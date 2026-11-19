@@ -416,7 +416,7 @@ describe("TargetConfig", () => {
       .mockResolvedValueOnce({ items: [saved, ...sampleTargets], pagination: { limit: 200, has_more: false } })
       .mockResolvedValue({ items: sampleTargets, pagination: { limit: 200, has_more: false } });
     mockedSavedEntriesApi.get.mockResolvedValue({
-      kind: "targets", name: "saved_chat", version: "v1", problem: null, saved_by: "Ada", saved_by_me: true,
+      kind: "targets", name: "saved_chat", version: "v1", problem: null,
       can_change: true,
     });
     mockedSavedEntriesApi.delete.mockResolvedValue();

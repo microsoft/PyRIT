@@ -48,7 +48,6 @@ from pyrit.registry import (
 )
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
-    SAVED_ENTRY_OWNER_METADATA_KEY,
     registration_origin,
 )
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
@@ -545,7 +544,6 @@ async def test_saves_a_scorer_that_restore_rebuilds(tmp_path: Path) -> None:
     )
 
     assert scorer.origin is RegistryEntryOrigin.SAVED
-    assert (scorer.saved_by, scorer.saved_by_me) == ("Ada", True)
     assert _saved_scorer(tmp_path, "leak_substring") == {
         "schema_version": 1,
         "class_module": "pyrit.score.true_false.substring_scorer",
@@ -555,7 +553,7 @@ async def test_saves_a_scorer_that_restore_rebuilds(tmp_path: Path) -> None:
     }
     entry = ScorerRegistry.get_registry_singleton().instances.get_entry("leak_substring")
     assert entry is not None
-    assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "scorers", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
+    assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "scorers"}
     saved_hash = entry.instance.get_identifier().hash
     ScorerRegistry.reset_registry_singleton()
     assert (await _restore(tmp_path)).failures == []
@@ -597,7 +595,8 @@ async def test_refuses_a_scorer_that_would_use_this_servers_key(tmp_path: Path) 
         await service.create_scorer_async(request=request, recipes_source=str(tmp_path))
 
     assert str(refusal.value) == (
-        "'api_key' is empty, so 'AzureContentFilterScorer' can use this server's credential instead. "
+        "'AzureContentFilterScorer' needs a credential in 'api_key', which saved entries can't hold or take from "
+        "this server yet. "
         "It can still be created without saving it."
     )
     assert ScorerRegistry.get_registry_singleton().instances.get("content_safety") is None
@@ -804,31 +803,3 @@ async def test_a_default_list_with_a_temporary_scorer_is_not_saved(
         "It can still be created without saving it."
     )
     assert not (tmp_path / "scorers").exists()
-
-
-@pytest.mark.parametrize(
-    ("owner", "current_user_oid", "saved_by"),
-    [
-        (SavedEntryOwner(oid="ada-oid", name="Ada"), "ada-oid", ("Ada", True)),
-        (SavedEntryOwner(oid="ada-oid", name="Ada"), "bob-oid", ("Ada", False)),
-        (SavedEntryOwner(oid="ada-oid", name="Ada"), None, ("Ada", False)),
-        (SavedEntryOwner(oid="ada-oid", name=""), "ada-oid", (None, True)),
-        (None, "ada-oid", (None, False)),
-    ],
-)
-async def test_list_and_get_say_who_saved_each_scorer(
-    owner: SavedEntryOwner | None, current_user_oid: str | None, saved_by: tuple[str | None, bool]
-) -> None:
-    ScorerRegistry.get_registry_singleton().instances.register(
-        SubStringScorer(substring="x"),
-        name="leak",
-        metadata={SAVED_ENTRY_METADATA_KEY: "scorers", SAVED_ENTRY_OWNER_METADATA_KEY: owner},
-    )
-    service = ScorerService()
-
-    listed = (await service.list_scorers_async(current_user_oid=current_user_oid)).items
-    fetched = await service.get_scorer_async(scorer_registry_name="leak", current_user_oid=current_user_oid)
-
-    assert [(item.saved_by, item.saved_by_me) for item in listed] == [saved_by]
-    assert fetched is not None and (fetched.saved_by, fetched.saved_by_me) == saved_by
-    assert "ada-oid" not in fetched.model_dump_json()

@@ -467,10 +467,6 @@ export interface ScorerInstance {
   chat_scoring_disabled_reason?: string | null
   /** Saved, from the server's configuration, or Temporary. */
   origin?: RegistryEntryOrigin | null
-  /** Name of the user who saved it, for display only; null when it isn't saved or was saved with sign-in off. */
-  saved_by?: string | null
-  /** Whether the signed-in user is the one who saved it. */
-  saved_by_me?: boolean
 }
 
 export type ScorerEvaluationMetrics = Record<string, number | string | null | undefined>
@@ -528,10 +524,6 @@ export interface TargetInstance {
   target_registry_name: string
   /** Saved, from the server's configuration, or Temporary. Absent for inner targets. */
   origin?: RegistryEntryOrigin | null
-  /** Name of the user who saved the target; null when it isn't saved or was saved with sign-in off. */
-  saved_by?: string | null
-  /** Whether the signed-in user is the one who saved the target. */
-  saved_by_me?: boolean
   binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
@@ -544,6 +536,12 @@ export interface TargetInstance {
   target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */
   inner_targets?: TargetInstance[] | null
+  /** True when only the requesting user, who created it, can see and use the target. */
+  private?: boolean
+  /** True when the target's API key or request headers can be updated in place. */
+  allow_credential_updates?: boolean
+  /** Whether the provider rejected the target's credentials on the last request; null until it is used. */
+  credentials_rejected?: boolean | null
 }
 
 export interface TargetListResponse {
@@ -559,6 +557,10 @@ export interface CreateTargetRequest {
   auth_mode?: TargetAuthMode
   /** Save the target so it comes back after a restart. */
   persist?: boolean
+  /** Makes the target visible to and usable by only its creator. */
+  private?: boolean
+  /** Lets the target's API key or request headers be updated later; defaults to true only when private. */
+  allow_credential_updates?: boolean
 }
 
 /** A target to check before saving it, as a create request would give it. */
@@ -640,10 +642,6 @@ export interface ConverterInstance {
   description?: string | null
   /** Saved, from the server's configuration, or Temporary. */
   origin?: RegistryEntryOrigin | null
-  /** Name of the user who saved it, for display only; null when it isn't saved or was saved with sign-in off. */
-  saved_by?: string | null
-  /** Whether the signed-in user is the one who saved it. */
-  saved_by_me?: boolean
 }
 
 export interface ConverterListResponse {
@@ -704,10 +702,6 @@ export interface TechniqueInstance {
   creation_statement: string
   /** Whether the technique comes back after a restart. */
   origin?: RegistryEntryOrigin | null
-  /** Name of the user who saved it, for display only; null when it isn't saved or was saved with sign-in off. */
-  saved_by?: string | null
-  /** Whether the signed-in user is the one who saved it. */
-  saved_by_me?: boolean
 }
 
 export interface TechniqueTypeEntry {
@@ -2633,9 +2627,7 @@ export interface SavedEntry {
   version: string | null
   /** Why the file can't be used, when it can't be read or isn't a valid entry. */
   problem: string | null
-  saved_by: string | null
-  saved_by_me: boolean
-  /** Whether the person asking may change or delete it. */
+  /** Whether the person asking may change or delete it, which takes an administrator. */
   can_change: boolean
 }
 

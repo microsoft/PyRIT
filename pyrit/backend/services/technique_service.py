@@ -30,12 +30,14 @@ from pyrit.registry import (
     NotSaveableError,
     SavedEntryConflictError,
     SavedEntryReplacement,
-    launch_script_class_reason,
+    creator_metadata,
+    get_class_saveability,
+    record_private_references,
     refuse_temporary_entries,
     refuse_temporary_references,
 )
 from pyrit.registry.components.attack_technique_registry import TechniqueSelectorConflictError
-from pyrit.registry.instance_registry import registry_entry_origin, saved_entry_owner
+from pyrit.registry.instance_registry import registry_entry_origin
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
 from pyrit.scenario.core import AttackTechniqueFactory
 
@@ -47,24 +49,16 @@ class TechniqueService:
         """Bind to the runtime registry; service lifecycle clears this binding on reset."""
         self._registry = AttackTechniqueRegistry.get_registry_singleton()
 
-    async def list_async(
-        self, *, limit: int = 50, cursor: str | None = None, current_user_oid: str | None = None
-    ) -> TechniqueListResponse:
+    async def list_async(self, *, limit: int = 50, cursor: str | None = None) -> TechniqueListResponse:
         """
         List factories in registry-name order, including advanced programmatic definitions.
-
-        Args:
-            limit (int): The most techniques to return. Defaults to 50.
-            cursor (str | None): The registry name to start after, or None for the first page. Defaults to None.
-            current_user_oid (str | None): The signed-in user's Microsoft Entra object ID, used to mark the
-                techniques they saved. Defaults to None.
 
         Returns:
             TechniqueListResponse: A page and its pagination metadata.
         """
-        return await asyncio.to_thread(self._list, limit=limit, cursor=cursor, current_user_oid=current_user_oid)
+        return await asyncio.to_thread(self._list, limit=limit, cursor=cursor)
 
-    def _list(self, *, limit: int, cursor: str | None, current_user_oid: str | None) -> TechniqueListResponse:
+    def _list(self, *, limit: int, cursor: str | None) -> TechniqueListResponse:
         entries = self._registry.instances.get_all_instances()
         start = next((index + 1 for index, entry in enumerate(entries) if entry.name == cursor), 0)
         page = entries[start : start + limit]
@@ -72,11 +66,7 @@ class TechniqueService:
         return TechniqueListResponse(
             items=[
                 technique_to_instance(
-                    name=entry.name,
-                    factory=entry.instance,
-                    origin=registry_entry_origin(entry.metadata),
-                    owner=saved_entry_owner(entry.metadata),
-                    current_user_oid=current_user_oid,
+                    name=entry.name, factory=entry.instance, origin=registry_entry_origin(entry.metadata)
                 )
                 for entry in page
             ],
@@ -88,14 +78,9 @@ class TechniqueService:
             ),
         )
 
-    async def get_async(self, *, name: str, current_user_oid: str | None = None) -> TechniqueInstance | None:
+    async def get_async(self, name: str) -> TechniqueInstance | None:
         """
         Get safe settings for a named factory.
-
-        Args:
-            name (str): The technique's registry name.
-            current_user_oid (str | None): The signed-in user's Microsoft Entra object ID, used to mark a technique
-                they saved. Defaults to None.
 
         Returns:
             TechniqueInstance | None: The factory settings, if registered.
@@ -104,12 +89,7 @@ class TechniqueService:
         if entry is None:
             return None
         return await asyncio.to_thread(
-            technique_to_instance,
-            name=name,
-            factory=entry.instance,
-            origin=registry_entry_origin(entry.metadata),
-            owner=saved_entry_owner(entry.metadata),
-            current_user_oid=current_user_oid,
+            technique_to_instance, name=name, factory=entry.instance, origin=registry_entry_origin(entry.metadata)
         )
 
     async def create_async(
@@ -150,13 +130,18 @@ class TechniqueService:
         return await asyncio.to_thread(self._create, request)
 
     def _create(self, request: CreateTechniqueRequest) -> TechniqueInstance:
-        factory = self._build(request)
+        with record_private_references() as private_references:
+            factory = self._build(request)
         result = technique_to_instance(name=request.name, factory=factory, origin=RegistryEntryOrigin.TEMPORARY)
-        self._registry.instances.register_runtime(factory)
+        # A technique built on the caller's private targets or converters is private to the caller too.
+        metadata = creator_metadata(
+            name=request.name, requested_private=request.private, private_references=private_references
+        )
+        self._registry.instances.register_runtime(factory, metadata=metadata)
         return result
 
     def _build(self, request: CreateTechniqueRequest) -> AttackTechniqueFactory:
-        args = request.model_dump(exclude_unset=True, exclude={"name", "type", "tags", "persist"})
+        args = request.model_dump(exclude_unset=True, exclude={"name", "type", "tags", "persist", "private"})
         return self._registry.create_factory(
             name=request.name, attack_type=request.type, technique_tags=request.tags, strict_json=True, **args
         )
@@ -184,35 +169,37 @@ class TechniqueService:
             SavedEntryConflictError: If the name or a tag conflicts with a registered technique.
             SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
-        if AttackRegistry.get_registry_singleton().is_temporary_class(request.type):
-            raise NotSaveableError(
-                f"{launch_script_class_reason(request.type)} It can still be created without saving it."
-            )
         refuse_temporary_entries(
             component_type=ComponentType.CONVERTER,
             names=[*(request.request_converters or []), *(request.response_converters or [])],
         )
         refuse_temporary_entries(component_type=ComponentType.TARGET, names=[request.adversarial_chat])
-        factory = await asyncio.to_thread(self._build, request)
+        with record_private_references() as private_references:
+            factory = await asyncio.to_thread(self._build, request)
+        _, class_reason = await asyncio.to_thread(
+            get_class_saveability, registry=AttackRegistry.get_registry_singleton(), type_name=request.type
+        )
+        if class_reason is not None:
+            raise NotSaveableError(class_reason)
         await asyncio.to_thread(self._refuse_attack_params_restore_would_refuse, request)
         try:
             await asyncio.to_thread(self._registry.instances.check_runtime_available, factory)
         except TechniqueSelectorConflictError as error:
             raise SavedEntryConflictError(str(error)) from error
-        # The user saving the technique is the one asking, so the response marks it as theirs.
         result = await asyncio.to_thread(
-            technique_to_instance,
-            name=request.name,
-            factory=factory,
-            origin=RegistryEntryOrigin.SAVED,
-            owner=owner,
-            current_user_oid=owner.oid if owner is not None else None,
+            technique_to_instance, name=request.name, factory=factory, origin=RegistryEntryOrigin.SAVED
         )
+        creator = creator_metadata(
+            name=request.name, requested_private=request.private, private_references=private_references
+        )
+        recipe_fields = request.model_dump(exclude_unset=True, exclude={"name", "persist", "private"})
         await save_then_register_locked_async(
             kind=RegistryRecipeKind.TECHNIQUES,
             name=request.name,
-            recipe=TechniqueRecipe(**request.model_dump(exclude_unset=True, exclude={"name", "persist"}), owner=owner),
-            register=lambda metadata: self._registry.instances.register_runtime(factory, metadata=metadata),
+            recipe=TechniqueRecipe(**recipe_fields, owner=owner),
+            register=lambda metadata: self._registry.instances.register_runtime(
+                factory, metadata={**creator, **metadata}
+            ),
             source=recipes_source,
             replacing=replacing,
         )
@@ -239,7 +226,7 @@ class TechniqueService:
             # The address needs fixing; creating the technique without saving it wouldn't make it usable.
             if error.reason is RestoreFailureReason.INVALID_RECIPE:
                 raise ValueError(str(error)) from error
-            raise NotSaveableError(f"{error} It can still be created without saving it.") from error
+            raise NotSaveableError(str(error)) from error
         refuse_temporary_references(parameters=metadata.parameters, params=request.params)
 
     async def types_async(self) -> TechniqueTypeResponse:

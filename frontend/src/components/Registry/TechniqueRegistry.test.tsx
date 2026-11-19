@@ -444,16 +444,22 @@ describe('TechniqueRegistry', () => {
   })
 
   it('offers a Temporary technique when the server refuses to save it, until a value changes', async () => {
-    techniques.createTechnique.mockRejectedValueOnce(
-      axiosError(400, { type: '/errors/not-saveable', detail: 'Refused. It can still be created without saving it.' }),
-    )
+    techniques.createTechnique.mockRejectedValueOnce(axiosError(400, {
+      type: '/errors/not-saveable',
+      detail: 'Refused. It can still be created without saving it.',
+      not_saveable_reason: 'Refused.',
+    }))
     render(tree())
     const user = await openCreate()
     await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'refused')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
     await user.click(screen.getByRole('button', { name: 'Save technique' }))
 
-    expect(await screen.findByText(/Refused\. It can still be created without saving it\./)).toBeInTheDocument()
+    // The cause and the Temporary note, each once.
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Refused. A Temporary technique is gone after the backend restarts or is reinitialized.',
+    )
+    expect(screen.queryByText(/It can still be created without saving it/)).not.toBeInTheDocument()
     expect(techniques.createTechnique.mock.calls[0][0]).toMatchObject({ persist: true })
     await user.type(screen.getByRole('spinbutton', { name: 'max_attempts_on_failure' }), '1')
     expect(screen.queryByText(/Refused\./)).not.toBeInTheDocument()
@@ -499,36 +505,6 @@ describe('TechniqueRegistry', () => {
     await user.type(name, '_2')
     expect(screen.queryByText("Technique 'first' already exists (names are case-insensitive)")).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save technique' })).toBeEnabled()
-  })
-
-  it('says who saved each technique and lists only yours on request', async () => {
-    const user = userEvent.setup()
-    techniques.listTechniques.mockResolvedValue(techniquePage([
-      { ...technique('mine_send'), origin: 'saved', saved_by: 'Ada', saved_by_me: true },
-      { ...technique('bobs_send'), origin: 'saved', saved_by: 'Bob' },
-      { ...technique('startup_send'), origin: 'configuration' },
-    ]))
-    render(tree())
-    const table = await screen.findByRole('table', { name: 'Registered techniques' })
-    const row = (name: string) => within(table).getByText(name).closest('tr') as HTMLElement
-
-    expect(within(row('mine_send')).getByText('Saved by you')).toBeInTheDocument()
-    expect(within(row('bobs_send')).getByText('Saved by Bob')).toBeInTheDocument()
-    expect(within(row('startup_send')).queryByText(/^Saved by /)).not.toBeInTheDocument()
-    await user.click(screen.getByRole('checkbox', { name: 'Only techniques I saved (1)' }))
-    expect(within(table).queryByText('bobs_send')).not.toBeInTheDocument()
-    expect(within(table).getByText('mine_send')).toBeInTheDocument()
-  })
-
-  it('offers no list of your own techniques when none are yours, such as with sign-in off', async () => {
-    techniques.listTechniques.mockResolvedValue(techniquePage([
-      { ...technique('local_send'), origin: 'saved', saved_by: null },
-      { ...technique('bobs_send'), origin: 'saved', saved_by: 'Bob' },
-    ]))
-    render(tree())
-    await screen.findByRole('table', { name: 'Registered techniques' })
-
-    expect(screen.queryByRole('checkbox', { name: /Only techniques I saved/ })).not.toBeInTheDocument()
   })
 
   it('lets a taken tag be changed and saved again', async () => {

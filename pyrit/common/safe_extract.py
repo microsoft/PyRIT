@@ -146,7 +146,7 @@ def _validate_members(
     for m in members:
         _reject_disallowed_entry_type(m)
         _reject_absolute_path(m)
-        _reject_path_traversal(m, dest_real)
+        _reject_path_traversal(m, dest_real=dest_real)
         _reject_oversized_member(m, max_file_size=max_file_size)
         _reject_compression_bomb(m, max_ratio=max_compression_ratio)
 
@@ -173,7 +173,7 @@ def _reject_absolute_path(m: zipfile.ZipInfo) -> None:
         raise UnsafeArchiveError(f"drive-letter path in archive: {name}")
 
 
-def _reject_path_traversal(m: zipfile.ZipInfo, dest_real: Path) -> None:
+def _reject_path_traversal(m: zipfile.ZipInfo, *, dest_real: Path) -> None:
     # Explicit null-byte check: Path.resolve() only raises ValueError for
     # embedded null bytes on POSIX. On Windows the path round-trips with the
     # null byte intact, so we need an OS-independent guard up front.

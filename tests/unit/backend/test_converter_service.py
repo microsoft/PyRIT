@@ -76,7 +76,6 @@ from pyrit.registry import (
 )
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
-    SAVED_ENTRY_OWNER_METADATA_KEY,
     RegistryNameTakenError,
     registration_origin,
 )
@@ -751,33 +750,6 @@ class TestGetConverter:
         assert result is not None
         assert result.converter_id == "conv-1"
         assert result.identifier.class_name == "MockConverter"
-
-
-@pytest.mark.parametrize(
-    ("owner", "current_user_oid", "saved_by"),
-    [
-        (SavedEntryOwner(oid="ada-oid", name="Ada"), "ada-oid", ("Ada", True)),
-        (SavedEntryOwner(oid="ada-oid", name="Ada"), "bob-oid", ("Ada", False)),
-        (SavedEntryOwner(oid="ada-oid", name="Ada"), None, ("Ada", False)),
-        (None, "ada-oid", (None, False)),
-    ],
-)
-async def test_list_and_get_say_who_saved_each_converter(
-    owner: SavedEntryOwner | None, current_user_oid: str | None, saved_by: tuple[str | None, bool]
-) -> None:
-    service = ConverterService()
-    service._registry.instances.register(
-        Base64Converter(),
-        name="saved_base64",
-        metadata={SAVED_ENTRY_METADATA_KEY: "converters", SAVED_ENTRY_OWNER_METADATA_KEY: owner},
-    )
-
-    listed = (await service.list_converters_async(current_user_oid=current_user_oid)).items
-    fetched = await service.get_converter_async(converter_id="saved_base64", current_user_oid=current_user_oid)
-
-    assert [(item.saved_by, item.saved_by_me) for item in listed] == [saved_by]
-    assert fetched is not None and (fetched.saved_by, fetched.saved_by_me) == saved_by
-    assert "ada-oid" not in fetched.model_dump_json()
 
 
 class TestGetConverterObject:
@@ -2449,7 +2421,6 @@ class TestPersistConverter:
         )
 
         assert converter.origin is RegistryEntryOrigin.SAVED
-        assert (converter.saved_by, converter.saved_by_me) == ("Ada", True)
         assert _saved_converter(tmp_path, "caesar_converter") == {
             "schema_version": 1,
             "class_module": "pyrit.converter.caesar_converter",
@@ -2459,7 +2430,7 @@ class TestPersistConverter:
         }
         entry = upload_service._registry.instances.get_entry("caesar_converter")
         assert entry is not None
-        assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "converters", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
+        assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "converters"}
         saved_hash = entry.instance.get_identifier().hash
         ConverterRegistry.reset_registry_singleton()
         assert (await _restore(tmp_path)).failures == []
@@ -2520,8 +2491,8 @@ class TestPersistConverter:
             )
 
         assert str(refusal.value) == (
-            f"'azure_speech_key' is empty, so '{converter_type}' can use this server's credential instead. "
-            "It can still be created without saving it."
+            f"'{converter_type}' needs a credential in 'azure_speech_key', which saved entries can't hold or take "
+            "from this server yet. It can still be created without saving it."
         )
         assert upload_service._registry.instances.get("speech") is None
         assert not (tmp_path / "converters").exists()
@@ -2843,7 +2814,7 @@ class TestPersistConverterWithADefaultTarget:
 
         assert str(refusal.value) == (
             "'converter_target' is left to a default target that isn't registered, so it won't exist after a "
-            "restart. Name a target to save it, or create it without saving it."
+            "restart. Name a target to save it. It can still be created without saving it."
         )
         assert not (tmp_path / "converters").exists()
 

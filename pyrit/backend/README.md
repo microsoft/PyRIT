@@ -63,11 +63,13 @@ its database collation.
 - `GET /api/targets/types` - List the target types that can be created, with their parameters and auth
   modes, the auth modes a saved target of each type can use (`saveable_auth_modes`), and why a type can't be saved
   at all (`not_saveable_reason`)
-- `POST /api/targets` - Create a target
+- `POST /api/targets` - Create (and optionally register) a target
 - `POST /api/targets/saveability` - Say whether a target could be saved, without building or saving it. Send the
-  create request's `type`, `params`, and `auth_mode`; the answer is `{"not_saveable_reason": ...}`, null when it can
-  be saved. It runs the checks a create with `persist` runs, so a request creating would refuse gets the same 400 or
-  403
+  create request's `type`, `params`, and `auth_mode`; the answer is `{"not_saveable_reason": ...}`, which gives only
+  the cause, or null when the save checks pass. It runs the checks a create with `persist` runs before the target is
+  built, so a request they refuse gets the same 400 or 403. The target's own constructor checks don't run, so null
+  doesn't mean the create succeeds: a round robin with one member gets null here and a 400 from create
+- `PUT /api/targets/{id}/credentials` - Update the API key or request headers of a target that allows it
 - `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
   apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.
   Detection uses a private target, has a four-minute operation deadline, and
@@ -107,6 +109,7 @@ target the same way; the API adds the signed-in user, the configured source, and
 | A request with `persist` that... | Gets |
 |---|---|
 | names the target with anything but up to 64 lowercase letters, digits, and underscores, starting with a letter | **422** |
+| is private, or allows credential updates | **422** |
 | would save a key, or use one of this server's keys or address settings | **400** not-saveable |
 | gives an address that can carry a credential | **400** not-saveable |
 | saves a target type that can't be saved, or one that a scan's launch scripts added or put in place of another | **400** not-saveable |
@@ -116,17 +119,18 @@ target the same way; the API adds the signed-in user, the configured source, and
 | takes a name that a target or a saved file already has | **409** |
 | can't be written to storage | **503** |
 
-A not-saveable **400** has `"type": "/errors/not-saveable"`, and the request can be sent again without `persist`; the
-other **400** needs the address fixed. `GET /api/targets/types` gives the same class-level answer before a request is
-sent, and `POST /api/targets/saveability` the answer for the request's values. When storage can't be written, the
+A not-saveable **400** has `"type": "/errors/not-saveable"` and the cause alone in `not_saveable_reason`, and the
+request can be sent again without `persist`. For any other **400**, fix what its `detail` names, such as the address
+or a constructor parameter. A name that a registered target has is a **409** without a problem type, with or without
+`persist`. `GET /api/targets/types` gives the same class-level answer before a request is sent, and
+`POST /api/targets/saveability` the answer for the request's values. When storage can't be written, the
 server log names the target and its folder, since the target comes back at the next start if the write reached storage
 anyway.
 
 Each listed target's `origin` is `saved`, `configuration` (registered by the server's startup scripts), or `temporary`
 (gone after a restart or a configuration apply, such as a target created without `persist` or registered by a scan's
 launch scripts). A saved target can only use targets that come back after a restart; targets from configuration keep
-their own sign-in. A saved target's `saved_by` is the name of the user who saved it (null when it was saved with sign-in
-off), and `saved_by_me` says whether that's the signed-in user asking. The user's object ID isn't returned.
+their own sign-in.
 
 A saved target records the create request without its name: the target type, `auth_mode`, and the parameters as the
 API accepted them. Restore sends it through the same create, so it passes the same checks and follows the class's
@@ -134,6 +138,64 @@ constructor. A class that moves within PyRIT still restores. Renaming or removin
 changes the saved format: such a change raises `schema_version` and adds a migration for older files, with a test that
 restores one. A file that still doesn't match fails to restore with the reason, and the backend stays not ready until
 the file is fixed or deleted, so nothing runs without the saved target.
+
+#### Private targets
+
+A target, scorer, converter, or technique created through the API is **shared** by default:
+everyone can see and use it. Send `"private": true` to make it **private**, so only the signed-in
+user who created it can see and use it. A private entry needs a signed-in caller (local mode has
+one) and `"register": true`, and can't be saved with `"persist": true`. Entries from initializers and
+saved configuration are always shared.
+
+```http
+POST /api/targets
+{"name": "my-claude", "type": "OpenAIChatTarget", "private": true,
+ "params": {"endpoint": "https://api.anthropic.com/v1", "model_name": "<model>", "api_key": "<your key>"}}
+
+PUT /api/targets/my-claude/credentials
+{"api_key": "<new key or access token>", "private": true}
+```
+
+- To everyone else, a private target doesn't exist: lists leave it out, and naming it anywhere
+  (a chat, scenario, scorer, converter, technique, or composite target) fails as for an unknown
+  target. Creating a target with a name already taken, even by a target you can't see, fails.
+- Anything built on your private target is private too, so a shared component never uses a
+  private one; `"private": false` then fails with 400 and registers nothing.
+- Results, such as attack and scenario results and conversations, stay visible to everyone.
+- Whoever creates a target decides whether its credentials can be updated later
+  (`"allow_credential_updates"`). A private target allows it by default, so its owner can keep a
+  short-lived token fresh; a shared target doesn't unless its creator sends `true`. An
+  initializer can allow it for a shared target it registers, for example one whose gateway
+  token expires, with `credential_update_metadata(allowed=True)` from `pyrit.registry`.
+  Responses report `allow_credential_updates`.
+- `PUT /api/targets/{id}/credentials` takes an `api_key`, `headers`, or both. Only the owner can
+  update a private target (others get 404), and anyone signed in can update a shared target that
+  allows it, so everyone's requests then use the new credentials. A target that doesn't allow
+  updates, or a saved target, returns 403. A header replaces any header of the same name, whatever
+  its case and wherever the target was configured with it (`headers`,
+  `OPENAI_ADDITIONAL_REQUEST_HEADERS`, or `httpx_client_kwargs`), so a target behind any auth
+  scheme can be kept fresh: `Authorization`, `x-api-key`, a team's own header, or `Cookie` (the
+  whole cookie string). If the target has an explicit `Authorization` header, update that
+  header instead of sending just `api_key` (400). Send `"private"` with the visibility you expect;
+  when the target isn't private or shared as expected, nothing changes and the request returns 409.
+- The update changes the registered target in place: its identity, configuration, detected
+  capabilities, and authentication mode stay the same, and everything using it, such as a round
+  robin, a scorer, or a running scenario, sends the new values with its next request. A target
+  that gets its tokens from a token provider, such as Microsoft Entra ID (`"auth_mode": "identity"`,
+  or a provider an initializer passes as `api_key`), can't take an `api_key` or an `Authorization`
+  header, and one that needs no key can't take an `api_key` (400). Headers that frame or route a request, such as
+  `Host` or `Content-Length`, can't be set (400). OpenAI-family targets other than `RealtimeTarget`
+  can update in place; other target types can't allow updates. Values are never returned.
+- Keys, sensitive parameters, and header values must be ASCII. When a target is created or updated,
+  surrounding whitespace is trimmed and remaining control characters are refused (400), except for
+  tabs inside header values. The error names only the parameter or header.
+- Target responses report `private` and `credentials_rejected`: whether the provider answered the
+  last request through the target, or a chat copy of it, with 401 or 403. It is `null` until a
+  request using the current credentials completes or fails authentication.
+- `pyrit_scan set-target-credential` updates a target's `api_key`, or a request header with
+  `--header`, from a prompt, an environment variable, or the `ant` CLI.
+- Like other targets created through the API, private targets are gone after the backend
+  restarts or reinitializes.
 
 ### Converters and scorers
 
@@ -152,9 +214,10 @@ Safety scorer, and the audio scorers), or a model from this server (the local re
 Temporary target, converter, or scorer, be of a type that only a scan's launch scripts added, or, for a converter, need
 or keep an uploaded file. A target left out of the
 request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
-converter copy made with `source` can't be saved yet (**422**). A taken name receives **409**, and storage that can't
+converter copy made with `source` can't be saved yet, and a private converter or scorer can't be saved (**422**). A
+taken name receives **409**, and storage that can't
 be written receives **503**. Each listed converter's and scorer's `origin` is `saved`, `configuration`, or
-`temporary`, and its `saved_by` and `saved_by_me` say who saved it, both as for targets. `DELETE /api/converters/{id}`
+`temporary`, as for targets. `DELETE /api/converters/{id}`
 refuses a saved converter (**409**); delete it with `DELETE /api/saved-entries/converters/{id}` instead.
 
 ### Saved entries
@@ -163,10 +226,9 @@ Saved targets, converters, scorers, and techniques are addressed by their saved 
 `converters`, `scorers`, or `techniques`. These routes answer while the runtime isn't ready, so an entry that keeps it
 from starting can be deleted.
 
-- `GET /api/saved-entries/{kind}/{name}` - The file's `version`, why it can't be used if it can't (`problem`), who
-  saved it (`saved_by`, `saved_by_me`), whether the caller may change or delete it (`can_change`), and, for a caller
-  who may, what it saves (`recipe`). **404** when no saved file has the name, including a name only a startup entry
-  has.
+- `GET /api/saved-entries/{kind}/{name}` - The file's `version`, why it can't be used if it can't (`problem`),
+  whether the caller may change or delete it (`can_change`), and, for an administrator, what it saves (`recipe`).
+  **404** when no saved file has the name, including a name only a startup entry has.
 - `PUT /api/saved-entries/{kind}/{name}` - Change a saved entry: send back the `recipe` GET returned, changed, as
   `{"expected_version": "<version>", "recipe": {...}}`. A target changes its `params` and `auth_mode`, and a converter
   or scorer its `params`; a technique changes anything its create request takes except its name, attack type, and
@@ -178,12 +240,13 @@ from starting can be deleted.
   change it, and the **403**, **404**, **409** for a changed file, and **503** codes, are as for DELETE. A file that
   can't be read or isn't a valid entry can't be changed (**409**); delete it and save it again.
 - `DELETE /api/saved-entries/{kind}/{name}?expected_version=<version>` - Delete the file and remove the entry it
-  restored, so it doesn't come back after a restart; a startup entry with the same name stays. Who may delete it
-  comes from the file: the person who saved it or an administrator, or anyone when sign-in is off (**403**
-  otherwise). A file that doesn't say who saved it, such as one that can't be read or isn't a valid entry, needs an
-  administrator. `expected_version` is required (**422**) unless the file can't be read. **409** when the file
-  changed since that version, another saved entry names this one (they're listed), a registered entry of any origin
-  holds it (they're listed; a Temporary one is gone after the next restart or configuration apply), or a request, run,
+  restored, so it doesn't come back after a restart; a startup entry with the same name stays. Saved entries are
+  shared, so only an administrator can delete one, as for scenario presets (**403** otherwise; in local mode that
+  needs `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`). The person who saved it, kept in its file, is attribution only.
+  `expected_version` is required (**422**) unless the file can't be read. **409** when the file changed since that
+  version, another saved entry names this one (they're listed), a registered entry of any origin holds it (they're
+  listed, except another user's private entry, which is counted without its name; a Temporary one is gone after the
+  next restart or configuration apply), or a request, run,
   send, or estimate is in progress. **503** when storage can't be read or written, or while the runtime is starting.
   Deleting an entry that couldn't be restored takes it off `restore_failures` in `GET /api/config/runtime`; apply the
   configuration or restart the backend to finish recovering. Saving and deleting take turns, and a save checks again
@@ -723,8 +786,8 @@ at every start. A request receives **400** with `"type": "/errors/not-saveable"`
 `persist`, if its attack type was added by a scan's launch scripts, or a converter or the adversarial target it names
 is Temporary. A name or tag that clashes with a
 registered technique receives **409**, and storage that can't be written receives **503**. Each listed technique's
-`origin` is `saved`, `configuration` (registered by a startup script), or `temporary`, and `saved_by` and
-`saved_by_me` say who saved it, as for targets. Settings changed for a single run aren't saved.
+`origin` is `saved`, `configuration` (registered by a startup script), or `temporary`, as for targets. Settings
+changed for a single run aren't saved.
 
 The basic GUI supports scalar inputs and one level of declared structured settings.
 It hides nested structured settings that the shared resolver cannot construct.
@@ -931,7 +994,7 @@ API callers are trusted operators, so these are intentional exceptions:
   OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
   of these.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
-  created them.
+  created them, except [private targets](#private-targets) and the components built on them.
 - Prompt content is not filtered; it is adversarial test data by design.
 - Any file type can be stored as a payload. `GET /api/media` renders only allow-listed image,
   audio, and video file extensions inline; everything else downloads as a file.

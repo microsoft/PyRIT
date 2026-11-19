@@ -159,10 +159,10 @@ class CodeAttackConverter(Converter):
         # Load and validate the template once, so a broken custom file fails at
         # construction rather than on the first conversion.
         self._seed_prompt = SeedPrompt.from_yaml_file(self._template_path)
-        self._validate_template(self._seed_prompt, self._template_path)
+        self._validate_template(self._seed_prompt, path=self._template_path)
 
     @staticmethod
-    def _validate_template(seed_prompt: SeedPrompt, path: pathlib.Path) -> None:
+    def _validate_template(seed_prompt: SeedPrompt, *, path: pathlib.Path) -> None:
         """
         Ensure the template injects the encoded objective and nothing else.
 
@@ -277,24 +277,28 @@ class CodeAttackConverter(Converter):
         if len(words) == 1:
             words = list(words[0])
         words = words[::-1]
-        literals = (_escape_string_literal(word, CodeAttackConverter.Encoding.PYTHON_STACK) for word in words)
+        literals = (_escape_string_literal(word, encoding=CodeAttackConverter.Encoding.PYTHON_STACK) for word in words)
         return "\n".join(f"    my_stack.append({literal})" for literal in literals)
 
     def _encode_python_list(self, prompt: str) -> str:
-        literals = (_escape_string_literal(word, CodeAttackConverter.Encoding.PYTHON_LIST) for word in prompt.split())
+        literals = (
+            _escape_string_literal(word, encoding=CodeAttackConverter.Encoding.PYTHON_LIST) for word in prompt.split()
+        )
         return "\n".join(f"    my_list.append({literal})" for literal in literals)
 
     def _encode_python_string(self, prompt: str) -> str:
-        return f"    my_string = {_escape_string_literal(prompt, CodeAttackConverter.Encoding.PYTHON_STRING)}"
+        return f"    my_string = {_escape_string_literal(prompt, encoding=CodeAttackConverter.Encoding.PYTHON_STRING)}"
 
     def _encode_cpp(self, prompt: str) -> str:
-        return f"    std::string my_string = {_escape_string_literal(prompt, CodeAttackConverter.Encoding.CPP)};"
+        return (
+            f"    std::string my_string = {_escape_string_literal(prompt, encoding=CodeAttackConverter.Encoding.CPP)};"
+        )
 
     def _encode_go(self, prompt: str) -> str:
-        return f"        myQueue := {_escape_string_literal(prompt, CodeAttackConverter.Encoding.GO)}"
+        return f"        myQueue := {_escape_string_literal(prompt, encoding=CodeAttackConverter.Encoding.GO)}"
 
 
-def _escape_string_literal(value: str, encoding: CodeAttackConverter.Encoding) -> str:
+def _escape_string_literal(value: str, *, encoding: CodeAttackConverter.Encoding) -> str:
     """
     Render ``value`` as a double-quoted string literal valid in the target language.
 

@@ -5,10 +5,8 @@ import abc
 from pathlib import Path
 from typing import Self
 
-import yaml
-
 from pyrit.common.utils import verify_and_resolve_path
-from pyrit.common.yaml_helper import safe_load_yaml
+from pyrit.common.yaml_helper import load_yaml_file
 
 
 class YamlLoadable(abc.ABC):  # noqa: B024
@@ -32,10 +30,7 @@ class YamlLoadable(abc.ABC):  # noqa: B024
             ValueError: If the YAML file is invalid.
         """
         file = verify_and_resolve_path(file)
-        try:
-            yaml_data = safe_load_yaml(file.read_text("utf-8"))
-        except yaml.YAMLError as exc:
-            raise ValueError(f"Invalid YAML file '{file}': {exc}") from exc
+        yaml_data = load_yaml_file(path=file)
 
         if yaml_data is None:
             raise ValueError(f"YAML file '{file}' is empty.")

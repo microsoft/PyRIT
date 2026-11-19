@@ -30,14 +30,9 @@ from pyrit.models.catalog import (
     TechniqueRecipe,
 )
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
-from pyrit.registry.instance_registry import (
-    SAVED_ENTRY_METADATA_KEY,
-    SAVED_ENTRY_OWNER_METADATA_KEY,
-    RegistryNameTakenError,
-    registry_entry_origin,
-)
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, RegistryNameTakenError, registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
-from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
+from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class, check_saved_entry_params
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.registry.resolution import reject_non_external_params
 
@@ -46,13 +41,24 @@ if TYPE_CHECKING:
 
     from pyrit.models import Parameter
     from pyrit.registry.instance_registry import RegistryEntry
-    from pyrit.registry.registry import InstanceHoldingRegistry
+    from pyrit.registry.registry import InstanceHoldingRegistry, Registry
 
 logger = logging.getLogger(__name__)
 
 
 class NotSaveableError(ValueError):
     """An entry can't be saved as asked, though it can still be created without saving it."""
+
+    def __init__(self, cause: str) -> None:
+        """
+        Initialize the error with why the entry can't be saved.
+
+        Args:
+            cause (str): Why the entry can't be saved, in words safe to show users. The error's message adds that
+                the entry can still be created without saving it.
+        """
+        super().__init__(f"{cause} It can still be created without saving it.")
+        self.cause = cause
 
 
 class SavedEntryConflictError(ValueError):
@@ -82,7 +88,30 @@ class SavedEntryReplacement:
     running: bool
 
 
-def launch_script_class_reason(type_name: str) -> str:
+def get_class_saveability(*, registry: Registry[Any, Any], type_name: str) -> tuple[tuple[str, ...], str | None]:
+    """
+    Return the auth modes a saved entry of a registered class can use, or why none can.
+
+    This is the class-level answer, before any of the entry's values are known; the values are checked when it's
+    saved.
+
+    Args:
+        registry (Registry[Any, Any]): The registry the class is registered in.
+        type_name (str): The name the class is registered under.
+
+    Returns:
+        tuple[tuple[str, ...], str | None]: The saveable auth modes and None, or no modes and why the class can't
+            be saved.
+    """
+    if registry.is_temporary_class(type_name):
+        return (), _launch_script_class_reason(type_name)
+    try:
+        return check_saveable_class(registry.get_class(type_name)), None
+    except SavedEntryRefusedError as error:
+        return (), str(error)
+
+
+def _launch_script_class_reason(type_name: str) -> str:
     """
     Explain why an entry of a class that a scan's launch script added can't be saved.
 
@@ -120,13 +149,15 @@ async def prepare_saved_params_async(
         dict[str, Any]: The parameters to build and save the entry with.
 
     Raises:
-        NotSaveableError: If the entry would hold or use a credential, leaves a setting to this server's environment,
-            its class was added by a scan's launch script, or it names a Temporary entry.
+        NotSaveableError: If the entry's class can't be saved or was added by a scan's launch script, or the entry
+            would hold or use a credential, leaves a setting to this server's environment, or names a Temporary entry.
         ValueError: If an address the entry would use isn't a full http(s) or ws(s) address, or a parameter is one
             the API can't set, which restore can't pass either.
     """
-    if registry.is_temporary_class(type_name):
-        raise NotSaveableError(f"{launch_script_class_reason(type_name)} It can still be created without saving it.")
+    # Finding the class can run the registry's first, slow class discovery, so it stays off the event loop.
+    _, class_reason = await asyncio.to_thread(get_class_saveability, registry=registry, type_name=type_name)
+    if class_reason is not None:
+        raise NotSaveableError(class_reason)
     saved_params = dict(params)
     fallbacks: Mapping[str, str | None] = getattr(cls, "server_fallback_parameters", {})
     for name, turned_off in fallbacks.items():
@@ -143,7 +174,7 @@ async def prepare_saved_params_async(
         # The address needs fixing; creating the entry without saving it wouldn't make it usable.
         if error.reason is RestoreFailureReason.INVALID_RECIPE:
             raise ValueError(str(error)) from error
-        raise NotSaveableError(f"{error} It can still be created without saving it.") from error
+        raise NotSaveableError(str(error)) from error
     _name_default_references(cls=cls, parameters=parameters, params=saved_params)
     _refuse_values_restore_cant_pass(cls=cls, parameters=parameters, params=saved_params)
     _refuse_environment_values(cls=cls, params=saved_params)
@@ -182,7 +213,7 @@ def _refuse_environment_values(*, cls: type, params: Mapping[str, Any]) -> None:
         if value is None or (isinstance(value, str) and not value.strip()):
             raise NotSaveableError(
                 f"'{name}' is empty, so '{cls.__name__}' would read it from this server's environment. A saved "
-                "entry sets it. It can still be created without saving it."
+                "entry sets it."
             )
 
 
@@ -256,7 +287,7 @@ def _registered_name(*, parameter_name: str, component_type: ComponentType, inst
     if not entries:
         raise NotSaveableError(
             f"'{parameter_name}' is left to a default {component_type.value} that isn't registered, so it won't "
-            f"exist after a restart. Name a {component_type.value} to save it, or create it without saving it."
+            f"exist after a restart. Name a {component_type.value} to save it."
         )
     entry = next(
         (item for item in entries if registry_entry_origin(item.metadata) is not RegistryEntryOrigin.TEMPORARY),
@@ -324,15 +355,11 @@ def refuse_temporary_entries(*, component_type: ComponentType, names: Sequence[A
             continue
         registry = _referenced_registry(component_type)
         if registry is None:
-            raise NotSaveableError(
-                f"Uses {component_type.value} '{name}', which saved entries can't use yet. "
-                "It can still be created without saving it."
-            )
+            raise NotSaveableError(f"Uses {component_type.value} '{name}', which saved entries can't use yet.")
         entry = registry.instances.get_entry(name)
         if entry is not None and registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
             raise NotSaveableError(
-                f"Uses temporary {component_type.value} '{name}', which won't exist after a restart. "
-                "It can still be created without saving it."
+                f"Uses temporary {component_type.value} '{name}', which won't exist after a restart."
             )
 
 
@@ -358,7 +385,7 @@ async def save_then_register_async(
     Args:
         kind (RegistryRecipeKind): The kind of entry.
         name (str): The entry's name.
-        recipe (ComponentRecipe | TechniqueRecipe): How to rebuild the entry, naming who saved it.
+        recipe (ComponentRecipe | TechniqueRecipe): How restore rebuilds the entry.
         register (Callable[[dict[str, Any]], object]): Registers the built entry with the metadata it's given.
         source (str | None): Local directory or Azure Blob URI holding the saved entries. Defaults to
             ``registry_recipes`` under the PyRIT configuration directory.
@@ -475,7 +502,7 @@ async def _save_then_register_async(
         )
         raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
     try:
-        register({SAVED_ENTRY_METADATA_KEY: kind.value, SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner})
+        register({SAVED_ENTRY_METADATA_KEY: kind.value})
     except Exception as error:
         if not await _delete_recipe_async(storage=storage, singular=singular, name=name, version=version):
             raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
@@ -521,7 +548,7 @@ async def _replace_then_register_async(
     if not replacing.running:
         return
     try:
-        register({SAVED_ENTRY_METADATA_KEY: kind.value, SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner})
+        register({SAVED_ENTRY_METADATA_KEY: kind.value})
     except Exception as error:
         try:
             await asyncio.to_thread(

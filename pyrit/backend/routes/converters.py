@@ -8,12 +8,9 @@ Provides endpoints for managing converter instances and previewing conversions.
 Converter types are set at app startup - you cannot add new types at runtime.
 """
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from pyrit.backend.middleware.auth import current_user_oid
 from pyrit.backend.models import (
     ConverterInstance,
     ConverterInstanceListResponse,
@@ -23,7 +20,7 @@ from pyrit.backend.models import (
     CreateConverterRequest,
     ProblemDetail,
 )
-from pyrit.backend.models.common import IdentifierStr
+from pyrit.backend.models.common import IdentifierStr, NotSaveableProblemDetail
 from pyrit.backend.models.converters import (
     UnregisteredConverter,
 )
@@ -35,6 +32,7 @@ from pyrit.backend.routes.common import (
 from pyrit.backend.services import get_converter_service
 from pyrit.backend.services.saved_entries import SavedEntryRemovalError
 from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
+from pyrit.registry.instance_registry import RegistryNameTakenError
 
 router = APIRouter(prefix="/converters", tags=["converters"])
 
@@ -43,9 +41,7 @@ router = APIRouter(prefix="/converters", tags=["converters"])
     "",
     response_model=ConverterInstanceListResponse,
 )
-async def list_converters(  # pyrit-async-suffix-exempt
-    user_oid: Annotated[str | None, Depends(current_user_oid)],
-) -> ConverterInstanceListResponse:
+async def list_converters() -> ConverterInstanceListResponse:  # pyrit-async-suffix-exempt
     """
     List converter instances.
 
@@ -55,7 +51,7 @@ async def list_converters(  # pyrit-async-suffix-exempt
         ConverterInstanceListResponse: List of converter instances.
     """
     service = get_converter_service()
-    return await service.list_converters_async(current_user_oid=user_oid)
+    return await service.list_converters_async()
 
 
 @router.get(
@@ -79,7 +75,7 @@ async def list_converter_types() -> ConverterTypeResponse:  # pyrit-async-suffix
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {
-            "model": ProblemDetail,
+            "model": NotSaveableProblemDetail,
             "description": (
                 f"Invalid converter type or parameters, or (type {NOT_SAVEABLE_PROBLEM_TYPE}) a converter that "
                 "can't be saved as asked but can be created without saving it"
@@ -87,7 +83,7 @@ async def list_converter_types() -> ConverterTypeResponse:  # pyrit-async-suffix
         },
         409: {
             "model": ProblemDetail,
-            "description": "A converter to save has the name of a registered or saved converter",
+            "description": "A registered converter has the name, or, for a converter to save, a saved converter has it",
         },
         503: {"model": ProblemDetail, "description": "Saved converters can't be written right now"},
     },
@@ -116,11 +112,14 @@ async def create_converter(
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
     except NotSaveableError as e:
-        return not_saveable_response(detail=str(e), request=request)
-    except SavedEntryConflictError as e:
+        return not_saveable_response(error=e, request=request)
+    except (SavedEntryConflictError, RegistryNameTakenError) as e:
+        # RegistryNameTakenError is a ValueError, and a taken name is a 409 whether or not the converter is saved.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except SavedEntryStorageError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -140,11 +139,7 @@ async def create_converter(
         404: {"model": ProblemDetail, "description": "Converter not found"},
     },
 )
-async def get_converter(  # pyrit-async-suffix-exempt
-    *,
-    converter_id: IdentifierStr,
-    user_oid: Annotated[str | None, Depends(current_user_oid)],
-) -> ConverterInstance:
+async def get_converter(converter_id: IdentifierStr) -> ConverterInstance:  # pyrit-async-suffix-exempt
     """
     Get a converter instance by ID.
 
@@ -153,7 +148,7 @@ async def get_converter(  # pyrit-async-suffix-exempt
     """
     service = get_converter_service()
 
-    converter = await service.get_converter_async(converter_id=converter_id, current_user_oid=user_oid)
+    converter = await service.get_converter_async(converter_id=converter_id)
     if not converter:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

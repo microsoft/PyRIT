@@ -34,14 +34,6 @@ class TechniqueInstance(BaseModel):
             "startup scripts), or 'temporary' (gone after a restart or reinitialization)"
         ),
     )
-    saved_by: str | None = Field(
-        None,
-        description=(
-            "Name of the user who saved the technique, for display only; None when it isn't saved or was saved "
-            "with sign-in off"
-        ),
-    )
-    saved_by_me: bool = Field(False, description="Whether the signed-in user asking is the one who saved the technique")
 
 
 class TechniqueListResponse(BaseModel):
@@ -113,6 +105,13 @@ class CreateTechniqueRequest(BaseModel):
     adversarial_system_prompt: str | None = None
     adversarial_seed_prompt: str | None = None
     adversarial_prompt_template: str | None = None
+    private: bool | None = Field(
+        None,
+        description=(
+            "Whether only the signed-in user who creates it can see and use it. Omitted, it is shared, unless "
+            "it is built on your private targets; then it is private and false is refused."
+        ),
+    )
 
     @field_validator("name")
     @classmethod
@@ -134,4 +133,7 @@ class CreateTechniqueRequest(BaseModel):
     def _validate_persist(self) -> "CreateTechniqueRequest":
         if self.persist:
             validate_registry_name(self.name)
+            # A saved technique is restored with no caller, so it would come back shared.
+            if self.private:
+                raise ValueError("A private technique can't be saved; leave out persist or private")
         return self

@@ -144,6 +144,14 @@ export function isNotSaveableError(error: ApiError): boolean {
   return error.status === 400 && error.type === NOT_SAVEABLE_ERROR_TYPE
 }
 
+/** Why the backend refused to save an entry, without its note that the entry can still be created unsaved. */
+export function notSaveableReason(error: ApiError): string | null {
+  if (!isNotSaveableError(error) || !isAxiosError(error.raw)) return null
+  const data: unknown = error.raw.response?.data
+  if (typeof data !== 'object' || data === null || !('not_saveable_reason' in data)) return null
+  return typeof data.not_saveable_reason === 'string' ? data.not_saveable_reason : null
+}
+
 /** Respect a server-directed cooldown before a user retries a busy read. */
 export function retryAfterMilliseconds(error: unknown): number {
   if (!isAxiosError(error) || error.response?.status !== 503) return 0

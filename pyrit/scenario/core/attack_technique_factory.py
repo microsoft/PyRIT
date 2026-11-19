@@ -919,7 +919,7 @@ class AttackTechniqueFactory(Identifiable):
                     "settings": self.get_effective_settings(),
                     "attack_type": f"{self._attack_class.__module__}.{self._attack_class.__qualname__}",
                     "seeds": self._seed_technique,
-                    "requirements": self._requirements,
+                    "requirements": self._requirements_identity(),
                     "scorer_policy": self._scorer_override_policy,
                     "prefix": self._adversarial_system_prompt_prefix,
                     "feedback": self._use_score_as_feedback,
@@ -928,6 +928,21 @@ class AttackTechniqueFactory(Identifiable):
                 }
             )
         )
+
+    def _requirements_identity(self) -> Any:
+        """
+        Serialize the technique requirements for the configuration fingerprint.
+
+        Scorer requirements that require nothing are left out, so a technique saved before
+        that field existed keeps its fingerprint.
+
+        Returns:
+            Any: The serialized requirements.
+        """
+        value = self._configuration_value(self._requirements)
+        if self._requirements.objective_scorer == type(self._requirements.objective_scorer)():
+            value.pop("objective_scorer", None)
+        return value
 
     @classmethod
     def _configuration_value(cls, value: Any) -> Any:

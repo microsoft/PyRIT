@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import FastAPI
 
+from pyrit.auth import caller_principal_scope
 from pyrit.backend.models import CreateConverterRequest
 from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.backend.services import ConverterService, get_converter_service, get_target_service
@@ -20,7 +21,6 @@ from pyrit.backend.services.configuration_file_service import ConfigurationFileS
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.saved_entry_service import (
-    SavedEntryCaller,
     SavedEntryForbiddenError,
     SavedEntryInUseError,
     SavedEntryNotFoundError,
@@ -47,7 +47,7 @@ from pyrit.registry import (
     TargetRegistry,
 )
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
-from pyrit.registry.instance_registry import registration_origin, registry_entry_origin
+from pyrit.registry.instance_registry import owner_metadata, registration_origin, registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from unit.async_utils import TEST_WATCHDOG_SECONDS
@@ -75,10 +75,6 @@ def isolated_registries() -> Iterator[None]:
     yield
     for registry in registries:
         registry.reset_registry_singleton()
-
-
-def _caller(oid: str | None = None, *, admin: bool = False, sign_in: bool = True) -> SavedEntryCaller:
-    return SavedEntryCaller(oid=oid, is_admin=admin, sign_in=sign_in)
 
 
 def _write(root: Path, kind: RegistryRecipeKind, name: str, document: dict[str, Any] | str) -> Path:
@@ -110,9 +106,9 @@ async def _save_replace(root: Path, name: str = "cat_replace") -> None:
     )
 
 
-async def _version(root: Path, kind: RegistryRecipeKind, name: str, caller: SavedEntryCaller | None = None) -> str:
+async def _version(root: Path, kind: RegistryRecipeKind, name: str) -> str:
     details = await SavedEntryService().get_saved_entry_async(
-        kind=kind, name=name, recipes_source=str(root), caller=caller or _caller(ADA.oid)
+        kind=kind, name=name, recipes_source=str(root), is_admin=True
     )
     assert details.version is not None
     return details.version
@@ -124,7 +120,7 @@ async def _delete(
     name: str,
     *,
     version: str | None,
-    caller: SavedEntryCaller | None = None,
+    is_admin: bool = True,
     runtime: RuntimeLifecycle | None = None,
 ) -> None:
     await SavedEntryService().delete_saved_entry_async(
@@ -132,7 +128,7 @@ async def _delete(
         name=name,
         expected_version=version,
         recipes_source=str(root),
-        caller=caller or _caller(ADA.oid),
+        is_admin=is_admin,
         runtime=runtime,
     )
 
@@ -141,14 +137,14 @@ def _runtime() -> RuntimeLifecycle:
     return RuntimeLifecycle(app=FastAPI(), source=ConfigurationFileService(config_file_value=None))
 
 
-async def test_whoever_saved_a_converter_deletes_it_and_it_doesnt_come_back(tmp_path: Path) -> None:
+async def test_an_administrator_deletes_a_saved_converter_and_it_doesnt_come_back(tmp_path: Path) -> None:
     await _save_replace(tmp_path)
     service = SavedEntryService()
 
     details = await service.get_saved_entry_async(
-        kind=CONVERTERS, name="cat_replace", recipes_source=str(tmp_path), caller=_caller(ADA.oid)
+        kind=CONVERTERS, name="cat_replace", recipes_source=str(tmp_path), is_admin=True
     )
-    assert (details.saved_by, details.saved_by_me, details.can_change, details.problem) == ("Ada", True, True, None)
+    assert (details.can_change, details.problem) == (True, None)
     await _delete(tmp_path, CONVERTERS, "cat_replace", version=details.version)
 
     assert not (tmp_path / "converters" / "cat_replace.json").exists()
@@ -157,31 +153,17 @@ async def test_whoever_saved_a_converter_deletes_it_and_it_doesnt_come_back(tmp_
     assert (await _restore_report(tmp_path)).restored == []
 
 
-@pytest.mark.parametrize(
-    ("caller", "may_delete"),
-    [
-        (_caller(BEN_OID), False),
-        (_caller(BEN_OID, admin=True), True),
-        (_caller(None, sign_in=False), True),
-    ],
-)
-async def test_only_whoever_saved_it_or_an_administrator_may_change_it(
-    tmp_path: Path, caller: SavedEntryCaller, may_delete: bool
-) -> None:
+async def test_only_an_administrator_may_change_a_saved_entry_even_for_whoever_saved_it(tmp_path: Path) -> None:
     await _save_replace(tmp_path)
     version = await _version(tmp_path, CONVERTERS, "cat_replace")
 
     details = await SavedEntryService().get_saved_entry_async(
-        kind=CONVERTERS, name="cat_replace", recipes_source=str(tmp_path), caller=caller
+        kind=CONVERTERS, name="cat_replace", recipes_source=str(tmp_path), is_admin=False
     )
-    assert (details.saved_by_me, details.can_change) == (False, may_delete)
-    if may_delete:
-        await _delete(tmp_path, CONVERTERS, "cat_replace", version=version, caller=caller)
-        assert not (tmp_path / "converters" / "cat_replace.json").exists()
-        return
+    assert details.can_change is False
     with pytest.raises(SavedEntryForbiddenError) as refusal:
-        await _delete(tmp_path, CONVERTERS, "cat_replace", version=version, caller=caller)
-    assert str(refusal.value) == "Only Ada or an administrator can delete saved converter 'cat_replace'."
+        await _delete(tmp_path, CONVERTERS, "cat_replace", version=version, is_admin=False)
+    assert str(refusal.value) == "Only an administrator can delete saved converter 'cat_replace'."
     assert (tmp_path / "converters" / "cat_replace.json").exists()
     assert ConverterRegistry.get_registry_singleton().instances.get("cat_replace") is not None
 
@@ -253,7 +235,6 @@ async def test_an_entry_another_saved_entry_names_isnt_deleted(tmp_path: Path) -
             CONVERTERS,
             "formal_tone",
             version=await _version(tmp_path, CONVERTERS, "formal_tone"),
-            caller=_caller(sign_in=False),
         )
 
     assert str(target_refusal.value) == (
@@ -280,6 +261,24 @@ async def test_an_entry_a_temporary_entry_holds_isnt_deleted(tmp_path: Path) -> 
         "Saved target 'saved_chat' is used by temporary converter 'formal_tone'. Delete or change it first. "
         "A temporary entry is gone after the backend restarts or is reinitialized."
     )
+    assert targets.get("saved_chat") is not None
+
+
+async def test_an_entry_another_users_private_entry_holds_isnt_deleted_and_isnt_named(tmp_path: Path) -> None:
+    _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
+    assert await _restore(tmp_path) == []
+    targets = TargetRegistry.get_registry_singleton().instances
+    ConverterRegistry.get_registry_singleton().instances.register(
+        ToneConverter(converter_target=targets.get("saved_chat"), tone="formal"),
+        name="bens_tone",
+        metadata=owner_metadata(BEN_OID, private=True),
+    )
+
+    with caller_principal_scope(ADA.oid), pytest.raises(SavedEntryInUseError) as refusal:
+        await _delete(tmp_path, TARGETS, "saved_chat", version=await _version(tmp_path, TARGETS, "saved_chat"))
+
+    assert "another user's private converter" in str(refusal.value)
+    assert "bens_tone" not in str(refusal.value)
     assert targets.get("saved_chat") is not None
 
 
@@ -433,7 +432,7 @@ async def test_an_entry_that_failed_to_restore_is_deleted_and_no_longer_listed(t
         ),
     ],
 )
-async def test_a_file_that_doesnt_say_who_saved_it_needs_an_administrator(
+async def test_a_file_that_cant_be_used_is_deleted_only_by_an_administrator(
     tmp_path: Path, document: dict[str, Any] | str, read_error: OSError | None, problem: RestoreFailureReason
 ) -> None:
     _write(tmp_path, CONVERTERS, "broken", document)
@@ -443,17 +442,15 @@ async def test_a_file_that_doesnt_say_who_saved_it_needs_an_administrator(
         read.start()
     try:
         details = await service.get_saved_entry_async(
-            kind=CONVERTERS, name="broken", recipes_source=str(tmp_path), caller=_caller(ADA.oid)
+            kind=CONVERTERS, name="broken", recipes_source=str(tmp_path), is_admin=False
         )
-        assert (details.problem, details.saved_by, details.can_change) == (problem, None, False)
+        assert (details.problem, details.can_change) == (problem, False)
         assert (details.version is None) is (read_error is not None)
         with pytest.raises(SavedEntryForbiddenError) as refusal:
-            await _delete(tmp_path, CONVERTERS, "broken", version=details.version)
-        assert str(refusal.value) == (
-            "Only an administrator can delete saved converter 'broken', since its file doesn't say who saved it."
-        )
+            await _delete(tmp_path, CONVERTERS, "broken", version=details.version, is_admin=False)
+        assert str(refusal.value) == "Only an administrator can delete saved converter 'broken'."
 
-        await _delete(tmp_path, CONVERTERS, "broken", version=details.version, caller=_caller(BEN_OID, admin=True))
+        await _delete(tmp_path, CONVERTERS, "broken", version=details.version)
     finally:
         if read is not None:
             read.stop()

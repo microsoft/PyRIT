@@ -33,11 +33,3 @@ class ScorerInstance(BaseModel):
             "startup scripts), or 'temporary' (gone after a restart or reinitialization)"
         ),
     )
-    saved_by: str | None = Field(
-        None,
-        description=(
-            "Name of the user who saved the scorer, for display only; None when it isn't saved or was saved "
-            "with sign-in off"
-        ),
-    )
-    saved_by_me: bool = Field(False, description="Whether the signed-in user asking is the one who saved the scorer")

@@ -24,7 +24,6 @@ from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.saved_entries import hold_saved_entry_lock_async, save_then_register_locked_async
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.saved_entry_service import (
-    SavedEntryCaller,
     SavedEntryForbiddenError,
     SavedEntryInUseError,
     SavedEntryRequestError,
@@ -52,7 +51,6 @@ from pyrit.registry import (
     TargetRegistry,
 )
 from pyrit.registry.instance_registry import (
-    SAVED_ENTRY_OWNER_METADATA_KEY,
     RegistryNameTakenError,
     registration_origin,
     registry_entry_origin,
@@ -94,10 +92,6 @@ def isolated_registries() -> Iterator[None]:
         cache.cache_clear()
 
 
-def _caller(oid: str | None = ADA.oid, *, admin: bool = False, sign_in: bool = True) -> SavedEntryCaller:
-    return SavedEntryCaller(oid=oid, is_admin=admin, sign_in=sign_in)
-
-
 def _file(root: Path, kind: RegistryRecipeKind, name: str) -> Path:
     return root / kind.value / f"{name}.json"
 
@@ -126,9 +120,9 @@ async def _save_replace(root: Path) -> None:
     )
 
 
-async def _read(root: Path, kind: RegistryRecipeKind, name: str, caller: SavedEntryCaller | None = None) -> Any:
+async def _read(root: Path, kind: RegistryRecipeKind, name: str, *, is_admin: bool = True) -> Any:
     return await SavedEntryService().get_saved_entry_async(
-        kind=kind, name=name, recipes_source=str(root), caller=caller or _caller()
+        kind=kind, name=name, recipes_source=str(root), is_admin=is_admin
     )
 
 
@@ -139,7 +133,7 @@ async def _edit(
     *,
     version: str,
     recipe: dict[str, Any],
-    caller: SavedEntryCaller | None = None,
+    is_admin: bool = True,
     runtime: RuntimeLifecycle | None = None,
 ) -> Any:
     return await SavedEntryService().update_saved_entry_async(
@@ -147,12 +141,12 @@ async def _edit(
         name=name,
         request=UpdateSavedEntryRequest(expected_version=version, recipe=recipe),
         recipes_source=str(root),
-        caller=caller or _caller(),
+        is_admin=is_admin,
         runtime=runtime,
     )
 
 
-async def test_the_owner_changes_a_saved_converter_and_a_restart_keeps_the_change(tmp_path: Path) -> None:
+async def test_an_administrator_changes_a_saved_converter_and_a_restart_keeps_the_change(tmp_path: Path) -> None:
     await _save_replace(tmp_path)
     old = ConverterRegistry.get_registry_singleton().instances.get("cat_replace")
     details = await _read(tmp_path, CONVERTERS, "cat_replace")
@@ -180,35 +174,31 @@ async def test_the_owner_changes_a_saved_converter_and_a_restart_keeps_the_chang
         "owner": {"oid": ADA.oid, "name": "Ada"},
     }
     assert edited.version == hashlib.sha256(content).hexdigest()
-    assert (edited.running, edited.still_using_old, edited.saved_by_me) == (True, [], True)
+    assert (edited.running, edited.still_using_old) == (True, [])
     entry = ConverterRegistry.get_registry_singleton().instances.get_entry("cat_replace")
     assert entry is not None
     assert entry.instance is not old
     assert entry.instance.get_identifier().params["replace_list"] == ["bird"]
     assert registry_entry_origin(entry.metadata) is RegistryEntryOrigin.SAVED
-    assert entry.metadata[SAVED_ENTRY_OWNER_METADATA_KEY] == ADA
     ConverterRegistry.reset_registry_singleton()
     assert (await _restore(tmp_path)).failures == []
     restored = ConverterRegistry.get_registry_singleton().instances.get("cat_replace")
     assert restored.get_identifier().params["replace_list"] == ["bird"]
 
 
-async def test_an_administrator_changes_someone_elses_target_and_it_stays_theirs(tmp_path: Path) -> None:
+async def test_an_administrator_changes_a_saved_target_and_who_saved_it_stays_in_its_file(tmp_path: Path) -> None:
     _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
     assert (await _restore(tmp_path)).failures == []
-    admin = _caller(BEN_OID, admin=True)
-    details = await _read(tmp_path, TARGETS, "saved_chat", admin)
+    details = await _read(tmp_path, TARGETS, "saved_chat")
 
-    edited = await _edit(
+    await _edit(
         tmp_path,
         TARGETS,
         "saved_chat",
         version=details.version,
         recipe={**details.recipe, "params": {**details.recipe["params"], "model_name": "gpt-4o-mini"}},
-        caller=admin,
     )
 
-    assert (edited.saved_by, edited.saved_by_me) == ("Ada", False)
     saved = json.loads(_file(tmp_path, TARGETS, "saved_chat").read_text())
     assert saved["params"]["model_name"] == "gpt-4o-mini"
     assert saved["owner"] == {"oid": ADA.oid, "name": "Ada"}
@@ -313,7 +303,7 @@ async def test_a_task_that_holds_the_saved_entry_lock_cant_wait_on_it_again() ->
         pass
 
 
-async def test_an_edit_needs_the_version_it_read_and_the_right_to_change_it(tmp_path: Path) -> None:
+async def test_an_edit_needs_the_version_it_read_and_an_administrator(tmp_path: Path) -> None:
     await _save_replace(tmp_path)
     details = await _read(tmp_path, CONVERTERS, "cat_replace")
     changed = {**details.recipe, "params": {"pattern": "cat", "replace": "bird"}}
@@ -321,12 +311,10 @@ async def test_an_edit_needs_the_version_it_read_and_the_right_to_change_it(tmp_
     with pytest.raises(SavedEntryInUseError):
         await _edit(tmp_path, CONVERTERS, "cat_replace", version="0" * 64, recipe=changed)
     with pytest.raises(SavedEntryForbiddenError) as refusal:
-        await _edit(
-            tmp_path, CONVERTERS, "cat_replace", version=details.version, recipe=changed, caller=_caller(BEN_OID)
-        )
+        await _edit(tmp_path, CONVERTERS, "cat_replace", version=details.version, recipe=changed, is_admin=False)
 
-    assert str(refusal.value) == "Only Ada or an administrator can change saved converter 'cat_replace'."
-    other = await _read(tmp_path, CONVERTERS, "cat_replace", _caller(BEN_OID))
+    assert str(refusal.value) == "Only an administrator can change saved converter 'cat_replace'."
+    other = await _read(tmp_path, CONVERTERS, "cat_replace", is_admin=False)
     assert (other.can_change, other.recipe) == (False, None)
     assert json.loads(_file(tmp_path, CONVERTERS, "cat_replace").read_text())["params"]["replace"] == "dog"
 
@@ -601,10 +589,10 @@ async def test_a_saved_entry_whose_class_is_gone_cant_be_changed(
 
 async def test_a_file_that_cant_be_read_cant_be_changed(tmp_path: Path) -> None:
     _write(tmp_path, CONVERTERS, "broken", "not json")
-    details = await _read(tmp_path, CONVERTERS, "broken", _caller(BEN_OID, admin=True))
+    details = await _read(tmp_path, CONVERTERS, "broken")
 
     with pytest.raises(SavedEntryInUseError) as refusal:
-        await _edit(tmp_path, CONVERTERS, "broken", version=details.version, recipe={}, caller=_caller(admin=True))
+        await _edit(tmp_path, CONVERTERS, "broken", version=details.version, recipe={})
 
     assert "can't be read or isn't a valid entry, so it can't be changed" in str(refusal.value)
 

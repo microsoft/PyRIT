@@ -156,42 +156,6 @@ describe('ConverterRegistry', () => {
     expect(within(row('unlabeled_base64')).queryByText(/Saved|From configuration|Temporary/)).not.toBeInTheDocument()
   })
 
-  it('says who saved each converter and lists only yours on request', async () => {
-    const user = userEvent.setup()
-    mockedConvertersApi.listConverters.mockResolvedValue({
-      items: [
-        { ...converter, converter_id: 'mine_base64', origin: 'saved', saved_by: 'Ada', saved_by_me: true },
-        { ...converter, converter_id: 'bobs_base64', origin: 'saved', saved_by: 'Bob' },
-        { ...converter, converter_id: 'local_base64', origin: 'saved', saved_by: null },
-        { ...converter, converter_id: 'startup_base64', origin: 'configuration' },
-      ],
-    })
-    renderRegistry()
-
-    const table = await screen.findByRole('table', { name: 'Converter instances' })
-    const caption = (name: string): string | null => (
-      within(within(table).getByRole('row', { name: new RegExp(name) })).queryByText(/^Saved by /)?.textContent ?? null
-    )
-    expect(['mine_base64', 'bobs_base64', 'local_base64', 'startup_base64'].map(caption)).toEqual([
-      'Saved by you', 'Saved by Bob', null, null,
-    ])
-    await user.click(screen.getByRole('checkbox', { name: 'Only converters I saved (1)' }))
-    expect(within(table).queryByRole('row', { name: /bobs_base64/ })).not.toBeInTheDocument()
-    expect(within(table).getByRole('row', { name: /mine_base64/ })).toBeInTheDocument()
-    await user.click(screen.getByRole('checkbox', { name: 'Only converters I saved (1)' }))
-    expect(within(table).getByRole('row', { name: /bobs_base64/ })).toBeInTheDocument()
-  })
-
-  it('offers no list of your own converters when none are yours, such as with sign-in off', async () => {
-    mockedConvertersApi.listConverters.mockResolvedValue({
-      items: [{ ...converter, converter_id: 'local_base64', origin: 'saved', saved_by: null }],
-    })
-    renderRegistry()
-
-    await screen.findByRole('table', { name: 'Converter instances' })
-    expect(screen.queryByRole('checkbox', { name: /Only converters I saved/ })).not.toBeInTheDocument()
-  })
-
   it('deletes a saved converter through its saved file and loads the list again', async () => {
     const user = userEvent.setup()
     mockedConvertersApi.listConverters.mockResolvedValue({
@@ -201,8 +165,7 @@ describe('ConverterRegistry', () => {
       ],
     })
     jest.mocked(savedEntriesApi.get).mockResolvedValue({
-      kind: 'converters', name: 'saved_base64', version: 'v1', problem: null,
-      saved_by: 'Ada', saved_by_me: true, can_change: true,
+      kind: 'converters', name: 'saved_base64', version: 'v1', problem: null, can_change: true,
     })
     jest.mocked(savedEntriesApi.delete).mockResolvedValue()
     renderRegistry()
@@ -211,7 +174,7 @@ describe('ConverterRegistry', () => {
     expect(screen.queryByRole('button', { name: 'Remove saved_base64' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Delete saved converter saved_base64' }))
     const dialog = await screen.findByRole('dialog', { name: "Delete saved converter 'saved_base64'?" })
-    await within(dialog).findByText('You saved it.')
+    await within(dialog).findByText(/deleted for everyone/)
     const calls = mockedConvertersApi.listConverters.mock.calls.length
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
@@ -466,9 +429,12 @@ describe('ConverterRegistry', () => {
     expect(await screen.findByText('No Converters Registered')).toBeInTheDocument()
   })
 
-  it('shows a failed removal inside the open dialog and allows retry', async () => {
+  it('shows an HTTP 404 removal error inside the open dialog and allows retry', async () => {
     mockedConvertersApi.deleteConverter
-      .mockRejectedValueOnce(new Error('Converter not found'))
+      .mockRejectedValueOnce({
+        isAxiosError: true,
+        response: { status: 404, data: { detail: 'Converter was already deleted' } },
+      })
       .mockResolvedValueOnce()
     mockedConvertersApi.listConverters
       .mockResolvedValueOnce({ items: [converter] })
@@ -482,10 +448,10 @@ describe('ConverterRegistry', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
 
     const alert = await within(dialog).findByRole('alert')
-    expect(alert).toHaveTextContent('Converter not found')
+    expect(alert).toHaveTextContent('Converter was already deleted')
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeEnabled()
     expect(within(dialog).getByRole('button', { name: 'Remove' })).toBeEnabled()
-    expect(screen.getAllByText(/Converter not found/)).toHaveLength(1)
+    expect(screen.getAllByText('Converter was already deleted')).toHaveLength(1)
 
     await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
 
@@ -500,14 +466,16 @@ describe('ConverterRegistry', () => {
     renderRegistry()
     await screen.findByText('base64-default')
 
-    await user.click(screen.getByRole('button', { name: 'Remove base64-default' }))
+    const trigger = screen.getByRole('button', { name: 'Remove base64-default' })
+    await user.click(trigger)
     let dialog = await screen.findByRole('dialog')
     await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
     await within(dialog).findByRole('alert')
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(trigger).toHaveFocus())
 
-    await user.click(screen.getByRole('button', { name: 'Remove base64-default' }))
+    await user.click(trigger)
     dialog = await screen.findByRole('dialog')
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
   })

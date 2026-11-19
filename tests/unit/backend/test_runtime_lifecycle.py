@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from starlette.requests import Request
 
 import pyrit.backend.services.runtime_lifecycle as lifecycle_module
+from pyrit.auth import caller_principal_scope, get_caller_principal
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
@@ -35,17 +36,11 @@ from pyrit.converter import Base64Converter
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
-from pyrit.models.catalog import (
-    ComponentRecipe,
-    RegistryEntryOrigin,
-    RunScenarioRequest,
-    SavedEntryOwner,
-)
+from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget, TextTarget
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.instance_registry import (
     CONFIGURATION_ENTRY_METADATA_KEY,
-    SAVED_ENTRY_OWNER_METADATA_KEY,
     registry_entry_origin,
 )
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
@@ -118,6 +113,21 @@ async def apply_async(runtime: RuntimeLifecycle) -> None:
     assert result["outcome"] == "accepted"
     assert runtime.apply_task is not None
     await runtime.apply_task
+
+
+async def test_live_apply_runs_as_the_server_not_the_requesting_admin_async(*, runtime: RuntimeLifecycle) -> None:
+    seen: list[str | None] = []
+
+    async def apply_async(*, version: str) -> None:
+        seen.append(get_caller_principal())
+
+    _, version = await runtime.source.read_with_version_async()
+    with patch.object(runtime, "_apply_async", side_effect=apply_async), caller_principal_scope("admin"):
+        assert runtime.begin_apply(version=version)["outcome"] == "accepted"
+        assert runtime.apply_task is not None
+        await runtime.apply_task
+
+    assert seen == [None]
 
 
 @pytest.mark.parametrize("state", ["initializing", "ready", "failed", "restart-required", None])
@@ -1206,7 +1216,6 @@ async def test_startup_marks_the_techniques_its_scripts_register_and_restores_sa
             RegistryEntryOrigin.CONFIGURATION,
             RegistryEntryOrigin.SAVED,
         )
-        assert saved.metadata[SAVED_ENTRY_OWNER_METADATA_KEY] == SavedEntryOwner(**owner)
     finally:
         AttackTechniqueRegistry.reset_registry_singleton()
 
@@ -1679,6 +1688,8 @@ async def test_an_edit_that_fixes_an_entry_that_couldnt_be_restored_comes_back_o
     assert runtime.state == "failed"
     # The fixture skips the management setup that names the storage source.
     runtime.app.state.registry_recipes_source = str(recipes)
+    # Changing a saved entry takes an administrator.
+    runtime.app.state.authentication_policy = AuthenticationPolicy(mode="local", allow_unauthenticated_admin=True)
     runtime.app.include_router(saved_entries.router, prefix="/api")
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:

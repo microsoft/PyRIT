@@ -4,12 +4,10 @@
 """Runtime technique catalog routes, guarded by shared authentication and admission."""
 
 import asyncio
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
-from pyrit.backend.middleware.auth import current_user_oid
 from pyrit.backend.models import ProblemDetail
 from pyrit.backend.models.common import CursorStr, IdentifierStr
 from pyrit.backend.models.techniques import (
@@ -32,7 +30,6 @@ router = APIRouter(prefix="/techniques", tags=["techniques"])
 @router.get("", response_model=TechniqueListResponse)
 async def list_techniques_async(
     *,
-    user_oid: Annotated[str | None, Depends(current_user_oid)],
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Pagination cursor (technique registry name)"),
 ) -> TechniqueListResponse:
@@ -42,7 +39,7 @@ async def list_techniques_async(
     Returns:
         TechniqueListResponse: A page of registered factories.
     """
-    return await get_technique_service().list_async(limit=limit, cursor=cursor, current_user_oid=user_oid)
+    return await get_technique_service().list_async(limit=limit, cursor=cursor)
 
 
 @router.get("/types", response_model=TechniqueTypeResponse)
@@ -57,16 +54,14 @@ async def technique_types_async() -> TechniqueTypeResponse:
 
 
 @router.get("/{name}", response_model=TechniqueInstance, responses={404: {"model": ProblemDetail}})
-async def get_technique_async(
-    *, name: IdentifierStr, user_oid: Annotated[str | None, Depends(current_user_oid)]
-) -> TechniqueInstance:
+async def get_technique_async(name: IdentifierStr) -> TechniqueInstance:
     """
     Get safe factory settings.
 
     Returns:
         TechniqueInstance: The named factory.
     """
-    item = await get_technique_service().get_async(name=name, current_user_oid=user_oid)
+    item = await get_technique_service().get_async(name)
     if item is None:
         raise HTTPException(status_code=404, detail=f"Technique '{name}' was not found")
     return item
@@ -136,10 +131,12 @@ async def create_technique_async(*, body: CreateTechniqueRequest, request: Reque
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
     except NotSaveableError as exc:
-        return not_saveable_response(detail=str(exc), request=request)
+        return not_saveable_response(error=exc, request=request)
     except SavedEntryConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SavedEntryStorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
