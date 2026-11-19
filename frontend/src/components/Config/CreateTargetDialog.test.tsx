@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, fireEvent, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { makeTarget } from "@/test-utils/targetFixtures";
+import { SAVEABILITY_DEBOUNCE_MS } from "@/hooks/useSaveability";
 import type { Parameter, TargetTypeEntry, TargetTypeListResponse } from "@/types";
 import CreateTargetDialog from "./CreateTargetDialog";
 import { parseWeight, MAX_WEIGHT } from "./weightValidation";
@@ -368,12 +369,13 @@ const TARGET_DISPLAY_NAMES: Record<string, string> = {
 // The primary action reads Save Target, or Create as Temporary when the target can't be saved.
 const SUBMIT_BUTTON_NAME = /^(Save Target|Create as Temporary|Creating\.\.\.)$/;
 
+// The note after the footer's reason, so a check of both pins where the reason ends.
+const TEMPORARY_NOTE = "A Temporary target is gone after the backend restarts or is reinitialized.";
+
 // The backend refuses to save a typed credential, so the dialog offers a Temporary target once it answers.
 function refuseSavingTypedCredential(name: string): void {
   mockedTargetsApi.checkSaveability.mockImplementation(async (request) => ({
-    not_saveable_reason: request.params[name]
-      ? `Saved entries can't hold credentials ('${name}'). It can still be created without saving it.`
-      : null,
+    not_saveable_reason: request.params[name] ? `Saved entries can't hold credentials ('${name}').` : null,
   }));
 }
 
@@ -2975,7 +2977,7 @@ describe("CreateTargetDialog", () => {
       });
     }
 
-    const SHARED_ONLY = "Saved targets are shared. Choose Everyone to save this one.";
+    const PRIVATE_REASON = "Private targets stay Temporary.";
 
     async function createAndExpect(
       user: ReturnType<typeof userEvent.setup>, request: Record<string, unknown>,
@@ -3032,7 +3034,7 @@ describe("CreateTargetDialog", () => {
       await user.click(screen.getByRole("radio", { name: "API Key" }));
 
       expect(onlyMeSwitch()).toBeChecked();
-      expect(screen.getByRole("status")).toHaveTextContent(SHARED_ONLY);
+      expect(screen.getByRole("status")).toHaveTextContent(PRIVATE_REASON);
       await createAndExpect(user, {
         type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, persist: false, private: true,
       });
@@ -3078,7 +3080,7 @@ describe("CreateTargetDialog", () => {
 
       expect(screen.getByText(/Anyone signed in can replace its key or headers/)).toBeInTheDocument();
       expect(screen.getByRole("status")).toHaveTextContent(
-        "A saved target's credentials can't be updated. Turn off Allow updates to save this one.",
+        `A saved target's credentials can't be updated. ${TEMPORARY_NOTE}`,
       );
       await createAndExpect(user, {
         type: "OpenAIChatTarget",
@@ -3174,7 +3176,7 @@ describe("CreateTargetDialog", () => {
       expect(onlyMeSwitch()).toBeChecked();
       expect(onlyMeSwitch()).toBeDisabled();
       expect(screen.getByText(PRIVATE_MEMBER_HINT)).toBeVisible();
-      expect(screen.getByRole("status")).toHaveTextContent("Saved targets are shared, and only you can use this one.");
+      expect(screen.getByRole("status")).toHaveTextContent(PRIVATE_REASON);
       await createAndExpect(user, {
         type: "RoundRobinTarget",
         params: { targets: ["shared_a", "mine"], weights: [1, 1] },
@@ -3272,6 +3274,7 @@ describe("CreateTargetDialog saving", () => {
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     dialogAccessibilityObserver.disconnect();
   });
 
@@ -3570,10 +3573,7 @@ describe("CreateTargetDialog saving", () => {
 
     // A live region, so screen readers hear why the button changed.
     const warning = screen.getByRole("status", { name: "This target can't be saved" });
-    expect(warning).toHaveTextContent(
-      "Saved targets can't use an API key yet. Choose Microsoft Entra ID or No key to save this one. "
-        + "A Temporary target is gone after the backend restarts or is reinitialized.",
-    );
+    expect(warning).toHaveTextContent(`Saved targets can't use an API key yet. ${TEMPORARY_NOTE}`);
     // Outside the scrolling form, so the auth choice the user just clicked stays where it was.
     expect(screen.getByTestId("create-target-form")).not.toContainElement(warning);
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
@@ -3587,6 +3587,26 @@ describe("CreateTargetDialog saving", () => {
       private: false,
       persist: false,
     });
+  });
+
+  it("should give each reason as its cause alone, without asking to share a private target", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await fillAzureOpenAiChat(user);
+    await user.click(screen.getByRole("radio", { name: "Only me" }));
+    await user.click(screen.getByRole("radio", { name: "API Key" }));
+    expect(screen.getByRole("status")).toHaveTextContent(`Saved targets can't use an API key yet. ${TEMPORARY_NOTE}`);
+
+    await user.click(screen.getByRole("radio", { name: /Identity-based/ }));
+
+    expect(screen.getByRole("status")).toHaveTextContent(`Private targets stay Temporary. ${TEMPORARY_NOTE}`);
+    expect(screen.getByRole("status")).not.toHaveTextContent(/Everyone/);
+    expect(screen.getByRole("button", { name: "Create as Temporary" })).toBeInTheDocument();
   });
 
   it("should explain before submitting why a target type can't be saved", async () => {
@@ -3604,7 +3624,7 @@ describe("CreateTargetDialog saving", () => {
 
   it("should offer Temporary only while the backend says a typed credential can't be saved", async () => {
     const user = userEvent.setup();
-    const refusal = "Saved entries can't hold credentials ('auth_token'). It can still be created without saving it.";
+    const refusal = "Saved entries can't hold credentials ('auth_token').";
     mockedTargetsApi.checkSaveability.mockImplementation(async (request) => ({
       not_saveable_reason: request.params.auth_token ? refusal : null,
     }));
@@ -3777,6 +3797,47 @@ describe("CreateTargetDialog saving", () => {
     expect(screen.queryByText("This target can't be saved")).not.toBeInTheDocument();
   });
 
+  it("should ask again whether the same values can be saved after the dialog is closed and reopened", async () => {
+    const user = userEvent.setup();
+    // Reinitializing the registry can make the same values saveable, and the next check can fail.
+    let reinitialized = false;
+    mockedTargetsApi.checkSaveability.mockImplementation(async () => {
+      if (reinitialized) throw new Error("Network Error");
+      return { not_saveable_reason: "Refused." };
+    });
+    const { rerender } = render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await fillAzureOpenAiChat(user);
+    expect(await screen.findByRole("status")).toHaveTextContent("Refused.");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    rerender(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} open={false} />
+      </TestWrapper>
+    );
+    reinitialized = true;
+    mockedTargetsApi.checkSaveability.mockClear();
+    rerender(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+    await fillAzureOpenAiChat(user);
+
+    expect(screen.queryByText("This target can't be saved")).not.toBeInTheDocument();
+    await waitFor(() => expect(mockedTargetsApi.checkSaveability).toHaveBeenCalledWith(
+      { type: "OpenAIChatTarget", params: { endpoint: AZURE_ENDPOINT, model_name: "gpt-4o" }, auth_mode: "identity" },
+      expect.any(AbortSignal),
+    ));
+    await act(async () => {});
+    expect(screen.queryByText("This target can't be saved")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Target" })).toBeEnabled();
+  });
+
   it("should ask for a target type when Enter is pressed in a filled-in name first, until one is chosen", async () => {
     const user = userEvent.setup();
     render(
@@ -3943,7 +4004,8 @@ describe("CreateTargetDialog saving", () => {
   });
 
   it("should create a target only you can use as Temporary without asking whether it can be saved", async () => {
-    const user = userEvent.setup();
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
@@ -3952,10 +4014,14 @@ describe("CreateTargetDialog saving", () => {
 
     await selectTargetType("OpenAIChatTarget");
     await user.click(screen.getByRole("radio", { name: "Only me" }));
+    // Everyone was chosen until now, so those values may already have been checked.
+    mockedTargetsApi.checkSaveability.mockClear();
     await pasteInto(user, screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), AZURE_ENDPOINT);
     await pasteInto(user, screen.getByRole("textbox", { name: /Model \/ Deployment Name/ }), "gpt-4o");
+    await act(async () => { jest.advanceTimersByTime(SAVEABILITY_DEBOUNCE_MS); });
 
-    expect(screen.getByRole("status")).toHaveTextContent("Saved targets are shared. Choose Everyone to save this one.");
+    expect(mockedTargetsApi.checkSaveability).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent(`Private targets stay Temporary. ${TEMPORARY_NOTE}`);
     await user.click(screen.getByRole("button", { name: "Create as Temporary" }));
     await waitFor(() => expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith(
       expect.objectContaining({ persist: false, private: true }),
@@ -4122,7 +4188,7 @@ describe("CreateTargetDialog saving", () => {
     const user = userEvent.setup();
     mockedTargetsApi.checkSaveability.mockImplementation(async (request) => ({
       not_saveable_reason: (request.params.targets as string[]).includes("temp_chat")
-        ? "Uses temporary target 'temp_chat', which won't exist after a restart. It can still be created without saving it."
+        ? "Uses temporary target 'temp_chat', which won't exist after a restart."
         : null,
     }));
     render(
@@ -4226,7 +4292,7 @@ describe("CreateTargetDialog saving", () => {
     await waitFor(() => expect(answers.length).toBeGreaterThan(stale + 1));
     await act(async () => {
       answers[answers.length - 1]({ not_saveable_reason: null });
-      answers[stale]({ not_saveable_reason: "Refused. It can still be created without saving it." });
+      answers[stale]({ not_saveable_reason: "Refused." });
     });
 
     expect(screen.getByRole("button", { name: "Save Target" })).toBeInTheDocument();
