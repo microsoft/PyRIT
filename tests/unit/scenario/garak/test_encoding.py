@@ -253,9 +253,9 @@ class TestEncodingTechniqueDefault:
         }
         all_names = {t.value for t in EncodingTechnique.get_all_techniques()}
         assert default_names < all_names
-        assert len(all_names) == 18
+        assert len(all_names) == 19
         # The niche/lossy schemes stay ALL-only.
-        assert all_names - default_names == {"braille", "ecoji", "zalgo", "ascii_smuggler", "bifid"}
+        assert all_names - default_names == {"braille", "ecoji", "zalgo", "ascii_smuggler", "bifid", "polybius"}
 
     def test_get_aggregate_tags_includes_default(self):
         """The scenario exposes both ``all`` and ``default`` as aggregate tags."""
