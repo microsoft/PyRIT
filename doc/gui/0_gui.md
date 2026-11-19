@@ -225,15 +225,18 @@ target, delete its file (`targets/<name>.json`) there, and the file of any saved
 round robin that uses it, then restart the backend. If a startup initializer later
 registers a target under a saved target's name, the saved one isn't restored and
 the backend isn't ready until that file is renamed or removed and the backend
-restarted.
+restarted. Before that restart, update or remove the file of each saved round
+robin that uses the old name: restore finds its members by name, so it would
+otherwise send to the initializer's target in place of the saved one.
 
 Saved targets can't hold credentials yet, so choose Identity-based or No key
 authentication when the target supports it. When the server lists keys for the
 target type in `server_credentials`, you can also choose **Server credential** and
 pick one by name: the key stays on the server, and the endpoint is set to the only
 address that key is sent to. A target that needs an API key or
-another credential value, a type that can't be saved, or a round robin that uses
-a Temporary target is created as **Temporary** instead, and the dialog says why.
+another credential value, a type that can't be saved, a round robin that uses a
+Temporary target, or a target that only you can use or that allows credential
+updates is created as **Temporary** instead, and the dialog says why.
 A Temporary target is gone after the backend restarts or is reinitialized.
 
 The Targets table labels each target **Saved**, **From configuration**

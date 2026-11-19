@@ -8,7 +8,7 @@ The canonical target instance type (``TargetInstance``) lives in
 ``pyrit.models.catalog.target`` and should be imported from there directly.
 """
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.backend.models.common import (
     MAX_ITEMS,
@@ -36,6 +36,7 @@ __all__ = [
     "TargetListResponse",
     "TargetTypeEntry",
     "TargetTypeResponse",
+    "UpdateTargetCredentialsRequest",
 ]
 
 
@@ -98,7 +99,35 @@ class TargetListResponse(BaseModel):
     pagination: PaginationInfo = Field(..., description="Pagination metadata")
 
 
-class CreateTargetRequest(RegistrationRequest):
+class TargetParametersRequest(BaseModel):
+    """The target type, constructor parameters, auth mode, and server credential that a target is built from."""
+
+    type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
+    params: dict[IdentifierStr, JSONValue] = Field(
+        default_factory=dict, max_length=MAX_ITEMS, description="Target constructor parameters"
+    )
+    auth_mode: AuthMode = Field(
+        "api_key",
+        description=(
+            "Authentication mode. 'api_key' uses the api_key in params (default). "
+            "'identity' omits the key so the target authenticates itself via an ambient "
+            "Azure identity (Entra ID token or DefaultAzureCredential); requires an Azure "
+            "endpoint and is supported by OpenAI-family targets, AzureMLChatTarget, "
+            "AzureBlobStorageTarget, and PromptShieldTarget. 'none' reads no key and sends a fixed "
+            "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets."
+        ),
+    )
+    server_credential: str | None = Field(
+        None,
+        pattern=r"^[a-z][a-z0-9_]{0,63}$",
+        description=(
+            "A server credential from this server's list to use as the target's key, with auth_mode 'api_key'. "
+            "The target's endpoint must be the credential's; the key is never returned or saved"
+        ),
+    )
+
+
+class CreateTargetRequest(TargetParametersRequest, RegistrationRequest):
     """Request to create a new target instance."""
 
     # LEGACY COMPATIBILITY: The GUI now sends a name whenever it registers a target. Requiring the name for
@@ -118,27 +147,22 @@ class CreateTargetRequest(RegistrationRequest):
         ),
     )
     source: SourceInstanceSpec | None = None
-    server_credential: str | None = Field(
+    private: bool | None = Field(
         None,
-        pattern=r"^[a-z][a-z0-9_]{0,63}$",
         description=(
-            "A server credential from this server's list to use as the target's key, with auth_mode 'api_key'. "
-            "The target's endpoint must be the credential's; the key is never returned or saved"
+            "Whether only the signed-in user who creates the target can see and use it, and anything built with "
+            "it. Omitted, it is shared, unless it is built on your private targets; then it is private and false "
+            "is refused. A private target requires register=true and can't be saved with persist."
         ),
     )
-    type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
-    params: dict[IdentifierStr, JSONValue] = Field(
-        default_factory=dict, max_length=MAX_ITEMS, description="Target constructor parameters"
-    )
-    auth_mode: AuthMode = Field(
-        "api_key",
+    allow_credential_updates: bool | None = Field(
+        None,
         description=(
-            "Authentication mode. 'api_key' uses the api_key in params (default). "
-            "'identity' omits the key so the target authenticates itself via an ambient "
-            "Azure identity (Entra ID token or DefaultAzureCredential); requires an Azure "
-            "endpoint and is supported by OpenAI-family targets, AzureMLChatTarget, "
-            "AzureBlobStorageTarget, and PromptShieldTarget. 'none' reads no key and sends a fixed "
-            "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets."
+            "Whether the target's API key and request headers can be updated in place later, through "
+            "PUT /api/targets/{name}/credentials: by you alone when the target is private, and by anyone signed in "
+            "when it is shared. Omitted, a private target allows updates if its type can make them (OpenAI-family "
+            "targets other than RealtimeTarget), and a shared target doesn't. True is refused for a type that "
+            "can't, and for a saved target."
         ),
     )
 
@@ -174,23 +198,19 @@ class CreateTargetRequest(RegistrationRequest):
             raise ValueError("persist requires register=true")
         if self.name is None:
             raise ValueError("persist requires a name")
+        # A saved target is restored with no caller, so it would come back shared, and its credentials can't change.
+        if self.private:
+            raise ValueError("A private target can't be saved; leave out persist or private")
+        if self.allow_credential_updates:
+            raise ValueError(
+                "A saved target's credentials can't be updated; leave out persist or allow_credential_updates"
+            )
         validate_registry_name(self.name)
         return self
 
 
-class TargetSaveabilityRequest(BaseModel):
+class TargetSaveabilityRequest(TargetParametersRequest):
     """A target to check, as a create request would give it, without building or saving it."""
-
-    type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
-    params: dict[IdentifierStr, JSONValue] = Field(
-        default_factory=dict, max_length=MAX_ITEMS, description="Target constructor parameters"
-    )
-    auth_mode: AuthMode = Field("api_key", description="Authentication mode, as in a create request")
-    server_credential: str | None = Field(
-        None,
-        pattern=r"^[a-z][a-z0-9_]{0,63}$",
-        description="A server credential from this server's list to use as the target's key, as in a create request",
-    )
 
 
 class UnregisteredTarget(BaseModel):
@@ -202,3 +222,47 @@ class UnregisteredTarget(BaseModel):
         default_factory=dict,
         description="Inclusive runtime bounds keyed by generation option name; missing entries mean unknown bounds",
     )
+
+
+class UpdateTargetCredentialsRequest(BaseModel):
+    """
+    Request to update a target's API key or request headers in place.
+
+    Only targets created with credential updates allowed accept it: a private one from its owner, a shared one
+    from anyone signed in.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: str | None = Field(
+        None,
+        max_length=16_384,
+        description=(
+            "The new API key or access token. If the target has an explicit Authorization header, update that "
+            "header instead of sending just api_key. Never returned."
+        ),
+    )
+    headers: dict[str, str] | None = Field(
+        None,
+        min_length=1,
+        max_length=MAX_ITEMS,
+        description=(
+            "Request headers to set, each replacing any header of the same name (case-insensitive), wherever the "
+            "target was configured with it. Any header that carries credentials can be set, such as Authorization, "
+            "x-api-key, or Cookie (the whole cookie string). Values are never returned."
+        ),
+    )
+    private: bool | None = Field(
+        None,
+        description=(
+            "Whether you expect the target to be private. When set and the target's visibility differs, nothing "
+            "changes and the request fails with 409, so a token meant for your private target never reaches a "
+            "shared target that took its name."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_a_credential(self) -> "UpdateTargetCredentialsRequest":
+        if self.api_key is None and not self.headers:
+            raise ValueError("Set api_key, headers, or both")
+        return self

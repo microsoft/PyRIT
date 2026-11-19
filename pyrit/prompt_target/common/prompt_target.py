@@ -42,6 +42,38 @@ from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, ta
 
 logger = logging.getLogger(__name__)
 
+# Provider status codes that mean the target's credentials were rejected.
+_CREDENTIAL_REJECTION_STATUS_CODES = frozenset({401, 403})
+
+
+def _is_credential_rejection(error: BaseException) -> bool:
+    """
+    Check whether a send failed because the provider rejected the target's credentials.
+
+    OpenAI SDK errors (``AuthenticationError``, ``PermissionDeniedError``), LiteLLM's errors, and
+    PyRIT exceptions carry the provider's ``status_code``; ``httpx.HTTPStatusError`` keeps it on its
+    ``response``. Targets that translate an error keep the original as its cause, so the whole chain
+    is checked.
+
+    Args:
+        error (BaseException): The error a send raised.
+
+    Returns:
+        bool: True if the error, or one it was raised from, has status 401 or 403.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        status_code = getattr(current, "status_code", None) or getattr(
+            getattr(current, "response", None), "status_code", None
+        )
+        if status_code in _CREDENTIAL_REJECTION_STATUS_CODES:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 # ``AuthMode`` is imported above (and re-exported from this module for backward
 # compatibility); it is canonically defined in ``pyrit.common.auth_mode`` so
 # ``pyrit.auth`` resolvers can consume it without depending on the target layer.
@@ -62,6 +94,13 @@ class PromptTarget(Identifiable):
     supported_converters: list[Any]
 
     _identifier: ComponentIdentifier | None = None
+
+    # Whether the provider rejected the credentials on the last request through this target, or None
+    # until a request through it completes or fails authentication.
+    _credentials_rejected: bool | None = None
+    # The target a copy reports credential rejections into, so its registered source reflects the copy's requests.
+    _credential_status_source: "PromptTarget | None" = None
+    _credential_generation: int = 0
 
     # Class-level default configuration for this target type.
     #
@@ -451,7 +490,9 @@ class PromptTarget(Identifiable):
                 if send_context:
                     send_context.mark_target_invoked()
                 try:
-                    response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+                    response = await self._send_and_track_credentials_async(
+                        normalized_conversation=normalized_conversation
+                    )
                 finally:
                     generation_info = RequestGenerationInfo.from_metadata(
                         metadata=normalized_request.get_piece().prompt_metadata
@@ -570,9 +611,86 @@ class PromptTarget(Identifiable):
         """
         token = self._DISPATCH_CAPABILITIES.set((self, capabilities))
         try:
-            return await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+            return await self._send_and_track_credentials_async(normalized_conversation=normalized_conversation)
         finally:
             self._DISPATCH_CAPABILITIES.reset(token)
+
+    async def _send_and_track_credentials_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        """
+        Send, and record whether the provider accepted the target's credentials.
+
+        A provider authentication failure (401 or 403) marks them rejected; a completed request marks
+        them accepted. Other failures and requests for older credentials leave the state unchanged.
+
+        Args:
+            normalized_conversation (list[Message]): The normalized conversation to send.
+
+        Returns:
+            list[Message]: Response messages from the target.
+        """
+        owner = self._credential_status_owner()
+        generation = self._credential_generation
+        try:
+            response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+        except Exception as error:
+            if generation == owner._credential_generation and _is_credential_rejection(error):
+                owner._credentials_rejected = True
+            raise
+        if generation == owner._credential_generation:
+            owner._credentials_rejected = False
+        return response
+
+    def _credential_status_owner(self) -> "PromptTarget":
+        return self._credential_status_source or self
+
+    @property
+    def credentials_rejected(self) -> bool | None:
+        """
+        Whether the provider rejected the current credentials on the last request that used them.
+
+        Requests through copies built from this target, such as a chat's temperature override, count too.
+        None until a request using the current credentials completes or fails authentication.
+        """
+        return self._credential_status_owner()._credentials_rejected
+
+    @property
+    def supports_credential_updates(self) -> bool:
+        """Whether ``update_credentials`` can replace this target's API key or request headers in place."""
+        return False
+
+    def update_credentials(self, *, api_key: str | None = None, headers: Mapping[str, str] | None = None) -> None:
+        """
+        Replace this target's API key or request headers in place, without changing anything else about it.
+
+        Everything holding this target, such as a round robin or a scorer, sends the new values with its next
+        request. Targets that can do this override this method and ``supports_credential_updates``.
+
+        Args:
+            api_key (str | None): The new API key or access token, or None to keep the current one.
+            headers (Mapping[str, str] | None): Request headers to set, replacing any of the same name.
+
+        Raises:
+            ValueError: Always, because this target type can't update its credentials in place.
+        """
+        raise ValueError(f"{type(self).__name__} can't update its credentials. Create a new target instead.")
+
+    def _reset_credential_status(self) -> None:
+        """Forget whether the provider accepted the credentials, because they just changed."""
+        # A copy whose credentials were changed no longer speaks for the source.
+        self._credential_status_source = None
+        self._credential_generation += 1
+        self._credentials_rejected = None
+
+    def attach_reconstruction_source(self, source: object) -> None:
+        """
+        Report credential rejections into the target this copy was built from.
+
+        Args:
+            source (object): The registered target this copy was built from.
+        """
+        if isinstance(source, PromptTarget):
+            self._credential_status_source = source._credential_status_owner()
+            self._credential_generation = source._credential_generation
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """

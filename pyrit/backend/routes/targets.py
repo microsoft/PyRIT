@@ -16,8 +16,9 @@ from pyrit.backend.models import (
     CreateTargetRequest,
     ProblemDetail,
     TargetListResponse,
+    UpdateTargetCredentialsRequest,
 )
-from pyrit.backend.models.common import CursorStr, IdentifierStr, SaveabilityResponse
+from pyrit.backend.models.common import CursorStr, IdentifierStr, NotSaveableProblemDetail, SaveabilityResponse
 from pyrit.backend.models.targets import (
     DetectTargetCapabilitiesRequest,
     TargetSaveabilityRequest,
@@ -25,9 +26,11 @@ from pyrit.backend.models.targets import (
     UnregisteredTarget,
 )
 from pyrit.backend.services import get_target_service
+from pyrit.backend.services.target_service import CredentialUpdateConflictError
 from pyrit.models.catalog import SavedEntryOwner, TargetInstance
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
 from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
+from pyrit.registry.instance_registry import RegistryNameTakenError
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 
@@ -166,8 +169,11 @@ async def check_target_saveability(  # pyrit-async-suffix-exempt
     """
     Say whether a target could be saved as asked, using the checks saving it runs, without building or saving it.
 
+    The target isn't built, so its constructor's own checks don't run: a null reason means the save checks pass,
+    not that creating the target succeeds.
+
     Returns:
-        SaveabilityResponse: Why the target can't be saved, or no reason when it can.
+        SaveabilityResponse: Why the target can't be saved, or no reason when the save checks pass.
     """
     try:
         return await get_target_service().check_saveability_async(
@@ -188,7 +194,7 @@ async def check_target_saveability(  # pyrit-async-suffix-exempt
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {
-            "model": ProblemDetail,
+            "model": NotSaveableProblemDetail,
             "description": (
                 f"Invalid target type or parameters, or (type {NOT_SAVEABLE_PROBLEM_TYPE}) a target that can't be "
                 "saved as asked but can be created without saving it"
@@ -197,11 +203,11 @@ async def check_target_saveability(  # pyrit-async-suffix-exempt
         403: {
             "model": ProblemDetail,
             "description": "Administrator access is required to run model repository code or to use the "
-            "server's stored credentials",
+            "server's stored credentials, or a private target was requested without a signed-in caller",
         },
         409: {
             "model": ProblemDetail,
-            "description": "A target to save has the name of a registered or saved target",
+            "description": "A registered target has the name, or, for a target to save, a saved target has it",
         },
         503: {"model": ProblemDetail, "description": "Saved targets can't be written right now"},
     },
@@ -217,7 +223,11 @@ async def create_target(
     Instantiates a target with the given type and parameters. Registration is
     optional; unregistered responses contain no reusable object handle.
 
-    Note: Sensitive parameters (API keys, tokens) are filtered from the response.
+    Note: Sensitive parameters (API keys, tokens) are filtered from the response. A
+    target is shared unless ``private`` is true or it is built on the caller's private
+    targets; supplying credentials doesn't make it private. A private target's credentials
+    can be updated later by its creator, a shared target's only when
+    ``allow_credential_updates`` is true.
 
     Returns:
         TargetInstance | UnregisteredTarget | JSONResponse: A named instance or an unregistered descriptor,
@@ -235,15 +245,17 @@ async def create_target(
             server_credentials=getattr(request.app.state, "server_credentials", ()),
         )
     except NotSaveableError as e:
-        problem = ProblemDetail(
+        problem = NotSaveableProblemDetail(
             type=NOT_SAVEABLE_PROBLEM_TYPE,
             title="Can't be saved",
             status=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
+            not_saveable_reason=e.cause,
             instance=str(request.url.path),
         )
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=problem.model_dump(exclude_none=True))
-    except SavedEntryConflictError as e:
+    except (SavedEntryConflictError, RegistryNameTakenError) as e:
+        # RegistryNameTakenError is a ValueError, and a taken name is a 409 whether or not the target is saved.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except SavedEntryStorageError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
@@ -289,4 +301,55 @@ async def get_target(
             detail=f"Target '{target_registry_name}' not found",
         )
 
+    return target
+
+
+@router.put(
+    "/{target_registry_name}/credentials",
+    response_model=TargetInstance,
+    responses={
+        400: {
+            "model": ProblemDetail,
+            "description": "A value can't be sent, or the change would alter how the target authenticates",
+        },
+        403: {
+            "model": ProblemDetail,
+            "description": "No signed-in caller, or the target is saved or doesn't allow credential updates",
+        },
+        404: {"model": ProblemDetail, "description": "Target not found"},
+        409: {"model": ProblemDetail, "description": "The target isn't private or shared as the request expects"},
+    },
+)
+async def update_target_credentials(
+    *,
+    target_registry_name: IdentifierStr,
+    body: UpdateTargetCredentialsRequest,
+) -> TargetInstance:  # pyrit-async-suffix-exempt
+    """
+    Replace a target's API key or request headers in place.
+
+    Works on a target created with credential updates allowed: your private target (private
+    targets allow them by default), or a shared target that allows them, which anyone signed in
+    can update. Everything using the target sends the new values with its next request; the
+    target's identity, configuration, and authentication mode don't change. Values are never
+    returned.
+
+    Returns:
+        TargetInstance: The updated target.
+    """
+    try:
+        target = await get_target_service().update_credentials_async(
+            target_registry_name=target_registry_name, request=body
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except CredentialUpdateConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Target '{target_registry_name}' not found",
+        )
     return target

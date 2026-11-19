@@ -177,9 +177,7 @@ def _check_class(cls: type) -> None:
         raise SavedEntryRefusedError(reason=RestoreFailureReason.UNSUPPORTED_CLASS, message=message)
     reason = getattr(cls, "not_saveable_reason", None)
     if reason is not None:
-        raise SavedEntryRefusedError(
-            reason=RestoreFailureReason.UNSUPPORTED_CLASS, message=f"'{cls.__name__}' can't be saved. {reason}"
-        )
+        raise SavedEntryRefusedError(reason=RestoreFailureReason.UNSUPPORTED_CLASS, message=reason)
 
 
 def _check_server_headers(cls: type) -> None:

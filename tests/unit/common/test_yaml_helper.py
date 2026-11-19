@@ -4,6 +4,7 @@
 import builtins
 import importlib
 import io
+import re
 from typing import Any
 from unittest.mock import patch
 
@@ -177,3 +178,24 @@ def test_safe_load_yaml_does_not_modify_pyyaml_loaders(yaml_loader):
     assert yaml.safe_load(document) == {"value": "second"}
     if hasattr(yaml, "CSafeLoader"):
         assert yaml.load(document, Loader=yaml.CSafeLoader) == {"value": "second"}
+
+
+def test_load_yaml_file_parses_a_utf8_file(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("name: café\nvalues: [1, 2]\n", encoding="utf-8")
+    assert yaml_helper.load_yaml_file(path=path) == {"name": "café", "values": [1, 2]}
+
+
+def test_load_yaml_file_returns_none_for_an_empty_file(tmp_path):
+    path = tmp_path / "empty.yaml"
+    path.write_text("", encoding="utf-8")
+    assert yaml_helper.load_yaml_file(path=str(path)) is None
+
+
+@pytest.mark.parametrize("document", ["summary: [unclosed\n", "value: first\nvalue: second\n"])
+def test_load_yaml_file_names_the_file_in_a_value_error(tmp_path, document):
+    path = tmp_path / "broken.yaml"
+    path.write_text(document, encoding="utf-8")
+    with pytest.raises(ValueError, match=f"Invalid YAML file '{re.escape(str(path))}'") as error:
+        yaml_helper.load_yaml_file(path=path)
+    assert isinstance(error.value.__cause__, yaml.YAMLError)

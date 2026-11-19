@@ -200,6 +200,7 @@ test("saves a target that uses a server credential by its name, with no key @see
     auth_mode: "api_key",
     server_credential: "e2e_listed",
     persist: true,
+    private: false,
   }]);
   await expect(page.getByTestId(`target-row-${name}`).getByText("Saved", { exact: true })).toBeVisible();
   const saved = await request.get(`/api/targets/${name}`, { headers: compatibilityHeaders() });

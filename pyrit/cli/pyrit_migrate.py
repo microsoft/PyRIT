@@ -27,12 +27,17 @@ def _validate_database_target(*, connection_string: str, expected_server: str, e
 
 
 async def _migrate_async(
-    *, config_file: str, expected_server: str, expected_database: str, check_only: bool = False
+    *,
+    config_file: str,
+    expected_server: str,
+    expected_database: str,
+    check_only: bool = False,
+    check_upgradable: bool = False,
 ) -> None:
     from pyrit.backend.services.configuration_file_service import ConfigurationFileService
     from pyrit.common import default_values
     from pyrit.memory import AzureSQLMemory
-    from pyrit.memory.migration import check_schema_migrations, run_schema_migrations
+    from pyrit.memory.migration import check_schema_migrations, check_schema_upgradable, run_schema_migrations
     from pyrit.setup import ConfigurationLoader
     from pyrit.setup.environment_loading import load_environment_async
 
@@ -63,25 +68,40 @@ async def _migrate_async(
         engine = memory.engine
         if engine is None:
             raise RuntimeError("Azure SQL engine was not created.")
+        if check_upgradable:
+            await asyncio.to_thread(check_schema_upgradable, engine=engine)
+            return
         if not check_only:
-            await asyncio.to_thread(run_schema_migrations, engine=engine, silent=True)
+            await asyncio.to_thread(run_schema_migrations, engine=engine, silent=False)
         await asyncio.to_thread(check_schema_migrations, engine=engine, silent=True)
     finally:
         await memory.dispose_engine_async()
 
 
+def _configure_progress_logging() -> None:
+    """Show timestamped Alembic revision progress without enabling verbose Azure SDK logging."""
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("alembic.runtime.migration").setLevel(logging.INFO)
+
+
 def main(*, args: list[str] | None = None) -> int:
     """
-    Run the schema check, with an optional upgrade first.
+    Check the schema, check that it can be upgraded, or upgrade and then check it.
 
     Returns:
-        int: 0 when the schema is current, otherwise 1.
+        int: 0 when the requested check passes or the upgraded schema is current, otherwise 1.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config-file", required=True)
     parser.add_argument("--expected-server", required=True)
     parser.add_argument("--expected-database", required=True)
-    parser.add_argument("--check-only", action="store_true", help="Check the schema without applying migrations.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check-only", action="store_true", help="Check the schema without applying migrations.")
+    mode.add_argument(
+        "--check-upgradable",
+        action="store_true",
+        help="Check that migrating can move the database to this release's head, without applying migrations.",
+    )
     parsed = parser.parse_args(args)
     try:
         asyncio.run(
@@ -90,14 +110,19 @@ def main(*, args: list[str] | None = None) -> int:
                 expected_server=parsed.expected_server,
                 expected_database=parsed.expected_database,
                 check_only=parsed.check_only,
+                check_upgradable=parsed.check_upgradable,
             )
         )
     except Exception:
-        logger.exception("Database schema check failed." if parsed.check_only else "Database migration failed.")
+        if parsed.check_upgradable:
+            logger.exception("Database revision check failed.")
+        else:
+            logger.exception("Database schema check failed." if parsed.check_only else "Database migration failed.")
         return 1
-    print("Database schema is current.")
+    print("Database revision can be upgraded." if parsed.check_upgradable else "Database schema is current.")
     return 0
 
 
 if __name__ == "__main__":
+    _configure_progress_logging()
     sys.exit(main())
