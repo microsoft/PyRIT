@@ -167,10 +167,11 @@ async def check_target_saveability(  # pyrit-async-suffix-exempt
     request: Request,
 ) -> SaveabilityResponse:
     """
-    Say whether a target could be saved as asked, using the checks saving it runs, without building or saving it.
+    Say whether a target could be saved as asked, without building or saving it.
 
-    The target isn't built, so its constructor's own checks don't run: a null reason means the save checks pass,
-    not that creating the target succeeds.
+    Only the type, parameters, and auth mode are checked, by create's parameter, permission, and save checks. The
+    name and registration options aren't checked, and the target isn't built, so its constructor's own checks don't
+    run: a null reason means the save checks pass, not that creating the target succeeds.
 
     Returns:
         SaveabilityResponse: Why the target can't be saved, or no reason when the save checks pass.
