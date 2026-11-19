@@ -60,6 +60,7 @@ from pyrit.models import (
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanGroupKind,
+    ScenarioRunPlanScorerBinding,
     ScenarioRunPlanSeedGroup,
     ScenarioRunPlanSeedPrompt,
     ScenarioRunSizeComponent,
@@ -80,7 +81,7 @@ from pyrit.models.scenario_readiness import (
 from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
-from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.atomic_attack import AtomicAttack, compute_atomic_group_id
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetSource,
@@ -100,6 +101,8 @@ from pyrit.scenario.core.scenario_target_defaults import (
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, IncompatibleTechniquePolicy
 from pyrit.score import (
+    CompatibleScorers,
+    ScorerRequirements,
     SelfAskRefusalScorer,
     SelfAskTrueFalseScorer,
     TrueFalseCompositeScorer,
@@ -179,6 +182,11 @@ class Scenario(ABC):
     #: an unavailable verdict is an expected result rather than a scenario error.
     RAISE_IF_DEFAULT_SCORER_BLOCKS: ClassVar[bool] = True
 
+    #: Whether the scenario accepts a ``CompatibleScorers`` pool as its objective scorer, selects
+    #: from it per attack population, and checks ``DatasetSource.scorer_requirements``. Unmigrated
+    #: scenarios reject pools and declared dataset requirements explicitly, so neither is silently ignored.
+    SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = False
+
     #: Whether the scenario applies ``technique_converters``. Scenarios that don't set this to
     #: False so the parameter isn't declared, and passing it fails instead of being ignored.
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = True
@@ -227,7 +235,7 @@ class Scenario(ABC):
         version: int,
         technique_class: type[ScenarioTechnique],
         default_dataset_config: DatasetAttackConfiguration,
-        objective_scorer: TrueFalseScorer | None,
+        objective_scorer: TrueFalseScorer | CompatibleScorers | None,
         scenario_result_id: uuid.UUID | str | None = None,
         uses_default_adversarial_target: bool | None = None,
         adversarial_target: PromptTarget | None = None,
@@ -244,7 +252,9 @@ class Scenario(ABC):
                 ``technique_class.default()``.
             default_dataset_config (DatasetAttackConfiguration): The default dataset configuration used
                 when no ``dataset_config`` is passed to ``initialize_async``.
-            objective_scorer (Scorer): The objective scorer used to evaluate attack results.
+            objective_scorer (TrueFalseScorer | CompatibleScorers | None): The objective scorer used
+                to evaluate attack results, or, for scenarios that set
+                ``SUPPORTS_OBJECTIVE_SCORER_POOL``, an ordered pool selected from per attack population.
             adversarial_target: Explicit scenario-owned generation target.
             uses_default_adversarial_target (bool | None): Whether this scenario uses the shared
                 adversarial target. None derives usage from its registered technique factories.
@@ -253,6 +263,9 @@ class Scenario(ABC):
                 Can be either a UUID object or a string representation of a UUID.
                 If provided and found in memory, the scenario will resume from prior progress.
                 All other parameters must still match the stored scenario configuration.
+
+        Raises:
+            TypeError: If a scorer pool is passed to a scenario that does not support one.
 
         Note:
             Attack runs are populated by calling initialize_async(), which invokes the
@@ -295,9 +308,18 @@ class Scenario(ABC):
         # Datasets the scenario reads in full to build its attacks, apart from dataset_config.
         self._required_data: ScenarioRequiredData | None = None
 
+        if isinstance(objective_scorer, CompatibleScorers):
+            if not type(self).SUPPORTS_OBJECTIVE_SCORER_POOL:
+                raise TypeError(
+                    f"{type(self).__name__} does not accept a CompatibleScorers pool. Pass one TrueFalseScorer."
+                )
+            self._objective_scorer_pool: CompatibleScorers | None = objective_scorer
+            objective_scorer = None
+        else:
+            self._objective_scorer_pool = None
         self._configured_objective_scorer = objective_scorer
         self._supplied_objective_scorer = objective_scorer
-        self._objective_scorer_identifier = objective_scorer.get_identifier() if objective_scorer is not None else None
+        self._objective_scorer_identifier = self._get_supplied_objective_scorer_identifier()
 
         self._name = name if name else type(self).__name__
         self._memory = CentralMemory.get_memory_instance()
@@ -332,9 +354,37 @@ class Scenario(ABC):
         self._resolved_adversarial_target: PromptTarget | None = None
         self._resolved_scoring_target: PromptTarget | None = None
 
+    def _get_supplied_objective_scorer_identifier(self) -> "ComponentIdentifier | None":
+        """
+        Identify the caller-supplied scorer, before any default is resolved.
+
+        Returns:
+            ComponentIdentifier | None: The scorer identity, or None when the default will be used
+                or the run selects from a scorer pool.
+        """
+        if self._supplied_objective_scorer is not None:
+            return self._supplied_objective_scorer.get_identifier()
+        return None
+
+    @property
+    def _objective_scorer_input(self) -> TrueFalseScorer | CompatibleScorers:
+        """The supplied scorer pool, or the single scorer (resolving the default when needed)."""
+        if self._objective_scorer_pool is not None:
+            return self._objective_scorer_pool
+        return self._objective_scorer
+
     @property
     def _objective_scorer(self) -> TrueFalseScorer:
-        """The supplied scorer or the resolved scenario-specific default scorer."""
+        """
+        The supplied scorer or the resolved scenario-specific default scorer.
+
+        Raises:
+            TypeError: If this run uses a scorer pool; read ``_objective_scorer_input`` instead.
+        """
+        if self._objective_scorer_pool is not None:
+            raise TypeError(
+                f"{type(self).__name__} uses a scorer pool; each attack population has its own selected scorer."
+            )
         if self._configured_objective_scorer is None:
             self._configured_objective_scorer = self._get_default_objective_scorer()
             self._objective_scorer_identifier = self._configured_objective_scorer.get_identifier()
@@ -677,9 +727,7 @@ class Scenario(ABC):
     def _reset_runtime_bindings(self) -> None:
         """Discard lazily resolved roles when the caller replaces the configuration."""
         self._configured_objective_scorer = self._supplied_objective_scorer
-        self._objective_scorer_identifier = (
-            self._supplied_objective_scorer.get_identifier() if self._supplied_objective_scorer is not None else None
-        )
+        self._objective_scorer_identifier = self._get_supplied_objective_scorer_identifier()
         self._resolved_scoring_target = None
         self._resolved_adversarial_target = None
 
@@ -1010,6 +1058,7 @@ class Scenario(ABC):
         self._dataset_config = (
             dataset_config if dataset_config is not None else self._resolved_default_dataset_config
         ).with_overrides()
+        self._validate_dataset_scorer_requirements()
         self._required_data = self.get_required_data()
         self._move_required_sources_out_of_dataset_config()
         options = self.get_dataset_options()
@@ -1027,6 +1076,24 @@ class Scenario(ABC):
             )
         self._load_required_data_like_dataset_config()
         self._validate_runtime_configuration()
+
+    def _validate_dataset_scorer_requirements(self) -> None:
+        """
+        Reject dataset scorer requirements this scenario would not check.
+
+        Raises:
+            ValueError: If a dataset source declares scorer requirements and the scenario does
+                not enforce them.
+        """
+        if type(self).SUPPORTS_OBJECTIVE_SCORER_POOL:
+            return
+        declared = sorted(self._dataset_config.get_scorer_requirements_by_dataset())
+        if declared:
+            raise ValueError(
+                f"{type(self).__name__} does not check DatasetSource.scorer_requirements, which these "
+                f"datasets declare: {', '.join(declared)}. Remove them, or use a scenario that selects "
+                "its objective scorer per dataset."
+            )
 
     def _load_required_data_like_dataset_config(self) -> None:
         """
@@ -1177,6 +1244,61 @@ class Scenario(ABC):
             self._dataset_config.source_limit(source.name) != "all" for source in self._dataset_config.sources
         ):
             raise ValueError("This scenario uses ingredient datasets and does not support per-dataset limits.")
+        self._validate_required_evaluations()
+
+    def _validate_required_evaluations(self) -> None:
+        """
+        Reject a required evaluation that no objective scorer candidate is bound to.
+
+        A key is configuration: a typo, or a key with a single unbound scorer, can never match.
+        A bound candidate judges only its own evaluation, so a dataset that requires none needs
+        an unbound candidate. Both fail here, before any dataset is read.
+
+        Raises:
+            ValueError: If an evaluation the scenario or a dataset requires has no bound candidate,
+                if a dataset requires no evaluation and every candidate is bound, or if the scenario
+                and a dataset require different evaluations.
+        """
+        if not type(self).SUPPORTS_OBJECTIVE_SCORER_POOL:
+            return
+        scenario_requirements = self._get_objective_scorer_requirements()
+        scenario_evaluation = scenario_requirements.evaluation if scenario_requirements is not None else None
+        dataset_requirements = self._dataset_config.get_scorer_requirements_by_dataset()
+        pool = self._objective_scorer_pool
+        if pool is not None and scenario_evaluation is None and None not in pool.evaluations:
+            undeclared = sorted(
+                name
+                for name in self._dataset_config.dataset_names
+                if name not in dataset_requirements or dataset_requirements[name].evaluation is None
+            )
+            if undeclared:
+                raise ValueError(
+                    "Every objective scorer candidate is bound to an evaluation, but these datasets require none: "
+                    f"{', '.join(repr(name) for name in undeclared)}. Declare scorer_requirements on them, or add "
+                    "a candidate without an evaluation."
+                )
+        owners: dict[str, list[str]] = {}
+        if scenario_evaluation is not None:
+            owners.setdefault(scenario_evaluation, []).append("the scenario")
+        for name, requirements in sorted(dataset_requirements.items()):
+            evaluation = ScorerRequirements.combine(scenario_requirements, requirements).evaluation
+            if evaluation is not None:
+                owners.setdefault(evaluation, []).append(f"dataset '{name}'")
+        available = {key for key in pool.evaluations if key is not None} if pool is not None else set()
+        missing = {key: names for key, names in owners.items() if key not in available}
+        if not missing:
+            return
+        required = "; ".join(f"{key!r} (required by {', '.join(names)})" for key, names in sorted(missing.items()))
+        if pool is None:
+            raise ValueError(
+                f"A single objective scorer is not bound to any evaluation, but these are required: {required}. "
+                "Pass a CompatibleScorers pool with a ScorerCandidate bound to each."
+            )
+        known = ", ".join(repr(key) for key in sorted(available)) or "none"
+        raise ValueError(
+            f"No objective scorer candidate is bound to these required evaluations: {required}. "
+            f"Evaluations in the pool: {known}. Check the key for a typo, or add a candidate bound to it."
+        )
 
     def _get_required_objective_keys(self) -> list[str]:
         """Return population names that must retain at least one objective."""
@@ -1244,6 +1366,51 @@ class Scenario(ABC):
         return any(factory is not None and factory.uses_default_adversarial_target for factory in selected) or (
             any(factory is None for factory in selected) and self.uses_default_adversarial_target
         )
+
+    def _add_objective_scorer_readiness(self, *, result: ScenarioReadiness) -> None:
+        """
+        Record the objective scorer binding, or every pool candidate, in a readiness result.
+
+        Args:
+            result (ScenarioReadiness): The readiness result to extend.
+        """
+        if self._objective_scorer_pool is not None:
+            for index, candidate in enumerate(self._objective_scorer_pool.candidates):
+                result.bindings.append(
+                    ScenarioRoleBinding(
+                        role=f"objective_scorer_candidate:{index}",
+                        component=candidate.evaluation or self.name,
+                        identifier=candidate.scorer.get_identifier(),
+                    )
+                )
+            return
+        try:
+            scorer = self._objective_scorer
+        except ValueError as exc:
+            result.issues.append(
+                ScenarioConfigurationIssue(
+                    role="scoring_target" if isinstance(exc, TargetRoleConfigurationError) else "objective_scorer",
+                    component=self.name,
+                    reason=str(exc),
+                    remediation="Select a scorer, or configure objective_scorer_chat for the scenario rubric.",
+                )
+            )
+        else:
+            result.bindings.append(
+                ScenarioRoleBinding(
+                    role="objective_scorer",
+                    component=self.name,
+                    identifier=scorer.get_identifier(),
+                )
+            )
+            if self._resolved_scoring_target is not None:
+                result.bindings.append(
+                    ScenarioRoleBinding(
+                        role="scoring_target",
+                        component=self.name,
+                        identifier=self._resolved_scoring_target.get_identifier(),
+                    )
+                )
 
     def get_readiness(self) -> ScenarioReadiness:
         """
@@ -1349,33 +1516,7 @@ class Scenario(ABC):
                     remediation="Select a compatible objective target or techniques.",
                 )
             )
-        try:
-            scorer = self._objective_scorer
-        except ValueError as exc:
-            result.issues.append(
-                ScenarioConfigurationIssue(
-                    role="scoring_target" if isinstance(exc, TargetRoleConfigurationError) else "objective_scorer",
-                    component=self.name,
-                    reason=str(exc),
-                    remediation="Select a scorer, or configure objective_scorer_chat for the scenario rubric.",
-                )
-            )
-        else:
-            result.bindings.append(
-                ScenarioRoleBinding(
-                    role="objective_scorer",
-                    component=self.name,
-                    identifier=scorer.get_identifier(),
-                )
-            )
-            if self._resolved_scoring_target is not None:
-                result.bindings.append(
-                    ScenarioRoleBinding(
-                        role="scoring_target",
-                        component=self.name,
-                        identifier=self._resolved_scoring_target.get_identifier(),
-                    )
-                )
+        self._add_objective_scorer_readiness(result=result)
         if self._requires_default_adversarial_target():
             try:
                 if self._resolved_adversarial_target is None:
@@ -1751,6 +1892,7 @@ class Scenario(ABC):
                     tags=sorted(technique.tags) if technique else [],
                     kind=atomic_attack.group_kind,
                     is_compound=atomic_attack.attack_technique.attack.IS_COMPOUND,
+                    objective_scorer_binding=self._get_scorer_binding(atomic_attack=atomic_attack),
                 )
             )
         return ScenarioRunPlan(
@@ -1773,18 +1915,28 @@ class Scenario(ABC):
         return atomic_attack.seed_groups
 
     @staticmethod
+    def _get_scorer_binding(*, atomic_attack: AtomicAttack) -> ScenarioRunPlanScorerBinding | None:
+        """
+        Return an atomic attack's pool selection, if it has one.
+
+        Returns:
+            ScenarioRunPlanScorerBinding | None: The binding, or None for single-scorer groups.
+        """
+        binding = getattr(atomic_attack, "objective_scorer_binding", None)
+        return binding if isinstance(binding, ScenarioRunPlanScorerBinding) else None
+
+    @staticmethod
     def _get_atomic_group_id(*, atomic_attack: AtomicAttack) -> str:
         """
-        Compute the stable ID of an atomic group from its name and technique.
+        Compute the stable ID of an atomic group, the same value as ``AtomicAttack.logical_group_id``.
 
         Returns:
             str: The atomic-group ID.
         """
-        return config_hash(
-            {
-                "atomic_attack_name": atomic_attack.atomic_attack_name,
-                "technique_eval_hash": str(atomic_attack.technique_eval_hash),
-            }
+        return compute_atomic_group_id(
+            atomic_attack_name=atomic_attack.atomic_attack_name,
+            technique_eval_hash=atomic_attack.technique_eval_hash,
+            objective_scorer_binding=Scenario._get_scorer_binding(atomic_attack=atomic_attack),
         )
 
     @staticmethod
@@ -1916,7 +2068,26 @@ class Scenario(ABC):
             datasets=datasets,
             objective_target=self._objective_target_identifier,
             objective_scorer=self._objective_scorer_identifier,
+            # A pool is not a scorer, so it is identity of its own rather than the objective_scorer reference.
+            # Requirements stay out: one that changes a selection changes the plan's group ids.
+            children=(
+                {"objective_scorer_pool": self._objective_scorer_pool.get_identifier()}
+                if self._objective_scorer_pool is not None
+                else None
+            ),
         )
+
+    def _get_objective_scorer_requirements(self) -> ScorerRequirements | None:
+        """
+        Return what the scenario and its resolved run configuration require from the objective scorer.
+
+        Dataset sources add their own requirements. Subclasses that promise a specific
+        evaluation override this; the default requires nothing.
+
+        Returns:
+            ScorerRequirements | None: The scenario-level requirements, or None.
+        """
+        return None
 
     def _validate_stored_scenario(
         self, *, stored_result: ScenarioResult, current_identifier: ScenarioIdentifier

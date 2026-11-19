@@ -21,6 +21,7 @@ import pytest
 import pyrit.backend.services.scenario_configuration_resolver as _resolver_mod
 import pyrit.backend.services.scenario_progress_read_model as _progress_mod
 import pyrit.backend.services.scenario_run_service as _svc_mod
+from pyrit.auth import caller_principal_scope, get_caller_principal
 from pyrit.backend.services import ScenarioRunService
 from pyrit.backend.services.scenario_progress_read_model import ScenarioPlanLookup, ScenarioProgressReadModel
 from pyrit.backend.services.scenario_run_service import SavedEntryLaunchConflictError, ScenarioRunConflictError
@@ -73,6 +74,7 @@ from pyrit.registry import (
     ScenarioMetadata,
     ScenarioRegistry,
     TargetRegistry,
+    owner_metadata,
 )
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, registry_entry_origin
 from pyrit.scenario import (
@@ -90,7 +92,7 @@ from pyrit.scenario.core import (
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.scenarios.airt import Jailbreak, Scam
 from pyrit.setup.initializers import ConverterInitializer, ToolsInitializer
-from unit.async_utils import wait_for_completion_async
+from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import (
     MockPromptTarget,
     get_mock_target_identifier,
@@ -238,6 +240,26 @@ def clear_service_cache():
     _svc_mod._service_instance = None
 
 
+def test_get_scenario_run_service_logs_unavailable_backend(caplog: pytest.LogCaptureFixture) -> None:
+    with (
+        patch.dict("sys.modules", {"pyrit.backend.main": None}),
+        patch.object(_svc_mod, "ScenarioRunService", autospec=True) as service_type,
+        caplog.at_level(logging.DEBUG, logger=_svc_mod.__name__),
+    ):
+        service = _svc_mod.get_scenario_run_service()
+        assert _svc_mod.get_scenario_run_service() is service
+
+    assert service is service_type.return_value
+    service_type.assert_called_once()
+    assert service_type.call_args.kwargs == {"max_concurrent_runs": _svc_mod._DEFAULT_MAX_CONCURRENT_RUNS}
+    records = [record for record in caplog.records if record.name == _svc_mod.__name__]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+    assert "Could not read max_concurrent_scenario_runs" in records[0].getMessage()
+    assert records[0].exc_info is not None
+    assert isinstance(records[0].exc_info[1], ModuleNotFoundError)
+
+
 async def test_has_active_work_covers_scheduler_owned_work(patch_central_database: MagicMock) -> None:
     service = ScenarioRunService()
     assert not service.has_active_work()
@@ -290,20 +312,40 @@ def converter_registry() -> Iterator[ConverterRegistry]:
 class _LaunchScript:
     """A launch script that registers one converter, optionally swallowing or wrapping errors."""
 
-    def __init__(self, *, name: str, swallow: bool = False, wrap: bool = False) -> None:
+    def __init__(self, *, name: str, swallow: bool = False, wrap: bool = False, replace: bool = True) -> None:
         self._name = name
         self._swallow = swallow
         self._wrap = wrap
+        self._replace = replace
 
     async def initialize_async(self) -> None:
         registry = ConverterRegistry.get_registry_singleton()
         try:
-            registry.instances.register(Base64Converter(), name=self._name, replace=True)
+            registry.instances.register(Base64Converter(), name=self._name, replace=self._replace)
         except Exception as error:
             if self._wrap:
                 raise ValueError("The launch script failed.") from error
             if not self._swallow:
                 raise
+
+
+class _CallerRecordingScript:
+    def __init__(self) -> None:
+        self.callers: list[str | None] = []
+
+    async def initialize_async(self) -> None:
+        self.callers.append(get_caller_principal())
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_run_initializers_run_as_the_server_not_the_requesting_caller_async() -> None:
+    """Per-run setup code sees only shared entries, so it can't build a shared component on a private one."""
+    script = _CallerRecordingScript()
+
+    with caller_principal_scope("alice"):
+        await _run_launch_scripts_async({"recording": script})
+
+    assert script.callers == [None]
 
 
 async def _run_launch_scripts_async(scripts: dict[str, Any]) -> None:
@@ -371,6 +413,33 @@ async def test_tools_launch_script_cannot_replace_a_saved_converter_async(
         assert "role_play_tool_calls" not in AttackTechniqueRegistry.get_registry_singleton().instances
     finally:
         AttackTechniqueRegistry.reset_registry_singleton()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "script",
+    [
+        _LaunchScript(name="rot13"),
+        _LaunchScript(name="rot13", swallow=True),
+        _LaunchScript(name="rot13", wrap=True),
+        _LaunchScript(name="rot13", replace=False),
+        _LaunchScript(name="rot13", replace=False, swallow=True),
+    ],
+)
+async def test_launch_scripts_report_a_name_a_private_entry_holds_async(
+    converter_registry: ConverterRegistry, script: Any
+) -> None:
+    private = ROT13Converter()
+    converter_registry.instances.register(private, name="rot13", metadata=owner_metadata("alice", private=True))
+
+    with pytest.raises(
+        SavedEntryLaunchConflictError, match="'converters' can't register 'rot13' .* until the server restarts"
+    ) as raised:
+        await _run_launch_scripts_async({"converters": script})
+
+    assert "alice" not in str(raised.value)
+    with caller_principal_scope("alice"):
+        assert converter_registry.instances.get("rot13") is private
 
 
 class _FailingLaunchScript:
@@ -1497,6 +1566,79 @@ class TestScenarioRunServiceStartRun:
         release_queued.set()
         await asyncio.wait_for(queued_task, timeout=1)
         assert started == ["run-1", "run-2"]
+
+    async def test_queued_run_uses_its_own_admitted_caller_async(self, mock_all_registries) -> None:
+        """A run started by another caller's handoff acts for its own admitting caller."""
+        service = ScenarioRunService()
+        mock_memory = mock_all_registries["memory"]
+        records: dict[str, MagicMock] = {}
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        finished = asyncio.Event()
+        release_second = asyncio.Event()
+        started: list[tuple[str, str | None]] = []
+
+        async def _create_scenario(*args: object, **kwargs: object) -> MagicMock:
+            run_id = f"run-{len(records) + 1}"
+            record = _make_db_scenario_result(result_id=run_id, run_state=ScenarioRunState.CREATED)
+            records[run_id] = record
+            scenario = MagicMock()
+            scenario._scenario_result_id = run_id
+            scenario.active_atomic_group_ids = set()
+
+            async def _run() -> None:
+                started.append((run_id, get_caller_principal()))
+                if run_id == "run-1":
+                    first_started.set()
+                    await release_first.wait()
+                else:
+                    finished.set()
+                    await release_second.wait()
+                record.scenario_run_state = ScenarioRunState.COMPLETED
+
+            scenario.run_async = AsyncMock(side_effect=_run)
+            return scenario
+
+        def _update_state(*, scenario_result_id: str, scenario_run_state: ScenarioRunState, **_: object) -> None:
+            records[scenario_result_id].scenario_run_state = scenario_run_state
+
+        def _get_results(*, scenario_result_ids: list[str] | None = None) -> list[MagicMock]:
+            return [records[run_id] for run_id in scenario_result_ids or records if run_id in records]
+
+        mock_all_registries["scenario_registry"].create_and_initialize_async = AsyncMock(side_effect=_create_scenario)
+        mock_memory.get_scenario_results_async = AsyncMock(side_effect=_get_results)
+        mock_memory.get_scenario_result_header_async = AsyncMock(
+            side_effect=lambda *, scenario_result_id: records.get(scenario_result_id)
+        )
+        mock_memory.update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
+        mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
+        mock_memory.update_scenario_run_state_and_metadata_fields_async = AsyncMock(side_effect=_update_state)
+
+        with caller_principal_scope("alice"):
+            await service.start_run_async(request=_make_request())
+        first_task = service._active_tasks["run-1"].task
+        assert first_task is not None
+        owned: list[asyncio.Task[None]] = [first_task]
+        try:
+            await wait_for_event_async(event=first_started, tasks=[first_task])
+            with caller_principal_scope("bob"):
+                queued = await service.start_run_async(request=_make_request())
+            release_first.set()
+            await wait_for_completion_async(future=first_task)
+            # The scheduler hands off to run-2 in its own task, so observe run-2's start by its event.
+            await wait_for_event_async(event=finished, tasks=[])
+            second_task = service._active_tasks["run-2"].task
+            assert second_task is not None
+            owned.append(second_task)
+            release_second.set()
+            await wait_for_completion_async(future=second_task)
+        finally:
+            release_first.set()
+            release_second.set()
+            await settle_tasks_async(*owned)
+
+        assert queued.status == ScenarioRunState.QUEUED
+        assert started == [("run-1", "alice"), ("run-2", "bob")]
 
     async def test_start_run_forwards_include_baseline(self, mock_all_registries) -> None:
         service = ScenarioRunService()

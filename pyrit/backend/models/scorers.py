@@ -50,12 +50,19 @@ class CreateScorerRequest(RegistrationRequest):
         description=(
             "Save the scorer so it comes back after the backend restarts or is reinitialized (true), or keep it "
             "only until then (false). A saved scorer needs a name of lowercase letters, digits, and underscores, "
-            "and can't hold or use a key."
+            "and can't hold or use a key or be private."
         ),
     )
     type: IdentifierStr = Field(..., description="Scorer class name")
     params: dict[IdentifierStr, JSONValue] = Field(
         default_factory=dict, max_length=MAX_ITEMS, description="Scorer constructor parameters"
+    )
+    private: bool | None = Field(
+        None,
+        description=(
+            "Whether only the signed-in user who creates it can see and use it. Omitted, it is shared, unless "
+            "it is built on your private targets; then it is private and false is refused. true requires register=true."
+        ),
     )
 
     @model_validator(mode="after")
@@ -73,6 +80,9 @@ class CreateScorerRequest(RegistrationRequest):
         if self.name is None:
             raise ValueError("persist requires a name")
         validate_registry_name(self.name)
+        # A saved scorer is restored with no caller, so it would come back shared.
+        if self.private:
+            raise ValueError("A private scorer can't be saved; leave out persist or private")
         return self
 
 
