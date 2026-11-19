@@ -474,13 +474,7 @@ class AssertPolicy(Scenario):
         Returns:
             str | None: The incompatibility reason, or None when ASSERT's scoring is accepted.
         """
-        required = factory.scoring_config_type
-        if required is not None and not issubclass(AttackScoringConfig, required):
-            return f"{required.__name__} cannot accept ASSERT's scoring configuration."
-        if scorer is None:
-            return None
-        missing = factory.requirements.check_objective_scorer(scorer=scorer, attack_class=factory.attack_class)
-        return " ".join(missing) or None
+        return " ".join(factory.check_objective_scorer(scorer=scorer)) or None
 
     def _apply_turn_limit(self, factory: AttackTechniqueFactory) -> AttackTechniqueFactory:
         """

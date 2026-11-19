@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy
     from pyrit.models import AttackTechniqueSeedGroup
     from pyrit.prompt_target import PromptTarget
-    from pyrit.score import Scorer
 
 logger = logging.getLogger(__name__)
 
@@ -97,19 +96,6 @@ class TechniqueRequirements:
             *attack_class.TARGET_REQUIREMENTS.check(target=target),
             *self.objective_target.check(target=target),
         ]
-
-    def check_objective_scorer(self, *, scorer: Scorer, attack_class: type[AttackStrategy[Any, Any]]) -> list[str]:
-        """
-        Check a configured objective scorer against the attack's and the technique's needs.
-
-        Args:
-            scorer (Scorer): The objective scorer the run would give the attack.
-            attack_class (type[AttackStrategy]): The technique's attack class.
-
-        Returns:
-            list[str]: Every capability the scorer lacks; empty when it qualifies.
-        """
-        return self.objective_scorer_for(attack_class=attack_class).check(scorer=scorer)
 
     def validate_target(self, *, target: PromptTarget, attack_class: type[AttackStrategy[Any, Any]]) -> None:
         """

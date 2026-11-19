@@ -66,6 +66,7 @@ class AdaptiveScenario(Scenario):
     """
 
     VERSION: ClassVar[int]
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = True
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @classmethod
@@ -355,9 +356,7 @@ class AdaptiveScenario(Scenario):
             ):
                 skipped_incompatible[technique_name] = "objective target requirements are not met"
                 continue
-            missing = factory.requirements.check_objective_scorer(
-                scorer=self._objective_scorer, attack_class=factory.attack_class
-            )
+            missing = factory.check_objective_scorer(scorer=self._objective_scorer)
             if missing:
                 reason = "scenario scorer is incompatible: " + " ".join(missing)
                 if context.incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:

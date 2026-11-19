@@ -101,6 +101,7 @@ from pyrit.scenario.scenarios.benchmark.adversarial import (
 )
 from pyrit.score import MessageScorable, TrueFalseCompositeScorer, TrueFalseInverterScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
+from tests.unit.mocks import accept_scenario_scoring
 
 # ---------------------------------------------------------------------------
 # Module-level constants derived from the canonical factory catalog
@@ -224,6 +225,7 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     # The benchmark derives a prefixed factory explicitly before building; returning
     # the same mock keeps existing `factory.create` assertions valid.
     factory.with_adversarial_system_prompt_prefix.return_value = factory
+    accept_scenario_scoring(factory)
     AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
     return factory
 
@@ -1108,6 +1110,7 @@ class TestGetAtomicAttacksCrossProduct:
             requirements=registered_factory.requirements,
             seed_technique=registered_factory.seed_technique,
         )
+        accept_scenario_scoring(override_factory)
         override_factory.create.return_value = registered_factory.create.return_value
         registered_factory.with_attack_kwargs.return_value = override_factory
         override_factory.with_adversarial_system_prompt_prefix.return_value = override_factory

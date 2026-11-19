@@ -48,6 +48,7 @@ from pyrit.score import (
     ScorerRequirements,
     SubStringScorer,
 )
+from tests.unit.mocks import accept_scenario_scoring
 
 HATE = "harm.hate"
 VIOLENCE = "harm.violence"
@@ -64,11 +65,10 @@ def _factory(
     factory.seed_technique = None
     factory.adversarial_chat = None
     factory.attack_class = attack_class
-    factory.scoring_config_type = AttackScoringConfig
     factory.requirements = requirements or TechniqueRequirements()
     factory.resolve_adversarial_chat.return_value = None
     factory.create.side_effect = lambda **_: AttackTechnique(attack=MagicMock(spec=AttackStrategy))
-    return factory
+    return accept_scenario_scoring(factory)
 
 
 def _group(objective: str, *, tools: tuple[str, ...] = ()) -> AttackSeedGroup:
@@ -378,6 +378,44 @@ class TestTapSelection:
         assert attacks == []
         tap.create.assert_not_called()
         assert "requires 'preserves_float_scale_value'" in caplog.text
+
+
+class _NarrowScoringConfig(AttackScoringConfig):
+    pass
+
+
+class _NarrowScoringAttack(PromptSendingAttack):
+    def __init__(
+        self, *, objective_target: PromptTarget, attack_scoring_config: _NarrowScoringConfig | None = None
+    ) -> None:
+        super().__init__(objective_target=objective_target, attack_scoring_config=attack_scoring_config)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScoringConfigCompatibility:
+    """An attack that would drop the scenario's plain scoring config never runs with its own judge."""
+
+    @pytest.mark.parametrize("pooled", [False, True])
+    def test_the_attack_is_skipped_with_its_reason(self, pooled: bool, caplog: pytest.LogCaptureFixture) -> None:
+        scorer = SubStringScorer(substring="x")
+        narrow = AttackTechniqueFactory(name="narrow", attack_class=_NarrowScoringAttack)
+        with caplog.at_level(logging.WARNING), patch.object(narrow, "create", side_effect=AssertionError("built")):
+            attacks = _builder(CompatibleScorers(candidates=[scorer]) if pooled else scorer).build(
+                technique_factories={"narrow": narrow, "plain": _factory(name="plain")},
+                dataset_groups={"d": [_group("o1")]},
+            )
+        assert [attack.atomic_attack_name for attack in attacks] == ["plain_d"]
+        assert "requires _NarrowScoringConfig" in caplog.text
+
+    @pytest.mark.parametrize("pooled", [False, True])
+    def test_the_attack_is_rejected_under_raise(self, pooled: bool) -> None:
+        scorer = SubStringScorer(substring="x")
+        narrow = AttackTechniqueFactory(name="narrow", attack_class=_NarrowScoringAttack)
+        builder = _builder(
+            CompatibleScorers(candidates=[scorer]) if pooled else scorer, policy=IncompatibleTechniquePolicy.RAISE
+        )
+        with pytest.raises(IncompatibleTechniqueError, match="requires _NarrowScoringConfig"):
+            builder.build(technique_factories={"narrow": narrow}, dataset_groups={"d": [_group("o1")]})
 
 
 def _threshold_scorer() -> FloatScaleThresholdScorer:

@@ -100,6 +100,26 @@ class TestWhoPromises:
         assert _keeps_float(wrapper) is expected
 
 
+class TestDeclaredCapabilities:
+    def test_the_promise_cannot_be_declared_apart_from_the_hook_that_enforces_it(self):
+        with pytest.raises(TypeError, match="_preserves_float_scale_value"):
+
+            class _Declared(TrueFalseScorer):
+                CAPABILITIES = TrueFalseScorer.CAPABILITIES | {ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE}
+
+    def test_a_scorer_cannot_return_both_result_families(self):
+        with pytest.raises(TypeError, match="both"):
+
+            class _Both(TrueFalseScorer, FloatScaleScorer):
+                pass
+
+    def test_a_subclass_keeps_its_base_result_family(self):
+        with pytest.raises(TypeError, match="must keep"):
+
+            class _Dropped(TrueFalseScorer):
+                CAPABILITIES = frozenset()
+
+
 class TestPublicBoundary:
     async def test_a_complete_verdict_without_the_value_is_rejected(self, sqlite_instance: MemoryInterface):
         judge = _Judge(promises=True)

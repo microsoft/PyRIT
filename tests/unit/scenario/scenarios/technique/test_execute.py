@@ -100,6 +100,17 @@ class _Scale(FloatScaleScorer):
         return []
 
 
+class _NarrowScoringConfig(AttackScoringConfig):
+    pass
+
+
+class _NarrowScoringAttack(PromptSendingAttack):
+    def __init__(
+        self, *, objective_target: MockPromptTarget, attack_scoring_config: _NarrowScoringConfig | None = None
+    ) -> None:
+        super().__init__(objective_target=objective_target, attack_scoring_config=attack_scoring_config)
+
+
 @pytest.fixture
 def scorer() -> MagicMock:
     result = MagicMock(spec=TrueFalseScorer)
@@ -793,6 +804,14 @@ class TestExecute:
         scenario = _scenario(scorer=SubStringScorer(substring="x"), scenario_techniques=["tap"])
         with pytest.raises(IncompatibleTechniqueError, match="requires 'preserves_float_scale_value'"):
             await scenario.initialize_async()
+
+    async def test_an_attack_that_would_drop_the_scenario_scorer_is_rejected_async(self, *, scorer: MagicMock) -> None:
+        factory = AttackTechniqueFactory(name="narrow_scoring", attack_class=_NarrowScoringAttack)
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        scenario = _scenario(scorer=scorer, scenario_techniques=["narrow_scoring"])
+        with patch.object(factory, "create", side_effect=AssertionError("Constructed incompatible technique")):
+            with pytest.raises(IncompatibleTechniqueError, match="requires _NarrowScoringConfig"):
+                await scenario.initialize_async()
 
     async def test_tap_judges_with_the_scenario_scorer_async(self) -> None:
         scorer = FloatScaleThresholdScorer(scorer=_Scale(), threshold=0.7)

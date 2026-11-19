@@ -24,7 +24,7 @@ from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.scenario import AttackTechnique, AttackTechniqueFactory
 from pyrit.scenario.core import ScorerOverridePolicy
-from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.score import Scorer, SubStringScorer, TrueFalseScorer
 
 if TYPE_CHECKING:
     # The regression tests bind these names only after constructing each factory.
@@ -1572,3 +1572,45 @@ class TestScoreFeedbackOverride:
 
         assert technique.attack.attack_scoring_config.use_score_as_feedback is False
         assert prefixed.get_identifier().params["use_score_as_feedback"] is False
+
+
+class _NarrowConfigAttack(_StubAttack):
+    def __init__(self, *, objective_target: PromptTarget, attack_scoring_config: _NarrowScoringConfig | None = None):
+        self.attack_scoring_config = attack_scoring_config
+
+
+class _UnscoredAttack(_StubAttack):
+    def __init__(self, *, objective_target: PromptTarget):
+        pass
+
+
+class TestCheckObjectiveScorer:
+    """Scenarios check before construction that their plain scoring config would reach the attack."""
+
+    def test_an_attack_taking_a_plain_config_passes(self):
+        assert AttackTechniqueFactory(name="test", attack_class=_StubAttack).check_objective_scorer() == []
+
+    def test_an_attack_requiring_a_narrower_config_is_reported(self):
+        errors = AttackTechniqueFactory(name="test", attack_class=_NarrowConfigAttack).check_objective_scorer()
+        assert errors == [
+            (
+                "Scorer config of type AttackScoringConfig is incompatible with _NarrowConfigAttack "
+                "(requires _NarrowScoringConfig)."
+            )
+        ]
+
+    def test_an_attack_without_a_scoring_config_is_reported(self):
+        errors = AttackTechniqueFactory(name="test", attack_class=_UnscoredAttack).check_objective_scorer()
+        assert errors == ["_UnscoredAttack does not accept 'attack_scoring_config'."]
+
+    @pytest.mark.usefixtures("patch_central_database")
+    def test_the_scorer_is_checked_against_the_attack_requirements(self):
+        scorer = SubStringScorer(substring="x")
+        assert (
+            AttackTechniqueFactory(name="send", attack_class=PromptSendingAttack).check_objective_scorer(scorer=scorer)
+            == []
+        )
+        errors = AttackTechniqueFactory(name="tap", attack_class=TreeOfAttacksWithPruningAttack).check_objective_scorer(
+            scorer=scorer
+        )
+        assert any("requires 'preserves_float_scale_value'" in error for error in errors)

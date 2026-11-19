@@ -296,9 +296,7 @@ class Execute(Scenario):
             policy=context.incompatible_technique_policy,
         ):
             raise IncompatibleTechniqueError(f"Technique '{name}' is incompatible with the objective target")
-        missing = factory.requirements.check_objective_scorer(
-            scorer=self._objective_scorer, attack_class=factory.attack_class
-        )
+        missing = factory.check_objective_scorer(scorer=self._objective_scorer)
         if missing:
             raise IncompatibleTechniqueError(
                 f"Technique '{name}' is incompatible with the objective scorer:\n" + "\n".join(missing)

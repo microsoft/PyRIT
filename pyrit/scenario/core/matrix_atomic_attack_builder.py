@@ -470,8 +470,8 @@ class MatrixAtomicAttackBuilder:
         Raises:
             ValueError: If no allowed scorer can judge every objective of a dataset, whatever
                 the policy, since dropping those objectives would lose requested work silently.
-            IncompatibleTechniqueError: If a technique's own scorer needs fit no candidate and
-                the policy is RAISE.
+            IncompatibleTechniqueError: If a technique cannot use the scenario's scoring configuration,
+                or its own scorer needs fit no candidate, and the policy is RAISE.
         """
         name_fn = name_fn or _default_atomic_attack_name
         display_group_fn = display_group_fn or _default_display_group
@@ -496,6 +496,14 @@ class MatrixAtomicAttackBuilder:
                 technique_name=technique_name,
                 policy=self._incompatible_technique_policy,
             ):
+                continue
+            if scoring_errors := factory.check_objective_scorer():
+                message = f"Technique '{technique_name}' is incompatible with the objective scorer:\n" + "\n".join(
+                    scoring_errors
+                )
+                if self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
+                    raise IncompatibleTechniqueError(message)
+                logger.warning("Skipping %s", message)
                 continue
             compatible_datasets = {
                 name: filter_seed_groups(

@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.assert_mocks import make_assert_config, make_assert_result
 
-from pyrit.executor.attack import AttackStrategy, PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack import AttackScoringConfig, AttackStrategy, PromptSendingAttack, RedTeamingAttack
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
@@ -51,7 +51,7 @@ from pyrit.scenario.scenarios.adaptive import (
 )
 from pyrit.score import SubStringScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques.core import get_technique_factories
-from tests.unit.mocks import MockPromptTarget
+from tests.unit.mocks import MockPromptTarget, accept_scenario_scoring
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -124,6 +124,17 @@ def _make_seed_group(*, value: str, harm_categories: list[str] | None = None) ->
     return AttackSeedGroup(seeds=[SeedObjective(value=value, harm_categories=harm_categories)])
 
 
+class _NarrowScoringConfig(AttackScoringConfig):
+    pass
+
+
+class _NarrowScoringAttack(PromptSendingAttack):
+    def __init__(
+        self, *, objective_target: PromptTarget, attack_scoring_config: _NarrowScoringConfig | None = None
+    ) -> None:
+        super().__init__(objective_target=objective_target, attack_scoring_config=attack_scoring_config)
+
+
 def _make_fake_factory(
     *,
     seed_technique: AttackTechniqueSeedGroup | None = None,
@@ -155,7 +166,7 @@ def _make_fake_factory(
     factory.create.return_value = fake_technique
     factory.adversarial_chat = adversarial_chat
     factory.resolve_adversarial_chat.return_value = adversarial_chat
-    return factory
+    return accept_scenario_scoring(factory)
 
 
 FIXTURES = ["patch_central_database", "mock_runtime_env", "mock_dataset_preparation"]
@@ -853,6 +864,47 @@ class TestTextAdaptiveAtomicAttacks:
         ranking_factory.create.assert_not_called()
         assert {b.name for b in techniques.values()} == {"role_play_movie_script"}
         assert any("requires 'preserves_float_scale_value'" in r.getMessage() for r in caplog.records)
+
+    async def test_a_technique_that_would_drop_the_scenario_scorer_is_skipped(
+        self, mock_objective_target, mock_objective_scorer, caplog
+    ):
+        """An attack whose annotation drops a plain scoring config never runs with its own judge."""
+        import logging
+
+        groups = {"violence": [_make_seed_group(value="obj")]}
+        narrow = AttackTechniqueFactory(name="many_shot", attack_class=_NarrowScoringAttack)
+        factories = {"role_play_movie_script": _make_fake_factory(), "many_shot": narrow}
+
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
+            scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
+            technique_class = scenario.get_technique_class()
+            with (
+                patch.object(scenario, "_get_attack_technique_factories", return_value=factories),
+                patch.object(narrow, "create", side_effect=AssertionError("Constructed incompatible technique")),
+                caplog.at_level(logging.WARNING),
+            ):
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                        "scenario_techniques": [
+                            technique_class("role_play_movie_script"),
+                            technique_class("many_shot"),
+                        ],
+                    }
+                )
+                await scenario.initialize_async()
+                techniques = scenario._build_techniques_dict(
+                    context=scenario._build_scenario_context(seed_groups_by_dataset={})
+                )
+
+        assert {b.name for b in techniques.values()} == {"role_play_movie_script"}
+        assert any("requires _NarrowScoringConfig" in r.getMessage() for r in caplog.records)
 
     async def test_factory_create_failure_propagates_async(self, mock_objective_target, mock_objective_scorer):
         """Unrelated factory construction errors must not become skipped work."""
