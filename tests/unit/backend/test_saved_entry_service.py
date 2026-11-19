@@ -45,9 +45,10 @@ from pyrit.registry import (
     SavedEntryStorageError,
     ScorerRegistry,
     TargetRegistry,
+    owner_metadata,
 )
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
-from pyrit.registry.instance_registry import owner_metadata, registration_origin, registry_entry_origin
+from pyrit.registry.instance_registry import registration_origin, registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from unit.async_utils import TEST_WATCHDOG_SECONDS

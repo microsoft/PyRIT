@@ -28,9 +28,9 @@ from pyrit.models.catalog import (
     SavedEntryRef,
     StoredRecipe,
 )
-from pyrit.registry import SavedEntryStorageError
+from pyrit.registry import SavedEntryStorageError, is_visible_to_caller
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
-from pyrit.registry.instance_registry import is_visible_to_caller, registry_entry_origin
+from pyrit.registry.instance_registry import registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 
