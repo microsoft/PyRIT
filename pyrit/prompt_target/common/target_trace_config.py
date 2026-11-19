@@ -40,8 +40,10 @@ def target_trace_context(
         yield
         return
 
+    conversation_id = request.get_piece().conversation_id
+    attributes = {"session.id": conversation_id, "pyrit.conversation_id": conversation_id} if conversation_id else {}
     span_context = (
-        config.tracer.start_as_current_span("pyrit.target", context=Context())
+        config.tracer.start_as_current_span("pyrit.target", context=Context(), attributes=attributes)
         if config.tracer is not None
         else use_span(
             NonRecordingSpan(

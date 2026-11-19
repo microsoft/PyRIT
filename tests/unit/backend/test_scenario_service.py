@@ -17,6 +17,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
+from pyrit.auth import caller_principal_scope, get_caller_principal
 from pyrit.backend.main import app
 from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.routes.scenarios import estimate_scenario_run_size
@@ -40,8 +41,8 @@ from pyrit.models import (
 )
 from pyrit.models.catalog import RegisteredScenario
 from pyrit.prompt_target import TargetCapabilities
-from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry, TargetRegistry
-from pyrit.scenario import Scenario
+from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry, TargetRegistry, owner_metadata
+from pyrit.scenario import DatasetSource, Scenario
 from pyrit.scenario.core import (
     AttackTechniqueFactory,
     DatasetAttackConfiguration,
@@ -54,6 +55,9 @@ from pyrit.scenario.scenarios.garak import Exploitation
 from pyrit.score import SubStringScorer
 from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks
 from unit.mocks import MockPromptTarget, make_technique_class
+
+# The estimate key's registry view when the caller sees no private entries.
+_SHARED_VIEW = (None, None, None)
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -421,7 +425,7 @@ class TestAdversarialEstimateScope:
         def construct() -> MagicMock:
             introspected.append(get_default_adversarial_target())
             scenario = MagicMock(spec=Scenario)
-            scenario._default_dataset_config = DatasetAttackConfiguration(dataset_names=["test_dataset"])
+            scenario._default_dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="test_dataset")])
             scenario.supported_parameters.return_value = Scenario.supported_parameters()
             return scenario
 
@@ -668,6 +672,62 @@ class TestScenarioServiceListScenarios:
         assert result == estimate
         prepare.assert_not_awaited()
 
+    @pytest.mark.usefixtures("patch_central_database")
+    async def test_default_estimates_are_shared_only_by_callers_who_see_the_same_entries_async(self) -> None:
+        """An estimate that could use one caller's private target is never reused for a caller who can't see it."""
+        metadata = _make_scenario_metadata()
+        estimate = ScenarioRunSizeEstimate(
+            total_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        seen: list[str | None] = []
+
+        async def estimate_async() -> ScenarioRunSizeEstimate:
+            seen.append(get_caller_principal())
+            return estimate
+
+        scenario = MagicMock()
+        scenario.get_default_run_size_estimate_async = AsyncMock(side_effect=estimate_async)
+        TargetRegistry.reset_registry_singleton()
+        TargetRegistry.get_registry_singleton().instances.register(
+            MockPromptTarget(), name="mine", metadata=owner_metadata("alice", private=True)
+        )
+
+        try:
+            with patch.object(ScenarioService, "__init__", lambda self: None):
+                service = ScenarioService()
+                service._registry = MagicMock()
+                service._registry.create_instance.return_value = scenario
+
+                for caller in ("alice", "bob", "carol", "alice", None):
+                    with caller_principal_scope(caller):
+                        assert await service._get_default_run_size_estimate_async(metadata=metadata) == estimate
+        finally:
+            TargetRegistry.reset_registry_singleton()
+
+        assert seen == ["alice", "bob"]
+
+    @pytest.mark.usefixtures("patch_central_database")
+    def test_configured_estimates_are_keyed_by_what_the_caller_can_see(self) -> None:
+        """A configured estimate that names a private target is never reused for another caller."""
+        request = ScenarioRunSizeEstimateRequest(target_name="mine")
+        TargetRegistry.reset_registry_singleton()
+        TargetRegistry.get_registry_singleton().instances.register(
+            MockPromptTarget(), name="mine", metadata=owner_metadata("alice", private=True)
+        )
+
+        def key(caller: str | None) -> object:
+            with caller_principal_scope(caller):
+                return ScenarioService._build_configured_estimate_key(
+                    scenario_name="test.scenario", scenario_class=MagicMock, request=request
+                )
+
+        try:
+            assert key("bob") == key(None)
+            assert key("alice") != key("bob")
+        finally:
+            TargetRegistry.reset_registry_singleton()
+
     async def test_concurrent_estimate_reads_share_one_task_async(self, *, estimate_watchdog_seconds: float) -> None:
         """Concurrent catalog readers share one atomic single-flight estimate."""
         metadata = _make_scenario_metadata()
@@ -852,13 +912,14 @@ class TestScenarioServiceListScenarios:
         async def cancelled_estimate_async(
             *,
             scenario_name: str,
-            cache_key: tuple[str, int, tuple[object, int]],
+            cache_key: tuple[str, int, tuple[object, int, str | None], tuple[str | None, ...]],
         ) -> ScenarioRunSizeEstimate:
             assert scenario_name == metadata.registry_name
             assert cache_key == (
                 metadata.registry_name,
                 metadata.scenario_version,
                 AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+                _SHARED_VIEW,
             )
             started.set()
             await blocked.wait()
@@ -874,6 +935,7 @@ class TestScenarioServiceListScenarios:
                 metadata.registry_name,
                 metadata.scenario_version,
                 AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+                _SHARED_VIEW,
             )
         ].cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -1706,7 +1768,7 @@ class TestScenarioServiceListScenarios:
 
         assert service._registry.create_instance.call_count == 2
         assert list(service._estimate_cache) == [
-            ("test.scenario", 2, AttackTechniqueRegistry.get_registry_singleton().catalog_revision)
+            ("test.scenario", 2, AttackTechniqueRegistry.get_registry_singleton().catalog_revision, _SHARED_VIEW)
         ]
 
     async def test_list_scenarios_preserves_disabled_baseline_policy(self) -> None:
@@ -1800,7 +1862,7 @@ class TestScenarioServiceGetScenario:
     async def test_estimate_resolves_total_limit_async(
         self, *, limit_args: dict[str, int | str | None], expected: int | str
     ) -> None:
-        original = DatasetAttackConfiguration(dataset_names=["harmbench"], max_total=20)
+        original = DatasetAttackConfiguration(sources=[DatasetSource(name="harmbench")], max_total=20)
         scenario_class = MagicMock()
         scenario_class.return_value._default_dataset_config = original
         scenario_class.return_value.supported_parameters.return_value = Scenario.supported_parameters()
@@ -1848,7 +1910,9 @@ class TestScenarioServiceGetScenario:
         )
         introspection_instance = MagicMock()
         introspection_instance._technique_class = _EstimateTechnique
-        introspection_instance._default_dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"])
+        introspection_instance._default_dataset_config = DatasetAttackConfiguration(
+            sources=[DatasetSource(name="harmbench")]
+        )
         introspection_instance.supported_parameters.return_value = Scenario.supported_parameters()
         scenario_class = MagicMock(return_value=introspection_instance)
         scenario_class.supported_parameters.return_value = [
@@ -1908,7 +1972,9 @@ class TestScenarioServiceGetScenario:
         metadata = _make_scenario_metadata(registry_name="airt.jailbreak")
         introspection_instance = MagicMock()
         introspection_instance._technique_class = _EstimateTechnique
-        introspection_instance._default_dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"])
+        introspection_instance._default_dataset_config = DatasetAttackConfiguration(
+            sources=[DatasetSource(name="harmbench")]
+        )
         introspection_instance.supported_parameters.return_value = Scenario.supported_parameters()
         scenario_class = MagicMock(return_value=introspection_instance)
 
@@ -1935,7 +2001,9 @@ class TestScenarioServiceGetScenario:
         )
         introspection_instance = MagicMock()
         introspection_instance._technique_class = _EstimateTechnique
-        introspection_instance._default_dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"])
+        introspection_instance._default_dataset_config = DatasetAttackConfiguration(
+            sources=[DatasetSource(name="harmbench")]
+        )
         introspection_instance.supported_parameters.return_value = Scenario.supported_parameters()
         scenario_class = MagicMock(return_value=introspection_instance)
 

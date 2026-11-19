@@ -515,3 +515,46 @@ async def test_words_the_model_skips_are_not_requested_again(sqlite_instance):
 
     assert mock.call_count == 1
     assert result.output_text.count("Hint:") == 1
+
+
+# --- private helper unit behavior ------------------------------------------
+
+
+def test_clue_line_without_semantics():
+    masked = keyword_masker.MaskedWord(text="secret", placeholder="[WORD1]", pos="word")
+    assert PuzzledConverter._clue_line(masked, semantics={}) == "[WORD1] = 6-letter word"
+
+
+def test_clue_line_with_semantics():
+    masked = keyword_masker.MaskedWord(text="secret", placeholder="[WORD1]", pos="word")
+    semantics = {"secret": "something kept hidden"}
+    assert (
+        PuzzledConverter._clue_line(masked, semantics=semantics)
+        == "[WORD1] = 6-letter word. Hint: something kept hidden"
+    )
+
+
+def test_parse_semantic_clues_valid_json():
+    raw = '{"steal": "take unlawfully", "documents": "official papers"}'
+    result = PuzzledConverter._parse_semantic_clues(raw, words=["steal", "documents"])
+    assert result == {"steal": "take unlawfully", "documents": "official papers"}
+
+
+def test_parse_semantic_clues_markdown_code_fence():
+    raw = '```json\n{"steal": "take unlawfully"}\n```'
+    result = PuzzledConverter._parse_semantic_clues(raw, words=["steal"])
+    assert result == {"steal": "take unlawfully"}
+
+
+def test_parse_semantic_clues_empty_returns_empty():
+    assert PuzzledConverter._parse_semantic_clues("", words=["steal"]) == {}
+
+
+def test_parse_semantic_clues_filters_unrequested_and_non_string():
+    raw = '{"steal": "take unlawfully", "other": "ignored", "documents": 123, "empty": ""}'
+    result = PuzzledConverter._parse_semantic_clues(raw, words=["steal", "documents", "empty"])
+    assert result == {"steal": "take unlawfully"}
+
+
+def test_parse_semantic_clues_invalid_json_returns_empty():
+    assert PuzzledConverter._parse_semantic_clues("not a json", words=["steal"]) == {}
