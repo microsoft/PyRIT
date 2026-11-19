@@ -38,6 +38,7 @@ class CharacterSpaceConverter(Converter):
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
-        clean_text = _PUNCTUATION_PATTERN.sub("", prompt)
-        converted_text = " ".join(graphemes(clean_text))
+        # Split before removing punctuation, so a keycap emoji such as #\ufe0f\u20e3 stays whole
+        clusters = [cluster for cluster in graphemes(prompt) if not _PUNCTUATION_PATTERN.fullmatch(cluster)]
+        converted_text = " ".join(clusters)
         return ConverterResult(output_text=converted_text, output_type="text")
