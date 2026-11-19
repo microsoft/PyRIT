@@ -387,7 +387,10 @@ def accept_scenario_scoring(factory: MagicMock) -> MagicMock:
     def check_objective_scorer(*, scorer: Any = None) -> list[str]:
         if scorer is None:
             return []
-        return factory.requirements.objective_scorer_for(attack_class=factory.attack_class).check(scorer=scorer)
+        problems: list[str] = factory.requirements.objective_scorer_for(attack_class=factory.attack_class).check(
+            scorer=scorer
+        )
+        return problems
 
     factory.check_objective_scorer.side_effect = check_objective_scorer
     return factory
