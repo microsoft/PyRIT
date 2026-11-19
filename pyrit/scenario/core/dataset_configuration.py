@@ -168,9 +168,9 @@ class DatasetSource:
     name: concurrent runs can otherwise generate and store different batches.
 
     ``scorer_requirements`` states what this dataset needs judged, such as the evaluation
-    its objectives promise. Scenarios that set ``ENFORCES_DATASET_SCORER_REQUIREMENTS`` select
-    or check an objective scorer that meets it; other scenarios reject a source that declares
-    it. Overrides of the same source keep it.
+    its objectives promise. Scenarios that set ``SUPPORTS_OBJECTIVE_SCORER_POOL`` select or
+    check an objective scorer that meets it; other scenarios reject a source that declares it.
+    Overrides of the same source keep it.
     """
 
     name: str

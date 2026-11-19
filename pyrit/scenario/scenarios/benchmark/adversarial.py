@@ -132,6 +132,11 @@ class AdversarialBenchmark(Scenario):
     ``AtomicAttack`` is named ``f"{technique}__{target}_{dataset}"`` with
     ``display_group`` set to the target's registry name so per-model ASR
     rolls up naturally in result displays.
+
+    The default composite objective scorer does not provide graded float feedback, so TAP is
+    skipped under the default incompatibility policy. To include TAP, supply an objective scorer
+    that preserves float feedback, such as a ``FloatScaleThresholdScorer``. The ``raise`` policy
+    rejects the incompatible combination instead of replacing the configured judge.
     """
 
     #: Bumped from 1 → 2 by the refactor that moved adversarial targets
@@ -149,10 +154,12 @@ class AdversarialBenchmark(Scenario):
     #: default to task-achievement evaluation that supports the benchmark's broad
     #: behavior taxonomy.
     #: Bumped from 6 → 7 when named-source limits became independent of the total cap.
+    #: Bumped from 7 to 8 when TAP began requiring the benchmark's objective scorer to
+    #: preserve float feedback instead of using a substitute judge.
     #: ``VERSION`` participates in resume identity, so older results cannot be resumed
-    #: as v7. Cache reuse also requires this version so implementation changes cannot
+    #: as v8. Cache reuse also requires this version so implementation changes cannot
     #: silently reuse results produced by an incompatible benchmark definition.
-    VERSION: int = 7
+    VERSION: int = 8
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.

@@ -229,6 +229,25 @@ await output_score_async([attack_result.last_score])
 # [Common Scenario Parameters](../scenarios/1_common_scenario_parameters.ipynb) shows both on a real run.
 
 # %% [markdown]
+# ## Printing Suite Results
+#
+# `output_scenario_suite_async` prints a `ScenarioSuiteExecutionSummary` with each submitted
+# entry's stored scenario result. Every entry appears in declared order, including running,
+# failed, and never-submitted entries; entries without a stored result show as unavailable.
+#
+# ```python
+# from pyrit.output import output_scenario_suite_async
+#
+# await output_scenario_suite_async(execution)
+# await output_scenario_suite_async(execution, format="json")
+# ```
+#
+# Each entry's success rate is computed like the scenario report's: only the latest outcome
+# of each objective execution counts, including errors and undetermined outcomes. There is
+# no suite-wide rate. To render results you already hold, pass them as `results=` (keyed by
+# scenario result ID) to a printer in `pyrit.output.scenario_suite_result`.
+
+# %% [markdown]
 # ## Sinks — Redirecting Output
 #
 # All printers write through a **Sink**. The default is `StdoutSink`, but you
@@ -340,7 +359,8 @@ await conversation_printer.write_async(conversation)  # type: ignore
 # ├── conversation/              # Conversation/message rendering
 # ├── score/                     # Individual Score object rendering
 # ├── scorer/                    # Scorer metrics/evaluation display
-# └── scenario_result/           # Scenario result printing
+# ├── scenario_result/           # Scenario result printing
+# └── scenario_suite_result/     # Suite snapshot and per-entry result summaries
 # ```
 #
 # ### Composition Pattern
@@ -368,6 +388,7 @@ await conversation_printer.write_async(conversation)  # type: ignore
 # |----------|--------|---------|
 # | `output_attack_async` | Attack results | `pretty`, `markdown` |
 # | `output_scenario_async` | Scenario results | `pretty`, `json` |
+# | `output_scenario_suite_async` | Suite snapshot and child results | `pretty`, `json` |
 # | `output_scenario_attacks_async` | Scenario attack table | `pretty`, `json` |
 # | `output_scenario_conversations_async` | Scenario conversations | `json` |
 # | `output_scenario_full_async` | Scenario overview + conversations | `json`, `html` |

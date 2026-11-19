@@ -414,7 +414,16 @@ class Psychosocial(Scenario):
 
     VERSION: int = 7
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
-    ENFORCES_DATASET_SCORER_REQUIREMENTS: ClassVar[bool] = True
+
+    def _validate_dataset_scorer_requirements(self) -> None:
+        """
+        Accept dataset scorer requirements, which Psychosocial checks itself.
+
+        Each sub-harm's selection requires that sub-harm's evaluation key and rejects a source
+        that names the other sub-harm's key, so the base guard for scenarios that ignore these
+        requirements does not apply.
+        """
+        return
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:

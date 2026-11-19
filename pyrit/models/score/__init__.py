@@ -36,7 +36,6 @@ if TYPE_CHECKING:
         scoring_expectation_fingerprint,
     )
     from pyrit.models.score.float_feedback import (
-        FLOAT_FEEDBACK_METADATA_KEY,
         FloatFeedback,
         InvalidFloatFeedbackError,
     )
@@ -109,7 +108,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ContentWritten": "pyrit.models.score.condition",
     "DivergesFromRepetition": "pyrit.models.score.condition",
     "ExecutionStep": "pyrit.models.score.trace",
-    "FLOAT_FEEDBACK_METADATA_KEY": "pyrit.models.score.float_feedback",
     "FloatFeedback": "pyrit.models.score.float_feedback",
     "InvalidFloatFeedbackError": "pyrit.models.score.float_feedback",
     "ExecutionStepKind": "pyrit.models.score.trace",

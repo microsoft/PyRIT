@@ -64,7 +64,7 @@ class CapabilityHandlingPolicy:
 
         Raises:
             KeyError: If no behavior exists for the capability. This occurs for
-            non-adaptable capabilities (e.g., supports_multi_message_pieces).
+                non-adaptable capabilities (e.g., supports_multi_message_pieces).
         """
         try:
             return self.behaviors[capability]

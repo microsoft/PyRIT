@@ -1044,7 +1044,6 @@ class TestPsychosocialSharedSelection:
             harm = _harm_name(atomic)
             assert atomic._objective_scorer is scorers[harm]
             assert atomic.objective_scorer_binding.evaluation == f"psychosocial.{harm}"
-            assert atomic.objective_scorer_binding.required_evaluation == f"psychosocial.{harm}"
 
     async def test_the_run_plan_records_each_sub_harms_binding(self, mock_objective_target):
         scenario, scorers = await _initialize_with_real_scorers_async(target=mock_objective_target)

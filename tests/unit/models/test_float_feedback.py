@@ -6,7 +6,6 @@ import math
 import pytest
 
 from pyrit.models import (
-    FLOAT_FEEDBACK_METADATA_KEY,
     ComponentIdentifier,
     FloatFeedback,
     InvalidFloatFeedbackError,
@@ -15,7 +14,7 @@ from pyrit.models import (
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
 # Score metadata coerces booleans to integers, so a boolean is only rejected on construction.
-INVALID = [None, "0.5", math.nan, math.inf, -0.1, 1.5]
+INVALID = [None, "0.5", math.nan, math.inf, -0.1, 1.5, 10**400]
 
 
 def _score(metadata: dict | None) -> Score:
@@ -31,26 +30,26 @@ def _score(metadata: dict | None) -> Score:
 
 
 def test_the_existing_key_is_kept_so_stored_scores_need_no_migration():
-    assert FLOAT_FEEDBACK_METADATA_KEY == "original_float_value" == ORIGINAL_FLOAT_VALUE_KEY
+    assert FloatFeedback.METADATA_KEY == "original_float_value" == ORIGINAL_FLOAT_VALUE_KEY
 
 
 @pytest.mark.parametrize("value", [0.0, 0.6, 1.0, 1])
 def test_reads_a_usable_value(value):
-    score = _score({FLOAT_FEEDBACK_METADATA_KEY: value})
+    score = _score({FloatFeedback.METADATA_KEY: value})
     assert FloatFeedback.read(score) == FloatFeedback(value=float(value))
     assert FloatFeedback.require(score).value == float(value)
 
 
 @pytest.mark.parametrize("raw", INVALID)
 def test_ordinary_reads_treat_missing_or_unusable_data_as_unset(raw):
-    metadata = None if raw is None else {FLOAT_FEEDBACK_METADATA_KEY: raw}
+    metadata = None if raw is None else {FloatFeedback.METADATA_KEY: raw}
     assert FloatFeedback.read(_score(metadata)) is None
     assert FloatFeedback.read(None) is None
 
 
 @pytest.mark.parametrize("raw", INVALID)
 def test_strict_reads_reject_missing_or_unusable_data(raw):
-    metadata = {} if raw is None else {FLOAT_FEEDBACK_METADATA_KEY: raw}
+    metadata = {} if raw is None else {FloatFeedback.METADATA_KEY: raw}
     with pytest.raises(InvalidFloatFeedbackError, match="ThresholdLike promised a float value"):
         FloatFeedback.require(_score(metadata))
 
@@ -64,7 +63,16 @@ def test_an_invalid_value_cannot_be_constructed(raw):
 def test_writing_and_removing_copy_the_metadata():
     metadata = {"model": "judge"}
     written = FloatFeedback(value=0.4).write_to(metadata)
-    assert written == {"model": "judge", FLOAT_FEEDBACK_METADATA_KEY: 0.4}
+    assert written == {"model": "judge", FloatFeedback.METADATA_KEY: 0.4}
     assert metadata == {"model": "judge"}
     assert FloatFeedback.remove_from(written) == {"model": "judge"}
-    assert FLOAT_FEEDBACK_METADATA_KEY in written
+    assert FloatFeedback.METADATA_KEY in written
+
+
+def test_metadata_round_trip_preserves_unrelated_values():
+    feedback = FloatFeedback(value=0.0)
+    metadata = {"model": "judge", **feedback.to_metadata()}
+
+    assert FloatFeedback.from_metadata(metadata=metadata) == feedback
+    assert FloatFeedback.remove_from(metadata) == {"model": "judge"}
+    assert metadata == {"model": "judge", FloatFeedback.METADATA_KEY: 0.0}

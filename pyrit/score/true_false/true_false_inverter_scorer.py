@@ -16,7 +16,6 @@ from pyrit.models import (
     Score,
     ScoringExpectation,
 )
-from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.scorer import Scorer, SnapshotParticipation, _set_snapshot_participation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -161,7 +160,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             inv_score.set_value(not inv_score.get_value())
             # The wrapped threshold score's float describes the uninverted verdict, and
             # normalize_score_to_float would prefer it over this one.
-            if inv_score.score_metadata and ORIGINAL_FLOAT_VALUE_KEY in inv_score.score_metadata:
+            if inv_score.score_metadata:
                 inv_score.score_metadata = FloatFeedback.remove_from(inv_score.score_metadata)
             inv_score.score_value_description = "Inverted score: " + str(inv_score.score_value_description)
             inv_score.score_rationale = (

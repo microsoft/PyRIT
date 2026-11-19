@@ -337,7 +337,11 @@ class TestAddMessage:
             patch("pyrit.backend.services.message_send_service.PromptNormalizer") as mock_normalizer_cls,
         ):
             mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
+            target = _make_matching_target_mock()
+            # Unlike the TextTarget the mock stands in for, this target replies.
+            target.configuration.includes.side_effect = None
+            target.configuration.includes.return_value = True
+            mock_target_svc.get_target_object.return_value = target
             mock_get_target_svc.return_value = mock_target_svc
 
             mock_normalizer = MagicMock()
@@ -2510,6 +2514,9 @@ class TestNormalizerPersistence:
             request.request_converter_configurations = [ConverterConfigurationRequest(converter_ids=["base64"])]
         elif failure == "response-converter":
             request.response_converter_configurations = [ConverterConfigurationRequest(converter_ids=["base64"])]
+        if failure == "write-only":
+            # Only a target that declares no response support turns an empty reply into a delivery.
+            target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
         component = target if failure in {"target", "write-only"} else converter
         method = "_send_prompt_to_target_async" if failure in {"target", "write-only"} else "convert_async"
         with patch.object(

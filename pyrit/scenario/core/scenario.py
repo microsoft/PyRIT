@@ -182,14 +182,10 @@ class Scenario(ABC):
     #: an unavailable verdict is an expected result rather than a scenario error.
     RAISE_IF_DEFAULT_SCORER_BLOCKS: ClassVar[bool] = True
 
-    #: Whether the scenario accepts a ``CompatibleScorers`` pool as its objective scorer and
-    #: selects from it per attack population. Unmigrated scenarios reject pools explicitly.
+    #: Whether the scenario accepts a ``CompatibleScorers`` pool as its objective scorer, selects
+    #: from it per attack population, and checks ``DatasetSource.scorer_requirements``. Unmigrated
+    #: scenarios reject pools and declared dataset requirements explicitly, so neither is silently ignored.
     SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = False
-
-    #: Whether the scenario checks its objective scorer against ``DatasetSource.scorer_requirements``.
-    #: Scenarios that do not check them reject a source that declares any, so a declared
-    #: requirement is never silently ignored.
-    ENFORCES_DATASET_SCORER_REQUIREMENTS: ClassVar[bool] = False
 
     #: Whether the scenario applies ``technique_converters``. Scenarios that don't set this to
     #: False so the parameter isn't declared, and passing it fails instead of being ignored.
@@ -360,13 +356,12 @@ class Scenario(ABC):
 
     def _get_supplied_objective_scorer_identifier(self) -> "ComponentIdentifier | None":
         """
-        Identify the caller-supplied scorer or pool, before any default is resolved.
+        Identify the caller-supplied scorer, before any default is resolved.
 
         Returns:
-            ComponentIdentifier | None: The pool or scorer identity, or None when the default will be used.
+            ComponentIdentifier | None: The scorer identity, or None when the default will be used
+                or the run selects from a scorer pool.
         """
-        if self._objective_scorer_pool is not None:
-            return self._objective_scorer_pool.get_identifier()
         if self._supplied_objective_scorer is not None:
             return self._supplied_objective_scorer.get_identifier()
         return None
@@ -1090,7 +1085,7 @@ class Scenario(ABC):
             ValueError: If a dataset source declares scorer requirements and the scenario does
                 not enforce them.
         """
-        if type(self).ENFORCES_DATASET_SCORER_REQUIREMENTS:
+        if type(self).SUPPORTS_OBJECTIVE_SCORER_POOL:
             return
         declared = sorted(self._dataset_config.get_scorer_requirements_by_dataset())
         if declared:
@@ -1249,6 +1244,61 @@ class Scenario(ABC):
             self._dataset_config.source_limit(source.name) != "all" for source in self._dataset_config.sources
         ):
             raise ValueError("This scenario uses ingredient datasets and does not support per-dataset limits.")
+        self._validate_required_evaluations()
+
+    def _validate_required_evaluations(self) -> None:
+        """
+        Reject a required evaluation that no objective scorer candidate is bound to.
+
+        A key is configuration: a typo, or a key with a single unbound scorer, can never match.
+        A bound candidate judges only its own evaluation, so a dataset that requires none needs
+        an unbound candidate. Both fail here, before any dataset is read.
+
+        Raises:
+            ValueError: If an evaluation the scenario or a dataset requires has no bound candidate,
+                if a dataset requires no evaluation and every candidate is bound, or if the scenario
+                and a dataset require different evaluations.
+        """
+        if not type(self).SUPPORTS_OBJECTIVE_SCORER_POOL:
+            return
+        scenario_requirements = self._get_objective_scorer_requirements()
+        scenario_evaluation = scenario_requirements.evaluation if scenario_requirements is not None else None
+        dataset_requirements = self._dataset_config.get_scorer_requirements_by_dataset()
+        pool = self._objective_scorer_pool
+        if pool is not None and scenario_evaluation is None and None not in pool.evaluations:
+            undeclared = sorted(
+                name
+                for name in self._dataset_config.dataset_names
+                if name not in dataset_requirements or dataset_requirements[name].evaluation is None
+            )
+            if undeclared:
+                raise ValueError(
+                    "Every objective scorer candidate is bound to an evaluation, but these datasets require none: "
+                    f"{', '.join(repr(name) for name in undeclared)}. Declare scorer_requirements on them, or add "
+                    "a candidate without an evaluation."
+                )
+        owners: dict[str, list[str]] = {}
+        if scenario_evaluation is not None:
+            owners.setdefault(scenario_evaluation, []).append("the scenario")
+        for name, requirements in sorted(dataset_requirements.items()):
+            evaluation = ScorerRequirements.combine(scenario_requirements, requirements).evaluation
+            if evaluation is not None:
+                owners.setdefault(evaluation, []).append(f"dataset '{name}'")
+        available = {key for key in pool.evaluations if key is not None} if pool is not None else set()
+        missing = {key: names for key, names in owners.items() if key not in available}
+        if not missing:
+            return
+        required = "; ".join(f"{key!r} (required by {', '.join(names)})" for key, names in sorted(missing.items()))
+        if pool is None:
+            raise ValueError(
+                f"A single objective scorer is not bound to any evaluation, but these are required: {required}. "
+                "Pass a CompatibleScorers pool with a ScorerCandidate bound to each."
+            )
+        known = ", ".join(repr(key) for key in sorted(available)) or "none"
+        raise ValueError(
+            f"No objective scorer candidate is bound to these required evaluations: {required}. "
+            f"Evaluations in the pool: {known}. Check the key for a typo, or add a candidate bound to it."
+        )
 
     def _get_required_objective_keys(self) -> list[str]:
         """Return population names that must retain at least one objective."""
@@ -1931,39 +1981,10 @@ class Scenario(ABC):
                     f"Scenario result id '{self._scenario_result_id}' cannot resume: atomic group "
                     f"'{planned_group.atomic_attack_name}' is missing {len(missing_seed_groups)} planned seed group(s)."
                 )
-            self._verify_planned_scorer_binding(planned_group=planned_group, atomic_attack=atomic_attack)
             atomic_attack._seed_groups = [current_seed_groups[group_id] for group_id in planned_group.seed_group_ids]
             retained_attacks.append(atomic_attack)
         self._atomic_attacks = retained_attacks
         self._display_group_map = {group.atomic_attack_name: group.display_group for group in stored_plan.atomic_groups}
-
-    def _verify_planned_scorer_binding(
-        self, *, planned_group: ScenarioRunPlanAtomicGroup, atomic_attack: AtomicAttack
-    ) -> None:
-        """
-        Refuse to resume when a pool group's scorer selection or prepared inputs changed.
-
-        Selection is deterministic for an unchanged pool and unchanged inputs, so the stored
-        binding must match the current one exactly. Inputs are compared by the fingerprints of
-        their prepared expectations.
-
-        Raises:
-            ValueError: If the stored and current bindings differ.
-        """
-        stored = planned_group.objective_scorer_binding
-        current = self._get_scorer_binding(atomic_attack=atomic_attack)
-        if stored == current:
-            return
-        if stored is None or current is None:
-            reason = "a scorer pool was added or removed"
-        elif stored.expectation_fingerprints != current.expectation_fingerprints:
-            reason = "its inputs' scoring criteria changed"
-        else:
-            reason = "a different objective scorer would now be selected"
-        raise ValueError(
-            f"Scenario result id '{self._scenario_result_id}' cannot resume: atomic group "
-            f"'{planned_group.atomic_attack_name}' no longer matches its saved scorer selection ({reason})."
-        )
 
     def _apply_persisted_objectives(self, *, stored_result: ScenarioResult) -> None:
         """
@@ -2046,12 +2067,13 @@ class Scenario(ABC):
             techniques=techniques,
             datasets=datasets,
             objective_target=self._objective_target_identifier,
-            objective_scorer=(
-                self._objective_scorer_pool.get_identifier(
-                    requirements=self._get_objective_scorer_requirements_identity()
-                )
+            objective_scorer=self._objective_scorer_identifier,
+            # A pool is not a scorer, so it is identity of its own rather than the objective_scorer reference.
+            # Requirements stay out: one that changes a selection changes the plan's group ids.
+            children=(
+                {"objective_scorer_pool": self._objective_scorer_pool.get_identifier()}
                 if self._objective_scorer_pool is not None
-                else self._objective_scorer_identifier
+                else None
             ),
         )
 
@@ -2066,27 +2088,6 @@ class Scenario(ABC):
             ScorerRequirements | None: The scenario-level requirements, or None.
         """
         return None
-
-    def _get_objective_scorer_requirements_identity(self) -> dict[str, Any] | None:
-        """
-        Collect every owner's scorer requirements for run identity.
-
-        Pool runs record these in the pool's identity, so changing what a dataset requires
-        changes the run.
-
-        Returns:
-            dict[str, Any] | None: Scenario and per-dataset requirements, or None when nothing is required.
-        """
-        identity: dict[str, Any] = {}
-        scenario_requirements = self._get_objective_scorer_requirements()
-        if scenario_requirements is not None:
-            identity["scenario"] = scenario_requirements.to_identity()
-        dataset_requirements = self._dataset_config.get_scorer_requirements_by_dataset()
-        if dataset_requirements:
-            identity["datasets"] = {
-                name: requirements.to_identity() for name, requirements in sorted(dataset_requirements.items())
-            }
-        return identity or None
 
     def _validate_stored_scenario(
         self, *, stored_result: ScenarioResult, current_identifier: ScenarioIdentifier
