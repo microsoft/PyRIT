@@ -42,9 +42,9 @@ from pyrit.models.catalog import (
     StoredRecipe,
     TechniqueRecipe,
 )
-from pyrit.registry import SavedEntryReplacement, SavedEntryStorageError
+from pyrit.registry import SavedEntryReplacement, SavedEntryStorageError, is_visible_to_caller
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
-from pyrit.registry.instance_registry import is_visible_to_caller, registry_entry_origin
+from pyrit.registry.instance_registry import registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 
