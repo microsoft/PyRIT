@@ -163,38 +163,6 @@ export function isChatPath(pathOrUrl: string): boolean {
   return cleanPath === '/attack/chat' || cleanPath.startsWith('/attack/chat/')
 }
 
-/** Parses attackId and conversationId from a chat or attack route path. */
-export function parseChatRoute(path: string): { attackId: string | null; conversationId: string | null } {
-  if (!path) return { attackId: null, conversationId: null }
-  const clean = path.split('?')[0]?.split('#')[0] ?? ''
-  const matchWithConv = /^\/attacks\/([^/]+)\/conversations\/([^/]+)/.exec(clean)
-  if (matchWithConv) {
-    const rawAttackId = matchWithConv[1] ?? ''
-    const rawConversationId = matchWithConv[2] ?? ''
-    try {
-      return {
-        attackId: decodeURIComponent(rawAttackId),
-        conversationId: decodeURIComponent(rawConversationId),
-      }
-    } catch {
-      return { attackId: rawAttackId, conversationId: rawConversationId }
-    }
-  }
-  const matchAttack = /^\/attacks\/([^/]+)/.exec(clean)
-  if (matchAttack) {
-    const rawAttackId = matchAttack[1] ?? ''
-    try {
-      return {
-        attackId: decodeURIComponent(rawAttackId),
-        conversationId: null,
-      }
-    } catch {
-      return { attackId: rawAttackId, conversationId: null }
-    }
-  }
-  return { attackId: null, conversationId: null }
-}
-
 /** Chat destination captured only when browsing starts from Chat. */
 export interface DatasetChatOrigin {
   path: string

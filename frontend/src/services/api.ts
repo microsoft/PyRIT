@@ -4,6 +4,7 @@ import { generateClientId } from '@/utils/clientId'
 import { decodeBlobErrorAsync, toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
+import { MAX_SEED_SEARCH_LENGTH } from '@/components/Datasets/seedExampleQuery'
 import type {
   ApplyChatScorerRequest,
   ApplyChatScorerResponse,
@@ -995,8 +996,6 @@ export const scenarioSuitesApi = {
     return response.data
   },
 }
-
-const MAX_SEED_SEARCH_LENGTH = 1_000
 
 function seedListQuery(params: SeedExampleListParams): Record<string, string | number | readonly string[]> {
   if (params.search != null && params.value_pattern != null) {

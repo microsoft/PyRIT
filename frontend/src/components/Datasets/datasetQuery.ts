@@ -15,7 +15,7 @@ export const DATASET_SORTS = [
 
 export type DatasetSort = (typeof DATASET_SORTS)[number]
 
-export const DEFAULT_DATASET_SORT: DatasetSort = 'name'
+const DEFAULT_DATASET_SORT: DatasetSort = 'name'
 
 export const DATASET_SORT_LABELS: Record<DatasetSort, string> = {
   name: 'Name (A-Z)',
