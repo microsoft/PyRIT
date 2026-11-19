@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.models import ComponentIdentifier, Identifiable
-from pyrit.models.catalog import RegistryEntryOrigin, SavedEntryOwner
+from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.registry import (
     DefaultInstanceRegistry,
     InstanceRegistry,
@@ -27,7 +27,6 @@ from pyrit.registry import (
 from pyrit.registry.instance_registry import (
     CONFIGURATION_ENTRY_METADATA_KEY,
     SAVED_ENTRY_METADATA_KEY,
-    SAVED_ENTRY_OWNER_METADATA_KEY,
     RegistryNameTakenError,
     SavedEntryReplacementError,
     current_registration_origin,
@@ -188,19 +187,14 @@ class TestRegistration:
         assert registry_entry_origin(metadata) is origin
 
     def test_a_restore_scope_marks_only_the_entry_it_names(self, registry: DefaultInstanceRegistry[_TestItem]):
-        ada = SavedEntryOwner(oid="00000000-0000-0000-0000-00000000000a", name="Ada")
-        with saved_entry_registration(kind="targets", name="saved", owner=ada):
-            registry.register(_item("saved"), name="saved", metadata={"note": "kept"})
+        with saved_entry_registration(kind="targets", name="saved"):
+            registry.register(_item("saved"), name="saved", metadata={"owner": "admin"})
             registry.register(_item("helper"), name="helper")
         registry.register(_item("later"), name="later")
 
-        assert registry.get_entry("saved").metadata == {
-            "note": "kept",
-            SAVED_ENTRY_METADATA_KEY: "targets",
-            SAVED_ENTRY_OWNER_METADATA_KEY: ada,
-        }
-        assert registry.get_entry("helper").metadata == {}
-        assert registry.get_entry("later").metadata == {}
+        assert registry.get_entry("saved").metadata == {"owner": "admin", SAVED_ENTRY_METADATA_KEY: "targets"}
+        assert SAVED_ENTRY_METADATA_KEY not in registry.get_entry("helper").metadata
+        assert SAVED_ENTRY_METADATA_KEY not in registry.get_entry("later").metadata
 
     def test_a_caught_duplicate_name_for_a_saved_entry_is_recorded(self, registry: DefaultInstanceRegistry[_TestItem]):
         registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "targets"})

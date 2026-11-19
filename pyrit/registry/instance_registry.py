@@ -28,7 +28,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
-from pyrit.models.catalog import RegistryEntryOrigin, SavedEntryOwner
+from pyrit.models.catalog import RegistryEntryOrigin
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator, Mapping
@@ -54,16 +54,10 @@ SAVED_ENTRY_METADATA_KEY = "saved_recipe_kind"
 #: after a restart. Entries with neither this nor the saved marker are gone after a restart.
 CONFIGURATION_ENTRY_METADATA_KEY = "configuration_entry"
 
-#: Entry metadata holding the ``SavedEntryOwner`` who saved a saved entry, or None when nobody was signed in. It is
-#: for display only, never used to decide who may change or remove the entry.
-SAVED_ENTRY_OWNER_METADATA_KEY = "saved_entry_owner"
-
 _saved_entry_refusals: ContextVar[list[tuple[str, str]] | None] = ContextVar("_saved_entry_refusals", default=None)
 _registration_origin: ContextVar[RegistryEntryOrigin | None] = ContextVar("_registration_origin", default=None)
-# The kind, name, and owner of the saved entry being rebuilt in this context, so registering that name marks the entry.
-_saved_entry_registration: ContextVar[tuple[str, str, SavedEntryOwner | None] | None] = ContextVar(
-    "_saved_entry_registration", default=None
-)
+# The kind and name of the saved entry being rebuilt in this context, so registering that name marks the entry.
+_saved_entry_registration: ContextVar[tuple[str, str] | None] = ContextVar("_saved_entry_registration", default=None)
 
 
 class RegistryNameTakenError(ValueError):
@@ -111,21 +105,6 @@ class SavedEntryReplacementError(RuntimeError):
         super().__init__(f"Saved {kind.removesuffix('s')} '{name}' can't be replaced.")
         self.kind = kind
         self.name = name
-
-
-def saved_entry_owner(metadata: Mapping[str, Any]) -> SavedEntryOwner | None:
-    """
-    Return who saved an entry, from its metadata.
-
-    Args:
-        metadata (Mapping[str, Any]): The entry's registry metadata.
-
-    Returns:
-        SavedEntryOwner | None: The signed-in user who saved the entry, or None for an entry that isn't saved or
-            was saved with sign-in off.
-    """
-    owner = metadata.get(SAVED_ENTRY_OWNER_METADATA_KEY)
-    return owner if isinstance(owner, SavedEntryOwner) else None
 
 
 def refuse_saved_entry(entry: RegistryEntry[Any] | None) -> None:
@@ -231,21 +210,18 @@ def record_saved_entry_refusals() -> Generator[list[tuple[str, str]], None, None
 
 
 @contextmanager
-def saved_entry_registration(
-    *, kind: str, name: str, owner: SavedEntryOwner | None = None
-) -> Generator[None, None, None]:
+def saved_entry_registration(*, kind: str, name: str) -> Generator[None, None, None]:
     """
     Mark the entry registered under ``name`` in this context as rebuilt from a saved recipe.
 
     Args:
         kind (str): The saved recipe kind, such as ``"targets"``.
         name (str): The saved entry's name.
-        owner (SavedEntryOwner | None): Who saved the entry, or None when nobody was signed in.
 
     Yields:
         None: Control returns to the caller while the mark applies.
     """
-    token = _saved_entry_registration.set((kind, name, owner))
+    token = _saved_entry_registration.set((kind, name))
     try:
         yield
     finally:
@@ -495,7 +471,6 @@ class DefaultInstanceRegistry(Generic[T]):
         restoring = _saved_entry_registration.get()
         if restoring is not None and restoring[1] == name:
             entry_metadata[SAVED_ENTRY_METADATA_KEY] = restoring[0]
-            entry_metadata[SAVED_ENTRY_OWNER_METADATA_KEY] = restoring[2]
         entry = RegistryEntry(
             name=name,
             instance=instance,

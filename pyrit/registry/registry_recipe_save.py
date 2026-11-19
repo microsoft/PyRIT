@@ -20,12 +20,7 @@ from pyrit.common.azure_storage import redact_urls
 from pyrit.models import ComponentType
 from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, RestoreFailureReason
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
-from pyrit.registry.instance_registry import (
-    SAVED_ENTRY_METADATA_KEY,
-    SAVED_ENTRY_OWNER_METADATA_KEY,
-    RegistryNameTakenError,
-    registry_entry_origin,
-)
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, RegistryNameTakenError, registry_entry_origin
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.registry.resolution import reject_non_external_params
@@ -197,7 +192,7 @@ async def save_then_register_async(
     Args:
         kind (RegistryRecipeKind): The kind of entry.
         name (str): The entry's name.
-        recipe (ComponentRecipe): How restore rebuilds the entry, naming who saved it.
+        recipe (ComponentRecipe): How restore rebuilds the entry.
         register (Callable[[dict[str, Any]], object]): Registers the built entry with the metadata it's given.
         source (str | None): Local directory or Azure Blob URI holding the saved entries. Defaults to
             ``registry_recipes`` under the PyRIT configuration directory.
@@ -266,7 +261,7 @@ async def _save_then_register_async(
         )
         raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
     try:
-        register({SAVED_ENTRY_METADATA_KEY: kind.value, SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner})
+        register({SAVED_ENTRY_METADATA_KEY: kind.value})
     except Exception as error:
         if not await _delete_recipe_async(storage=storage, singular=singular, name=name, version=version):
             raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error

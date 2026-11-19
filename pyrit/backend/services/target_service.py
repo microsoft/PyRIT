@@ -64,7 +64,7 @@ from pyrit.registry import (
     prepare_saved_params_async,
     save_then_register_async,
 )
-from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin, saved_entry_owner
+from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class
 
 logger = logging.getLogger(__name__)
@@ -123,19 +123,12 @@ class TargetService:
         with target.capabilities_scope(capabilities):
             yield
 
-    async def detect_capabilities_async(
-        self, *, target_registry_name: str, expected_hash: str, current_user_oid: str | None = None
-    ) -> TargetInstance:
+    async def detect_capabilities_async(self, *, target_registry_name: str, expected_hash: str) -> TargetInstance:
         """
         Probe private targets and apply a completed result to the selected source.
 
         Round-robin detection probes each child independently and combines their
         results. Only the selected parent is updated; live children are not changed.
-
-        Args:
-            target_registry_name: The target's registry name.
-            expected_hash: The identifier hash the caller last saw, so a changed target isn't updated.
-            current_user_oid: The signed-in user's Microsoft Entra object ID, used to mark a target they saved.
 
         Returns:
             TargetInstance: The updated live target.
@@ -195,8 +188,6 @@ class TargetService:
                     target_registry_name=target_registry_name,
                     target_obj=target,
                     origin=registry_entry_origin(entry.metadata),
-                    owner=saved_entry_owner(entry.metadata),
-                    current_user_oid=current_user_oid,
                 )
         finally:
             self._detecting.discard(target_registry_name)
@@ -223,13 +214,7 @@ class TargetService:
             await release_component_async(probe)
 
     def _build_instance_from_object(
-        self,
-        *,
-        target_registry_name: str,
-        target_obj: Any,
-        origin: RegistryEntryOrigin | None = None,
-        owner: SavedEntryOwner | None = None,
-        current_user_oid: str | None = None,
+        self, *, target_registry_name: str, target_obj: Any, origin: RegistryEntryOrigin | None = None
     ) -> TargetInstance:
         """
         Build a TargetInstance from a registry object.
@@ -237,16 +222,13 @@ class TargetService:
         Returns:
             TargetInstance with metadata derived from the object.
         """
-        return target_object_to_instance(
-            target_registry_name, target_obj, origin=origin, owner=owner, current_user_oid=current_user_oid
-        )
+        return target_object_to_instance(target_registry_name, target_obj, origin=origin)
 
     async def list_targets_async(
         self,
         *,
         limit: int = 50,
         cursor: str | None = None,
-        current_user_oid: str | None = None,
     ) -> TargetListResponse:
         """
         List all target instances with pagination.
@@ -254,18 +236,13 @@ class TargetService:
         Args:
             limit: Maximum items to return.
             cursor: Pagination cursor (target_registry_name to start after).
-            current_user_oid: The signed-in user's Microsoft Entra object ID, used to mark the targets they saved.
 
         Returns:
             TargetListResponse containing paginated targets.
         """
         items = [
             self._build_instance_from_object(
-                target_registry_name=entry.name,
-                target_obj=entry.instance,
-                origin=registry_entry_origin(entry.metadata),
-                owner=saved_entry_owner(entry.metadata),
-                current_user_oid=current_user_oid,
+                target_registry_name=entry.name, target_obj=entry.instance, origin=registry_entry_origin(entry.metadata)
             )
             for entry in self._registry.instances.get_all_instances()
         ]
@@ -300,15 +277,9 @@ class TargetService:
         has_more = len(items) > start_idx + limit
         return page, has_more
 
-    async def get_target_async(
-        self, *, target_registry_name: str, current_user_oid: str | None = None
-    ) -> TargetInstance | None:
+    async def get_target_async(self, *, target_registry_name: str) -> TargetInstance | None:
         """
         Get a target instance by registry name.
-
-        Args:
-            target_registry_name: The target's registry name.
-            current_user_oid: The signed-in user's Microsoft Entra object ID, used to mark a target they saved.
 
         Returns:
             TargetInstance if found, None otherwise.
@@ -320,8 +291,6 @@ class TargetService:
             target_registry_name=target_registry_name,
             target_obj=entry.instance,
             origin=registry_entry_origin(entry.metadata),
-            owner=saved_entry_owner(entry.metadata),
-            current_user_oid=current_user_oid,
         )
 
     def get_target_object(self, *, target_registry_name: str) -> Any | None:
@@ -880,13 +849,8 @@ class TargetService:
             SavedEntryConflictError: If a saved or registered target already has the name.
             SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
-        # The user saving the target is the one asking, so the response marks it as theirs.
         target = self._build_instance_from_object(
-            target_registry_name=name,
-            target_obj=target_obj,
-            origin=RegistryEntryOrigin.SAVED,
-            owner=owner,
-            current_user_oid=owner.oid if owner is not None else None,
+            target_registry_name=name, target_obj=target_obj, origin=RegistryEntryOrigin.SAVED
         )
         auth_parameters = target_cls.get_auth_mode_parameters(auth_mode=auth_mode)
         recipe = ComponentRecipe(

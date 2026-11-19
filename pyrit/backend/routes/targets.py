@@ -8,12 +8,10 @@ Provides endpoints for managing target instances.
 Target types are set at app startup via initializers - you cannot add new types at runtime.
 """
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
-from pyrit.backend.middleware.auth import AuthenticatedUser, current_user_oid, has_admin_access
+from pyrit.backend.middleware.auth import AuthenticatedUser, has_admin_access
 from pyrit.backend.models import (
     CreateTargetRequest,
     ProblemDetail,
@@ -49,9 +47,7 @@ NOT_SAVEABLE_PROBLEM_TYPE = "/errors/not-saveable"
     },
 )
 async def detect_capabilities_async(
-    target_registry_name: IdentifierStr,
-    body: DetectTargetCapabilitiesRequest,
-    user_oid: Annotated[str | None, Depends(current_user_oid)],
+    target_registry_name: IdentifierStr, body: DetectTargetCapabilitiesRequest
 ) -> TargetInstance:
     """
     Run live checks and automatically update a registered target.
@@ -61,7 +57,7 @@ async def detect_capabilities_async(
     """
     try:
         return await get_target_service().detect_capabilities_async(
-            target_registry_name=target_registry_name, expected_hash=body.expected_hash, current_user_oid=user_oid
+            target_registry_name=target_registry_name, expected_hash=body.expected_hash
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -115,7 +111,6 @@ def _saved_entry_owner(request: Request) -> SavedEntryOwner | None:
     },
 )
 async def list_targets(  # pyrit-async-suffix-exempt
-    user_oid: Annotated[str | None, Depends(current_user_oid)],
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Pagination cursor (target_registry_name)"),
 ) -> TargetListResponse:
@@ -128,7 +123,7 @@ async def list_targets(  # pyrit-async-suffix-exempt
         TargetListResponse: Paginated list of target instances.
     """
     service = get_target_service()
-    return await service.list_targets_async(limit=limit, cursor=cursor, current_user_oid=user_oid)
+    return await service.list_targets_async(limit=limit, cursor=cursor)
 
 
 @router.get(
@@ -272,9 +267,7 @@ async def create_target(
     },
 )
 async def get_target(
-    *,
     target_registry_name: IdentifierStr,
-    user_oid: Annotated[str | None, Depends(current_user_oid)],
 ) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
     Get a target instance by registry name.
@@ -284,7 +277,7 @@ async def get_target(
     """
     service = get_target_service()
 
-    target = await service.get_target_async(target_registry_name=target_registry_name, current_user_oid=user_oid)
+    target = await service.get_target_async(target_registry_name=target_registry_name)
     if not target:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
