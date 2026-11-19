@@ -31,10 +31,15 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetRequirements
 from pyrit.score.score_utils import score_is_true
 
 logger = logging.getLogger(__name__)
+
+# An outgoing caller-written assistant prefix needs the target to send it natively for continuation.
+_ASSISTANT_PREFIX_TARGET_REQUIREMENTS = TargetRequirements(
+    native_required=frozenset({CapabilityName.PREFILL, CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY})
+)
 
 
 @dataclass(frozen=True)
@@ -61,7 +66,14 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
     The strategy supports customization through prepended conversations, converters,
     and multiple scorer types for comprehensive evaluation.
+
+    A target that never replies (``supports_responses=False``, e.g. ``TextTarget``) is
+    supported: the sent request is never scored as a response, and only scorers that judge
+    side effects (e.g. a written file or invoked tools) decide the outcome.
     """
+
+    # Unlike other attacks, prompt sending also works against targets that never reply.
+    TARGET_REQUIREMENTS = TargetRequirements()
 
     @apply_defaults
     def __init__(
@@ -220,6 +232,9 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # Execute with retries
         response = None
         score = None
+        # A target that never replies hands back the sent request (or a delivery receipt), which
+        # must not be judged as a response; only side-effect scorers can judge such a turn.
+        target_responds = self._objective_target_responds()
 
         # Attack execution steps:
         # 1) Construct the seed prompt(s) that will be injected into the conversation
@@ -250,8 +265,15 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
             # Score the response including auxiliary and objective scoring
             score = await self._evaluate_response_async(
-                response=response, objective=context.objective, expectation=context.expectation
+                response=response,
+                objective=context.objective,
+                expectation=context.expectation,
+                side_effect_evidence_only=not target_responds,
             )
+
+            if not target_responds and score is None:
+                # Nothing judged the turn, and retrying would only deliver the request again.
+                break
 
             # If there is no objective, we have a response but can't determine success
             if not self._objective_scorer:
@@ -276,7 +298,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
         return self._create_attack_result(
             context=context,
-            response=response,
+            response=response if target_responds else None,
             score=score,
             outcome=outcome,
             outcome_reason=outcome_reason,
@@ -332,6 +354,10 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             # No scorer means we can't determine success/failure
             return AttackOutcome.UNDETERMINED, "No objective scorer configured"
 
+        if score is None and not self._objective_target_responds():
+            # The objective scorer judges responses, and this target never replies.
+            return AttackOutcome.UNDETERMINED, "Objective target returned no response to score"
+
         if score:
             outcome = attack_outcome_from_score(score)
             if outcome is AttackOutcome.SUCCESS:
@@ -352,6 +378,15 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
         # No response at all (all attempts filtered/failed)
         return AttackOutcome.FAILURE, "All attempts were filtered or failed to get a response"
+
+    def _objective_target_responds(self) -> bool:
+        """
+        Check whether the objective target replies to the requests it receives.
+
+        Returns:
+            bool: False for a target that only delivers requests, such as ``TextTarget``.
+        """
+        return self._objective_target.configuration.includes(capability=CapabilityName.RESPONSES)
 
     async def _teardown_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """Clean up after attack execution."""
@@ -391,6 +426,10 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             Message | None: The model's response if successful, or None if
                 the request was filtered, blocked, or encountered an error.
         """
+        is_assistant_prefix = message.api_role == "assistant" and message.is_simulated
+        if is_assistant_prefix:
+            _ASSISTANT_PREFIX_TARGET_REQUIREMENTS.validate(target=self._objective_target)
+
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self.__class__.__name__,
@@ -403,7 +442,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 message=message,
                 target=self._objective_target,
                 conversation_id=context.conversation_id,
-                request_converter_configurations=self._request_converters,
+                request_converter_configurations=([] if is_assistant_prefix else self._request_converters),
                 response_converter_configurations=self._response_converters,
                 normalizer_overrides=self._get_prepended_normalizer_overrides(
                     prepended_history_send_context=context.prepended_history_send_context,
@@ -417,6 +456,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         response: Message,
         objective: str,
         expectation: ScoringExpectation,
+        side_effect_evidence_only: bool = False,
     ) -> Score | None:
         """
         Evaluate the response against the objective using the configured scorers.
@@ -428,6 +468,8 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             response (Message): The response from the model.
             objective (str): The natural-language description of the attack's objective.
             expectation (ScoringExpectation): The effective scoring question.
+            side_effect_evidence_only (bool): Run only scorers that judge side-effect evidence, for a
+                target that never replies. Defaults to False.
 
         Returns:
             Score | None: The score from the objective scorer if configured, or None if
@@ -444,6 +486,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
                 expectation=expectation,
+                side_effect_evidence_only=side_effect_evidence_only,
             )
 
         if not self._objective_scorer:

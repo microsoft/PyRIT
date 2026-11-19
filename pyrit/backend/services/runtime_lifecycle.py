@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
+from pyrit.auth import caller_principal_context
 from pyrit.backend.models.initializers import ConfiguredInitializerSetting
 from pyrit.backend.services.analytics_service import get_analytics_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
@@ -27,7 +28,9 @@ from pyrit.backend.services.service_lifecycle import (
 )
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.memory import CentralMemory
+from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry, ScenarioSuiteRegistry
+from pyrit.registry.instance_registry import registration_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
@@ -106,6 +109,7 @@ class RuntimeLifecycle:
         )
         self.app.state.allow_custom_initializers = config.allow_custom_initializers
         self.app.state.target_upload_directory = config.target_upload_directory
+        self.app.state.registry_recipes_source = config.registry_recipes_source
         registry = await asyncio.to_thread(InitializerRegistry.get_registry_singleton)
         registry.configure_custom_scripts_source(config.custom_initializers_source)
         preset_registry = ScenarioPresetRegistry.get_registry_singleton()
@@ -179,6 +183,7 @@ class RuntimeLifecycle:
         """Keep management alive even when parsing or initialization fails."""
         self.app.state.allow_custom_initializers = False
         self.app.state.target_upload_directory = None
+        self.app.state.registry_recipes_source = None
         self.app.state.environment_file_service = None
         self.app.state.configured_initializers = []
         self.app.state.default_labels = {}
@@ -190,7 +195,10 @@ class RuntimeLifecycle:
             if config.allow_custom_initializers:
                 logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
                 await asyncio.to_thread(registry.register_stored_initializers, strict=True)
-            await config.initialize_pyrit_async(raise_on_initializer_error=True)
+            # Entries the startup scripts register are marked as configuration, so they can be told apart
+            # from entries that are gone after a restart, such as ones a scan's launch scripts register.
+            with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+                await config.initialize_pyrit_async(raise_on_initializer_error=True)
             await get_scenario_run_service().reconcile_interrupted_runs_async()
             _, self.version = await self.source.read_with_version_async()
             if await self._restore_saved_entries_async(config):
@@ -219,7 +227,10 @@ class RuntimeLifecycle:
             return {**self.status(), "outcome": "restart-required"}
         if (self.apply_task and not self.apply_task.done()) or self.edit_lock.locked() or self.management_operations:
             return {**self.status(), "outcome": "busy"}
-        self.apply_task = asyncio.create_task(self._apply_async(version=version))
+        # Setup code runs as the server, like startup: it sees only shared entries and owns none.
+        self.apply_task = asyncio.create_task(
+            self._apply_async(version=version), context=caller_principal_context(None)
+        )
         self.outcome, self.message = "validating", "Validating saved sources."
         return {**self.status(), "outcome": "accepted"}
 
@@ -277,7 +288,8 @@ class RuntimeLifecycle:
                 # The restore report describes the runtime being replaced.
                 self.restore_failures, self.restore_ignored = [], []
                 await close_services_async()
-                await config.apply_prepared_reinitialization_async(prepared=prepared)
+                with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+                    await config.apply_prepared_reinitialization_async(prepared=prepared)
                 await self._management_async(config)
                 self.version = current_version
                 if await self._restore_saved_entries_async(config):

@@ -215,7 +215,9 @@ class A2ATarget(PromptTarget):
             if modalities != frozenset({frozenset({"text"})}):
                 raise ValueError(f"A2ATarget only supports text {name} modality.")
         for capability in CapabilityName:
-            if capability != CapabilityName.MULTI_TURN and capabilities.includes(capability=capability):
+            if capability not in (CapabilityName.MULTI_TURN, CapabilityName.RESPONSES) and capabilities.includes(
+                capability=capability
+            ):
                 raise ValueError(f"A2ATarget does not support {capability.value}.")
 
     def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:

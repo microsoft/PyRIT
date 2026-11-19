@@ -16,6 +16,12 @@ PYRIT_AUTH_MODE=local python -m uvicorn pyrit.backend.main:app --reload --host 1
 
 The API will be available at `http://localhost:8000`
 
+Uvicorn's default WebSocket implementation is `websockets-sansio`. PyRIT requires
+Uvicorn 0.53 or newer to retain keepalive, subprotocol negotiation, header values,
+and closing-handshake behavior without importing the deprecated `websockets`
+legacy server. Keep the default `--ws auto`; `--ws websockets` explicitly selects
+the deprecated implementation.
+
 For a shared deployment, set `PYRIT_AUTH_MODE=entra`, configure
 `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, and `ENTRA_ALLOWED_GROUP_IDS`, and then
 bind the server to the intended network interface. Startup fails when neither
@@ -54,6 +60,8 @@ its database collation.
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
+- `POST /api/targets` - Create (and optionally register) a target
+- `PUT /api/targets/{id}/credentials` - Update the API key or request headers of a target that allows it
 - `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
   apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.
   Detection uses a private target, has a four-minute operation deadline, and
@@ -81,6 +89,98 @@ Range declarations remain Python-only constructor inputs, not REST `params`
 overrides; reconstruction preserves declarations from the source target.
 Per-send values use
 [`request_generation_config` metadata](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
+
+A created target is Temporary: a restart or a configuration apply removes it. With `"persist": true` (and `register`
+left on), the target is saved under `registry_recipes_source` and restored at every start, and the signed-in user is
+recorded as the one who saved it. A saved target can't hold or use a key: it signs in with Microsoft Entra ID
+(`"auth_mode": "identity"`, through this server's Azure identity) or needs no key. An OpenAI target's empty `headers`
+is set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITIONAL_REQUEST_HEADERS`. The save
+itself is the registry library's `prepare_saved_params_async` and `save_then_register_async`, so Python code saves a
+target the same way; the API adds the signed-in user, the configured source, and the responses below.
+
+| A request with `persist` that... | Gets |
+|---|---|
+| names the target with anything but up to 64 lowercase letters, digits, and underscores, starting with a letter | **422** |
+| would save a key, or use one of this server's keys or address settings | **400** |
+| gives an address that can carry a credential, or, where this server's setting would apply, one that isn't a full http(s) or ws(s) address | **400** |
+| saves a target type that can't be saved, or one that a scan's launch scripts added or put in place of another | **400** |
+| saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** |
+| uses a Temporary target | **400** |
+| takes a name that a target or a saved file already has | **409** |
+| can't be written to storage | **503** |
+
+A request refused with **400** can be sent again without `persist`. When storage can't be written, the server log names
+the target and its folder, since the target comes back at the next start if the write reached storage anyway.
+
+Each listed target's `origin` is `saved`, `configuration` (registered by the server's startup scripts), or `temporary`
+(gone after a restart or a configuration apply, such as a target created without `persist` or registered by a scan's
+launch scripts). A saved target can only use targets that come back after a restart; targets from configuration keep
+their own sign-in.
+
+A saved target records the create request without its name: the target type, `auth_mode`, and the parameters as the
+API accepted them. Restore sends it through the same create, so it passes the same checks and follows the class's
+constructor. A class that moves within PyRIT still restores. Renaming or removing a class or a constructor parameter
+changes the saved format: such a change raises `schema_version` and adds a migration for older files, with a test that
+restores one. A file that still doesn't match fails to restore with the reason, and the backend stays not ready until
+the file is fixed or deleted, so nothing runs without the saved target.
+
+#### Private targets
+
+A target, scorer, converter, or technique created through the API is **shared** by default:
+everyone can see and use it. Send `"private": true` to make it **private**, so only the signed-in
+user who created it can see and use it. A private entry needs a signed-in caller (local mode has
+one) and `"register": true`, and can't be saved with `"persist": true`. Entries from initializers and
+saved configuration are always shared.
+
+```http
+POST /api/targets
+{"name": "my-claude", "type": "OpenAIChatTarget", "private": true,
+ "params": {"endpoint": "https://api.anthropic.com/v1", "model_name": "<model>", "api_key": "<your key>"}}
+
+PUT /api/targets/my-claude/credentials
+{"api_key": "<new key or access token>", "private": true}
+```
+
+- To everyone else, a private target doesn't exist: lists leave it out, and naming it anywhere
+  (a chat, scenario, scorer, converter, technique, or composite target) fails as for an unknown
+  target. Creating a target with a name already taken, even by a target you can't see, fails.
+- Anything built on your private target is private too, so a shared component never uses a
+  private one; `"private": false` then fails with 400 and registers nothing.
+- Results, such as attack and scenario results and conversations, stay visible to everyone.
+- Whoever creates a target decides whether its credentials can be updated later
+  (`"allow_credential_updates"`). A private target allows it by default, so its owner can keep a
+  short-lived token fresh; a shared target doesn't unless its creator sends `true`. An
+  initializer can allow it for a shared target it registers, for example one whose gateway
+  token expires, with `credential_update_metadata(allowed=True)` from `pyrit.registry`.
+  Responses report `allow_credential_updates`.
+- `PUT /api/targets/{id}/credentials` takes an `api_key`, `headers`, or both. Only the owner can
+  update a private target (others get 404), and anyone signed in can update a shared target that
+  allows it, so everyone's requests then use the new credentials. A target that doesn't allow
+  updates, or a saved target, returns 403. A header replaces any header of the same name, whatever
+  its case and wherever the target was configured with it (`headers`,
+  `OPENAI_ADDITIONAL_REQUEST_HEADERS`, or `httpx_client_kwargs`), so a target behind any auth
+  scheme can be kept fresh: `Authorization`, `x-api-key`, a team's own header, or `Cookie` (the
+  whole cookie string). If the target has an explicit `Authorization` header, update that
+  header instead of sending just `api_key` (400). Send `"private"` with the visibility you expect;
+  when the target isn't private or shared as expected, nothing changes and the request returns 409.
+- The update changes the registered target in place: its identity, configuration, detected
+  capabilities, and authentication mode stay the same, and everything using it, such as a round
+  robin, a scorer, or a running scenario, sends the new values with its next request. A target
+  that gets its tokens from a token provider, such as Microsoft Entra ID (`"auth_mode": "identity"`,
+  or a provider an initializer passes as `api_key`), can't take an `api_key` or an `Authorization`
+  header, and one that needs no key can't take an `api_key` (400). Headers that frame or route a request, such as
+  `Host` or `Content-Length`, can't be set (400). OpenAI-family targets other than `RealtimeTarget`
+  can update in place; other target types can't allow updates. Values are never returned.
+- Keys, sensitive parameters, and header values must be ASCII. When a target is created or updated,
+  surrounding whitespace is trimmed and remaining control characters are refused (400), except for
+  tabs inside header values. The error names only the parameter or header.
+- Target responses report `private` and `credentials_rejected`: whether the provider answered the
+  last request through the target, or a chat copy of it, with 401 or 403. It is `null` until a
+  request using the current credentials completes or fails authentication.
+- `pyrit_scan set-target-credential` updates a target's `api_key`, or a request header with
+  `--header`, from a prompt, an environment variable, or the `ant` CLI.
+- Like other targets created through the API, private targets are gone after the backend
+  restarts or reinitializes.
 
 ### Dataset creation, batch mutation, and deletion
 
@@ -368,6 +468,26 @@ external filesystem/blob modifications outside PyRIT's memory APIs do not
 participate in this protocol. Deploy the new Alembic migration before starting
 backends configured to require an already-current Azure SQL schema.
 
+### Component registration
+
+`POST /api/targets`, `POST /api/converters`, and `POST /api/scorers` accept
+`register`, which defaults to `true`. Setting it to `false` returns a descriptor
+without registering the component. Converter and scorer registration requires
+`name`; targets still accept an omitted name for legacy UI compatibility.
+
+The Python request models store this flag as `register_instance` with the
+`register` alias. Existing `register=` construction and read/write `.register`
+access remain supported, as do `model_copy(update={"register": ...})` and
+serialization include/exclude filters using `register`. Default model
+serialization and OpenAPI schemas keep the public key `register`.
+
+Field introspection differs from PyRIT 1.2: `model_fields` and
+`model_fields_set` now use `register_instance`, whose field alias is `register`.
+Code inspecting these collections must use the internal name or the field's
+alias metadata. `model_dump(by_alias=False)` likewise deliberately exposes
+`register_instance`; use the default or `by_alias=True` for the existing JSON
+shape. Copy updates and field filters accept either name.
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
@@ -536,6 +656,17 @@ Node expansion returns up to 50 main/pruned conversation summaries, the exact re
 count, and a clipping flag. These use the same metadata model as the generic attack API.
 Use the saved-conversation APIs above for reference continuation and all transcript
 bodies. There is no hierarchy-specific transcript format or conversation-preview mode.
+
+### ASSERT analytics
+
+`GET /api/analytics/assert?scenario_result_id=<run-id>` returns the SDK's
+`AssertPolicyMetrics` for a completed `foundry.assert_policy` run. Other scenarios
+return 400 with problem type `/errors/not-assert-policy-run`, runs that haven't
+completed return 409, and saved results that can't be read as ASSERT metrics return
+500. A saved registry name identifies the run; older runs without one must come from
+the `AssertPolicy` class in PyRIT's Foundry scenario module. The run page shows these
+metrics for completed ASSERT runs and hides the panel when the route identifies
+another scenario.
 
 An entirely rootless saved graph, such as a closed cycle, returns a bounded
 `diagnostics.rootless_result_ids` sample with its total count and clipping flag.
@@ -782,7 +913,7 @@ API callers are trusted operators, so these are intentional exceptions:
   OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
   of these.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
-  created them.
+  created them, except [private targets](#private-targets) and the components built on them.
 - Prompt content is not filtered; it is adversarial test data by design.
 - Any file type can be stored as a payload. `GET /api/media` renders only allow-listed image,
   audio, and video file extensions inline; everything else downloads as a file.

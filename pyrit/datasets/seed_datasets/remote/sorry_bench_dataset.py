@@ -53,6 +53,8 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
         "University of Chicago",
     ]
 
+    source_url = "https://huggingface.co/datasets/sorry-bench/sorry-bench-202503"
+
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "medium"  # 440 base prompts (style mutations not loaded by default)
