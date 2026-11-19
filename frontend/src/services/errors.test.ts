@@ -1,4 +1,4 @@
-import { decodeBlobErrorAsync, retryAfterMilliseconds, toApiError } from './errors'
+import { decodeBlobErrorAsync, isNotSaveableError, notSaveableReason, retryAfterMilliseconds, toApiError } from './errors'
 import type { ApiError } from './errors'
 
 // ---------------------------------------------------------------------------
@@ -297,5 +297,39 @@ describe('decodeBlobErrorAsync', () => {
     await decodeBlobErrorAsync(makeAxiosError({ hasResponse: false }))
 
     expect(notAxios.response.data).toBe(body)
+  })
+})
+
+describe('isNotSaveableError', () => {
+  it('should recognize the typed refusal to save', () => {
+    const refused = toApiError(makeAxiosError({ status: 400, data: { type: '/errors/not-saveable', detail: 'No.' } }))
+
+    expect(isNotSaveableError(refused)).toBe(true)
+  })
+
+  it.each([
+    ['an untyped bad request', 400, { detail: 'Bad endpoint.' }],
+    ['another problem type', 400, { type: '/errors/validation-error', detail: 'Bad name.' }],
+    ['the problem type on another status', 409, { type: '/errors/not-saveable', detail: 'Taken.' }],
+  ])('should not treat %s as a refusal to save', (_, status, data) => {
+    expect(isNotSaveableError(toApiError(makeAxiosError({ status, data })))).toBe(false)
+  })
+})
+
+describe('notSaveableReason', () => {
+  it('should give the cause of a refusal to save without the rest of its detail', () => {
+    const refused = toApiError(makeAxiosError({
+      status: 400,
+      data: { type: '/errors/not-saveable', detail: 'No. It can still be created without saving it.', not_saveable_reason: 'No.' },
+    }))
+
+    expect(notSaveableReason(refused)).toBe('No.')
+  })
+
+  it.each([
+    ['a refusal without a cause', 400, { type: '/errors/not-saveable', detail: 'No.' }],
+    ['another bad request with a cause', 400, { detail: 'Bad endpoint.', not_saveable_reason: 'No.' }],
+  ])('should give no cause for %s', (_, status, data) => {
+    expect(notSaveableReason(toApiError(makeAxiosError({ status, data })))).toBeNull()
   })
 })

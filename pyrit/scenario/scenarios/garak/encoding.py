@@ -13,6 +13,7 @@ from pyrit.converter import (
     AtbashConverter,
     Base64Converter,
     Base2048Converter,
+    BifidConverter,
     BinAsciiConverter,
     BrailleConverter,
     ColumnarTranspositionConverter,
@@ -126,6 +127,7 @@ class EncodingTechnique(ScenarioTechnique):
     Zalgo = ("zalgo", set[str]())
     LeetSpeak = ("leet_speak", {"default"})
     AsciiSmuggler = ("ascii_smuggler", set[str]())
+    Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
 
     @classmethod
@@ -313,6 +315,7 @@ class Encoding(Scenario):
             ([ZalgoConverter()], "zalgo", "zalgo"),
             ([LeetspeakConverter()], "leet_speak", "leet_speak"),
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
+            ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
         ]
 
