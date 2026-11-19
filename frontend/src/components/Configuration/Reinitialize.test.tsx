@@ -220,7 +220,7 @@ describe('Reinitialize', () => {
     })
     jest.mocked(savedEntriesApi.get).mockResolvedValue({
       kind: 'targets', name: 'ghost', version: 'v1', problem: 'unknown_class',
-      saved_by: null, saved_by_me: false, can_change: true,
+      can_change: true,
     })
     jest.mocked(savedEntriesApi.delete).mockResolvedValue()
     render(

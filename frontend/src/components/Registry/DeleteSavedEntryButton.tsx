@@ -78,10 +78,6 @@ function DeleteSavedEntryDialog({ kind, name, onClose, onDeleted }: DeleteSavedE
     }
   }
 
-  const savedBy = entry?.saved_by_me ? 'You saved it.' : entry?.saved_by ? `${entry.saved_by} saved it.` : null
-  const permission = entry && !entry.can_change
-    ? (entry.saved_by ? `Only ${entry.saved_by} or an administrator can delete it.` : 'Only an administrator can delete it.')
-    : null
 
   return (
     <Dialog open onOpenChange={(_, data) => { if (!data.open && !deleting) onClose() }}>
@@ -98,9 +94,8 @@ function DeleteSavedEntryDialog({ kind, name, onClose, onDeleted }: DeleteSavedE
             {entry && (
               <>
                 <Text>It&apos;s deleted for everyone and doesn&apos;t come back after the backend restarts.</Text>
-                {savedBy && <Text>{savedBy}</Text>}
                 {entry.problem && <Text>Its saved file can&apos;t be used, so it&apos;s deleted as it is.</Text>}
-                {permission && <Text weight="semibold">{permission}</Text>}
+                {!entry.can_change && <Text weight="semibold">Only an administrator can delete it.</Text>}
               </>
             )}
             {deleteError && (
@@ -136,7 +131,7 @@ interface DeleteSavedEntryButtonProps {
   className?: string
 }
 
-/** A button that deletes a saved entry's file, after a dialog that says who saved it and whether you may. */
+/** A button that deletes a saved entry's file, after a dialog that says whether you may. */
 export default function DeleteSavedEntryButton({
   kind, name, onDeleted, iconOnly = false, className,
 }: DeleteSavedEntryButtonProps) {

@@ -17,7 +17,6 @@ from pyrit.backend.routes import converters, saved_entries
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.saved_entry_service import (
-    SavedEntryCaller,
     SavedEntryForbiddenError,
     SavedEntryInUseError,
     SavedEntryNotFoundError,
@@ -31,8 +30,6 @@ _ENTRY = SavedEntryResponse(
     kind=RegistryRecipeKind.CONVERTERS,
     name="cat_replace",
     version="v1",
-    saved_by="Ada",
-    saved_by_me=True,
     can_change=True,
 )
 
@@ -53,8 +50,6 @@ def test_get_describes_the_saved_file(client: TestClient) -> None:
         "name": "cat_replace",
         "version": "v1",
         "problem": None,
-        "saved_by": "Ada",
-        "saved_by_me": True,
         "can_change": True,
     }
     assert get.call_args.kwargs["recipes_source"] == "/recipes"
@@ -94,7 +89,7 @@ def test_delete_sends_the_version_and_the_runtime(client: TestClient) -> None:
     ("error", "status_code"),
     [
         (SavedEntryNotFoundError("No saved converter is named 'cat_replace'."), 404),
-        (SavedEntryForbiddenError("Only Ada or an administrator can delete saved converter 'cat_replace'."), 403),
+        (SavedEntryForbiddenError("Only an administrator can delete saved converter 'cat_replace'."), 403),
         (SavedEntryVersionRequiredError("Send the version."), 422),
         (SavedEntryInUseError("Saved converter 'cat_replace' is used by saved technique 'x'."), 409),
         (SavedEntryStorageError("Saved converters can't be deleted right now."), 503),
@@ -120,25 +115,24 @@ def test_get_explains_why_it_found_nothing(client: TestClient, error: Exception,
 
 
 @pytest.mark.parametrize(
-    ("policy", "caller"),
+    ("policy", "is_admin"),
     [
-        (AuthenticationPolicy(mode="local"), SavedEntryCaller(oid=None, is_admin=False, sign_in=False)),
-        (
-            AuthenticationPolicy(mode="local", allow_unauthenticated_admin=True),
-            SavedEntryCaller(oid=None, is_admin=True, sign_in=False),
-        ),
+        (AuthenticationPolicy(mode="local"), False),
+        (AuthenticationPolicy(mode="local", allow_unauthenticated_admin=True), True),
     ],
 )
-def test_the_caller_follows_the_sign_in_setting(
-    client: TestClient, policy: AuthenticationPolicy, caller: SavedEntryCaller
+def test_changing_a_saved_entry_takes_an_administrator_in_local_mode_too(
+    client: TestClient, policy: AuthenticationPolicy, is_admin: bool
 ) -> None:
     with (
         patch.object(app.state, "authentication_policy", policy),
         patch.object(SavedEntryService, "get_saved_entry_async", AsyncMock(return_value=_ENTRY)) as get,
+        patch.object(SavedEntryService, "delete_saved_entry_async", AsyncMock()) as delete,
     ):
         client.get("/api/saved-entries/converters/cat_replace")
+        client.delete("/api/saved-entries/converters/cat_replace?expected_version=v1")
 
-    assert get.call_args.kwargs["caller"] == caller
+    assert (get.call_args.kwargs["is_admin"], delete.call_args.kwargs["is_admin"]) == (is_admin, is_admin)
 
 
 async def test_a_saved_entry_can_be_deleted_while_the_runtime_isnt_ready() -> None:

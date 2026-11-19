@@ -19,8 +19,6 @@ const ENTRY: SavedEntry = {
   name: 'cat_replace',
   version: 'v1',
   problem: null,
-  saved_by: 'Ada',
-  saved_by_me: false,
   can_change: true,
 }
 
@@ -46,13 +44,12 @@ async function openDialog(onDeleted = jest.fn()) {
 describe('DeleteSavedEntryButton', () => {
   beforeEach(() => { jest.clearAllMocks() })
 
-  it('deletes the version it showed and says who saved it', async () => {
+  it('deletes the version it showed', async () => {
     mockedApi.get.mockResolvedValue(ENTRY)
     mockedApi.delete.mockResolvedValue()
     const { user, dialog, onDeleted } = await openDialog()
 
-    expect(await within(dialog).findByText('Ada saved it.')).toBeInTheDocument()
-    expect(within(dialog).getByText(/deleted for everyone and doesn't come back after the backend restarts/))
+    expect(await within(dialog).findByText(/deleted for everyone and doesn't come back after the backend restarts/))
       .toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
@@ -61,19 +58,16 @@ describe('DeleteSavedEntryButton', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it.each([
-    ['Ada', 'Only Ada or an administrator can delete it.'],
-    [null, 'Only an administrator can delete it.'],
-  ])("says who may delete it when it isn't the person asking (%s)", async (savedBy, message) => {
-    mockedApi.get.mockResolvedValue({ ...ENTRY, saved_by: savedBy, can_change: false })
+  it("says that only an administrator can delete it when the person asking isn't one", async () => {
+    mockedApi.get.mockResolvedValue({ ...ENTRY, can_change: false })
     const { dialog } = await openDialog()
 
-    expect(await within(dialog).findByText(message)).toBeInTheDocument()
+    expect(await within(dialog).findByText('Only an administrator can delete it.')).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: 'Delete' })).toBeDisabled()
   })
 
   it("deletes a file that can't be read without a version", async () => {
-    mockedApi.get.mockResolvedValue({ ...ENTRY, version: null, problem: 'unreadable_recipe', saved_by: null })
+    mockedApi.get.mockResolvedValue({ ...ENTRY, version: null, problem: 'unreadable_recipe' })
     mockedApi.delete.mockResolvedValue()
     const { user, dialog } = await openDialog()
 
@@ -88,7 +82,7 @@ describe('DeleteSavedEntryButton', () => {
     const detail = "Saved converter 'cat_replace' is used by saved technique 'formal_send'. Delete or change it first."
     mockedApi.delete.mockRejectedValue(apiError(409, detail))
     const { user, dialog, onDeleted } = await openDialog()
-    await within(dialog).findByText('Ada saved it.')
+    await within(dialog).findByText(/deleted for everyone/)
 
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
@@ -104,7 +98,7 @@ describe('DeleteSavedEntryButton', () => {
       .mockRejectedValueOnce(apiError(409, "Saved converter 'cat_replace' changed since it was read. Look at it again before deleting it."))
       .mockResolvedValueOnce()
     const { user, dialog, onDeleted } = await openDialog()
-    await within(dialog).findByText('Ada saved it.')
+    await within(dialog).findByText(/deleted for everyone/)
 
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
     const lookAgain = await within(dialog).findByRole('button', { name: 'Look again' })

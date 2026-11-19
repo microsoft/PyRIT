@@ -207,8 +207,9 @@ red X to remove a converter from the live registry; confirmation is required.
 
 **Delete** on a saved target, converter, scorer, or technique deletes its saved
 file and removes it from the registry, so it doesn't come back after a restart.
-The person who saved it, or an administrator, can delete it; anyone can when
-sign-in is off. The dialog says who saved it. An entry that another saved entry
+Saved entries are shared, so only an administrator can delete one, as for
+scenario presets. In local mode that needs `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`.
+An entry that another saved entry
 uses, or that a registered entry holds, isn't deleted until that one is deleted
 or changed, and an entry isn't deleted while a run, send, or request could be
 using it. If the file changed since the dialog read it, **Look again** shows the

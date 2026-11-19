@@ -11,11 +11,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request, status
 
-from pyrit.backend.middleware.auth import current_user_oid, get_authentication_policy, has_admin_access
+from pyrit.backend.middleware.auth import has_admin_access
 from pyrit.backend.models import ProblemDetail
 from pyrit.backend.models.saved_entries import SavedEntryResponse
 from pyrit.backend.services.saved_entry_service import (
-    SavedEntryCaller,
     SavedEntryForbiddenError,
     SavedEntryInUseError,
     SavedEntryNotFoundError,
@@ -29,20 +28,6 @@ from pyrit.registry import SavedEntryStorageError
 router = APIRouter(prefix="/saved-entries", tags=["saved-entries"])
 
 SavedEntryName = Annotated[str, Path(pattern=REGISTRY_NAME_PATTERN, description="The saved entry's name")]
-
-
-def _caller(request: Request) -> SavedEntryCaller:
-    """
-    Work out who is asking.
-
-    Returns:
-        SavedEntryCaller: The caller's object ID, whether they're an administrator, and whether sign-in is on.
-    """
-    return SavedEntryCaller(
-        oid=current_user_oid(request),
-        is_admin=has_admin_access(request),
-        sign_in=get_authentication_policy(request).mode != "local",
-    )
 
 
 def _recipes_source(request: Request) -> str | None:
@@ -62,7 +47,7 @@ async def get_saved_entry(  # pyrit-async-suffix-exempt
     *, kind: RegistryRecipeKind, name: SavedEntryName, request: Request
 ) -> SavedEntryResponse:
     """
-    Get a saved entry's file version, who saved it, and whether the caller may delete it.
+    Get a saved entry's file version, and whether the caller may delete it.
 
     Returns:
         SavedEntryResponse: The file's description.
@@ -72,7 +57,7 @@ async def get_saved_entry(  # pyrit-async-suffix-exempt
     """
     try:
         return await SavedEntryService().get_saved_entry_async(
-            kind=kind, name=name, recipes_source=_recipes_source(request), caller=_caller(request)
+            kind=kind, name=name, recipes_source=_recipes_source(request), is_admin=has_admin_access(request)
         )
     except SavedEntryNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
@@ -84,7 +69,7 @@ async def get_saved_entry(  # pyrit-async-suffix-exempt
     "/{kind}/{name}",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
-        403: {"model": ProblemDetail, "description": "Only the person who saved it or an administrator can delete it"},
+        403: {"model": ProblemDetail, "description": "Only an administrator can delete it"},
         404: {"model": ProblemDetail, "description": "No saved entry of the kind has the name"},
         409: {
             "model": ProblemDetail,
@@ -120,7 +105,7 @@ async def delete_saved_entry(  # pyrit-async-suffix-exempt
             name=name,
             expected_version=expected_version,
             recipes_source=_recipes_source(request),
-            caller=_caller(request),
+            is_admin=has_admin_access(request),
             runtime=getattr(request.app.state, "runtime_lifecycle", None),
         )
     except SavedEntryNotFoundError as e:

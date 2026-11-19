@@ -2627,9 +2627,7 @@ export interface SavedEntry {
   version: string | null
   /** Why the file can't be used, when it can't be read or isn't a valid entry. */
   problem: string | null
-  saved_by: string | null
-  saved_by_me: boolean
-  /** Whether the person asking may change or delete it. */
+  /** Whether the person asking may change or delete it, which takes an administrator. */
   can_change: boolean
 }
 

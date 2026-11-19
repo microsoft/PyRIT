@@ -4,9 +4,9 @@
 """
 Look up and delete saved registry entries through their stored files.
 
-Who may delete an entry comes from its file, never from the running entry: the person who saved it or an
-administrator, or anyone when sign-in is off. A file that doesn't say who saved it, such as one that can't be read,
-needs an administrator. An entry that another saved entry names, or that a registered entry holds, isn't deleted.
+Saved entries are shared, so only an administrator may delete one, as for scenario presets and suites. The person
+who saved an entry is kept in its file as attribution only. An entry that another saved entry names, or that a
+registered entry holds, isn't deleted.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import asyncio
 import dataclasses
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pyrit.backend.models.saved_entries import SavedEntryResponse
@@ -26,13 +25,12 @@ from pyrit.models.catalog import (
     RegistryEntryOrigin,
     RegistryRecipeKind,
     RestoreFailure,
-    SavedEntryOwner,
     SavedEntryRef,
     StoredRecipe,
 )
 from pyrit.registry import SavedEntryStorageError
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
-from pyrit.registry.instance_registry import registry_entry_origin
+from pyrit.registry.instance_registry import is_visible_to_caller, registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 
@@ -59,7 +57,7 @@ class SavedEntryNotFoundError(LookupError):
 
 
 class SavedEntryForbiddenError(PermissionError):
-    """The caller may not delete the saved entry."""
+    """The caller isn't an administrator, so may not delete the saved entry."""
 
 
 class SavedEntryVersionRequiredError(ValueError):
@@ -70,36 +68,20 @@ class SavedEntryInUseError(ValueError):
     """The saved entry changed since it was read, or something still uses it."""
 
 
-@dataclass(frozen=True)
-class SavedEntryCaller:
-    """
-    Who is asking, as the route works it out from the request.
-
-    Attributes:
-        oid (str | None): The signed-in user's object ID, or None when nobody is signed in.
-        is_admin (bool): Whether the caller is an administrator.
-        sign_in (bool): Whether sign-in is on.
-    """
-
-    oid: str | None
-    is_admin: bool
-    sign_in: bool
-
-
 class SavedEntryService:
     """Look up and delete saved targets, converters, scorers, and techniques."""
 
     async def get_saved_entry_async(
-        self, *, kind: RegistryRecipeKind, name: str, recipes_source: str | None, caller: SavedEntryCaller
+        self, *, kind: RegistryRecipeKind, name: str, recipes_source: str | None, is_admin: bool
     ) -> SavedEntryResponse:
         """
-        Describe a saved entry's file: its version, who saved it, and whether the caller may change it.
+        Describe a saved entry's file: its version, and whether the caller may change it.
 
         Args:
             kind (RegistryRecipeKind): The kind of entry.
             name (str): The entry's name.
             recipes_source (str | None): Where saved entries are stored, or None for the default folder.
-            caller (SavedEntryCaller): Who is asking.
+            is_admin (bool): Whether the caller is an administrator.
 
         Returns:
             SavedEntryResponse: The file's description.
@@ -111,15 +93,12 @@ class SavedEntryService:
         stored = await _read_async(
             storage=RegistryRecipeStorage(kind=kind, source=recipes_source), kind=kind, name=name
         )
-        owner = _owner(stored)
         return SavedEntryResponse(
             kind=kind,
             name=name,
             version=stored.version,
             problem=stored.reason if isinstance(stored, RestoreFailure) else None,
-            saved_by=(owner.name or None) if owner is not None else None,
-            saved_by_me=owner is not None and caller.oid is not None and owner.oid == caller.oid,
-            can_change=_may_change(owner=owner, caller=caller),
+            can_change=is_admin,
         )
 
     async def delete_saved_entry_async(
@@ -129,7 +108,7 @@ class SavedEntryService:
         name: str,
         expected_version: str | None,
         recipes_source: str | None,
-        caller: SavedEntryCaller,
+        is_admin: bool,
         runtime: RuntimeLifecycle | None,
     ) -> None:
         """
@@ -144,13 +123,13 @@ class SavedEntryService:
             name (str): The entry's name.
             expected_version (str | None): The file version the caller read. Required unless the file can't be read.
             recipes_source (str | None): Where saved entries are stored, or None for the default folder.
-            caller (SavedEntryCaller): Who is asking.
+            is_admin (bool): Whether the caller is an administrator, which deleting takes.
             runtime (RuntimeLifecycle | None): The runtime, to check that nothing is using the entry and to stop
                 listing it among the entries that couldn't be restored.
 
         Raises:
             SavedEntryNotFoundError: If no saved entry of the kind has the name.
-            SavedEntryForbiddenError: If the caller may not delete it.
+            SavedEntryForbiddenError: If the caller isn't an administrator.
             SavedEntryVersionRequiredError: If ``expected_version`` is missing for a file that can be read.
             SavedEntryInUseError: If the file changed since it was read, another saved entry names it, a registered
                 entry holds it, or a request, run, or send is in progress.
@@ -160,15 +139,8 @@ class SavedEntryService:
         storage = RegistryRecipeStorage(kind=kind, source=recipes_source)
         async with saved_entry_lock():
             stored = await _read_async(storage=storage, kind=kind, name=name)
-            owner = _owner(stored)
-            if not _may_change(owner=owner, caller=caller):
-                who = owner.name if owner is not None and owner.name else None
-                raise SavedEntryForbiddenError(
-                    f"Only {who} or an administrator can delete saved {singular} '{name}'."
-                    if who
-                    else f"Only an administrator can delete saved {singular} '{name}', since its file doesn't say "
-                    "who saved it."
-                )
+            if not is_admin:
+                raise SavedEntryForbiddenError(f"Only an administrator can delete saved {singular} '{name}'.")
             if stored.version is not None:
                 if expected_version is None:
                     raise SavedEntryVersionRequiredError(
@@ -308,12 +280,16 @@ def _holders(*, kind: RegistryRecipeKind, entry: RegistryEntry[Any]) -> list[str
     held_hash = entry.instance.get_identifier().hash
     holders = []
     for other_kind, registry in REGISTRIES_BY_KIND.items():
-        for other in registry.get_registry_singleton().instances.get_all_instances():
+        # Another user's private entry holds it too, but its name isn't shown.
+        for other in registry.get_registry_singleton().instances.get_all_instances_of_every_owner():
             if (other_kind, other.name) == (kind, entry.name):
                 continue
             if held_hash in _held_hashes(other.instance):
-                origin = _ORIGIN_WORDS[registry_entry_origin(other.metadata)]
-                holders.append(f"{origin} {_singular(other_kind)} '{other.name}'")
+                if is_visible_to_caller(other):
+                    origin = _ORIGIN_WORDS[registry_entry_origin(other.metadata)]
+                    holders.append(f"{origin} {_singular(other_kind)} '{other.name}'")
+                else:
+                    holders.append(f"another user's private {_singular(other_kind)}")
     return holders
 
 
@@ -405,30 +381,8 @@ def _registered_anywhere(instance: object) -> bool:
     return any(
         other.instance is instance
         for registry in REGISTRIES_BY_KIND.values()
-        for other in registry.get_registry_singleton().instances.get_all_instances()
+        for other in registry.get_registry_singleton().instances.get_all_instances_of_every_owner()
     )
-
-
-def _owner(stored: StoredRecipe | RestoreFailure) -> SavedEntryOwner | None:
-    """
-    Return who saved an entry, as its file says.
-
-    Returns:
-        SavedEntryOwner | None: The owner, or None when the file doesn't say or can't be used.
-    """
-    return stored.recipe.owner if isinstance(stored, StoredRecipe) else None
-
-
-def _may_change(*, owner: SavedEntryOwner | None, caller: SavedEntryCaller) -> bool:
-    """
-    Return whether the caller may change or delete an entry its file says the owner saved.
-
-    Returns:
-        bool: True when sign-in is off, for an administrator, and for the person who saved it.
-    """
-    if not caller.sign_in or caller.is_admin:
-        return True
-    return owner is not None and caller.oid is not None and owner.oid == caller.oid
 
 
 def _singular(kind: RegistryRecipeKind) -> str:

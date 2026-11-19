@@ -22,12 +22,10 @@ class SavedEntryResponse(BaseModel):
     problem: RestoreFailureReason | None = Field(
         None, description="Why the file can't be used, when it can't be read or isn't a valid entry"
     )
-    saved_by: str | None = Field(None, description="The name of the person who saved it, when sign-in was on")
-    saved_by_me: bool = Field(False, description="Whether the signed-in user asking is the one who saved it")
     can_change: bool = Field(
         ...,
         description=(
-            "Whether the caller may change or delete it: the person who saved it or an administrator, or anyone when "
-            "sign-in is off. A file that doesn't say who saved it needs an administrator."
+            "Whether the caller may change or delete it, which takes an administrator. In local mode that needs "
+            "PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true"
         ),
     )

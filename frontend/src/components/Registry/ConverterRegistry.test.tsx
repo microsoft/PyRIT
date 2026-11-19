@@ -165,8 +165,7 @@ describe('ConverterRegistry', () => {
       ],
     })
     jest.mocked(savedEntriesApi.get).mockResolvedValue({
-      kind: 'converters', name: 'saved_base64', version: 'v1', problem: null,
-      saved_by: 'Ada', saved_by_me: true, can_change: true,
+      kind: 'converters', name: 'saved_base64', version: 'v1', problem: null, can_change: true,
     })
     jest.mocked(savedEntriesApi.delete).mockResolvedValue()
     renderRegistry()
@@ -175,7 +174,7 @@ describe('ConverterRegistry', () => {
     expect(screen.queryByRole('button', { name: 'Remove saved_base64' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Delete saved converter saved_base64' }))
     const dialog = await screen.findByRole('dialog', { name: "Delete saved converter 'saved_base64'?" })
-    await within(dialog).findByText('You saved it.')
+    await within(dialog).findByText(/deleted for everyone/)
     const calls = mockedConvertersApi.listConverters.mock.calls.length
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
 

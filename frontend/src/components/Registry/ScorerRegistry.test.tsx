@@ -85,7 +85,7 @@ describe('ScorerRegistry', () => {
   it('moves focus to the page heading after a saved scorer is deleted', async () => {
     const user = userEvent.setup()
     jest.spyOn(savedEntriesApi, 'get').mockResolvedValue({
-      kind: 'scorers', name: 'saved_judge', version: 'v1', problem: null, saved_by: 'Ada', saved_by_me: true,
+      kind: 'scorers', name: 'saved_judge', version: 'v1', problem: null,
       can_change: true,
     })
     const deleteEntry = jest.spyOn(savedEntriesApi, 'delete').mockResolvedValue()

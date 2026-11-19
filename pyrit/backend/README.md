@@ -230,12 +230,13 @@ from starting can be deleted.
   whether the caller may change or delete it (`can_change`). **404** when no saved
   file has the name, including a name only a startup entry has.
 - `DELETE /api/saved-entries/{kind}/{name}?expected_version=<version>` - Delete the file and remove the entry it
-  restored, so it doesn't come back after a restart; a startup entry with the same name stays. Who may delete it
-  comes from the file: the person who saved it or an administrator, or anyone when sign-in is off (**403**
-  otherwise). A file that doesn't say who saved it, such as one that can't be read or isn't a valid entry, needs an
-  administrator. `expected_version` is required (**422**) unless the file can't be read. **409** when the file
-  changed since that version, another saved entry names this one (they're listed), a registered entry of any origin
-  holds it (they're listed; a Temporary one is gone after the next restart or configuration apply), or a request, run,
+  restored, so it doesn't come back after a restart; a startup entry with the same name stays. Saved entries are
+  shared, so only an administrator can delete one, as for scenario presets (**403** otherwise; in local mode that
+  needs `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`). The person who saved it, kept in its file, is attribution only.
+  `expected_version` is required (**422**) unless the file can't be read. **409** when the file changed since that
+  version, another saved entry names this one (they're listed), a registered entry of any origin holds it (they're
+  listed, except another user's private entry, which is counted without its name; a Temporary one is gone after the
+  next restart or configuration apply), or a request, run,
   send, or estimate is in progress. **503** when storage can't be read or written, or while the runtime is starting.
   Deleting an entry that couldn't be restored takes it off `restore_failures` in `GET /api/config/runtime`; apply the
   configuration or restart the backend to finish recovering. Saving and deleting take turns, and a save checks again
