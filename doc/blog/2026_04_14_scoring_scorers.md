@@ -22,6 +22,7 @@ Because the two scoring types produce different outputs, the evaluation metrics 
 - **Objective evaluations** use accuracy, precision, recall, and F1.
 - **Harm evaluations** use mean absolute error, a t-statistic to determine whether mean score differences are significantly different from 0, and Krippendorff's Alpha as a measure of interrater reliability.
 
+(scorer-evaluation-identifier)=
 ## Scorer Evaluation Identifier
 
 When we first thought about running evaluations, we thought, "Okay, we have our human-labeled datasets, so let's just run our built-in default scorers against them and see how well they do." But, as we ran those evaluations and got initial metrics, two questions arose: 1) How can we make incremental improvements to our scorers? 2) How can we effectively track those improvements in our repository? We have different scorer classes like `SelfAskLikertScorer` and `SelfAskTrueFalseScorer`, but ultimately, it's not just the class that defines the scorer — it's everything under the hood: the system prompt, the scoring rubrics that define each possible score, the type of LLM, the temperature, and more. There are a myriad of factors we can tweak that could affect how well the scorer performs as a whole — how do we capture all of those changes?

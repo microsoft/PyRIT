@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _describe_template_value(value: Any, *, enclosing: frozenset[int] = frozenset()) -> str:
+def _describe_template_value(value: Any, *, parameter_name: str, enclosing: frozenset[int] = frozenset()) -> str:
     """
     Describe a template parameter value so that values which render differently are told apart.
 
@@ -43,18 +43,29 @@ def _describe_template_value(value: Any, *, enclosing: frozenset[int] = frozense
 
     Args:
         value (Any): The template parameter value.
+        parameter_name (str): The name of the template parameter that holds the value.
         enclosing (frozenset[int]): Ids of the containers being described, to stop at self-references.
 
     Returns:
         str: A description of the value's rendering-relevant state, tagged with its type.
+
+    Raises:
+        ValueError: If the value is or holds a set or frozenset.
     """
+    if isinstance(value, (set, frozenset)):
+        # Set iteration order can change between processes, and so would the prompt and identifier.
+        raise ValueError(
+            f"Template parameter {parameter_name!r} contains a {type(value).__name__}, whose iteration order "
+            "can change between Python processes. Pass an ordered list prepared before constructing the "
+            "converter instead, such as sorted(values) or sorted(values.difference(exclusions))."
+        )
     type_name = f"{type(value).__module__}.{type(value).__qualname__}"
     if id(value) in enclosing:
         return f"{type_name}(<recursive>)"
     nested = enclosing | {id(value)}
 
     def describe(item: Any) -> str:
-        return _describe_template_value(item, enclosing=nested)
+        return _describe_template_value(item, parameter_name=parameter_name, enclosing=nested)
 
     attributes = getattr(value, "__dict__", None)
     state = f"(attributes={describe(attributes)})" if isinstance(attributes, dict) else ""
@@ -65,7 +76,7 @@ def _describe_template_value(value: Any, *, enclosing: frozenset[int] = frozense
         entries = ", ".join(f"{describe(key)}: {describe(item)}" for key, item in value.items())
         factory = f"(default_factory={describe(value.default_factory)})" if isinstance(value, defaultdict) else ""
         return f"{type_name}{state}{factory}{{{entries}}}"
-    if isinstance(value, (list, tuple, set, frozenset)):
+    if isinstance(value, (list, tuple)):
         return f"{type_name}{state}[{', '.join(describe(item) for item in value)}]"
     if isinstance(value, PurePath):
         return f"{type_name}({str(value)!r})"
@@ -83,12 +94,16 @@ def _hash_template_parameters(parameters: dict[str, Any]) -> str | None:
 
     Returns:
         str | None: The first 16 hex characters of the SHA-256 digest, or ``None`` if there are no parameters.
+
+    Raises:
+        ValueError: If a parameter value is or holds a set or frozenset.
     """
     if not parameters:
         return None
     # Keyword argument order does not change the rendered prompt, so sort by parameter name.
     description = ", ".join(
-        f"{name!r}: {_describe_template_value(value)}" for name, value in sorted(parameters.items())
+        f"{name!r}: {_describe_template_value(value, parameter_name=name)}"
+        for name, value in sorted(parameters.items())
     )
     return hashlib.sha256(description.encode("utf-8", errors="backslashreplace")).hexdigest()[:16]
 
@@ -149,12 +164,15 @@ class LLMGenericTextConverter(Converter):
             kwargs: Additional parameters forwarded to both the system prompt and user prompt templates
                 during rendering. Their constructor-time state contributes to the identifier, including
                 container iteration order, path flavor and object fields. Parameters should remain static
-                after construction. The incoming prompt supplies ``objective`` at render time.
+                after construction. Sets and frozensets are rejected, including inside other parameters,
+                because their iteration order can change between processes. Pass an ordered list instead,
+                such as ``sorted(values)``. The incoming prompt supplies ``objective`` at render time.
 
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
             ValueError: If ``user_prompt_template_with_objective`` does not declare an ``objective``
                 parameter.
+            ValueError: If a template parameter is or holds a set or frozenset.
         """
         super().__init__(converter_target=converter_target)
         self._converter_target = converter_target

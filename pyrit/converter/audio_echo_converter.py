@@ -77,7 +77,7 @@ class AudioEchoConverter(Converter):
             },
         )
 
-    def _apply_echo(self, data: np.ndarray[Any, Any], sample_rate: int) -> np.ndarray[Any, Any]:
+    def _apply_echo(self, data: np.ndarray[Any, Any], *, sample_rate: int) -> np.ndarray[Any, Any]:
         """
         Apply echo effect to a 1-D audio signal.
 
@@ -136,9 +136,9 @@ class AudioEchoConverter(Converter):
 
             # Apply echo to each channel
             if data.ndim == 1:
-                echo_data = self._apply_echo(data, sample_rate).astype(original_dtype)
+                echo_data = self._apply_echo(data, sample_rate=sample_rate).astype(original_dtype)
             else:
-                channels = [self._apply_echo(data[:, ch], sample_rate) for ch in range(data.shape[1])]
+                channels = [self._apply_echo(data[:, ch], sample_rate=sample_rate) for ch in range(data.shape[1])]
                 echo_data = np.column_stack(channels).astype(original_dtype)
 
             # Write the processed data as a new WAV file
