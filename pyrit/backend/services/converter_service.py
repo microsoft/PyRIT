@@ -454,7 +454,7 @@ class ConverterService:
             parameter for parameter in self._upload_params(converter_type=request.type) if parameter in request.params
         ]
         if uploads:
-            raise NotSaveableError(f"Saved converters can't keep uploaded files yet, so leave out '{uploads[0]}'.")
+            raise NotSaveableError(f"Saved converters can't keep uploaded files yet ('{uploads[0]}').")
         converter_cls = self._registry.get_class(request.type)
         params = await prepare_saved_params_async(
             registry=self._registry, type_name=request.type, cls=converter_cls, params=request.params

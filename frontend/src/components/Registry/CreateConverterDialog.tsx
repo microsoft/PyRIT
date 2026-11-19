@@ -567,7 +567,7 @@ export default function CreateConverterDialog({
     const upload = selectedConverterType.parameters.find(
       (parameter) => isUploadParameter(parameter) && formValueIsSet(parameterValues[parameter.name]),
     )
-    if (upload) return `Saved converters can't keep uploaded files yet ('${upload.name}'). Remove the file to save it.`
+    if (upload) return `Saved converters can't keep uploaded files yet ('${upload.name}').`
     const temporaryTarget = selectedConverterType.parameters
       .filter((parameter) => parameter.reference_type === 'target')
       .map((parameter) => stringFormValue(parameterValues[parameter.name]))
