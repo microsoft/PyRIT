@@ -56,6 +56,7 @@ from pyrit.converter import (
     BinAsciiConverter,
     BrailleConverter,
     CaesarConverter,
+    ColumnarTranspositionConverter,
     DigitBijectionConverter,
     EcojiConverter,
     LetterBijectionConverter,
@@ -89,6 +90,10 @@ print("NATO:", await NatoConverter().convert_async(prompt=prompt))  # type: igno
 print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=prompt))  # type: ignore
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
 print("Vigenere:", await VigenereConverter(key="key").convert_async(prompt=prompt))  # type: ignore
+print(
+    "ColumnarTransposition:",
+    await ColumnarTranspositionConverter(key="SECRET").convert_async(prompt=prompt),  # type: ignore
+)
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
 print("LetterBijectionConverter:", await LetterBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
 print("DigitBijectionConverter:", await DigitBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
