@@ -80,6 +80,16 @@ async def test_columnar_transposition_identifier_params():
     assert identifier.params["key"] == "ZEBRAS"
 
 
+def test_columnar_transposition_decode_prompt_description_includes_key():
+    # The decode-prompt description must disclose the keyword (uppercased) and the read convention,
+    # since a keyed transposition cannot be reversed without them.
+    converter = ColumnarTranspositionConverter(key="zebras")
+    description = converter.decode_prompt_description
+    assert "ZEBRAS" in description
+    assert "columnar transposition" in description.lower()
+    assert "alphabetical" in description.lower()
+
+
 def test_columnar_transposition_invalid_empty_key():
     with pytest.raises(ValueError, match="columnar transposition key value invalid"):
         ColumnarTranspositionConverter(key="")

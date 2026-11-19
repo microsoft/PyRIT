@@ -53,6 +53,24 @@ class ColumnarTranspositionConverter(Converter):
             raise ValueError("columnar transposition key value invalid, must be a non-empty alphabetic string.")
         self.key = key
 
+    @property
+    def decode_prompt_description(self) -> str:
+        """
+        A human-readable description of this cipher, including its keyword, for use in decode prompts.
+
+        A keyed transposition cannot be reversed without the keyword, so a scenario that asks a model
+        to decode the output must disclose the key and the column-ordering convention; otherwise a
+        failure to decode reflects the missing key rather than the behavior under test.
+
+        Returns:
+            str: A phrase naming the cipher, its keyword, and the incomplete-column read order.
+        """
+        return (
+            f'columnar transposition cipher (keyword "{self.key.upper()}", written row-wise into a grid '
+            "with that many columns, incomplete final row, then read out column by column in the "
+            "alphabetical order of the keyword's letters)"
+        )
+
     def _build_identifier(self) -> ComponentIdentifier:
         """
         Build the converter identifier with columnar transposition parameters.
