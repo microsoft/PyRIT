@@ -2682,11 +2682,13 @@ export interface FindingField {
   /** The severity slot's badge color for each top-level option. */
   colors: Record<string, FindingSeverityColor>
   hint: string | null
+  /** A heading, such as "Reproduction", shown above this field when the field before it has a different section. */
   section: string | null
 }
 
 /** The active finding fields: the severity slot and the fields shown after it. */
 export interface FindingFields {
+  /** Its options run from highest to lowest severity; findings sort in that order. */
   severity: FindingField
   fields: FindingField[]
 }

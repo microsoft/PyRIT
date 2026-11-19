@@ -67,7 +67,8 @@ class FindingField(BaseModel):
         allow_other (bool): Whether a single-level ``choice`` field also accepts typed text.
         colors (dict[str, FindingSeverityColor]): The severity slot's badge color for each top-level option.
         hint (str | None): Help text under the field in the finding dialog.
-        section (str | None): A heading the finding dialog shows where the section changes.
+        section (str | None): A heading, such as "Reproduction", that the finding dialog shows above this field
+            when the field before it has a different section.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -239,7 +240,14 @@ class FindingValueDescription(BaseModel):
 
 
 class FindingFields(BaseModel):
-    """A deployment's finding fields: the severity slot and the fields shown after it."""
+    """
+    A deployment's finding fields: the severity slot and the fields shown after it.
+
+    Attributes:
+        severity (FindingField): The required severity choice. List its options from highest to lowest; findings
+            sort in that order.
+        fields (list[FindingField]): The fields after the severity slot, in dialog order.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
