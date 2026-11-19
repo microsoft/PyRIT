@@ -32,6 +32,7 @@ from pyrit.backend.routes.common import (
 from pyrit.backend.services import get_converter_service
 from pyrit.backend.services.saved_entries import SavedEntryRemovalError
 from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
+from pyrit.registry.instance_registry import RegistryNameTakenError
 
 router = APIRouter(prefix="/converters", tags=["converters"])
 
@@ -82,7 +83,7 @@ async def list_converter_types() -> ConverterTypeResponse:  # pyrit-async-suffix
         },
         409: {
             "model": ProblemDetail,
-            "description": "A converter to save has the name of a registered or saved converter",
+            "description": "A registered converter has the name, or, for a converter to save, a saved converter has it",
         },
         503: {"model": ProblemDetail, "description": "Saved converters can't be written right now"},
     },
@@ -112,7 +113,8 @@ async def create_converter(
         )
     except NotSaveableError as e:
         return not_saveable_response(error=e, request=request)
-    except SavedEntryConflictError as e:
+    except (SavedEntryConflictError, RegistryNameTakenError) as e:
+        # RegistryNameTakenError is a ValueError, and a taken name is a 409 whether or not the converter is saved.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except SavedEntryStorageError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
