@@ -519,7 +519,7 @@ class ConverterService:
             if parameter in source_spec.params
         ]
         if uploads:
-            raise NotSaveableError(f"Saved converters can't keep uploaded files yet, so leave out '{uploads[0]}'.")
+            raise NotSaveableError(f"Saved converters can't keep uploaded files yet ('{uploads[0]}').")
         source_name = copied_entry_name(registry=self._registry, kind=RegistryRecipeKind.CONVERTERS, source=source)
         try:
             self._registry.instances.validate_name_available(name)

@@ -122,13 +122,17 @@ describe('SaveConverterDialog', () => {
     jest.mocked(convertersApi.createConverter).mockRejectedValueOnce(axiosError(400, {
       type: '/errors/not-saveable',
       detail: "Copies temporary converter 'caesar', which won't exist after a restart. It can still be created without saving it.",
+      not_saveable_reason: "Copies temporary converter 'caesar', which won't exist after a restart.",
     }))
     render(tree(onSaved))
     await user.type(screen.getByRole('textbox', { name: /Registry name/ }), 'saved')
     await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
 
     expect(await screen.findByText("This converter can't be saved")).toBeInTheDocument()
-    expect(screen.getByText(/Copies temporary converter 'caesar'/)).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      "Copies temporary converter 'caesar', which won't exist after a restart. "
+        + 'A Temporary converter is gone after the backend restarts or is reinitialized.',
+    )
     expect(onSaved).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(saved, true))

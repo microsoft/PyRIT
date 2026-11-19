@@ -6,7 +6,7 @@ import {
 } from '@fluentui/react-components'
 
 import { convertersApi } from '@/services/api'
-import { isNotSaveableError, toApiError } from '@/services/errors'
+import { isNotSaveableError, notSaveableReason, toApiError } from '@/services/errors'
 import type { ConverterInstance, SourceInstanceSpec } from '@/types'
 import { validateRegistryName } from '@/utils/registryName'
 
@@ -66,7 +66,7 @@ export default function SaveConverterDialog({
       if (active.current) {
         const apiError = toApiError(err)
         if (persist && isNotSaveableError(apiError)) {
-          setRefusal(apiError.detail)
+          setRefusal(notSaveableReason(apiError) ?? apiError.detail)
         } else if (apiError.status === 409 && apiError.type === undefined) {
           setNameConflict({ name: trimmed, detail: apiError.detail })
           setShowValidation(true)
