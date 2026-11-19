@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.executor.attack import (
+    AttackScoringConfig,
     SequenceCompletionPolicy,
     SequentialAttack,
     SequentialChildAttack,
@@ -40,7 +41,6 @@ from pyrit.scenario.core import (
 )
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
     build_baseline_atomic_attack,
-    build_technique_scoring_config,
     resolve_technique_factories,
 )
 from pyrit.scenario.core.technique_requirements import (
@@ -296,17 +296,14 @@ class Execute(Scenario):
             policy=context.incompatible_technique_policy,
         ):
             raise IncompatibleTechniqueError(f"Technique '{name}' is incompatible with the objective target")
-        needs = factory.requirements.objective_scorer_for(attack_class=factory.attack_class)
-        if needs.preserves_float_scale_value and not self._objective_scorer.capabilities.preserves_float_scale_value:
+        missing = factory.requirements.check_objective_scorer(
+            scorer=self._objective_scorer, attack_class=factory.attack_class
+        )
+        if missing:
             raise IncompatibleTechniqueError(
-                f"Technique '{name}' ranks by float feedback, which the objective scorer does not keep"
+                f"Technique '{name}' is incompatible with the objective scorer:\n" + "\n".join(missing)
             )
-        # Built in the config type the attack accepts, or the attack would judge with its own default.
-        scoring_config = build_technique_scoring_config(factory=factory, objective_scorer=self._objective_scorer)
-        if scoring_config is None:
-            raise IncompatibleTechniqueError(
-                f"Technique '{name}' has a scoring config type that cannot carry the objective scorer"
-            )
+        scoring_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
         if self.params.get("prompt") is not None and not factory.supports_prompt:
             raise IncompatibleTechniqueError(f"Technique '{name}' cannot send a separate prompt")
         groups = await asyncio.to_thread(

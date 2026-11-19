@@ -646,8 +646,8 @@ class TestAdversarialBenchmarkInit:
 
         assert {technique.value for technique in bench._scenario_techniques} == _DEFAULT_BENCHMARK_TECHNIQUE_NAMES
 
-    def test_tap_constructs_with_benchmark_scorer_policy(self, caplog):
-        """The benchmark's generic scorer is skipped under TAP's WARN policy so TAP can use its own scorer."""
+    def test_tap_constructs_with_the_benchmark_scoring_config(self, caplog):
+        """TAP takes the benchmark's AttackScoringConfig as is instead of dropping it for its own judge."""
         factory = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()["tap"]
 
         objective_target = MagicMock(spec=PromptTarget)
@@ -697,7 +697,8 @@ class TestAdversarialBenchmarkInit:
         assert "test objective" in rendered
         assert "Expected prefix" in rendered
         assert "{{" not in rendered
-        assert any("incompatible" in record.message for record in caplog.records)
+        assert technique.attack.get_attack_scoring_config() is scoring_config
+        assert not any("incompatible" in record.message for record in caplog.records)
         atomic_attack = MagicMock()
         atomic_attack.attack_technique = technique
         expected_scorer_hash = ScorerEvaluationIdentifier(technique.attack._objective_scorer.get_identifier()).eval_hash
@@ -731,7 +732,12 @@ class TestAdversarialBenchmarkInit:
             class_name="MockAdversarialTarget",
             class_module="tests.unit.scenario.benchmark.test_adversarial",
         )
-        scoring_config = AttackScoringConfig(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        objective_scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockObjectiveScorer",
+            class_module="tests.unit.scenario.benchmark.test_adversarial",
+        )
+        scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
         default_technique = registered_factory.create(
             objective_target=objective_target,

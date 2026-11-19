@@ -16,6 +16,7 @@ from pyrit.models import (
     MessagePiece,
     Scorable,
     Score,
+    ScorerCapabilityName,
     ScoreStatus,
     ScoringExpectation,
 )
@@ -77,22 +78,26 @@ def _threshold() -> FloatScaleThresholdScorer:
     return FloatScaleThresholdScorer(scorer=_FloatScorer(), threshold=0.5)
 
 
+def _keeps_float(scorer: TrueFalseScorer) -> bool:
+    return scorer.capabilities.includes(capability=ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE)
+
+
 class TestWhoPromises:
     def test_the_default_promises_nothing(self):
-        assert _Judge(promises=False).capabilities.preserves_float_scale_value is False
+        assert _keeps_float(_Judge(promises=False)) is False
 
     def test_threshold_scorers_promise_the_value_they_compared(self):
-        assert _threshold().capabilities.preserves_float_scale_value is True
+        assert _keeps_float(_threshold()) is True
 
     def test_inverting_a_verdict_clears_the_promise(self):
-        assert TrueFalseInverterScorer(scorer=_threshold()).capabilities.preserves_float_scale_value is False
+        assert _keeps_float(TrueFalseInverterScorer(scorer=_threshold())) is False
 
     @pytest.mark.parametrize(
         ("primary", "fallback", "expected"), [(True, True, True), (True, False, False), (False, True, False)]
     )
     def test_a_fallback_promises_only_when_both_children_do(self, primary, fallback, expected):
         wrapper = TrueFalseFallbackScorer(scorer=_Judge(promises=primary), fallback_scorer=_Judge(promises=fallback))
-        assert wrapper.capabilities.preserves_float_scale_value is expected
+        assert _keeps_float(wrapper) is expected
 
 
 class TestPublicBoundary:

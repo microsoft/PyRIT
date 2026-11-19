@@ -12,6 +12,7 @@ from pyrit.models import (
     Scorable,
     ScorableUnion,
     Score,
+    ScorerCapabilityName,
     ScoringExpectation,
 )
 from pyrit.score.observation.execution import _merge_observation_ids
@@ -80,8 +81,9 @@ class _FallbackScorer(Scorer):
         Returns:
             bool: Whether both the primary and the fallback guarantee the value.
         """
-        return self._scorer.capabilities.preserves_float_scale_value and (
-            self._fallback_scorer.capabilities.preserves_float_scale_value
+        return all(
+            child.capabilities.includes(capability=ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE)
+            for child in (self._scorer, self._fallback_scorer)
         )
 
     def _get_child_scorers(self) -> tuple[Scorer, ...]:

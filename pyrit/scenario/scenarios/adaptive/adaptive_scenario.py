@@ -20,7 +20,7 @@ import asyncio
 import logging
 from abc import abstractmethod
 from collections import Counter, defaultdict, deque
-from typing import TYPE_CHECKING, Any, ClassVar, get_type_hints
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackScoringConfig
@@ -355,20 +355,11 @@ class AdaptiveScenario(Scenario):
             ):
                 skipped_incompatible[technique_name] = "objective target requirements are not met"
                 continue
-            needs = factory.requirements.objective_scorer_for(attack_class=factory.attack_class)
-            lacks_feedback = (
-                needs.preserves_float_scale_value
-                and not self._objective_scorer.capabilities.preserves_float_scale_value
+            missing = factory.requirements.check_objective_scorer(
+                scorer=self._objective_scorer, attack_class=factory.attack_class
             )
-            scoring_config = None if lacks_feedback else self._build_scoring_config_for_factory(factory=factory)
-            if scoring_config is None:
-                required_type = factory.scoring_config_type
-                required_name = required_type.__name__ if required_type is not None else "AttackScoringConfig"
-                reason = (
-                    "scenario scorer does not keep the float value this technique ranks by"
-                    if lacks_feedback
-                    else f"scenario scorer is incompatible with required {required_name}"
-                )
+            if missing:
+                reason = "scenario scorer is incompatible: " + " ".join(missing)
                 if context.incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
                     raise IncompatibleTechniqueError(f"Technique '{technique_name}': {reason}")
                 skipped_incompatible[technique_name] = reason
@@ -376,7 +367,7 @@ class AdaptiveScenario(Scenario):
                 continue
             techniques[technique_name] = TechniqueBundle(
                 factory=factory,
-                attack_scoring_config=scoring_config,
+                attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
                 name=technique_name,
             )
 
@@ -393,47 +384,6 @@ class AdaptiveScenario(Scenario):
             )
 
         return techniques
-
-    def _build_scoring_config_for_factory(self, *, factory: AttackTechniqueFactory) -> AttackScoringConfig | None:
-        """
-        Build the most specific scoring config the factory's attack class accepts.
-
-        When the attack's constructor narrows ``attack_scoring_config`` to a
-        subtype of ``AttackScoringConfig`` (e.g. TAP requires
-        ``TAPAttackScoringConfig``), construct that subtype directly so the
-        factory does not have to fall back to its WARN policy and silently
-        substitute an internal default scorer.
-
-        Returns ``None`` when the scorer does not match the subtype's declared
-        ``objective_scorer`` type, or when the subtype's own validation rejects the
-        scorer (e.g. TAP's float feedback check). ``None`` signals that no scenario-scorer-
-        preserving config exists for this technique. The caller applies its
-        compatibility policy rather than relying on the factory's override policy to
-        react (under WARN/SKIP the factory would silently substitute its
-        internal default scorer, masking the incompatibility).
-
-        Returns:
-            AttackScoringConfig | None: The most specific config that could
-                be built, or ``None`` if the technique is incompatible with
-                the scenario scorer.
-
-        Raises:
-            TypeError: If a factory returns a non-``AttackScoringConfig`` instance.
-        """
-        required = factory.scoring_config_type
-        if required is None or required is AttackScoringConfig:
-            return AttackScoringConfig(objective_scorer=self._objective_scorer)
-        scorer_type = get_type_hints(required.__init__).get("objective_scorer")
-        if isinstance(scorer_type, type) and not isinstance(self._objective_scorer, scorer_type):
-            return None
-        try:
-            config = required(objective_scorer=self._objective_scorer)
-        except ValueError:
-            # The narrowed config validates the scorer itself, as TAP's does for float feedback.
-            return None
-        if not isinstance(config, AttackScoringConfig):
-            raise TypeError(f"Scoring config factory returned unsupported type: {type(config).__name__}")
-        return config
 
     async def _build_atomics_for_dataset_async(
         self,

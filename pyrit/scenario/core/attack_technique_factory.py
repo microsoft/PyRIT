@@ -1148,9 +1148,9 @@ class AttackTechniqueFactory(Identifiable):
 
         Args:
             objective_target: The target to attack (always required at create time).
-            attack_scoring_config: The scoring config to use for the attack. This is important
-                for attacks like TAP that may need a more specific scorer than the
-                scorer the scenario provides.
+            attack_scoring_config: The scoring config to use for the attack. It is forwarded
+                when the attack's ``attack_scoring_config`` annotation accepts its type;
+                otherwise the factory's scorer override policy decides.
             seed_group: Optional group whose named adversarial prompts configure this
                 attack instance. Target messages remain execution inputs.
             adversarial_chat: Optional adversarial chat target to use for this
@@ -1285,7 +1285,7 @@ class AttackTechniqueFactory(Identifiable):
         """
         Apply this technique's ``use_score_as_feedback`` override to a scoring config.
 
-        A shallow copy keeps the config's scorers and subtype (e.g. TAP's) without
+        A shallow copy keeps the config's scorers and subtype without
         re-running its constructor, and leaves the original config unchanged.
 
         Args:

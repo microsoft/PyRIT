@@ -54,6 +54,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    ScorerCapabilityName,
     ScoringExpectation,
     SeedPrompt,
 )
@@ -125,27 +126,6 @@ def _validate_stateful_clone_history_compatibility(
         )
 
 
-def _require_float_feedback(objective_scorer: object) -> TrueFalseScorer:
-    """
-    Check that a TAP objective scorer keeps a float value on every complete verdict.
-
-    Returns:
-        TrueFalseScorer: The scorer, unchanged.
-
-    Raises:
-        ValueError: If the scorer is not a true/false scorer that guarantees float feedback.
-    """
-    if not isinstance(objective_scorer, TrueFalseScorer):
-        raise ValueError("TAP requires a TrueFalseScorer as the objective scorer.")
-    if not objective_scorer.capabilities.preserves_float_scale_value:
-        raise ValueError(
-            f"TAP ranks branches by float feedback, so its objective scorer must keep a float value on each "
-            f"true/false result. {type(objective_scorer).__name__} does not guarantee one. Use a scorer that does, "
-            "such as FloatScaleThresholdScorer, or a TrueFalseFallbackScorer whose scorers both do."
-        )
-    return objective_scorer
-
-
 def _rank_key(score: Score) -> tuple[bool, bool, float]:
     """
     Order an objective score for pruning and for choosing the best node.
@@ -164,12 +144,11 @@ def _rank_key(score: Score) -> tuple[bool, bool, float]:
 
 class TAPAttackScoringConfig(AttackScoringConfig):
     """
-    Scoring configuration specifically for Tree of Attacks with Pruning (TAP).
+    Deprecated scoring configuration for Tree of Attacks with Pruning (TAP).
 
-    TAP takes success from the objective scorer's true/false verdict and ranks branches by the
-    float value that scorer keeps on each verdict. Any ``TrueFalseScorer`` that guarantees that
-    value qualifies (see ``Scorer.capabilities``), such as ``FloatScaleThresholdScorer`` or a
-    ``TrueFalseFallbackScorer`` whose scorers both guarantee it.
+    Use ``AttackScoringConfig``. TAP takes success from the objective scorer's true/false verdict
+    and ranks branches by the float value that scorer keeps on each verdict, and checks that
+    requirement itself (``TreeOfAttacksWithPruningAttack.OBJECTIVE_SCORER_REQUIREMENTS``).
     """
 
     def __init__(
@@ -184,26 +163,22 @@ class TAPAttackScoringConfig(AttackScoringConfig):
         Initialize TAP scoring configuration.
 
         Args:
-            objective_scorer (TrueFalseScorer): The scorer for evaluating attack success. Its verdict
-                decides success, and it must keep a float value on each verdict for ranking.
+            objective_scorer (TrueFalseScorer): The scorer for evaluating attack success.
             refusal_scorer (TrueFalseScorer | None): Optional scorer for detecting refusals.
             auxiliary_scorers (list[Scorer] | None): Additional scorers for auxiliary metrics.
             use_score_as_feedback (bool): Whether to use scoring results as feedback. Defaults to True.
-
-        Raises:
-            ValueError: If objective_scorer does not guarantee float feedback or
-                if refusal_scorer is not a TrueFalseScorer.
         """
-        _require_float_feedback(objective_scorer)
-
-        # Validate refusal scorer type
-        if refusal_scorer is not None and not isinstance(refusal_scorer, TrueFalseScorer):
-            raise ValueError("Refusal scorer must be a TrueFalseScorer")
-
-        self.objective_scorer = objective_scorer
-        self.refusal_scorer = refusal_scorer
-        self.auxiliary_scorers = auxiliary_scorers or []
-        self.use_score_as_feedback = use_score_as_feedback
+        print_deprecation_message(
+            old_item="TAPAttackScoringConfig",
+            new_item="AttackScoringConfig",
+            removed_in="1.4.0",
+        )
+        super().__init__(
+            objective_scorer=objective_scorer,
+            refusal_scorer=refusal_scorer,
+            auxiliary_scorers=auxiliary_scorers or [],
+            use_score_as_feedback=use_score_as_feedback,
+        )
 
     @property
     def threshold(self) -> float:
@@ -1567,8 +1542,11 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
     Example:
         >>> from pyrit.prompt_target import AzureOpenAIChat
-        >>> from pyrit.executor.attack import TreeOfAttacksWithPruningAttack, AttackAdversarialConfig
-        >>> from pyrit.executor.attack.multi_turn import TAPAttackScoringConfig
+        >>> from pyrit.executor.attack import (
+        ...     AttackAdversarialConfig,
+        ...     AttackScoringConfig,
+        ...     TreeOfAttacksWithPruningAttack,
+        ... )
         >>> from pyrit.score import FloatScaleThresholdScorer, SelfAskScaleScorer
         >>> # Initialize models
         >>> target = AzureOpenAIChat(deployment_name="gpt-4", endpoint="...", api_key="...")
@@ -1578,7 +1556,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         >>> tap_attack = TreeOfAttacksWithPruningAttack(
         ...     objective_target=target,
         ...     attack_adversarial_config=AttackAdversarialConfig(target=adversarial_llm),
-        ...     attack_scoring_config=TAPAttackScoringConfig(
+        ...     attack_scoring_config=AttackScoringConfig(
         ...         objective_scorer=FloatScaleThresholdScorer(
         ...             scorer=SelfAskScaleScorer.from_scale(chat_target=adversarial_llm),
         ...             threshold=0.7,
@@ -1618,8 +1596,11 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         EXECUTOR_SEED_PROMPT_PATH / "tree_of_attacks" / "adversarial_seed_prompt.yaml"
     )
     ADVERSARIAL_TARGET_REQUIREMENTS = _ADVERSARIAL_REQUIREMENTS
-    #: TAP ranks branches by the float value its objective scorer keeps on each verdict.
-    OBJECTIVE_SCORER_REQUIREMENTS = ScorerRequirements(preserves_float_scale_value=True)
+    #: TAP decides success from its objective scorer's verdict and ranks branches by the float
+    #: value that scorer keeps on each verdict.
+    OBJECTIVE_SCORER_REQUIREMENTS = ScorerRequirements(
+        required=frozenset({ScorerCapabilityName.TRUE_FALSE, ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE})
+    )
     ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
         default_system_prompt_path=DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
         system_prompt_parameters=("desired_prefix",),
@@ -1638,7 +1619,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
         attack_converter_config: AttackConverterConfig | None = None,
-        attack_scoring_config: TAPAttackScoringConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
         tree_width: int = 3,
         tree_depth: int = 5,
@@ -1656,12 +1637,12 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial chat component.
             attack_converter_config (AttackConverterConfig | None): Configuration for attack converters.
                 Defaults to None.
-            attack_scoring_config (TAPAttackScoringConfig | None): Scoring configuration for TAP.
-                Can be either AttackScoringConfig or TAPAttackScoringConfig. The objective scorer's
-                true/false verdict decides success, and the scorer must keep a float value on each
-                verdict for ranking branches (``Scorer.capabilities.preserves_float_scale_value``),
-                as ``FloatScaleThresholdScorer`` does. If not provided, a default configuration
-                with SelfAskScaleScorer and threshold 0.7 is created.
+            attack_scoring_config (AttackScoringConfig | None): Scoring configuration for TAP. The
+                objective scorer's true/false verdict decides success, and the scorer must keep a
+                float value on each verdict for ranking branches
+                (``ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE``), as ``FloatScaleThresholdScorer``
+                does. If not provided, a default configuration with SelfAskScaleScorer and threshold
+                0.7 is created.
             prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use. Defaults to None.
             tree_width (int): Number of branches to explore in parallel at each level. Defaults to 3.
             tree_depth (int): Maximum number of iterations to perform. Defaults to 5.
@@ -1674,7 +1655,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 application by role and request formatting for targets without editable history.
 
         Raises:
-            ValueError: If attack_scoring_config's objective scorer does not guarantee float feedback,
+            ValueError: If the objective scorer lacks a capability in ``OBJECTIVE_SCORER_REQUIREMENTS``,
                 if the adversarial target does not natively support the capabilities TAP needs,
                 or if parameters are invalid.
 
@@ -1755,6 +1736,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._attack_scoring_config = tap_scoring_config
         self._auxiliary_scorers = tap_scoring_config.auxiliary_scorers
         self._objective_scorer = tap_scoring_config.objective_scorer
+        self._validate_objective_scorer(scorer=self._objective_scorer)
 
         # Use the adversarial chat target for scoring, as in CrescendoAttack
         self._scoring_target = self._adversarial_chat
@@ -1764,62 +1746,50 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
 
-    def _resolve_scoring_config(self, attack_scoring_config: AttackScoringConfig | None) -> TAPAttackScoringConfig:
+    def _resolve_scoring_config(self, attack_scoring_config: AttackScoringConfig | None) -> AttackScoringConfig:
         """
-        Normalize runtime inputs while preserving the constructor's factory-facing TAP type contract.
+        Use the given scoring config, or build TAP's default when none is given.
 
         Args:
-            attack_scoring_config: Optional scoring config, including legacy base configs from direct callers.
+            attack_scoring_config: Optional scoring config.
 
         Returns:
-            A TAP scoring config whose objective scorer guarantees float feedback.
+            The scoring config with an objective scorer. The caller checks that scorer
+            against ``OBJECTIVE_SCORER_REQUIREMENTS``.
 
         Raises:
-            ValueError: If a base config has no objective scorer or an incompatible scorer.
+            ValueError: If a given config has no objective scorer.
         """
-        # If no scoring config provided, create the default TAP scorer using FloatScaleThresholdScorer
-        if attack_scoring_config is None:
-            # Determine supported data types based on target's output modalities.
-            # The default SelfAskScaleScorer only supports text; for targets that output
-            # images (or other non-text types), we need a scorer that accepts those types
-            # so it can evaluate the response with a multimodal LLM.
-            output_types: set[PromptDataType] = set()
-            for modality_set in self._objective_target.configuration.capabilities.output_modalities:
-                output_types.update(modality_set)
-            supported_types = sorted(output_types)
-            if not supported_types:
-                supported_types.append("text")
-
-            scorer_validator = ScorerPromptValidator(supported_data_types=supported_types)
-            default_scorer = FloatScaleThresholdScorer(
-                scorer=SelfAskScaleScorer.from_scale(
-                    chat_target=self._adversarial_chat,
-                    scale=NumericRubric.from_yaml(SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value),
-                    validator=scorer_validator,
-                ),
-                threshold=0.7,
-            )
-            tap_scoring_config = TAPAttackScoringConfig(objective_scorer=default_scorer)
-            self._logger.info(
-                f"No scoring config provided, using default FloatScaleThresholdScorer with threshold 0.7 "
-                f"(supported types: {supported_types})"
-            )
-        elif isinstance(attack_scoring_config, TAPAttackScoringConfig):
-            # Already the right type, use as-is
-            tap_scoring_config = attack_scoring_config
-        else:
-            # Convert AttackScoringConfig to TAPAttackScoringConfig
-            objective_scorer = attack_scoring_config.objective_scorer
-            if objective_scorer is None:
+        if attack_scoring_config is not None:
+            if attack_scoring_config.objective_scorer is None:
                 raise ValueError("objective_scorer is required")
-            tap_scoring_config = TAPAttackScoringConfig(
-                objective_scorer=_require_float_feedback(objective_scorer),
-                refusal_scorer=attack_scoring_config.refusal_scorer,
-                auxiliary_scorers=attack_scoring_config.auxiliary_scorers or None,
-                use_score_as_feedback=attack_scoring_config.use_score_as_feedback,
-            )
+            return attack_scoring_config
 
-        return tap_scoring_config
+        # Determine supported data types based on target's output modalities.
+        # The default SelfAskScaleScorer only supports text; for targets that output
+        # images (or other non-text types), we need a scorer that accepts those types
+        # so it can evaluate the response with a multimodal LLM.
+        output_types: set[PromptDataType] = set()
+        for modality_set in self._objective_target.configuration.capabilities.output_modalities:
+            output_types.update(modality_set)
+        supported_types = sorted(output_types)
+        if not supported_types:
+            supported_types.append("text")
+
+        scorer_validator = ScorerPromptValidator(supported_data_types=supported_types)
+        default_scorer = FloatScaleThresholdScorer(
+            scorer=SelfAskScaleScorer.from_scale(
+                chat_target=self._adversarial_chat,
+                scale=NumericRubric.from_yaml(SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value),
+                validator=scorer_validator,
+            ),
+            threshold=0.7,
+        )
+        self._logger.info(
+            f"No scoring config provided, using default FloatScaleThresholdScorer with threshold 0.7 "
+            f"(supported types: {supported_types})"
+        )
+        return AttackScoringConfig(objective_scorer=default_scorer)
 
     def _load_adversarial_prompts(self) -> None:
         """Load the adversarial chat prompt template and seed prompt from the default paths."""
@@ -1838,7 +1808,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Get the attack scoring configuration used by this strategy.
 
         Returns:
-            TAPAttackScoringConfig: The TAP-specific scoring configuration.
+            AttackScoringConfig: The scoring configuration.
         """
         return self._attack_scoring_config
 
