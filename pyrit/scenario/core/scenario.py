@@ -2069,12 +2069,9 @@ class Scenario(ABC):
             objective_target=self._objective_target_identifier,
             objective_scorer=self._objective_scorer_identifier,
             # A pool is not a scorer, so it is identity of its own rather than the objective_scorer reference.
+            # Requirements stay out: one that changes a selection changes the plan's group ids.
             children=(
-                {
-                    "objective_scorer_pool": self._objective_scorer_pool.get_identifier(
-                        requirements=self._get_objective_scorer_requirements_identity()
-                    )
-                }
+                {"objective_scorer_pool": self._objective_scorer_pool.get_identifier()}
                 if self._objective_scorer_pool is not None
                 else None
             ),
@@ -2091,27 +2088,6 @@ class Scenario(ABC):
             ScorerRequirements | None: The scenario-level requirements, or None.
         """
         return None
-
-    def _get_objective_scorer_requirements_identity(self) -> dict[str, Any] | None:
-        """
-        Collect every owner's scorer requirements for run identity.
-
-        Pool runs record these in the pool's identity, so changing what a dataset requires
-        changes the run.
-
-        Returns:
-            dict[str, Any] | None: Scenario and per-dataset requirements, or None when nothing is required.
-        """
-        identity: dict[str, Any] = {}
-        scenario_requirements = self._get_objective_scorer_requirements()
-        if scenario_requirements is not None:
-            identity["scenario"] = scenario_requirements.to_identity()
-        dataset_requirements = self._dataset_config.get_scorer_requirements_by_dataset()
-        if dataset_requirements:
-            identity["datasets"] = {
-                name: requirements.to_identity() for name, requirements in sorted(dataset_requirements.items())
-            }
-        return identity or None
 
     def _validate_stored_scenario(
         self, *, stored_result: ScenarioResult, current_identifier: ScenarioIdentifier

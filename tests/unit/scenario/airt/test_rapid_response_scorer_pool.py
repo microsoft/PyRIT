@@ -275,7 +275,7 @@ class TestRapidResponseScorerPool:
             "objective_scorer_candidate:1": (VIOLENCE, violence.get_identifier().hash),
         }
 
-    async def test_identity_includes_pool_order_and_dataset_requirements(self, objective_target, judges):
+    async def test_identity_records_the_pool_but_not_dataset_requirements(self, objective_target, judges):
         hate, violence = judges
 
         async def identity(pool: CompatibleScorers, config: DatasetAttackConfiguration):
@@ -286,10 +286,9 @@ class TestRapidResponseScorerPool:
 
         base = await identity(_pool(hate, violence), _dataset_config())
         assert base.objective_scorer is None
-        assert (
-            base.get_child("objective_scorer_pool").params["requirements"]["datasets"]["airt_hate"]["evaluation"]
-            == HATE
-        )
+        pool_params = base.get_child("objective_scorer_pool").params
+        assert pool_params["evaluations"] == [HATE, VIOLENCE]
+        assert "requirements" not in pool_params
         same = await identity(_pool(hate, violence), _dataset_config())
         reordered = await identity(
             CompatibleScorers(
@@ -303,6 +302,15 @@ class TestRapidResponseScorerPool:
         assert base.hash == same.hash
         assert base.hash != reordered.hash
         assert ScenarioEvaluationIdentifier(base).eval_hash != ScenarioEvaluationIdentifier(reordered).eval_hash
+
+        # A requirement that changes a selection changes the plan's group ids instead.
+        both_hate = DatasetAttackConfiguration(
+            sources=[
+                DatasetSource(name="airt_hate", scorer_requirements=ScorerRequirements(evaluation=HATE)),
+                DatasetSource(name="airt_violence", scorer_requirements=ScorerRequirements(evaluation=HATE)),
+            ]
+        )
+        assert (await identity(_pool(hate, violence), both_hate)).hash == base.hash
 
     async def test_the_pool_identity_round_trips_through_storage(self, objective_target, judges):
         scenario = await _initialize(

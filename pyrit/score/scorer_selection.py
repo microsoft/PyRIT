@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pyrit.models import (
     Scorable,
@@ -29,7 +29,7 @@ from pyrit.models import (
 from pyrit.score.expectation_errors import AmbiguousConditionError, ExpectationMismatchError
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -135,15 +135,6 @@ class ScorerRequirements:
                 )
             evaluation = item.evaluation
         return cls(preserves_float_scale_value=preserves, evaluation=evaluation)
-
-    def to_identity(self) -> dict[str, str | bool | None]:
-        """
-        Return the requirement values that feed run identity.
-
-        Returns:
-            dict[str, str | bool | None]: A JSON-serializable view.
-        """
-        return {"evaluation": self.evaluation, "preserves_float_scale_value": self.preserves_float_scale_value}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -491,26 +482,19 @@ class CompatibleScorers:
                 return mismatch(kind=ScorerMismatchKind.CONDITION, detail=f"{exc} (rejected by {exc.scorer_name}).")
         return None
 
-    def get_identifier(self, *, requirements: Mapping[str, Any] | None = None) -> ScorerIdentifier:
+    def get_identifier(self) -> ScorerIdentifier:
         """
-        Identify the ordered pool for run identity.
+        Identify the ordered pool.
 
         The identity includes each candidate's full scorer identity and evaluation key in
         pool order, so a different pool, order, or binding means a different run.
 
-        Args:
-            requirements (Mapping[str, Any] | None): The run's requirement owners and their
-                values (see ``ScorerRequirements.to_identity``), when any are declared.
-
         Returns:
             ScorerIdentifier: The pool's identity.
         """
-        params: dict[str, Any] = {"evaluations": [candidate.evaluation for candidate in self._candidates]}
-        if requirements:
-            params["requirements"] = dict(requirements)
         return ScorerIdentifier.of(
             self,
-            params=params,
+            params={"evaluations": [candidate.evaluation for candidate in self._candidates]},
             scorer_type="true_false",
             sub_scorers=[candidate.scorer.get_identifier() for candidate in self._candidates],
         )
