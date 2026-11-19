@@ -136,9 +136,9 @@ await output_scenario_async(prompt_inject_result)
 # pyrit_scan run garak.encoding --target openai_chat --techniques base64 --max-total 1
 # ```
 #
-# **Available techniques** (17 encodings): Base64, Base2048, Base16, Base32, ASCII85, Hex,
+# **Available techniques** (18 encodings): Base64, Base2048, Base16, Base32, ASCII85, Hex,
 # QuotedPrintable, UUencode, ROT13, Braille, Atbash, MorseCode, NATO, Ecoji, Zalgo, LeetSpeak,
-# AsciiSmuggler
+# AsciiSmuggler, Bifid
 #
 # **Aggregate techniques:** `ALL` (every encoding, exhaustive) and `DEFAULT` (a broad curated subset
 # spanning every encoding family — base-N, byte-encodings, substitution ciphers, and symbolic
@@ -422,11 +422,7 @@ latent_injection_scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
         "scenario_techniques": [LatentInjectionTechnique.Bare],
-        "dataset_config": LatentInjectionDatasetConfiguration(
-            sources=[DatasetSource(name=name) for name in LatentInjection.required_datasets()],
-            families=["whois"],
-            max_total=1,
-        ),
+        "dataset_config": LatentInjectionDatasetConfiguration(families=["whois"], max_total=1),
     }
 )
 await latent_injection_scenario.initialize_async()  # type: ignore

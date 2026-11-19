@@ -16,6 +16,7 @@ from sqlalchemy.orm import Query, Session
 from pyrit.common import Singleton
 from pyrit.converter import Base64Converter
 from pyrit.memory import (
+    AttackResultEntry,
     AttackResultKeysetCursor,
     AzureSQLMemory,
     EmbeddingDataEntry,
@@ -636,6 +637,23 @@ def test_get_conversation_stats_uses_one_latest_row_apply(
     assert sql.upper().count("SELECT TOP 1") == 1
     assert "OUTER APPLY" in sql.upper()
     assert "p2.converted_value_data_type AS last_data_type" in sql
+
+
+def test_latest_per_conversation_tiebreak_orders_uuids_canonically(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The anti-join tiebreak normalizes both id operands for SQL Server.
+
+    Native uniqueidentifier ordering differs from the SDK string comparison,
+    so an unnormalized comparison would crown a different tie winner than the
+    post-fetch Python dedup on the same rows.
+    """
+    condition = uninitialized_memory_interface._attack_results_not_superseded_condition(conditions=[])
+    statement = select(AttackResultEntry.id).where(condition)
+    sql = str(statement.compile(dialect=mssql.dialect())).upper()
+
+    assert "LOWER(CAST(NEWER.ID AS VARCHAR(36)))" in sql
+    assert "LOWER(CAST([ATTACKRESULTENTRIES].ID AS VARCHAR(36)))" in sql
 
 
 def test_get_conversation_stats_chunks_within_bind_budget(

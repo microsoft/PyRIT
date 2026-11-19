@@ -265,6 +265,10 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
     )
     chat_scorer_inherited: bool = Field(default=False, description="Uses the scan's registered original scorer")
     execution_read_only: bool = Field(default=False, description="Execution changes require a manual continuation")
+    in_progress: bool = Field(
+        default=False, description="The attack is still running in a scan; its result is not saved yet"
+    )
+    scenario_result_id: str | None = Field(default=None, description="The scan run that produced this attack")
 
     @computed_field
     @property
@@ -370,6 +374,10 @@ class AttackMetadata(BaseModel):
     chat_scorer: RegisteredComponentReference | None = None
     chat_scorer_inherited: bool = False
     execution_read_only: bool = False
+    in_progress: bool = Field(
+        default=False, description="The attack is still running in a scan; its result is not saved yet"
+    )
+    scenario_result_id: str | None = Field(default=None, description="The scan run that produced this attack")
     manual_continuation: ManualContinuation | None = None
     last_response_message_piece_id: str | None = None
     related_conversation_count: int = Field(..., ge=0, description="Number of pruned conversations, excluding main")

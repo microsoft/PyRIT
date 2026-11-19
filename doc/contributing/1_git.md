@@ -3,6 +3,7 @@
 In this guide, there are two ways to set up your fork for PyRIT: one using [Approach 1: Using GitHub CLI](#approach-1-using-github-cli), and one with [Approach 2: Without GitHub CLI](#approach-2-without-github-cli).
 
 ## Step 1: Fork
+(approach-1-using-github-cli)=
 ### Approach 1: Using GitHub CLI
 You will need to install [GitHub CLI](https://cli.github.com/)
 ```bash
@@ -23,6 +24,7 @@ git merge upstream/main
 git push origin main
 ```
 
+(approach-2-without-github-cli)=
 ### Approach 2: Without GitHub CLI
 [Fork](https://github.com/microsoft/PyRIT/fork) the repo from the main branch. By default, forks are named the same as their upstream repository. This will create a new repo called `GITHUB_USERNAME/PyRIT` (where `GITHUB_USERNAME` is a variable for your GitHub username).
 

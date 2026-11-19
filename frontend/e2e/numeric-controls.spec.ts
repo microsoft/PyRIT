@@ -74,6 +74,7 @@ async function mockNumericControlApis(page: Page): Promise<void> {
         items: [makeTarget({ target_registry_name: 'mock-target' })],
         pagination: { limit: 200, has_more: false },
       },
+      '/api/targets/saveability': { not_saveable_reason: null },
       '/api/targets/types': {
         items: [
           {

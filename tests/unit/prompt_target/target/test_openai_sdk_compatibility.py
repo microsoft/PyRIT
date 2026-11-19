@@ -4,8 +4,10 @@
 import asyncio
 import base64
 import importlib.util
+import inspect
 import json
 from collections.abc import Iterator
+from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -175,13 +177,22 @@ async def test_sdk_errors_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("media", ["image", "tts", "video"])
-async def test_sdk_binary_responses_async(*, http_module: ModuleType, media: str) -> None:
+@pytest.mark.parametrize(
+    ("media", "endpoint"),
+    [
+        ("image", "https://example.test/v1"),
+        ("tts", "https://example.test/v1"),
+        ("video", "https://example.test/v1"),
+        ("video", "https://test.openai.azure.com/openai/v1"),
+        ("video", "https://compatible.test/custom"),
+    ],
+)
+async def test_sdk_binary_responses_async(*, http_module: ModuleType, media: str, endpoint: str) -> None:
     data = b"synthetic media bytes"
-    paths: list[str] = []
+    urls: list[str] = []
 
     def respond(request: Any) -> Any:
-        paths.append(request.url.path)
+        urls.append(str(request.url))
         if media == "tts" or request.url.path.endswith("/content"):
             return http_module.Response(200, content=data)
         if media == "image":
@@ -207,16 +218,34 @@ async def test_sdk_binary_responses_async(*, http_module: ModuleType, media: str
     async with http_module.AsyncClient(transport=http_module.MockTransport(respond)) as client:
         target = target_type(
             model_name="test-model",
-            endpoint="https://example.test/v1",
+            endpoint=endpoint,
             api_key="test-key",
             httpx_client_kwargs={"http_client": client, "max_retries": 0},
         )
-        responses = await target.send_prompt_async(message=Message.from_prompt(prompt="hello", role="user"))
+        # SDK retirement warnings also apply to mocked compatible-provider calls.
+        warning_context = (
+            pytest.warns(
+                DeprecationWarning,
+                match=r"^The Sora API is scheduled to permanently shut down on September 24, 2026\.$",
+            )
+            if media == "video"
+            and getattr(inspect.getattr_static(target._client.videos, "create_and_poll"), "__deprecated__", None)
+            else nullcontext()
+        )
+        with warning_context:
+            responses = await target.send_prompt_async(message=Message.from_prompt(prompt="hello", role="user"))
 
     piece = responses[0].get_piece()
     assert piece.converted_value_data_type == {"image": "image_path", "tts": "audio_path", "video": "video_path"}[media]
     assert await asyncio.to_thread(Path(piece.converted_value).read_bytes) == data
-    assert len(paths) == (3 if media == "video" else 1)
+    expected_paths = {
+        "image": ["images/generations"],
+        "tts": ["audio/speech"],
+        "video": ["videos", "videos/video_test", "videos/video_test/content"],
+    }[media]
+    assert urls == [f"{endpoint}/{path}" for path in expected_paths]
+    if media == "video":
+        assert piece.prompt_metadata["video_id"] == "video_test"
 
 
 async def test_sdk_embedding_response_async() -> None:

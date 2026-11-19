@@ -719,6 +719,8 @@ async def test_crescendo_scenario_cancellation_preserves_progress_and_resumes_on
         "B progress 3",
         "B prompt 4",
         "B progress 4",
+        # The request in flight when the run was cancelled, with no response.
+        "B prompt 5",
     ]
 
     assert events == [

@@ -417,16 +417,22 @@ az deployment group show -g <rg> -n <application-deployment-name> --query proper
 
 > This section documents the repository maintainers' internal pipeline. It depends on Microsoft team-owned ADO service connections, environments, and variable groups. It is not required or expected for community deployments; use direct Bicep or `deploy_instance.py` instead.
 
-`gui-deploy.yml` is an **update-only** workflow for the pre-created test-v2 and prod-v2 stacks. Both parameters default to `false`:
+`gui-deploy.yml` is an **update-only** workflow for the pre-created test-v2 and prod-v2 stacks. `deployInfra` and `deployToProd` default to `false`; `deployToTest` defaults to `true`:
 
-| `deployInfra` | `deployToProd` | Workflow |
-| --- | --- | --- |
-| `false` | `false` | Build, deploy app to test |
-| `true` | `false` | Build, reconcile test infrastructure without changing the app, deploy app to test |
-| `false` | `true` | Build, deploy app to test, production approval, deploy the same image to production |
-| `true` | `true` | Build, test infrastructure, test app, production approval, production infrastructure, production app |
+| `deployInfra` | `deployToTest` | `deployToProd` | Workflow |
+| --- | --- | --- | --- |
+| `false` | `true` | `false` | Build, deploy app to test |
+| `true` | `true` | `false` | Build, reconcile test infrastructure without changing the app, deploy app to test |
+| `false` | `true` | `true` | Build, deploy app to test, production approval, deploy the same image to production |
+| `true` | `true` | `true` | Build, test infrastructure, test app, production approval, production infrastructure, production app |
+| `false` | `false` | `true` | Build, production approval, production app (test is skipped) |
+| `true` | `false` | `true` | Build, production approval, production infrastructure, production app (test is skipped) |
 
-Qualifying merges to `main` automatically deploy **the app to test without infrastructure reconciliation**. Production remains opt-in: manually queue a commit merged to `main` with `deployToProd=true`. Approval rejects on timeout and the requester cannot self-approve. All stages remain in the run graph: infrastructure stages show **Skipped** when `deployInfra=false`, just as production stages do when production is disabled. App deployment accepts that intentional skip, but an infrastructure failure or cancellation blocks it.
+Qualifying merges to `main` automatically deploy **the app to test without infrastructure reconciliation**. Production remains opt-in: manually queue a run from `main` or a `releases/v*` branch with `deployToProd=true`. Other branches are rejected before the build. Approval rejects on timeout and the requester cannot self-approve. All stages remain in the run graph: infrastructure stages show **Skipped** when `deployInfra=false`, just as production stages do when production is disabled. App deployment accepts that intentional skip, but an infrastructure failure or cancellation blocks it.
+
+Set `deployToTest=false` only with `deployToProd=true`, for example to deploy a release branch to production. The test database follows `main`, so a release branch that is older than `main` would fail its test schema check. Skipped test stages do not block production approval, but a failed or canceled test stage does. The approver must confirm the release was validated elsewhere.
+
+The pipeline reads `gui-deploy.yml` and the deployment scripts from the queued commit. A release branch cut before this policy existed still enforces the `main`-only rule; cherry-pick the pipeline change into it before deploying it. Branch checks configured on the `copyrit-prod` ADO environment also apply and must allow `releases/v*`.
 
 The Build job logs disk usage and prunes unused local Docker images and build cache before and after building, even on failure, to leave space for Component Governance scanning. Pushed ACR images are unaffected. This cleanup is only for disposable hosted agents, not shared self-hosted agents.
 
@@ -516,10 +522,13 @@ Each internal app stage (test, and prod after approval) does these steps in sequ
 
 1. Validate the inputs and preview the app deployment.
 2. Preview, then create or update the manual ACA job `<deploymentAppName>-migrate` from `infra/migration.bicep`. This does not start the job. The job uses the built image, the app managed identity, and the app configuration sources. If job preparation fails, the running app is not stopped.
-3. Start a check-only execution using the full deployed job template, changing only the migration container's arguments to `--check-only`, and wait up to 30 minutes. This preserves its image, environment, and resources. It validates the database target and checks the schema without applying migrations. If it succeeds, skip steps 4 and 5: deploy without stopping the app. If the execution fails, log the failure and use the stopped-app migration path. A template/start/status API error, interrupted execution, or polling timeout aborts deployment without stopping the app.
-4. Deactivate all active revisions and wait for their replicas, including replicas from inactive revisions, to stop. Each poll reads all revision states in one Azure API call. Missing or invalid replica counts do not count as zero. If shutdown is not confirmed, do not start the migration. The app is offline until step 6. This also supports a rerun when the app is already stopped.
-5. Start the job without check-only arguments and wait up to 30 minutes. Before opening a database connection, it verifies that the connection string identifies the deployment server and database. It then upgrades the schema and checks it. If the migration fails or times out, stop. The app stays offline and is not deployed. Fix the cause and run the stage again.
-6. Deploy the app with `PYRIT_REQUIRE_CURRENT_SCHEMA=true`. The app checks the schema and does not migrate. If the app template did not change (for example, a rerun with the same image), the stage activates the previous revision again, including when a successful check skipped migration on an already-stopped app.
+3. Start a check-only execution using the full deployed job template, changing only the migration container's arguments to `--check-only`, and wait up to about 10 minutes. This preserves its image, environment, and resources. It validates the database target and checks the schema without applying migrations. If it succeeds, skip steps 4–6: deploy without stopping the app. If the execution fails, log the failure and continue to step 4. A template/start/status API error, interrupted execution, or polling timeout aborts deployment without stopping the app; a timed-out execution is stopped, and if the stop request fails, deployment reports an unknown execution state that must be confirmed before retrying.
+4. Start a revision-check execution the same way with `--check-upgradable`, and wait up to about 10 minutes. It fails if the database is stamped with a revision that this image's migrations do not contain, which means a newer release already migrated it, or if the database is already at this image's head, so migrating cannot fix the schema mismatch (for example, a migration edited after it was deployed, a model change without a migration, or a manual database change). If it fails, abort deployment **without stopping the app**; deploy the newer release (or a later one), or investigate the schema mismatch.
+5. Deactivate all active revisions and wait for their replicas, including replicas from inactive revisions, to stop. Each poll reads all revision states in one Azure API call. Missing or invalid replica counts do not count as zero. If shutdown is not confirmed, do not start the migration. The app is offline until step 7. This also supports a rerun when the app is already stopped.
+6. Start the job without check arguments and wait up to the job's 2-hour `replicaTimeout`. Before opening a database connection, it verifies that the connection string identifies the deployment server and database. It then upgrades the schema and checks it. The job logs list each applied revision with timestamps and data-backfill progress. If the migration fails or times out, stop. The app stays offline and is not deployed. Fix the cause and run the stage again.
+7. Deploy the app with `PYRIT_REQUIRE_CURRENT_SCHEMA=true`. The app checks the schema and does not migrate. If the app template did not change (for example, a rerun with the same image), the stage activates the previous revision again, including when a successful check skipped migration on an already-stopped app.
+
+Each deployment stage has a 3-hour timeout to fit the migration budget. Override poll counts with `PYRIT_SCHEMA_CHECK_POLL_ATTEMPTS` (default 30) and `PYRIT_MIGRATION_POLL_ATTEMPTS` (default 375), each `PYRIT_MIGRATION_POLL_SECONDS` (default 20) apart.
 
 Azure SQL initialization checks the schema without migrating by default, including calls to `initialize_pyrit_async`. A migration requires the explicit migration command, or `skip_schema_migration=False` for non-production initialization. The internal backend's `PYRIT_REQUIRE_CURRENT_SCHEMA=true` also blocks that initialization opt-in and fails startup on a schema mismatch. The job can share the backend identity: SQL DDL permission alone does not trigger migrations. SQLite initialization is unchanged.
 

@@ -1,6 +1,19 @@
 import type { FilterOption, TargetInstance } from '@/types'
 import { targetType } from '@/utils/targetIdentity'
 
+/** Who can see and use a target: everyone (`shared`) or only the requesting user (`yours`). */
+export type TargetAccount = 'shared' | 'yours'
+
+/** Display name for each account, shared by the table and the filters. */
+export const TARGET_ACCOUNT_LABELS: Readonly<Record<TargetAccount, string>> = {
+  shared: 'Shared',
+  yours: 'Yours',
+}
+
+export function targetAccount(target: Pick<TargetInstance, 'private'>): TargetAccount {
+  return target.private === true ? 'yours' : 'shared'
+}
+
 /** Display name for each known modality, shared by the table icons and the filters. */
 export const MODALITY_LABELS: Readonly<Record<string, string>> = {
   text: 'Text',
@@ -45,12 +58,17 @@ type ModalityField = 'supported_input_modalities' | 'supported_output_modalities
 /** Selected values per filter; an empty list means the filter is off. */
 export interface TargetFilters {
   types: string[]
+  accounts: string[]
   inputs: string[]
   outputs: string[]
   capabilities: string[]
 }
 
-export const DEFAULT_TARGET_FILTERS: TargetFilters = { types: [], inputs: [], outputs: [], capabilities: [] }
+export const DEFAULT_TARGET_FILTERS: TargetFilters = { types: [], accounts: [], inputs: [], outputs: [], capabilities: [] }
+
+/** Account choices in display order. */
+const ACCOUNT_OPTIONS: readonly FilterOption[] = (Object.keys(TARGET_ACCOUNT_LABELS) as TargetAccount[])
+  .map((account: TargetAccount) => ({ value: account, label: TARGET_ACCOUNT_LABELS[account] }))
 
 /** Choices per filter; a filter with no choices cannot narrow the table and is not shown. */
 export type TargetFilterOptions = Record<keyof TargetFilters, FilterOption[]>
@@ -103,6 +121,26 @@ function capabilityOptions(targets: TargetInstance[]): FilterOption[] {
   return narrowingOptions(targets, options, supportsCapability)
 }
 
+/** Like types, accounts can narrow the table only when the targets use more than one. */
+function accountOptions(targets: TargetInstance[]): FilterOption[] {
+  const present = new Set(targets.map((target: TargetInstance) => targetAccount(target)))
+  return present.size > 1 ? [...ACCOUNT_OPTIONS] : []
+}
+
+/** Display name of a selected value that no current target offers. */
+function retainedOptionLabel(key: keyof TargetFilters, value: string): string | undefined {
+  switch (key) {
+    case 'types':
+      return value
+    case 'accounts':
+      return ACCOUNT_OPTIONS.find((option: FilterOption) => option.value === value)?.label
+    case 'capabilities':
+      return CAPABILITY_COLUMNS.find((column: (typeof CAPABILITY_COLUMNS)[number]) => column.key === value)?.label
+    default:
+      return MODALITY_LABELS[value]
+  }
+}
+
 /** Current choices plus selected values that must remain visible and removable. */
 export function getTargetFilterOptions(
   targets: TargetInstance[], filters: TargetFilters = DEFAULT_TARGET_FILTERS,
@@ -110,17 +148,15 @@ export function getTargetFilterOptions(
   const types = [...new Set(targets.map((target: TargetInstance) => targetType(target)))].sort()
   const options: TargetFilterOptions = {
     types: types.length > 1 ? types.map((type: string) => ({ value: type, label: type })) : [],
+    accounts: accountOptions(targets),
     inputs: modalityOptions(targets, 'supported_input_modalities'),
     outputs: modalityOptions(targets, 'supported_output_modalities'),
     capabilities: capabilityOptions(targets),
   }
-  for (const key of ['types', 'inputs', 'outputs', 'capabilities'] as const) {
+  for (const key of ['types', 'accounts', 'inputs', 'outputs', 'capabilities'] as const) {
     for (const value of filters[key]) {
       if (options[key].some((option: FilterOption) => option.value === value)) continue
-      const label = key === 'capabilities'
-        ? CAPABILITY_COLUMNS.find((column: (typeof CAPABILITY_COLUMNS)[number]) => column.key === value)?.label
-        : key === 'types' ? value : MODALITY_LABELS[value]
-      options[key].push({ value, label: label ?? value })
+      options[key].push({ value, label: retainedOptionLabel(key, value) ?? value })
     }
   }
   return options
@@ -131,13 +167,14 @@ export function hasActiveTargetFilters(filters: TargetFilters): boolean {
 }
 
 /**
- * Whether a target passes every filter. Types, inputs, and outputs match any selected value;
+ * Whether a target passes every filter. Types, accounts, inputs, and outputs match any selected value;
  * capabilities are requirements, so a target must support every selected one.
  */
 export function targetMatchesFilters(target: TargetInstance, filters: TargetFilters): boolean {
   const matchesAny = (selected: string[], matches: (value: string) => boolean): boolean =>
     selected.length === 0 || selected.some(matches)
   return matchesAny(filters.types, (type: string) => targetType(target) === type)
+    && matchesAny(filters.accounts, (account: string) => targetAccount(target) === account)
     && matchesAny(filters.inputs, (modality: string) => supportsModality(target, 'supported_input_modalities', modality))
     && matchesAny(filters.outputs, (modality: string) => supportsModality(target, 'supported_output_modalities', modality))
     && filters.capabilities.every((key: string) => supportsCapability(target, key))

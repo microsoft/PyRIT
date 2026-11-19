@@ -14,10 +14,8 @@ from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import current_user_name
 from pyrit.backend.models.prompt_generations import (
     PromptGenerationPreflightResponse,
-    PromptGenerationRecord,
     PromptGenerationRequestFromDataset,
     PromptGenerationReview,
-    PromptGenerationStatus,
 )
 from pyrit.backend.services.prompt_generation_adapters import create_prompt_generation_adapters
 from pyrit.backend.services.prompt_generation_service import (
@@ -25,7 +23,7 @@ from pyrit.backend.services.prompt_generation_service import (
     PromptGenerationNotFoundError,
     PromptGenerationService,
 )
-from pyrit.models import PromptGenerationEstimate
+from pyrit.models import PromptGenerationEstimate, PromptGenerationRecord, PromptGenerationStatus
 
 GENERATION_ID = "11111111-1111-4111-8111-111111111111"
 GROUP_ID = "22222222-2222-4222-8222-222222222222"
@@ -102,6 +100,7 @@ def test_create_records_user_and_hides_checkpoint(client: TestClient, service: M
     assert body["id"] == GENERATION_ID
     assert body["request"] == CREATE_BODY["request"]
     assert "checkpoint" not in body
+    assert "execution_id" not in body
     assert service.create_async.call_args.kwargs["created_by"] == "Ada"
 
 
@@ -141,24 +140,32 @@ def test_preflight_returns_validation_and_estimate(client: TestClient, service: 
     assert response.status_code == 422
 
 
-def test_list_and_lifecycle_actions(client: TestClient, service: MagicMock) -> None:
-    service.list_async = AsyncMock(return_value=[_record()])
+def test_list_hides_request_and_execution_id(client: TestClient, service: MagicMock) -> None:
+    service.list_async = AsyncMock(return_value=[_record(execution_id="33333333-3333-4333-8333-333333333333")])
     listed = client.get("/api/prompt-generations").json()["items"]
     assert listed[0]["id"] == GENERATION_ID
     assert "request" not in listed[0]
+    assert "execution_id" not in listed[0]
 
-    for action, method in (
-        ("continue", "continue_async"),
-        ("retry", "retry_async"),
-        ("cancel", "cancel_async"),
-    ):
-        setattr(service, method, AsyncMock(return_value=_record(status=PromptGenerationStatus.CANCELLED)))
-        response = client.post(f"/api/prompt-generations/{GENERATION_ID}/{action}")
-        assert response.status_code == 200, action
-        getattr(service, method).assert_awaited_once_with(GENERATION_ID)
 
+@pytest.mark.parametrize(
+    ("action", "method"),
+    [("continue", "continue_async"), ("retry", "retry_async"), ("cancel", "cancel_async")],
+)
+def test_lifecycle_action_returns_the_generation(
+    client: TestClient, service: MagicMock, action: str, method: str
+) -> None:
+    setattr(service, method, AsyncMock(return_value=_record(status=PromptGenerationStatus.CANCELLED)))
+    response = client.post(f"/api/prompt-generations/{GENERATION_ID}/{action}")
+    assert response.status_code == 200
+    assert response.json()["status"] == PromptGenerationStatus.CANCELLED.value
+    getattr(service, method).assert_awaited_once_with(GENERATION_ID)
+
+
+def test_delete_returns_no_content(client: TestClient, service: MagicMock) -> None:
     service.delete_async = AsyncMock(return_value=None)
     assert client.delete(f"/api/prompt-generations/{GENERATION_ID}").status_code == 204
+    service.delete_async.assert_awaited_once_with(GENERATION_ID)
 
 
 def test_get_maps_not_found_and_invalid_id(client: TestClient, service: MagicMock) -> None:
@@ -176,10 +183,12 @@ def test_review_round_trip(client: TestClient, service: MagicMock) -> None:
     assert response.status_code == 409
 
 
-def test_estimate_and_from_dataset(client: TestClient, service: MagicMock) -> None:
+def test_estimate_returns_the_remaining_work(client: TestClient, service: MagicMock) -> None:
     service.get_estimate_async = AsyncMock(return_value=PromptGenerationEstimate(exact_calls=True))
     assert client.get(f"/api/prompt-generations/{GENERATION_ID}/estimate").json()["exact_calls"] is True
 
+
+def test_from_dataset_returns_the_recorded_request(client: TestClient, service: MagicMock) -> None:
     service.request_from_dataset_async = AsyncMock(
         return_value=PromptGenerationRequestFromDataset(
             generator="assert", request={"behavior_name": "support"}, source_dataset_name="support_policy"

@@ -35,7 +35,7 @@ function technique(name: string, overrides: Partial<AssertTechniqueMetrics> = {}
     policy_violation_on_permissible: rate(1, 6, 2),
     dimensions: { policy_violation: rate(3, 8), overrefusal: rate(1, 8), quality_failure: rate(2, 6, 2) },
     dimension_no_verdict: { policy_violation: 0, overrefusal: 1, quality_failure: 0 },
-    dimension_grades: { quality_failure: { counts: { '1': 4, '2': 1, '3': 1 }, median: 1 } },
+    dimension_grades: { quality_failure: [{ scale: [1, 2, 3], counts: { '1': 4, '2': 1, '3': 1 }, median: 1 }] },
     categories: [
       { behavior_name: 'support', policy_id: 'a'.repeat(64), name: 'public_policy', permissible: true, node_violation: rate(1, 6) },
       { behavior_name: 'support', policy_id: 'a'.repeat(64), name: 'private_disclosure', permissible: false, node_violation: rate(2, 4) },
@@ -99,8 +99,43 @@ describe('AssertPolicyMetricsPanel', () => {
 
     expect(screen.getByText(
       'Some conversations are left out of these rates. red_teaming not judged: 1 target blocked; '
-        + 'left out of the stance rates only: 2 without a matching stored policy, 1 without a policy verdict.',
+        + 'left out of the stance rates only: 2 without a recorded policy, 1 without a policy verdict.',
     )).toBeInTheDocument()
+  })
+
+  it('keeps N/A and no-verdict counts visible when nothing is applicable', () => {
+    renderPanel({
+      ...METRICS,
+      techniques: {
+        baseline: technique('baseline', {
+          dimensions: { overrefusal: rate(0, 0, 6) },
+          dimension_no_verdict: { overrefusal: 2 },
+          dimension_grades: {},
+        }),
+      },
+    })
+
+    const table = screen.getByRole('table', { name: 'ASSERT rates' })
+    expect(within(table).getByText('0 / 0 · 6 n/a · 2 no verdict')).toBeInTheDocument()
+  })
+
+  it('shows each recorded grade scale without pooling incompatible grades', () => {
+    renderPanel({
+      ...METRICS,
+      techniques: {
+        baseline: technique('baseline', {
+          dimension_grades: {
+            quality_failure: [
+              { scale: ['good', 'bad'], counts: { good: 0, bad: 2 }, median: 'bad' },
+              { scale: ['fine', 'awful'], counts: { fine: 1, awful: 0 }, median: 'fine' },
+            ],
+          },
+        }),
+      },
+    })
+
+    expect(screen.getByText('median bad · good: 0, bad: 2')).toBeInTheDocument()
+    expect(screen.getByText('median fine · fine: 1, awful: 0')).toBeInTheDocument()
   })
 
   it('shows per-category rates on demand', async () => {

@@ -7,23 +7,28 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import Enum, StrEnum
 from itertools import combinations
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    JsonValue,
     StrictBool,
     StringConstraints,
+    ValidationError,
     field_validator,
     model_validator,
 )
 
+from pyrit.common.yaml_helper import load_yaml_file
+from pyrit.models.identifiers import TargetIdentifier  # noqa: TC001  (runtime-required by Pydantic field annotations)
+
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
+    from pathlib import Path
 
 _Text = Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]
 _Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -98,46 +103,6 @@ class AssertDimension(_AssertModel):
         return self
 
 
-class AssertGenerationConfig(_AssertModel):
-    """A serializable generation request, without targets or credentials."""
-
-    behavior_name: _Name
-    behavior_description: _Text
-    context: str = ""
-    group_count: Annotated[int, Field(strict=True, ge=1, le=100_000)]
-    include_user_prompt: StrictBool = True
-    include_adversarial_prompt: StrictBool = False
-    behavior_category_count: Annotated[int, Field(strict=True, ge=1, le=1000)] = Field(
-        default=25, description="Suggested taxonomy size, not a reason to add unsupported policy."
-    )
-    dimensions: tuple[AssertDimension, ...] = ()
-    dimension_level_count: Annotated[int, Field(strict=True, ge=2, le=100)] = 3
-    sampling: AssertSamplingConfig = Field(default_factory=AssertSamplingConfig)
-    random_seed: Annotated[int, Field(strict=True)] = 0
-    web_search: StrictBool = False
-    target_system_prompt: str | None = None
-    target_owns_instructions: StrictBool = False
-
-    @model_validator(mode="after")
-    def _validate_request(self) -> Self:
-        if not self.include_user_prompt and not self.include_adversarial_prompt:
-            raise ValueError("Request a user prompt, an adversarial prompt, or both.")
-        names = [dimension.name for dimension in self.dimensions]
-        if len(set(names)) != len(names):
-            raise ValueError("Coverage dimension names must be unique.")
-        explicit = [bool(dimension.levels) for dimension in self.dimensions]
-        if any(explicit) and not all(explicit):
-            raise ValueError("Use explicit levels for every dimension, or descriptions for every dimension.")
-        if self.target_system_prompt is not None and not self.target_system_prompt.strip():
-            raise ValueError("target_system_prompt must be non-empty when supplied.")
-        if self.target_owns_instructions and self.target_system_prompt is not None:
-            raise ValueError("A target-owned instruction mode cannot also supply target_system_prompt.")
-        unknown = set(self.sampling.stratify_by) - {"behavior", *names}
-        if self.sampling.method == AssertSamplingMethod.STRATIFIED and unknown:
-            raise ValueError(f"Unknown stratify_by dimensions: {sorted(unknown)}.")
-        return self
-
-
 class AssertTerm(_AssertModel):
     """An operational definition used by a behavior taxonomy."""
 
@@ -189,6 +154,52 @@ class AssertTaxonomy(_AssertModel):
         names = [category.name for category in self.behavior_categories]
         if len(set(names)) != len(names):
             raise ValueError("Taxonomy behavior names must be unique.")
+        return self
+
+
+class AssertGenerationConfig(_AssertModel):
+    """A serializable generation request, without targets or credentials."""
+
+    behavior_name: _Name
+    behavior_description: _Text
+    context: str = ""
+    group_count: Annotated[int, Field(strict=True, ge=1, le=100_000)]
+    include_user_prompt: StrictBool = True
+    include_adversarial_prompt: StrictBool = False
+    behavior_category_count: Annotated[int, Field(strict=True, ge=1, le=1000)] = Field(
+        default=25, description="Suggested taxonomy size, not a reason to add unsupported policy."
+    )
+    taxonomy: AssertTaxonomy | None = Field(
+        default=None,
+        description="A supplied or reviewed taxonomy. Generation then skips the systematization and taxonomy stages.",
+    )
+    dimensions: tuple[AssertDimension, ...] = ()
+    dimension_level_count: Annotated[int, Field(strict=True, ge=2, le=100)] = 3
+    sampling: AssertSamplingConfig = Field(default_factory=AssertSamplingConfig)
+    random_seed: Annotated[int, Field(strict=True)] = 0
+    web_search: StrictBool = False
+    target_system_prompt: str | None = None
+    target_owns_instructions: StrictBool = False
+
+    @model_validator(mode="after")
+    def _validate_request(self) -> Self:
+        if not self.include_user_prompt and not self.include_adversarial_prompt:
+            raise ValueError("Request a user prompt, an adversarial prompt, or both.")
+        if self.taxonomy is not None and self.taxonomy.behavior.name != self.behavior_name:
+            raise ValueError("The taxonomy behavior must match the generation request.")
+        names = [dimension.name for dimension in self.dimensions]
+        if len(set(names)) != len(names):
+            raise ValueError("Coverage dimension names must be unique.")
+        explicit = [bool(dimension.levels) for dimension in self.dimensions]
+        if any(explicit) and not all(explicit):
+            raise ValueError("Use explicit levels for every dimension, or descriptions for every dimension.")
+        if self.target_system_prompt is not None and not self.target_system_prompt.strip():
+            raise ValueError("target_system_prompt must be non-empty when supplied.")
+        if self.target_owns_instructions and self.target_system_prompt is not None:
+            raise ValueError("A target-owned instruction mode cannot also supply target_system_prompt.")
+        unknown = set(self.sampling.stratify_by) - {"behavior", *names}
+        if self.sampling.method == AssertSamplingMethod.STRATIFIED and unknown:
+            raise ValueError(f"Unknown stratify_by dimensions: {sorted(unknown)}.")
         return self
 
 
@@ -359,7 +370,7 @@ class AssertCoverage(_AssertModel):
 
 
 class AssertGroupMetadata(_AssertModel):
-    """Policy, coverage assignment, and bounded provenance for one generated group."""
+    """Policy, tester task, coverage assignment, and provenance for one ASSERT group."""
 
     METADATA_KEY: ClassVar[str] = "assert_generation"
     SOURCE_REVISION: ClassVar[str] = "04b713fe73879208369750b3bd5ad53544f3eecc"
@@ -369,6 +380,7 @@ class AssertGroupMetadata(_AssertModel):
     group_id: _Text
     behavior_category: _Name
     dimension_values: dict[_Name, _Name] = Field(default_factory=dict)
+    tester_instructions: _Text | None = None
     config: AssertGenerationConfig
     taxonomy: AssertTaxonomy
     dimensions: tuple[AssertDimension, ...]
@@ -377,8 +389,7 @@ class AssertGroupMetadata(_AssertModel):
 
     @model_validator(mode="after")
     def _validate_context(self) -> Self:
-        if self.taxonomy.behavior.name != self.config.behavior_name:
-            raise ValueError("The taxonomy behavior must match the generation request.")
+        _validate_resolved_taxonomy(config=self.config, taxonomy=self.taxonomy)
         _validate_resolved_dimensions(config=self.config, dimensions=self.dimensions)
         levels = self.taxonomy.get_coverage_levels(self.dimensions)
         if set(self.dimension_values) != {dimension.name for dimension in self.dimensions} or any(
@@ -444,7 +455,7 @@ class AssertGenerationCheckpoint(_AssertModel):
 
     schema_version: Annotated[int, Field(strict=True)] = SCHEMA_VERSION
     config: AssertGenerationConfig
-    targets: dict[_Name, dict[str, JsonValue]] = Field(
+    targets: dict[_Name, TargetIdentifier] = Field(
         default_factory=dict, description="Identifier of the target that produced each role's completed work"
     )
     systematization: AssertSystematization | None = None
@@ -466,12 +477,11 @@ class AssertGenerationCheckpoint(_AssertModel):
 
     @model_validator(mode="after")
     def _validate_progress(self) -> Self:
-        behavior_name = self.config.behavior_name
-        if self.systematization is not None and self.systematization.behavior != behavior_name:
+        if self.systematization is not None and self.systematization.behavior != self.config.behavior_name:
             raise ValueError("The systematization behavior must match the generation request.")
-        if self.taxonomy is not None and self.taxonomy.behavior.name != behavior_name:
-            raise ValueError("The taxonomy behavior must match the generation request.")
-        if self.taxonomy is not None and self.systematization is None:
+        if self.taxonomy is not None:
+            _validate_resolved_taxonomy(config=self.config, taxonomy=self.taxonomy)
+        if self.taxonomy is not None and self.systematization is None and self.config.taxonomy is None:
             raise ValueError("A taxonomy needs the systematization it was converted from.")
         if self.dimensions is not None and self.taxonomy is None:
             raise ValueError("Dimensions need the taxonomy they describe.")
@@ -495,11 +505,18 @@ class AssertGenerationCheckpoint(_AssertModel):
                 value not in levels[name] for name, value in group.assignment.items()
             ):
                 raise ValueError(f"Invalid coverage assignment for group {group.group_id!r}.")
+            if (group.user_prompt is not None) != self.config.include_user_prompt or (
+                group.adversarial_instructions is not None
+            ) != self.config.include_adversarial_prompt:
+                raise ValueError(
+                    f"Group {group.group_id!r} doesn't match the request's include_user_prompt and "
+                    "include_adversarial_prompt."
+                )
 
     @property
     def next_stage(self) -> AssertGenerationStage | None:
         """The next stage to run, or None when every requested seed group exists."""
-        if self.systematization is None:
+        if self.systematization is None and self.config.taxonomy is None:
             return AssertGenerationStage.SYSTEMATIZATION
         if self.taxonomy is None:
             return AssertGenerationStage.TAXONOMY
@@ -520,8 +537,9 @@ class AssertGenerationCheckpoint(_AssertModel):
         """
         Replace the generated taxonomy and dimensions with reviewed versions.
 
-        Edited dimensions become the request's explicit levels, so stored groups describe the
-        dimensions they were generated from. The provenance records which stages a person edited.
+        The reviewed policy becomes part of the request: its taxonomy and explicit dimension levels.
+        Each stored group's request then reproduces that policy on a rerun, without the research
+        stages. The provenance records which stages a person edited.
 
         Args:
             taxonomy (AssertTaxonomy): The reviewed taxonomy. Its behavior name can't change.
@@ -539,14 +557,13 @@ class AssertGenerationCheckpoint(_AssertModel):
             raise ValueError("The policy can't change after seed groups have been generated.")
         reviewed_dimensions = tuple(dimensions)
         edited = set(self.provenance.edited_stages)
-        config = self.config
         if taxonomy != self.taxonomy:
             edited.add(AssertGenerationStage.TAXONOMY)
         if reviewed_dimensions != self.dimensions:
             edited.add(AssertGenerationStage.DIMENSIONS)
-            config = AssertGenerationConfig.model_validate(
-                {**config.model_dump(), "dimensions": [item.model_dump() for item in reviewed_dimensions]}
-            )
+        config = AssertGenerationConfig.model_validate(
+            {**self.config.model_dump(), "taxonomy": taxonomy, "dimensions": reviewed_dimensions}
+        )
         provenance = self.provenance.model_copy(
             update={"edited_stages": tuple(stage for stage in AssertGenerationStage if stage in edited)}
         )
@@ -561,9 +578,34 @@ class AssertGenerationCheckpoint(_AssertModel):
         )
 
 
-class AssertBehaviorPreset(_AssertModel):
+class _AssertPreset(_AssertModel):
+    @classmethod
+    def from_yaml_file(cls, path: str | Path) -> Self:
+        """
+        Load a preset from an ASSERT library YAML file.
+
+        Args:
+            path (str | Path): The preset file.
+
+        Returns:
+            Self: The validated preset.
+
+        Raises:
+            ValueError: If the file is not valid YAML, not a YAML mapping, or not a valid preset of this kind.
+        """
+        loaded = load_yaml_file(path=path)
+        if not isinstance(loaded, Mapping):
+            raise ValueError(f"ASSERT preset file {path} must contain a YAML mapping.")
+        try:
+            return cls.model_validate(dict(loaded))
+        except ValidationError as error:
+            raise ValueError(f"Invalid {cls.__name__} file {path}: {error}") from error
+
+
+class AssertBehaviorPreset(_AssertPreset):
     """A ready-made behavior description from the bundled ASSERT behavior library."""
 
+    kind: Literal["behavior"] = "behavior"
     name: _Name
     version: _Name
     tags: tuple[_Name, ...] = ()
@@ -572,10 +614,26 @@ class AssertBehaviorPreset(_AssertModel):
     description: _Text
     suggested_judge_presets: tuple[_Name, ...] = ()
 
+    def to_config(self, *, group_count: int, context: str = "") -> AssertGenerationConfig:
+        """
+        Build a generation request for this behavior.
 
-class AssertSuitePreset(_AssertModel):
+        Args:
+            group_count (int): The number of seed groups to generate.
+            context (str): The application the generated groups test. Defaults to none.
+
+        Returns:
+            AssertGenerationConfig: A request with this behavior's name and description.
+        """
+        return AssertGenerationConfig(
+            behavior_name=self.name, behavior_description=self.description, context=context, group_count=group_count
+        )
+
+
+class AssertSuitePreset(_AssertPreset):
     """An application context and the library behaviors to evaluate in it, one dataset per behavior."""
 
+    kind: Literal["scenario"] = "scenario"
     name: _Name
     version: _Name
     tags: tuple[_Name, ...] = ()
@@ -590,6 +648,35 @@ class AssertSuitePreset(_AssertModel):
         if len(set(self.behaviors)) != len(self.behaviors):
             raise ValueError(f"Suite {self.name!r} lists a behavior more than once.")
         return self
+
+    def to_configs(
+        self, *, behaviors: Mapping[str, AssertBehaviorPreset], group_count: int
+    ) -> list[AssertGenerationConfig]:
+        """
+        Build one generation request per suite behavior, each in the suite's context.
+
+        Args:
+            behaviors (Mapping[str, AssertBehaviorPreset]): Behavior presets by name, such as
+                ``list_assert_behavior_presets()``.
+            group_count (int): The number of seed groups to generate for each behavior.
+
+        Returns:
+            list[AssertGenerationConfig]: Requests in the suite's behavior order.
+
+        Raises:
+            ValueError: If a suite behavior is not in ``behaviors``.
+        """
+        missing = [name for name in self.behaviors if name not in behaviors]
+        if missing:
+            raise ValueError(f"Suite {self.name!r} refers to unknown behaviors: {missing}.")
+        return [behaviors[name].to_config(group_count=group_count, context=self.context) for name in self.behaviors]
+
+
+def _validate_resolved_taxonomy(*, config: AssertGenerationConfig, taxonomy: AssertTaxonomy) -> None:
+    if taxonomy.behavior.name != config.behavior_name:
+        raise ValueError("The taxonomy behavior must match the generation request.")
+    if config.taxonomy is not None and taxonomy != config.taxonomy:
+        raise ValueError("The taxonomy must match the request's taxonomy.")
 
 
 def _validate_resolved_dimensions(*, config: AssertGenerationConfig, dimensions: tuple[AssertDimension, ...]) -> None:

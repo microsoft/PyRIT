@@ -104,23 +104,22 @@ print(f"Stored {len(assert_result.seed_groups)} seed groups.")
 # %% [markdown]
 # ### Review the policy before generating seed groups
 #
-# `advance_async` runs the same stages and returns an `AssertGenerationCheckpoint`. Stop after the
-# dimensions stage to review the taxonomy, apply edits with `with_reviewed_policy`, then continue.
-# Each group's provenance records the edited stages. Pass `on_checkpoint` to store progress and
-# resume after an interruption. `AssertGenerator.estimate` reports the remaining model calls and an
-# approximate token range without calling a target.
-#
-# The bundled ASSERT behavior library (`list_assert_behavior_presets`) and suites
-# (`list_assert_suite_presets`) provide ready-made behavior descriptions. The GUI runs this flow
+# `advance_async` runs the same stages and returns an `AssertGenerationCheckpoint`. This example
+# starts from a behavior in the bundled ASSERT library, estimates the model calls, and stops after
+# the dimensions stage to review the taxonomy. `with_reviewed_policy` applies the edits. The reviewed
+# policy becomes part of the request that each seed group stores, so a rerun from that request skips
+# the research stages. The GUI runs this flow
 # from **Datasets > Generate dataset**.
 
 # %%
-from pyrit.datasets import get_assert_behavior_preset
+from pyrit.datasets import load_assert_behavior_preset
 from pyrit.models import AssertGenerationCheckpoint, AssertGenerationStage
 
-print(get_assert_behavior_preset("prompt_injection").summary)
-
-draft = AssertGenerationCheckpoint(config=assert_config)
+preset = load_assert_behavior_preset("prompt_injection")
+print(preset.summary)
+draft = AssertGenerationCheckpoint(
+    config=preset.to_config(group_count=2, context="An email assistant summarizes messages and drafts replies.")
+)
 print(f"Up to {AssertGenerator.estimate(checkpoint=draft).max_calls} model calls")
 draft = await assert_generator.advance_async(checkpoint=draft, stop_after=AssertGenerationStage.DIMENSIONS)  # type: ignore
 for category in draft.taxonomy.behavior_categories:
@@ -135,6 +134,8 @@ reviewed = draft.with_reviewed_policy(
 reviewed = await assert_generator.advance_async(checkpoint=reviewed)  # type: ignore
 reviewed_result = assert_generator.build_result(checkpoint=reviewed)
 print(f"{len(reviewed_result.seed_groups)} seed groups from the reviewed policy")
+rerun = AssertGenerator.estimate(checkpoint=AssertGenerationCheckpoint(config=reviewed_result.config))
+print(f"A rerun from the stored request needs {rerun.max_calls} model calls")
 
 # %% [markdown]
 # ## Anecdoctor Generator

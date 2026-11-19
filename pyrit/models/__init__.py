@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     )
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.conversation_summary import ConversationSummary
+    from pyrit.models.dataset_provider import DatasetProviderInfo
     from pyrit.models.decomposition import (
         DecompositionNode,
         DecompositionPath,
@@ -79,7 +80,7 @@ if TYPE_CHECKING:
         validate_own_decomposition,
     )
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
-    from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, FindingSeverity
+    from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, FindingSeverity, is_finding_path_complete
     from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
     from pyrit.models.identifiers import (
         REGISTRY_NAME_PATTERN,
@@ -149,6 +150,15 @@ if TYPE_CHECKING:
         StructuredParameterValue,
         display_choices,
     )
+    from pyrit.models.prompt_generation import (
+        ACTIVE_GENERATION_STATUSES,
+        DATASET_NAME_RELEASING_STATUSES,
+        RETRYABLE_GENERATION_STATUSES,
+        PromptGenerationProgress,
+        PromptGenerationRecord,
+        PromptGenerationStatus,
+        TargetObjectiveGenerationRequest,
+    )
     from pyrit.models.prompt_generation_estimate import PromptGenerationEstimate, PromptGenerationStageEstimate
     from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
     from pyrit.models.results.assert_policy_metrics import AssertBinaryRate, AssertPolicyMetrics
@@ -208,6 +218,7 @@ if TYPE_CHECKING:
         ScenarioRunPlan,
         ScenarioRunPlanAtomicGroup,
         ScenarioRunPlanGroupKind,
+        ScenarioRunPlanScorerBinding,
         ScenarioRunPlanSeedGroup,
         ScenarioRunPlanSeedPrompt,
         ScenarioRunProgress,
@@ -215,6 +226,7 @@ if TYPE_CHECKING:
         ScenarioSeedGroupProgress,
         ScenarioTechniqueProgress,
     )
+    from pyrit.models.scenario_run_execution_token import ScenarioRunExecutionToken
     from pyrit.models.scenario_suite_execution import (
         SCENARIO_SUITE_EXECUTION_METADATA_KEY,
         SCENARIO_SUITE_EXECUTION_METADATA_VERSION,
@@ -257,6 +269,7 @@ if TYPE_CHECKING:
         Scorable,
         ScorableUnion,
         Score,
+        ScorerCapabilities,
         ScorerTargetResponsePayload,
         ScoreStatus,
         ScoreType,
@@ -269,11 +282,12 @@ if TYPE_CHECKING:
         SurfaceObservationPayload,
         SurfaceScorable,
         TextMatcher,
+        ToolArgumentRequirement,
         ToolCallRequirement,
         ToolEventsObservationPayload,
         ToolExecution,
         ToolsCalled,
-        TraceContent,
+        ToolsCalledInOrder,
         TraceCoverage,
         TraceQuery,
         TraceQueryResult,
@@ -283,6 +297,7 @@ if TYPE_CHECKING:
         TraceSpanStatus,
         UndeterminedScoreError,
         UnvalidatedScore,
+        ViolatesAssertPolicy,
         scorable_from_dict,
         scoring_expectation_fingerprint,
     )
@@ -349,6 +364,7 @@ if TYPE_CHECKING:
         AssertTaxonomy,
         AssertTerm,
     )
+    from pyrit.models.seeds.gcg_seed_metadata import GCGSeedMetadata
     from pyrit.models.target import (
         COMMON_JSON_SCHEMAS,
         JSON_SCHEMA_METADATA_KEY,
@@ -371,10 +387,12 @@ if TYPE_CHECKING:
         register_common_json_schema,
         unregister_common_json_schema,
     )
+    from pyrit.models.target.reasoning_content_metadata import ReasoningContentMetadata
     from pyrit.models.target.request_trace_context import RequestTraceContext
     from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "GCGSeedMetadata": "pyrit.models.seeds",
     "AdversarialPrompts": "pyrit.models.seeds.adversarial_prompts",
     "AssertBehaviorCategory": "pyrit.models.seeds.assert_generation",
     "AssertBehaviorDefinition": "pyrit.models.seeds.assert_generation",
@@ -409,6 +427,13 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AssertSystematization": "pyrit.models.seeds.assert_generation",
     "AssertTaxonomy": "pyrit.models.seeds.assert_generation",
     "AssertTerm": "pyrit.models.seeds.assert_generation",
+    "ACTIVE_GENERATION_STATUSES": "pyrit.models.prompt_generation",
+    "DATASET_NAME_RELEASING_STATUSES": "pyrit.models.prompt_generation",
+    "RETRYABLE_GENERATION_STATUSES": "pyrit.models.prompt_generation",
+    "PromptGenerationProgress": "pyrit.models.prompt_generation",
+    "PromptGenerationRecord": "pyrit.models.prompt_generation",
+    "PromptGenerationStatus": "pyrit.models.prompt_generation",
+    "TargetObjectiveGenerationRequest": "pyrit.models.prompt_generation",
     "PromptGenerationEstimate": "pyrit.models.prompt_generation_estimate",
     "PromptGenerationStageEstimate": "pyrit.models.prompt_generation_estimate",
     "WebSearchConfig": "pyrit.models.target.web_search_config",
@@ -444,6 +469,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetSizeEstimate": "pyrit.models.scenario_dataset_size_estimate",
     "ScenarioDatasetSizeEstimateKind": "pyrit.models.scenario_dataset_size_estimate",
     "scenario_dataset_size_from_limit": "pyrit.models.scenario_dataset_size_estimate",
+    "ReasoningContentMetadata": "pyrit.models.target.reasoning_content_metadata",
     "RequestTraceContext": "pyrit.models.target.request_trace_context",
     "ToolExecutionMetadata": "pyrit.models.target.tool_execution_metadata",
     "ToolLoopStop": "pyrit.models.target.tool_execution_metadata",
@@ -510,6 +536,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "FindingCreate": "pyrit.models.finding",
     "FindingEvidence": "pyrit.models.finding",
     "FindingSeverity": "pyrit.models.finding",
+    "is_finding_path_complete": "pyrit.models.finding",
     "ConversationType": "pyrit.models.messages.conversation_reference",
     "ContentEntryScorable": "pyrit.models.score",
     "ContentScorable": "pyrit.models.score",
@@ -579,6 +606,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Score": "pyrit.models.score",
     "ScoreStatus": "pyrit.models.score",
     "ScoreType": "pyrit.models.score",
+    "ScorerCapabilities": "pyrit.models.score",
     "ScoringExpectation": "pyrit.models.score",
     "SurfaceBaseline": "pyrit.models.score",
     "SurfaceCoverage": "pyrit.models.score",
@@ -586,11 +614,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SurfaceMatch": "pyrit.models.score",
     "SurfaceObservationPayload": "pyrit.models.score",
     "SurfaceScorable": "pyrit.models.score",
+    "ToolArgumentRequirement": "pyrit.models.score",
     "ToolCallRequirement": "pyrit.models.score",
     "ToolEventsObservationPayload": "pyrit.models.score",
     "ToolExecution": "pyrit.models.score",
     "ToolsCalled": "pyrit.models.score",
-    "TraceContent": "pyrit.models.score",
+    "ToolsCalledInOrder": "pyrit.models.score",
     "TraceCoverage": "pyrit.models.score",
     "TraceQuery": "pyrit.models.score",
     "TraceQueryResult": "pyrit.models.score",
@@ -622,6 +651,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioTechniqueSummary": "pyrit.models.catalog",
     "ScenarioResult": "pyrit.models.results.scenario_result",
     "ScenarioRunState": "pyrit.models.results.scenario_result",
+    "ScenarioRunExecutionToken": "pyrit.models.scenario_run_execution_token",
     "SCENARIO_CONVERSATIONS_METADATA_KEY": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_PLAN_METADATA_KEY": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_PLAN_VERSION": "pyrit.models.scenario_progress",
@@ -661,6 +691,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioQueueSnapshot": "pyrit.models.scenario_progress",
     "ScenarioRunPlan": "pyrit.models.scenario_progress",
     "ScenarioRunPlanAtomicGroup": "pyrit.models.scenario_progress",
+    "ScenarioRunPlanScorerBinding": "pyrit.models.scenario_progress",
     "ScenarioRunPlanGroupKind": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedPrompt": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedGroup": "pyrit.models.scenario_progress",
@@ -677,6 +708,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SeedRecord": "pyrit.models.seeds",
     "SeedDataset": "pyrit.models.seeds",
     "SeedDatasetSummary": "pyrit.models.seeds",
+    "DatasetProviderInfo": "pyrit.models.dataset_provider",
     "SeedGroup": "pyrit.models.seeds",
     "SeedGroupRequirements": "pyrit.models.seeds",
     "SeedIdentifier": "pyrit.models.identifiers",
@@ -704,6 +736,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ToolCall": "pyrit.models.messages.chat_message",
     "UndeterminedScoreError": "pyrit.models.score",
     "UnvalidatedScore": "pyrit.models.score",
+    "ViolatesAssertPolicy": "pyrit.models.score",
     "read_usage_int": "pyrit.models.target",
     "read_usage_value": "pyrit.models.target",
     "scorable_from_dict": "pyrit.models.score",
