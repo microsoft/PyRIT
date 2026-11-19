@@ -24,7 +24,7 @@ import {
 
 import HelpField from '@/components/HelpField'
 import { convertersApi } from '@/services/api'
-import { isNotSaveableError, toApiError } from '@/services/errors'
+import { isNotSaveableError, notSaveableReason, toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
 import { useTargetPreferences } from '@/hooks/useTargetPreferences'
 import { resolveDefaultAdversarialTarget } from '@/utils/targetIdentity'
@@ -405,7 +405,6 @@ export default function CreateConverterDialog({
   const [nameConflict, setNameConflict] = useState<NameConflict | null>(null)
   const errorRef = useRef<HTMLDivElement>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
-  const temporaryWarningRef = useRef<HTMLDivElement>(null)
   // The dialog instance is reused across openings, so a create response can
   // land after the opening that started it has gone.
   const openEpochRef = useRef(0)
@@ -582,11 +581,6 @@ export default function CreateConverterDialog({
   const refusedReason = saveRefusal !== null && saveRefusal.formKey === formKey() ? saveRefusal.reason : null
   const temporaryReason = editing ? null : predictedTemporaryReason ?? refusedReason
 
-  // The reason sits below the fields, so bring it into view when it appears or changes.
-  useEffect(() => {
-    if (temporaryReason) temporaryWarningRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [temporaryReason])
-
   const reset = () => {
     fileReads.current.clear()
     setSelectedType('')
@@ -689,7 +683,7 @@ export default function CreateConverterDialog({
   const handleCreateError = (err: unknown, persist: boolean) => {
     const apiError = toApiError(err)
     if (persist && isNotSaveableError(apiError)) {
-      setSaveRefusal({ formKey: formKey(), reason: apiError.detail })
+      setSaveRefusal({ formKey: formKey(), reason: notSaveableReason(apiError) ?? apiError.detail })
       return
     }
     // A taken name is a 409 without a problem type; a typed 409 is the build-identity mismatch the client handles.
@@ -969,19 +963,20 @@ export default function CreateConverterDialog({
                       </div>
                     ))}
                   </div>
-                  {temporaryReason && (
-                    <MessageBar intent="warning" ref={temporaryWarningRef} role="status">
-                      <MessageBarBody>
-                        <MessageBarTitle>This converter can&apos;t be saved</MessageBarTitle>
-                        {temporaryReason} {TEMPORARY_CONVERTER_NOTE}
-                      </MessageBarBody>
-                    </MessageBar>
-                  )}
                 </>
               )}
             </form>
           </DialogContent>
-          <DialogActions>
+          {/* Outside the scrolling form, so it shows next to the button it explains without moving the fields. */}
+          {temporaryReason && (
+            <MessageBar intent="warning" className={styles.temporaryWarning} role="status">
+              <MessageBarBody>
+                <MessageBarTitle>This converter can&apos;t be saved</MessageBarTitle>
+                {temporaryReason} {TEMPORARY_CONVERTER_NOTE}
+              </MessageBarBody>
+            </MessageBar>
+          )}
+          <DialogActions className={temporaryReason ? styles.actionsBelowWarning : undefined}>
             <Button appearance="secondary" onClick={close}>Cancel</Button>
             <Button
               appearance="primary"
