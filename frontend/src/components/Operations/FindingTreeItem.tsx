@@ -8,7 +8,7 @@ import { toApiError } from '@/services/errors'
 import type { FindingFields, FindingListItem } from '@/types'
 import { subFindingNumbers } from '@/utils/findingTree'
 
-import FindingCardValues from './FindingCardValues'
+import FindingCardContent from './FindingCardContent'
 import FindingEvidenceList from './FindingEvidenceList'
 import FindingPathsPanel from './FindingPathsPanel'
 import FindingSeverityBadge from './FindingSeverityBadge'
@@ -71,7 +71,7 @@ export default function FindingTreeItem({
         )}
         <time dateTime={finding.created_at}>{new Date(finding.created_at).toLocaleString()}</time>
       </div>
-      <FindingCardValues finding={finding} />
+      <FindingCardContent finding={finding} />
       <FindingEvidenceList operationId={operationId} findingId={finding.id} count={finding.evidence_count}
         onDetached={actions.onEvidenceDetached} actions={<>
           <Button className={styles.button} aria-label={`Edit finding: ${finding.title}`}

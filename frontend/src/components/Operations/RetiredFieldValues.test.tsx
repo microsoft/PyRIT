@@ -90,7 +90,7 @@ describe('RetiredFieldValues', () => {
     expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
   })
 
-  it('asks before removing and keeps the value on Keep it', async () => {
+  it('asks before removing and keeps the value on Cancel', async () => {
     const user = userEvent.setup()
     render(<TestWrapper><RetiredFieldValues {...defaultProps} /></TestWrapper>)
     await user.click(screen.getByRole('button', { name: removeButtonName('description') }))
@@ -100,7 +100,7 @@ describe('RetiredFieldValues', () => {
       + 'Cancel on the edit dialog still brings it back.',
     )
     expect(within(dialog).getByRole('button', { name: 'Remove' })).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: 'Keep it' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(await screen.findByRole('button', { name: removeButtonName('description') })).toBeInTheDocument()
     expect(defaultProps.onRemove).not.toHaveBeenCalled()
@@ -144,14 +144,14 @@ describe('RetiredFieldValues', () => {
   })
 
   // jsdom fires no focusout when the dialog removes the focused button, so Tabster only restores focus here after
-  // keyboard use. The e2e spec covers a mouse click on Keep it.
-  it('returns focus to the Remove button on Keep it', async () => {
+  // keyboard use. The e2e spec covers a mouse click on Cancel.
+  it('returns focus to the Remove button on Cancel', async () => {
     const user = userEvent.setup()
     render(<TestWrapper><RetiredFieldValuesHarness onRemove={jest.fn()} onUndo={jest.fn()} /></TestWrapper>)
     const removeButton = screen.getByRole('button', { name: removeButtonName('contoso_ticket') })
     await user.click(removeButton)
     const dialog = await findConfirmation('contoso_ticket')
-    expect(within(dialog).getByRole('button', { name: 'Keep it' })).toHaveFocus()
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
     await user.keyboard('{Enter}')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await waitFor(() => expect(removeButton).toHaveFocus())

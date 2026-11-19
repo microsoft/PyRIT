@@ -92,7 +92,7 @@ export default function RetiredFieldValues({
               </Text>
             </DialogContent>
             <DialogActions>
-              <Button className={styles.button} onClick={closeConfirmation}>Keep it</Button>
+              <Button className={styles.button} onClick={closeConfirmation}>Cancel</Button>
               <Button appearance="primary" className={styles.button} disabled={disabled} onClick={() => {
                 focusAfterChange.current = undoRef
                 onRemove(confirming.key)

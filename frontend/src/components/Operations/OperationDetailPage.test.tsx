@@ -35,6 +35,14 @@ const FINDING: FindingListItem = {
 function row(key: string, label: string, value: string, extra: Partial<FindingValueRow> = {}): FindingValueRow {
   return { key, label, value, multiline: false, ...extra }
 }
+
+/** The label/value pairs of a description list, in the order a screen reader announces them. */
+function describedValues(container: HTMLElement): Array<[string | null, string | null]> {
+  const terms = within(container).getAllByRole('term')
+  const definitions = within(container).getAllByRole('definition')
+  expect(definitions).toHaveLength(terms.length)
+  return terms.map((term, index) => [term.textContent, definitions[index].textContent])
+}
 const EMPTY = { items: [], has_more: false, next_offset: null }
 const NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'missing' } } }
 const conflict = (detail: object) => ({ isAxiosError: true, response: { status: 409, data: { detail } } })
@@ -386,7 +394,8 @@ it('displays and preserves both custom classifications when editing a finding', 
   jest.mocked(operationsApi.updateFinding).mockResolvedValue(classified)
   renderPage()
   expect(await screen.findByText('Team severity')).toBeInTheDocument()
-  expect(screen.getByText('Harm-type: Team harm')).toBeInTheDocument()
+  const card = screen.getByRole('heading', { level: 2, name: FINDING.title }).closest('li') as HTMLElement
+  expect(describedValues(card)).toEqual([['Harm-type:', 'Team harm']])
   await user.click(screen.getByRole('button', { name: `Edit finding: ${FINDING.title}` }))
   expect(screen.getByRole('textbox', { name: 'Other Severity' })).toHaveValue('Team severity')
   expect(screen.getByRole('textbox', { name: 'Other Harm-type' })).toHaveValue('Team harm')
@@ -466,22 +475,20 @@ it('shows configured rows and retired values on a finding card', async () => {
   const card = (await screen.findByRole('heading', { level: 2, name: contosoFinding.title })).closest('li') as HTMLElement
   expect(operationsApi.getFindingFields).toHaveBeenCalledWith(OPERATION.id)
   expect(within(card).getByText('Sev 1')).toBeInTheDocument()
-  const rows = ['Severity rationale: Customer impact', 'Category: Model security', 'Subcategory: System prompt leak',
-    'Technique: Contoso persona swap', 'Owner: Contoso red team'].map(row => within(card).getByText(row))
-  for (const [index, row] of rows.slice(1).entries()) {
-    expect(rows[index].compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  }
-  expect(within(card).getByText('Steps to reproduce')).toBeInTheDocument()
-  expect(within(card).getByText(/Ask again in French/)).toHaveTextContent(steps, { normalizeWhitespace: false })
-  expect(within(card).queryByText(/^Steps to reproduce:/)).not.toBeInTheDocument()
+  const retiredValues: Array<[string, string]> = [['description', note], ['contoso_ticket', 'CONTOSO-42']]
+  expect(describedValues(card)).toEqual([
+    ['Severity rationale:', 'Customer impact'],
+    ['Category:', 'Model security'],
+    ['Subcategory:', 'System prompt leak'],
+    ['Technique:', 'Contoso persona swap'],
+    ['Steps to reproduce', steps],
+    ['Owner:', 'Contoso red team'],
+    ...retiredValues,
+  ])
 
   const retired = within(card).getByRole('group', { name: 'Retired fields' })
-  expect(within(retired).getByText('description')).toBeInTheDocument()
-  expect(within(retired).getByText('Recorded before Contoso configured its own fields.')).toBeInTheDocument()
-  expect(within(retired).getByText('contoso_ticket')).toBeInTheDocument()
-  expect(within(retired).getByText('CONTOSO-42')).toBeInTheDocument()
+  expect(describedValues(retired)).toEqual(retiredValues)
   expect(within(retired).queryByRole('button')).not.toBeInTheDocument()
-  expect(rows[4].compareDocumentPosition(retired) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
   await user.click(within(card).getByRole('button', { name: `Edit finding: ${contosoFinding.title}` }))
   expect(within(screen.getByRole('dialog')).getByRole('combobox', { name: 'Technique' })).toHaveValue('Other')

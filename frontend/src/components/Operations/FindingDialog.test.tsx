@@ -79,7 +79,7 @@ async function confirmRemoval(user: UserEvent, key: string): Promise<void> {
   await user.click(await screen.findByRole('button', { name: `Remove retired value ${key}` }))
   const confirmation = await findRemovalConfirmation()
   await user.click(within(confirmation).getByRole('button', { name: 'Remove' }))
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Keep it' })).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument())
 }
 
 function requestPageUnload(): Event {
@@ -359,7 +359,7 @@ describe('FindingDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Remove retired value description' }))
     await findRemovalConfirmation()
     await user.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Keep it' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument())
     expect(onClose).not.toHaveBeenCalled()
     expect(await screen.findByRole('heading', { name: 'Edit finding' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Remove retired value description' })).toBeInTheDocument()

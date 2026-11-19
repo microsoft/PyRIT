@@ -7,10 +7,10 @@ export async function pick(user: UserEvent, label: string, optionName: string): 
   await user.click(within(await screen.findByRole('listbox')).getByRole('option', { name: optionName }))
 }
 
-// The confirmation's title wraps the key in <code>, so it is found by its Keep it button instead of its name.
+// The confirmation's title wraps the key in <code>, so it is found by its Remove button instead of its name.
 export async function findRemovalConfirmation(): Promise<HTMLElement> {
   const dialogs = await screen.findAllByRole('dialog')
-  const confirmation = dialogs.find((dialog: HTMLElement) => within(dialog).queryByRole('button', { name: 'Keep it' }))
+  const confirmation = dialogs.find((dialog: HTMLElement) => within(dialog).queryByRole('button', { name: 'Remove' }))
   if (confirmation === undefined) throw new Error('No removal confirmation is open')
   return confirmation
 }
