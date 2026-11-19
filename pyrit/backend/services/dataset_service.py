@@ -128,7 +128,8 @@ class DatasetService:
         Returns:
             DatasetListResponse: Available datasets.
         """
-        provider_names = {name for name in await SeedDatasetProvider.get_all_dataset_names_async() if name}
+        descriptors = await SeedDatasetProvider.get_all_dataset_descriptors_async()
+        provider_names = set(descriptors)
         summaries = await self._memory.get_seed_dataset_summaries_async()
         named_summaries = {summary.dataset_name: summary for summary in summaries if summary.dataset_name}
 
@@ -137,12 +138,14 @@ class DatasetService:
         items: list[DatasetInfo] = []
         for dataset_name in sorted(dataset_names):
             summary = named_summaries.get(dataset_name)
+            descriptor = descriptors.get(dataset_name)
             items.append(
                 DatasetInfo(
                     name=dataset_name,
                     selection_key=f"dataset:named:{dataset_name}",
                     loaded=summary is not None,
                     provider_available=dataset_name in provider_names,
+                    provider=descriptor,
                     origins=list(summary.origins) if summary else [],
                     logical_examples=summary.logical_examples if summary else None,
                     seed_pieces=summary.seed_pieces if summary else None,

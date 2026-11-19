@@ -220,52 +220,59 @@ await output_scenario_async(custom_result)
 # and a violence scorer for another. `RapidResponse`, `Cyber`, and `Leakage` accept a
 # `CompatibleScorers` pool in place of one scorer. Bind each candidate to an evaluation key, then
 # name the key a dataset needs on its `DatasetSource`:
-#
-# ```python
-# from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
-# from pyrit.scenario.airt import RapidResponse
-# from pyrit.score import CompatibleScorers, ScorerCandidate, ScorerRequirements
-#
-# scorers = CompatibleScorers(
-#     candidates=[
-#         ScorerCandidate(scorer=hate_scorer, evaluation="harm.hate"),
-#         ScorerCandidate(scorer=violence_scorer, evaluation="harm.violence"),
-#     ]
-# )
-# dataset_config = DatasetAttackConfiguration(
-#     sources=[
-#         DatasetSource(name="airt_hate", scorer_requirements=ScorerRequirements(evaluation="harm.hate")),
-#         DatasetSource(name="airt_violence", scorer_requirements=ScorerRequirements(evaluation="harm.violence")),
-#     ]
-# )
-# scenario = RapidResponse(objective_scorer=scorers)
-# scenario.set_params_from_args(args={"objective_target": objective_target, "dataset_config": dataset_config})
-# await scenario.initialize_async()
-# ```
-#
-# Selection runs once per technique and dataset while the scenario initializes, and it never calls a
-# judge model. A candidate qualifies when it accepts the evidence the attack produces, carries the
-# required evaluation key, meets the technique's own scorer needs, and accepts the conditions of
-# every objective in the dataset. The first qualifying candidate in pool order is used, so order
-# only matters between candidates that both qualify. A dataset with no requirements uses the first
-# candidate that can judge its objectives.
-#
-# When no candidate qualifies, `incompatible_technique_policy` applies to that technique and dataset:
-# `skip` leaves it out with a warning, and `raise` stops with each candidate's reason. A mistyped key
-# is reported together with the keys the pool has. With a baseline, each dataset gets its own baseline
-# judged by the same scorer as its attacks. The run plan records every selection, and a resumed run
-# stops if the pool or the objectives' scoring criteria have changed since it started.
-#
+
+# %%
+from azure.ai.contentsafety.models import TextCategory
+
+from pyrit.scenario.airt import RapidResponse
+from pyrit.score import (
+    AzureContentFilterScorer,
+    CompatibleScorers,
+    FloatScaleThresholdScorer,
+    ScorerCandidate,
+    ScorerRequirements,
+)
+
+hate_scorer = FloatScaleThresholdScorer(
+    scorer=AzureContentFilterScorer(harm_categories=[TextCategory.HATE]), threshold=0.5
+)
+violence_scorer = FloatScaleThresholdScorer(
+    scorer=AzureContentFilterScorer(harm_categories=[TextCategory.VIOLENCE]), threshold=0.5
+)
+scorers = CompatibleScorers(
+    candidates=[
+        ScorerCandidate(scorer=hate_scorer, evaluation="harm.hate"),
+        ScorerCandidate(scorer=violence_scorer, evaluation="harm.violence"),
+    ]
+)
+harm_dataset_config = DatasetAttackConfiguration(
+    sources=[
+        DatasetSource(name="airt_hate", scorer_requirements=ScorerRequirements(evaluation="harm.hate")),
+        DatasetSource(name="airt_violence", scorer_requirements=ScorerRequirements(evaluation="harm.violence")),
+    ]
+)
+
+pool_scenario = RapidResponse(objective_scorer=scorers)
+pool_scenario.set_params_from_args(args={"objective_target": objective_target, "dataset_config": harm_dataset_config})
+
+# %% [markdown]
 # To check a pool against the datasets before a run, read the selection report after initializing. It
 # lists each technique and dataset with the scorer it will use and, for every candidate passed over,
 # the reason. Building it sends nothing to the target and calls no judge model:
 #
 # ```python
-# await scenario.initialize_async()
-# print(scenario.get_scorer_selection_report().to_text())
+# await pool_scenario.initialize_async()
+# print(pool_scenario.get_scorer_selection_report().to_text())
 # ```
 
 # %% [markdown]
+# Each dataset is judged by the candidate bound to the evaluation it names, and a dataset without
+# `scorer_requirements` uses a candidate without one. If no candidate can judge a dataset's
+# objectives, initialization fails and gives each candidate's reason. A technique that needs a
+# particular kind of scorer, such as TAP, follows `incompatible_technique_policy`.
+
+# %% [markdown]
+# (reporting-every-conversation)=
 # ## Reporting Every Conversation
 #
 # `output_scenario_async` gives a high-level overview of a run. To see granular details within each attack, use

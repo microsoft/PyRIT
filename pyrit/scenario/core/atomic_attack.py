@@ -131,8 +131,8 @@ class AtomicAttack:
                 ``build_baseline_atomic_attack`` passes ``BASELINE`` and Adaptive
                 scenarios pass ``ADAPTIVE``. It describes the group and does not
                 change its identity or what it executes.
-            objective_scorer_binding: The candidate a scorer pool selected for this group and
-                the prepared inputs it accepted. ``None`` for single-scorer runs.
+            objective_scorer_binding: The candidate a scorer pool selected for this group.
+                ``None`` for single-scorer runs.
             **attack_execute_params: Additional parameters to pass to the attack
                 execution method.
 
