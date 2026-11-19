@@ -304,9 +304,6 @@ class AssertPolicy(Scenario):
                 self._validate_group(group=group, dataset_name=dataset_name)
         return selection.select(apply_sampling=True) if apply_sampling else population
 
-    async def _prepare_resume_state_async(self) -> None:
-        """Use the saved groups for all build state; the live resolver only validates and samples."""
-
     def _validate_group(self, *, group: AttackSeedGroup, dataset_name: str) -> None:
         """
         Require ASSERT metadata, and no stored system prompt when ``target_system_prompt`` is set.

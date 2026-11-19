@@ -2018,26 +2018,46 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         lookup.assert_not_awaited()
         sample.assert_not_called()
 
-    async def test_overriding_resolution_still_reads_its_datasets_on_resume(self, mock_objective_target) -> None:
+    @pytest.mark.parametrize("restores_state", [False, True])
+    async def test_overriding_resolution_runs_on_resume_only_when_restoring_state(
+        self, mock_objective_target, restores_state: bool
+    ) -> None:
+        received: list[dict[str, list[AttackSeedGroup]]] = []
+
         class _OverridingScenario(self._StrategyScenario):
             async def _resolve_seed_groups_by_dataset_async(self, *, apply_sampling: bool = True):
                 return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
 
+        class _StatefulScenario(_OverridingScenario):
+            async def _prepare_resume_state_async(self, *, seed_groups_by_dataset):
+                received.append(seed_groups_by_dataset)
+                await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+
+        scenario_class = _StatefulScenario if restores_state else _OverridingScenario
         memory = CentralMemory.get_memory_instance()
         await memory.add_seeds_to_memory_async(
             seeds=[SeedObjective(value=f"objective-{index}", dataset_name="owned") for index in range(2)],
             added_by="test",
         )
         config = DatasetAttackConfiguration(sources=[DatasetSource(name="owned")], fetch=DatasetFetchPolicy.NEVER)
-        original = _OverridingScenario(name="Overriding", version=1)
+        original = scenario_class(name="Overriding", version=1)
         original.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
         await original.initialize_async()
+        original_plan = original._build_run_plan()
         await memory.remove_seeds_from_memory_async(dataset_name="owned")
-        resumed = _OverridingScenario(name="Overriding", version=1, scenario_result_id=original._scenario_result_id)
+        resumed = scenario_class(name="Overriding", version=1, scenario_result_id=original._scenario_result_id)
         resumed.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
+        if not restores_state:
+            # An override that only selects seeds is not rerun, so the deleted dataset doesn't matter.
+            await resumed.initialize_async()
+            assert resumed._build_run_plan() == original_plan
+            return
         with pytest.raises(ValueError, match=r"dataset\(s\) 'owned' are no longer in memory") as error:
             await resumed.initialize_async()
         assert isinstance(error.value.__cause__, DatasetConstraintError)
+        assert [sorted(group.objective.value for group in groups) for groups in received[0].values()] == [
+            ["objective-0", "objective-1"]
+        ]
 
     @pytest.mark.parametrize(
         "scenario_class",
@@ -2050,7 +2070,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         with patch.object(
             scenario, "_resolve_seed_groups_by_dataset_async", AsyncMock(side_effect=DatasetConstraintError("gone"))
         ) as resolve:
-            await scenario._prepare_resume_state_async()
+            await scenario._prepare_resume_state_async(seed_groups_by_dataset={})
         resolve.assert_not_awaited()
 
     async def test_resume_reports_only_absent_datasets_as_deleted(self) -> None:

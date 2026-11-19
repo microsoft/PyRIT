@@ -279,6 +279,15 @@ class ApiKey(Scenario):
         config._set_techniques([ApiKeyTechnique(technique.value) for technique in self._scenario_techniques])
         super()._validate_runtime_configuration()
 
+    async def _prepare_resume_state_async(self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]) -> None:
+        """
+        Restore the default credential scorer, whose excluded values the stored groups don't carry.
+
+        Args:
+            seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
+        """
+        await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:

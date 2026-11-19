@@ -532,7 +532,10 @@ class TestLatentAttacks:
         with pytest.raises(ValueError, match="matching configuration"):
             await _initialize_async(resumed, **args)
 
-    async def test_changed_case_resumes_the_planned_cases_async(self, seeded_memory_async: MemoryInterface) -> None:
+    @pytest.mark.parametrize("change", ["edit_context", "edit_trigger", "add_trigger", "remove_trigger"])
+    async def test_changed_ingredients_resume_the_planned_cases_async(
+        self, seeded_memory_async: MemoryInterface, change: str
+    ) -> None:
         original = LatentInjection()
         args = {
             "dataset_config": _config(families=["whois"], max_dataset_size=2),
@@ -544,9 +547,27 @@ class TestLatentAttacks:
             name: list(await seeded_memory_async.get_seeds_async(dataset_name=name))
             for name in LatentInjection.required_datasets()
         }
-        for seed in sources[LatentInjectionDatasetConfiguration.CONTEXT_DATASET_NAME]:
-            seed.value += " changed"
+        triggers = sources[LatentInjectionDatasetConfiguration.TRIGGER_DATASET_NAME]
+        whois_trigger = next(seed for seed in triggers if (seed.metadata or {}).get("family") == "whois")
+        if change == "edit_context":
+            for seed in sources[LatentInjectionDatasetConfiguration.CONTEXT_DATASET_NAME]:
+                seed.value += " changed"
+        elif change == "edit_trigger":
+            whois_trigger.value += " refreshed"
+        elif change == "add_trigger":
+            triggers.append(
+                SeedPrompt(
+                    value="goal C",
+                    dataset_name=LatentInjectionDatasetConfiguration.TRIGGER_DATASET_NAME,
+                    metadata={"family": "whois"},
+                )
+            )
+        else:
+            triggers.remove(whois_trigger)
         resumed = LatentInjection(scenario_result_id=original._scenario_result_id)
-        with _read_ingredients(sources):
+        # The trigger scorer is rebuilt from the stored groups, so changed ingredients are never read.
+        with _read_ingredients(sources) as read:
             await _initialize_async(resumed, **args)
+        read.assert_not_awaited()
         assert [[group.logical_id for group in attack.seed_groups] for attack in resumed._atomic_attacks] == planned
+        assert resumed._objective_scorer_identifier == original._objective_scorer_identifier

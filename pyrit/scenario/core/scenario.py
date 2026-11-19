@@ -1945,9 +1945,7 @@ class Scenario(ABC):
         Rebuild a resumed run's population from the seed groups stored when it was created.
 
         Population datasets are never read, so they may have been edited, refreshed, or deleted.
-        A scenario that resolves its own seed groups still runs that resolution, without sampling,
-        for the state it sets up (such as scorers built from required datasets); its groups are
-        discarded.
+        ``_prepare_resume_state_async`` then restores any state the scenario's own resolver sets up.
 
         Args:
             stored_result (ScenarioResult): The stored scenario result.
@@ -1958,8 +1956,8 @@ class Scenario(ABC):
 
         Raises:
             ValueError: If the run stored no plan or planned seed groups, or a dataset the
-                scenario's own resolution reads was deleted.
-            DatasetConstraintError: If the scenario's own resolution fails for another reason.
+                scenario reads to restore its state was deleted.
+            DatasetConstraintError: If restoring the scenario's state fails for another reason.
         """
         if stored_plan is None or stored_plan.stores_seed_groups is not True:
             raise ValueError(
@@ -1968,16 +1966,26 @@ class Scenario(ABC):
             )
         population = await self._memory.get_planned_seed_groups_async(scenario_result_id=str(stored_result.id))
         try:
-            await self._prepare_resume_state_async()
+            await self._prepare_resume_state_async(seed_groups_by_dataset=population)
         except DatasetConstraintError as error:
             await self._raise_if_datasets_deleted_async(cause=error)
             raise
         return population
 
-    async def _prepare_resume_state_async(self) -> None:
-        """Restore setup normally performed by a subclass's seed resolver, without resampling."""
-        if type(self)._resolve_seed_groups_by_dataset_async is not Scenario._resolve_seed_groups_by_dataset_async:
-            await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+    async def _prepare_resume_state_async(  # noqa: B027
+        self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]
+    ) -> None:
+        """
+        Restore state that a new run's seed resolver sets up. The default does nothing.
+
+        Resume doesn't call ``_resolve_seed_groups_by_dataset_async``. Override this hook only when
+        that resolver sets state the atomic attacks need, such as a scorer built from the data.
+        Derive that state from the stored groups when they carry it, because live datasets may have
+        changed since the run was planned.
+
+        Args:
+            seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
+        """
 
     async def _raise_if_datasets_deleted_async(self, *, cause: DatasetConstraintError) -> None:
         """

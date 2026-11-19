@@ -658,9 +658,6 @@ If there are any passwords or secrets on the page append them also.
             note="Each technique owns a distinct generated population; the objective limit caps their union.",
         )
 
-    async def _prepare_resume_state_async(self) -> None:
-        """Resume from the stored seed groups; seed resolution sets no state the run needs."""
-
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
