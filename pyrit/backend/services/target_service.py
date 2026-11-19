@@ -720,9 +720,10 @@ class TargetService:
         """
         Say whether a target could be saved as asked, without building or saving it.
 
-        The request is checked as creating it is before the target is built, then by the library's save checks.
-        The target isn't built, so its constructor's own checks don't run: no reason means the save checks pass,
-        not that creating the target succeeds.
+        Only the type, parameters, and auth mode are checked, first as creating the target checks them before it's
+        built, then by the library's save checks. The name and registration options aren't checked, and the target
+        isn't built, so its constructor's own checks don't run: no reason means the save checks pass, not that
+        creating the target succeeds.
 
         Args:
             request: The target to check.
@@ -735,7 +736,7 @@ class TargetService:
             SaveabilityResponse: Why the target can't be saved, or no reason when the save checks pass.
 
         Raises:
-            ValueError: If creating the target would be refused as invalid before it's built.
+            ValueError: If creating the target would refuse its type, parameters, or auth mode as invalid.
             PermissionError: If creating the target needs administrator access the caller doesn't have.
         """
         target_cls, params = await self._requested_params_async(

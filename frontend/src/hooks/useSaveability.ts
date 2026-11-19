@@ -10,10 +10,12 @@ interface SaveabilityAnswer {
 }
 
 /**
- * Ask the backend, debounced, whether a request could be saved as asked, using the checks saving it runs.
+ * Ask the backend, debounced, whether a request passes its save checks.
  *
- * Returns why it can't be saved, null when it can, or undefined until the backend answers for the current request.
- * Answers for earlier requests are dropped, and so are failed checks, since saving reports its own refusal.
+ * Returns why it can't be saved, null when the save checks pass, or undefined until the backend answers for the current
+ * request. An answer is dropped once its request changes or goes away, so a request that comes back, such as the same
+ * values in a reopened dialog, waits for a fresh answer. Failed checks give no answer, since saving reports its own
+ * refusal.
  */
 export function useSaveability<Request>(
   request: Request | null,
@@ -21,6 +23,7 @@ export function useSaveability<Request>(
 ): string | null | undefined {
   const requestKey = request === null ? null : JSON.stringify(request)
   const [answer, setAnswer] = useState<SaveabilityAnswer | null>(null)
+  if (answer !== null && answer.requestKey !== requestKey) setAnswer(null)
   // Checks follow the request key, so an identical request rebuilt by a render isn't checked again.
   const latest = useRef({ request, check })
   useEffect(() => {
