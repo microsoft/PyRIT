@@ -375,7 +375,9 @@ async def test_create_config_rejects_multiple_final_pieces(completion_scorer: Ma
 
 
 async def test_create_config_rejects_refusal_via_scorer(completion_scorer: MagicMock) -> None:
-    completion_scorer.score_text_async.return_value[0].score_value = "false"
+    completion_scorer.score_text_async.return_value = [
+        Score(score_value="false", score_type="true_false", message_piece_id=uuid.uuid4()),
+    ]
 
     with pytest.raises(ValueError, match="rejected by completion_scorer"):
         await create_gcg_data_config_async(
