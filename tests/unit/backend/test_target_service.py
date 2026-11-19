@@ -2219,6 +2219,20 @@ def test_a_request_with_a_server_credential_sends_no_key_of_its_own(fields: dict
         )
 
 
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"params": {"api_key": "typed-key"}}, "Send either an api_key or a server_credential, not both"),
+        ({"auth_mode": "identity"}, "server_credential needs auth_mode 'api_key'"),
+    ],
+)
+def test_a_saveability_check_refuses_a_server_credential_as_create_does(fields: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        TargetSaveabilityRequest.model_validate(
+            {"type": "OpenAIChatTarget", "params": {}, "server_credential": "contoso", **fields}
+        )
+
+
 @pytest.mark.usefixtures("sqlite_instance")
 class TestCheckSaveability:
     async def test_answers_as_saving_would_without_building_anything(self) -> None:
