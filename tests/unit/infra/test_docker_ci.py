@@ -25,6 +25,14 @@ PYPI_GATES = {
 }
 
 
+def test_production_installs_litellm_and_checks_final_interpreter() -> None:
+    dockerfile = (REPO_ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
+    installs = [line for line in dockerfile.splitlines() if "uv pip install" in line and "github-copilot" in line]
+    assert len(installs) == 2
+    assert all(",litellm]" in line for line in installs)
+    assert 'cd /tmp && \\\n    /opt/venv/bin/python -c "import litellm' in dockerfile
+
+
 @pytest.fixture(scope="module")
 def workflow() -> dict[str, Any]:
     # BaseLoader preserves the Actions "on" key instead of treating it as a YAML 1.1 boolean.
@@ -57,6 +65,38 @@ def _run_bash(*, bash_path: str, script: str, environment: dict[str, str | None]
             check=False,
             timeout=20,
         )
+
+
+@pytest.mark.parametrize(
+    ("source", "has_claude", "expected_exit"),
+    [("local", "true", 0), ("local", "false", 1), ("pypi", "false", 0)],
+)
+def test_production_target_smoke_check_respects_installed_source(
+    *, bash_path: str, source: str, has_claude: str, expected_exit: int
+) -> None:
+    dockerfile = (REPO_ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
+    smoke = dockerfile.split("    cd /tmp && \\\n", 1)[1].split("    if ! ", 1)[0]
+    smoke = smoke.replace("\\\n", "\n").rstrip().removesuffix(" &&")
+    smoke = smoke.replace("/opt/venv/bin/python", "python_smoke")
+    script = (
+        """
+python_smoke() {
+    printf '%s\\n' "$*"
+    if [[ "$*" == *"ClaudeChatTarget"* && "$HAS_CLAUDE" == "false" ]]; then
+        return 1
+    fi
+}
+"""
+        + smoke
+    )
+    result = _run_bash(
+        bash_path=bash_path,
+        script=script,
+        environment={"PYRIT_SOURCE": source, "HAS_CLAUDE": has_claude},
+    )
+    assert result.returncode == expected_exit, result.stderr
+    assert "import litellm" in result.stdout
+    assert ("ClaudeChatTarget" in result.stdout) == (source == "local")
 
 
 @pytest.mark.parametrize("gate_id", ["local-checks", *PYPI_GATES])
