@@ -343,6 +343,15 @@ class TestVerbPlacement:
         assert args.command == "list-scenarios"
         assert args.server_url == "http://x"
 
+    def test_start_server_verb_with_benchmark_pipeline_options(self):
+        # The form .azuredevops/adversarial-benchmark.yml uses.
+        args = pyrit_scan.parse_args(
+            ["start-server", "--config-file", "conf.yaml", "--log-level", "INFO", "--startup-timeout", "180"]
+        )
+        assert args.command == "start-server"
+        assert args.startup_timeout == 180
+        assert not args._unknown_args
+
     def test_start_server_modifier_before_verb(self):
         args = pyrit_scan.parse_args(["--start-server", "list-targets"])
         assert args.command == "list-targets"

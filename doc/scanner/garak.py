@@ -181,8 +181,8 @@ await output_scenario_async(scenario_result)
 # **CLI examples:**
 #
 # ```bash
-# pyrit_scan garak.figstep --target openai_chat --datasets figstep --max-total 1
-# pyrit_scan garak.figstep --target openai_chat --datasets figstep_pro --max-total 1
+# pyrit_scan run garak.figstep --target openai_chat --datasets figstep --max-total 1
+# pyrit_scan run garak.figstep --target openai_chat --datasets figstep_pro --max-total 1
 # ```
 #
 # > **Note:** The objective target must natively support multi-piece user messages and accept text
@@ -486,7 +486,7 @@ await output_scenario_async(doctor_result)
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan garak.system_prompt_extraction --target openai_chat --techniques direct_requests
+# pyrit_scan run garak.system_prompt_extraction --target openai_chat --techniques direct_requests
 # ```
 #
 # **Available techniques** (9 categories): DirectRequests, RolePlayingAttacks, EncodingBasedAttacks,
@@ -530,10 +530,10 @@ await output_scenario_async(sysprompt_result)
 #
 # ```bash
 # # Run the default Rust technique.
-# pyrit_scan garak.package_hallucination --target openai_chat
+# pyrit_scan run garak.package_hallucination --target openai_chat
 #
 # # Select another supported language.
-# pyrit_scan garak.package_hallucination --target openai_chat --techniques dart
+# pyrit_scan run garak.package_hallucination --target openai_chat --techniques dart
 # ```
 #
 # **Available techniques** (7 languages): Python, JavaScript, Ruby, Rust, Dart, Perl, Raku.
@@ -572,7 +572,7 @@ await output_scenario_async(package_result)
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan garak.audio_achilles_heel --target azure_openai_realtime --max-total 2
+# pyrit_scan run garak.audio_achilles_heel --target azure_openai_realtime --max-total 2
 # ```
 #
 # > **Note:** The objective target must accept `audio_path` input (i.e. be multimodal). The example
