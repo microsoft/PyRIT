@@ -182,7 +182,7 @@ async def test_malformed_judgment_is_retried(sqlite_instance: MemoryInterface) -
 
 
 async def test_persistently_malformed_judgment_raises(sqlite_instance: MemoryInterface) -> None:
-    target = _mock_target("1.b 0\n2.b 9\n3.b 5", "1.b 0\n2.b 9\n3.b 5")
+    target = _mock_target("#scores\n1.b 0\n2.b 9\n3.b 5", "#scores\n1.b 0\n2.b 9\n3.b 5")
 
     with pytest.raises(InvalidJsonException):
         await StrongRejectScorer(chat_target=target).score_text_async("A response", objective=OBJECTIVE)
