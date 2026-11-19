@@ -35,6 +35,7 @@ from pyrit.score import (
 )
 
 if TYPE_CHECKING:
+    from pyrit.models import ScenarioResult
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.score import TrueFalseScorer
 
@@ -323,6 +324,13 @@ class PackageHallucination(Scenario):
             )
             for prompt in prompts
         ]
+
+    async def _restore_resume_state_async(
+        self, *, stored_result: ScenarioResult, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]
+    ) -> None:
+        # The scorers need the full package registries, which are far too large to save per run,
+        # so resume reads the corpus datasets again.
+        await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
 
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True

@@ -1010,9 +1010,8 @@ class TestAtomicAttackFilterSeedGroupsByCompletedHashes:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestAtomicAttackRestrictSeedGroupsToHashes:
-    """Tests for ``keep_seed_groups_with_hashes`` — the keep-set inverse used
-    on resume to replay the originally-sampled subset."""
+class TestDeprecatedKeepSeedGroupsWithHashes:
+    """Tests for the deprecated ``keep_seed_groups_with_hashes`` keep-set filter."""
 
     def test_keeps_only_listed_hashes(self, mock_attack, sample_seed_groups):
         from pyrit.common.utils import to_sha256
@@ -1023,7 +1022,8 @@ class TestAtomicAttackRestrictSeedGroupsToHashes:
             atomic_attack_name="test",
         )
         keep = {to_sha256("objective1"), to_sha256("objective3")}
-        retained = atomic.keep_seed_groups_with_hashes(hashes=keep)
+        with pytest.warns(DeprecationWarning, match="keep_seed_groups_with_hashes"):
+            retained = atomic.keep_seed_groups_with_hashes(hashes=keep)
 
         assert {sg.objective.value for sg in atomic.seed_groups} == {"objective1", "objective3"}
         assert retained == keep
@@ -1037,7 +1037,8 @@ class TestAtomicAttackRestrictSeedGroupsToHashes:
             atomic_attack_name="test",
         )
         keep = {to_sha256("objective1"), to_sha256("not-in-dataset")}
-        retained = atomic.keep_seed_groups_with_hashes(hashes=keep)
+        with pytest.warns(DeprecationWarning, match="keep_seed_groups_with_hashes"):
+            retained = atomic.keep_seed_groups_with_hashes(hashes=keep)
 
         assert {sg.objective.value for sg in atomic.seed_groups} == {"objective1"}
         assert retained == {to_sha256("objective1")}

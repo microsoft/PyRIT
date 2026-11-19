@@ -48,8 +48,13 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import Literal
 
+    from pyrit.models import ScenarioResult
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.score import TrueFalseScorer
+
+#: Scenario result metadata key for the values the default scorer ignores, so resume doesn't read
+#: the partial-key and placeholder datasets again.
+_EXCLUDED_VALUES_METADATA_KEY = "api_key_excluded_values"
 
 DATASET_SERVICES = "garak_api_key_services"
 DATASET_TEMPLATES = "garak_api_key_templates"
@@ -240,6 +245,7 @@ class ApiKey(Scenario):
             scenario_result_id (str | None): Optional existing scenario result to resume.
         """
         self._uses_default_scorer = objective_scorer is None
+        self._excluded_values: list[str] = []
         super().__init__(
             version=self.VERSION,
             technique_class=ApiKeyTechnique,
@@ -297,14 +303,37 @@ class ApiKey(Scenario):
         populations = _assemble_requests(corpus=corpus, techniques=config._techniques)
         groups = config.select_assembled_groups(groups_by_population=populations, apply_sampling=apply_sampling)
         if self._uses_default_scorer:
-            excluded_values = [
-                seed.value for name in (DATASET_PARTIAL_KEYS, DATASET_SAFE_PLACEHOLDERS) for seed in corpus[name]
-            ]
-            self._objective_scorer = CredentialLeakScorer.from_excluded_values(
-                excluded_values, patterns=CredentialLeakScorer.GARAK_PATTERNS
+            self._set_default_scorer(
+                excluded_values=[
+                    seed.value for name in (DATASET_PARTIAL_KEYS, DATASET_SAFE_PLACEHOLDERS) for seed in corpus[name]
+                ]
             )
-            self._objective_scorer_identifier = self._objective_scorer.get_identifier()
         return groups
+
+    async def _restore_resume_state_async(
+        self, *, stored_result: ScenarioResult, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]
+    ) -> None:
+        if not self._uses_default_scorer:
+            return
+        saved = stored_result.metadata.get(_EXCLUDED_VALUES_METADATA_KEY)
+        if saved is None:
+            # Runs created before the values were saved read them from the corpus datasets.
+            await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+            return
+        self._set_default_scorer(excluded_values=list(saved))
+
+    def _build_initial_scenario_metadata(self) -> dict[str, Any]:
+        metadata = super()._build_initial_scenario_metadata()
+        if self._uses_default_scorer:
+            metadata[_EXCLUDED_VALUES_METADATA_KEY] = list(self._excluded_values)
+        return metadata
+
+    def _set_default_scorer(self, *, excluded_values: list[str]) -> None:
+        self._excluded_values = excluded_values
+        self._objective_scorer = CredentialLeakScorer.from_excluded_values(
+            excluded_values, patterns=CredentialLeakScorer.GARAK_PATTERNS
+        )
+        self._objective_scorer_identifier = self._objective_scorer.get_identifier()
 
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """

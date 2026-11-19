@@ -184,6 +184,24 @@ class TestApiKey:
 
         assert _objectives(resumed) == _objectives(original)
 
+    async def test_resume_rebuilds_default_scorer_without_reading_the_corpus(
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        original = ApiKey()
+        await _initialize_async(scenario=original, target=mock_objective_target, corpus_seeds=corpus_seeds)
+        resumed = ApiKey(scenario_result_id=original._scenario_result_id)
+        resumed.set_params_from_args(args={"objective_target": mock_objective_target})
+
+        with patch.object(
+            _RequiredDatasetConfiguration,
+            "_collect_named_seeds_async",
+            side_effect=AssertionError("Resume read the corpus"),
+        ):
+            await resumed.initialize_async()
+
+        assert resumed._objective_scorer_identifier == original._objective_scorer_identifier
+        assert _objectives(resumed) == _objectives(original)
+
     async def test_default_scorer_receives_all_exclusions(
         self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:

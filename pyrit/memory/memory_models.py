@@ -42,12 +42,14 @@ from pyrit.common.utils import to_sha256
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.analytics_sql import ResolvedAttackIdentifierHash
 from pyrit.models import (
+    MEDIA_PATH_DATA_TYPES,
     SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
     AttackTechniqueIdentifier,
     ChatMessageRole,
     ComponentIdentifier,
@@ -2716,3 +2718,90 @@ class ScenarioResultEntry(Base):
             str: String representation of the scenario result entry
         """
         return f"ScenarioResultEntry: {self.scenario_name} (version {self.scenario_version})"
+
+
+_SIMULATED_CONVERSATION_PROMPT_FIELDS = (
+    "adversarial_chat_system_prompt",
+    "simulated_target_system_prompt",
+    "next_message_system_prompt",
+)
+
+
+def planned_media_values(seed_group: dict[str, Any]) -> list[str]:
+    """
+    Return the media paths a stored planned seed group references.
+
+    Args:
+        seed_group (dict[str, Any]): A ``ScenarioPlanSeedGroupEntry.seed_group`` value.
+
+    Returns:
+        list[str]: The media paths, in seed order.
+    """
+    values: list[str] = []
+    for seed in seed_group.get("seeds", []):
+        prompts = [seed]
+        if seed.get("seed_type") == "simulated_conversation":
+            prompts = [seed.get(field) for field in _SIMULATED_CONVERSATION_PROMPT_FIELDS]
+        values.extend(
+            prompt["value"]
+            for prompt in prompts
+            if isinstance(prompt, dict) and prompt.get("data_type") in MEDIA_PATH_DATA_TYPES
+        )
+    return values
+
+
+class ScenarioPlanSeedGroupEntry(Base):
+    """
+    One seed group a scenario run planned, stored when the run is created.
+
+    Resume rebuilds the run's population from these rows instead of reading its datasets, so
+    editing, refreshing, or deleting a dataset doesn't change what a run resumes on. Rows are
+    deleted with their scenario result.
+    """
+
+    __tablename__ = "ScenarioPlanSeedGroupEntries"
+    __table_args__ = (
+        Index("ix_ScenarioPlanSeedGroupEntries_scenario_result_id_position", "scenario_result_id", "position"),
+        Index("ix_ScenarioPlanSeedGroupEntries_has_media", "has_media"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    scenario_result_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID, ForeignKey("ScenarioResultEntries.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The population key the group was planned under, usually its dataset name.
+    dataset_name: Mapped[str] = mapped_column(Unicode, nullable=False)
+    #: The group's order in the planned population, across all datasets.
+    position: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    #: The ``AttackSeedGroup`` as JSON.
+    seed_group: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    #: Whether ``seed_group`` references media files, so media cleanup reads only these rows.
+    has_media: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    def __init__(
+        self, *, scenario_result_id: uuid.UUID, dataset_name: str, position: int, seed_group: AttackSeedGroup
+    ) -> None:
+        """
+        Store one planned seed group.
+
+        Args:
+            scenario_result_id (uuid.UUID): The run that planned the group.
+            dataset_name (str): The population key the group was planned under.
+            position (int): The group's order in the planned population.
+            seed_group (AttackSeedGroup): The planned group.
+        """
+        self.id = uuid.uuid4()
+        self.scenario_result_id = scenario_result_id
+        self.dataset_name = dataset_name
+        self.position = position
+        self.seed_group = seed_group.model_dump(mode="json")
+        self.has_media = bool(planned_media_values(self.seed_group))
+
+    def get_seed_group(self) -> AttackSeedGroup:
+        """
+        Rebuild the planned seed group.
+
+        Returns:
+            AttackSeedGroup: The group, equal to the one the run planned.
+        """
+        return AttackSeedGroup.model_validate(self.seed_group)

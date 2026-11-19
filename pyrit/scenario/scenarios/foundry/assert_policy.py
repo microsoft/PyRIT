@@ -50,12 +50,16 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from pyrit.models import ScenarioDatasetSizeEstimate
+    from pyrit.models import ScenarioDatasetSizeEstimate, ScenarioResult
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 logger = logging.getLogger(__name__)
+
+#: Scenario result metadata key for the logical IDs repeated in the unsampled population, which
+#: unit names depend on, so resume doesn't read the selected datasets again.
+_REPEATED_IDS_METADATA_KEY = "assert_policy_repeated_ids"
 
 
 _ASSERT_PACKAGE = "assert_package"
@@ -268,11 +272,29 @@ class AssertPolicy(Scenario):
             note=note,
         )
 
+    async def _restore_resume_state_async(
+        self, *, stored_result: ScenarioResult, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]
+    ) -> None:
+        saved = stored_result.metadata.get(_REPEATED_IDS_METADATA_KEY)
+        if saved is None:
+            # Runs created before the IDs were saved read them from the selected datasets.
+            await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+            return
+        self._repeated_ids = set(saved)
+
+    def _build_initial_scenario_metadata(self) -> dict[str, Any]:
+        metadata = super()._build_initial_scenario_metadata()
+        metadata[_REPEATED_IDS_METADATA_KEY] = sorted(self._repeated_ids)
+        return metadata
+
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
         """
         Read the selected groups once, validate them, then sample that same population.
+
+        Repeated IDs come from the unsampled population, so unit names don't depend on the sample.
+        The run saves them, and resume restores them in ``_restore_resume_state_async``.
 
         Returns:
             dict[str, list[AttackSeedGroup]]: Selected groups keyed by dataset.

@@ -23,10 +23,19 @@ from pyrit.memory import CentralMemory, PromptMemoryEntry, SeedEntry, SQLiteMemo
 from pyrit.memory.dataset_lifecycle import DatasetNameConflictError, entry_references_dataset_assets
 from pyrit.memory.dataset_mutation import DatasetVersionConflictError, dataset_version, editable_seed
 from pyrit.memory.memory_models import DatasetLifecycleEntry
-from pyrit.models import MessagePiece, SeedPrompt, SeedRecord, SeedUnion
+from pyrit.models import (
+    AttackSeedGroup,
+    MessagePiece,
+    ScenarioRunState,
+    SeedObjective,
+    SeedPrompt,
+    SeedRecord,
+    SeedUnion,
+)
 from pyrit.setup import SQLITE, initialize_pyrit_async
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 from unit.async_utils import TEST_WATCHDOG_SECONDS
+from unit.mocks import get_mock_target_identifier, make_scenario_result
 
 if TYPE_CHECKING:
     from sqlalchemy.sql.dml import Insert, Update
@@ -704,3 +713,37 @@ async def test_text_message_writes_skip_the_lifecycle_lock_but_seeds_take_it(
         await session.flush()
         assert session.info.get("dataset_lifecycle_locked")
         await session.commit()
+
+
+async def _plan_media_run_async(memory: SQLiteMemory, *, path: Path, state: ScenarioRunState) -> None:
+    group = AttackSeedGroup(
+        seeds=[SeedObjective(value="objective"), SeedPrompt(value=str(path), data_type="binary_path")]
+    )
+    result = make_scenario_result(
+        objective_target_identifier=get_mock_target_identifier(), attack_results={}, scenario_run_state=state
+    )
+    await memory.add_planned_scenario_result_async(scenario_result=result, seed_groups_by_dataset={"owned": [group]})
+
+
+@pytest.mark.parametrize(("state", "kept"), [(ScenarioRunState.FAILED, True), (ScenarioRunState.COMPLETED, False)])
+async def test_dataset_delete_keeps_media_an_incomplete_run_planned(
+    memories: tuple[SQLiteMemory, SQLiteMemory], state: ScenarioRunState, kept: bool
+) -> None:
+    memory = memories[0]
+    path = await _create_media_dataset_async(memory)
+    await _plan_media_run_async(memory, path=path, state=state)
+
+    deletion_id = await memory.delete_dataset_async(dataset_name="owned")
+    result = await memory.cleanup_dataset_media_async(operation_id=deletion_id)
+
+    assert result["status"] == "completed"
+    assert path.exists() is kept
+
+
+async def test_run_cannot_plan_media_queued_for_deletion(memories: tuple[SQLiteMemory, SQLiteMemory]) -> None:
+    memory = memories[0]
+    path = await _create_media_dataset_async(memory)
+    await memory.delete_dataset_async(dataset_name="owned")
+
+    with pytest.raises(ValueError, match="reserved for dataset cleanup"):
+        await _plan_media_run_async(memory, path=path, state=ScenarioRunState.CREATED)

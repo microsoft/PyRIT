@@ -114,6 +114,7 @@ from pyrit.memory.memory_models import (
     PromptConverterIdentifierEntry,
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
+    ScenarioPlanSeedGroupEntry,
     ScenarioResultEntry,
     ScorableContentEntry,
     ScoreEntry,
@@ -140,6 +141,7 @@ from pyrit.models import (
     AttackResult,
     AttackResultRole,
     AttackResultSelection,
+    AttackSeedGroup,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     ContentEntryScorable,
@@ -7853,17 +7855,33 @@ class MemoryInterface(abc.ABC):
             ]
         return {"operators": sorted(operators), "operations": sorted(operations)}
 
-    def _execute_add_scenario_results_to_memory(self, *, scenario_results: Sequence[ScenarioResult]) -> None:
+    def _execute_add_scenario_results_to_memory(
+        self,
+        *,
+        scenario_results: Sequence[ScenarioResult],
+        planned_seed_groups: Mapping[uuid.UUID, Mapping[str, Sequence[AttackSeedGroup]]] | None = None,
+    ) -> None:
         """
         Insert a list of scenario results into the memory storage.
 
         Args:
             scenario_results: Sequence of ScenarioResult objects to store in the database.
+            planned_seed_groups: The population each result's run planned, keyed by result ID and
+                then by dataset name, stored in the same transaction.
 
         Raises:
             SQLAlchemyError: If a scenario result or identifier graph cannot be persisted.
         """
         entries = [ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
+        plan_entries = [
+            ScenarioPlanSeedGroupEntry(
+                scenario_result_id=result_id, dataset_name=dataset_name, position=position, seed_group=seed_group
+            )
+            for result_id, population in (planned_seed_groups or {}).items()
+            for position, (dataset_name, seed_group) in enumerate(
+                (name, group) for name, groups in population.items() for group in groups
+            )
+        ]
         with closing(self._get_session()) as session:
             try:
                 for scenario_result in scenario_results:
@@ -7874,6 +7892,8 @@ class MemoryInterface(abc.ABC):
                 for entry in entries:
                     self._validate_activity_operation(session=session, entry=entry)
                 session.add_all(entries)
+                session.flush()
+                session.add_all(plan_entries)
                 self._recheck_activity_operations(session=session, entries=entries)
                 session.commit()
             except SQLAlchemyError as error:
@@ -8033,7 +8053,7 @@ class MemoryInterface(abc.ABC):
         Replace the ``scenario_metadata`` JSON blob on an existing scenario result.
 
         Used by the scenario layer to persist first-run state (e.g.
-        ``objective_hashes``) that resume needs to replay. Performs a
+        an adaptive run's choices) that resume needs to replay. Performs a
         targeted UPDATE so it doesn't clobber other columns.
 
         Args:
@@ -8102,6 +8122,24 @@ class MemoryInterface(abc.ABC):
             new_tries: int = session.query(ScenarioResultEntry.number_tries).filter_by(id=scenario_result_id).scalar()
             session.commit()
             return new_tries
+
+    def _execute_get_planned_seed_groups(self, *, scenario_result_id: str) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Read a run's stored planned seed groups.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: The population by dataset name, in planned order.
+        """
+        with closing(self._get_session()) as session:
+            entries = session.scalars(
+                select(ScenarioPlanSeedGroupEntry)
+                .where(ScenarioPlanSeedGroupEntry.scenario_result_id == uuid.UUID(scenario_result_id))
+                .order_by(ScenarioPlanSeedGroupEntry.position)
+            ).all()
+            population: dict[str, list[AttackSeedGroup]] = {}
+            for entry in entries:
+                population.setdefault(entry.dataset_name, []).append(entry.get_seed_group())
+            return population
 
     def _execute_get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """Return one ScenarioResult header without hydrating linked attack results."""
@@ -12666,6 +12704,43 @@ class MemoryInterface(abc.ABC):
             self._execute_add_scenario_results_to_memory, scenario_results=scenario_results
         )
 
+    async def add_planned_scenario_result_async(
+        self, *, scenario_result: ScenarioResult, seed_groups_by_dataset: Mapping[str, Sequence[AttackSeedGroup]]
+    ) -> None:
+        """
+        Insert a new scenario result together with the seed groups its run planned.
+
+        Resume rebuilds the run from these groups, so later dataset changes don't affect it.
+
+        Args:
+            scenario_result (ScenarioResult): The new scenario result.
+            seed_groups_by_dataset (Mapping[str, Sequence[AttackSeedGroup]]): The planned population,
+                by dataset name, in the order the run was built from.
+
+        Raises:
+            SQLAlchemyError: If the result, its identifier graph, or its seed groups cannot be persisted.
+        """
+        return await self._run_database_operation_async(
+            self._execute_add_scenario_results_to_memory,
+            scenario_results=[scenario_result],
+            planned_seed_groups={scenario_result.id: seed_groups_by_dataset},
+        )
+
+    async def get_planned_seed_groups_async(self, *, scenario_result_id: str) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Return the seed groups a scenario run planned, as stored when the run was created.
+
+        Args:
+            scenario_result_id (str): The scenario result ID.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: The planned population by dataset name, in planned
+                order. Empty when the run planned no groups or was created before they were stored.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_planned_seed_groups, scenario_result_id=scenario_result_id
+        )
+
     def update_scenario_run_state(
         self,
         *,
@@ -12869,7 +12944,7 @@ class MemoryInterface(abc.ABC):
         Replace the ``scenario_metadata`` JSON blob on an existing scenario result.
 
         Used by the scenario layer to persist first-run state (e.g.
-        ``objective_hashes``) that resume needs to replay. Performs a
+        an adaptive run's choices) that resume needs to replay. Performs a
         targeted UPDATE so it doesn't clobber other columns.
 
         Args:

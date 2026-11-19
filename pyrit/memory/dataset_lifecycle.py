@@ -24,10 +24,13 @@ from pyrit.memory.memory_models import (
     DatasetLifecycleLock,
     DatasetMediaEntry,
     PromptMemoryEntry,
+    ScenarioPlanSeedGroupEntry,
+    ScenarioResultEntry,
     ScorableContentEntry,
     SeedEntry,
+    planned_media_values,
 )
-from pyrit.models import MEDIA_PATH_DATA_TYPES
+from pyrit.models import MEDIA_PATH_DATA_TYPES, ScenarioRunState
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -129,6 +132,8 @@ def _entry_media_values(entry: object) -> list[str]:
             return []
     if isinstance(entry, ScorableContentEntry):
         return [entry.value] if entry.data_type in MEDIA_PATH_DATA_TYPES else []
+    if isinstance(entry, ScenarioPlanSeedGroupEntry):
+        return planned_media_values(entry.seed_group)
     if isinstance(entry, PromptMemoryEntry):
         return [
             value
@@ -206,6 +211,9 @@ def stored_media_keys(session: Session) -> set[str]:
     """
     Read all live seed, original/converted message, and loose scorer-media references.
 
+    Media planned by a scenario run that hasn't completed counts too, so deleting a dataset
+    doesn't remove files a paused run still needs to resume.
+
     Returns:
         set[str]: Canonical identities of the referenced media.
     """
@@ -226,6 +234,15 @@ def stored_media_keys(session: Session) -> set[str]:
         (PromptMemoryEntry.converted_value, PromptMemoryEntry.converted_value_data_type),
     ):
         values.extend(session.scalars(select(value_column).where(type_column.in_(MEDIA_PATH_DATA_TYPES))).all())
+    for seed_group in session.scalars(
+        select(ScenarioPlanSeedGroupEntry.seed_group)
+        .join(ScenarioResultEntry, ScenarioResultEntry.id == ScenarioPlanSeedGroupEntry.scenario_result_id)
+        .where(
+            ScenarioPlanSeedGroupEntry.has_media,
+            ScenarioResultEntry.scenario_run_state != ScenarioRunState.COMPLETED.value,
+        )
+    ):
+        values.extend(planned_media_values(seed_group))
     return _media_keys(session, [value for value in values if value])
 
 

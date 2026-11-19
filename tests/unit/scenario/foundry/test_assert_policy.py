@@ -647,6 +647,23 @@ async def test_sampled_identical_content_resumes_the_same_stored_group_async(har
     assert _group_id(restored) == "group_2"
 
 
+async def test_resume_keeps_unit_names_after_the_dataset_is_deleted_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_duplicate_result())
+    args = {
+        "scenario_techniques": [_technique("red_teaming")],
+        "include_baseline": False,
+        "dataset_overrides": {"sources": [{"name": "assert_a"}], "max_total": 1},
+    }
+    original = await harness.initialize_async(harness.scenario(), **args)
+    await CentralMemory.get_memory_instance().remove_seeds_from_memory_async(dataset_name="assert_a")
+
+    resumed = await harness.initialize_async(harness.scenario(scenario_result_id=original._scenario_result_id), **args)
+
+    assert [attack.atomic_attack_name for attack in resumed._atomic_attacks] == [
+        attack.atomic_attack_name for attack in original._atomic_attacks
+    ]
+
+
 async def test_sampled_resume_keeps_the_sampled_batch_when_generation_ids_collide_async(harness: _Harness) -> None:
     config = make_assert_config(group_count=1, include_adversarial_prompt=False)
     batches = [
