@@ -97,7 +97,7 @@ export default function OperationPicker({ selection, warning, onSelect, onRetry 
           }}
           onKeyDownCapture={event => { if (event.key === 'Tab') event.stopPropagation() }}
           onKeyDown={event => { if (event.key === 'Escape') dismiss() }}
-          positioning={{ autoSize: 'width' }}
+          positioning={{ matchTargetSize: undefined as never, autoSize: 'width' }}
           listbox={{ className: styles.operationListbox }}
           aria-label="Operation"
           data-testid="edit-label-operation"
