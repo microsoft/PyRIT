@@ -49,6 +49,13 @@ class CreateScorerRequest(RegistrationRequest):
     params: dict[IdentifierStr, JSONValue] = Field(
         default_factory=dict, max_length=MAX_ITEMS, description="Scorer constructor parameters"
     )
+    private: bool | None = Field(
+        None,
+        description=(
+            "Whether only the signed-in user who creates it can see and use it. Omitted, it is shared, unless "
+            "it is built on your private targets; then it is private and false is refused. true requires register=true."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_registration(self) -> "CreateScorerRequest":

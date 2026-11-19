@@ -397,7 +397,7 @@ def test_check_saveable_class_lists_the_auth_modes_a_saved_target_can_use(
         (
             "HTTPTarget",
             RestoreFailureReason.UNSUPPORTED_CLASS,
-            "'HTTPTarget' can't be saved. Its raw HTTP request can carry credentials.",
+            "Its raw HTTP request can carry credentials.",
         ),
         (
             "HTTPXAPITarget",
@@ -407,15 +407,12 @@ def test_check_saveable_class_lists_the_auth_modes_a_saved_target_can_use(
         (
             "HuggingFaceChatTarget",
             RestoreFailureReason.UNSUPPORTED_CLASS,
-            (
-                "'HuggingFaceChatTarget' can't be saved. It needs a Hugging Face token or model files on this server, "
-                "and saved targets can hold neither yet."
-            ),
+            "It needs a Hugging Face token or model files on this server, and saved targets can hold neither yet.",
         ),
         (
             "WebSocketCopilotTarget",
             RestoreFailureReason.UNSUPPORTED_CLASS,
-            "'WebSocketCopilotTarget' can't be saved. It signs in with the Copilot account this server is set up with.",
+            "It signs in with the Copilot account this server is set up with.",
         ),
     ],
 )

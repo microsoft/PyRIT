@@ -18,6 +18,7 @@ may override merged values using PyYAML's existing precedence rules.
 from __future__ import annotations
 
 from collections.abc import Hashable
+from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
 
 import yaml
@@ -95,3 +96,22 @@ def safe_load_yaml(source: str | bytes | IO[str] | IO[bytes]) -> Any:
             duplicate mapping keys. Duplicate errors include the key and source marks.
     """
     return yaml.load(source, Loader=_UniqueKeySafeLoader)
+
+
+def load_yaml_file(*, path: str | Path) -> Any:
+    """
+    Read a UTF-8 YAML file and parse it with ``safe_load_yaml``.
+
+    Args:
+        path (str | Path): The YAML file to read.
+
+    Returns:
+        Any: The parsed YAML content, or ``None`` if the file is empty.
+
+    Raises:
+        ValueError: If the file is not valid YAML. The message names the file.
+    """
+    try:
+        return safe_load_yaml(Path(path).read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML file '{path}': {exc}") from exc

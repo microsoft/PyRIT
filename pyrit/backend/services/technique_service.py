@@ -15,7 +15,7 @@ from pyrit.backend.models.techniques import (
     TechniqueTypeEntry,
     TechniqueTypeResponse,
 )
-from pyrit.registry import AttackRegistry, AttackTechniqueRegistry
+from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, creator_metadata, record_private_references
 
 
 class TechniqueService:
@@ -71,12 +71,17 @@ class TechniqueService:
         return await asyncio.to_thread(self._create, request)
 
     def _create(self, request: CreateTechniqueRequest) -> TechniqueInstance:
-        args = request.model_dump(exclude_unset=True, exclude={"name", "type", "tags"})
-        factory = self._registry.create_factory(
-            name=request.name, attack_type=request.type, technique_tags=request.tags, strict_json=True, **args
-        )
+        args = request.model_dump(exclude_unset=True, exclude={"name", "type", "tags", "private"})
+        with record_private_references() as private_references:
+            factory = self._registry.create_factory(
+                name=request.name, attack_type=request.type, technique_tags=request.tags, strict_json=True, **args
+            )
         result = technique_to_instance(name=request.name, factory=factory)
-        self._registry.instances.register_runtime(factory)
+        # A technique built on the caller's private targets or converters is private to the caller too.
+        metadata = creator_metadata(
+            name=request.name, requested_private=request.private, private_references=private_references
+        )
+        self._registry.instances.register_runtime(factory, metadata=metadata)
         return result
 
     async def types_async(self) -> TechniqueTypeResponse:
