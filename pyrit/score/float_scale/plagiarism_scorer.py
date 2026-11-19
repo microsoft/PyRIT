@@ -147,7 +147,7 @@ class PlagiarismScorer(MessageFloatScaleScorer):
         )
         return unicodedata.normalize("NFKC", text).lower()
 
-    def _lcs_length(self, a: list[str], b: list[str]) -> int:
+    def _lcs_length(self, a: list[str], *, b: list[str]) -> int:
         """
         Compute the length of the Longest Common Subsequence at word level.
 
@@ -163,7 +163,7 @@ class PlagiarismScorer(MessageFloatScaleScorer):
                     dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
         return int(dp[len(a)][len(b)])
 
-    def _levenshtein_distance(self, a: list[str], b: list[str]) -> int:
+    def _levenshtein_distance(self, a: list[str], *, b: list[str]) -> int:
         """
         Compute Levenshtein edit distance at word level.
 
@@ -181,7 +181,7 @@ class PlagiarismScorer(MessageFloatScaleScorer):
                 dp[i][j] = min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
         return int(dp[len(a)][len(b)])
 
-    def _ngram_set(self, tokens: list[str], n: int) -> set[tuple[str, ...]]:
+    def _ngram_set(self, tokens: list[str], *, n: int) -> set[tuple[str, ...]]:
         """
         Generate a set of n-grams from token list.
 
@@ -214,6 +214,7 @@ class PlagiarismScorer(MessageFloatScaleScorer):
     def _plagiarism_score(
         self,
         response: str,
+        *,
         reference: str,
         metric: PlagiarismMetric = PlagiarismMetric.LCS,
         n: int = 5,
@@ -251,19 +252,19 @@ class PlagiarismScorer(MessageFloatScaleScorer):
 
         # Compute the LCS metric (normalized by reference length)
         if metric.value == "lcs":
-            lcs_len = self._lcs_length(tokens_reference, tokens_response)
+            lcs_len = self._lcs_length(tokens_reference, b=tokens_response)
             return lcs_len / reference_len
 
         # Compute the Levenshtein metric (normalized by max length)
         if metric.value == "levenshtein":
-            lev_dist = self._levenshtein_distance(tokens_reference, tokens_response)
+            lev_dist = self._levenshtein_distance(tokens_reference, b=tokens_response)
             max_len = max(reference_len, response_len)
             return 1 - (lev_dist / max_len)
 
         # Compute the Jaccard metric (normalized by number of n-grams in reference)
         if metric.value == "jaccard":
-            ref_ngrams = self._ngram_set(tokens_reference, n) if reference_len >= n else set()
-            res_ngrams = self._ngram_set(tokens_response, n) if response_len >= n else set()
+            ref_ngrams = self._ngram_set(tokens_reference, n=n) if reference_len >= n else set()
+            res_ngrams = self._ngram_set(tokens_response, n=n) if response_len >= n else set()
             if not ref_ngrams:
                 return 0.0
             return len(ref_ngrams & res_ngrams) / len(ref_ngrams)
@@ -284,7 +285,9 @@ class PlagiarismScorer(MessageFloatScaleScorer):
             list[Score]: A list containing the computed score.
         """
         response_to_evaluate = message_piece.converted_value
-        score_value = self._plagiarism_score(response_to_evaluate, self.reference_text, metric=self.metric, n=self.n)
+        score_value = self._plagiarism_score(
+            response_to_evaluate, reference=self.reference_text, metric=self.metric, n=self.n
+        )
 
         return [
             Score(

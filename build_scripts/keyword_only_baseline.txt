@@ -70,7 +70,6 @@ pyrit.common.singleton:Singleton.__new__
 pyrit.common.text_helper:write_txt
 pyrit.common.utils:combine_dict
 pyrit.common.utils:combine_list
-pyrit.converter.audio_echo_converter:AudioEchoConverter._apply_echo
 pyrit.converter.audio_speed_converter:AudioSpeedConverter._resample_channel
 pyrit.converter.azure_speech_audio_to_text_converter:AzureSpeechAudioToTextConverter.stop_cb
 pyrit.converter.azure_speech_audio_to_text_converter:AzureSpeechAudioToTextConverter.transcript_cb
@@ -235,10 +234,6 @@ pyrit.scenario.core.scenario:Scenario._execute_atomic_attacks_parallel_async.<lo
 pyrit.scenario.core.scenario_technique:ScenarioTechnique.__new__
 pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy:_derive_rng
 pyrit.scenario:_ScenarioAliasFinder.find_spec
-pyrit.score.float_scale.plagiarism_scorer:PlagiarismScorer._lcs_length
-pyrit.score.float_scale.plagiarism_scorer:PlagiarismScorer._levenshtein_distance
-pyrit.score.float_scale.plagiarism_scorer:PlagiarismScorer._ngram_set
-pyrit.score.float_scale.plagiarism_scorer:PlagiarismScorer._plagiarism_score
 pyrit.score.scorer:Scorer.scale_value_float
 pyrit.score.scorer_evaluation.krippendorff:krippendorff_alpha
 pyrit.score.scorer_evaluation.scorer_evaluator:ScorerEvaluator.evaluate_dataset_async
