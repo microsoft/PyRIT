@@ -105,6 +105,7 @@ if TYPE_CHECKING:
     from pyrit.converter.string_join_converter import StringJoinConverter
     from pyrit.converter.suffix_append_converter import SuffixAppendConverter
     from pyrit.converter.superscript_converter import SuperscriptConverter
+    from pyrit.converter.tap_code_converter import TapCodeConverter
     from pyrit.converter.task_framing_converter import TaskFramingConverter
     from pyrit.converter.tatweel_converter import TatweelConverter
     from pyrit.converter.template_segment_converter import TemplateSegmentConverter
@@ -246,6 +247,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "StringJoinConverter": "pyrit.converter.string_join_converter",
     "SuffixAppendConverter": "pyrit.converter.suffix_append_converter",
     "SuperscriptConverter": "pyrit.converter.superscript_converter",
+    "TapCodeConverter": "pyrit.converter.tap_code_converter",
     "TaskFramingConverter": "pyrit.converter.task_framing_converter",
     "TatweelConverter": "pyrit.converter.tatweel_converter",
     "TemplateSegmentConverter": "pyrit.converter.template_segment_converter",

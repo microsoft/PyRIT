@@ -22,6 +22,7 @@ from pyrit.converter import (
     MorseConverter,
     NatoConverter,
     ROT13Converter,
+    TapCodeConverter,
     ZalgoConverter,
 )
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
@@ -127,6 +128,7 @@ class EncodingTechnique(ScenarioTechnique):
     LeetSpeak = ("leet_speak", {"default"})
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
+    TapCode = ("tap_code", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -314,6 +316,7 @@ class Encoding(Scenario):
             ([LeetspeakConverter()], "leet_speak", "leet_speak"),
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
+            ([TapCodeConverter()], "tap_code", "tap_code"),
         ]
 
     # These are the same as Garak encoding attacks
