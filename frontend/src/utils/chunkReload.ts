@@ -10,9 +10,14 @@ export function isChunkLoadError(error: unknown): boolean {
   return error instanceof Error && CHUNK_ERROR_PATTERN.test(error.message)
 }
 
-function failedChunk(payload: unknown): string {
+function failedChunk(payload: unknown, target: Window): string {
   const message = payload instanceof Error ? payload.message : String(payload)
-  return message.match(/\/assets\/[^\s'")]+/)?.[0] ?? message
+  const asset = message.match(/\/assets\/[^\s'")]+/)?.[0]
+  if (asset) return asset
+  // Some browsers leave the URL out. The entry script's hashed name changes with each deploy,
+  // so keying on it still gives every build one reload.
+  const build = target.document?.querySelector('script[type="module"][src]')?.getAttribute('src') ?? ''
+  return `${build} ${message}`
 }
 
 /**
@@ -26,7 +31,7 @@ function failedChunk(payload: unknown): string {
  */
 export function installChunkReloadHandler(target: Window = window): () => void {
   const onPreloadError = (event: Event) => {
-    const chunk = failedChunk((event as Event & { payload?: unknown }).payload)
+    const chunk = failedChunk((event as Event & { payload?: unknown }).payload, target)
     try {
       const reloaded: string[] = JSON.parse(target.sessionStorage.getItem(RELOADED_KEY) ?? '[]')
       if (reloaded.includes(chunk)) return

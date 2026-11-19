@@ -1,10 +1,12 @@
 import { installChunkReloadHandler, isChunkLoadError } from './chunkReload'
 
-function fakeWindow() {
+function fakeWindow(entryScript = '/assets/index-aaa.js') {
   const target = new EventTarget() as EventTarget & {
     sessionStorage: Storage
     location: { reload: jest.Mock }
+    document: { querySelector: () => { getAttribute: () => string } }
   }
+  target.document = { querySelector: () => ({ getAttribute: () => entryScript }) }
   const store = new Map<string, string>()
   target.sessionStorage = {
     getItem: (key: string) => store.get(key) ?? null,
@@ -50,6 +52,23 @@ describe('installChunkReloadHandler', () => {
 
     preloadError(target, '/assets/AnalyticsPage-def456.js')
 
+    expect(target.location.reload).toHaveBeenCalledTimes(2)
+  })
+
+  it('reloads once per build for an error without a chunk URL', () => {
+    const target = fakeWindow('/assets/index-aaa.js')
+    installChunkReloadHandler(target as unknown as Window)
+    const urlless = () => {
+      const event = new Event('vite:preloadError', { cancelable: true }) as Event & { payload: Error }
+      event.payload = new TypeError('Importing a module script failed.')
+      target.dispatchEvent(event)
+    }
+    urlless()
+    urlless()
+    expect(target.location.reload).toHaveBeenCalledTimes(1)
+
+    target.document = { querySelector: () => ({ getAttribute: () => '/assets/index-bbb.js' }) }
+    urlless()
     expect(target.location.reload).toHaveBeenCalledTimes(2)
   })
 
