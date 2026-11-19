@@ -57,7 +57,7 @@ async def test_caesar_converter_with_description():
     assert "ifmmp" in result.output_text
 
 
-async def test_caesar_converter_description_digit_example_matches_encoding():
+async def test_caesar_converter_description_digit_example_matches_encoding_async() -> None:
     converter = CaesarConverter(caesar_offset=1, append_description=True)
     result = await converter.convert_async(prompt="hello", input_type="text")
     assert 'with a shift of three 7 becomes 0 and "2025" becomes "5358"' in result.output_text
