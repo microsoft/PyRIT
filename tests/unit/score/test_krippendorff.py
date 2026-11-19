@@ -175,39 +175,41 @@ class TestValidateAndPrepareData:
         """Test that only ordinal measurement is accepted."""
         data = np.array([[1, 2], [1, 2]])
         with pytest.raises(ValueError, match="Only 'ordinal' level of measurement is supported"):
-            _validate_and_prepare_data(data, "nominal", np.nan)
+            _validate_and_prepare_data(data, level_of_measurement="nominal", missing=np.nan)
 
     def test_converts_to_float64(self):
         """Test that data is converted to float64."""
         data = np.array([[1, 2], [1, 2]], dtype=np.int32)
-        result_data, _, _ = _validate_and_prepare_data(data, "ordinal", np.nan)
+        result_data, _, _ = _validate_and_prepare_data(data, level_of_measurement="ordinal", missing=np.nan)
         assert result_data.dtype == np.float64
 
     def test_handles_none_missing_value(self):
         """Test that None missing value is converted to NaN."""
         data = np.array([[1, 2], [1, 2]])
-        result_data, valid_mask, categories = _validate_and_prepare_data(data, "ordinal", None)
+        result_data, valid_mask, categories = _validate_and_prepare_data(
+            data, level_of_measurement="ordinal", missing=None
+        )
         # Should work without error and treat NaN as missing
         assert len(categories) == 2
 
     def test_creates_valid_mask_for_nan(self):
         """Test valid mask creation for NaN missing values."""
         data = np.array([[1, np.nan], [2, 3]])
-        _, valid_mask, _ = _validate_and_prepare_data(data, "ordinal", np.nan)
+        _, valid_mask, _ = _validate_and_prepare_data(data, level_of_measurement="ordinal", missing=np.nan)
         expected_mask = np.array([[True, False], [True, True]])
         assert np.array_equal(valid_mask, expected_mask)
 
     def test_creates_valid_mask_for_custom_sentinel(self):
         """Test valid mask creation for custom sentinel value."""
         data = np.array([[1, -999], [2, 3]])
-        _, valid_mask, _ = _validate_and_prepare_data(data, "ordinal", -999)
+        _, valid_mask, _ = _validate_and_prepare_data(data, level_of_measurement="ordinal", missing=-999)
         expected_mask = np.array([[True, False], [True, True]])
         assert np.array_equal(valid_mask, expected_mask)
 
     def test_extracts_sorted_categories(self):
         """Test that categories are extracted and sorted."""
         data = np.array([[3, 1, 2], [2, 1, 3]])
-        _, _, categories = _validate_and_prepare_data(data, "ordinal", np.nan)
+        _, _, categories = _validate_and_prepare_data(data, level_of_measurement="ordinal", missing=np.nan)
         expected_categories = np.array([1.0, 2.0, 3.0])
         assert np.array_equal(categories, expected_categories)
 
@@ -221,7 +223,7 @@ class TestBuildValueCountsMatrix:
         valid_mask = np.array([[True, True, True], [True, True, True]])
         categories = np.array([1.0, 2.0, 3.0])
 
-        result = _build_value_counts_matrix(data, valid_mask, categories)
+        result = _build_value_counts_matrix(data, valid_mask=valid_mask, categories=categories)
 
         # Each item should have 2 raters agreeing
         expected = np.array([[2, 0, 0], [0, 2, 0], [0, 0, 2]])
@@ -233,7 +235,7 @@ class TestBuildValueCountsMatrix:
         valid_mask = np.array([[True, True, True], [True, False, True]])
         categories = np.array([1.0, 2.0, 3.0])
 
-        result = _build_value_counts_matrix(data, valid_mask, categories)
+        result = _build_value_counts_matrix(data, valid_mask=valid_mask, categories=categories)
 
         # Item 0: 2 raters for category 1
         # Item 1: 1 rater for category 2
@@ -247,7 +249,7 @@ class TestBuildValueCountsMatrix:
         valid_mask = np.array([[True, True], [True, True]])
         categories = np.array([1.0, 2.0, 3.0])
 
-        result = _build_value_counts_matrix(data, valid_mask, categories)
+        result = _build_value_counts_matrix(data, valid_mask=valid_mask, categories=categories)
 
         # Item 0: 1 rater for cat 1, 1 for cat 2
         # Item 1: 1 rater for cat 2, 1 for cat 3
@@ -330,7 +332,7 @@ class TestBuildOrdinalDistanceMatrix:
         """Test that diagonal distances are zero."""
         n_v = np.array([1.0, 2.0, 3.0])
 
-        result = _build_ordinal_distance_matrix(3, n_v)
+        result = _build_ordinal_distance_matrix(3, n_v=n_v)
 
         assert result[0, 0] == 0.0
         assert result[1, 1] == 0.0
@@ -340,7 +342,7 @@ class TestBuildOrdinalDistanceMatrix:
         """Test that distance matrix is symmetric."""
         n_v = np.array([1.0, 2.0, 3.0, 4.0])
 
-        result = _build_ordinal_distance_matrix(4, n_v)
+        result = _build_ordinal_distance_matrix(4, n_v=n_v)
 
         # Check symmetry
         for i in range(4):
@@ -351,7 +353,7 @@ class TestBuildOrdinalDistanceMatrix:
         """Test that adjacent categories have smaller distances."""
         n_v = np.array([1.0, 1.0, 1.0, 1.0])
 
-        result = _build_ordinal_distance_matrix(4, n_v)
+        result = _build_ordinal_distance_matrix(4, n_v=n_v)
 
         # Distance between adjacent categories should be less than distant ones
         # For uniform marginals, d(0,1) < d(0,2) < d(0,3)
@@ -364,34 +366,34 @@ class TestComputeAlphaFromDisagreements:
 
     def test_zero_disagreement_returns_one(self):
         """Test that zero observed and expected disagreement returns 1.0."""
-        result = _compute_alpha_from_disagreements(0.0, 0.0)
+        result = _compute_alpha_from_disagreements(0.0, expected_disagreement=0.0)
         assert result == 1.0
 
     def test_zero_expected_with_nonzero_observed_returns_nan(self):
         """Test that zero expected with non-zero observed returns NaN."""
-        result = _compute_alpha_from_disagreements(1.0, 0.0)
+        result = _compute_alpha_from_disagreements(1.0, expected_disagreement=0.0)
         assert np.isnan(result)
 
     def test_equal_disagreements_returns_zero(self):
         """Test that equal observed and expected disagreement returns 0.0."""
-        result = _compute_alpha_from_disagreements(5.0, 5.0)
+        result = _compute_alpha_from_disagreements(5.0, expected_disagreement=5.0)
         assert result == 0.0
 
     def test_half_expected_disagreement_returns_half(self):
         """Test that observed = 0.5 * expected returns alpha = 0.5."""
-        result = _compute_alpha_from_disagreements(5.0, 10.0)
+        result = _compute_alpha_from_disagreements(5.0, expected_disagreement=10.0)
         assert np.isclose(result, 0.5)
 
     def test_higher_observed_than_expected_negative_alpha(self):
         """Test that observed > expected gives negative alpha."""
-        result = _compute_alpha_from_disagreements(10.0, 5.0)
+        result = _compute_alpha_from_disagreements(10.0, expected_disagreement=5.0)
         assert result < 0.0
         assert np.isclose(result, -1.0)
 
     def test_tiny_negative_clipped_to_zero(self):
         """Test that tiny negative values due to rounding are clipped to 0."""
         # Simulate rounding error
-        result = _compute_alpha_from_disagreements(10.0 + 1e-12, 10.0)
+        result = _compute_alpha_from_disagreements(10.0 + 1e-12, expected_disagreement=10.0)
         assert result == 0.0
 
 

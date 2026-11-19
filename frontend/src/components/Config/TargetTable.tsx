@@ -14,6 +14,9 @@ import {
   Checkbox,
   MessageBar,
   MessageBarBody,
+  Popover,
+  PopoverSurface,
+  PopoverTrigger,
   mergeClasses,
 } from '@fluentui/react-components'
 import {
@@ -33,8 +36,12 @@ import {
   ChevronDownRegular,
   EyeOffRegular,
   EyeRegular,
+  KeyFilled,
+  LockClosedFilled,
 } from '@fluentui/react-icons'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import type { TargetCapabilityDetection } from '@/hooks/useTargetCapabilityDetection'
@@ -51,8 +58,10 @@ import {
   CAPABILITY_COLUMNS,
   DEFAULT_TARGET_FILTERS,
   MODALITY_LABELS,
+  TARGET_ACCOUNT_LABELS,
   getTargetFilterOptions,
   orderModalities,
+  targetAccount,
   targetMatchesFilters,
   type TargetFilters,
 } from './targetFilters'
@@ -67,6 +76,8 @@ interface TargetTableProps {
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
   detection: TargetCapabilityDetection
 }
+
+const CREDENTIALS_ACCEPTED_LABEL = 'Credentials accepted'
 
 /** Format target_specific_params into a short human-readable string. */
 function formatParams(params?: Record<string, unknown> | null): string {
@@ -183,6 +194,87 @@ function ModelCell({ target }: { target: TargetInstance }) {
   return <Text size={200}>{displayName}</Text>
 }
 
+function credentialsRejectedMessage(name: string, canUpdate: boolean): string {
+  const rejected = 'The last request was rejected. The credentials may be expired or invalid. '
+  return canUpdate
+    ? rejected + `Update them through the API (PUT /api/targets/${name}/credentials) or with `
+      + `pyrit_scan set-target-credential ${name}.`
+    : rejected + "This target doesn't allow credential updates, so ask whoever set it up to update them."
+}
+
+/** A red lock that explains, on click, how to update credentials the provider rejected. */
+function RejectedCredentialsButton({ name, canUpdate }: { name: string; canUpdate: boolean }) {
+  const styles = useTargetTableStyles()
+  const [infoOpen, setInfoOpen] = useState(false)
+  const [hoverVisible, setHoverVisible] = useState(false)
+  const message = credentialsRejectedMessage(name, canUpdate)
+  return (
+    <Popover withArrow open={infoOpen} onOpenChange={(_, data) => {
+      setInfoOpen(data.open)
+      setHoverVisible(false)
+    }}>
+      <PopoverTrigger disableButtonEnhancement>
+        <Tooltip content={message} relationship="label" visible={hoverVisible && !infoOpen}
+          onVisibleChange={(_, data) => setHoverVisible(!infoOpen && data.visible)}>
+          <Button
+            className={styles.rowAction}
+            appearance="subtle"
+            size="small"
+            icon={<LockClosedFilled className={styles.credentialsRejectedIcon} />}
+            aria-label={message}
+          />
+        </Tooltip>
+      </PopoverTrigger>
+      <PopoverSurface className={styles.credentialsHelp}>
+        The last request was rejected. The credentials may be expired or invalid.{' '}
+        {canUpdate ? (
+          <>
+            Update them through the API (<code>PUT /api/targets/{name}/credentials</code>) or with{' '}
+            <code>pyrit_scan set-target-credential {name}</code>.
+          </>
+        ) : (
+          <>This target doesn&apos;t allow credential updates, so ask whoever set it up to update them.</>
+        )}
+      </PopoverSurface>
+    </Popover>
+  )
+}
+
+/**
+ * Whether the provider accepted the target's credentials; the icon's shape carries that, not only its color.
+ * A target that hasn't been used shows no icon, because nothing has checked its credentials yet.
+ */
+function CredentialsStatus({ target }: { target: TargetInstance }) {
+  const styles = useTargetTableStyles()
+  if (target.credentials_rejected === true) {
+    return (
+      <RejectedCredentialsButton
+        name={target.target_registry_name}
+        canUpdate={target.allow_credential_updates === true}
+      />
+    )
+  }
+  if (target.credentials_rejected !== false) {
+    return null
+  }
+  return (
+    <Tooltip content={CREDENTIALS_ACCEPTED_LABEL} relationship="label">
+      <KeyFilled className={styles.credentialsAcceptedIcon} role="img" aria-label={CREDENTIALS_ACCEPTED_LABEL} />
+    </Tooltip>
+  )
+}
+
+/** Render who can use the target and whether the provider accepted its credentials. */
+function AccountCell({ target }: { target: TargetInstance }) {
+  const styles = useTargetTableStyles()
+  return (
+    <span className={styles.accountCell}>
+      <Text size={200}>{TARGET_ACCOUNT_LABELS[targetAccount(target)]}</Text>
+      <CredentialsStatus target={target} />
+    </span>
+  )
+}
+
 /** Render capability cells for a target. */
 function CapabilityCells({ target }: { target: TargetInstance }) {
   const styles = useTargetTableStyles()
@@ -220,6 +312,8 @@ function InnerTargetRows({ parentKey, innerTargets, weights, selectionVisible, d
           <TableCell>
             <Text size={200}>{targetType(inner)}</Text>
           </TableCell>
+          {/* Inner targets don't report who can use them; their own rows show it. */}
+          <TableCell className={styles.accountColumn} />
           <TableCell>
             <ModelCell target={inner} />
           </TableCell>
@@ -452,6 +546,9 @@ export default function TargetTable({
                 <span className={styles.helpHeader}>Type</span>
               </Tooltip>
             </TableHeaderCell>
+            <TableHeaderCell aria-label="Account" className={styles.accountColumn}>
+              <ContextualHelpLabel term="Account">{HELP_DEFINITIONS.targetAccount}</ContextualHelpLabel>
+            </TableHeaderCell>
             <TableHeaderCell style={{ width: '160px' }}>
               <Tooltip content={COLUMN_TOOLTIPS.model} relationship="description">
                 <span className={styles.helpHeader}>Model</span>
@@ -500,7 +597,7 @@ export default function TargetTable({
                 key={target.target_registry_name}
                 name={target.target_registry_name}
                 identity={target.identifier}
-                columns={8 + CAPABILITY_COLUMNS.length + Number(selectionVisible) + Number(detectionVisible)}
+                columns={9 + CAPABILITY_COLUMNS.length + Number(selectionVisible) + Number(detectionVisible)}
                 expanded={expandedIdentities.has(target.target_registry_name)}
                 onToggle={() => toggleIdentity(target.target_registry_name)}
                 leadingCell={
@@ -580,6 +677,9 @@ export default function TargetTable({
                     )}
                     <Text size={200}>{targetType(target)}</Text>
                   </div>
+                </TableCell>
+                <TableCell className={styles.accountColumn}>
+                  <AccountCell target={target} />
                 </TableCell>
                 <TableCell>
                   <ModelCell target={target} />

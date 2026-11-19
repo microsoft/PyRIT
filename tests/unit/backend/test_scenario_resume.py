@@ -61,7 +61,12 @@ from pyrit.models import (
 from pyrit.models.catalog import RunScenarioRequest, ScenarioRunSummary
 from pyrit.models.seeds import yaml_seed_loader
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, ScorerRegistry, TargetRegistry
-from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration, IncompatibleTechniquePolicy
+from pyrit.scenario import (
+    AttackTechniqueFactory,
+    DatasetAttackConfiguration,
+    DatasetSource,
+    IncompatibleTechniquePolicy,
+)
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechnique,
@@ -109,7 +114,9 @@ class _OfflineResumeScenario(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=_OfflineTechnique,
-            default_dataset_config=DatasetAttackConfiguration(dataset_names=[_DATASET_NAME], auto_fetch=False),
+            default_dataset_config=DatasetAttackConfiguration(
+                sources=[DatasetSource(name=_DATASET_NAME)], fetch=DatasetFetchPolicy.NEVER
+            ),
             objective_scorer=SubStringScorer(substring="default"),
             scenario_result_id=scenario_result_id,
         )
@@ -871,7 +878,9 @@ async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) ->
         max_retries=0,
         memory_labels=_LABELS,
         operation_id=_OPERATION_ID,
-        dataset_config=DatasetAttackConfiguration(dataset_names=[_DATASET_NAME], max_dataset_size=2, auto_fetch=False),
+        dataset_config=DatasetAttackConfiguration(
+            sources=[DatasetSource(name=_DATASET_NAME)], max_total=2, fetch=DatasetFetchPolicy.NEVER
+        ),
         initial_metadata={}
         if legacy
         else {
