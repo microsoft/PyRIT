@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from pyrit.converter.azure_speech_text_to_audio_converter import AzureSpeechTextToAudioConverter
     from pyrit.converter.base64_converter import Base64Converter
     from pyrit.converter.base2048_converter import Base2048Converter
+    from pyrit.converter.beaufort_converter import BeaufortConverter
     from pyrit.converter.bidi_converter import BidiConverter
     from pyrit.converter.bifid_converter import BifidConverter
     from pyrit.converter.bijection_converter import (
@@ -63,6 +64,7 @@ if TYPE_CHECKING:
     from pyrit.converter.flip_converter import FlipConverter
     from pyrit.converter.fullwidth_converter import FullwidthConverter
     from pyrit.converter.grid_composite_converter import GridCompositeConverter
+    from pyrit.converter.gronsfeld_converter import GronsfeldConverter
     from pyrit.converter.image_color_saturation_converter import ImageColorSaturationConverter
     from pyrit.converter.image_compression_converter import ImageCompressionConverter
     from pyrit.converter.image_overlay_converter import ImageOverlayConverter
@@ -90,6 +92,7 @@ if TYPE_CHECKING:
     from pyrit.converter.persuasion_converter import PersuasionConverter
     from pyrit.converter.pinyin_converter import PinyinConverter
     from pyrit.converter.policy_puppetry_converter import PolicyPuppetryConverter, PolicyPuppetryTemplate
+    from pyrit.converter.porta_converter import PortaConverter
     from pyrit.converter.prompt_template_converter import PromptTemplateConverter
     from pyrit.converter.puzzled import PuzzledConverter, PuzzleType
     from pyrit.converter.qr_code_converter import QRCodeConverter
@@ -169,6 +172,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AzureSpeechTextToAudioConverter": "pyrit.converter.azure_speech_text_to_audio_converter",
     "Base2048Converter": "pyrit.converter.base2048_converter",
     "Base64Converter": "pyrit.converter.base64_converter",
+    "BeaufortConverter": "pyrit.converter.beaufort_converter",
     "BidiConverter": "pyrit.converter.bidi_converter",
     "BifidConverter": "pyrit.converter.bifid_converter",
     "DigitBijectionConverter": "pyrit.converter.bijection_converter",
@@ -195,6 +199,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FlipConverter": "pyrit.converter.flip_converter",
     "FullwidthConverter": "pyrit.converter.fullwidth_converter",
     "GridCompositeConverter": "pyrit.converter.grid_composite_converter",
+    "GronsfeldConverter": "pyrit.converter.gronsfeld_converter",
     "ImageColorSaturationConverter": "pyrit.converter.image_color_saturation_converter",
     "ImageCompressionConverter": "pyrit.converter.image_compression_converter",
     "ImageOverlayConverter": "pyrit.converter.image_overlay_converter",
@@ -223,6 +228,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PinyinConverter": "pyrit.converter.pinyin_converter",
     "PolicyPuppetryConverter": "pyrit.converter.policy_puppetry_converter",
     "PolicyPuppetryTemplate": "pyrit.converter.policy_puppetry_converter",
+    "PortaConverter": "pyrit.converter.porta_converter",
     "PositionSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "PromptTemplateConverter": "pyrit.converter.prompt_template_converter",
     "Converter": "pyrit.converter.converter",

@@ -13,14 +13,17 @@ from pyrit.converter import (
     AtbashConverter,
     Base64Converter,
     Base2048Converter,
+    BeaufortConverter,
     BifidConverter,
     BinAsciiConverter,
     BrailleConverter,
     Converter,
     EcojiConverter,
+    GronsfeldConverter,
     LeetspeakConverter,
     MorseConverter,
     NatoConverter,
+    PortaConverter,
     ROT13Converter,
     ZalgoConverter,
 )
@@ -127,6 +130,9 @@ class EncodingTechnique(ScenarioTechnique):
     LeetSpeak = ("leet_speak", {"default"})
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
+    Porta = ("porta", set[str]())
+    Gronsfeld = ("gronsfeld", set[str]())
+    Beaufort = ("beaufort", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -314,6 +320,9 @@ class Encoding(Scenario):
             ([LeetspeakConverter()], "leet_speak", "leet_speak"),
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
+            ([PortaConverter(key="pyrit")], "porta", "porta"),
+            ([GronsfeldConverter()], "gronsfeld", "gronsfeld"),
+            ([BeaufortConverter(key="pyrit")], "beaufort", "beaufort"),
         ]
 
     # These are the same as Garak encoding attacks

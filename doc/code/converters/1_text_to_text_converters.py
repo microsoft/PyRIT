@@ -52,6 +52,7 @@ from pyrit.converter import (
     AtbashConverter,
     Base64Converter,
     Base2048Converter,
+    BeaufortConverter,
     BifidConverter,
     BinaryConverter,
     BinAsciiConverter,
@@ -59,10 +60,12 @@ from pyrit.converter import (
     CaesarConverter,
     DigitBijectionConverter,
     EcojiConverter,
+    GronsfeldConverter,
     LetterBijectionConverter,
     MorseConverter,
     NatoConverter,
     NegationTrapConverter,
+    PortaConverter,
     ROT13Converter,
     TokenBijectionConverter,
     VigenereConverter,
@@ -90,6 +93,9 @@ print("NATO:", await NatoConverter().convert_async(prompt=prompt))  # type: igno
 print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=prompt))  # type: ignore
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
 print("Vigenere:", await VigenereConverter(key="key").convert_async(prompt=prompt))  # type: ignore
+print("Porta:", await PortaConverter(key="pyrit").convert_async(prompt=prompt))  # type: ignore
+print("Gronsfeld:", await GronsfeldConverter().convert_async(prompt=prompt))  # type: ignore
+print("Beaufort:", await BeaufortConverter(key="pyrit").convert_async(prompt=prompt))  # type: ignore
 print("Bifid:", await BifidConverter().convert_async(prompt=prompt))  # type: ignore
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
 print("LetterBijectionConverter:", await LetterBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
