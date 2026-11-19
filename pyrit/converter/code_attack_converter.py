@@ -277,15 +277,12 @@ class CodeAttackConverter(Converter):
         if len(words) == 1:
             words = list(words[0])
         words = words[::-1]
-        literals = (
-            _escape_string_literal(word, encoding=CodeAttackConverter.Encoding.PYTHON_STACK) for word in words
-        )
+        literals = (_escape_string_literal(word, encoding=CodeAttackConverter.Encoding.PYTHON_STACK) for word in words)
         return "\n".join(f"    my_stack.append({literal})" for literal in literals)
 
     def _encode_python_list(self, prompt: str) -> str:
         literals = (
-            _escape_string_literal(word, encoding=CodeAttackConverter.Encoding.PYTHON_LIST)
-            for word in prompt.split()
+            _escape_string_literal(word, encoding=CodeAttackConverter.Encoding.PYTHON_LIST) for word in prompt.split()
         )
         return "\n".join(f"    my_list.append({literal})" for literal in literals)
 
