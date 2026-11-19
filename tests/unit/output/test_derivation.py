@@ -31,6 +31,7 @@ from pyrit.models import (
 from pyrit.output._derivation import (
     GroupStatistics,
     SuiteEntryStatistics,
+    attack_objective_scorer_identifier,
     attack_score_display,
     attack_technique_label,
     resolve_scorer_name,
@@ -390,3 +391,22 @@ def test_select_objective_scores_reads_duplicated_piece_score_from_original():
     duplicate = MessagePiece(role="assistant", original_value="reply", original_prompt_id=original_id)
     scores = [_stored_score(owner=original_id, label="original", scorer=_OBJECTIVE)]
     assert _selected([duplicate], scores) == {str(duplicate.id): "original"}
+
+
+def _attack_with_recorded_scorer(scorer: ComponentIdentifier | None) -> SimpleNamespace:
+    children = {"objective_scorer": scorer} if scorer is not None else {}
+    strategy = ComponentIdentifier(class_name="PromptSendingAttack", class_module="tests", children=children)
+    return SimpleNamespace(get_attack_strategy_identifier=lambda: strategy)
+
+
+def test_attack_objective_scorer_identifier_prefers_the_scorer_the_attack_recorded():
+    attack = _attack_with_recorded_scorer(_REFUSAL)
+    assert attack_objective_scorer_identifier(attack=attack, run_scorer_identifier=_OBJECTIVE) == _REFUSAL
+    assert attack_objective_scorer_identifier(attack=attack, run_scorer_identifier=None) == _REFUSAL
+
+
+def test_attack_objective_scorer_identifier_falls_back_to_the_run_scorer():
+    unrecorded = _attack_with_recorded_scorer(None)
+    no_identity = SimpleNamespace(get_attack_strategy_identifier=lambda: None)
+    assert attack_objective_scorer_identifier(attack=unrecorded, run_scorer_identifier=_OBJECTIVE) == _OBJECTIVE
+    assert attack_objective_scorer_identifier(attack=no_identity, run_scorer_identifier=None) is None

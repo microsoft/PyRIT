@@ -709,6 +709,23 @@ async def test_output_scenario_conversations_async_scores_duplicated_conversatio
 
 
 @pytest.mark.usefixtures("patch_central_database")
+async def test_output_scenario_conversations_async_keeps_the_score_of_each_attacks_recorded_judge(
+    seeded_attacks, capsys
+):
+    # A scorer-pool run has no single objective scorer; each attack records the judge it used.
+    result = make_scenario_result(attack_results=seeded_attacks, objective_scorer_identifier=None)
+    attack_identity = ComponentIdentifier(
+        class_name="PromptSendingAttack", class_module="tests", children={"objective_scorer": REFUSAL_SCORER}
+    )
+
+    with patch.object(AttackResult, "get_attack_strategy_identifier", return_value=attack_identity):
+        await output_scenario_conversations_async(result)
+
+    for entry in json.loads(capsys.readouterr().out)["conversations"]:
+        assert _piece_scores(entry) == [[], [("RefusalScorer", "true")]]
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_output_scenario_conversations_async_without_objective_scorer_omits_scores(seeded_attacks, capsys):
     result = make_scenario_result(attack_results=seeded_attacks, objective_scorer_identifier=None)
 
