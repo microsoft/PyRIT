@@ -2656,7 +2656,7 @@ export interface FindingUpdateRequest extends FindingCreate {
   remove_retired_keys: string[]
 }
 
-export type FindingFieldType = 'text' | 'multiline' | 'choice'
+export type FindingFieldType = 'text' | 'multiline' | 'choice' | 'number'
 
 export type FindingSeverityColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'gray' | 'dark' | 'neutral'
 

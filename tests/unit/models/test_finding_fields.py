@@ -185,6 +185,7 @@ def test_finding_fields_rejects_invalid_definitions(severity: dict, fields: list
         ),
         (_choice(levels=[("feature", "Feature")], options={("chat", "Chat"): [(" ", "History")]}), "must not be blank"),
         ({"key": "notes", "label": "Notes", "type": "text", "default": "a"}, "cannot have default"),
+        ({"key": "score", "label": "Score", "type": "number", "options": [("a", "A")]}, "cannot have options"),
         (_choice(options={"chat": []}), r"\(key, label\) pair"),
     ],
 )
@@ -428,6 +429,34 @@ def test_check_values_accepts_other_text_that_matches_no_option(severity: str) -
 
 def test_check_values_accepts_unchanged_other_text_that_matches_an_option() -> None:
     DEFAULT_FINDING_FIELDS.check_values(severity="Critical", field_values={}, previous_severity="Critical")
+
+
+SCORED = FindingFields.model_validate(
+    {"severity": SEVERITY, "fields": [{"key": "cvss_score", "label": "CVSS score", "type": "number", "required": True}]}
+)
+
+
+@pytest.mark.parametrize("score", ["9.8", "10", "0", "-2", "-0.5"])
+def test_check_values_accepts_a_plain_decimal_number(score: str) -> None:
+    SCORED.check_values(severity="high", field_values={"cvss_score": score})
+
+
+@pytest.mark.parametrize("score", ["high", "1e3", "1_000", "inf", "nan", ".5", "5.", "+3", " 9 ", "\u0661\u0662"])
+def test_check_values_rejects_a_number_that_is_not_a_plain_decimal(score: str) -> None:
+    with pytest.raises(FindingValuesError) as error:
+        SCORED.check_values(severity="high", field_values={"cvss_score": score})
+    assert str(error.value) == f"CVSS score must be a number like 9.8 or -2, not {score!r}."
+
+
+def test_check_values_requires_a_number_and_keeps_an_unchanged_value_saved_before_the_field_was_a_number() -> None:
+    with pytest.raises(FindingValuesError, match="CVSS score is required."):
+        SCORED.check_values(severity="high", field_values={})
+    SCORED.check_values(
+        severity="high",
+        field_values={"cvss_score": "High"},
+        previous_severity="high",
+        previous_values={"cvss_score": "High"},
+    )
 
 
 AREA = _choice(

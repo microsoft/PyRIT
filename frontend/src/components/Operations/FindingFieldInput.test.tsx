@@ -109,6 +109,18 @@ describe('FindingFieldInput', () => {
     expect(onChange).toHaveBeenLastCalledWith({ owner: 'C' })
   })
 
+  it('renders a number field as a spin button that accepts a decimal', async () => {
+    const user = userEvent.setup()
+    const score: FindingField = { ...OWNER, key: 'cvss_score', label: 'CVSS score', type: 'number' }
+    render(<TestWrapper><FieldHarness field={score} initialValues={{}} onChange={onChange} /></TestWrapper>)
+
+    const input = screen.getByRole('spinbutton', { name: 'CVSS score' })
+    await user.type(input, '9.8')
+    expect(onChange).toHaveBeenLastCalledWith({ cvss_score: '9.8' })
+    // The dialog is a native form, and a browser blocks saving a decimal on the default step of 1.
+    expect(input).toHaveAttribute('step', 'any')
+  })
+
   it('picks a cascade path level by level and disables a level until its parent has a value', async () => {
     const user = userEvent.setup()
     render(<TestWrapper><FieldHarness field={CATEGORY} initialValues={{}} onChange={onChange} /></TestWrapper>)

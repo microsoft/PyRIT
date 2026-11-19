@@ -19,6 +19,7 @@ class FindingFieldType(StrEnum):
     TEXT = "text"
     MULTILINE = "multiline"
     CHOICE = "choice"
+    NUMBER = "number"
 
 
 class FindingSeverityColor(StrEnum):
@@ -55,7 +56,8 @@ class FindingField(BaseModel):
     Attributes:
         key (str): The stored name of the value. Keep it fixed; change ``label`` to rename what users see.
         label (str): The name the finding dialog and cards show.
-        type (FindingFieldType): ``text``, ``multiline`` or ``choice``.
+        type (FindingFieldType): ``text``, ``multiline``, ``choice`` or ``number``. A ``number`` takes a plain
+            decimal, such as ``9.8`` or ``-2``.
         required (bool): Whether every finding needs a value. For a cascade, every level with options needs one.
         options (list[FindingFieldOption]): A ``choice`` field's options. Write ``(key, label)`` pairs for one
             dropdown, or a dict from each pair to its children for a cascade.
@@ -327,8 +329,8 @@ class FindingFields(BaseModel):
 
         Raises:
             FindingValuesError: For the first unknown key, changed value of a field that is no longer
-                configured, missing required value, value that is not an option, or Other text that
-                matches an option.
+                configured, missing required value, value that is not an option, Other text that
+                matches an option, or changed ``number`` value that is not a plain decimal.
         """
         previous_values = previous_values or {}
         self._check_known_keys(field_values=field_values, previous_values=previous_values)
@@ -541,17 +543,31 @@ def _walk_values(
         options = match.children if match is not None else []
 
 
+# float() would also take exponents, underscores, inf and nan, which are not what people type as a score or count.
+_NUMBER_PATTERN = re.compile(r"-?[0-9]+(\.[0-9]+)?")
+
+
 def _check_field_values(*, field: FindingField, values: dict[str, str], previous_values: dict[str, str]) -> None:
     """
     Check the value of one field and of its levels.
 
     Raises:
-        FindingValuesError: If a required value is missing or a value is not an option.
+        FindingValuesError: If a required value is missing, a value is not an option, or a changed ``number`` value
+            is not a plain decimal.
     """
     if field.type == FindingFieldType.CHOICE:
         _check_choice_values(field=field, values=values, previous_values=previous_values)
-    elif field.required and _non_blank(values.get(field.key)) is None:
-        raise FindingValuesError(f"{field.label} is required.")
+        return
+    value = _non_blank(values.get(field.key))
+    if value is None:
+        if field.required:
+            raise FindingValuesError(f"{field.label} is required.")
+    elif (
+        field.type == FindingFieldType.NUMBER
+        and value != _non_blank(previous_values.get(field.key))
+        and not _NUMBER_PATTERN.fullmatch(value)
+    ):
+        raise FindingValuesError(f"{field.label} must be a number like 9.8 or -2, not {value!r}.")
 
 
 def _check_choice_values(*, field: FindingField, values: dict[str, str], previous_values: dict[str, str]) -> None:

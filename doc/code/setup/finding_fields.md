@@ -45,6 +45,7 @@ class ContosoFindingsInitializer(FindingsInitializer):
                     levels=[("subarea", "Subarea")],
                 ),
                 FindingField(key="repro_steps", label="Repro steps", type=FindingFieldType.MULTILINE),
+                FindingField(key="cvss_score", label="CVSS score", type=FindingFieldType.NUMBER),
                 FindingField(key="contoso_ticket", label="Contoso ticket", type=FindingFieldType.TEXT),
             ],
         )
@@ -54,6 +55,7 @@ A few things to note in this example:
 
 - Options are `(key, label)` pairs. The finding stores the `key`, and people see the `label`. Field and level keys use lowercase letters, digits and underscores, up to 256 characters each, and the fields and their levels can use at most 100 keys besides `severity`. Option keys can be any text that isn't blank and has no surrounding whitespace.
 - `Area` is a cascade. Each of its options maps to the options of a second dropdown. `levels` names that dropdown, and its value is stored under `subarea`.
+- `CVSS score` is a `number` field. It takes a plain decimal, such as `9.8` or `-2`, without exponents.
 - `colors` sets the badge color of a severity option.
 
 `FindingField` also takes `hint`, `section` and `allow_other`. Its docstring describes each setting.
@@ -79,7 +81,7 @@ With `allow_custom_initializers: true`, the backend runs every script in that so
 - A changed `key` makes a new field. Values saved under the old key show under **Retired fields**, where they are read-only. Edits keep them. **Remove** deletes one when you save.
 - Other text that matches an option's key or label is rejected, ignoring case and surrounding spaces. The message names the option to choose instead.
 - On the Operations list, severities that match no option share one **Other** count.
-- Exports put multi-line fields in the Finding column, and choice and text fields in the Assessment column. Retired values follow in the Finding column, labelled by their keys.
+- Exports put multi-line fields in the Finding column, and choice, text and number fields in the Assessment column. Retired values follow in the Finding column, labelled by their keys.
 
 ## Upgrading
 
