@@ -32,7 +32,7 @@ from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initializers import ScenarioSuiteInitializer
 
-config = ConfigurationLoader.from_yaml_file(Path("../../scanner/pyrit_conf.yaml"))
+config = ConfigurationLoader.load_with_overrides(config_file=Path("../../scanner/pyrit_conf.yaml"))
 await config.initialize_pyrit_async()  # type: ignore
 
 preset_registry = ScenarioPresetRegistry.get_registry_singleton()
@@ -137,29 +137,42 @@ for entry in execution.entries:
 # %% [markdown]
 # ## Summarize the results
 #
-# Each row counts the latest outcome for each technique/objective execution unit.
-# This summary leaves raw conversations in memory rather than printing them here.
+# The output helper loads each entry's stored scenario result and prints every entry from
+# the execution snapshot, leaving raw conversations in memory. Each entry counts the latest
+# outcome of each technique/objective execution. See
+# [Printing Suite Results](../output/0_output.ipynb#printing-suite-results).
 
 # %%
-from pyrit.analytics import compute_scenario_statistics
-from pyrit.backend.services import get_scenario_run_service
+from pyrit.output import output_scenario_suite_async
 
-run_service = get_scenario_run_service()
-results = {
-    entry.preset_name: await run_service.get_run_results_async(scenario_result_id=entry.run.scenario_result_id)  # type: ignore
-    for entry in execution.entries
-    if entry.run is not None
-}
+await output_scenario_suite_async(execution)  # type: ignore
 
-for preset_name, result in results.items():
-    counts = compute_scenario_statistics(result).overall
-    outcomes = counts.outcomes
-    assert outcomes is not None
-    print(
-        f"{preset_name}: {counts.completed}/{counts.planned} completed, "
-        f"{outcomes.successes} succeeded, {outcomes.failures} failed, "
-        f"{outcomes.errors} errors, {outcomes.undetermined} undetermined"
+# %% [markdown]
+# ## Explore a scenario's results
+#
+# Each **Scenario Result ID** above identifies a child run stored in memory. Load one
+# to see its technique-level summary, individual attacks and/or conversations. This example
+# selects the first submitted entry; use another printed ID to explore a different scenario.
+# The limits and outcome filter keep the attack list output short.
+
+# %%
+from pyrit.memory import CentralMemory
+from pyrit.output import output_scenario_async, output_scenario_attacks_async
+
+scenario_result_ids = [entry.run.scenario_result_id for entry in execution.entries if entry.run is not None]
+if scenario_result_ids:
+    scenario_results = await CentralMemory.get_memory_instance().get_scenario_results_async(  # type: ignore
+        scenario_result_ids=scenario_result_ids
     )
+else:
+    scenario_results = []
+
+if scenario_results:
+    scenario_result = scenario_results[1]
+    await output_scenario_async(scenario_result)  # type: ignore
+    await output_scenario_attacks_async(scenario_result, limit=3)  # type: ignore
+else:
+    print("No stored scenario result is available yet.")
 
 # %% [markdown]
 # ## Define your own suite
