@@ -29,6 +29,7 @@ from pyrit.models import (
     Scorable,
     ScorableUnion,
     Score,
+    ScorerCapabilities,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
     ScoreStatus,
@@ -37,6 +38,11 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, CapabilityName, TargetRequirements
 from pyrit.prompt_target.batch_helper import batch_task_async
+from pyrit.score.expectation_errors import (
+    AmbiguousConditionError,
+    MissingConditionError,
+    UnsupportedConditionError,
+)
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _collect_scores,
@@ -464,7 +470,8 @@ class Scorer(Identifiable, abc.ABC):
 
         Raises:
             TypeError: If the expectation is invalid or the requested type is not this leaf's criterion.
-            ValueError: If the condition is missing or duplicated.
+            MissingConditionError: If the condition is missing.
+            AmbiguousConditionError: If the condition is duplicated.
         """
         ScoringExpectation.validate_type(expectation)
         if condition_type is not self.condition_type:
@@ -475,12 +482,14 @@ class Scorer(Identifiable, abc.ABC):
             if isinstance(condition, condition_type)
         ]
         if not matches:
-            raise ValueError(
+            raise MissingConditionError(
                 f"{type(self).__name__} requires one {condition_type.__name__} condition. "
-                f"Supply it in ScoringExpectation.conditions; objective text alone does not supply this criterion."
+                f"Supply it in ScoringExpectation.conditions; objective text alone does not supply this criterion.",
+                scorer_name=type(self).__name__,
+                condition_names=(condition_type.__name__,),
             )
         if len(matches) > 1:
-            raise ValueError(
+            raise AmbiguousConditionError(
                 f"{type(self).__name__} received {len(matches)} {condition_type.__name__} conditions. "
                 "A leaf scorer requires exactly one condition of its declared type."
             )
@@ -571,6 +580,39 @@ class Scorer(Identifiable, abc.ABC):
         if isinstance(self, FloatScaleScorer):
             return "float_scale"
         return "unknown"
+
+    @property
+    def capabilities(self) -> ScorerCapabilities:
+        """
+        Describe what this configured scorer accepts and guarantees, without scoring.
+
+        The view is derived from the scorer's existing contracts (supported evidence types,
+        condition coverage, result family) plus ``_preserves_float_scale_value``, so it is
+        never a second declaration that can drift. Building it constructs nothing and calls
+        no model.
+
+        Returns:
+            ScorerCapabilities: The derived capability view.
+        """
+        return ScorerCapabilities(
+            scorable_types=self.get_supported_scorable_types(),
+            condition_types=self.get_condition_types(),
+            result_family=self.scorer_type,
+            preserves_float_scale_value=self._preserves_float_scale_value(),
+        )
+
+    def _preserves_float_scale_value(self) -> bool:
+        """
+        Report whether every complete, applicable true/false result keeps its float value.
+
+        The default promises nothing. A scorer that guarantees a finite ``[0, 1]`` value for
+        the same criterion on each such result overrides this, so attacks that rank by
+        float feedback can require it.
+
+        Returns:
+            bool: Whether the output guarantee holds for this configured scorer.
+        """
+        return False
 
     @property
     def _memory(self) -> MemoryInterface:
@@ -866,8 +908,9 @@ class Scorer(Identifiable, abc.ABC):
 
         Raises:
             TypeError: If the expectation is not a ``ScoringExpectation``.
-            ValueError: If a condition is unsupported, a required condition is absent, or
-                more than one condition of the same supported type is present.
+            UnsupportedConditionError: If a condition is unsupported.
+            ValueError: If a required condition is absent, or more than one condition of the
+                same supported type is present.
         """
         ScoringExpectation.validate_type(expectation)
         condition_type = self.condition_type
@@ -880,8 +923,12 @@ class Scorer(Identifiable, abc.ABC):
             if not isinstance(condition, supported)
         ]
         if unmatched:
-            names = ", ".join(sorted({type(condition).__name__ for condition in unmatched}))
-            raise ValueError(f"{type(self).__name__} does not support condition(s): {names}.")
+            unmatched_names = tuple(sorted({type(condition).__name__ for condition in unmatched}))
+            raise UnsupportedConditionError(
+                f"{type(self).__name__} does not support condition(s): {', '.join(unmatched_names)}.",
+                scorer_name=type(self).__name__,
+                condition_names=unmatched_names,
+            )
         for child, selected in self._get_child_expectations(expectation=expectation):
             child._validate_expectation(expectation=selected)
 

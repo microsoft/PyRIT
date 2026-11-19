@@ -294,7 +294,8 @@ class TestRestoreOrderAndRebuild:
 
     def test_technique_recipe_matches_the_create_request(self) -> None:
         recipe_fields = set(TechniqueRecipe.model_fields) - {"schema_version"}
-        request_fields = set(CreateTechniqueRequest.model_fields) - {"name"}
+        # A saved technique is never private: it has no creator.
+        request_fields = set(CreateTechniqueRequest.model_fields) - {"name", "private"}
         request = CreateTechniqueRequest.model_validate({"name": "formal_red_team", **_TECHNIQUE})
         recipe = TechniqueRecipe.model_validate(_TECHNIQUE)
 
@@ -307,7 +308,7 @@ class TestRestoreOrderAndRebuild:
         recipe = TechniqueRecipe.model_validate({"type": "RedTeamingAttack"})
         request = CreateTechniqueRequest.model_validate({"name": "formal_red_team", "type": "RedTeamingAttack"})
 
-        assert recipe.model_dump(exclude={"schema_version"}) == request.model_dump(exclude={"name"})
+        assert recipe.model_dump(exclude={"schema_version"}) == request.model_dump(exclude={"name", "private"})
 
     @pytest.mark.parametrize(
         "changes",

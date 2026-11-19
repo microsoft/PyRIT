@@ -624,3 +624,25 @@ async def test_openai_response_target_rejects_provider_name_conflict(patch_centr
             conversation=[Message.from_prompt(prompt="Read a note", role="user")],
             json_config=JsonResponseConfig(enabled=False),
         )
+
+
+def test_openai_response_target_skips_malformed_function_call_pieces() -> None:
+    target = object.__new__(OpenAIResponseTarget)
+    response = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="not valid json",
+                original_value_data_type="function_call",
+            ),
+            MessagePiece(
+                role="assistant",
+                original_value='{"type":"function_call","call_id":"call-1","name":"get_note","arguments":"{}"}',
+                original_value_data_type="function_call",
+            ),
+        ]
+    )
+
+    calls = target._find_pending_tool_calls(response)
+
+    assert [call["call_id"] for call in calls] == ["call-1"]

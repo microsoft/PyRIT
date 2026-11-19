@@ -812,6 +812,28 @@ async def test_print_conversations_async_renders_messages_and_objective_score(ca
     assert "Total attacks: 1" in out
 
 
+@pytest.mark.parametrize("fmt", ["pretty", "json"])
+async def test_print_conversations_async_shows_the_score_of_the_judge_each_attack_recorded(fmt, capsys):
+    from pyrit.models import AttackResult, ComponentIdentifier
+
+    # A scorer-pool run has no single objective scorer; each attack records the judge it used.
+    judge = ComponentIdentifier(class_name="HateScorer", class_module="tests.unit.mocks")
+    other = ComponentIdentifier(class_name="RefusalScorer", class_module="tests.unit.mocks")
+    attack_identity = ComponentIdentifier(
+        class_name="PromptSendingAttack", class_module="tests.unit.mocks", children={"objective_scorer": judge}
+    )
+    result = _result_with_attacks({"tech_a": [("conv-1", "extract secrets")]})
+    scores = [_score_json(scorer=other, rationale="refusal rationale"), _score_json(scorer=judge, rationale="judged")]
+    client = _FakeMessagesClient({"conv-1": _scored_conversation(scores=scores)})
+
+    with patch.object(AttackResult, "get_attack_strategy_identifier", return_value=attack_identity):
+        await _output.print_conversations_async(result=result, client=client, scenario_result_id="SID", format=fmt)
+
+    out = capsys.readouterr().out
+    assert "judged" in out
+    assert "refusal rationale" not in out
+
+
 async def test_print_conversations_async_without_objective_scorer_shows_no_scores(capsys):
     from pyrit.models import ComponentIdentifier
 
