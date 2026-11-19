@@ -570,18 +570,17 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (targetTypeEntry?.not_saveable_reason) return targetTypeEntry.not_saveable_reason
     const saveableAuthModes = targetTypeEntry?.saveable_auth_modes
     if (showAuthField && saveableAuthModes && !saveableAuthModes.includes(authMode)) {
-      const choices = saveableAuthModes.map((mode) => AUTH_MODE_LABELS[mode]).join(' or ')
       const current = authMode === 'api_key' ? 'an API key' : AUTH_MODE_LABELS[authMode]
-      return `Saved targets can't use ${current} yet. Choose ${choices} to save this one.`
+      return `Saved targets can't use ${current} yet.`
     }
     return null
   })()
   // Saved targets are shared, and their credentials can't be updated, so these choices are known to need Temporary.
   const choiceTemporaryReason: string | null = (() => {
     if (!targetType) return null
-    if (privateMemberName !== undefined) return 'Saved targets are shared, and only you can use this one.'
-    if (onlyMe) return 'Saved targets are shared. Choose Everyone to save this one.'
-    if (allowCredentialUpdates) return "A saved target's credentials can't be updated. Turn off Allow updates to save this one."
+    // Also a round robin that's private because of a member, which the "Who can use it" hint names.
+    if (onlyMe) return 'Private targets stay Temporary.'
+    if (allowCredentialUpdates) return "A saved target's credentials can't be updated."
     return null
   })()
   const requestAuthMode: TargetAuthMode | undefined = isIdentity ? 'identity' : isNoKey ? 'none' : undefined
@@ -608,7 +607,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     return { ok: true, params }
   }
   const saveabilityRequest: TargetSaveabilityRequest | null = (() => {
-    if (!targetType || typeTemporaryReason !== null || choiceTemporaryReason !== null) return null
+    if (!open || !targetType || typeTemporaryReason !== null || choiceTemporaryReason !== null) return null
     if (isRoundRobin) {
       if (selectedInnerTargets.length === 0) return null
       return { type: targetType, params: { targets: selectedInnerTargets.map((selected) => selected.registryName) } }
@@ -631,6 +630,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     selectedInnerTargets,
   ])
   const refusedReason = saveRefusal?.formKey === formKey ? saveRefusal.reason : null
+  // Each reason gives only its cause: the footer shows the first, and changing what it names can leave another.
   const temporaryReason = typeTemporaryReason ?? choiceTemporaryReason ?? checkedReason ?? refusedReason
   const submitLabel = submitting ? 'Creating...' : (temporaryReason === null ? 'Save Target' : 'Create as Temporary')
 
