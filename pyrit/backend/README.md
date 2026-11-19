@@ -758,7 +758,9 @@ Dataset names are create-only, under one rule shared with dataset uploads: a nam
 taken while stored seeds use it, an upload is staging it, or a generation holds it, and
 the database's collation decides which names match. A generation holds its name until
 it completes or is cancelled. If the name is taken while generating, the save fails
-without adding seeds to the other dataset.
+without adding seeds to the other dataset. If another dataset or generation takes the
+name of a cancelled generation, that generation can't resume: retry returns 409, and a
+new generation under another name starts over and repeats the model calls.
 
 Failed, cancelled, and interrupted generations retry from their last checkpoint.
 Shutdown interrupts running generations but lets a dataset save finish. On first use

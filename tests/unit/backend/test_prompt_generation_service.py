@@ -791,6 +791,8 @@ async def test_a_dataset_created_while_generating_fails_the_save_without_mixing_
     failed = await service.get_async(str(created.id))
     assert failed.status == PromptGenerationStatus.FAILED
     assert failed.error is not None and "was created while generating" in failed.error
+    # The message must not suggest the checkpoint's work carries over to a new name.
+    assert "starts over and repeats the model calls" in failed.error
     seeds = await sqlite_instance.get_seeds_async(dataset_name="support_policy")
     assert [seed.value for seed in seeds] == ["someone else's"]
 
@@ -809,8 +811,9 @@ async def test_retry_rejects_a_dataset_saved_by_another_source_async(
     await sqlite_instance.add_seeds_to_memory_async(
         seeds=[SeedObjective(value="someone else's", dataset_name="support_policy")], added_by="test"
     )
-    with pytest.raises(PromptGenerationConflictError, match="already exists"):
+    with pytest.raises(PromptGenerationConflictError, match="already exists") as conflict:
         await service.retry_async(str(created.id))
+    assert "can't resume under that name" in str(conflict.value)
     assert (await _read_async(sqlite_instance, created)).status == PromptGenerationStatus.FAILED
     assert not service.has_active_work()
 
@@ -946,8 +949,11 @@ async def test_retry_conflicts_with_a_generation_that_took_the_released_name_asy
         await service.create_async(request=_assert_request(pause_for_review=True))
         await _settle_async(service)
 
-    with pytest.raises(PromptGenerationConflictError, match="already exists"):
+    with pytest.raises(PromptGenerationConflictError, match="already exists") as conflict:
         await service.retry_async(str(cancelled.id))
+    # A cancel released the name, so the checkpoint can't be saved; a new generation starts over.
+    assert "can't resume under that name" in str(conflict.value)
+    assert "starts over and repeats the model calls" in str(conflict.value)
     assert (await _read_async(sqlite_instance, cancelled)).status == PromptGenerationStatus.CANCELLED
 
 

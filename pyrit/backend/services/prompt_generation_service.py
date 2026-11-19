@@ -535,7 +535,11 @@ class PromptGenerationService:
                 **changes,
             )
         except DatasetNameConflictError as error:
-            raise PromptGenerationConflictError(str(error)) from error
+            # A cancel releases the name, so another dataset or generation may have taken it since.
+            raise PromptGenerationConflictError(
+                f"{error} This generation can't resume under that name. A new generation under another "
+                "name starts over and repeats the model calls."
+            ) from error
         if queued is None:
             current = await self._read_async(record.id)
             raise PromptGenerationConflictError(f"A {current.status.value} generation can't be queued.")
@@ -651,8 +655,9 @@ class PromptGenerationService:
                 )
             except DatasetNameConflictError:
                 raise PromptGenerationConflictError(
-                    f"A dataset named '{record.dataset_name}' was created while generating. "
-                    "Use Edit & regenerate to save this request under a new name."
+                    f"A dataset named '{record.dataset_name}' was created while generating, so this generation "
+                    "can't save under that name. A new generation under another name starts over and repeats "
+                    "the model calls."
                 ) from None
             if not saved:
                 raise _OwnershipLostError
