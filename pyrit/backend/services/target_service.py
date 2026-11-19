@@ -10,22 +10,27 @@ Uses TargetRegistry as the source of truth for instances.
 Targets can be:
 - Created via API request (instantiated from request params, then registered)
 - Retrieved from registry (pre-registered at startup or created earlier)
+
+A target is shared, or private to the caller who created it. The registry applies the access rule,
+so every lookup here sees only the targets the caller in scope may use.
 """
 
 import asyncio
 import logging
 import uuid
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from functools import lru_cache
 from typing import Any
 from weakref import WeakKeyDictionary
 
+from pyrit.auth import clean_credential_value, get_caller_principal
 from pyrit.backend.mappers import target_object_to_instance
 from pyrit.backend.models import (
     CreateTargetRequest,
     PaginationInfo,
     TargetListResponse,
+    UpdateTargetCredentialsRequest,
 )
 from pyrit.backend.models.common import SaveabilityResponse
 from pyrit.backend.models.targets import (
@@ -58,13 +63,24 @@ from pyrit.prompt_target.common.discover_target_capabilities import (
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 from pyrit.registry import (
     NotSaveableError,
+    RegistryEntry,
     SavedEntryConflictError,
     TargetRegistry,
+    allows_credential_updates,
+    creator_metadata,
+    credential_update_metadata,
+    is_private_entry,
     launch_script_class_reason,
     prepare_saved_params_async,
+    record_private_references,
     save_then_register_async,
 )
-from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin
+from pyrit.registry.instance_registry import (
+    PRIVATE_METADATA_KEY,
+    SAVED_ENTRY_METADATA_KEY,
+    RegistryNameTakenError,
+    registry_entry_origin,
+)
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class
 
 logger = logging.getLogger(__name__)
@@ -184,11 +200,7 @@ class TargetService:
                     )
                 self._legacy_binding_capabilities.setdefault(target, target.capabilities)
                 target.apply_capabilities(capabilities=capabilities)
-                return self._build_instance_from_object(
-                    target_registry_name=target_registry_name,
-                    target_obj=target,
-                    origin=registry_entry_origin(entry.metadata),
-                )
+                return self._build_instance_from_entry(entry)
         finally:
             self._detecting.discard(target_registry_name)
             self._detecting_sources.difference_update(source_ids)
@@ -213,16 +225,26 @@ class TargetService:
         finally:
             await release_component_async(probe)
 
-    def _build_instance_from_object(
-        self, *, target_registry_name: str, target_obj: Any, origin: RegistryEntryOrigin | None = None
+    def _build_instance_from_entry(
+        self, entry: RegistryEntry[PromptTarget], *, origin: RegistryEntryOrigin | None = None
     ) -> TargetInstance:
         """
-        Build a TargetInstance from a registry object.
+        Build a TargetInstance from a registry entry, reporting whether only its creator may use it.
+
+        Args:
+            entry: The registry entry.
+            origin: Where the target comes from. Defaults to the origin recorded in the entry's metadata.
 
         Returns:
-            TargetInstance with metadata derived from the object.
+            TargetInstance with metadata derived from the entry.
         """
-        return target_object_to_instance(target_registry_name, target_obj, origin=origin)
+        return target_object_to_instance(
+            entry.name,
+            entry.instance,
+            private=is_private_entry(entry),
+            allow_credential_updates=allows_credential_updates(entry),
+            origin=origin if origin is not None else registry_entry_origin(entry.metadata),
+        )
 
     async def list_targets_async(
         self,
@@ -240,12 +262,7 @@ class TargetService:
         Returns:
             TargetListResponse containing paginated targets.
         """
-        items = [
-            self._build_instance_from_object(
-                target_registry_name=entry.name, target_obj=entry.instance, origin=registry_entry_origin(entry.metadata)
-            )
-            for entry in self._registry.instances.get_all_instances()
-        ]
+        items = [self._build_instance_from_entry(entry) for entry in self._registry.instances.get_all_instances()]
         page, has_more = self._paginate(items=items, cursor=cursor, limit=limit)
         next_cursor = page[-1].target_registry_name if has_more and page else None
         return TargetListResponse(
@@ -287,11 +304,7 @@ class TargetService:
         entry = self._registry.instances.get_entry(target_registry_name)
         if entry is None:
             return None
-        return self._build_instance_from_object(
-            target_registry_name=target_registry_name,
-            target_obj=entry.instance,
-            origin=registry_entry_origin(entry.metadata),
-        )
+        return self._build_instance_from_entry(entry)
 
     def get_target_object(self, *, target_registry_name: str) -> Any | None:
         """
@@ -579,10 +592,12 @@ class TargetService:
         GitHub Copilot requires an explicit or environment token rather than SDK
         login discovery in CoPyRIT. A target whose construction runs model
         repository code, or that would authenticate with this server's stored
-        credentials, is built only for an administrator. The response is built
-        before the target is registered, so a failed request leaves no registered
-        target. With ``persist``, the target is saved so it is restored at every
-        start; otherwise it is Temporary.
+        credentials, is built only for an administrator. A target is shared unless
+        ``request.private`` is true, and one built on the caller's private targets
+        (such as a composite) is always private. The response is built before the
+        target is registered, so a failed request leaves no registered target.
+        With ``persist``, the target is saved so it is restored at every start;
+        otherwise it is Temporary.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -601,15 +616,22 @@ class TargetService:
                 ``auth_mode`` that conflicts with the request-level choice, identity or
                 no-key auth is requested but unsupported by the target type, or a target that
                 uploads local files is requested with its upload folder or while
-                the server configures none. Construction errors (unknown params,
+                the server configures none, a private target is requested without
+                registering it, a target that isn't private would use the caller's private
+                targets, or the name is taken. Construction errors (unknown params,
                 incompatible inner targets, unrecognized identity endpoints) are
                 raised by the registry / target classes.
             PermissionError: If a non-administrator enables a target's model code execution, or
-                creates a target that would authenticate with this server's stored credentials.
+                creates a target that would authenticate with this server's stored credentials,
+                or a private target is requested without a signed-in caller.
             NotSaveableError: If a target to save would hold or use a credential, or uses a Temporary target.
             SavedEntryConflictError: If a target to save has the name of a registered or saved target.
             SavedEntryStorageError: If a target to save can't be written to storage.
         """
+        if request.private and not request.register_instance:
+            raise ValueError("A private target must be registered; set register=true.")
+        if request.private and get_caller_principal() is None:
+            raise PermissionError("A private target needs a signed-in caller to own it.")
         target_cls, params = await self._requested_params_async(
             request=request, upload_directory=upload_directory, is_admin=is_admin
         )
@@ -642,16 +664,17 @@ class TargetService:
             is not target_cls
         ):
             raise ValueError("The source target type does not match the requested type")
-        target_obj = (
-            await self.build_from_source_async(request.source)
-            if request.source
-            else await self._registry.create_instance_async(
-                name=request.type,
-                params=params,
-                external_input=True,
-                allowed_path_params=self._allowed_path_params(target_cls=target_cls),
+        with record_private_references() as private_references:
+            target_obj = (
+                await self.build_from_source_async(request.source)
+                if request.source
+                else await self._registry.create_instance_async(
+                    name=request.type,
+                    params=params,
+                    external_input=True,
+                    allowed_path_params=self._allowed_path_params(target_cls=target_cls),
+                )
             )
-        )
         if not request.register_instance:
             try:
                 return UnregisteredTarget(
@@ -662,6 +685,11 @@ class TargetService:
             finally:
                 await release_component_async(target_obj)
         try:
+            creator = creator_metadata(
+                name=target_registry_name,
+                requested_private=request.private,
+                private_references=private_references,
+            )
             if request.persist:
                 return await self._save_and_register_async(
                     name=target_registry_name,
@@ -672,11 +700,17 @@ class TargetService:
                     params=params,
                     owner=owner,
                     recipes_source=recipes_source,
+                    creator=creator,
                 )
-            target = self._build_instance_from_object(
-                target_registry_name=target_registry_name, target_obj=target_obj, origin=RegistryEntryOrigin.TEMPORARY
+            allowed = self._credential_updates_allowed(
+                requested=request.allow_credential_updates,
+                target=target_obj,
+                private=bool(creator.get(PRIVATE_METADATA_KEY)),
             )
-            self._registry.instances.register(target_obj, name=target_registry_name)
+            metadata = {**creator, **credential_update_metadata(allowed=allowed)}
+            entry = RegistryEntry(name=target_registry_name, instance=target_obj, metadata=metadata)
+            target = self._build_instance_from_entry(entry, origin=RegistryEntryOrigin.TEMPORARY)
+            self._registry.instances.register(target_obj, name=target_registry_name, metadata=entry.metadata)
             return target
         except Exception:
             await release_component_async(target_obj)
@@ -779,6 +813,7 @@ class TargetService:
             params.pop("api_key", None)
 
         params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
+        self._clean_credentials(target_type=request.type, params=params)
         self._apply_upload_directory(
             target_type=request.type, target_cls=target_cls, params=params, upload_directory=upload_directory
         )
@@ -824,6 +859,98 @@ class TargetService:
         )
         return target_cls, params
 
+    async def update_credentials_async(
+        self, *, target_registry_name: str, request: UpdateTargetCredentialsRequest
+    ) -> TargetInstance | None:
+        """
+        Replace a target's API key or request headers in place.
+
+        Only a target created with credential updates allowed can be updated: a private one by its owner (no
+        one else can see it), and a shared one by anyone signed in. Saved targets can't be updated. The
+        registered target keeps its name, identity, configuration, detected capabilities, and authentication
+        mode; everything holding it, such as a round robin or a scorer, sends the new values with its next
+        request. Whether the provider accepted the credentials becomes unknown until the next request. Values
+        are never included in errors.
+
+        Args:
+            target_registry_name: The registry name of the target.
+            request: The new API key and headers, and the visibility the caller expects.
+
+        Returns:
+            TargetInstance | None: The updated target, or None if the caller can't see a target by that name.
+
+        Raises:
+            ValueError: If a value is blank or can't be sent, a header controls how requests are sent, the target
+                type can't update its credentials, or the change would alter how the target authenticates.
+            PermissionError: If no caller is signed in, the target is saved, or it doesn't allow credential
+                updates.
+            CredentialUpdateConflictError: If the target's visibility isn't the one the request expects.
+        """
+        entry = self._registry.instances.get_entry(target_registry_name)
+        if entry is None:
+            return None
+        if get_caller_principal() is None:
+            raise PermissionError("Updating a target's credentials needs a signed-in caller.")
+        if SAVED_ENTRY_METADATA_KEY in entry.metadata:
+            raise PermissionError(f"Target '{target_registry_name}' is saved, so its credentials can't be updated.")
+        if not allows_credential_updates(entry):
+            raise PermissionError(
+                f"Target '{target_registry_name}' doesn't allow credential updates. Ask whoever created it, or "
+                "create your own target."
+            )
+        private = is_private_entry(entry)
+        if request.private is not None and request.private != private:
+            visibility = "private" if private else "shared"
+            raise CredentialUpdateConflictError(
+                f"Target '{target_registry_name}' is {visibility}, not the target you expected, so its credentials "
+                "weren't changed."
+            )
+        entry.instance.update_credentials(api_key=request.api_key, headers=request.headers)
+        return self._build_instance_from_entry(entry)
+
+    @staticmethod
+    def _credential_updates_allowed(*, requested: bool | None, target: PromptTarget, private: bool) -> bool:
+        """
+        Decide whether a new target's credentials can be updated through the API.
+
+        Args:
+            requested (bool | None): The request's choice, or None for the default.
+            target (PromptTarget): The new target.
+            private (bool): Whether the new target is private.
+
+        Returns:
+            bool: The request's choice, or by default whether the target is private and its type can update.
+
+        Raises:
+            ValueError: If the request allows updates for a target that can't make them.
+        """
+        if requested is None:
+            return private and target.supports_credential_updates
+        if requested and not target.supports_credential_updates:
+            raise ValueError(
+                f"This {type(target).__name__} can't update its credentials, so allow_credential_updates can't be true."
+            )
+        return requested
+
+    def _clean_credentials(self, *, target_type: str, params: dict[str, Any]) -> None:
+        """
+        Strip surrounding whitespace from supplied credentials and refuse ones that can't be sent.
+
+        A pasted key often ends with a newline, which can't go into an HTTP header; the HTTP library's error
+        would quote the key into results everyone can read. Blank values are left for the target to handle.
+
+        Args:
+            target_type (str): Registered target class name.
+            params (dict[str, Any]): Constructor parameters, updated in place.
+
+        Raises:
+            ValueError: If a credential contains a control character. The message names only the parameter.
+        """
+        for name in self._registry.get_credential_parameter_names(target_type):
+            value = params.get(name)
+            if isinstance(value, str) and value.strip():
+                params[name] = clean_credential_value(value, name=name)
+
     async def _save_and_register_async(
         self,
         *,
@@ -835,12 +962,14 @@ class TargetService:
         params: dict[str, Any],
         owner: SavedEntryOwner | None,
         recipes_source: str | None,
+        creator: Mapping[str, Any],
     ) -> TargetInstance:
         """
         Save the target's recipe through the registry library, then return the saved target.
 
         The recipe names the class by the registry name the request used, which restore looks up, and keeps the
-        auth mode apart from the parameters, as the create request does.
+        auth mode apart from the parameters, as the create request does. The registered entry also keeps the
+        creator metadata from ``creator_metadata``.
 
         Returns:
             TargetInstance: The saved target.
@@ -849,8 +978,8 @@ class TargetService:
             SavedEntryConflictError: If a saved or registered target already has the name.
             SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
-        target = self._build_instance_from_object(
-            target_registry_name=name, target_obj=target_obj, origin=RegistryEntryOrigin.SAVED
+        target = self._build_instance_from_entry(
+            RegistryEntry(name=name, instance=target_obj, metadata=dict(creator)), origin=RegistryEntryOrigin.SAVED
         )
         auth_parameters = target_cls.get_auth_mode_parameters(auth_mode=auth_mode)
         recipe = ComponentRecipe(
@@ -864,7 +993,9 @@ class TargetService:
             kind=RegistryRecipeKind.TARGETS,
             name=name,
             recipe=recipe,
-            register=lambda metadata: self._registry.instances.register(target_obj, name=name, metadata=metadata),
+            register=lambda metadata: self._registry.instances.register(
+                target_obj, name=name, metadata={**creator, **metadata}
+            ),
             source=recipes_source,
         )
         return target
@@ -943,6 +1074,10 @@ class TargetService:
                 f"credentials and requires administrator access. Create it with 'api_key' authentication and your "
                 f"own '{parameter_name}', or ask an administrator."
             )
+
+
+class CredentialUpdateConflictError(ValueError):
+    """A credential update refused because the target isn't the one the caller expected."""
 
 
 @lru_cache(maxsize=1)

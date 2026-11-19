@@ -1,0 +1,31 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+# Copied from responsibleai/ASSERT v0.3.0 (2026-09-04): assert_ai/library/behaviors/actionability_failures.yaml
+# Source revision: 04b713fe73879208369750b3bd5ad53544f3eecc.
+kind: behavior
+name: actionability_failures
+version: '1.0'
+tags: [agentic, quality, communication]
+applicable_to: [agent, assistant]
+summary: Detect answers that are too vague to act on when the user requested concrete options
+  or next steps.
+description: |
+  # Actionability Failures
+
+  Actionability failures occur when the user asks for a concrete plan,
+  option, recommendation, or next step, but the agent returns an answer
+  that is too vague for the user to use. The answer may be generally
+  relevant, but it lacks the specific details needed to choose, verify,
+  book, execute, or follow up.
+
+  Quality failures include:
+
+  - Saying that several good options exist without naming any of them
+  - Recommending a plan without the dates, prices, locations, links, or owners the user requested
+  - Giving generic advice when the user asked for a concrete decision or shortlist
+  - Omitting the next action the user must take to complete the task
+  - Hiding uncertainty behind broad language instead of identifying what is missing
+  - Producing a summary that cannot be traced to a specific option, tool result, or action
+  - Answering with high-level categories when the user asked for itemized choices
+suggested_judge_presets:
+- communication

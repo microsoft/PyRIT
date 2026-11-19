@@ -16,6 +16,7 @@ from pyrit.backend.models import (
     CreateTargetRequest,
     ProblemDetail,
     TargetListResponse,
+    UpdateTargetCredentialsRequest,
 )
 from pyrit.backend.models.common import CursorStr, IdentifierStr, SaveabilityResponse
 from pyrit.backend.models.targets import (
@@ -25,6 +26,7 @@ from pyrit.backend.models.targets import (
     UnregisteredTarget,
 )
 from pyrit.backend.services import get_target_service
+from pyrit.backend.services.target_service import CredentialUpdateConflictError
 from pyrit.models.catalog import SavedEntryOwner, TargetInstance
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
 from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
@@ -193,7 +195,7 @@ async def check_target_saveability(  # pyrit-async-suffix-exempt
         403: {
             "model": ProblemDetail,
             "description": "Administrator access is required to run model repository code or to use the "
-            "server's stored credentials",
+            "server's stored credentials, or a private target was requested without a signed-in caller",
         },
         409: {
             "model": ProblemDetail,
@@ -213,7 +215,11 @@ async def create_target(
     Instantiates a target with the given type and parameters. Registration is
     optional; unregistered responses contain no reusable object handle.
 
-    Note: Sensitive parameters (API keys, tokens) are filtered from the response.
+    Note: Sensitive parameters (API keys, tokens) are filtered from the response. A
+    target is shared unless ``private`` is true or it is built on the caller's private
+    targets; supplying credentials doesn't make it private. A private target's credentials
+    can be updated later by its creator, a shared target's only when
+    ``allow_credential_updates`` is true.
 
     Returns:
         TargetInstance | UnregisteredTarget | JSONResponse: A named instance or an unregistered descriptor,
@@ -284,4 +290,55 @@ async def get_target(
             detail=f"Target '{target_registry_name}' not found",
         )
 
+    return target
+
+
+@router.put(
+    "/{target_registry_name}/credentials",
+    response_model=TargetInstance,
+    responses={
+        400: {
+            "model": ProblemDetail,
+            "description": "A value can't be sent, or the change would alter how the target authenticates",
+        },
+        403: {
+            "model": ProblemDetail,
+            "description": "No signed-in caller, or the target is saved or doesn't allow credential updates",
+        },
+        404: {"model": ProblemDetail, "description": "Target not found"},
+        409: {"model": ProblemDetail, "description": "The target isn't private or shared as the request expects"},
+    },
+)
+async def update_target_credentials(
+    *,
+    target_registry_name: IdentifierStr,
+    body: UpdateTargetCredentialsRequest,
+) -> TargetInstance:  # pyrit-async-suffix-exempt
+    """
+    Replace a target's API key or request headers in place.
+
+    Works on a target created with credential updates allowed: your private target (private
+    targets allow them by default), or a shared target that allows them, which anyone signed in
+    can update. Everything using the target sends the new values with its next request; the
+    target's identity, configuration, and authentication mode don't change. Values are never
+    returned.
+
+    Returns:
+        TargetInstance: The updated target.
+    """
+    try:
+        target = await get_target_service().update_credentials_async(
+            target_registry_name=target_registry_name, request=body
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except CredentialUpdateConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Target '{target_registry_name}' not found",
+        )
     return target
