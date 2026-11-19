@@ -36,7 +36,7 @@ stages:
     jobs:
       - deployment: ${{ parameters.deploymentName }}
         displayName: ${{ parameters.displayName }}
-        timeoutInMinutes: 120
+        timeoutInMinutes: 180
         environment: 'copyrit-${{ parameters.slot }}'
         strategy:
           runOnce:

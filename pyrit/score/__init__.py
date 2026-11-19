@@ -21,6 +21,12 @@ if TYPE_CHECKING:
     from pyrit.score.batch_scorer import BatchScorer
     from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
     from pyrit.score.evidence.conversation_trace_evidence import TraceEvidenceRequirement
+    from pyrit.score.expectation_errors import (
+        AmbiguousConditionError,
+        ExpectationMismatchError,
+        MissingConditionError,
+        UnsupportedConditionError,
+    )
     from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
     from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
     from pyrit.score.float_scale.decision_scorer import DecisionScorer
@@ -100,6 +106,16 @@ if TYPE_CHECKING:
     )
     from pyrit.score.scorer_info import get_scorer_info
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+    from pyrit.score.scorer_selection import (
+        CompatibleScorers,
+        ConflictingScorerRequirementsError,
+        NoCompatibleScorerError,
+        ScorerCandidate,
+        ScorerMismatch,
+        ScorerMismatchKind,
+        ScorerRequirements,
+        ScorerSelection,
+    )
     from pyrit.score.true_false.assert_judge_scorer import AssertJudgeScorer
     from pyrit.score.true_false.assert_policy_scorer import (
         AssertJudgmentMode,
@@ -316,6 +332,18 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "RobloxPiiCategory": "pyrit.score.float_scale.roblox_pii_scorer",
     "RobloxPiiScorer": "pyrit.score.float_scale.roblox_pii_scorer",
     "Scorer": "pyrit.score.scorer",
+    "CompatibleScorers": "pyrit.score.scorer_selection",
+    "ConflictingScorerRequirementsError": "pyrit.score.scorer_selection",
+    "NoCompatibleScorerError": "pyrit.score.scorer_selection",
+    "ScorerCandidate": "pyrit.score.scorer_selection",
+    "ScorerMismatch": "pyrit.score.scorer_selection",
+    "ScorerMismatchKind": "pyrit.score.scorer_selection",
+    "ScorerRequirements": "pyrit.score.scorer_selection",
+    "ScorerSelection": "pyrit.score.scorer_selection",
+    "AmbiguousConditionError": "pyrit.score.expectation_errors",
+    "ExpectationMismatchError": "pyrit.score.expectation_errors",
+    "MissingConditionError": "pyrit.score.expectation_errors",
+    "UnsupportedConditionError": "pyrit.score.expectation_errors",
     "SecretDisclosureScorer": "pyrit.score.float_scale.secret_disclosure_scorer",
     "SecretDisclosureView": "pyrit.score.float_scale.secret_disclosure_scorer",
     "Scorable": "pyrit.score.scorable",

@@ -460,7 +460,7 @@ def _outcome_evidence(result: AttackResult, *, attempts_by_id: dict[str, AttackR
     return _OutcomeEvidence(scores=tuple(scores), objective_targets=tuple(objective_targets))
 
 
-def _check_pair_evidence(before: _OutcomeEvidence, after: _OutcomeEvidence) -> None:
+def _check_pair_evidence(*, before: _OutcomeEvidence, after: _OutcomeEvidence) -> None:
     """
     Reject known target and scoring incompatibilities within one seed pair.
 
@@ -641,7 +641,7 @@ def _compute_paired_outcome_statistics(
             continue
         before_score = _outcome_evidence(before[1], attempts_by_id=before[2])
         after_score = _outcome_evidence(after[1], attempts_by_id=after[2])
-        _check_pair_evidence(before_score, after_score)
+        _check_pair_evidence(before=before_score, after=after_score)
         if (before[0], after[0]) in transitions:
             for target in before_score.objective_targets + after_score.objective_targets:
                 if observed_target is not None and target != observed_target:

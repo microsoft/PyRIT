@@ -426,6 +426,10 @@ class _NamedInstanceRegistry(Protocol):
         """Return the sorted names of registered instances."""
         ...
 
+    def get_all_instances(self) -> list[Any]:
+        """Return the registered entries."""
+        ...
+
 
 def _registry_getter_for_component_type(
     component_type: ComponentType,
@@ -603,8 +607,8 @@ def reference_name(*, component_type: ComponentType, value: Any) -> str | None:
     getter = _registry_getter_for_component_type(component_type)
     if getter is None:
         return None
-    registry = getter()
-    return next((name for name in registry.get_names() if registry.get(name) is value), None)
+    # Compare entries directly: a lookup by name would record every private entry passed over as used.
+    return next((entry.name for entry in getter().get_all_instances() if entry.instance is value), None)
 
 
 def project_parameter_value(*, parameter: Parameter, value: Any) -> JsonValue:
