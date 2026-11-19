@@ -114,4 +114,5 @@ Nearly everything in [Learning Resources](./1_resources.md) is free and online. 
 - 📦 [Installation](../getting_started/README.md): install and configure PyRIT
 - 🖥️ [GUI](../gui/0_gui.md): human-led red teaming in the browser
 - 🔍 [Scanner](../scanner/0_scanner.md): automated runs from the command line
+- ❓ [FAQ](../faq.md): short answers to common questions about using PyRIT
 - 💬 [Discord](https://discord.gg/9fMpq3tc8u): ask questions and share what you are learning

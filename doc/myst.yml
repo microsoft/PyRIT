@@ -93,6 +93,7 @@ project:
                 - file: getting_started/troubleshooting/hf_aml_model_endpoint_guide.md
                 - file: getting_started/troubleshooting/score_aml_endpoint.ipynb
                 - file: getting_started/troubleshooting/guide_hf_azureml.md
+    - file: faq.md
     - file: contributing/README.md
       children:
         - file: contributing/1_git.md
