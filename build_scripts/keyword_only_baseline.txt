@@ -70,7 +70,6 @@ pyrit.common.singleton:Singleton.__new__
 pyrit.common.text_helper:write_txt
 pyrit.common.utils:combine_dict
 pyrit.common.utils:combine_list
-pyrit.converter.audio_echo_converter:AudioEchoConverter._apply_echo
 pyrit.converter.audio_speed_converter:AudioSpeedConverter._resample_channel
 pyrit.converter.azure_speech_audio_to_text_converter:AzureSpeechAudioToTextConverter.stop_cb
 pyrit.converter.azure_speech_audio_to_text_converter:AzureSpeechAudioToTextConverter.transcript_cb
