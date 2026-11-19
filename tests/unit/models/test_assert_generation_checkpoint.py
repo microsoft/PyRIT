@@ -431,7 +431,7 @@ def test_preset_from_yaml_file_names_an_invalid_file(tmp_path: Path) -> None:
 def test_preset_from_yaml_file_names_a_malformed_file(tmp_path: Path) -> None:
     path = tmp_path / "prompt_injection.yaml"
     path.write_text("kind: behavior\nname: prompt_injection\nsummary: [unclosed\n", encoding="utf-8")
-    with pytest.raises(ValueError, match=f"Invalid YAML in ASSERT preset file {re.escape(str(path))}"):
+    with pytest.raises(ValueError, match=f"Invalid YAML file '{re.escape(str(path))}'"):
         AssertBehaviorPreset.from_yaml_file(path)
 
 

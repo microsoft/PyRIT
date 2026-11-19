@@ -10,10 +10,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from enum import Enum, StrEnum
 from itertools import combinations
-from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Self
 
-import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -25,11 +23,12 @@ from pydantic import (
     model_validator,
 )
 
-from pyrit.common.yaml_helper import safe_load_yaml
+from pyrit.common.yaml_helper import load_yaml_file
 from pyrit.models.identifiers import TargetIdentifier  # noqa: TC001  (runtime-required by Pydantic field annotations)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
 _Text = Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]
 _Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -594,10 +593,7 @@ class _AssertPreset(_AssertModel):
         Raises:
             ValueError: If the file is not valid YAML, not a YAML mapping, or not a valid preset of this kind.
         """
-        try:
-            loaded = safe_load_yaml(Path(path).read_text(encoding="utf-8"))
-        except yaml.YAMLError as error:
-            raise ValueError(f"Invalid YAML in ASSERT preset file {path}: {error}") from error
+        loaded = load_yaml_file(path=path)
         if not isinstance(loaded, Mapping):
             raise ValueError(f"ASSERT preset file {path} must contain a YAML mapping.")
         try:
