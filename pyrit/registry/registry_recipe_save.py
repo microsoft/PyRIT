@@ -260,7 +260,7 @@ def _registered_name(*, parameter_name: str, component_type: ComponentType, inst
     if not entries:
         raise NotSaveableError(
             f"'{parameter_name}' is left to a default {component_type.value} that isn't registered, so it won't "
-            f"exist after a restart. Name a {component_type.value} to save it."
+            "exist after a restart."
         )
     entry = next(
         (item for item in entries if registry_entry_origin(item.metadata) is not RegistryEntryOrigin.TEMPORARY),
