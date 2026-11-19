@@ -515,6 +515,7 @@ async def test_openai_response_target_retries_request_inside_provider_scope() ->
     target._tool_providers = [provider]
     target._suppress_tools = False
     target._execute_tools = True
+    target._max_tool_rounds = 10
     target._get_json_response_config = MagicMock(return_value=JsonResponseConfig(enabled=False))  # type: ignore[method-assign]
     target._construct_request_body_async = AsyncMock(return_value={})  # type: ignore[method-assign]
     response = Message(
