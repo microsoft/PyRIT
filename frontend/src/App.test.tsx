@@ -1608,7 +1608,7 @@ describe("App", () => {
       labels: {},
     });
     await waitFor(() =>
-      expect(await screen.findByTestId("active-conversation-id")).toHaveTextContent("attack-conv-2")
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("attack-conv-2")
     );
     expect(await screen.findByTestId("conversation-id")).toHaveTextContent("attack-conv-2");
     expect(await screen.findByTestId("draft-conversation-id")).toHaveTextContent("attack-conv-2");
