@@ -3,7 +3,8 @@
 
 import json
 import math
-from collections.abc import Iterator
+import re
+from collections.abc import Callable, Iterator
 from itertools import product
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -15,6 +16,7 @@ from unit.assert_mocks import (
     make_assert_config,
     make_assert_generation_target,
     make_assert_group_content,
+    make_assert_systematization,
     make_assert_taxonomy,
 )
 
@@ -26,11 +28,14 @@ from pyrit.models import (
     AssertGenerationConfig,
     AssertGenerationStage,
     AssertGroupMetadata,
+    AssertSystematization,
     AssertTaxonomy,
     ComponentIdentifier,
     Message,
     PromptGenerationEstimate,
+    TargetIdentifier,
 )
+from pyrit.prompt_target import OpenAIResponseTarget
 
 _POLICY_STAGES = ["systematization", "taxonomy", "dimensions"]
 
@@ -591,6 +596,19 @@ def test_estimate_notes_web_search() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "checkpoint",
+    [
+        AssertGenerationCheckpoint(config=make_assert_config(web_search=True, taxonomy=make_assert_taxonomy())),
+        make_assert_checkpoint(config=make_assert_config(web_search=True)),
+    ],
+)
+def test_estimate_omits_the_web_search_note_without_research_stages(checkpoint: AssertGenerationCheckpoint) -> None:
+    estimate = AssertGenerator.estimate(checkpoint=checkpoint)
+    assert {stage.target_role for stage in estimate.stages} == {AssertGenerator.GENERATION_ROLE}
+    assert not any("Web search" in note for note in estimate.notes)
+
+
 def test_estimate_skips_completed_policy_stages() -> None:
     checkpoint = make_assert_checkpoint()
     assert _stage_names(checkpoint) == ["seed_groups"]
@@ -804,19 +822,9 @@ class TestCheckpointIntegrity:
             await AssertGenerator(target=target).advance_async(checkpoint=edited)
         send.assert_not_called()
 
-    async def test_batches_append_without_revalidating_the_checkpoint_async(self) -> None:
-        target = make_assert_generation_target()
-        validate = AssertGenerationCheckpoint.model_validate
-        with patch.object(AssertGenerationCheckpoint, "model_validate", wraps=validate) as validations:
-            complete, stages = await _advance_async(
-                generator=AssertGenerator(target=target),
-                target=target,
-                checkpoint=make_assert_checkpoint(config=make_assert_config(group_count=24)),
-            )
-        assert stages.count("seed_groups") == complete.completed_batches == 8
-        assert validations.call_count == 1
-
-    async def test_resume_rejects_a_batch_whose_group_ids_repeat_stored_ids_async(self) -> None:
+    async def test_resume_rejects_stored_group_ids_that_a_remaining_batch_assigns_before_any_call_async(
+        self,
+    ) -> None:
         target = make_assert_generation_target()
         generator = AssertGenerator(target=target)
         on_checkpoint = AsyncMock()
@@ -828,17 +836,21 @@ class TestCheckpointIntegrity:
         )
         partial = next(saved for saved in _saved_checkpoints(on_checkpoint) if saved.completed_batches == 1)
         first, *others = partial.groups
+        reserved = f"group_{len(partial.groups):06d}"
         renamed = AssertGenerationCheckpoint.model_validate(
-            {
-                **partial.model_dump(),
-                "groups": [first.model_copy(update={"group_id": f"group_{len(partial.groups):06d}"}), *others],
-            }
+            {**partial.model_dump(), "groups": [first.model_copy(update={"group_id": reserved}), *others]}
         )
+        rejection = re.escape(f"use IDs ['{reserved}'] that the remaining batches assign")
+        with pytest.raises(ValueError, match=rejection):
+            AssertGenerator.estimate(checkpoint=renamed)
+        saved = AsyncMock()
         with (
-            patch.object(target, "_send_prompt_to_target_async", side_effect=assert_generation_response_async),
-            pytest.raises(ValueError, match="Generated group IDs must be unique"),
+            patch.object(target, "_send_prompt_to_target_async") as send,
+            pytest.raises(ValueError, match=rejection),
         ):
-            await generator.advance_async(checkpoint=renamed)
+            await generator.advance_async(checkpoint=renamed, on_checkpoint=saved)
+        send.assert_not_called()
+        saved.assert_not_awaited()
 
 
 _RESEARCH_TARGET = ComponentIdentifier(
@@ -926,6 +938,71 @@ class TestRoleProducers:
         assert complete.next_stage is None
         assert complete.targets[AssertGenerator.RESEARCH_ROLE] == stopped.targets[AssertGenerator.RESEARCH_ROLE]
 
+    @pytest.mark.parametrize(
+        "is_stored",
+        [
+            pytest.param(lambda saved: saved.next_stage == AssertGenerationStage.TAXONOMY, id="after-systematization"),
+            pytest.param(lambda saved: saved.completed_batches == 1, id="after-one-batch"),
+        ],
+    )
+    async def test_resume_with_only_a_changed_rate_limit_continues_async(
+        self, is_stored: Callable[[AssertGenerationCheckpoint], bool]
+    ) -> None:
+        original = _openai_target()
+        on_checkpoint = AsyncMock()
+        await _advance_async(
+            generator=AssertGenerator(target=original),
+            target=original,
+            checkpoint=AssertGenerationCheckpoint(config=_described_config(group_count=12)),
+            on_checkpoint=on_checkpoint,
+        )
+        saved = next(checkpoint for checkpoint in _saved_checkpoints(on_checkpoint) if is_stored(checkpoint))
+        stored = AssertGenerationCheckpoint.model_validate_json(saved.model_dump_json())
+
+        slower = _openai_target(max_requests_per_minute=10)
+        complete, stages = await _advance_async(
+            generator=AssertGenerator(target=slower), target=slower, checkpoint=stored
+        )
+
+        assert complete.next_stage is None
+        assert complete.groups[: len(stored.groups)] == stored.groups
+        assert stages.count("seed_groups") == complete.completed_batches - stored.completed_batches
+        live = TargetIdentifier.from_component_identifier(slower.get_identifier())
+        roles = (AssertGenerator.RESEARCH_ROLE, AssertGenerator.GENERATION_ROLE)
+        assert complete.targets == {role: stored.targets.get(role, live) for role in roles}
+
+    @pytest.mark.parametrize("changes", [{"model_name": "gpt-y"}, {"temperature": 0.5}])
+    async def test_resume_with_a_changed_generation_setting_is_rejected_before_any_call_async(
+        self, changes: dict[str, Any]
+    ) -> None:
+        original = _openai_target()
+        stopped, _ = await _advance_async(
+            generator=AssertGenerator(target=original),
+            target=original,
+            checkpoint=AssertGenerationCheckpoint(config=make_assert_config()),
+            stop_after=AssertGenerationStage.DIMENSIONS,
+        )
+        changed = _openai_target(**changes)
+        with (
+            patch.object(changed, "_send_prompt_to_target_async") as send,
+            pytest.raises(ValueError, match="generation work was produced by a different target"),
+        ):
+            await AssertGenerator(target=changed).advance_async(checkpoint=stopped)
+        send.assert_not_called()
+
+
+def _openai_target(**settings: Any) -> OpenAIResponseTarget:
+    """Build a real target, whose identifier records its settings as a deployed target's does."""
+    return OpenAIResponseTarget(
+        **{
+            "endpoint": "https://example.org/openai/v1",
+            "model_name": "gpt-x",
+            "api_key": "test-key",
+            "custom_configuration": make_assert_generation_target().configuration,
+            **settings,
+        }
+    )
+
 
 @pytest.mark.usefixtures("patch_central_database", "no_retry_wait")
 class TestSuppliedTaxonomy:
@@ -989,6 +1066,78 @@ def test_estimate_counts_dimension_descriptions_in_the_dimensions_stage() -> Non
         return next(stage.max_tokens for stage in estimate.stages if stage.stage == "dimensions")
 
     assert dimensions_stage_tokens("d" * 40_020) - dimensions_stage_tokens("d" * 20) == 10_000
+
+
+# A multiple of CHARACTERS_PER_TOKEN, so each request that carries it grows by an exact token count.
+_PADDING = "z" * 40_000
+
+
+def _systematization(padding: str) -> AssertSystematization:
+    data = make_assert_systematization().model_dump(mode="json")
+    data["scope"] += padding
+    return AssertSystematization.model_validate(data)
+
+
+def _taxonomy(padding: str) -> AssertTaxonomy:
+    data = make_assert_taxonomy().model_dump(mode="json")
+    data["behavior_categories"][0]["definition"] += padding
+    return AssertTaxonomy.model_validate(data)
+
+
+def _dimensions(padding: str) -> tuple[AssertDimension, ...]:
+    config = _described_config()
+    levels = [
+        {"name": f"level_{index}", "definition": f"Condition {index}."} for index in range(config.dimension_level_count)
+    ]
+    levels[0]["definition"] += padding
+    return tuple(
+        AssertDimension.model_validate({**item.model_dump(mode="json"), "levels": levels}) for item in config.dimensions
+    )
+
+
+@pytest.mark.parametrize(
+    "build, stages",
+    [
+        pytest.param(
+            lambda padding: AssertGenerationCheckpoint(
+                config=_described_config(), systematization=_systematization(padding)
+            ),
+            ["taxonomy"],
+            id="stored-systematization",
+        ),
+        pytest.param(
+            lambda padding: AssertGenerationCheckpoint(
+                config=_described_config(), systematization=make_assert_systematization(), taxonomy=_taxonomy(padding)
+            ),
+            ["dimensions", "seed_groups"],
+            id="stored-taxonomy",
+        ),
+        pytest.param(
+            lambda padding: AssertGenerationCheckpoint(config=make_assert_config(taxonomy=_taxonomy(padding))),
+            ["seed_groups"],
+            id="supplied-taxonomy",
+        ),
+        pytest.param(
+            lambda padding: AssertGenerationCheckpoint(
+                config=_described_config(),
+                systematization=make_assert_systematization(),
+                taxonomy=make_assert_taxonomy(),
+                dimensions=_dimensions(padding),
+            ),
+            ["seed_groups"],
+            id="stored-dimension-levels",
+        ),
+    ],
+)
+def test_estimate_counts_the_stored_or_supplied_policy(
+    build: Callable[[str], AssertGenerationCheckpoint], stages: list[str]
+) -> None:
+    small = {stage.stage: stage for stage in AssertGenerator.estimate(checkpoint=build("")).stages}
+    large = {stage.stage: stage for stage in AssertGenerator.estimate(checkpoint=build(_PADDING)).stages}
+    added = PromptGenerationEstimate.tokens_from_characters(len(_PADDING))
+    for name in stages:
+        growth = (large[name].min_tokens - small[name].min_tokens, large[name].max_tokens - small[name].max_tokens)
+        assert growth == (large[name].min_calls * added, large[name].max_calls * added)
 
 
 @pytest.mark.parametrize("policy_exists", [False, True])

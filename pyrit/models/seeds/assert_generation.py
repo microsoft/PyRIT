@@ -13,6 +13,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Self
 
+import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -591,9 +592,12 @@ class _AssertPreset(_AssertModel):
             Self: The validated preset.
 
         Raises:
-            ValueError: If the file is not a YAML mapping or is not a valid preset of this kind.
+            ValueError: If the file is not valid YAML, not a YAML mapping, or not a valid preset of this kind.
         """
-        loaded = safe_load_yaml(Path(path).read_text(encoding="utf-8"))
+        try:
+            loaded = safe_load_yaml(Path(path).read_text(encoding="utf-8"))
+        except yaml.YAMLError as error:
+            raise ValueError(f"Invalid YAML in ASSERT preset file {path}: {error}") from error
         if not isinstance(loaded, Mapping):
             raise ValueError(f"ASSERT preset file {path} must contain a YAML mapping.")
         try:

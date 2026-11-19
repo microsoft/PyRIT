@@ -242,8 +242,8 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
         This returns progress rather than a result, so it runs setup and teardown but not the strategy
         events or retry collection of ``execute_async``. Before any model call, it checks the target of
         each role that has a stage left to run: the target must support the request's web search
-        policy and, if the role already produced work, must be the target that produced it.
-        ``build_result`` attributes work to the recorded targets.
+        policy and, if the role already produced work, must be the target that produced it; only its rate
+        limit may differ. ``build_result`` attributes work to the recorded targets.
 
         Args:
             checkpoint (AssertGenerationCheckpoint): The progress to continue from.
@@ -322,7 +322,8 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
             PromptGenerationEstimate: Remaining calls by stage and an approximate token range.
 
         Raises:
-            ValueError: If the checkpoint's seed groups don't match the planned coverage assignments.
+            ValueError: If the checkpoint's seed groups don't match the planned coverage assignments or use
+                group IDs that the remaining batches assign.
         """
         checkpoint = AssertGenerationCheckpoint.model_validate(checkpoint)
         model_stages = _model_stages(checkpoint=checkpoint)
@@ -336,7 +337,7 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
             group_stage, exact = cls._estimate_seed_groups(checkpoint=checkpoint)
             stages.append(group_stage)
         notes = ["JSON validation retries can add calls."]
-        if checkpoint.config.web_search:
+        if checkpoint.config.web_search and any(cls._STAGE_ROLES[stage] == cls.RESEARCH_ROLE for stage in model_stages):
             notes.append("Web search adds provider-side usage to the research stages.")
         return PromptGenerationEstimate(stages=tuple(stages), exact_calls=exact, notes=tuple(notes))
 
@@ -457,13 +458,15 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
         target = self._research_target if role == self.RESEARCH_ROLE else self._target
         identifier = TargetIdentifier.from_component_identifier(target.get_identifier())
         recorded = checkpoint.targets.get(role)
-        if recorded is not None and recorded.hash != identifier.hash:
+        if recorded is None:
+            return role, identifier
+        if _producer_hash(recorded) != _producer_hash(identifier):
             raise ValueError(
                 f"This checkpoint's {role} work was produced by a different target "
                 f"({recorded.class_name} {recorded.hash:.8}). Resume with the same {role} target, or start a new "
                 "generation."
             )
-        return role, identifier
+        return role, recorded
 
     async def _teardown_async(self, *, context: AssertGeneratorContext) -> None:
         for target, conversation_id in context._conversations:
@@ -607,7 +610,7 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
         )
         return [
             AssertGeneratedGroupContent(
-                group_id=f"group_{offset + index:06d}",
+                group_id=_group_id(offset + index),
                 assignment=assignment,
                 conversation_id=conversation_id,
                 **content.model_dump(),
@@ -907,6 +910,16 @@ def _model_stages(
     return [stage for stage in stages[: last + 1] if calls_model[stage]]
 
 
+def _producer_hash(identifier: TargetIdentifier) -> str:
+    """
+    Hash a producer's identity without its rate limit, a runtime setting that doesn't shape output.
+
+    Returns:
+        str: The content hash of the identifier with ``max_requests_per_minute`` removed.
+    """
+    return TargetIdentifier.model_validate({**identifier.model_dump(), "max_requests_per_minute": None}).hash
+
+
 def _require_policy(checkpoint: AssertGenerationCheckpoint) -> tuple[AssertTaxonomy, tuple[AssertDimension, ...]]:
     if checkpoint.taxonomy is None or checkpoint.dimensions is None:
         raise ValueError("Seed groups need a taxonomy and dimensions.")
@@ -920,6 +933,14 @@ def _require_planned_groups(
     planned = [assignment for assignment, count in batches[:done] for _ in range(count)]
     if done > len(batches) or [group.assignment for group in checkpoint.groups] != planned:
         raise ValueError("The checkpoint's seed groups don't match the planned coverage assignments.")
+    remaining_ids = {_group_id(index) for index in range(len(checkpoint.groups), checkpoint.config.group_count)}
+    reserved = sorted(remaining_ids.intersection(group.group_id for group in checkpoint.groups))
+    if reserved:
+        raise ValueError(f"The checkpoint's seed groups use IDs {reserved} that the remaining batches assign.")
+
+
+def _group_id(index: int) -> str:
+    return f"group_{index:06d}"
 
 
 def _update_checkpoint(
