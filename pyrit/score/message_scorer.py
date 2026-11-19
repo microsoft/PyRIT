@@ -40,6 +40,7 @@ from pyrit.models import (
 )
 from pyrit.models.score.observation import _message_piece_digest
 from pyrit.models.score.scorable import SCORABLE_TYPES
+from pyrit.score.expectation_errors import MissingConditionError
 from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation.execution import (
@@ -452,12 +453,14 @@ class MessageScorer(Scorer):
             expectation (ScoringExpectation | None): The expectation to validate.
 
         Raises:
-            ValueError: If ``MatchesObjective`` is present without an objective to match.
+            MissingConditionError: If ``MatchesObjective`` is present without an objective to match.
         """
         ScoringExpectation.validate_type(expectation)
         if self.condition_type is MatchesObjective and (expectation is None or not expectation.objective):
-            raise ValueError(
-                "MatchesObjective requires the expectation to carry an objective. Set ScoringExpectation.objective."
+            raise MissingConditionError(
+                "MatchesObjective requires the expectation to carry an objective. Set ScoringExpectation.objective.",
+                scorer_name=type(self).__name__,
+                condition_names=("MatchesObjective",),
             )
         super()._validate_expectation(expectation=expectation)
 

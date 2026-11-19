@@ -48,7 +48,6 @@ from pyrit.registry import (
 )
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
-    SAVED_ENTRY_OWNER_METADATA_KEY,
     registration_origin,
 )
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
@@ -554,7 +553,7 @@ async def test_saves_a_scorer_that_restore_rebuilds(tmp_path: Path) -> None:
     }
     entry = ScorerRegistry.get_registry_singleton().instances.get_entry("leak_substring")
     assert entry is not None
-    assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "scorers", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
+    assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "scorers"}
     saved_hash = entry.instance.get_identifier().hash
     ScorerRegistry.reset_registry_singleton()
     assert (await _restore(tmp_path)).failures == []
@@ -596,7 +595,8 @@ async def test_refuses_a_scorer_that_would_use_this_servers_key(tmp_path: Path) 
         await service.create_scorer_async(request=request, recipes_source=str(tmp_path))
 
     assert str(refusal.value) == (
-        "'api_key' is empty, so 'AzureContentFilterScorer' can use this server's credential instead. "
+        "'AzureContentFilterScorer' needs a credential in 'api_key', which saved entries can't hold or take from "
+        "this server yet. "
         "It can still be created without saving it."
     )
     assert ScorerRegistry.get_registry_singleton().instances.get("content_safety") is None

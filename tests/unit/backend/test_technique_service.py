@@ -58,7 +58,6 @@ from pyrit.registry import (
 from pyrit.registry.components.attack_technique_registry import TechniqueSelectorConflictError
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
-    SAVED_ENTRY_OWNER_METADATA_KEY,
     registration_origin,
 )
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
@@ -921,6 +920,11 @@ def test_request_rejects_invalid_selectors_and_removed_inputs(
     assert registry.catalog_revision == before
 
 
+def test_request_refuses_to_save_a_private_technique() -> None:
+    with pytest.raises(ValidationError, match="A private technique can't be saved"):
+        CreateTechniqueRequest(name="mine", type="PromptSendingAttack", persist=True, private=True)
+
+
 @pytest.fixture
 def saving_catalog(registry: AttackTechniqueRegistry) -> AttackTechniqueRegistry:
     """The startup techniques, with startup and Temporary converters and targets for saved techniques to use."""
@@ -966,7 +970,7 @@ async def test_saves_a_technique_that_restore_rebuilds(saving_catalog: AttackTec
     }
     entry = saving_catalog.instances.get_entry("base64_send")
     assert entry is not None
-    assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "techniques", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
+    assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "techniques"}
     saved_hash = entry.instance.get_identifier().hash
 
     AttackTechniqueRegistry.reset_registry_singleton()
@@ -980,7 +984,7 @@ async def test_saves_a_technique_that_restore_rebuilds(saving_catalog: AttackTec
 
     restored = restarted.instances.get_entry("base64_send")
     assert restored is not None
-    assert restored.metadata == {SAVED_ENTRY_METADATA_KEY: "techniques", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
+    assert restored.metadata == {SAVED_ENTRY_METADATA_KEY: "techniques"}
     assert restored.instance.get_identifier().hash == saved_hash
     assert restored.instance.technique_tags == ["encoded"]
 
@@ -1164,6 +1168,7 @@ def test_rest_create_with_persist_saves_or_explains_why_it_cant(
             "saving it."
         ),
         "instance": "/api/techniques",
+        "not_saveable_reason": "Uses temporary converter 'rot13', which won't exist after a restart.",
     }
     assert clashing.status_code == 409
     assert invalid.status_code == 422
@@ -1257,7 +1262,7 @@ class _KeyedAttack(PromptSendingAttack):
 @pytest.mark.parametrize(
     ("attack_class", "type_name", "params", "message"),
     [
-        (_ServerFileAttack, "server_file_attack", {}, "'_ServerFileAttack' can't be saved. It reads a file only "),
+        (_ServerFileAttack, "server_file_attack", {}, "It reads a file only this server has. "),
         (_KeyedAttack, "keyed_attack", {"api_key": "secret"}, "Saved entries can't hold credentials ('api_key')."),
     ],
 )

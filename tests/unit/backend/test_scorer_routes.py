@@ -346,10 +346,14 @@ def test_create_scorer_marks_a_save_refusal_so_it_can_be_created_without_saving(
         "title": "Can't be saved",
         "status": 400,
         "detail": (
-            "'api_key' is empty, so 'AzureContentFilterScorer' can use this server's credential instead. "
-            "It can still be created without saving it."
+            "'AzureContentFilterScorer' needs a credential in 'api_key', which saved entries can't hold or take from "
+            "this server yet. It can still be created without saving it."
         ),
         "instance": "/api/scorers",
+        "not_saveable_reason": (
+            "'AzureContentFilterScorer' needs a credential in 'api_key', which saved entries can't hold or take from "
+            "this server yet."
+        ),
     }
     assert not (tmp_path / "scorers").exists()
 

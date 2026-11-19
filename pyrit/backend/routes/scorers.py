@@ -12,7 +12,7 @@ from pyrit.backend.models import (
     ScorerListResponse,
     ScorerTypeResponse,
 )
-from pyrit.backend.models.common import CursorStr, IdentifierStr
+from pyrit.backend.models.common import CursorStr, IdentifierStr, NotSaveableProblemDetail
 from pyrit.backend.models.scorers import (
     UnregisteredScorer,
 )
@@ -59,7 +59,7 @@ async def list_scorers(
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {
-            "model": ProblemDetail,
+            "model": NotSaveableProblemDetail,
             "description": (
                 f"Invalid scorer type, parameters, or name, or (type {NOT_SAVEABLE_PROBLEM_TYPE}) a scorer that "
                 "can't be saved as asked but can be created without saving it"
@@ -88,11 +88,13 @@ async def create_scorer(
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
     except NotSaveableError as exc:
-        return not_saveable_response(detail=str(exc), request=request)
+        return not_saveable_response(error=exc, request=request)
     except SavedEntryConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SavedEntryStorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:

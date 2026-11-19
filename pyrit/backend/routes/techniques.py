@@ -131,10 +131,12 @@ async def create_technique_async(*, body: CreateTechniqueRequest, request: Reque
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
     except NotSaveableError as exc:
-        return not_saveable_response(detail=str(exc), request=request)
+        return not_saveable_response(error=exc, request=request)
     except SavedEntryConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SavedEntryStorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

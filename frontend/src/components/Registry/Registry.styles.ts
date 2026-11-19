@@ -110,6 +110,18 @@ export const useCreateConverterDialogStyles = makeStyles({
     maxHeight: '70vh',
     overflowY: 'auto',
   },
+  // DialogBody is a grid with the actions in its third row; while the warning shows, it takes that row and the
+  // actions move below it.
+  temporaryWarning: {
+    gridRowStart: 3,
+    gridRowEnd: 3,
+    gridColumnStart: 1,
+    gridColumnEnd: 4,
+  },
+  actionsBelowWarning: {
+    gridRowStart: 4,
+    gridRowEnd: 4,
+  },
   form: {
     display: 'flex',
     flexDirection: 'column',
