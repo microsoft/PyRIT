@@ -912,12 +912,20 @@ def _model_stages(
 
 def _producer_hash(identifier: TargetIdentifier) -> str:
     """
-    Hash a producer's identity without its rate limit, a runtime setting that doesn't shape output.
+    Hash a producer's identity without rate limits, a runtime setting that doesn't shape output.
 
     Returns:
-        str: The content hash of the identifier with ``max_requests_per_minute`` removed.
+        str: The content hash of the identifier with ``max_requests_per_minute`` removed from it and
+            from every inner target.
     """
-    return TargetIdentifier.model_validate({**identifier.model_dump(), "max_requests_per_minute": None}).hash
+    return _without_rate_limits(identifier).hash
+
+
+def _without_rate_limits(identifier: TargetIdentifier) -> TargetIdentifier:
+    data = {**identifier.model_dump(), "max_requests_per_minute": None}
+    if identifier.targets:
+        data["targets"] = [_without_rate_limits(inner) for inner in identifier.targets]
+    return TargetIdentifier.model_validate(data)
 
 
 def _require_policy(checkpoint: AssertGenerationCheckpoint) -> tuple[AssertTaxonomy, tuple[AssertDimension, ...]]:

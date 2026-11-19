@@ -35,7 +35,7 @@ from pyrit.models import (
     PromptGenerationEstimate,
     TargetIdentifier,
 )
-from pyrit.prompt_target import OpenAIResponseTarget
+from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget, RoundRobinTarget
 
 _POLICY_STAGES = ["systematization", "taxonomy", "dimensions"]
 
@@ -858,6 +858,24 @@ _RESEARCH_TARGET = ComponentIdentifier(
 )
 
 
+def _openai_target(**settings: Any) -> OpenAIResponseTarget:
+    """Build a real target, whose identifier records its settings as a deployed target's does."""
+    return OpenAIResponseTarget(
+        **{
+            "endpoint": "https://example.org/openai/v1",
+            "model_name": "gpt-x",
+            "api_key": "test-key",
+            "custom_configuration": make_assert_generation_target().configuration,
+            **settings,
+        }
+    )
+
+
+def _round_robin_target(**settings: Any) -> RoundRobinTarget:
+    """Build a round-robin target whose inner targets share the given settings."""
+    return RoundRobinTarget(targets=[_openai_target(**settings), _openai_target(**settings)])
+
+
 @pytest.mark.usefixtures("patch_central_database", "no_retry_wait")
 class TestRoleProducers:
     async def test_checkpoint_records_each_role_with_its_own_target_async(self) -> None:
@@ -971,37 +989,44 @@ class TestRoleProducers:
         roles = (AssertGenerator.RESEARCH_ROLE, AssertGenerator.GENERATION_ROLE)
         assert complete.targets == {role: stored.targets.get(role, live) for role in roles}
 
-    @pytest.mark.parametrize("changes", [{"model_name": "gpt-y"}, {"temperature": 0.5}])
-    async def test_resume_with_a_changed_generation_setting_is_rejected_before_any_call_async(
-        self, changes: dict[str, Any]
-    ) -> None:
-        original = _openai_target()
+    async def test_resume_with_slower_round_robin_targets_continues_async(self) -> None:
+        original = _round_robin_target()
         stopped, _ = await _advance_async(
             generator=AssertGenerator(target=original),
             target=original,
             checkpoint=AssertGenerationCheckpoint(config=make_assert_config()),
             stop_after=AssertGenerationStage.DIMENSIONS,
         )
-        changed = _openai_target(**changes)
+        stored = AssertGenerationCheckpoint.model_validate_json(stopped.model_dump_json())
+
+        slower = _round_robin_target(max_requests_per_minute=10)
+        complete, stages = await _advance_async(
+            generator=AssertGenerator(target=slower), target=slower, checkpoint=stored
+        )
+
+        assert complete.next_stage is None
+        assert set(stages) == {"seed_groups"}
+        assert complete.targets == stored.targets
+
+    @pytest.mark.parametrize("build", [_openai_target, _round_robin_target], ids=["direct", "round-robin"])
+    @pytest.mark.parametrize("changes", [{"model_name": "gpt-y"}, {"temperature": 0.5}])
+    async def test_resume_with_a_changed_generation_setting_is_rejected_before_any_call_async(
+        self, build: Callable[..., PromptTarget], changes: dict[str, Any]
+    ) -> None:
+        original = build()
+        stopped, _ = await _advance_async(
+            generator=AssertGenerator(target=original),
+            target=original,
+            checkpoint=AssertGenerationCheckpoint(config=make_assert_config()),
+            stop_after=AssertGenerationStage.DIMENSIONS,
+        )
+        changed = build(max_requests_per_minute=10, **changes)
         with (
             patch.object(changed, "_send_prompt_to_target_async") as send,
             pytest.raises(ValueError, match="generation work was produced by a different target"),
         ):
             await AssertGenerator(target=changed).advance_async(checkpoint=stopped)
         send.assert_not_called()
-
-
-def _openai_target(**settings: Any) -> OpenAIResponseTarget:
-    """Build a real target, whose identifier records its settings as a deployed target's does."""
-    return OpenAIResponseTarget(
-        **{
-            "endpoint": "https://example.org/openai/v1",
-            "model_name": "gpt-x",
-            "api_key": "test-key",
-            "custom_configuration": make_assert_generation_target().configuration,
-            **settings,
-        }
-    )
 
 
 @pytest.mark.usefixtures("patch_central_database", "no_retry_wait")
