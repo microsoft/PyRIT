@@ -20,7 +20,7 @@ from pyrit.backend.models import (
     CreateConverterRequest,
     ProblemDetail,
 )
-from pyrit.backend.models.common import IdentifierStr
+from pyrit.backend.models.common import IdentifierStr, NotSaveableProblemDetail
 from pyrit.backend.models.converters import (
     UnregisteredConverter,
 )
@@ -74,7 +74,7 @@ async def list_converter_types() -> ConverterTypeResponse:  # pyrit-async-suffix
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {
-            "model": ProblemDetail,
+            "model": NotSaveableProblemDetail,
             "description": (
                 f"Invalid converter type or parameters, or (type {NOT_SAVEABLE_PROBLEM_TYPE}) a converter that "
                 "can't be saved as asked but can be created without saving it"
@@ -111,11 +111,13 @@ async def create_converter(
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
     except NotSaveableError as e:
-        return not_saveable_response(detail=str(e), request=request)
+        return not_saveable_response(error=e, request=request)
     except SavedEntryConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except SavedEntryStorageError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

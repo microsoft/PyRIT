@@ -76,7 +76,6 @@ from pyrit.registry import (
 )
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
-    SAVED_ENTRY_OWNER_METADATA_KEY,
     RegistryNameTakenError,
     registration_origin,
 )
@@ -2431,7 +2430,7 @@ class TestPersistConverter:
         }
         entry = upload_service._registry.instances.get_entry("caesar_converter")
         assert entry is not None
-        assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "converters", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
+        assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "converters"}
         saved_hash = entry.instance.get_identifier().hash
         ConverterRegistry.reset_registry_singleton()
         assert (await _restore(tmp_path)).failures == []
@@ -2492,8 +2491,8 @@ class TestPersistConverter:
             )
 
         assert str(refusal.value) == (
-            f"'azure_speech_key' is empty, so '{converter_type}' can use this server's credential instead. "
-            "It can still be created without saving it."
+            f"'{converter_type}' needs a credential in 'azure_speech_key', which saved entries can't hold or take "
+            "from this server yet. It can still be created without saving it."
         )
         assert upload_service._registry.instances.get("speech") is None
         assert not (tmp_path / "converters").exists()
@@ -2815,7 +2814,7 @@ class TestPersistConverterWithADefaultTarget:
 
         assert str(refusal.value) == (
             "'converter_target' is left to a default target that isn't registered, so it won't exist after a "
-            "restart. Name a target to save it, or create it without saving it."
+            "restart. Name a target to save it. It can still be created without saving it."
         )
         assert not (tmp_path / "converters").exists()
 

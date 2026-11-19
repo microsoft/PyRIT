@@ -27,6 +27,8 @@ import {
 } from '@fluentui/react-components'
 import { DeleteRegular } from '@fluentui/react-icons'
 
+import HelpField from '@/components/HelpField'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import ParameterField from '@/components/Parameters/ParameterField'
 import {
   buildParametersFromForm,
@@ -34,7 +36,7 @@ import {
 } from '@/components/Parameters/parameterForm'
 import { useSaveability } from '@/hooks/useSaveability'
 import { targetsApi } from '@/services/api'
-import { isNotSaveableError, toApiError } from '@/services/errors'
+import { isNotSaveableError, notSaveableReason, toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetAuthMode, TargetInstance, TargetSaveabilityRequest, TargetTypeEntry } from '@/types'
 import { suggestRegistryName, validateRegistryName } from '@/utils/registryName'
@@ -316,6 +318,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   // The auth mode the user picked; until then the dialog uses the default for the selected type.
   const [chosenAuthMode, setChosenAuthMode] = useState<TargetAuthMode | null>(null)
   const [apiKey, setApiKey] = useState('')
+  const [onlyMeChoice, setOnlyMeChoice] = useState(false)
+  // Null follows the default: updates are allowed for a private target and not for a shared one.
+  const [credentialUpdatesChoice, setCredentialUpdatesChoice] = useState<boolean | null>(null)
   const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -474,6 +479,57 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     : metadataUnavailableForSelection && isOpenAi
   const underlyingModelRequired = Boolean(underlyingModelParameter?.required)
   const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity && !isNoKey
+  // Anything built on a private target is private too, so such a round robin can't be shared.
+  const privateMemberName = isRoundRobin
+    ? selectedInnerTargets.find((selected: SelectedInnerTarget) => availableTargets.some(
+      (target: TargetInstance) => target.target_registry_name === selected.registryName && target.private === true,
+    ))?.registryName
+    : undefined
+  const onlyMe = privateMemberName !== undefined || onlyMeChoice
+  // OpenAI-family targets can replace their key or headers in place; Realtime sessions keep their connections.
+  const canUpdateCredentials = isOpenAi && targetType !== 'RealtimeTarget'
+  const allowCredentialUpdates = canUpdateCredentials && (credentialUpdatesChoice ?? onlyMe)
+  // Who can use the target is the last decision about it, so it follows the connection and sign-in fields.
+  const visibilityField = targetType !== '' && (
+    <>
+      <HelpField
+        className={styles.formField}
+        label="Who can use it"
+        help={HELP_DEFINITIONS.privateTarget}
+        hint={privateMemberName !== undefined
+          ? `Only me, because it uses ${privateMemberName}, which only you can use.`
+          : undefined}
+      >
+        <RadioGroup
+          value={onlyMe ? 'private' : 'shared'}
+          disabled={submitting || privateMemberName !== undefined}
+          onChange={(_, data) => setOnlyMeChoice(data.value === 'private')}
+        >
+          <Radio value="shared" label="Everyone" />
+          <Radio value="private" label="Only me" />
+        </RadioGroup>
+      </HelpField>
+      {canUpdateCredentials && (
+        <HelpField
+          className={styles.formField}
+          label="Credential updates"
+          help={HELP_DEFINITIONS.credentialUpdates}
+          hint={allowCredentialUpdates
+            ? onlyMe
+              ? 'You can replace its key or headers later, for example when a token expires.'
+              : "Anyone signed in can replace its key or headers, and everyone's requests then use them."
+            : undefined}
+        >
+          <Switch
+            label="Allow updates"
+            checked={allowCredentialUpdates}
+            disabled={submitting}
+            onChange={(_, data) => setCredentialUpdatesChoice(data.checked)}
+          />
+        </HelpField>
+      )}
+    </>
+  )
   const identityEndpointError: string | null = (() => {
     if (!isIdentity || endpoint === '') return null
     if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
@@ -520,6 +576,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     }
     return null
   })()
+  // Saved targets are shared, and their credentials can't be updated, so these choices are known to need Temporary.
+  const choiceTemporaryReason: string | null = (() => {
+    if (!targetType) return null
+    if (privateMemberName !== undefined) return 'Saved targets are shared, and only you can use this one.'
+    if (onlyMe) return 'Saved targets are shared. Choose Everyone to save this one.'
+    if (allowCredentialUpdates) return "A saved target's credentials can't be updated. Turn off Allow updates to save this one."
+    return null
+  })()
   const requestAuthMode: TargetAuthMode | undefined = isIdentity ? 'identity' : isNoKey ? 'none' : undefined
   // The parameters a create request sends for the standard fields, or why the form can't give them.
   const buildFormParams = (): { ok: true, params: Record<string, unknown> } | { ok: false, error: string } => {
@@ -536,14 +600,15 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     }
     if (hasEndpointField && endpoint) params.endpoint = endpoint
     if (hasModelNameField && modelName) params.model_name = modelName
-    if (hasApiKeyField && !isIdentity && !isNoKey && apiKey) params.api_key = apiKey
+    // A pasted key often ends with a newline, which can't be sent in a request header.
+    if (hasApiKeyField && !isIdentity && !isNoKey && apiKey.trim()) params.api_key = apiKey.trim()
     if ((underlyingModelRequired || hasDifferentUnderlying) && underlyingModel && hasUnderlyingModelField) {
       params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
     }
     return { ok: true, params }
   }
   const saveabilityRequest: TargetSaveabilityRequest | null = (() => {
-    if (!targetType || typeTemporaryReason !== null) return null
+    if (!targetType || typeTemporaryReason !== null || choiceTemporaryReason !== null) return null
     if (isRoundRobin) {
       if (selectedInnerTargets.length === 0) return null
       return { type: targetType, params: { targets: selectedInnerTargets.map((selected) => selected.registryName) } }
@@ -566,14 +631,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     selectedInnerTargets,
   ])
   const refusedReason = saveRefusal?.formKey === formKey ? saveRefusal.reason : null
-  const temporaryReason = typeTemporaryReason ?? checkedReason ?? refusedReason
+  const temporaryReason = typeTemporaryReason ?? choiceTemporaryReason ?? checkedReason ?? refusedReason
   const submitLabel = submitting ? 'Creating...' : (temporaryReason === null ? 'Save Target' : 'Create as Temporary')
-  const temporaryWarningRef = useRef<HTMLDivElement>(null)
-
-  // The reason sits below the fields, so bring it into view when it appears or changes.
-  useEffect(() => {
-    if (temporaryReason) temporaryWarningRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [temporaryReason])
 
   // Fetch the available targets when the dialog opens with RoundRobin selected.
   // If the parent already passed targets, derive availableTargets from them
@@ -667,6 +726,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setUnderlyingModel('')
     setChosenAuthMode(null)
     setApiKey('')
+    setOnlyMeChoice(false)
+    setCredentialUpdatesChoice(null)
     setParameterValues({})
     setError(null)
     setHttpRequestError(null)
@@ -688,7 +749,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const handleCreateError = (err: unknown, persist: boolean) => {
     const apiError = toApiError(err)
     if (persist && isNotSaveableError(apiError)) {
-      setSaveRefusal({ formKey, reason: apiError.detail })
+      setSaveRefusal({ formKey, reason: notSaveableReason(apiError) ?? apiError.detail })
       return
     }
     // A taken name is a 409 without a problem type; a typed 409 is the build-identity mismatch the client handles.
@@ -746,6 +807,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
             weights: parsedWeights,
           },
           persist,
+          private: onlyMe,
         })
         resetForm()
         onCreated()
@@ -770,7 +832,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (underlyingModelRequired && !underlyingModel) {
       errors.underlyingModel = 'Please provide the underlying model'
     }
-    if (apiKeyRequired && !apiKey) errors.apiKey = 'Please provide an API key'
+    if (apiKeyRequired && !apiKey.trim()) errors.apiKey = 'Please provide an API key'
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors)
       return
@@ -795,6 +857,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         params: formParams.params,
         ...(requestAuthMode ? { auth_mode: requestAuthMode } : {}),
         persist,
+        private: onlyMe,
+        // The server applies the same default, so the choice is sent only when the user changed it.
+        ...(canUpdateCredentials && credentialUpdatesChoice !== null
+          ? { allow_credential_updates: allowCredentialUpdates }
+          : {}),
       })
 
       resetForm()
@@ -939,7 +1006,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               <Field
                 className={styles.formField}
                 label="Registry Name"
-                hint="Lowercase letters, digits and underscores, starting with a letter."
+                hint={nameMessage ? undefined : 'Lowercase letters, digits and underscores, starting with a letter, up to 64 characters.'}
                 required
                 validationMessage={nameMessage ?? undefined}
                 validationState={nameMessage ? 'error' : 'none'}
@@ -963,11 +1030,13 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       CoPyRIT does not use browser or saved Copilot logins.
                     </MessageBarBody>
                   </MessageBar>
-                  <MessageBar intent="warning">
-                    <MessageBarBody>
-                      Tokens and created targets can be used by anyone with access to this CoPyRIT instance.
-                    </MessageBarBody>
-                  </MessageBar>
+                  {!onlyMe && (
+                    <MessageBar intent="warning">
+                      <MessageBarBody>
+                        Tokens and created targets can be used by anyone with access to this CoPyRIT instance.
+                      </MessageBarBody>
+                    </MessageBar>
+                  )}
                 </>
               )}
 
@@ -1075,6 +1144,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       </div>
                     </div>
                   )}
+                  {visibilityField}
                 </>
               )}
 
@@ -1246,6 +1316,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     </Field>
                   )}
 
+                  {visibilityField}
+
                   {(optionalMetadataParameters.length > 0 || customFunctionsReason) && (
                     <details className={styles.advancedSettings}>
                       <summary className={styles.advancedSettingsSummary}>
@@ -1289,14 +1361,6 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 </>
               )}
 
-              {temporaryReason && (
-                <MessageBar intent="warning" className={styles.warningMessage} ref={temporaryWarningRef} role="status">
-                  <MessageBarBody className={styles.warningMessageBody}>
-                    <MessageBarTitle>This target can&apos;t be saved</MessageBarTitle>
-                    {temporaryReason} {TEMPORARY_TARGET_NOTE}
-                  </MessageBarBody>
-                </MessageBar>
-              )}
 
               {!isRoundRobin && (
               <Label size="small" style={{ color: tokens.colorNeutralForeground3 }}>
@@ -1315,7 +1379,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               )}
             </form>
           </DialogContent>
-          <DialogActions>
+          {/* Outside the scrolling form, so it shows next to the button it explains without moving the fields. */}
+          {temporaryReason && (
+            <MessageBar intent="warning" className={styles.temporaryWarning} role="status">
+              <MessageBarBody className={styles.warningMessageBody}>
+                <MessageBarTitle>This target can&apos;t be saved</MessageBarTitle>
+                {temporaryReason} {TEMPORARY_TARGET_NOTE}
+              </MessageBarBody>
+            </MessageBar>
+          )}
+          <DialogActions className={temporaryReason ? styles.actionsBelowWarning : undefined}>
             <Button appearance="secondary" onClick={handleClose} disabled={submitting}>
               Cancel
             </Button>
@@ -1331,7 +1404,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   : (endpointRequired && !endpoint) || showIdentityEndpointError)
                   || (modelNameRequired && !modelName)
                   || (underlyingModelRequired && !underlyingModel)
-                  || (apiKeyRequired && !apiKey)
+                  || (apiKeyRequired && !apiKey.trim())
                   || requiredMetadataParameterMissing
                   || nameBlocked
               }

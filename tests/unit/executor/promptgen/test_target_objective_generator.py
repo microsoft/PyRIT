@@ -566,3 +566,60 @@ value: |
             second = await generator.execute_async(instructions="Test", count=1)
         assert first.conversation_id != second.conversation_id
         assert not hasattr(generator, "generate_async")
+
+
+def test_estimate_is_one_exact_call() -> None:
+    estimate = TargetObjectiveGenerator.estimate(instructions="Test formatting.", count=10)
+    assert estimate.exact_calls
+    assert estimate.min_calls == estimate.max_calls == 1
+    assert [(stage.stage, stage.target_role) for stage in estimate.stages] == [
+        ("objectives", TargetObjectiveGenerator.GENERATION_ROLE)
+    ]
+    assert estimate.stages[0].min_tokens == estimate.stages[0].max_tokens
+    assert 0 < estimate.low_tokens < estimate.high_tokens
+
+
+def test_estimate_tokens_scale_with_count() -> None:
+    ten = TargetObjectiveGenerator.estimate(instructions="Test formatting.", count=10).stages[0].max_tokens
+    twenty = TargetObjectiveGenerator.estimate(instructions="Test formatting.", count=20).stages[0].max_tokens
+    assert twenty - ten == 10 * TargetObjectiveGenerator.OUTPUT_TOKENS_PER_OBJECTIVE
+
+
+def test_estimate_tokens_include_instructions_and_harm_categories() -> None:
+    base = TargetObjectiveGenerator.estimate(instructions="Test", count=1).stages[0].max_tokens
+    longer = TargetObjectiveGenerator.estimate(instructions="Test" + "x" * 400, count=1).stages[0].max_tokens
+    categorized = (
+        TargetObjectiveGenerator.estimate(instructions="Test", count=1, harm_categories=["y" * 398])
+        .stages[0]
+        .max_tokens
+    )
+    assert longer - base == 100
+    assert categorized - base == 100
+
+
+def test_estimate_counts_the_escaped_request_that_is_sent() -> None:
+    cjk = TargetObjectiveGenerator.estimate(instructions="一" * 300, count=1)
+    escaped_length = TargetObjectiveGenerator.estimate(instructions="x" * 1800, count=1)
+    assert cjk == escaped_length
+
+
+@pytest.mark.parametrize("count", [0, -1, True, 1.5, "2"])
+def test_estimate_rejects_invalid_count(count: Any) -> None:
+    with pytest.raises(ValueError, match="count must be a positive integer"):
+        TargetObjectiveGenerator.estimate(instructions="Test", count=count)
+
+
+@pytest.mark.parametrize(
+    "instructions, harm_categories, message",
+    [
+        ("", (), "instructions must be a non-empty string"),
+        ("  ", (), "instructions must be a non-empty string"),
+        (None, (), "instructions must be a non-empty string"),
+        ("Test", ["  "], "harm_categories must contain non-empty strings"),
+    ],
+)
+def test_estimate_rejects_requests_that_execution_rejects(
+    instructions: Any, harm_categories: list[str], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        TargetObjectiveGenerator.estimate(instructions=instructions, count=3, harm_categories=harm_categories)

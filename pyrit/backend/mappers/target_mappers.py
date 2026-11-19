@@ -15,7 +15,7 @@ composite ``inner_targets`` (full instances, not bare identifiers), and a curate
 from typing import Any
 
 from pyrit.models import CapabilityName, TargetIdentifier
-from pyrit.models.catalog import RegistryEntryOrigin, SavedEntryOwner, TargetInstance
+from pyrit.models.catalog import RegistryEntryOrigin, TargetInstance
 from pyrit.prompt_target import PromptTarget
 
 # Capability flag names that should never be surfaced as identifier-level params:
@@ -56,9 +56,9 @@ def target_object_to_instance(
     target_registry_name: str,
     target_obj: PromptTarget,
     *,
+    private: bool = False,
+    allow_credential_updates: bool = False,
     origin: RegistryEntryOrigin | None = None,
-    owner: SavedEntryOwner | None = None,
-    current_user_oid: str | None = None,
 ) -> TargetInstance:
     """
     Build a TargetInstance DTO from a registry target object.
@@ -70,9 +70,9 @@ def target_object_to_instance(
     Args:
         target_registry_name: The human-friendly target registry name.
         target_obj: The domain PromptTarget object from the registry.
+        private: Whether only the target's creator can see and use it. Defaults to False.
+        allow_credential_updates: Whether the target's credentials can be updated through the API. Defaults to False.
         origin: Where the registered target comes from, or None for an inner target.
-        owner: Who saved the target, or None when it isn't saved or was saved with sign-in off.
-        current_user_oid: The signed-in user's Microsoft Entra object ID, or None when nobody is signed in.
 
     Returns:
         TargetInstance DTO with metadata derived from the object.
@@ -93,9 +93,10 @@ def target_object_to_instance(
         supports_history_replay=supports_history_replay,
         target_specific_params=_target_specific_params(target_identifier),
         inner_targets=_build_inner_targets(target_obj),
+        private=private,
+        allow_credential_updates=allow_credential_updates,
+        credentials_rejected=target_obj.credentials_rejected,
         origin=origin,
-        saved_by=(owner.name or None) if owner is not None else None,
-        saved_by_me=owner is not None and current_user_oid is not None and owner.oid == current_user_oid,
     )
 
 

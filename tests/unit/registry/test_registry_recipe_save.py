@@ -24,6 +24,7 @@ from pyrit.registry import (
     SavedEntryStorageError,
     ScorerRegistry,
     TargetRegistry,
+    get_class_saveability,
     prepare_saved_params_async,
     save_then_register_async,
 )
@@ -172,18 +173,32 @@ async def test_prepare_saved_params_async_refuses_a_parameter_restore_cant_pass(
     assert str(refusal.value).startswith("Saved entries are rebuilt from what the API accepts.")
 
 
-async def test_prepare_saved_params_async_refuses_a_class_a_launch_script_added() -> None:
+async def test_saving_refuses_a_class_for_the_reason_its_class_answer_gives() -> None:
     class LaunchScriptTextTarget(TextTarget):
         pass
 
     registry = TargetRegistry.get_registry_singleton()
     with registration_origin(RegistryEntryOrigin.TEMPORARY):
         registry.register_class(LaunchScriptTextTarget, name="launch_text")
+    launch_reason = (
+        "'launch_text' was added by a scan's launch script, so a saved entry of it couldn't be restored after a "
+        "restart."
+    )
 
-    with pytest.raises(NotSaveableError, match="'launch_text' was added by a scan's launch script"):
+    assert get_class_saveability(registry=registry, type_name="TextTarget") == (("api_key",), None)
+    assert get_class_saveability(registry=registry, type_name="HTTPTarget") == (
+        (),
+        "Its raw HTTP request can carry credentials.",
+    )
+    assert get_class_saveability(registry=registry, type_name="launch_text") == ((), launch_reason)
+    with pytest.raises(NotSaveableError) as refusal:
         await prepare_saved_params_async(
             registry=registry, type_name="launch_text", cls=LaunchScriptTextTarget, params={}
         )
+    assert (refusal.value.cause, str(refusal.value)) == (
+        launch_reason,
+        f"{launch_reason} It can still be created without saving it.",
+    )
 
 
 @pytest.mark.usefixtures("patch_central_database")
