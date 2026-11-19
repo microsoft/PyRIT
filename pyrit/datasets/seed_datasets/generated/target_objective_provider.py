@@ -10,8 +10,6 @@ from pyrit.executor.promptgen import TargetObjectiveGenerator
 from pyrit.models import SeedDataset, SeedObjective, SeedOrigin, TargetObjectiveGenerationRequest
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from pyrit.executor.promptgen import TargetObjectiveGeneratorResult
     from pyrit.models import SeedPrompt
     from pyrit.prompt_target import PromptTarget
@@ -81,9 +79,7 @@ class TargetObjectiveProvider(SeedDatasetProvider):
         request = TargetObjectiveGenerationRequest(
             instructions=self._instructions, count=self._count, harm_categories=self._harm_categories
         )
-        return self.package_result(
-            dataset_name=self.dataset_name, result=result, harm_categories=self._harm_categories, request=request
-        )
+        return self.package_result(dataset_name=self.dataset_name, result=result, request=request)
 
     @classmethod
     def package_result(
@@ -91,8 +87,7 @@ class TargetObjectiveProvider(SeedDatasetProvider):
         *,
         dataset_name: str,
         result: TargetObjectiveGeneratorResult,
-        harm_categories: Sequence[str] = (),
-        request: TargetObjectiveGenerationRequest | None = None,
+        request: TargetObjectiveGenerationRequest,
     ) -> SeedDataset:
         """
         Package generated objectives as a named dataset.
@@ -100,9 +95,8 @@ class TargetObjectiveProvider(SeedDatasetProvider):
         Args:
             dataset_name (str): Destination name, assigned to every seed.
             result (TargetObjectiveGeneratorResult): The generated objectives.
-            harm_categories (Sequence[str]): Labels for every seed.
-            request (TargetObjectiveGenerationRequest | None): The request that generated the objectives.
-                When given, every seed stores it, so the request can be read back and run again.
+            request (TargetObjectiveGenerationRequest): The request that generated the objectives. Its harm
+                categories label every seed, and every seed stores it, so it can be read back and run again.
 
         Returns:
             SeedDataset: Text objectives with generation evidence references and no actor attribution.
@@ -112,7 +106,6 @@ class TargetObjectiveProvider(SeedDatasetProvider):
         """
         if not isinstance(dataset_name, str) or not dataset_name.strip():
             raise ValueError("dataset_name must be a non-empty string.")
-        stored_request = request.to_metadata() if request is not None else {}
         return SeedDataset(
             dataset_name=dataset_name,
             seeds=[
@@ -121,8 +114,8 @@ class TargetObjectiveProvider(SeedDatasetProvider):
                     dataset_name=dataset_name,
                     origin=SeedOrigin.GENERATED,
                     is_jinja_template=False,
-                    harm_categories=list(harm_categories),
-                    metadata={"generation_conversation_id": result.conversation_id, **stored_request},
+                    harm_categories=list(request.harm_categories),
+                    metadata={"generation_conversation_id": result.conversation_id, **request.to_metadata()},
                 )
                 for value in result.objectives
             ],

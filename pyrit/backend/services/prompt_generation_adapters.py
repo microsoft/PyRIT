@@ -134,8 +134,8 @@ class PromptGenerationAdapter(ABC):
         targets: Mapping[str, PromptTarget],
         checkpoint: Mapping[str, Any],
         dataset_name: str,
-    ) -> tuple[SeedDataset, dict[str, JsonValue]]:
-        """Package a complete checkpoint as a dataset and a result summary."""
+    ) -> tuple[SeedDataset, dict[str, JsonValue] | None]:
+        """Package a complete checkpoint as a dataset and its result summary, if the generator has one."""
 
     def get_review(self, *, checkpoint: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
         """
@@ -485,19 +485,17 @@ class TargetObjectiveGenerationAdapter(PromptGenerationAdapter):
         targets: Mapping[str, PromptTarget],
         checkpoint: Mapping[str, Any],
         dataset_name: str,
-    ) -> tuple[SeedDataset, dict[str, JsonValue]]:
+    ) -> tuple[SeedDataset, dict[str, JsonValue] | None]:
         """
         Package the objectives with ``TargetObjectiveProvider``.
 
         Returns:
-            tuple[SeedDataset, dict[str, JsonValue]]: The dataset and its objective count.
+            tuple[SeedDataset, dict[str, JsonValue] | None]: The dataset and no summary, because the
+                request's count and the progress already give the number of objectives.
         """
         result = TargetObjectiveGeneratorResult.model_validate(dict(checkpoint))
         parsed = TargetObjectiveGenerationRequest.model_validate(dict(request))
-        dataset = TargetObjectiveProvider.package_result(
-            dataset_name=dataset_name, result=result, harm_categories=parsed.harm_categories, request=parsed
-        )
-        return dataset, {"objective_count": len(result.objectives)}
+        return TargetObjectiveProvider.package_result(dataset_name=dataset_name, result=result, request=parsed), None
 
     def request_from_seeds(self, seeds: Sequence[SeedRecord]) -> dict[str, Any] | None:
         """

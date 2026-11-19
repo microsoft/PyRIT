@@ -14,7 +14,7 @@ from sqlalchemy.dialects import mssql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pyrit.memory import SQLiteMemory
-from pyrit.memory.dataset_lifecycle import DatasetNameConflictError, find_unavailable_dataset_names_async
+from pyrit.memory.dataset_lifecycle import DatasetNameConflictError, is_dataset_name_taken_async
 from pyrit.memory.memory_models import DatasetLifecycleEntry, PromptGenerationEntry
 from pyrit.models import (
     PromptGenerationProgress,
@@ -72,7 +72,7 @@ async def test_round_trip_keeps_every_field(sqlite_instance: SQLiteMemory) -> No
         group_label="Suite",
         group_index=2,
         checkpoint={"objectives": ["a"], "conversation_id": "c"},
-        summary={"objective_count": 1},
+        summary={"group_count": 1},
         created_by="Ada",
         pause_for_review=True,
         started_at=NOW,
@@ -80,7 +80,7 @@ async def test_round_trip_keeps_every_field(sqlite_instance: SQLiteMemory) -> No
     )
     await sqlite_instance.add_prompt_generations_async(generations=[generation])
 
-    assert await sqlite_instance.get_prompt_generations_async(generation_ids=[generation.id]) == [generation]
+    assert await sqlite_instance.get_prompt_generation_async(generation_id=generation.id) == generation
     async with await sqlite_instance.get_session_async() as session:
         entry = await session.scalar(select(PromptGenerationEntry))
         assert entry is not None and entry.pyrit_version
@@ -96,9 +96,11 @@ async def test_list_is_newest_first_then_by_id(sqlite_instance: SQLiteMemory) ->
 
     listed = await sqlite_instance.get_prompt_generations_async()
     assert [generation.id for generation in listed] == [*sorted(tied), older.id]
-    selected = await sqlite_instance.get_prompt_generations_async(generation_ids=[older.id, tied[0], tied[2]])
-    assert [generation.id for generation in selected] == [tied[2], tied[0], older.id]
-    assert await sqlite_instance.get_prompt_generations_async(generation_ids=[uuid.uuid4()]) == []
+
+
+async def test_reading_an_unknown_generation_returns_none(sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.add_prompt_generations_async(generations=[_generation()])
+    assert await sqlite_instance.get_prompt_generation_async(generation_id=uuid.uuid4()) is None
 
 
 async def test_batch_members_list_in_batch_order(sqlite_instance: SQLiteMemory) -> None:
@@ -113,8 +115,6 @@ async def test_batch_members_list_in_batch_order(sqlite_instance: SQLiteMemory) 
 
     expected = [generation.id for generation in batch]
     assert [generation.id for generation in await sqlite_instance.get_prompt_generations_async()] == expected
-    selected = await sqlite_instance.get_prompt_generations_async(generation_ids=ids)
-    assert [generation.id for generation in selected] == expected
 
 
 async def test_update_compares_status_and_execution(sqlite_instance: SQLiteMemory) -> None:
@@ -143,7 +143,7 @@ async def test_update_compares_status_and_execution(sqlite_instance: SQLiteMemor
         expected_execution_id=owner,
         fields=["checkpoint"],
     )
-    assert await sqlite_instance.get_prompt_generations_async(generation_ids=[generation.id]) == [checkpointed]
+    assert await sqlite_instance.get_prompt_generation_async(generation_id=generation.id) == checkpointed
 
 
 @pytest.mark.parametrize(
@@ -161,7 +161,7 @@ async def test_update_rejects_empty_statuses_or_fields(
             expected_statuses=expected_statuses,
             fields=fields,
         )
-    assert await sqlite_instance.get_prompt_generations_async(generation_ids=[generation.id]) == [generation]
+    assert await sqlite_instance.get_prompt_generation_async(generation_id=generation.id) == generation
 
 
 async def test_update_writes_only_the_given_fields(sqlite_instance: SQLiteMemory) -> None:
@@ -179,7 +179,7 @@ async def test_update_writes_only_the_given_fields(sqlite_instance: SQLiteMemory
         expected_statuses=[PromptGenerationStatus.AWAITING_REVIEW],
         fields=["status", "review_completed"],
     )
-    stored = (await sqlite_instance.get_prompt_generations_async(generation_ids=[generation.id]))[0]
+    stored = await sqlite_instance.get_prompt_generation_async(generation_id=generation.id)
     assert stored == _changed(reviewed, status=PromptGenerationStatus.QUEUED, review_completed=True)
     with pytest.raises(ValueError, match="can't be changed"):
         await sqlite_instance.try_update_prompt_generation_async(
@@ -220,10 +220,11 @@ async def test_new_generations_reject_taken_names(sqlite_instance: SQLiteMemory,
         )
     batch = [_generation(dataset_name="free"), _generation(dataset_name="taken")]
 
-    assert await sqlite_instance.get_unavailable_dataset_names_async(dataset_names=["free", "taken"]) == {"taken"}
+    assert await sqlite_instance.is_dataset_name_available_async(dataset_name="free")
+    assert not await sqlite_instance.is_dataset_name_available_async(dataset_name="taken")
     with pytest.raises(DatasetNameConflictError, match="named 'taken' already exists"):
         await sqlite_instance.add_prompt_generations_async(generations=batch)
-    assert not await sqlite_instance.get_prompt_generations_async(generation_ids=[batch[0].id])
+    assert await sqlite_instance.get_prompt_generation_async(generation_id=batch[0].id) is None
 
 
 async def test_name_check_uses_the_databases_comparison(sqlite_instance: SQLiteMemory) -> None:
@@ -231,25 +232,20 @@ async def test_name_check_uses_the_databases_comparison(sqlite_instance: SQLiteM
         seeds=[SeedObjective(value="existing", dataset_name="Foo")], added_by="test"
     )
     # SQLite compares names exactly, so only the stored spelling is taken.
-    assert await sqlite_instance.get_unavailable_dataset_names_async(dataset_names=["Foo", "foo", "FOO"]) == {"Foo"}
-    many = [f"name_{index}" for index in range(250)]
-    assert await sqlite_instance.get_unavailable_dataset_names_async(dataset_names=[*many, "Foo"]) == {"Foo"}
-    assert await sqlite_instance.get_unavailable_dataset_names_async(dataset_names=[]) == set()
+    assert not await sqlite_instance.is_dataset_name_available_async(dataset_name="Foo")
+    assert await sqlite_instance.is_dataset_name_available_async(dataset_name="foo")
+    assert await sqlite_instance.is_dataset_name_available_async(dataset_name="FOO")
 
 
-async def test_name_check_reports_every_name_the_database_matches() -> None:
+async def test_name_check_lets_the_database_decide_the_match() -> None:
     # A case- and width-insensitive collation can match "DATA" to a stored "ＤＡＴＡ"; no Python check may undo that.
-    rows = MagicMock()
-    rows.all.return_value = ["DATA"]
     session = MagicMock(spec=AsyncSession)
-    session.scalars = AsyncMock(return_value=rows)
+    session.scalar = AsyncMock(return_value=1)
 
-    assert await find_unavailable_dataset_names_async(session, dataset_names=["DATA", "free"]) == {"DATA"}
-    compound = session.scalars.call_args.args[0]
-    # The database returns the requested name itself, never a stored spelling to compare in Python.
-    assert [query.selected_columns[0].element.value for query in compound.selects] == ["DATA", "free"]
-    statement = str(compound.compile(dialect=mssql.dialect()))
-    assert statement.count("EXISTS") == 6
+    assert await is_dataset_name_taken_async(session, dataset_name="DATA")
+    # The database answers whether the name is taken; no stored spelling comes back to compare in Python.
+    statement = str(session.scalar.call_args.args[0].compile(dialect=mssql.dialect()))
+    assert statement.count("EXISTS") == 3
     assert "[SeedPromptEntries].dataset_name = " in statement
     assert "[PromptGenerationEntries].dataset_name = " in statement
 
@@ -269,8 +265,9 @@ async def test_completed_and_cancelled_generations_release_their_names(sqlite_in
             _generation(dataset_name="paused", status=PromptGenerationStatus.AWAITING_REVIEW),
         ]
     )
-    names = ["done", "stopped", "paused"]
-    assert await sqlite_instance.get_unavailable_dataset_names_async(dataset_names=names) == {"paused"}
+    assert await sqlite_instance.is_dataset_name_available_async(dataset_name="done")
+    assert await sqlite_instance.is_dataset_name_available_async(dataset_name="stopped")
+    assert not await sqlite_instance.is_dataset_name_available_async(dataset_name="paused")
 
 
 async def test_requeue_rechecks_the_name_excluding_its_own_hold(sqlite_instance: SQLiteMemory) -> None:
@@ -294,7 +291,7 @@ async def test_requeue_rechecks_the_name_excluding_its_own_hold(sqlite_instance:
             fields=["status"],
             reserve_dataset_name=True,
         )
-    assert (await sqlite_instance.get_prompt_generations_async(generation_ids=[cancelled.id]))[0] == cancelled
+    assert await sqlite_instance.get_prompt_generation_async(generation_id=cancelled.id) == cancelled
 
 
 async def test_requeue_rejects_a_name_another_generation_took(sqlite_instance: SQLiteMemory) -> None:
@@ -310,15 +307,15 @@ async def test_requeue_rejects_a_name_another_generation_took(sqlite_instance: S
             fields=["status"],
             reserve_dataset_name=True,
         )
-    assert (await sqlite_instance.get_prompt_generations_async(generation_ids=[cancelled.id]))[0] == cancelled
+    assert await sqlite_instance.get_prompt_generation_async(generation_id=cancelled.id) == cancelled
 
 
 async def test_commit_saves_the_dataset_and_completes_the_record_together(sqlite_instance: SQLiteMemory) -> None:
     owner = uuid.uuid4()
-    saving = _generation(status=PromptGenerationStatus.SAVING, execution_id=owner)
-    await sqlite_instance.add_prompt_generations_async(generations=[saving])
+    running = _generation(status=PromptGenerationStatus.RUNNING, execution_id=owner)
+    await sqlite_instance.add_prompt_generations_async(generations=[running])
     completed = _changed(
-        saving, status=PromptGenerationStatus.COMPLETED, execution_id=None, summary={"objective_count": 2}
+        running, status=PromptGenerationStatus.COMPLETED, execution_id=None, summary={"group_count": 2}
     )
     dataset = _dataset("generated", "first", "first")
 
@@ -333,7 +330,7 @@ async def test_commit_saves_the_dataset_and_completes_the_record_together(sqlite
     seeds = await sqlite_instance.get_seeds_async(dataset_name="generated")
     assert [seed.value for seed in seeds] == ["first", "first"]
     assert {seed.added_by for seed in seeds} == {"Ada"}
-    assert await sqlite_instance.get_prompt_generations_async(generation_ids=[saving.id]) == [completed]
+    assert await sqlite_instance.get_prompt_generation_async(generation_id=running.id) == completed
     assert not await sqlite_instance.commit_prompt_generation_dataset_async(
         generation=completed, expected_execution_id=owner, dataset=dataset, added_by="Ada"
     )
@@ -342,28 +339,28 @@ async def test_commit_saves_the_dataset_and_completes_the_record_together(sqlite
 
 async def test_commit_after_a_cancel_saves_nothing(sqlite_instance: SQLiteMemory) -> None:
     owner = uuid.uuid4()
-    saving = _generation(status=PromptGenerationStatus.SAVING, execution_id=owner)
-    await sqlite_instance.add_prompt_generations_async(generations=[saving])
-    cancelled = _changed(saving, status=PromptGenerationStatus.CANCELLED, execution_id=None)
+    running = _generation(status=PromptGenerationStatus.RUNNING, execution_id=owner)
+    await sqlite_instance.add_prompt_generations_async(generations=[running])
+    cancelled = _changed(running, status=PromptGenerationStatus.CANCELLED, execution_id=None)
     assert await sqlite_instance.try_update_prompt_generation_async(
-        generation=cancelled, expected_statuses=[PromptGenerationStatus.SAVING], fields=["status", "execution_id"]
+        generation=cancelled, expected_statuses=[PromptGenerationStatus.RUNNING], fields=["status", "execution_id"]
     )
 
     assert not await sqlite_instance.commit_prompt_generation_dataset_async(
-        generation=_changed(saving, status=PromptGenerationStatus.COMPLETED, execution_id=None),
+        generation=_changed(running, status=PromptGenerationStatus.COMPLETED, execution_id=None),
         expected_execution_id=owner,
         dataset=_dataset("generated", "late"),
         added_by="Ada",
     )
     assert await sqlite_instance.get_seeds_async(dataset_name="generated") == []
-    assert await sqlite_instance.get_prompt_generations_async(generation_ids=[saving.id]) == [cancelled]
+    assert await sqlite_instance.get_prompt_generation_async(generation_id=running.id) == cancelled
 
 
 @pytest.mark.parametrize("holder", ["stored", "staging", "generation"])
 async def test_commit_rolls_back_when_the_name_was_taken(sqlite_instance: SQLiteMemory, holder: str) -> None:
     owner = uuid.uuid4()
-    saving = _generation(status=PromptGenerationStatus.SAVING, execution_id=owner)
-    await sqlite_instance.add_prompt_generations_async(generations=[saving])
+    running = _generation(status=PromptGenerationStatus.RUNNING, execution_id=owner)
+    await sqlite_instance.add_prompt_generations_async(generations=[running])
     if holder == "stored":
         await sqlite_instance.add_seeds_to_memory_async(
             seeds=[SeedObjective(value="someone else's", dataset_name="generated")], added_by="test"
@@ -378,22 +375,22 @@ async def test_commit_rolls_back_when_the_name_was_taken(sqlite_instance: SQLite
 
     with pytest.raises(DatasetNameConflictError):
         await sqlite_instance.commit_prompt_generation_dataset_async(
-            generation=_changed(saving, status=PromptGenerationStatus.COMPLETED, execution_id=None),
+            generation=_changed(running, status=PromptGenerationStatus.COMPLETED, execution_id=None),
             expected_execution_id=owner,
             dataset=_dataset("generated", "mine"),
             added_by="Ada",
         )
     assert "mine" not in {seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="generated")}
-    assert await sqlite_instance.get_prompt_generations_async(generation_ids=[saving.id]) == [saving]
+    assert await sqlite_instance.get_prompt_generation_async(generation_id=running.id) == running
 
 
 async def test_commit_rejects_seeds_from_another_dataset(sqlite_instance: SQLiteMemory) -> None:
     owner = uuid.uuid4()
-    saving = _generation(status=PromptGenerationStatus.SAVING, execution_id=owner)
-    await sqlite_instance.add_prompt_generations_async(generations=[saving])
+    running = _generation(status=PromptGenerationStatus.RUNNING, execution_id=owner)
+    await sqlite_instance.add_prompt_generations_async(generations=[running])
     with pytest.raises(ValueError, match="belong to the generation's dataset"):
         await sqlite_instance.commit_prompt_generation_dataset_async(
-            generation=saving, expected_execution_id=owner, dataset=_dataset("other", "x"), added_by="Ada"
+            generation=running, expected_execution_id=owner, dataset=_dataset("other", "x"), added_by="Ada"
         )
     assert await sqlite_instance.get_seeds_async(dataset_name="other") == []
 

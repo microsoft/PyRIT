@@ -101,7 +101,9 @@ def _record(*, status: PromptGenerationStatus, dataset_name: str = "support_poli
 
 
 async def _read_async(memory: MemoryInterface, record: PromptGenerationRecord) -> PromptGenerationRecord:
-    return (await memory.get_prompt_generations_async(generation_ids=[record.id]))[0]
+    stored = await memory.get_prompt_generation_async(generation_id=record.id)
+    assert stored is not None
+    return stored
 
 
 async def _settle_async(service: PromptGenerationService) -> None:
@@ -449,7 +451,7 @@ async def test_target_objective_generation_async(
 
     record = await service.get_async(str(created.id))
     assert record.status == PromptGenerationStatus.COMPLETED
-    assert record.summary == {"objective_count": 3}
+    assert record.summary is None
     assert record.progress == PromptGenerationProgress(
         completed_stages=["objectives"], items_completed=3, items_total=3
     )
@@ -650,7 +652,7 @@ async def test_shutdown_lets_a_dataset_save_finish_async(
     ):
         created = await generation_service.create_async(request=_assert_request())
         await wait_for_event_async(event=saving, tasks=list(generation_service._tasks.values()))
-        with pytest.raises(PromptGenerationConflictError, match="can't be cancelled"):
+        with pytest.raises(PromptGenerationConflictError, match="saving its dataset, so it can't be cancelled"):
             await generation_service.cancel_async(str(created.id))
         shutdown = asyncio.create_task(generation_service.shutdown_async())
         await asyncio.sleep(0)
@@ -662,28 +664,27 @@ async def test_shutdown_lets_a_dataset_save_finish_async(
     assert len(await sqlite_instance.get_seeds_async(dataset_name="support_policy")) > 0
 
 
-async def test_an_orphaned_saving_generation_can_be_cancelled_then_retried_or_deleted_async(
+async def test_an_orphaned_running_generation_can_be_cancelled_then_retried_or_deleted_async(
     sqlite_instance: SQLiteMemory, service: PromptGenerationService, target: PromptTarget
 ) -> None:
-    # Shared memory skips reconcile, so a backend that stopped while saving leaves the record saving.
+    # Shared memory skips reconcile, so a backend that stopped while running or saving leaves the record running.
     await service.list_async()
     orphans = [
-        _record(status=PromptGenerationStatus.SAVING, dataset_name=name).model_copy(
+        _record(status=PromptGenerationStatus.RUNNING, dataset_name=name).model_copy(
             update={"id": uuid.uuid4(), "execution_id": uuid.uuid4(), "targets": {"generation": TARGET_NAME}}
         )
         for name in ("retried", "deleted")
     ]
     await sqlite_instance.add_prompt_generations_async(generations=orphans)
-    assert await sqlite_instance.get_unavailable_dataset_names_async(dataset_names=["retried", "deleted"]) == {
-        "retried",
-        "deleted",
-    }
+    assert not await sqlite_instance.is_dataset_name_available_async(dataset_name="retried")
+    assert not await sqlite_instance.is_dataset_name_available_async(dataset_name="deleted")
 
     for orphan in orphans:
         cancelled = await service.cancel_async(str(orphan.id))
         assert cancelled.status == PromptGenerationStatus.CANCELLED
         assert cancelled.execution_id is None
-    assert await sqlite_instance.get_unavailable_dataset_names_async(dataset_names=["retried", "deleted"]) == set()
+    assert await sqlite_instance.is_dataset_name_available_async(dataset_name="retried")
+    assert await sqlite_instance.is_dataset_name_available_async(dataset_name="deleted")
 
     await service.delete_async(str(orphans[1].id))
     with pytest.raises(PromptGenerationNotFoundError):
@@ -719,8 +720,10 @@ async def test_cancel_during_another_services_save_makes_its_commit_a_no_op_asyn
         ):
             created = await owner.create_async(request=_assert_request())
             await wait_for_event_async(event=saving, tasks=list(owner._tasks.values()))
-            assert (await _read_async(sqlite_instance, created)).status == PromptGenerationStatus.SAVING
-            with pytest.raises(PromptGenerationConflictError, match="can't be cancelled"):
+            during_save = await _read_async(sqlite_instance, created)
+            assert during_save.status == PromptGenerationStatus.RUNNING
+            assert during_save.execution_id is not None
+            with pytest.raises(PromptGenerationConflictError, match="saving its dataset, so it can't be cancelled"):
                 await owner.cancel_async(str(created.id))
             cancelled = await other.cancel_async(str(created.id))
             assert cancelled.status == PromptGenerationStatus.CANCELLED
@@ -863,15 +866,15 @@ async def test_a_review_saved_while_continue_queues_is_kept_async(
     service: PromptGenerationService, target: PromptTarget, sqlite_instance: SQLiteMemory
 ) -> None:
     edited = "Explains the published 30-day return window."
-    read_generations = sqlite_instance.get_prompt_generations_async
+    read_generation = sqlite_instance.get_prompt_generation_async
     continue_read = asyncio.Event()
     save_done = asyncio.Event()
 
-    async def read_then_wait_for_the_save_async(**kwargs: Any) -> list[PromptGenerationRecord]:
-        records = await read_generations(**kwargs)
+    async def read_then_wait_for_the_save_async(**kwargs: Any) -> PromptGenerationRecord | None:
+        record = await read_generation(**kwargs)
         continue_read.set()
         await save_done.wait()
-        return records
+        return record
 
     with _respond_with(target):
         created = await service.create_async(request=_assert_request(pause_for_review=True))
@@ -888,7 +891,7 @@ async def test_a_review_saved_while_continue_queues_is_kept_async(
         )
 
         with patch.object(
-            sqlite_instance, "get_prompt_generations_async", side_effect=read_then_wait_for_the_save_async
+            sqlite_instance, "get_prompt_generation_async", side_effect=read_then_wait_for_the_save_async
         ):
             queued = asyncio.create_task(service.continue_async(generation_id))
             await wait_for_event_async(event=continue_read, tasks=[queued])

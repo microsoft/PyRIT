@@ -33,16 +33,13 @@ class PromptGenerationStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
     AWAITING_REVIEW = "awaiting_review"
-    SAVING = "saving"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
     INTERRUPTED = "interrupted"
 
 
-ACTIVE_GENERATION_STATUSES = frozenset(
-    {PromptGenerationStatus.QUEUED, PromptGenerationStatus.RUNNING, PromptGenerationStatus.SAVING}
-)
+ACTIVE_GENERATION_STATUSES = frozenset({PromptGenerationStatus.QUEUED, PromptGenerationStatus.RUNNING})
 RETRYABLE_GENERATION_STATUSES = frozenset(
     {PromptGenerationStatus.FAILED, PromptGenerationStatus.CANCELLED, PromptGenerationStatus.INTERRUPTED}
 )

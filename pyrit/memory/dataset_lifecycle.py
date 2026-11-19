@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, unquote, urlparse
 
-from sqlalchemy import Unicode, literal, or_, select, union_all
+from sqlalchemy import literal, or_, select
 from sqlalchemy.util.concurrency import await_only
 
 from pyrit.memory.dataset_upload_lease import try_upload_lease_async
@@ -31,9 +31,8 @@ from pyrit.memory.memory_models import (
 from pyrit.models import DATASET_NAME_RELEASING_STATUSES, MEDIA_PATH_DATA_TYPES
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Collection, Sequence
+    from collections.abc import Awaitable, Callable, Sequence
 
-    from sqlalchemy import Select
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import Session
 
@@ -48,60 +47,42 @@ class DatasetNameConflictError(ValueError):
     """A stored dataset, another import, or an unfinished prompt generation already uses this exact name."""
 
 
-async def find_unavailable_dataset_names_async(
-    session: AsyncSession, *, dataset_names: Collection[str], exclude_generation_id: uuid.UUID | None = None
-) -> set[str]:
+async def is_dataset_name_taken_async(
+    session: AsyncSession, *, dataset_name: str, exclude_generation_id: uuid.UUID | None = None
+) -> bool:
     """
     Apply the create-only dataset name rule shared by uploads and prompt generations.
 
-    A name is unavailable when stored seeds use it, a staging upload reserved it, or a prompt
-    generation whose status doesn't release names holds it. The database decides each match with
-    its own ``=`` comparison, so under a case- or width-insensitive collation, such as SQL Server's
-    default, every variant it treats as equal is unavailable too. Hold ``lock_dataset_lifecycle`` in
-    the same transaction to act on the answer.
+    A name is taken when stored seeds use it, a staging upload reserved it, or a prompt generation
+    whose status doesn't release names holds it. The database decides the match with its own ``=``
+    comparison, so under a case- or width-insensitive collation, such as SQL Server's default, every
+    variant it treats as equal is taken too. Hold ``lock_dataset_lifecycle`` in the same transaction
+    to act on the answer.
 
     Args:
         session (AsyncSession): The session to read with.
-        dataset_names (Collection[str]): The names to check.
+        dataset_name (str): The name to check.
         exclude_generation_id (uuid.UUID | None): A generation whose own hold doesn't count.
 
     Returns:
-        set[str]: The requested names that are unavailable.
-    """
-    requested = sorted(set(dataset_names))
-    unavailable: set[str] = set()
-    # Each name binds four parameters; chunks stay under SQL Server's parameter and SQLite's compound limits.
-    for start in range(0, len(requested), 100):
-        checks = [
-            _dataset_name_taken_check(name=name, exclude_generation_id=exclude_generation_id)
-            for name in requested[start : start + 100]
-        ]
-        unavailable.update((await session.scalars(union_all(*checks) if len(checks) > 1 else checks[0])).all())
-    return unavailable
-
-
-def _dataset_name_taken_check(*, name: str, exclude_generation_id: uuid.UUID | None) -> Select[str]:
-    """
-    Select ``name`` itself when the database finds it taken, so its own comparison decides the match.
-
-    Returns:
-        Select[str]: A one-row select of the requested name, or no rows when it is free.
+        bool: True if the name is taken.
     """
     held = [
-        PromptGenerationEntry.dataset_name == name,
+        PromptGenerationEntry.dataset_name == dataset_name,
         PromptGenerationEntry.status.not_in([status.value for status in DATASET_NAME_RELEASING_STATUSES]),
     ]
     if exclude_generation_id is not None:
         held.append(PromptGenerationEntry.id != exclude_generation_id)
-    return select(literal(name, Unicode).label("dataset_name")).where(
+    taken = select(literal(1)).where(
         or_(
-            select(SeedEntry.id).where(SeedEntry.dataset_name == name).exists(),
+            select(SeedEntry.id).where(SeedEntry.dataset_name == dataset_name).exists(),
             select(DatasetLifecycleEntry.id)
-            .where(DatasetLifecycleEntry.status == "staging", DatasetLifecycleEntry.dataset_name == name)
+            .where(DatasetLifecycleEntry.status == "staging", DatasetLifecycleEntry.dataset_name == dataset_name)
             .exists(),
             select(PromptGenerationEntry.id).where(*held).exists(),
         )
     )
+    return await session.scalar(taken) is not None
 
 
 def media_key(value: str, *, storage: StorageIO | None = None) -> str:
@@ -372,7 +353,7 @@ async def _reserve_upload_async(
     keys = await asyncio.to_thread(lambda: [media_key(path, storage=memory.results_storage_io) for path in paths])
     async with await memory.get_session_async() as session:
         await session.run_sync(lock_dataset_lifecycle)
-        if not mutation and await find_unavailable_dataset_names_async(session, dataset_names=[dataset_name]):
+        if not mutation and await is_dataset_name_taken_async(session, dataset_name=dataset_name):
             raise DatasetNameConflictError("A stored dataset, upload, or prompt generation already uses this name.")
         if mutation:
             # Editing changes an existing dataset, so only another upload's reservation conflicts.

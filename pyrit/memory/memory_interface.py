@@ -18,7 +18,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, NoReturn, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse
 
 from sqlalchemy import (
@@ -346,19 +346,16 @@ def _prompt_generation_filters(
     return filters
 
 
-def _raise_for_taken_dataset_names(names: Collection[str]) -> None:
+def _raise_dataset_name_taken(dataset_name: str) -> NoReturn:
     """
-    Reject dataset names that the shared create-only name rule reports as taken.
+    Reject a dataset name that the shared create-only name rule reports as taken.
 
     Raises:
-        DatasetNameConflictError: If any name is taken.
+        DatasetNameConflictError: Always.
     """
     from pyrit.memory.dataset_lifecycle import DatasetNameConflictError
 
-    if names:
-        raise DatasetNameConflictError(
-            " ".join(f"A dataset or generation named '{name}' already exists." for name in sorted(names))
-        )
+    raise DatasetNameConflictError(f"A dataset or generation named '{dataset_name}' already exists.")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1072,79 +1069,68 @@ class MemoryInterface(abc.ABC):
             DatasetNameConflictError: If a dataset name is used by stored seeds, a staging upload, another
                 unfinished generation, or an earlier member of the batch. Nothing is saved.
         """
-        from pyrit.memory.dataset_lifecycle import find_unavailable_dataset_names_async, lock_dataset_lifecycle
+        from pyrit.memory.dataset_lifecycle import is_dataset_name_taken_async, lock_dataset_lifecycle
 
         entries = [PromptGenerationEntry(generation) for generation in generations]
-        taken: set[str] = set()
         async with await self.get_session_async() as session:
             await session.run_sync(lock_dataset_lifecycle)
             for generation, entry in zip(generations, entries, strict=True):
-                if generation.status not in DATASET_NAME_RELEASING_STATUSES:
-                    taken |= await find_unavailable_dataset_names_async(
-                        session, dataset_names=[generation.dataset_name]
-                    )
+                if generation.status not in DATASET_NAME_RELEASING_STATUSES and await is_dataset_name_taken_async(
+                    session, dataset_name=generation.dataset_name
+                ):
+                    await session.rollback()
+                    _raise_dataset_name_taken(generation.dataset_name)
                 session.add(entry)
                 await session.flush()
-            if taken:
-                await session.rollback()
-                _raise_for_taken_dataset_names(taken)
             await session.commit()
 
-    async def get_prompt_generations_async(
-        self, *, generation_ids: Sequence[uuid.UUID] | None = None
-    ) -> list[PromptGenerationRecord]:
+    async def get_prompt_generations_async(self) -> list[PromptGenerationRecord]:
         """
-        Read prompt generations, newest first.
+        Read every prompt generation, newest first.
 
         Generations created at the same time, such as the members of one batch, keep their batch order:
         by batch position, first member first, and then by ID.
 
-        Args:
-            generation_ids (Sequence[uuid.UUID] | None): Only these generations. Defaults to all.
-
         Returns:
-            list[PromptGenerationRecord]: The matching generations.
+            list[PromptGenerationRecord]: The generations.
         """
         statement = select(PromptGenerationEntry).order_by(
             PromptGenerationEntry.created_at.desc(), PromptGenerationEntry.group_index, PromptGenerationEntry.id
         )
         async with await self.get_session_async() as session:
-            if generation_ids is None:
-                entries = list((await session.scalars(statement)).all())
-            else:
-                requested = list(dict.fromkeys(generation_ids))
-                entries = []
-                # Chunk for SQL Server's parameter limit.
-                for start in range(0, len(requested), 500):
-                    chunk = statement.where(PromptGenerationEntry.id.in_(requested[start : start + 500]))
-                    entries.extend((await session.scalars(chunk)).all())
-                # Stable sorts: newest first, then batch position and ID ascending, as the query orders them.
-                entries.sort(key=lambda entry: (entry.group_index, entry.id))
-                entries.sort(key=lambda entry: entry.created_at, reverse=True)
-            return [entry.get_prompt_generation() for entry in entries]
+            return [entry.get_prompt_generation() for entry in (await session.scalars(statement)).all()]
 
-    async def get_unavailable_dataset_names_async(
-        self, *, dataset_names: Sequence[str], exclude_generation_id: uuid.UUID | None = None
-    ) -> set[str]:
+    async def get_prompt_generation_async(self, *, generation_id: uuid.UUID) -> PromptGenerationRecord | None:
         """
-        Report which dataset names a new dataset can't use, without reserving any.
-
-        A name is unavailable when stored seeds use it, a staging upload reserved it, or an unfinished
-        prompt generation holds it. Uploads and generations enforce the same rule when they reserve a name.
+        Read one prompt generation.
 
         Args:
-            dataset_names (Sequence[str]): The names to check.
-            exclude_generation_id (uuid.UUID | None): A generation whose own hold doesn't count.
+            generation_id (uuid.UUID): The generation to read.
 
         Returns:
-            set[str]: The unavailable names.
+            PromptGenerationRecord | None: The generation, or None if it doesn't exist.
         """
-        from pyrit.memory.dataset_lifecycle import find_unavailable_dataset_names_async
+        async with await self.get_session_async() as session:
+            entry = await session.get(PromptGenerationEntry, generation_id)
+            return entry.get_prompt_generation() if entry is not None else None
+
+    async def is_dataset_name_available_async(self, *, dataset_name: str) -> bool:
+        """
+        Report whether a new dataset can use a name, without reserving it.
+
+        A name is taken when stored seeds use it, a staging upload reserved it, or an unfinished prompt
+        generation holds it. Uploads and generations enforce the same rule when they reserve a name.
+
+        Args:
+            dataset_name (str): The name to check.
+
+        Returns:
+            bool: True if no stored dataset, staging upload, or unfinished generation uses the name.
+        """
+        from pyrit.memory.dataset_lifecycle import is_dataset_name_taken_async
 
         async with await self.get_session_async() as session:
-            return await find_unavailable_dataset_names_async(
-                session, dataset_names=dataset_names, exclude_generation_id=exclude_generation_id
-            )
+            return not await is_dataset_name_taken_async(session, dataset_name=dataset_name)
 
     async def try_update_prompt_generation_async(
         self,
@@ -1180,7 +1166,7 @@ class MemoryInterface(abc.ABC):
             DatasetNameConflictError: If ``reserve_dataset_name`` is set and the name is taken. Nothing changes.
             RuntimeError: If the database does not return a cursor result.
         """
-        from pyrit.memory.dataset_lifecycle import find_unavailable_dataset_names_async, lock_dataset_lifecycle
+        from pyrit.memory.dataset_lifecycle import is_dataset_name_taken_async, lock_dataset_lifecycle
 
         if not expected_statuses:
             raise ValueError("expected_statuses must not be empty")
@@ -1209,13 +1195,15 @@ class MemoryInterface(abc.ABC):
             result = await session.execute(statement)
             if not isinstance(result, CursorResult):
                 raise RuntimeError("Prompt generation update did not return a database cursor result.")
-            if result.rowcount and reserve_dataset_name:
-                taken = await find_unavailable_dataset_names_async(
-                    session, dataset_names=[generation.dataset_name], exclude_generation_id=generation.id
+            if (
+                result.rowcount
+                and reserve_dataset_name
+                and await is_dataset_name_taken_async(
+                    session, dataset_name=generation.dataset_name, exclude_generation_id=generation.id
                 )
-                if taken:
-                    await session.rollback()
-                    _raise_for_taken_dataset_names(taken)
+            ):
+                await session.rollback()
+                _raise_dataset_name_taken(generation.dataset_name)
             await session.commit()
         return bool(result.rowcount)
 
@@ -1235,13 +1223,13 @@ class MemoryInterface(abc.ABC):
 
         Args:
             generation (PromptGenerationRecord): The completed generation to store.
-            expected_execution_id (uuid.UUID): The run attempt that must still own the saving generation.
+            expected_execution_id (uuid.UUID): The run attempt that must still own the running generation.
             dataset (SeedDataset): The dataset to create, named ``generation.dataset_name``.
             added_by (str): Who the seeds are attributed to.
 
         Returns:
             bool: True if the dataset and the generation were saved, False if the generation is missing,
-                isn't saving, or another run attempt owns it. Nothing is saved then.
+                isn't running, or another run attempt owns it. Nothing is saved then.
 
         Raises:
             ValueError: If the dataset is empty or a seed belongs to another dataset.
@@ -1249,7 +1237,7 @@ class MemoryInterface(abc.ABC):
                 dataset name. Nothing is saved.
             RuntimeError: If the database does not return a cursor result.
         """
-        from pyrit.memory.dataset_lifecycle import find_unavailable_dataset_names_async, lock_dataset_lifecycle
+        from pyrit.memory.dataset_lifecycle import is_dataset_name_taken_async, lock_dataset_lifecycle
 
         seeds = (await self.prepare_seed_batch_async(seeds=dataset.seeds, added_by=added_by)).seeds
         if not seeds or any(seed.dataset_name != generation.dataset_name or not seed.value_sha256 for seed in seeds):
@@ -1258,7 +1246,7 @@ class MemoryInterface(abc.ABC):
             )
         filters = _prompt_generation_filters(
             generation_id=generation.id,
-            expected_statuses=[PromptGenerationStatus.SAVING],
+            expected_statuses=[PromptGenerationStatus.RUNNING],
             expected_execution_id=expected_execution_id,
         )
         completion = (
@@ -1276,12 +1264,11 @@ class MemoryInterface(abc.ABC):
             if not result.rowcount:
                 await session.rollback()
                 return False
-            taken = await find_unavailable_dataset_names_async(
-                session, dataset_names=[generation.dataset_name], exclude_generation_id=generation.id
-            )
-            if taken:
+            if await is_dataset_name_taken_async(
+                session, dataset_name=generation.dataset_name, exclude_generation_id=generation.id
+            ):
                 await session.rollback()
-                _raise_for_taken_dataset_names(taken)
+                _raise_dataset_name_taken(generation.dataset_name)
             session.add_all(SeedEntry(entry=seed) for seed in seeds)
             await session.commit()
         return True
