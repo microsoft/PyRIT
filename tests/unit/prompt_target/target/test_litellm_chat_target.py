@@ -38,6 +38,8 @@ from pyrit.models import (
     ScoringExpectation,
     ToolCallRequirement,
     ToolExecutionMetadata,
+    ToolLoopStop,
+    ToolLoopStopReason,
     ToolsCalled,
     TraceScorable,
 )
@@ -244,9 +246,12 @@ class TestLiteLLMToolLoop:
             await target.send_prompt_async(message=_user_message())
         litellm_stub.acompletion.assert_not_awaited()
 
-    async def test_unserializable_result_preserves_execution_status_async(self, litellm_stub: Any) -> None:
+    async def test_unserializable_result_propagates_after_execution_async(self, litellm_stub: Any) -> None:
+        executions: list[str] = []
+
         @tool
         async def unserializable_async() -> object:
+            executions.append("ran")
             return object()
 
         target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[unserializable_async])
@@ -254,10 +259,27 @@ class TestLiteLLMToolLoop:
             _tool_response(calls=[("a", "unserializable_async", "{}")]),
             _mock_response("Recovered."),
         ]
-        responses = await target.send_prompt_async(message=_user_message())
-        assert "TypeError" in responses[1].get_value()
-        assert ToolExecutionMetadata.from_metadata(metadata=responses[1].get_piece().prompt_metadata).invoked is True
-        assert litellm_stub.acompletion.await_count == 2
+        with pytest.raises(TypeError):
+            await target.send_prompt_async(message=_user_message())
+        assert executions == ["ran"]
+        assert litellm_stub.acompletion.await_count == 1
+
+    async def test_arguments_are_validated_like_openai_response_target_async(self, litellm_stub: Any) -> None:
+        received: list[int] = []
+
+        @tool
+        async def count_async(*, value: int) -> str:
+            received.append(value)
+            return "counted"
+
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[count_async])
+        litellm_stub.acompletion.side_effect = [
+            _tool_response(calls=[("a", "count_async", '{"value":"7"}')]),
+            _mock_response("Done."),
+        ]
+        replies = await target.send_prompt_async(message=_user_message())
+        assert received == [7]
+        assert json.loads(replies[1].get_value())["output"] == "counted"
 
     @pytest.mark.parametrize("max_rounds", [-1, True, 1.5])
     def test_invalid_budget(self, max_rounds: Any) -> None:
@@ -333,6 +355,8 @@ class TestLiteLLMToolLoop:
         assert "max_tool_rounds_exhausted" in output.converted_value
         assert ToolExecutionMetadata.from_metadata(metadata=output.prompt_metadata).invoked is False
         assert litellm_stub.acompletion.await_count == budget + 1
+        stop = ToolLoopStop.from_metadata(metadata=responses[-1].get_piece().prompt_metadata)
+        assert stop.reason == ToolLoopStopReason.MAX_TOOL_ROUNDS_EXHAUSTED
 
     @pytest.mark.parametrize(
         ("name", "arguments"),
@@ -374,6 +398,8 @@ class TestLiteLLMToolLoop:
         assert replies[-1].get_piece().response_error == "processing"
         assert "Invalid tool calls" in replies[-1].get_value()
         assert litellm_stub.acompletion.await_count == 1
+        stop = ToolLoopStop.from_metadata(metadata=replies[-1].get_piece().prompt_metadata)
+        assert stop.reason == ToolLoopStopReason.INVALID_TOOL_CALLS
 
     async def test_reused_id_from_prior_round_does_not_reexecute_async(
         self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]]
@@ -398,26 +424,21 @@ class TestLiteLLMToolLoop:
         assert weather_tool[1] == []
         assert replies[0].get_piece().is_truncated
         assert replies[-1].get_piece().response_error == "processing"
+        stop = ToolLoopStop.from_metadata(metadata=replies[-1].get_piece().prompt_metadata)
+        assert stop.reason == ToolLoopStopReason.INVALID_TOOL_CALLS
 
-    async def test_continuation_failure_retains_persisted_evidence_and_replays_async(
-        self, *, litellm_stub: Any, sqlite_instance: SQLiteMemory, weather_tool: tuple[FunctionTool, list[str]]
+    async def test_continuation_failure_propagates_after_execution_async(
+        self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]]
     ) -> None:
         target = LiteLLMChatTarget(model_name="openai/gpt-4o", underlying_model="gpt-4o", tools=[weather_tool[0]])
         litellm_stub.acompletion.side_effect = [
             _tool_response(calls=[("a", "weather_async", '{"location":"SF"}')]),
             RuntimeError("offline failure"),
-            _mock_response("Recovered."),
         ]
-        normalizer = PromptNormalizer()
-        reply = await normalizer.send_prompt_async(target=target, message=_user_message(), conversation_id="failed")
-        assert reply.get_piece().response_error == "processing"
-        history = await sqlite_instance.get_conversation_messages_async(conversation_id="failed")
-        assert [message.api_role for message in history] == ["user", "assistant", "tool", "assistant"]
-        await normalizer.send_prompt_async(target=target, message=_user_message(), conversation_id="failed")
-        messages = litellm_stub.acompletion.call_args.kwargs["messages"]
-        assert [message["role"] for message in messages] == ["user", "assistant", "tool", "user"]
+        with pytest.raises(Exception, match="offline failure"):
+            await target.send_prompt_async(message=_user_message())
         assert weather_tool[1] == ["SF"]
-        assert litellm_stub.acompletion.await_count == 3
+        assert litellm_stub.acompletion.await_count == 2
 
     @pytest.mark.parametrize("cancel", [False, True])
     async def test_tool_errors_and_cancellation_close_provider_scope_async(
@@ -451,14 +472,10 @@ class TestLiteLLMToolLoop:
             _tool_response(calls=[("a", "failing_async", "{}")]),
             _mock_response("Recovered."),
         ]
-        if cancel:
-            with pytest.raises(asyncio.CancelledError):
-                await target.send_prompt_async(message=_user_message())
-        else:
-            replies = await target.send_prompt_async(message=_user_message())
-            assert "Tool failed." in replies[1].get_value()
-            assert ToolExecutionMetadata.from_metadata(metadata=replies[1].get_piece().prompt_metadata).invoked is True
+        with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
+            await target.send_prompt_async(message=_user_message())
         assert events == ["open", "close"]
+        assert litellm_stub.acompletion.await_count == 1
 
     @pytest.mark.parametrize("target_class", [LiteLLMChatTarget, ClaudeChatTarget])
     @pytest.mark.parametrize("failure_index", [0, 1, 2])
@@ -505,7 +522,9 @@ class TestLiteLLMToolLoop:
             target=target, message=_user_message(), conversation_id="infrastructure-failure"
         )
         assert reply.get_piece().response_error == "processing"
-        assert "infrastructure" in reply.get_value().lower()
+        assert "Sandbox unavailable." in reply.get_value()
+        stop = ToolLoopStop.from_metadata(metadata=reply.get_piece().prompt_metadata)
+        assert stop.reason == ToolLoopStopReason.TOOL_INFRASTRUCTURE_ERROR
         assert litellm_stub.acompletion.await_count == 1
         assert executions == list(range(failure_index + 1))
         assert events == ["open", "close"]
@@ -517,8 +536,9 @@ class TestLiteLLMToolLoop:
             ToolExecutionMetadata.from_metadata(metadata=message.get_piece().prompt_metadata).invoked
             for message in outputs
         ] == [index < failure_index or (index == failure_index and failure_invoked) for index in range(3)]
-        for message in outputs[failure_index:]:
-            assert json.loads(json.loads(message.get_value())["output"]) == {"error": "tool_infrastructure_error"}
+        errors = [json.loads(json.loads(message.get_value())["output"])["error"] for message in outputs[failure_index:]]
+        assert errors == ["tool_infrastructure_error"] + ["tool_not_executed"] * (2 - failure_index)
+        assert "Sandbox" not in outputs[failure_index].get_value()
         target.validate_tool_history(history)
 
     async def test_execution_opt_out_advertises_but_returns_calls_async(

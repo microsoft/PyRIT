@@ -72,32 +72,35 @@ function's typed keyword parameters. Automatic execution requires `n=1`.
 executing them. Declaring wire tools only through `extra_body_parameters` does
 not install executable implementations.
 
-The inherited LiteLLM loop handles multiple calls per completion and multiple
-rounds. `max_tool_rounds` defaults to 10; zero advertises tools without executing
+Tools run through the same bounded loop as `OpenAIResponseTarget`, so a tool
+behaves identically on both targets. The loop handles multiple calls per
+completion and multiple rounds. `max_tool_rounds` defaults to 10; zero advertises tools without executing
 a returned batch. Each round counts one completion with user-tool calls, not
 each individual call or the terminal JSON formatter.
 
 For unconstrained JSON-object requests, the target advertises a reserved internal
 formatting tool, `pyrit_claude_json_output`, and converts its arguments to response
-text. It is never locally executed or counted against the tool budget. With user
+text, without validating it; parse the reply as you would any target's JSON.
+It is never locally executed or counted against the tool budget. With user
 tools present, Anthropic can choose those tools before formatting the final answer.
 Explicit JSON schemas use the shared configuration/normalization path and
 LiteLLM's Anthropic adaptation. Never register the reserved formatter as a user tool.
 
-Unknown tools, invalid arguments, and execution/serialization failures produce
-matching tool-result error payloads. Reused/missing call IDs and truncated calls
-stop execution with an explicit processing-error response. Calls beyond the
-round budget receive unexecuted error results and a terminal processing error.
-Continuation failures retain completed calls/results plus an error response;
-the entire send is not retried, so completed side effects are not repeated.
-Tools can raise `ToolInfrastructureError` (exported from `pyrit.prompt_target`)
+Unknown tools and malformed or invalid arguments produce tool-result error
+payloads so the model can correct the call. Exceptions raised by a tool, an
+unserializable result, and a failed continuation request propagate to the
+caller, as with `OpenAIResponseTarget`. Reused/missing call IDs and truncated
+calls stop execution with an explicit processing-error response. Calls beyond
+the round budget receive unexecuted error results and a terminal processing
+error. Every such early stop records its reason as `ToolLoopStop` metadata on
+the error response. Tools can raise `ToolInfrastructureError` (exported from `pyrit.prompt_target`)
 when their own infrastructure fails or the execution outcome is unknown.
 This stops the turn without another model request. The failing call receives
 an error result marked as invoked unless the tool explicitly reports
 `ToolInfrastructureError(..., invoked=False)` because nothing ran; remaining calls receive uninvoked error
 results, followed by a terminal processing-error response. Earlier successful
-results remain in history. Ordinary tool/argument errors still go back to
-the model so it can recover.
+results remain in history. Argument errors still go back to the model so it
+can recover.
 Cancellation propagates and scoped provider resources are closed.
 
 Targets return all interaction messages; `PromptNormalizer` persists them in

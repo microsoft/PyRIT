@@ -356,17 +356,19 @@ class TestClaudeChatTarget:
         assert "tools" not in body
 
     @pytest.mark.parametrize("value", ["not JSON", "[]"])
-    async def test_json_final_response_must_be_an_object_async(self, *, claude_sdk: Any, value: str) -> None:
+    async def test_json_final_response_is_returned_for_the_caller_to_validate_async(
+        self, *, claude_sdk: Any, value: str
+    ) -> None:
         target = ClaudeChatTarget(model_name="claude-sonnet-4-6")
         claude_sdk.acompletion.return_value = _mock_response(content=value)
-        with pytest.raises(ValueError):
-            await target.send_prompt_async(
-                message=MessagePiece(
-                    role="user",
-                    original_value="Return JSON.",
-                    prompt_metadata=JsonResponseConfig(enabled=True).to_metadata(),
-                ).to_message()
-            )
+        replies = await target.send_prompt_async(
+            message=MessagePiece(
+                role="user",
+                original_value="Return JSON.",
+                prompt_metadata=JsonResponseConfig(enabled=True).to_metadata(),
+            ).to_message()
+        )
+        assert replies[-1].get_value() == value
 
     def test_formatter_name_is_reserved(self) -> None:
         @tool

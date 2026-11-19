@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import json
-import os
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
@@ -20,17 +18,8 @@ from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
 class ClaudeChatTarget(LiteLLMChatTarget):
     """Use Claude through LiteLLM's native Anthropic Messages adapter."""
 
-    _CREDENTIAL_HEADERS = frozenset(
-        {
-            "authorization",
-            "proxy-authorization",
-            "x-api-key",
-            "api-key",
-            "ocp-apim-subscription-key",
-            "cookie",
-            "set-cookie",
-        }
-    )
+    _API_KEY_ENVIRONMENT_VARIABLE = "ANTHROPIC_API_KEY"
+    _ENDPOINT_ENVIRONMENT_VARIABLE = None
     _JSON_OUTPUT_TOOL_NAME = "pyrit_claude_json_output"
 
     @forward_init_parameters
@@ -77,20 +66,17 @@ class ClaudeChatTarget(LiteLLMChatTarget):
         super().__init__(
             model_name=routed_model,
             underlying_model=raw_model,
-            api_key=api_key if api_key is not None else os.environ.get("ANTHROPIC_API_KEY", ""),
+            api_key=api_key,
             headers=dict(headers) if headers is not None else None,
             endpoint=endpoint,
             custom_configuration=custom_configuration,
             **kwargs,
         )
-        self._endpoint = endpoint
 
     def _build_identifier(self) -> ComponentIdentifier:
-        params = super()._build_identifier().params
-        params["headers"] = {
-            name: value for name, value in (self._headers or {}).items() if name.lower() not in self._CREDENTIAL_HEADERS
-        } or None
-        return self._create_identifier(params=params)
+        return self._create_identifier(
+            params={**super()._build_identifier().params, "headers": self._identifier_headers()}
+        )
 
     def _validate_tool_definitions(self, tools: Sequence[Tool]) -> None:
         super()._validate_tool_definitions(tools)
@@ -140,17 +126,17 @@ class ClaudeChatTarget(LiteLLMChatTarget):
             piece.is_truncated or piece.response_error != "none" for piece in message.message_pieces
         ):
             return message
+        # The formatting call carries the JSON answer; return it as text, unvalidated, so the
+        # caller validates it as it does other targets' JSON replies.
         formatting: list[MessagePiece] = []
         remaining: list[MessagePiece] = []
         for piece in message.message_pieces:
-            payload = json.loads(piece.converted_value) if piece.converted_value_data_type == "function_call" else {}
-            if payload.get("function", {}).get("name") == self._JSON_OUTPUT_TOOL_NAME:
-                call = parse_function_call(piece)
-                if not isinstance(call.function, FunctionCall):
-                    raise ValueError("Claude JSON formatting requires structured function arguments.")
-                value = json.loads(call.function.arguments)
-                if not isinstance(value, dict):
-                    raise ValueError("Claude JSON formatting output must be a JSON object.")
+            call = parse_function_call(piece) if piece.converted_value_data_type == "function_call" else None
+            if (
+                call is not None
+                and isinstance(call.function, FunctionCall)
+                and call.function.name == self._JSON_OUTPUT_TOOL_NAME
+            ):
                 formatting.extend(
                     construct_response_from_request(
                         request=request, response_text_pieces=[call.function.arguments], response_type="text"
@@ -158,15 +144,11 @@ class ClaudeChatTarget(LiteLLMChatTarget):
                 )
             else:
                 remaining.append(piece)
-        if formatting:
-            cost = message.message_pieces[0].prompt_metadata.get("token_usage_cost")
-            pieces = [*formatting, *remaining]
-            capture_usage_and_finish_reason(pieces=pieces, response=response)
-            if cost is not None:
-                pieces[0].prompt_metadata["token_usage_cost"] = cost
-            return Message(message_pieces=pieces)
-        if not any(piece.converted_value_data_type == "function_call" for piece in remaining):
-            value = json.loads(message.get_value())
-            if not isinstance(value, dict):
-                raise ValueError("Claude JSON output must be a JSON object.")
-        return message
+        if not formatting:
+            return message
+        cost = message.message_pieces[0].prompt_metadata.get("token_usage_cost")
+        pieces = [*formatting, *remaining]
+        capture_usage_and_finish_reason(pieces=pieces, response=response)
+        if cost is not None:
+            pieces[0].prompt_metadata["token_usage_cost"] = cost
+        return Message(message_pieces=pieces)

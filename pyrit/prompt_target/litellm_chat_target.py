@@ -10,8 +10,6 @@ from contextlib import AsyncExitStack
 from types import MappingProxyType
 from typing import Any, ClassVar, NoReturn, cast
 
-import jsonschema
-
 from pyrit.auth import ensure_async_token_provider
 from pyrit.exceptions import (
     EmptyResponseException,
@@ -26,9 +24,6 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
-    ToolCall,
-    ToolExecutionMetadata,
-    construct_response_from_request,
 )
 from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.chat_completions_message_builder import (
@@ -56,9 +51,15 @@ from pyrit.prompt_target.common.target_capabilities import (
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES, parse_function_call
+from pyrit.prompt_target.common.tool_loop import (
+    InvalidToolCallsError,
+    PendingToolCall,
+    ToolFunction,
+    dispatch_tool_call_async,
+    run_tool_loop_async,
+)
 from pyrit.prompt_target.common.tool_provider import (
     Tool,
-    ToolInfrastructureError,
     ToolProvider,
     _ScopedToolProvider,
     collect_tools_async,
@@ -226,6 +227,23 @@ class LiteLLMChatTarget(PromptTarget):
 
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
 
+    # Environment variables read when ``api_key`` or ``endpoint`` is omitted. Subclasses that pin a
+    # provider override these; None skips the lookup and leaves it to LiteLLM.
+    _API_KEY_ENVIRONMENT_VARIABLE: ClassVar[str | None] = "LITELLM_API_KEY"
+    _ENDPOINT_ENVIRONMENT_VARIABLE: ClassVar[str | None] = "LITELLM_ENDPOINT"
+    # Header names, compared case-insensitively, that identifiers never record.
+    _CREDENTIAL_HEADERS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "authorization",
+            "proxy-authorization",
+            "x-api-key",
+            "api-key",
+            "ocp-apim-subscription-key",
+            "cookie",
+            "set-cookie",
+        }
+    )
+
     # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
     # model metadata at construction time (see ``_derive_capabilities_from_litellm``).
     _SUPPORTS_TOOL_CALL_HISTORY = True
@@ -300,14 +318,15 @@ class LiteLLMChatTarget(PromptTarget):
             trace_config=trace_config,
         )
 
-        # Resolve api_key: explicit value/callable > LITELLM_API_KEY env var > None (LiteLLM
+        # Resolve api_key: explicit value/callable > _API_KEY_ENVIRONMENT_VARIABLE > None (LiteLLM
         # then reads provider-specific env vars itself). ``ensure_async_token_provider`` wraps a
         # sync token provider so we can uniformly await it at request time.
-        if api_key is None:
-            api_key = os.environ.get("LITELLM_API_KEY")
+        if api_key is None and self._API_KEY_ENVIRONMENT_VARIABLE:
+            api_key = os.environ.get(self._API_KEY_ENVIRONMENT_VARIABLE)
         self._api_key = ensure_async_token_provider(api_key)
 
-        self._endpoint = endpoint or os.environ.get("LITELLM_ENDPOINT")
+        endpoint_variable = self._ENDPOINT_ENVIRONMENT_VARIABLE
+        self._endpoint = endpoint or (os.environ.get(endpoint_variable) if endpoint_variable else None)
         self._headers = headers
         self._temperature = temperature
         self._top_p = top_p
@@ -444,6 +463,17 @@ class LiteLLMChatTarget(PromptTarget):
             },
         )
 
+    def _identifier_headers(self) -> dict[str, str] | None:
+        """
+        Return the configured headers without credentials, for identifiers that record headers.
+
+        Returns:
+            dict[str, str] | None: The non-credential headers, or None when there are none.
+        """
+        return {
+            name: value for name, value in (self._headers or {}).items() if name.lower() not in self._CREDENTIAL_HEADERS
+        } or None
+
     def is_json_response_supported(self) -> bool:
         """
         Whether this target honors a JSON ``response_format`` request.
@@ -466,7 +496,31 @@ class LiteLLMChatTarget(PromptTarget):
                 else await collect_tools_async(tools=self._direct_tools, providers=self._tool_providers)
             )
             self._validate_tool_definitions(tools)
-            return await self._run_tool_loop_async(conversation=normalized_conversation, tools=tools)
+            request = normalized_conversation[-1]
+            if not tools or not self._execute_tools:
+                return await self._send_completion_async(
+                    conversation=normalized_conversation, request=request, tools=tools
+                )
+
+            async def send_async(conversation: Sequence[Message]) -> Message:
+                [reply] = await self._send_completion_async(
+                    conversation=list(conversation), request=request, tools=tools
+                )
+                return reply
+
+            async def resolve_tools_async() -> tuple[Sequence[Tool], Mapping[str, ToolFunction]]:
+                return tools, {}
+
+            return await run_tool_loop_async(
+                conversation=normalized_conversation,
+                request_piece=request.message_pieces[0],
+                send_async=send_async,
+                find_calls=self._tool_call_finder(normalized_conversation),
+                dispatch_async=lambda call: dispatch_tool_call_async(
+                    call=call, resolve_tools_async=resolve_tools_async
+                ),
+                max_tool_rounds=self._max_tool_rounds,
+            )
 
     @staticmethod
     def _tool_definition(tool: Tool) -> dict[str, Any]:
@@ -489,129 +543,51 @@ class LiteLLMChatTarget(PromptTarget):
         if conflicts:
             raise ValueError(f"Tools conflict with extra_body_parameters declarations: {sorted(conflicts)}")
 
-    async def _run_tool_loop_async(self, *, conversation: list[Message], tools: Sequence[Tool]) -> list[Message]:
-        request = conversation[-1]
-        working = list(conversation)
-        responses: list[Message] = []
-        registered = {tool.name: tool for tool in tools}
+    @staticmethod
+    def _tool_call_finder(conversation: Sequence[Message]) -> Callable[[Message], list[PendingToolCall]]:
+        """
+        Build the shared tool loop's call reader, rejecting calls whose IDs would corrupt history.
+
+        Args:
+            conversation: The conversation being sent, whose call IDs cannot be reused.
+
+        Returns:
+            A function returning a response's calls in order, or raising ``InvalidToolCallsError``.
+        """
         seen_ids = {
             parse_function_call(piece).id
             for message in conversation
             for piece in message.message_pieces
             if piece.converted_value_data_type == "function_call"
         }
-        rounds = 0
-        while True:
-            try:
-                result = await self._send_completion_async(conversation=working, request=request, tools=tools)
-            except Exception as exc:
-                if not responses:
-                    raise
-                logger.exception("LiteLLM tool continuation failed; retaining completed tool evidence.")
-                responses.append(self._tool_loop_error(request=request, detail=f"Tool continuation failed: {exc}"))
-                return responses
-            responses.extend(result)
-            reply = result[-1]
+
+        def find_calls(reply: Message) -> list[PendingToolCall]:
             call_pieces = [
                 piece for piece in reply.message_pieces if piece.converted_value_data_type == "function_call"
             ]
-            if not call_pieces or not registered or not self._execute_tools:
-                return responses
+            if not call_pieces:
+                return []
             if any(piece.is_truncated or piece.response_error != "none" for piece in reply.message_pieces):
-                for piece in reply.message_pieces:
-                    piece.response_error = "processing"
-                responses.append(
-                    self._tool_loop_error(request=request, detail="Truncated or failed tool calls were not executed.")
-                )
-                return responses
+                raise InvalidToolCallsError("Truncated or failed tool calls were not executed.")
             try:
                 calls = [parse_function_call(piece) for piece in call_pieces]
-                ids = [call.id for call in calls]
-                if len(set(ids)) != len(ids) or seen_ids.intersection(ids):
-                    raise ValueError("Duplicate or reused tool call ID.")
             except ValueError as exc:
-                for piece in reply.message_pieces:
-                    piece.response_error = "processing"
-                responses.append(self._tool_loop_error(request=request, detail=f"Invalid tool calls: {exc}"))
-                return responses
+                raise InvalidToolCallsError(f"Invalid tool calls: {exc}") from exc
+            ids = [call.id for call in calls]
+            if len(set(ids)) != len(ids) or seen_ids.intersection(ids):
+                raise InvalidToolCallsError("Invalid tool calls: Duplicate or reused tool call ID.")
             seen_ids.update(ids)
-            working.extend(result)
-            exhausted = rounds >= self._max_tool_rounds
-            for index, call in enumerate(calls):
-                try:
-                    output = (
-                        self._tool_result(
-                            request=request, call=call, output={"error": "max_tool_rounds_exhausted"}, invoked=False
-                        )
-                        if exhausted
-                        else await self._execute_tool_async(request=request, call=call, registered=registered)
-                    )
-                except ToolInfrastructureError as exc:
-                    for offset, pending_call in enumerate(calls[index:]):
-                        responses.append(
-                            self._tool_result(
-                                request=request,
-                                call=pending_call,
-                                output={"error": "tool_infrastructure_error"},
-                                invoked=offset == 0 and exc.invoked,
-                            )
-                        )
-                    responses.append(
-                        self._tool_loop_error(request=request, detail=f"Tool infrastructure failed: {exc}")
-                    )
-                    return responses
-                responses.append(output)
-                working.append(output)
-            if exhausted:
-                responses.append(
-                    self._tool_loop_error(request=request, detail=f"max_tool_rounds={self._max_tool_rounds} exhausted.")
+            return [
+                PendingToolCall(
+                    call_id=call.id,
+                    name=call.function.name if isinstance(call.function, FunctionCall) else None,
+                    arguments=call.function.arguments if isinstance(call.function, FunctionCall) else call.function,
+                    section=json.loads(piece.converted_value),
                 )
-                return responses
-            rounds += 1
+                for call, piece in zip(calls, call_pieces, strict=True)
+            ]
 
-    @staticmethod
-    def _tool_loop_error(*, request: Message, detail: str) -> Message:
-        logger.error(detail)
-        return construct_response_from_request(
-            request=request.message_pieces[0], response_text_pieces=[detail], response_type="error", error="processing"
-        )
-
-    async def _execute_tool_async(self, *, request: Message, call: ToolCall, registered: Mapping[str, Tool]) -> Message:
-        invoked = False
-        try:
-            if not isinstance(call.function, FunctionCall):
-                raise ValueError("Tool calls require structured function arguments.")
-            configured = registered.get(call.function.name)
-            if configured is None:
-                raise ValueError(f"Unknown tool: {call.function.name}")
-            arguments = json.loads(call.function.arguments)
-            if not isinstance(arguments, dict):
-                raise ValueError("Tool arguments must be a JSON object.")
-            jsonschema.validate(instance=arguments, schema=configured.parameters)
-            configured.validate_arguments(arguments=arguments)
-            invoked = True
-            output = await configured.execute_async(arguments=arguments)
-            # Validate serialization here so a completed side effect is never lost or repeated.
-            if not isinstance(output, str):
-                output = json.dumps(output, allow_nan=False)
-        except ToolInfrastructureError:
-            raise
-        except Exception as exc:
-            logger.exception("Tool call %s failed.", call.id)
-            output = json.dumps({"error": type(exc).__name__, "message": str(exc)})
-        return self._tool_result(request=request, call=call, output=output, invoked=invoked)
-
-    @staticmethod
-    def _tool_result(*, request: Message, call: ToolCall, output: object, invoked: bool) -> Message:
-        return MessagePiece(
-            role="tool",
-            conversation_id=request.message_pieces[0].conversation_id,
-            original_value_data_type="function_call_output",
-            original_value=json.dumps(
-                {"call_id": call.id, "output": output if isinstance(output, str) else json.dumps(output)}
-            ),
-            prompt_metadata=ToolExecutionMetadata(invoked=invoked).to_metadata(),
-        ).to_message()
+        return find_calls
 
     @limit_requests_per_minute
     async def _send_completion_async(
