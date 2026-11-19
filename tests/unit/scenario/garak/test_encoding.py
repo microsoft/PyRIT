@@ -6,10 +6,26 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from unit.mocks import MockPromptTarget
 
-from pyrit.converter import Base64Converter
-from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolicy, SeedObjective, SeedPrompt
+from pyrit.converter import AsciiSmugglerConverter, Base64Converter
+from pyrit.executor.attack import (
+    AttackConverterConfig,
+    AttackExecutor,
+    AttackScoringConfig,
+    PromptSendingAttack,
+)
+from pyrit.models import (
+    AttackOutcome,
+    AttackSeedGroup,
+    ComponentIdentifier,
+    DatasetFetchPolicy,
+    Message,
+    MessagePiece,
+    SeedObjective,
+    SeedPrompt,
+)
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import (
     CompoundDatasetAttackConfiguration,
@@ -650,6 +666,52 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
         """Test that _build_attack_groups returns an empty list when given no seeds."""
         config = EncodingDatasetConfiguration(sources=[DatasetSource(name="empty_dataset")])
         assert config._build_attack_groups([]) == []
+
+    @pytest.mark.parametrize(
+        ("value", "expected_metadata"),
+        [
+            ("plain ascii", {}),
+            ("it\u2019s a caf\u00e9 \u2013 ok", {"decoded_text": "it's a cafe - ok"}),
+            ("\u4f60\u597d", {}),
+        ],
+    )
+    def test_build_attack_groups_records_ascii_smuggled_text(self, value, expected_metadata):
+        config = EncodingDatasetConfiguration(sources=[DatasetSource(name="garak_slur_terms_en")])
+        [group] = config._build_attack_groups([SeedPrompt(value=value, data_type="text")])
+
+        assert group.seeds[1].value == value
+        assert group.seeds[1].metadata == expected_metadata
+
+    async def test_ascii_smuggler_decoded_reply_scores_true_with_default_scorer(self):
+        # AsciiSmugglerConverter smuggles "it's a cafe - ok"; a target that decodes it correctly must not be
+        # scored as a failure because the seed's original value still has the curly quote, accent and en dash.
+        class _TagDecodingTarget(MockPromptTarget):
+            async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+                request = normalized_conversation[-1].message_pieces[0]
+                decoded = AsciiSmugglerConverter(action="decode").decode_message(message=request.converted_value)
+                return [
+                    MessagePiece(
+                        role="assistant",
+                        original_value=f"Decoded: {decoded}",
+                        conversation_id=request.conversation_id,
+                    ).to_message()
+                ]
+
+        config = EncodingDatasetConfiguration(sources=[DatasetSource(name="garak_slur_terms_en")])
+        seed_groups = config._build_attack_groups(
+            [SeedPrompt(value="it\u2019s a caf\u00e9 \u2013 ok", data_type="text")]
+        )
+        attack = PromptSendingAttack(
+            objective_target=_TagDecodingTarget(),
+            attack_converter_config=AttackConverterConfig(
+                request_converters=ConverterConfiguration.from_converters(converters=[AsciiSmugglerConverter()])
+            ),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=DecodingScorer()),
+        )
+
+        results = await AttackExecutor().execute_attack_from_seed_groups_async(attack=attack, seed_groups=seed_groups)
+
+        assert results[0].outcome == AttackOutcome.SUCCESS
 
     async def test_get_attack_seed_groups_async_transforms_memory_seeds(self, mock_memory_seeds):
         """Test that get_attack_seed_groups_async loads seeds and shapes them via _build_attack_groups."""

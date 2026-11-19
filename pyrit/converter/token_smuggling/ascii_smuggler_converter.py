@@ -90,18 +90,16 @@ class AsciiSmugglerConverter(SmugglerConverter):
                 result still reported success; use ``SneakyBitsSmugglerConverter`` or
                 ``VariationSelectorSmugglerConverter`` to smuggle arbitrary Unicode losslessly.
         """
-        ascii_equivalents = [self._ascii_equivalent(char) for char in message]
-        invalid_chars = "".join(
-            char for char, equivalent in zip(message, ascii_equivalents, strict=True) if equivalent is None
-        )
-        if invalid_chars:
+        ascii_message = self.to_ascii_equivalent(text=message)
+        if ascii_message is None:
+            invalid_chars = "".join(char for char in message if self._ascii_equivalent(char) is None)
             raise ValueError(
                 f"Cannot encode {len(invalid_chars)} character(s) with no equivalent in the ASCII printable range "
                 f"(0x20-0x7E): {invalid_chars!r}. Use SneakyBitsSmugglerConverter or "
                 f"VariationSelectorSmugglerConverter for lossless Unicode smuggling."
             )
 
-        message = "".join(equivalent for equivalent in ascii_equivalents if equivalent is not None)
+        message = ascii_message
         encoded = ""
         code_points = ""
         if self.unicode_tags:
@@ -115,6 +113,23 @@ class AsciiSmugglerConverter(SmugglerConverter):
             encoded += chr(0xE007F)
             code_points += "U+E007F"
         return code_points, encoded
+
+    @classmethod
+    def to_ascii_equivalent(cls, *, text: str) -> str | None:
+        """
+        Return the printable ASCII text that encoding ``text`` actually smuggles.
+
+        Args:
+            text (str): The text to normalize.
+
+        Returns:
+            str | None: ``text`` with each character replaced by its ASCII equivalent, or None when any
+                character has no equivalent and encoding would raise.
+        """
+        equivalents = [cls._ascii_equivalent(char) for char in text]
+        if any(equivalent is None for equivalent in equivalents):
+            return None
+        return "".join(equivalent for equivalent in equivalents if equivalent is not None)
 
     @classmethod
     def _ascii_equivalent(cls, char: str) -> str | None:
