@@ -2018,22 +2018,14 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         lookup.assert_not_awaited()
         sample.assert_not_called()
 
-    @pytest.mark.parametrize("restores_state", [False, True])
-    async def test_overriding_resolution_runs_on_resume_only_when_restoring_state(
-        self, mock_objective_target, restores_state: bool
-    ) -> None:
-        received: list[dict[str, list[AttackSeedGroup]]] = []
+    class _OverridingScenario(_StrategyScenario):
+        async def _resolve_seed_groups_by_dataset_async(self, *, apply_sampling: bool = True):
+            return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
 
-        class _OverridingScenario(self._StrategyScenario):
-            async def _resolve_seed_groups_by_dataset_async(self, *, apply_sampling: bool = True):
-                return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
-
-        class _StatefulScenario(_OverridingScenario):
-            async def _prepare_resume_state_async(self, *, seed_groups_by_dataset):
-                received.append(seed_groups_by_dataset)
-                await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
-
-        scenario_class = _StatefulScenario if restores_state else _OverridingScenario
+    async def _plan_then_delete_dataset_async(
+        self, *, scenario_class: type[Scenario], mock_objective_target: PromptTarget
+    ) -> tuple[Scenario, Scenario]:
+        """Plan a run over the ``owned`` dataset, delete that dataset, and return the run and its resume."""
         memory = CentralMemory.get_memory_instance()
         await memory.add_seeds_to_memory_async(
             seeds=[SeedObjective(value=f"objective-{index}", dataset_name="owned") for index in range(2)],
@@ -2043,15 +2035,30 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         original = scenario_class(name="Overriding", version=1)
         original.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
         await original.initialize_async()
-        original_plan = original._build_run_plan()
         await memory.remove_seeds_from_memory_async(dataset_name="owned")
         resumed = scenario_class(name="Overriding", version=1, scenario_result_id=original._scenario_result_id)
         resumed.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
-        if not restores_state:
-            # An override that only selects seeds is not rerun, so the deleted dataset doesn't matter.
-            await resumed.initialize_async()
-            assert resumed._build_run_plan() == original_plan
-            return
+        return original, resumed
+
+    async def test_overriding_resolution_is_not_rerun_on_resume(self, mock_objective_target) -> None:
+        # An override that only selects seeds sets no state, so the deleted dataset doesn't matter.
+        original, resumed = await self._plan_then_delete_dataset_async(
+            scenario_class=self._OverridingScenario, mock_objective_target=mock_objective_target
+        )
+        await resumed.initialize_async()
+        assert resumed._build_run_plan() == original._build_run_plan()
+
+    async def test_resume_state_hook_gets_stored_groups_and_names_deleted_datasets(self, mock_objective_target) -> None:
+        received: list[dict[str, list[AttackSeedGroup]]] = []
+
+        class _StatefulScenario(self._OverridingScenario):
+            async def _prepare_resume_state_async(self, *, seed_groups_by_dataset):
+                received.append(seed_groups_by_dataset)
+                await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+
+        _, resumed = await self._plan_then_delete_dataset_async(
+            scenario_class=_StatefulScenario, mock_objective_target=mock_objective_target
+        )
         with pytest.raises(ValueError, match=r"dataset\(s\) 'owned' are no longer in memory") as error:
             await resumed.initialize_async()
         assert isinstance(error.value.__cause__, DatasetConstraintError)

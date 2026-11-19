@@ -209,9 +209,9 @@ Options:
 - Resume replays the saved launch request with the seed groups stored when the run was planned;
   later changes to the population do not change the stored seed content. Referenced media files
   must still be available. Dataset names are checked by the stored identity.
-- Resume never prepares, resolves, or resamples datasets. If your resolver sets state the atomic
-  attacks need, override `_prepare_resume_state_async(seed_groups_by_dataset=...)` to restore it.
-  It receives the stored groups; derive the state from them when they carry it (see `LatentInjection`).
+- Resume never prepares or resamples datasets and doesn't call the seed resolver. If your resolver
+  sets state the atomic attacks need, override `_prepare_resume_state_async(seed_groups_by_dataset=...)`
+  to restore it. Derive that state from the stored groups when they carry it (see `LatentInjection`).
 - Keep custom shaping in `_build_attack_groups()` or `_build_groups_by_dataset_async()`.
   Reads use `_collect_seeds_for_dataset_async()` and must not fetch.
 - Build synthesized prompts from those filtered seeds, not a second unfiltered memory query.

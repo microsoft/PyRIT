@@ -283,10 +283,13 @@ class ApiKey(Scenario):
         """
         Restore the default credential scorer, whose excluded values the stored groups don't carry.
 
+        A custom scorer needs nothing from the corpus, so resume then reads no dataset.
+
         Args:
             seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
         """
-        await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+        if self._uses_default_scorer:
+            await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
 
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True

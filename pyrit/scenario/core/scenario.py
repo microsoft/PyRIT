@@ -2272,9 +2272,9 @@ class Scenario(ABC):
 
         Args:
             apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.
-                Resume rebuilds the population from the seed groups stored with the run, so
-                it calls an overriding implementation only for the state it sets up (such as
-                scorers built from required datasets), with False, and discards its groups.
+                Resume rebuilds the population from the seed groups stored with the run and
+                doesn't call this. An override that sets state the atomic attacks need must also
+                restore that state in ``_prepare_resume_state_async``.
 
         Returns:
             dict[str, list[AttackSeedGroup]]: Seed groups keyed by dataset name.

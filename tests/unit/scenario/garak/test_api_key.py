@@ -184,6 +184,31 @@ class TestApiKey:
 
         assert _objectives(resumed) == _objectives(original)
 
+    async def test_resume_with_custom_scorer_reads_no_corpus(
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        scorer = MagicMock(spec=TrueFalseScorer)
+        scorer.get_identifier.return_value = ComponentIdentifier(class_name="CustomScorer", class_module="test")
+        original = ApiKey(objective_scorer=scorer)
+        await _initialize_async(
+            scenario=original,
+            target=mock_objective_target,
+            corpus_seeds=corpus_seeds,
+            dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+        )
+        resumed = ApiKey(objective_scorer=scorer, scenario_result_id=original._scenario_result_id)
+
+        # Only the default scorer is built from the corpus, so a custom scorer resumes without it.
+        with patch.object(ScenarioRequiredData, "load_async", side_effect=AssertionError("read corpus")):
+            await _initialize_async(
+                scenario=resumed,
+                target=mock_objective_target,
+                corpus_seeds=corpus_seeds,
+                dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+            )
+
+        assert _objectives(resumed) == _objectives(original)
+
     async def test_default_scorer_receives_all_exclusions(
         self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
