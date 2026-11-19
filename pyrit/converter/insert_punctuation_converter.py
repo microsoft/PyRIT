@@ -113,10 +113,10 @@ class InsertPunctuationConverter(Converter):
                 f" Only single characters from {string.punctuation} are allowed."
             )
 
-        modified_prompt = self._insert_punctuation(prompt, punctuation_list)
+        modified_prompt = self._insert_punctuation(prompt, punctuation_list=punctuation_list)
         return ConverterResult(output_text=modified_prompt, output_type="text")
 
-    def _insert_punctuation(self, prompt: str, punctuation_list: list[str]) -> str:
+    def _insert_punctuation(self, prompt: str, *, punctuation_list: list[str]) -> str:
         """
         Insert punctuation into the prompt.
 
@@ -141,11 +141,21 @@ class InsertPunctuationConverter(Converter):
             return self._get_random_generator(stream="punctuation").choice(punctuation_list) + prompt
 
         if self._between_words:
-            return self._insert_between_words(words, word_indices, num_insertions, punctuation_list)
-        return self._insert_within_words(prompt, num_insertions, punctuation_list)
+            return self._insert_between_words(
+                words,
+                word_indices=word_indices,
+                num_insertions=num_insertions,
+                punctuation_list=punctuation_list,
+            )
+        return self._insert_within_words(prompt, num_insertions=num_insertions, punctuation_list=punctuation_list)
 
     def _insert_between_words(
-        self, words: list[str], word_indices: list[int], num_insertions: int, punctuation_list: list[str]
+        self,
+        words: list[str],
+        *,
+        word_indices: list[int],
+        num_insertions: int,
+        punctuation_list: list[str],
     ) -> str:
         """
         Insert punctuation between words in the prompt.
@@ -172,7 +182,7 @@ class InsertPunctuationConverter(Converter):
         # Join the words list and return a modified prompt
         return "".join(words).strip()
 
-    def _insert_within_words(self, prompt: str, num_insertions: int, punctuation_list: list[str]) -> str:
+    def _insert_within_words(self, prompt: str, *, num_insertions: int, punctuation_list: list[str]) -> str:
         """
         Insert punctuation at any indices in the prompt, can insert into a word.
 
