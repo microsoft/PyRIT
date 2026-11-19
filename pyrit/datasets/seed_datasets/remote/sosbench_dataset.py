@@ -30,6 +30,8 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
     size: str = "large"  # 3,000 hazard-focused scientific prompts across 6 domains
     tags: frozenset[str] = frozenset({"safety", "medical", "cybersecurity"})
 
+    source_url = "https://huggingface.co/datasets/SOSBench/SOSBench"
+
     def __init__(
         self,
         *,

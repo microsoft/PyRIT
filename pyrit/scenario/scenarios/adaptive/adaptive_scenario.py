@@ -405,9 +405,7 @@ class AdaptiveScenario(Scenario):
         substitute an internal default scorer.
 
         Returns ``None`` when the scorer does not match the subtype's declared
-        ``objective_scorer`` type (e.g. TAP requires a
-        ``FloatScaleThresholdScorer`` while the scenario provides a
-        ``TrueFalseScorer``), or when the subtype's own validation rejects the
+        ``objective_scorer`` type, or when the subtype's own validation rejects the
         scorer (e.g. TAP's float feedback check). ``None`` signals that no scenario-scorer-
         preserving config exists for this technique. The caller applies its
         compatibility policy rather than relying on the factory's override policy to

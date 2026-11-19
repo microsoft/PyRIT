@@ -7,15 +7,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from pyrit.models.score.score import Score
-
-#: The existing metadata key. Kept as-is for compatibility, so stored scores need no migration.
-FLOAT_FEEDBACK_METADATA_KEY = "original_float_value"
 
 
 class InvalidFloatFeedbackError(ValueError):
@@ -34,6 +31,8 @@ class FloatFeedback:
     Attributes:
         value (float): A finite number in ``[0, 1]``.
     """
+
+    METADATA_KEY: ClassVar[str] = "original_float_value"
 
     value: float
 
@@ -59,10 +58,29 @@ class FloatFeedback:
         Returns:
             FloatFeedback | None: The value, or None when the score has no usable one.
         """
-        raw = cls._raw(score)
+        return cls.from_metadata(metadata=score.score_metadata if score is not None else None)
+
+    @classmethod
+    def from_metadata(cls, *, metadata: Mapping[str, str | int | float] | None) -> FloatFeedback | None:
+        """
+        Read usable feedback from metadata, treating legacy or invalid values as unset.
+
+        Returns:
+            FloatFeedback | None: The recorded value, or None when absent or unusable.
+        """
+        raw = metadata.get(cls.METADATA_KEY) if metadata else None
         if raw is None or _describe_invalid(raw) is not None:
             return None
         return cls(value=float(raw))
+
+    def to_metadata(self) -> dict[str, float]:
+        """
+        Return the metadata fragment carrying this value.
+
+        Returns:
+            dict[str, float]: The feedback metadata.
+        """
+        return {self.METADATA_KEY: self.value}
 
     @classmethod
     def require(cls, score: Score) -> FloatFeedback:
@@ -99,10 +117,10 @@ class FloatFeedback:
         Returns:
             dict[str, str | int | float]: The copy, with the value under the feedback key.
         """
-        return {**(metadata or {}), FLOAT_FEEDBACK_METADATA_KEY: self.value}
+        return {**(metadata or {}), **self.to_metadata()}
 
-    @staticmethod
-    def remove_from(metadata: Mapping[str, str | int | float] | None) -> dict[str, str | int | float]:
+    @classmethod
+    def remove_from(cls, metadata: Mapping[str, str | int | float] | None) -> dict[str, str | int | float]:
         """
         Return a copy of score metadata without a float value.
 
@@ -115,13 +133,13 @@ class FloatFeedback:
         Returns:
             dict[str, str | int | float]: The copy, without the feedback key.
         """
-        return {key: value for key, value in (metadata or {}).items() if key != FLOAT_FEEDBACK_METADATA_KEY}
+        return {key: value for key, value in (metadata or {}).items() if key != cls.METADATA_KEY}
 
-    @staticmethod
-    def _raw(score: Score | None) -> str | int | float | None:
+    @classmethod
+    def _raw(cls, score: Score | None) -> str | int | float | None:
         if score is None or not score.score_metadata:
             return None
-        return score.score_metadata.get(FLOAT_FEEDBACK_METADATA_KEY)
+        return score.score_metadata.get(cls.METADATA_KEY)
 
 
 def _describe_invalid(raw: object) -> str | None:
@@ -133,7 +151,7 @@ def _describe_invalid(raw: object) -> str | None:
     """
     if isinstance(raw, bool) or not isinstance(raw, int | float):
         return f"is {type(raw).__name__}, not a number"
-    if not math.isfinite(raw):
+    if isinstance(raw, float) and not math.isfinite(raw):
         return f"is {raw}, not a finite number"
     if not 0.0 <= raw <= 1.0:
         return f"is {raw}, outside [0, 1]"

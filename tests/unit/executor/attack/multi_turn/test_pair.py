@@ -41,7 +41,13 @@ def _make_mock_objective_target() -> PromptTarget:
     )
     target.capabilities.supports_multi_turn = True
     target.capabilities.output_modalities = frozenset({frozenset(["text"])})
-    target.configuration.includes.side_effect = lambda capability: capability == CapabilityName.MULTI_TURN
+    target.configuration.includes.side_effect = lambda capability: (
+        capability
+        in {
+            CapabilityName.MULTI_TURN,
+            CapabilityName.RESPONSES,
+        }
+    )
     target.configuration.capabilities.output_modalities = frozenset({frozenset(["text"])})
     return cast("PromptTarget", target)
 
