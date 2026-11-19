@@ -1697,6 +1697,24 @@ class _SchemaTemplatedTarget(MockPromptTarget):
         ]
 
 
+class _BlockedTemplatedTarget(_SchemaTemplatedTarget):
+    """Templated judge target whose response is always blocked."""
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        message = normalized_conversation[-1]
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value="",
+                original_value_data_type="error",
+                converted_value="",
+                converted_value_data_type="error",
+                response_error="blocked",
+                conversation_id=message.message_pieces[0].conversation_id,
+            ).to_message()
+        ]
+
+
 def _templated_scorer(*, template: str) -> tuple[SelfAskTrueFalseScorer, _SchemaTemplatedTarget]:
     target = _SchemaTemplatedTarget(schema_instructions_template=template)
     return SelfAskTrueFalseScorer(chat_target=target), target
@@ -1763,3 +1781,29 @@ async def test_judgment_replay_keeps_pre_adaptation_contract_replayable_async(
 
     assert replay.score_value == live.score_value == "true"
     assert replay_target.prompt_sent == []
+
+
+async def test_blocked_judgment_replay_rejects_changed_schema_normalizer_template_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    target = _BlockedTemplatedTarget(schema_instructions_template=_TEMPLATE_A)
+    scorer = SelfAskTrueFalseScorer(chat_target=target)
+    scorer.raise_if_scorer_blocks = False
+    expectation = ScoringExpectation(objective="Judge this response")
+    score = (await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation))[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+
+    assert score.is_undetermined
+    assert observation.acquisition is Acquisition.ERROR
+    assert observation.metadata == {"reason": "scorer_response_blocked"}
+    assert observation.payload.replay_contract_fingerprint is not None
+
+    replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
+    assert replay.is_undetermined
+
+    changed_target = _BlockedTemplatedTarget(schema_instructions_template=_TEMPLATE_B)
+    changed_scorer = SelfAskTrueFalseScorer(chat_target=changed_target)
+    changed_scorer.raise_if_scorer_blocks = False
+    with pytest.raises(NonReplayableObservationError, match="handler or category"):
+        await changed_scorer.score_observation_async(observation=observation, expectation=expectation)
+    assert changed_target.prompt_sent == []
