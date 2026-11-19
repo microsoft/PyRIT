@@ -832,6 +832,56 @@ from `frontend`. Set `PYRIT_PYTHON` to this worktree's Python interpreter if Vit
 find `python` (for example, `<worktree>\.venv\Scripts\python.exe` on Windows).
 Stop these test-owned servers after the run.
 
+### REST tools
+
+MCP tools are generated from this server's OpenAPI document; none are hand-written. Each
+operation named in `RestToolset.OPERATIONS` (`pyrit/backend/rest_tools.py`) becomes a tool
+named after its route function, such as `list_scenario_runs`. The tool takes the operation's
+description, its path and query parameters, and its JSON body as `body`. A call is an
+in-process REST request with the caller's `Authorization` header, so it gets the same
+validation, errors, authentication, and runtime admission as any other request. Error
+responses go back to the model as results.
+
+Responses are compacted for the model. Component identifiers keep only readable fields, such
+as class, model, and endpoint, plus the `hash` that a request uses to pin a registered
+component, as in `"objective_scorer": {"registry_name": "...", "identifier_hash": "..."}`.
+Null values and empty lists and objects are dropped; empty strings stay, because some are real
+values, such as an analytics bucket for an empty label. Text over 1,000 characters is shortened
+to a preview unless its field is named in `response_fields`. A response over 40,000 characters
+keeps the leading entries of its largest list and reports how many it left out. Continuation
+fields such as `next_cursor` are then dropped, because they would skip those entries, so the
+model asks for fewer at a time instead. If not even one entry fits, the response is replaced by
+a note that lists its fields. Every tool also accepts `response_fields`: dot paths, such as
+`items.scenario_name`, that keep only part of a successful response. A path that matches no
+field is reported with the field names available where it stopped matching; a path to an
+empty value is not.
+
+To offer another operation, add its name to `RestToolset.OPERATIONS`. The list is curated
+because every tool schema is sent with each model request, and some operations, such as
+reading environment files, must not be given to a model.
+
+### MCP
+
+External MCP clients can use the same [tools](#rest-tools) over Streamable HTTP at `/api/mcp`
+(no trailing slash). Authentication and runtime admission apply as for the rest of `/api`, but
+the compatibility header is not required. Responses are JSON, so the endpoint accepts only
+POST. A request with an `Origin` header, which browsers send, must come from an origin in
+`PYRIT_CORS_ORIGINS`, where `*` allows any, as it does for CORS; MCP clients outside a browser
+send none. For example, with GitHub Copilot CLI:
+
+```bash
+copilot mcp add --transport http pyrit http://localhost:8000/api/mcp
+```
+
+Or in VS Code's `mcp.json`:
+
+```json
+{"servers": {"pyrit": {"type": "http", "url": "http://localhost:8000/api/mcp"}}}
+```
+
+With Entra authentication, the client must also send a Microsoft Graph access token as a
+bearer token, which each tool call forwards.
+
 ### Request Limits
 
 Attachments upload in the background while editing remains available, with up to three
@@ -952,7 +1002,7 @@ Problem responses use `application/problem+json` and include `expected` (backend
 `actual` (caller or null), `status`, `title`, and `detail`. On failure, stop further
 business requests and explain which matching artifacts are needed. Do not replay
 mutations. Backend replacement is detected by the next request even after a successful
-startup handshake. Health, authentication discovery, version, and media retain their
+startup handshake. Health, authentication discovery, version, media, and MCP retain their
 existing authentication behavior and bypass only compatibility enforcement.
 
 Example using the packaged CLI client (authentication and handshake are automatic):
