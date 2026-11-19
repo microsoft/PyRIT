@@ -52,7 +52,10 @@ export interface ApiError {
  *
  * Handles:
  * - Axios errors with an RFC 7807 JSON body (`response.data.detail`)
- * - Axios errors with a plain-string body (e.g. nginx 502 HTML)
+ * - Axios errors with a plain-text body
+ * - Axios errors with an HTML error page (e.g. a proxy 502/503), identified by
+ *   `Content-Type` (or by content when the type is missing or generic), which
+ *   falls back to a status message instead of showing markup
  * - Axios errors with no response at all (network / CORS)
  * - Axios timeout errors (`code === 'ECONNABORTED'`)
  * - Plain `Error` instances
@@ -87,8 +90,8 @@ export function toApiError(err: unknown): ApiError {
     }
 
     // We have an HTTP response — try to extract RFC 7807 detail
-    const { status, data } = err.response
-    const { detail, type, fieldErrors } = extractDetail(data)
+    const { status, data, headers } = err.response
+    const { detail, type, fieldErrors } = extractDetail(data, responseMediaType(headers))
 
     return {
       status,
@@ -189,6 +192,14 @@ export async function decodeBlobErrorAsync(error: unknown): Promise<void> {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+const HTML_MEDIA_TYPES = new Set(['text/html', 'application/xhtml+xml'])
+/** Media types that say nothing about the body, so its content decides. */
+const UNSPECIFIED_MEDIA_TYPES = new Set(['', 'application/octet-stream'])
+const WHITESPACE_PATTERN = /\s/
+const XML_DECLARATION = { start: '<?xml', end: '?>' }
+const HTML_COMMENT = { start: '<!--', end: '-->' }
+const HTML_ROOT_PATTERN = /^<(?:!doctype\s+html|html|head|body)\b/i
+
 /** Type-guard for Axios errors. */
 function isAxiosError(err: unknown): err is AxiosError {
   return typeof err === 'object' && err !== null && (err as AxiosError).isAxiosError === true
@@ -208,14 +219,16 @@ function readBlobText(blob: Blob): Promise<string> {
  *
  * The body may be:
  * - An RFC 7807 JSON object with `.detail` and optionally `.type`
- * - A plain string (e.g. nginx HTML error page)
+ * - A plain-text string
+ * - An HTML error page from a proxy or host, which yields no detail
  * - Something else entirely (null, number, etc.)
  */
-function extractDetail(data: unknown): {
+function extractDetail(data: unknown, mediaType: string): {
   detail: string | undefined; type: string | undefined; fieldErrors: FieldError[]
 } {
   if (typeof data === 'string') {
-    return { detail: data, type: undefined, fieldErrors: [] }
+    const detail = isHtmlBody(data, mediaType) ? undefined : data
+    return { detail, type: undefined, fieldErrors: [] }
   }
   if (typeof data === 'object' && data !== null) {
     const obj = data as Record<string, unknown>
@@ -224,6 +237,47 @@ function extractDetail(data: unknown): {
     return { detail, type, fieldErrors: extractFieldErrors(obj.errors) }
   }
   return { detail: undefined, type: undefined, fieldErrors: [] }
+}
+
+/** Lowercase media type from the response `Content-Type`, without parameters; empty when absent. */
+function responseMediaType(headers: unknown): string {
+  if (typeof headers !== 'object' || headers === null) return ''
+  const header = Object.entries(headers).find(([name]) => name.toLowerCase() === 'content-type')
+  const value: unknown = header?.[1]
+  return typeof value === 'string' ? (value.split(';')[0] ?? '').trim().toLowerCase() : ''
+}
+
+/** Trust an explicit media type; inspect the body only when the type is missing or generic. */
+function isHtmlBody(body: string, mediaType: string): boolean {
+  if (HTML_MEDIA_TYPES.has(mediaType)) return true
+  return UNSPECIFIED_MEDIA_TYPES.has(mediaType) && startsWithHtmlDocument(body)
+}
+
+/**
+ * Whether the body opens with an HTML document root, after an optional XML
+ * declaration and any comments. Scans by index so untrusted bodies stay linear.
+ */
+function startsWithHtmlDocument(body: string): boolean {
+  let position = skipWhitespace(body, 0)
+  if (body.startsWith(XML_DECLARATION.start, position)) {
+    position = skipPast(body, position, XML_DECLARATION)
+  }
+  while (position >= 0 && body.startsWith(HTML_COMMENT.start, position)) {
+    position = skipPast(body, position, HTML_COMMENT)
+  }
+  return position >= 0 && HTML_ROOT_PATTERN.test(body.slice(position))
+}
+
+/** Index after the construct opening at `position` and any following whitespace; -1 when unterminated. */
+function skipPast(text: string, position: number, construct: { start: string; end: string }): number {
+  const end = text.indexOf(construct.end, position + construct.start.length)
+  return end < 0 ? -1 : skipWhitespace(text, end + construct.end.length)
+}
+
+function skipWhitespace(text: string, position: number): number {
+  let next = position
+  while (next < text.length && WHITESPACE_PATTERN.test(text.charAt(next))) next++
+  return next
 }
 
 function extractFieldErrors(errors: unknown): FieldError[] {
