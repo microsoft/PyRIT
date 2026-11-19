@@ -9,9 +9,9 @@ import pytest
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
-    FLOAT_FEEDBACK_METADATA_KEY,
     ComponentIdentifier,
     ContentScorable,
+    FloatFeedback,
     InvalidFloatFeedbackError,
     MessagePiece,
     Scorable,
@@ -107,7 +107,7 @@ class TestPublicBoundary:
 
     @pytest.mark.parametrize(
         "score",
-        [_verdict(metadata={FLOAT_FEEDBACK_METADATA_KEY: 0.6}), _verdict(value=None)],
+        [_verdict(metadata={FloatFeedback.METADATA_KEY: 0.6}), _verdict(value=None)],
         ids=["complete_with_value", "undetermined"],
     )
     async def test_results_that_keep_the_promise_pass(self, score: Score, sqlite_instance: MemoryInterface):
@@ -135,7 +135,7 @@ class TestPublicBoundary:
         with patch.object(scorer._scorer, "_score_scorable_async", new_callable=AsyncMock, return_value=[child]):
             (result,) = await scorer.score_async(scorable=EVIDENCE)
         assert result.get_value() is False
-        assert result.score_metadata[FLOAT_FEEDBACK_METADATA_KEY] == 0.4
+        assert result.score_metadata[FloatFeedback.METADATA_KEY] == 0.4
 
 
 class TestNestedBoundary:
@@ -152,13 +152,13 @@ class TestNestedBoundary:
     async def test_the_wrapper_keeps_the_deciding_childs_value(self, sqlite_instance: MemoryInterface):
         primary, fallback = _Judge(promises=True), _Judge(promises=True)
         wrapper = TrueFalseFallbackScorer(scorer=primary, fallback_scorer=fallback)
-        kept = _verdict(metadata={FLOAT_FEEDBACK_METADATA_KEY: 0.7})
+        kept = _verdict(metadata={FloatFeedback.METADATA_KEY: 0.7})
         with (
             patch.object(primary, "_score_scorable_async", new_callable=AsyncMock, return_value=[_verdict(value=None)]),
             patch.object(fallback, "_score_scorable_async", new_callable=AsyncMock, return_value=[kept]),
         ):
             (result,) = await wrapper.score_async(scorable=EVIDENCE)
-        assert result.score_metadata[FLOAT_FEEDBACK_METADATA_KEY] == 0.7
+        assert result.score_metadata[FloatFeedback.METADATA_KEY] == 0.7
 
 
 class _MessageJudge(MessageTrueFalseScorer):
@@ -193,15 +193,15 @@ class TestInHandMessageBoundary:
             await judge._score_nested_message_async(message=self._transcript().to_message(), expectation=None)
 
     async def test_a_child_that_keeps_its_promise_passes(self, sqlite_instance: MemoryInterface):
-        judge = _MessageJudge(result=_verdict(metadata={FLOAT_FEEDBACK_METADATA_KEY: 0.6}))
+        judge = _MessageJudge(result=_verdict(metadata={FloatFeedback.METADATA_KEY: 0.6}))
         scores = await judge._score_nested_message_async(message=self._transcript().to_message(), expectation=None)
-        assert [score.score_metadata[FLOAT_FEEDBACK_METADATA_KEY] for score in scores] == [0.6]
+        assert [score.score_metadata[FloatFeedback.METADATA_KEY] for score in scores] == [0.6]
 
 
 class TestReusedResults:
     async def test_a_stored_verdict_without_the_value_is_not_reused(self):
         judge = _Judge(promises=True)
-        kept = _verdict(metadata={FLOAT_FEEDBACK_METADATA_KEY: 0.2})
+        kept = _verdict(metadata={FloatFeedback.METADATA_KEY: 0.2})
         missing = _verdict()
         undetermined = _verdict(value=None)
         with (

@@ -142,9 +142,6 @@ class FloatFeedback:
         return score.score_metadata.get(cls.METADATA_KEY)
 
 
-FLOAT_FEEDBACK_METADATA_KEY = FloatFeedback.METADATA_KEY
-
-
 def _describe_invalid(raw: object) -> str | None:
     """
     Explain why a raw value is not usable feedback.
