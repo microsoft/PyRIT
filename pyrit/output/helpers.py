@@ -193,8 +193,8 @@ async def output_scenario_conversations_async(
     Print every attack's summary and conversation for a scenario result as one JSON document.
 
     The document has the same format as the CLI's ``scenario-results --view conversations
-    --format json`` output, and each response keeps only the score from the scenario's objective
-    scorer. Conversations are read from memory and every attack is included unless you pass
+    --format json`` output, and each response keeps only the score from the objective scorer that
+    judged its attack. Conversations are read from memory and every attack is included unless you pass
     ``attack_result_ids`` or ``limit``, so narrow large scenarios.
 
     Args:
@@ -229,7 +229,7 @@ async def output_scenario_full_async(
 
     The report has the same format as the CLI's ``scenario-results --view full`` output with
     ``--format json`` or ``--format html``, and each response keeps only the score from the
-    scenario's objective scorer. The overview always covers the whole scenario;
+    objective scorer that judged its attack. The overview always covers the whole scenario;
     ``attack_result_ids`` and ``limit`` only choose which conversations are included.
 
     Args:

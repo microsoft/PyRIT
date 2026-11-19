@@ -126,7 +126,7 @@ def test_required_evaluation_wins_regardless_of_order(reverse):
 
     assert selected.candidate is crisis
     assert selected.evaluation == CRISIS
-    assert [m.kind for m in selected.skipped] == ([] if reverse else [ScorerMismatchKind.EVALUATION])
+    assert selected.candidate_index == (0 if reverse else 1)
 
 
 def test_order_breaks_ties_between_matching_candidates():
@@ -173,10 +173,14 @@ def test_unsupported_condition_skips_to_a_candidate_that_accepts_it():
         requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[_tools("lookup")]
     )
     assert selected.scorer is tool_scorer
-    (skipped,) = selected.skipped
-    assert skipped.kind is ScorerMismatchKind.CONDITION
-    assert "ToolsCalled" in skipped.detail
-    assert "rejected by SubStringScorer" in skipped.detail
+    with pytest.raises(NoCompatibleScorerError) as excinfo:
+        CompatibleScorers(candidates=[substring]).select(
+            requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[_tools("lookup")]
+        )
+    (mismatch,) = excinfo.value.mismatches
+    assert mismatch.kind is ScorerMismatchKind.CONDITION
+    assert "ToolsCalled" in mismatch.detail
+    assert "rejected by SubStringScorer" in mismatch.detail
 
 
 def test_missing_condition_skips_to_next_candidate():
@@ -185,8 +189,13 @@ def test_missing_condition_skips_to_next_candidate():
         requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[ScoringExpectation()]
     )
     assert selected.scorer is substring
-    assert selected.skipped[0].kind is ScorerMismatchKind.CONDITION
-    assert "requires one ToolsCalled condition" in selected.skipped[0].detail
+    with pytest.raises(NoCompatibleScorerError) as excinfo:
+        CompatibleScorers(candidates=[tool_scorer]).select(
+            requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[ScoringExpectation()]
+        )
+    (mismatch,) = excinfo.value.mismatches
+    assert mismatch.kind is ScorerMismatchKind.CONDITION
+    assert "requires one ToolsCalled condition" in mismatch.detail
 
 
 def test_candidate_must_accept_every_input_in_the_population():
@@ -251,15 +260,16 @@ def test_a_population_without_an_evaluation_uses_an_unbound_candidate():
     pool = CompatibleScorers(candidates=[ScorerCandidate(scorer=_substring("c"), evaluation=CRISIS), unbound])
     selected = pool.select(requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[None])
     assert selected.scorer is unbound
-    (skipped,) = selected.skipped
-    assert skipped.kind is ScorerMismatchKind.EVALUATION
-    assert "bound to 'psychosocial.imminent_crisis'; the population requires none" in skipped.detail
+    assert selected.candidate_index == 1
 
 
 def test_bound_candidates_do_not_judge_a_population_without_an_evaluation():
     pool = CompatibleScorers(candidates=[ScorerCandidate(scorer=_substring(), evaluation=CRISIS)])
-    with pytest.raises(NoCompatibleScorerError, match="This population requires no evaluation"):
+    with pytest.raises(NoCompatibleScorerError, match="This population requires no evaluation") as excinfo:
         pool.select(requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[None])
+    (mismatch,) = excinfo.value.mismatches
+    assert mismatch.kind is ScorerMismatchKind.EVALUATION
+    assert "bound to 'psychosocial.imminent_crisis'; the population requires none" in mismatch.detail
 
 
 @pytest.mark.parametrize("error", [RuntimeError, ValueError])

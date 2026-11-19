@@ -16,7 +16,7 @@ execution fallback. Execution outcomes never advance the pool.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -227,19 +227,15 @@ class ScorerMismatch:
 @dataclass(frozen=True, kw_only=True)
 class ScorerSelection:
     """
-    The chosen candidate and how it was chosen.
+    The chosen candidate.
 
     Attributes:
         candidate (ScorerCandidate): The selected candidate.
         candidate_index (int): Its position in the pool.
-        requirements (ScorerRequirements): The effective requirements it satisfied.
-        skipped (tuple[ScorerMismatch, ...]): Earlier candidates and why each was passed over.
     """
 
     candidate: ScorerCandidate
     candidate_index: int
-    requirements: ScorerRequirements
-    skipped: tuple[ScorerMismatch, ...] = field(default_factory=tuple)
 
     @property
     def scorer(self) -> TrueFalseScorer:
@@ -421,7 +417,7 @@ class CompatibleScorers:
                 expectations. Empty populations accept any candidate that meets the requirements.
 
         Returns:
-            ScorerSelection: The chosen candidate, its index, and the reasons earlier ones were skipped.
+            ScorerSelection: The chosen candidate and its index.
 
         Raises:
             TypeError: If an argument has the wrong type.
@@ -445,12 +441,7 @@ class CompatibleScorers:
             if mismatch is not None:
                 mismatches.append(mismatch)
                 continue
-            return ScorerSelection(
-                candidate=candidate,
-                candidate_index=index,
-                requirements=requirements,
-                skipped=tuple(mismatches),
-            )
+            return ScorerSelection(candidate=candidate, candidate_index=index)
         raise NoCompatibleScorerError(
             requirements=requirements, mismatches=mismatches, available_evaluations=self.evaluations
         )

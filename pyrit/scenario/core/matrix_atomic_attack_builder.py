@@ -139,7 +139,7 @@ def _binding(selection: ScorerSelection) -> ScenarioRunPlanScorerBinding:
     Record a pool selection for the run plan.
 
     Returns:
-        ScenarioRunPlanScorerBinding: The selected candidate and the inputs it accepted.
+        ScenarioRunPlanScorerBinding: The selected candidate's index, evaluation, and scorer hash.
     """
     return ScenarioRunPlanScorerBinding(
         candidate_index=selection.candidate_index,
@@ -193,8 +193,8 @@ def _select_carried(
     """
     Select from the pool candidates whose scorer is an instance of ``carried``.
 
-    Candidates keep their position in the full pool, and each passed-over one is reported with
-    a typed reason, so pool order still only breaks ties between candidates that fit.
+    Candidates keep their position in the full pool, so pool order still only breaks ties
+    between candidates that fit, and a failure gives every candidate's reason.
 
     Returns:
         ScorerSelection: The selection, indexed against the full pool.
@@ -215,10 +215,6 @@ def _select_carried(
         for index, candidate in enumerate(pool.candidates)
         if not isinstance(candidate.scorer, carried)
     ]
-
-    def in_pool(mismatch: ScorerMismatch) -> ScorerMismatch:
-        return replace(mismatch, candidate_index=positions[mismatch.candidate_index])
-
     if not positions:
         raise NoCompatibleScorerError(
             requirements=requirements, mismatches=excluded, available_evaluations=pool.evaluations
@@ -227,16 +223,13 @@ def _select_carried(
     try:
         selection = fitting.select(requirements=requirements, scorable_type=MessageScorable, expectations=expectations)
     except NoCompatibleScorerError as exc:
+        in_pool = [replace(item, candidate_index=positions[item.candidate_index]) for item in exc.mismatches]
         raise NoCompatibleScorerError(
             requirements=requirements,
-            mismatches=sorted([*excluded, *map(in_pool, exc.mismatches)], key=lambda item: item.candidate_index),
+            mismatches=sorted([*excluded, *in_pool], key=lambda item: item.candidate_index),
             available_evaluations=pool.evaluations,
         ) from exc
-    index = positions[selection.candidate_index]
-    skipped = [*(item for item in excluded if item.candidate_index < index), *map(in_pool, selection.skipped)]
-    return replace(
-        selection, candidate_index=index, skipped=tuple(sorted(skipped, key=lambda item: item.candidate_index))
-    )
+    return replace(selection, candidate_index=positions[selection.candidate_index])
 
 
 def build_baseline_atomic_attack(

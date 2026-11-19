@@ -41,6 +41,8 @@ class ScenarioIdentifier(ComponentIdentifier):
     run-resolved reference slots — ``objective_target`` (a ``PromptTarget``) and
     ``objective_scorer`` (a ``Scorer``) — are promoted children the registry
     resolves by name from the target / scorer registries when building a scenario.
+    A run that selects from a scorer pool leaves ``objective_scorer`` unset and
+    records the pool as its ``objective_scorer_pool`` child.
     """
 
     component_type: ClassVar[ComponentType | None] = ComponentType.SCENARIO
