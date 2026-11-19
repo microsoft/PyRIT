@@ -34,8 +34,8 @@ describe('resolveChatScorerReference', () => {
 describe('Krippendorff alpha labels', () => {
   it('names the combined alpha after what it pools and labels the gold-vs-model alpha', () => {
     expect(scorerMetricLabel('krippendorff_alpha_combined')).toBe('Combined alpha (humans + trials)')
-    expect(scorerMetricDescription('krippendorff_alpha_combined')).toContain('rises with the number of trials')
+    expect(scorerMetricDescription('krippendorff_alpha_combined')).toContain('can inflate this value')
     expect(scorerMetricLabel('krippendorff_alpha_gold_model')).toBe('Gold vs model alpha')
-    expect(scorerMetricDescription('krippendorff_alpha_gold_model')).toContain("more trials with the same answers don't raise it")
+    expect(scorerMetricDescription('krippendorff_alpha_gold_model')).toContain("more trials with the same answers don't change it")
   })
 })

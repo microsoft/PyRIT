@@ -45,10 +45,12 @@ const METRIC_DESCRIPTIONS: Record<string, string> = {
   accuracy: 'The share of evaluated cases scored correctly.',
   f1_score: 'The harmonic mean of precision and recall.',
   mean_absolute_error: 'The average absolute difference from human ratings. Lower is better.',
-  krippendorff_alpha_combined: "Krippendorff's alpha over the human ratings and every scoring trial together. "
-    + "Each trial counts as an extra rater, so it rises with the number of trials even when the scorer's answers don't change.",
+  krippendorff_alpha_combined: 'Agreement among human raters and all model scoring trials pooled together. '
+    + 'Each trial counts as a separate rater, so repeating identical model answers changes the relative weight of '
+    + 'model and human ratings and can inflate this value. It is not guaranteed to increase with trial count. '
+    + "Use `krippendorff_alpha_gold_model` to compare gold labels with the model's per-response median score.",
   krippendorff_alpha_gold_model: "Krippendorff's alpha between the gold (median human) label and the scorer's median score "
-    + "per response. Unlike the combined alpha, more trials with the same answers don't raise it.",
+    + "per response. Unlike the combined alpha, more trials with the same answers don't change it.",
   average_score_time_seconds: 'The average seconds per scored item during the recorded evaluation.',
 }
 
