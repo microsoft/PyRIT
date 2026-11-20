@@ -20,6 +20,7 @@ from sqlalchemy.util.concurrency import await_only
 
 from pyrit.memory.dataset_upload_lease import try_upload_lease_async
 from pyrit.memory.memory_models import (
+    SIMULATED_CONVERSATION_PROMPT_FIELDS,
     DatasetLifecycleEntry,
     DatasetLifecycleLock,
     DatasetMediaEntry,
@@ -195,7 +196,7 @@ def _seed_media_values(*, seed_type: str, value: str, data_type: str) -> list[st
     if not isinstance(config, dict):
         raise ValueError("A simulated conversation requires a stored configuration object.")
     values = []
-    for field in ("adversarial_chat_system_prompt", "simulated_target_system_prompt", "next_message_system_prompt"):
+    for field in SIMULATED_CONVERSATION_PROMPT_FIELDS:
         prompt = config.get(field)
         if isinstance(prompt, dict) and prompt.get("data_type") in MEDIA_PATH_DATA_TYPES:
             path = prompt.get("value")
@@ -247,12 +248,16 @@ def _validate_dataset_references(*, session: Session, dataset_names: set[str | N
                     raise ValueError("Media has been removed or is reserved for dataset cleanup.")
 
 
-def stored_media_keys(session: Session) -> set[str]:
+def stored_media_keys(session: Session, *, include_planned: bool = True) -> set[str]:
     """
     Read all live seed, original/converted message, and loose scorer-media references.
 
     Media planned by a scenario run that hasn't completed counts too, so deleting a dataset
     doesn't remove files a paused run still needs to resume.
+
+    Args:
+        session (Session): The session to read in.
+        include_planned (bool): Whether to include media planned by runs that haven't completed.
 
     Returns:
         set[str]: Canonical identities of the referenced media.
@@ -274,14 +279,15 @@ def stored_media_keys(session: Session) -> set[str]:
         (PromptMemoryEntry.converted_value, PromptMemoryEntry.converted_value_data_type),
     ):
         values.extend(session.scalars(select(value_column).where(type_column.in_(MEDIA_PATH_DATA_TYPES))).all())
-    for seed_group in session.scalars(
+    planned = (
         select(ScenarioPlanSeedGroupEntry.seed_group)
         .join(ScenarioResultEntry, ScenarioResultEntry.id == ScenarioPlanSeedGroupEntry.scenario_result_id)
         .where(
             ScenarioPlanSeedGroupEntry.has_media,
             ScenarioResultEntry.scenario_run_state != ScenarioRunState.COMPLETED.value,
         )
-    ):
+    )
+    for seed_group in session.scalars(planned) if include_planned else []:
         values.extend(planned_media_values(seed_group))
     return _media_keys(session, [value for value in values if value])
 
@@ -305,10 +311,20 @@ def reserved_seed_state(session: Session) -> dict[uuid.UUID, tuple[object, ...]]
 
 
 def validate_stored_dataset_references(
-    session: Session, *, reserved_seeds: dict[uuid.UUID, tuple[object, ...]] | None = None
+    session: Session,
+    *,
+    reserved_seeds: dict[uuid.UUID, tuple[object, ...]] | None = None,
+    include_planned: bool = False,
 ) -> None:
     """
     Validate bulk writes without refreshing or discarding pending ORM changes.
+
+    Args:
+        session (Session): The session that ran the bulk write.
+        reserved_seeds (dict[uuid.UUID, tuple[object, ...]] | None): Protected seed rows read before the write.
+        include_planned (bool): Whether to check media planned by runs that haven't completed. Only
+            planned seed group writes need this; a run's older plan can name media deleted while it
+            was completed, and that must not block unrelated writes.
 
     Raises:
         DatasetNameConflictError: If bulk DML changed a protected seed population.
@@ -319,7 +335,7 @@ def validate_stored_dataset_references(
         _validate_dataset_references(
             session=session,
             dataset_names=set(),
-            keys=stored_media_keys(session),
+            keys=stored_media_keys(session, include_planned=include_planned),
         )
 
 

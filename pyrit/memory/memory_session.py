@@ -210,5 +210,9 @@ def _guard_bulk_media_writes(state: ORMExecuteState) -> Any:
     with state.session.begin_nested():
         reserved_seeds = reserved_seed_state(state.session) if table_name == SeedEntry.__tablename__ else None
         result = state.invoke_statement()
-        validate_stored_dataset_references(state.session, reserved_seeds=reserved_seeds)
+        validate_stored_dataset_references(
+            state.session,
+            reserved_seeds=reserved_seeds,
+            include_planned=table_name == ScenarioPlanSeedGroupEntry.__tablename__,
+        )
     return result

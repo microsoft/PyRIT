@@ -22,7 +22,7 @@ from pyrit.common import Singleton
 from pyrit.memory import CentralMemory, PromptMemoryEntry, SeedEntry, SQLiteMemory
 from pyrit.memory.dataset_lifecycle import DatasetNameConflictError, entry_references_dataset_assets
 from pyrit.memory.dataset_mutation import DatasetVersionConflictError, dataset_version, editable_seed
-from pyrit.memory.memory_models import DatasetLifecycleEntry
+from pyrit.memory.memory_models import DatasetLifecycleEntry, ScenarioPlanSeedGroupEntry
 from pyrit.models import (
     AttackSeedGroup,
     MessagePiece,
@@ -715,7 +715,7 @@ async def test_text_message_writes_skip_the_lifecycle_lock_but_seeds_take_it(
         await session.commit()
 
 
-async def _plan_media_run_async(memory: SQLiteMemory, *, path: Path, state: ScenarioRunState) -> None:
+async def _plan_media_run_async(memory: SQLiteMemory, *, path: Path, state: ScenarioRunState) -> str:
     group = AttackSeedGroup(
         seeds=[SeedObjective(value="objective"), SeedPrompt(value=str(path), data_type="binary_path")]
     )
@@ -723,6 +723,7 @@ async def _plan_media_run_async(memory: SQLiteMemory, *, path: Path, state: Scen
         objective_target_identifier=get_mock_target_identifier(), attack_results={}, scenario_run_state=state
     )
     await memory.add_planned_scenario_result_async(scenario_result=result, seed_groups_by_dataset={"owned": [group]})
+    return str(result.id)
 
 
 @pytest.mark.parametrize(("state", "kept"), [(ScenarioRunState.FAILED, True), (ScenarioRunState.COMPLETED, False)])
@@ -747,3 +748,49 @@ async def test_run_cannot_plan_media_queued_for_deletion(memories: tuple[SQLiteM
 
     with pytest.raises(ValueError, match="reserved for dataset cleanup"):
         await _plan_media_run_async(memory, path=path, state=ScenarioRunState.CREATED)
+
+
+async def test_reopened_run_with_deleted_planned_media_does_not_block_unrelated_bulk_writes(
+    memories: tuple[SQLiteMemory, SQLiteMemory],
+) -> None:
+    memory = memories[0]
+    path = await _create_media_dataset_async(memory)
+    run_id = await _plan_media_run_async(memory, path=path, state=ScenarioRunState.COMPLETED)
+    deletion_id = await memory.delete_dataset_async(dataset_name="owned")
+    await memory.cleanup_dataset_media_async(operation_id=deletion_id)
+    assert not path.exists()
+    await memory.update_scenario_run_state_async(scenario_result_id=run_id, scenario_run_state=ScenarioRunState.FAILED)
+    other = SeedPrompt(value="original", dataset_name="other", added_by="test")
+    await memory.add_seeds_to_memory_async(seeds=[other], added_by="test")
+
+    async with await memory.get_session_async() as session:
+        await session.execute(update(SeedEntry.__table__).where(SeedEntry.id == other.id).values(value="bulk"))
+        await session.commit()
+
+    async with await memory.get_session_async() as session:
+        assert await session.scalar(select(SeedEntry.value).where(SeedEntry.id == other.id)) == "bulk"
+
+
+async def test_bulk_planned_group_insert_cannot_reference_media_queued_for_deletion(
+    memories: tuple[SQLiteMemory, SQLiteMemory],
+) -> None:
+    memory = memories[0]
+    path = await _create_media_dataset_async(memory)
+    result = make_scenario_result(objective_target_identifier=get_mock_target_identifier(), attack_results={})
+    await memory.add_planned_scenario_result_async(scenario_result=result, seed_groups_by_dataset={})
+    await memory.delete_dataset_async(dataset_name="owned")
+    entry = ScenarioPlanSeedGroupEntry(
+        scenario_result_id=result.id,
+        dataset_name="owned",
+        position=0,
+        seed_group=AttackSeedGroup(
+            seeds=[SeedObjective(value="objective"), SeedPrompt(value=str(path), data_type="binary_path")]
+        ),
+    )
+    table = ScenarioPlanSeedGroupEntry.__table__
+
+    async with await memory.get_session_async() as session:
+        with pytest.raises(ValueError, match="reserved for dataset cleanup"):
+            await session.execute(
+                insert(table).values(**{column.name: getattr(entry, column.name) for column in table.columns})
+            )

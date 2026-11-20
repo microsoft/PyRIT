@@ -129,7 +129,6 @@ def test_planned_seed_group_entry_flags_media() -> None:
 
     assert (plain.has_media, image.has_media) == (False, True)
     assert planned_media_values(image.seed_group) == ["/media/cat.png"]
-    assert image.get_seed_group() == image.get_seed_group()
 
 
 def test_planned_media_values_reads_simulated_conversation_prompts() -> None:

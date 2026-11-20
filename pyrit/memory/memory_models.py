@@ -2826,7 +2826,7 @@ class ScenarioResultEntry(Base):
         return f"ScenarioResultEntry: {self.scenario_name} (version {self.scenario_version})"
 
 
-_SIMULATED_CONVERSATION_PROMPT_FIELDS = (
+SIMULATED_CONVERSATION_PROMPT_FIELDS = (
     "adversarial_chat_system_prompt",
     "simulated_target_system_prompt",
     "next_message_system_prompt",
@@ -2847,7 +2847,7 @@ def planned_media_values(seed_group: dict[str, Any]) -> list[str]:
     for seed in seed_group.get("seeds", []):
         prompts = [seed]
         if seed.get("seed_type") == "simulated_conversation":
-            prompts = [seed.get(field) for field in _SIMULATED_CONVERSATION_PROMPT_FIELDS]
+            prompts = [seed.get(field) for field in SIMULATED_CONVERSATION_PROMPT_FIELDS]
         values.extend(
             prompt["value"]
             for prompt in prompts
