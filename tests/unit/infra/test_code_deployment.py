@@ -66,6 +66,42 @@ JOB_TEMPLATE = {
     ],
     "volumes": [{"name": "data", "storageType": "EmptyDir"}],
 }
+BLOB = "https://profilestore.blob.core.windows.net"
+SEED_INPUTS = APP_INPUTS | {
+    "PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/test/.pyrit_conf",
+    "PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/seed",
+    "PYRIT_SOURCE_BRANCH": "refs/heads/releases/v1.2.3",
+    "SEED_FILES": "1",
+}
+# Prints each Azure CLI call without its local folder argument. A download writes the release seed when
+# SEED_FILES is set, and an upload lists the top-level entries it would send.
+SEED_AZ = r"""
+az() {
+  local command=$3 local_flag="" printed=() local_path=""
+  case "$command" in
+    download-batch) local_flag=--destination ;;
+    upload-batch) local_flag=--source ;;
+  esac
+  while (($#)); do
+    if [[ "$1" == "$local_flag" ]]; then
+      local_path=$2
+      shift 2
+      continue
+    fi
+    printed+=("$1")
+    shift
+  done
+  if [[ "$command" == download-batch && -n "${SEED_FILES:-}" ]]; then
+    local seed="$local_path/seed/releases/v1.2.3"
+    mkdir -p "$seed/internal_initializers"
+    touch "$seed/.pyrit_conf" "$seed/internal_initializers/sample.py"
+  fi
+  if [[ "$command" == upload-batch ]]; then
+    printed+=("uploaded=$(cd "$local_path" && LC_ALL=C ls -A | paste -sd, -)")
+  fi
+  echo "${printed[*]}"
+}
+"""
 
 
 def _find_bash() -> str | None:
@@ -565,8 +601,8 @@ echo done
             inputs=APP_INPUTS,
             command=f"""
 for step in validate_app_inputs initialize_deployment_scope read_existing_topology read_app_access_mode \
-  build_app_parameters prepare_database_migration stop_app run_database_migration start_unchanged_revision \
-  verify_readiness wait_for_runtime_readiness warn_if_sql_public; do
+  build_app_parameters prepare_database_migration stop_app run_database_migration reset_configuration_from_seed \
+  start_unchanged_revision verify_readiness wait_for_runtime_readiness warn_if_sql_public; do
   eval "$step() {{ echo $step; }}"
 done
 schema_is_current() {{ echo schema-check; return {check_exit}; }}
@@ -599,6 +635,7 @@ main
                 if check_exit
                 else ["Schema is current; deploying without stopping the app"]
             ),
+            "reset_configuration_from_seed",
             "az deployment group create",
             "start_unchanged_revision",
             "verify_readiness",
@@ -842,6 +879,7 @@ initialize_deployment_scope
             ("PYRIT_ENV_SECRET_NAME", "invalid/secret", "Invalid SQL"),
             ("PYRIT_ALLOWED_CLIENT_CIDR", "$(allowed)", "Optional deployment value"),
             ("PYRIT_CONFIG_FILE_URI", "$(config)", "Optional deployment value"),
+            ("PYRIT_CONFIG_SEED_URI", "$(seed)", "Optional deployment value"),
             ("PYRIT_ALLOWED_CLIENT_CIDR", "192.0.2.0/24", "leave PYRIT_ALLOWED_CLIENT_CIDR empty"),
             ("PYRIT_CONFIG_FILE_URI", "https://example.com/container/config", "Invalid Entra"),
             ("PYRIT_CONFIG_FILE_URI", "https://account.blob.core.windows.net/container/config?sas=1", "Invalid Entra"),
@@ -858,6 +896,71 @@ initialize_deployment_scope
                 )
                 assert result.returncode != 0
                 assert message in result.stdout, result.stdout + result.stderr
+
+    def test_config_seed_requires_separate_folders_and_a_branch(self) -> None:
+        cases = {
+            "no config file": {"PYRIT_CONFIG_FILE_URI": ""},
+            "config file at container root": {"PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/.pyrit_conf"},
+            "seed inside config folder": {"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/test/seed"},
+            "seed folder is config folder": {
+                "PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles",
+                "PYRIT_SOURCE_BRANCH": "refs/heads/test",
+            },
+            "seed with credentials": {"PYRIT_CONFIG_SEED_URI": f"{SEED_INPUTS['PYRIT_CONFIG_SEED_URI']}?sig=secret"},
+            "seed outside Blob Storage": {"PYRIT_CONFIG_SEED_URI": "https://example.com/profiles/seed"},
+            "tag instead of branch": {"PYRIT_SOURCE_BRANCH": "refs/tags/v1.2.3"},
+            "missing branch": {"PYRIT_SOURCE_BRANCH": ""},
+            "parent folder in branch": {"PYRIT_SOURCE_BRANCH": "refs/heads/releases/../main"},
+        }
+        for name, inputs in cases.items():
+            with self.subTest(name):
+                result = self._run(script="deploy_app.sh", inputs=SEED_INPUTS | inputs, command="validate_app_inputs")
+                assert result.returncode != 0
+                assert "Invalid config seed" in result.stdout, result.stdout + result.stderr
+
+    def test_deployment_replaces_the_config_folder_with_the_branch_seed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            result = self._run(
+                script="deploy_app.sh",
+                inputs=SEED_INPUTS | {"PYRIT_AGENT_TEMP_DIRECTORY": Path(temporary).as_posix()},
+                command=SEED_AZ + "validate_app_inputs\nreset_configuration_from_seed",
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            storage = "--auth-mode login --account-name profilestore"
+            quiet = "--only-show-errors -o none"
+            assert result.stdout.splitlines() == [
+                f"storage blob download-batch {storage} --source profiles --pattern seed/releases/v1.2.3/* {quiet}",
+                f"storage blob delete-batch {storage} --source profiles --pattern test/* {quiet}",
+                (
+                    f"storage blob upload-batch {storage} --destination profiles --destination-path test {quiet} "
+                    "uploaded=.pyrit_conf,internal_initializers"
+                ),
+                "Reset profiles/test from the profiles/seed/releases/v1.2.3 seed",
+            ]
+            assert not list(Path(temporary).iterdir())
+
+    def test_missing_branch_seed_stops_before_changing_the_config_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            result = self._run(
+                script="deploy_app.sh",
+                inputs=SEED_INPUTS | {"PYRIT_AGENT_TEMP_DIRECTORY": Path(temporary).as_posix(), "SEED_FILES": ""},
+                command=SEED_AZ + "validate_app_inputs\nreset_configuration_from_seed",
+            )
+            assert result.returncode != 0
+            assert (
+                "The config seed has no .pyrit_conf for this branch at profiles/seed/releases/v1.2.3" in result.stdout
+            )
+            assert "delete-batch" not in result.stdout and "upload-batch" not in result.stdout
+            assert not list(Path(temporary).iterdir())
+
+    def test_deployment_without_a_seed_keeps_the_config_folder(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS | {"PYRIT_SOURCE_BRANCH": "refs/heads/main"},
+            command="validate_app_inputs\nreset_configuration_from_seed",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout == ""
 
     def test_shared_image_validation_requires_registry_digest_and_valid_repository(self) -> None:
         for image, message in (

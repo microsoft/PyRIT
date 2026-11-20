@@ -143,12 +143,16 @@ class TestPipelineGuardrails(unittest.TestCase):
             "PYRIT_ALLOWED_GROUP_OBJECT_IDS",
             "PYRIT_ADMIN_GROUP_OBJECT_ID",
             "PYRIT_CONFIG_FILE_URI",
+            "PYRIT_CONFIG_SEED_URI",
+            "PYRIT_SOURCE_BRANCH",
             "PYRIT_SQL_SERVER_FQDN",
             "PYRIT_SQL_DATABASE_NAME",
             "PYRIT_KEY_VAULT_RESOURCE_ID",
             "PYRIT_ENV_SECRET_NAME",
         }
         assert app["PYRIT_CONTAINER_IMAGE"] == "$(immutableImage)"
+        assert app["PYRIT_CONFIG_SEED_URI"] == "$(pyritConfigSeedUri)"
+        assert app["PYRIT_SOURCE_BRANCH"] == "$(Build.SourceBranch)"
         image = stage["variables"][2]["${{ if eq(parameters.phase, 'app') }}"][0]
         assert image == {
             "name": "immutableImage",

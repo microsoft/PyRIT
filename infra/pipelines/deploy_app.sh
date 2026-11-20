@@ -12,7 +12,7 @@ validate_app_inputs() {
   require_values PYRIT_CONTAINER_IMAGE PYRIT_ENTRA_TENANT_ID PYRIT_ENTRA_CLIENT_ID \
     PYRIT_ALLOWED_GROUP_OBJECT_IDS PYRIT_ADMIN_GROUP_OBJECT_ID PYRIT_SQL_SERVER_FQDN \
     PYRIT_SQL_DATABASE_NAME PYRIT_KEY_VAULT_RESOURCE_ID PYRIT_ENV_SECRET_NAME
-  validate_optional_values PYRIT_ALLOWED_CLIENT_CIDR PYRIT_CONFIG_FILE_URI
+  validate_optional_values PYRIT_ALLOWED_CLIENT_CIDR PYRIT_CONFIG_FILE_URI PYRIT_CONFIG_SEED_URI
   if [[ -n "${PYRIT_ALLOWED_CLIENT_CIDR:-}" ]]; then
     deployment_error "Front Door cannot use an ACA client CIDR restriction because ACA sees Front Door backend IPs, not client IPs; leave PYRIT_ALLOWED_CLIENT_CIDR empty"
   fi
@@ -67,6 +67,86 @@ PY
     deployment_error "Invalid Entra ID, group ID, or config URI"
   fi
   validate_immutable_image "$PYRIT_CONTAINER_IMAGE"
+  read_config_seed
+}
+
+# A seed folder holds the starting configuration for each deployable branch, for example
+# <seed>/main/ or <seed>/releases/v1.2.3/. Each deployment copies the deployed branch's seed over
+# the folder that holds pyritConfigFileUri, so configuration edits saved in the GUI last only until
+# the next deployment.
+read_config_seed() {
+  config_seed=()
+  [[ -n "${PYRIT_CONFIG_SEED_URI:-}" ]] || return 0
+  local location
+  if ! location=$(python3 - "$PYRIT_CONFIG_SEED_URI" "${PYRIT_CONFIG_FILE_URI:-}" "${PYRIT_SOURCE_BRANCH:-}" << 'PY'
+import re
+import sys
+from urllib.parse import urlparse
+
+SUFFIXES = (".blob.core.windows.net", ".blob.core.chinacloudapi.cn", ".blob.core.usgovcloudapi.net", ".blob.core.cloudapi.de")
+
+
+def blob_location(uri: str) -> tuple[str, str, list[str]]:
+    parsed = urlparse(uri)
+    hostname = parsed.hostname or ""
+    path = parsed.path.strip("/").split("/")
+    if (
+        parsed.scheme != "https"
+        or not any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in SUFFIXES)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+        or not all(re.fullmatch(r"[A-Za-z0-9._-]+", part) and part not in (".", "..") for part in path)
+    ):
+        raise ValueError
+    return hostname.split(".")[0], path[0], path[1:]
+
+
+try:
+    seed_account, seed_container, seed_root = blob_location(sys.argv[1])
+    config_account, config_container, config_path = blob_location(sys.argv[2])
+    branch = re.fullmatch(r"refs/heads/((?:[A-Za-z0-9][A-Za-z0-9._-]*/)*[A-Za-z0-9][A-Za-z0-9._-]*)", sys.argv[3])
+    # The config file must sit in its own folder, because each deployment replaces that whole folder.
+    if branch is None or len(config_path) < 2 or ".." in branch[1]:
+        raise ValueError
+    seed_folder = "/".join([*seed_root, branch[1]])
+    config_folder = "/".join(config_path[:-1])
+    if (seed_account, seed_container) == (config_account, config_container) and (
+        seed_folder == config_folder
+        or seed_folder.startswith(f"{config_folder}/")
+        or config_folder.startswith(f"{seed_folder}/")
+    ):
+        raise ValueError
+except (ValueError, IndexError):
+    raise SystemExit(1)
+print("\t".join((seed_account, seed_container, seed_folder, config_account, config_container, config_folder, config_path[-1])))
+PY
+  ); then
+    deployment_error "Invalid config seed: pyritConfigSeedUri and pyritConfigFileUri must be separate credential-free Blob folders, and the config file must be in its own folder"
+  fi
+  IFS=$'\t' read -r -a config_seed <<< "$location"
+}
+
+reset_configuration_from_seed() {
+  [[ -n "${config_seed+x}" ]] || return 0
+  local seed_account=${config_seed[0]} seed_container=${config_seed[1]} seed_folder=${config_seed[2]}
+  local config_account=${config_seed[3]} config_container=${config_seed[4]} config_folder=${config_seed[5]}
+  local config_name=${config_seed[6]} seed_directory
+  seed_directory=$(mktemp -d "$PYRIT_AGENT_TEMP_DIRECTORY/pyrit-config-seed.XXXXXX")
+  az storage blob download-batch --auth-mode login --account-name "$seed_account" --source "$seed_container" \
+    --pattern "$seed_folder/*" --destination "$seed_directory" --only-show-errors -o none
+  if [[ ! -f "$seed_directory/$seed_folder/$config_name" ]]; then
+    rm -rf -- "$seed_directory"
+    deployment_error "The config seed has no $config_name for this branch at $seed_container/$seed_folder"
+  fi
+  az storage blob delete-batch --auth-mode login --account-name "$config_account" --source "$config_container" \
+    --pattern "$config_folder/*" --only-show-errors -o none
+  az storage blob upload-batch --auth-mode login --account-name "$config_account" --destination "$config_container" \
+    --destination-path "$config_folder" --source "$seed_directory/$seed_folder" --only-show-errors -o none
+  rm -rf -- "$seed_directory"
+  echo "Reset $config_container/$config_folder from the $seed_container/$seed_folder seed"
 }
 
 read_app_access_mode() {
@@ -298,6 +378,7 @@ main() {
     stop_app
     run_database_migration
   fi
+  reset_configuration_from_seed
   az deployment group create \
     --name "$deployment_name" --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
     --template-file "$template_file" --mode Incremental --parameters "${parameters[@]}"

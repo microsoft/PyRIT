@@ -500,6 +500,7 @@ Both `copyrit-gui-test` and `copyrit-gui-prod` supply:
 | `allowedGroupObjectIds` | Backend-authorized Entra security groups |
 | `adminGroupObjectId` | Entra group authorized to manage backend configuration |
 | `pyritConfigFileUri` | Optional credential-free Azure Blob URI for `.pyrit_conf` |
+| `pyritConfigSeedUri` | Optional credential-free Azure Blob folder with a starting configuration for each deployed branch; see [Configuration](#configuration-pyrit_conf-and-env) |
 | `sqlServerFqdn`, `sqlDatabaseName` | Existing SQL database |
 | `keyVaultResourceId`, `envSecretName` | Existing runtime configuration secret |
 | `acrResourceId`, `enableOtel` | Registry resource ID and observability setting |
@@ -675,6 +676,8 @@ Open the public URL and verify unauthenticated users are redirected to Entra and
 ## Configuration: .pyrit_conf and .env
 
 The backend can load `.pyrit_conf` directly from Azure Blob Storage. Set `pyritConfigFileUri` to a credential-free blob HTTPS URI; the backend uses the Container App UAMI to read and update it. Leave it empty to generate configuration from `sqlServerFqdn` and `pyritInitializer`. Grant `Storage Blob Data Contributor` on the storage account or blob container. When using `deploy_instance.py`, pass that resource ID through `--pyrit-config-rbac-scope` so the helper grants access before starting the app.
+
+To start every pipeline deployment from a known configuration, set `pyritConfigSeedUri` to a credential-free Blob folder with one subfolder per deployed branch, such as `<seed>/main/` and `<seed>/releases/v1.2.3/`. Just before deploying the app, the pipeline replaces the folder that holds `pyritConfigFileUri` with the deployed branch's subfolder, including any custom initializer scripts in it. Configuration edits saved in the GUI then last until the next deployment. If the branch has no subfolder with the configuration file, the deployment stops before changing the configuration or the app. Keep the seed and configuration folders separate, point any `custom_initializers_source` in a seeded `.pyrit_conf` at the configuration folder, and grant the pipeline's service connection `Storage Blob Data Contributor` on both.
 
 Write access to the configuration blob, and to any `custom_initializers_source` it names while `allow_custom_initializers` is enabled, lets a principal change code that the backend runs as its UAMI. Limit data-plane write roles on those scopes to the backend identity and principals trusted as configuration administrators.
 
