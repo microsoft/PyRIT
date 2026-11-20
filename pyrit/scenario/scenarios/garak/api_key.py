@@ -322,10 +322,13 @@ class ApiKey(Scenario):
             return {key: value for key, value in params.items() if key not in _EXCLUSION_IDENTIFIER_PARAMS}
 
         # Only the excluded values differ: same scorer class and patterns, a different exclusion digest.
+        # A planned default scorer always excludes some values, so a stored scorer without exclusions was
+        # a custom one, and the generic mismatch applies.
         if (
             self._uses_default_scorer
             and stored_scorer is not None
             and current_scorer is not None
+            and stored_scorer.params.get("excluded_values_count")
             and stored_scorer.class_name == current_scorer.class_name
             and without_exclusions(stored_scorer.params) == without_exclusions(current_scorer.params)
             and stored_scorer.params.get("excluded_values_digest")

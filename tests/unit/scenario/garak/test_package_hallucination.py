@@ -12,7 +12,7 @@ from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import MemoryInterface
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario import BaselineAttackPolicy, DatasetConfiguration
+from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration, DatasetConfiguration, DatasetSource
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.garak import (  # type: ignore[ty:import-not-found]
     PackageHallucination,
@@ -129,7 +129,7 @@ class TestPackageHallucinationTechnique:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPackageHallucinationAtomicAttacks:
-    async def _initialize(self, scenario, target, techniques, memory):
+    async def _initialize(self, scenario, target, techniques, memory, dataset_config=None):
         with patch(
             "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
             return_value=memory,
@@ -138,6 +138,7 @@ class TestPackageHallucinationAtomicAttacks:
                 args={
                     "objective_target": target,
                     "scenario_techniques": techniques,
+                    "dataset_config": dataset_config,
                 }
             )
             await scenario.initialize_async()
@@ -316,6 +317,28 @@ class TestPackageHallucinationAtomicAttacks:
                 fake_registry_memory,
             )
         assert "no longer in memory" not in str(error.value)
+
+    async def test_resume_names_a_deleted_registry_the_configuration_does_not_list(
+        self, mock_objective_target, fake_registry_memory
+    ):
+        corpus = [
+            "garak_package_hallucination_stubs",
+            "garak_package_hallucination_real_tasks",
+            "garak_package_hallucination_unreal_tasks",
+        ]
+
+        def corpus_only():
+            return DatasetAttackConfiguration(max_per_dataset="all", sources=[DatasetSource(name=n) for n in corpus])
+
+        techniques = [PackageHallucinationTechnique.Rust]
+        original = PackageHallucination()
+        await self._initialize(original, mock_objective_target, techniques, fake_registry_memory, corpus_only())
+        # The scorer reads the Rust registry even though the configuration doesn't list it.
+        del fake_registry_memory.packages_by_dataset["garak_crates_packages"]
+
+        resumed = PackageHallucination(scenario_result_id=original._scenario_result_id)
+        with pytest.raises(ValueError, match="dataset 'garak_crates_packages'.* is no longer in memory"):
+            await self._initialize(resumed, mock_objective_target, techniques, fake_registry_memory, corpus_only())
 
     async def test_max_prompts_per_language_caps_output(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination(max_prompts_per_language=3)

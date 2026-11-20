@@ -1980,8 +1980,8 @@ class Scenario(ABC):
 
         Raises:
             ValueError: If the run stored no plan or planned seed groups, if restoring its state
-                needs a dataset the planned run never read (the configuration changed), or if a
-                dataset the planned run read is no longer in memory.
+                needs a dataset the planned run never listed and the configuration changed, or if a
+                dataset restoring its state reads is no longer in memory.
             DatasetConstraintError: If restoring the scenario's state fails for another reason.
         """
         if stored_plan is None or stored_plan.stores_seed_groups is not True:
@@ -1993,10 +1993,16 @@ class Scenario(ABC):
         try:
             await self._prepare_resume_state_async(seed_groups_by_dataset=population)
         except MissingDatasetError as error:
-            # The stored identity lists the datasets the planned run read, so a missing dataset outside
-            # it means the current selection differs from the plan, not that anything was deleted.
+            # A dataset outside the stored identity's list usually means the selection changed since
+            # planning, but a scenario can also read a dataset its configuration doesn't list. Report a
+            # mismatch only when the configuration differs; otherwise the dataset was removed.
             if error.dataset_name not in (stored_result.scenario_identifier.datasets or []):
-                raise ValueError(self._configuration_mismatch_message()) from error
+                try:
+                    self._validate_stored_scenario(
+                        stored_result=stored_result, current_identifier=self._build_scenario_identifier()
+                    )
+                except ValueError as mismatch:
+                    raise mismatch from error
             raise ValueError(
                 self._resume_error_message(
                     reason=f"dataset {error.dataset_name!r}, which this run read when it was planned, "

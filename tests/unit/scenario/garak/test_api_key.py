@@ -233,6 +233,27 @@ class TestApiKey:
         assert DATASET_SAFE_PLACEHOLDERS in str(error.value)
         assert "re-import the dataset content this run used" in str(error.value)
 
+    async def test_resume_from_a_custom_scorer_to_the_default_is_a_configuration_mismatch(
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        original = ApiKey(objective_scorer=CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS))
+        await _initialize_async(
+            scenario=original,
+            target=mock_objective_target,
+            corpus_seeds=corpus_seeds,
+            dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+        )
+        resumed = ApiKey(scenario_result_id=original._scenario_result_id)
+
+        # The planned scorer excluded nothing, so it wasn't the default and the exclusions aren't the cause.
+        with pytest.raises(ValueError, match="does not match the current 'ApiKey' configuration"):
+            await _initialize_async(
+                scenario=resumed,
+                target=mock_objective_target,
+                corpus_seeds=corpus_seeds,
+                dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+            )
+
     async def test_resume_with_custom_scorer_reads_no_corpus(
         self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:

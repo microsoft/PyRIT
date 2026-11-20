@@ -2083,21 +2083,31 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
             await scenario._prepare_resume_state_async(seed_groups_by_dataset={})
         resolve.assert_not_awaited()
 
-    async def test_resume_reports_a_dataset_the_plan_never_read_as_a_configuration_mismatch(
-        self, mock_objective_target
+    @pytest.mark.parametrize("configuration_changed", [True, False])
+    async def test_resume_reports_an_unlisted_missing_dataset_by_whether_the_configuration_changed(
+        self, mock_objective_target, configuration_changed: bool
     ) -> None:
-        missing = MissingDatasetError("no seeds", dataset_name="unplanned")
+        missing = MissingDatasetError("no seeds", dataset_name="unlisted")
 
-        class _ChangedScenario(self._OverridingScenario):
+        class _UnlistedScenario(self._OverridingScenario):
             async def _prepare_resume_state_async(self, *, seed_groups_by_dataset):
                 raise missing
 
-        _, resumed = await self._plan_then_delete_dataset_async(
-            scenario_class=_ChangedScenario, mock_objective_target=mock_objective_target
+        original, resumed = await self._plan_then_delete_dataset_async(
+            scenario_class=_UnlistedScenario, mock_objective_target=mock_objective_target
         )
-        with pytest.raises(ValueError, match="does not match the current '_ChangedScenario' configuration") as error:
+        if configuration_changed:
+            # A new version changes the stored identity, so the unlisted dataset comes from the new configuration.
+            resumed = _UnlistedScenario(name="Overriding", version=2, scenario_result_id=original._scenario_result_id)
+            resumed.set_params_from_args(
+                args={"objective_target": mock_objective_target, "dataset_config": original._dataset_config}
+            )
+            expected = "does not match the current '_UnlistedScenario' configuration"
+        else:
+            # Unchanged configuration: the scenario read a dataset it doesn't list, and it is gone now.
+            expected = "dataset 'unlisted', which this run read when it was planned, is no longer in memory"
+        with pytest.raises(ValueError, match=expected) as error:
             await resumed.initialize_async()
-        assert "no longer in memory" not in str(error.value)
         assert error.value.__cause__ is missing
 
     async def test_resume_reraises_other_dataset_errors_unchanged(self, mock_objective_target) -> None:
