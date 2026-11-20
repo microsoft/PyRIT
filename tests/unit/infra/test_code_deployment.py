@@ -935,6 +935,13 @@ initialize_deployment_scope
             # The config folder is another branch's seed, or the seed is the whole container.
             ({"PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/seed/main/.pyrit_conf"}, separate),
             ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles"}, separate),
+            (
+                {
+                    "PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles//seed",
+                    "PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/seed/main/.pyrit_conf",
+                },
+                separate,
+            ),
             ({"PYRIT_CONFIG_SEED_URI": BLOB}, separate),
             ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/my%20seed"}, separate),
             ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/seed?sig=secret"}, "pyritConfigSeedUri must be"),

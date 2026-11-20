@@ -45,7 +45,7 @@ def _is_plain_folder(folder: str) -> bool:
     return all(re.fullmatch(r"[A-Za-z0-9._-]+", part) and part not in (".", "..") for part in folder.split("/"))
 
 
-def _overlaps(first: str, second: str) -> bool:
+def _overlaps(*, first: str, second: str) -> bool:
     """Return whether two folders in one container are the same, nested, or either is the container root."""
     return not first or not second or f"{first}/".startswith(f"{second}/") or f"{second}/".startswith(f"{first}/")
 
@@ -81,9 +81,11 @@ def seed_location(*, seed_uri: str, config_uri: str, source_branch: str) -> tupl
         raise ValueError(f"pyritConfigSeedUri selects the configuration by branch; {source} is not a branch")
     seed_account, seed_container, seed_root = _blob_location(seed_uri, name="pyritConfigSeedUri")
     config_account, config_container, config_path = _blob_location(config_uri, name="pyritConfigFileUri")
-    seed_folder = f"{seed_root}/{branch[1]}".lstrip("/")
+    # Keep the seed root as written, so an empty segment such as profiles//seed fails the plain-folder check
+    # instead of being compared unstripped.
+    seed_folder = f"{seed_root}/{branch[1]}" if seed_root else branch[1]
     config_folder, _, config_name = config_path.rpartition("/")
-    nested = _overlaps(seed_root, config_folder)
+    nested = _overlaps(first=seed_root, second=config_folder)
     plain = _is_plain_folder(f"{seed_container}/{seed_folder}") and _is_plain_folder(
         f"{config_container}/{config_folder}"
     )
