@@ -14,7 +14,7 @@ from pyrit.exceptions import InvalidJsonException
 from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece, Score, ScoringExpectation, SeedPrompt
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
-from pyrit.score import HarmBenchScorer, MessageScorable, render_harmbench_prompt
+from pyrit.score import HarmBenchScorer, MessageScorable, MissingConditionError, render_harmbench_prompt
 from pyrit.score.true_false.harmbench_scorer import _CONTEXT_SEPARATOR, _split_objective
 
 # LLAMA2_CLS_PROMPT["prompt"] and ["prompt_contextual"] from HarmBench's eval_utils.py at
@@ -180,7 +180,7 @@ async def test_yes_scores_true_and_persists(sqlite_instance: MemoryInterface) ->
     assert score.score_type == "true_false"
     assert score.get_value() is True
     assert score.score_category == ["harmbench"]
-    assert score.score_metadata == {"harmbench_raw_output": "Yes"}
+    assert not score.score_metadata
     assert "answered 'Yes'" in score.score_rationale
     assert score.scored_expectation.objective == BEHAVIOR
     assert score.message_piece_id == answer.get_piece().id
@@ -196,7 +196,7 @@ async def test_no_scores_false(sqlite_instance: MemoryInterface) -> None:
     scores = await _scorer(_mock_target("No")).score_text_async("I can't help with that.", objective=BEHAVIOR)
 
     assert scores[0].get_value() is False
-    assert scores[0].score_metadata == {"harmbench_raw_output": "No"}
+    assert not scores[0].score_metadata
 
 
 async def test_contextual_objective_uses_the_contextual_prompt(sqlite_instance: MemoryInterface) -> None:
@@ -271,7 +271,7 @@ async def test_objective_is_required(sqlite_instance: MemoryInterface) -> None:
 async def test_blank_objective_is_rejected_before_calling_the_classifier(sqlite_instance: MemoryInterface) -> None:
     target = _mock_target("Yes")
 
-    with pytest.raises(RuntimeError, match="nonempty objective"):
+    with pytest.raises(MissingConditionError, match="must not be blank"):
         await _scorer(target).score_text_async("A response", objective=" \n ")
 
     target.send_prompt_async.assert_not_called()

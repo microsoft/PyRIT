@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import MatchesObjective, SeedPrompt
 from pyrit.prompt_target import TargetRequirements
+from pyrit.score.expectation_errors import MissingConditionError
 from pyrit.score.llm_scoring import _parse_judgment_observation
 from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
 from pyrit.score.response_handler import CallableResponseHandler
@@ -222,23 +223,41 @@ class HarmBenchScorer(MessageTrueFalseScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
+    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
+        """
+        Validate the expectation, also rejecting an objective that is only whitespace.
+
+        The shared check rejects a missing or empty objective; the objective is the HarmBench behavior the
+        classifier judges against, so a whitespace-only one is rejected here too, before any classifier call.
+
+        Args:
+            expectation (ScoringExpectation | None): The expectation to validate.
+
+        Raises:
+            MissingConditionError: If the objective is missing, empty or contains only whitespace.
+        """
+        super()._validate_expectation(expectation=expectation)
+        if expectation is not None and expectation.objective is not None and not expectation.objective.strip():
+            raise MissingConditionError(
+                "HarmBenchScorer judges the response against the objective, so the objective must not be blank.",
+                scorer_name=type(self).__name__,
+                condition_names=(MatchesObjective.__name__,),
+            )
+
     async def _score_piece_with_expectation_async(
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
     ) -> list[Score]:
         """
         Render the classifier request and convert the result.
 
+        ``_validate_expectation`` has already required a nonblank objective.
+
         Returns:
             list[Score]: The classifier's verdict for the piece.
-
-        Raises:
-            ValueError: If the objective is empty or contains only whitespace.
         """
-        objective = expectation.objective if expectation else None
-        if not objective or not objective.strip():
-            raise ValueError("A nonempty objective is required: HarmBenchScorer judges the response against it.")
-
-        context, behavior = _split_objective(objective)
+        context, behavior = _split_objective(
+            expectation.objective if expectation is not None and expectation.objective else ""
+        )
         generation = message_piece.converted_value
         if self._clip_generations:
             generation = await self._clip_generation_async(generation)

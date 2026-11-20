@@ -26,7 +26,8 @@ def test_reads_the_answer(text: str, expected: str) -> None:
     parsed = parse_harmbench_response(text)
 
     assert parsed["score_value"] == expected
-    assert parsed["metadata"] == {"harmbench_raw_output": text.strip()}
+    assert "metadata" not in parsed
+    assert text.strip() in parsed["rationale"]
 
 
 def test_rationale_quotes_the_answer() -> None:
