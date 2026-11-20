@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, unquote, urlparse
@@ -114,13 +115,17 @@ def media_key(value: str, *, storage: StorageIO | None = None) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _media_keys(session: Session, values: Sequence[str]) -> set[str]:
-    def canonicalize() -> set[str]:
-        return {media_key(value, storage=session.info.get("dataset_storage_io")) for value in values}
+def _media_key_map(session: Session, values: Sequence[str]) -> dict[str, str]:
+    def canonicalize() -> dict[str, str]:
+        return {value: media_key(value, storage=session.info.get("dataset_storage_io")) for value in values}
 
     if session.get_bind().dialect.is_async:
         return await_only(asyncio.to_thread(canonicalize))
     return canonicalize()
+
+
+def _media_keys(session: Session, values: Sequence[str]) -> set[str]:
+    return set(_media_key_map(session, values).values())
 
 
 def lock_dataset_lifecycle(session: Session) -> None:
@@ -279,6 +284,20 @@ def stored_media_keys(session: Session, *, include_planned: bool = True) -> set[
         (PromptMemoryEntry.converted_value, PromptMemoryEntry.converted_value_data_type),
     ):
         values.extend(session.scalars(select(value_column).where(type_column.in_(MEDIA_PATH_DATA_TYPES))).all())
+    keys = _media_keys(session, [value for value in values if value])
+    return keys | set(planned_media_key_counts(session)) if include_planned else keys
+
+
+def planned_media_key_counts(session: Session) -> Counter[str]:
+    """
+    Count the planned seed groups of runs that haven't completed that reference each media key.
+
+    Args:
+        session (Session): The session to read in.
+
+    Returns:
+        Counter[str]: The number of planned groups referencing each canonical media identity.
+    """
     planned = (
         select(ScenarioPlanSeedGroupEntry.seed_group)
         .join(ScenarioResultEntry, ScenarioResultEntry.id == ScenarioPlanSeedGroupEntry.scenario_result_id)
@@ -287,9 +306,10 @@ def stored_media_keys(session: Session, *, include_planned: bool = True) -> set[
             ScenarioResultEntry.scenario_run_state != ScenarioRunState.COMPLETED.value,
         )
     )
-    for seed_group in session.scalars(planned) if include_planned else []:
-        values.extend(planned_media_values(seed_group))
-    return _media_keys(session, [value for value in values if value])
+    with session.no_autoflush:
+        groups = [{value for value in planned_media_values(group) if value} for group in session.scalars(planned)]
+    keys = _media_key_map(session, sorted(set().union(*groups)))
+    return Counter(key for values in groups for key in {keys[value] for value in values})
 
 
 def reserved_seed_state(session: Session) -> dict[uuid.UUID, tuple[object, ...]]:
@@ -314,7 +334,7 @@ def validate_stored_dataset_references(
     session: Session,
     *,
     reserved_seeds: dict[uuid.UUID, tuple[object, ...]] | None = None,
-    include_planned: bool = False,
+    planned_before: Counter[str] | None = None,
 ) -> None:
     """
     Validate bulk writes without refreshing or discarding pending ORM changes.
@@ -322,9 +342,9 @@ def validate_stored_dataset_references(
     Args:
         session (Session): The session that ran the bulk write.
         reserved_seeds (dict[uuid.UUID, tuple[object, ...]] | None): Protected seed rows read before the write.
-        include_planned (bool): Whether to check media planned by runs that haven't completed. Only
-            planned seed group writes need this; a run's older plan can name media deleted while it
-            was completed, and that must not block unrelated writes.
+        planned_before (Counter[str] | None): Planned media references read before a planned seed group
+            write. Only references the write added are checked; a run's older plan can name media
+            deleted while it was completed, and that must not block other writes.
 
     Raises:
         DatasetNameConflictError: If bulk DML changed a protected seed population.
@@ -332,11 +352,10 @@ def validate_stored_dataset_references(
     with session.no_autoflush:
         if reserved_seeds is not None and reserved_seed_state(session) != reserved_seeds:
             raise DatasetNameConflictError("The dataset name is reserved by an upload.")
-        _validate_dataset_references(
-            session=session,
-            dataset_names=set(),
-            keys=stored_media_keys(session, include_planned=include_planned),
-        )
+        keys = stored_media_keys(session, include_planned=False)
+        if planned_before is not None:
+            keys |= {key for key, count in planned_media_key_counts(session).items() if count > planned_before[key]}
+        _validate_dataset_references(session=session, dataset_names=set(), keys=keys)
 
 
 async def _finish_storage_write_async(write: Awaitable[None]) -> None:

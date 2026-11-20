@@ -200,6 +200,7 @@ def _guard_bulk_media_writes(state: ORMExecuteState) -> Any:
         return state.invoke_statement()
     from pyrit.memory.dataset_lifecycle import (
         lock_dataset_lifecycle,
+        planned_media_key_counts,
         reserved_seed_state,
         validate_stored_dataset_references,
     )
@@ -209,10 +210,9 @@ def _guard_bulk_media_writes(state: ORMExecuteState) -> Any:
         return state.invoke_statement()
     with state.session.begin_nested():
         reserved_seeds = reserved_seed_state(state.session) if table_name == SeedEntry.__tablename__ else None
-        result = state.invoke_statement()
-        validate_stored_dataset_references(
-            state.session,
-            reserved_seeds=reserved_seeds,
-            include_planned=table_name == ScenarioPlanSeedGroupEntry.__tablename__,
+        planned_before = (
+            planned_media_key_counts(state.session) if table_name == ScenarioPlanSeedGroupEntry.__tablename__ else None
         )
+        result = state.invoke_statement()
+        validate_stored_dataset_references(state.session, reserved_seeds=reserved_seeds, planned_before=planned_before)
     return result
