@@ -20,18 +20,23 @@ _BRANCH = re.compile(r"refs/heads/((?:[A-Za-z0-9][A-Za-z0-9._-]*/)*[A-Za-z0-9][A
 
 def _blob_location(uri: str, *, name: str) -> tuple[str, str, str]:
     """Return the account, container, and path of a credential-free Azure Blob Storage URI."""
-    parsed = urlparse(uri)
+    message = f"{name} must be a credential-free Azure Blob Storage URI"
+    try:
+        parsed = urlparse(uri)
+        port = parsed.port
+    except ValueError:
+        raise ValueError(message) from None
     hostname = parsed.hostname or ""
     if (
         parsed.scheme != "https"
         or not any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in _BLOB_SUFFIXES)
         or parsed.username is not None
         or parsed.password is not None
-        or parsed.port is not None
+        or port is not None
         or parsed.query
         or parsed.fragment
     ):
-        raise ValueError(f"{name} must be a credential-free Azure Blob Storage URI")
+        raise ValueError(message)
     container, _, path = parsed.path.strip("/").partition("/")
     return hostname.split(".")[0], container, path
 
