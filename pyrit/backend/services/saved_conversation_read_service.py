@@ -72,7 +72,6 @@ class SavedConversationReadService:
             or anchor.position < 0
             or anchor.position >= page.total_count
             or anchor.identifier != str(uuid.UUID(attack_result_id))
-            or anchor.timestamp != page.timestamp
         ):
             raise ValueError("Invalid or stale saved-conversation cursor.")
         offset = anchor.position if anchor is not None and anchor.position is not None else 0
