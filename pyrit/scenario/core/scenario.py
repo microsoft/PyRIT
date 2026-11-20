@@ -45,6 +45,7 @@ from pyrit.models import (
     DatasetFetchPolicy,
     DatasetLimitInput,
     DatasetLimitState,
+    DatasetSelectionMode,
     IndeterminateDatasetSize,
     Parameter,
     RegistryReference,
@@ -1190,7 +1191,19 @@ class Scenario(ABC):
     DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions()
 
     def get_dataset_options(self) -> ScenarioDatasetOptions:
-        """Return the scenario's named-dataset capabilities for the current parameters."""
+        """
+        Return the scenario's named-dataset capabilities for the current parameters.
+
+        Named sources can't replace inline seeds, so an inline configuration reports its sources as
+        fixed, with no required selection. Limits and filters keep their declared capabilities.
+
+        Returns:
+            ScenarioDatasetOptions: The permitted dataset overrides.
+        """
+        if self._dataset_config.source_kind is DatasetSourceKind.INLINE:
+            return self.DATASET_OPTIONS.model_copy(
+                update={"mode": DatasetSelectionMode.FIXED, "allowed_names": [], "min_selected": None}
+            )
         return self.DATASET_OPTIONS
 
     def get_default_dataset_settings(self) -> ScenarioDatasetSettings:

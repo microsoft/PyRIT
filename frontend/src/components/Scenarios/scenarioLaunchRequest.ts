@@ -9,6 +9,8 @@ import type {
   TechniqueOverride,
 } from '@/types'
 
+import { scenarioDatasetDefaults } from './datasetPresentation'
+
 /**
  * Common/opaque parameters the base scenario declares via
  * `Scenario._common_scenario_parameters` — the launch form exposes a
@@ -44,6 +46,37 @@ export function supportsParameter(scenario: RegisteredScenario, name: string): b
   return scenario.supported_parameter_names.includes(name)
 }
 
+/** Whether the scenario declares that a launch needs datasets selected, such as one without defaults. */
+export function requiresDatasetSelection(scenario: RegisteredScenario): boolean {
+  return (scenario.dataset_options?.min_selected ?? 0) > 0
+}
+
+/** Why the selected datasets are too few for the scenario's declared minimum, or null. */
+export function datasetSelectionError(scenario: RegisteredScenario, datasetEdits: ScenarioDatasetRequest): string | null {
+  const minimum = scenario.dataset_options?.min_selected ?? 0
+  if (minimum === 0) return null
+  const selected = (datasetEdits.sources ?? scenarioDatasetDefaults(scenario).sources).length
+  if (selected >= minimum) return null
+  return minimum === 1 ? 'Select a dataset.' : `Select at least ${minimum} datasets.`
+}
+
+function linkedDatasetLabel(name: string): string {
+  return name !== '' && name === name.trim() ? name : JSON.stringify(name)
+}
+
+/**
+ * Why a link's dataset names can't launch, or null. A scenario without dataset input would drop
+ * them silently; other names, including blank ones, are left for the server to validate.
+ */
+export function linkedDatasetProblem(names: readonly string[], supportsDatasets: boolean): string | null {
+  if (names.length === 0) return null
+  if (!supportsDatasets) {
+    return "This scenario does not take datasets, so it can't launch with the linked datasets: "
+      + `${names.map(linkedDatasetLabel).join(', ')}.`
+  }
+  return null
+}
+
 /** The scenario-specific parameters the launch form renders, without the common ones. */
 export function scenarioDynamicParameters(scenario: RegisteredScenario): Parameter[] {
   return scenario.supported_parameters.filter(
@@ -71,6 +104,8 @@ export interface ScenarioLaunchInput {
   presetScenarioParams?: Record<string, unknown>
   datasetEdits: ScenarioDatasetRequest
   datasetError: string | null
+  /** Why the linked dataset names can't launch; see `linkedDatasetProblem`. */
+  linkedDatasetError?: string | null
   includeBaseline: boolean
   techniqueOverride?: TechniqueOverride
   techniqueEditError?: string
@@ -110,7 +145,9 @@ export function buildEstimateRequest({
   supportsPrompt = true,
   objectiveScorer,
   scorerError,
+  linkedDatasetError,
 }: ScenarioLaunchInput): BuildEstimateRequestResult {
+  if (linkedDatasetError) return { ok: false, error: linkedDatasetError }
   if (techniqueEditError) return { ok: false, error: techniqueEditError }
   if (scorerError) return { ok: false, error: scorerError }
   if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0) {
@@ -181,6 +218,8 @@ export function buildRunRequest(input: ScenarioLaunchInput): BuildRunRequestResu
   if (supportsParameter(input.scenario, 'objective_target') && !input.targetName) {
     return { ok: false, error: 'Select a target.' }
   }
+  const datasetProblem = datasetSelectionError(input.scenario, input.datasetEdits)
+  if (datasetProblem) return { ok: false, error: datasetProblem }
   const estimateResult = buildEstimateRequest(input)
   if (!estimateResult.ok) {
     return estimateResult

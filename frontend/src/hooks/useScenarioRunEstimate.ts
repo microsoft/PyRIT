@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { mapScenarioRunEstimate } from '@/components/Scenarios/scenarioRunEstimateAdapter'
 import { scenariosApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
+import { apiErrorMessage, toApiError } from '@/services/errors'
 import type {
   ScenarioDatasetSettings,
   ScenarioRunEstimateResult,
@@ -88,7 +88,7 @@ export function useScenarioRunEstimate({
         .catch((err: unknown) => {
           if (isStale()) return
           const error = toApiError(err)
-          setRequestState({ status: 'error', requestKey, error: error.detail })
+          setRequestState({ status: 'error', requestKey, error: apiErrorMessage(error) })
           if (request.datasets && (error.status === 400 || error.status === 422)) {
             const { datasets, ...defaultRequest } = request
             void datasets

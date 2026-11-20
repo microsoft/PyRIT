@@ -3,6 +3,7 @@ import type { Parameter, RegisteredScenario } from '@/types'
 import {
   buildEstimateRequest,
   buildRunRequest,
+  linkedDatasetProblem,
   scenarioDynamicParameters,
   type ScenarioLaunchInput,
 } from './scenarioLaunchRequest'
@@ -118,6 +119,28 @@ describe('scenario launch requests', () => {
     ['pending technique edits', { techniqueEditError: 'Wait for valid technique settings before launch.' },
       'Wait for valid technique settings before launch.'],
     ['invalid datasets', { datasetError: 'Bad dataset limit.' }, 'Bad dataset limit.'],
+    ['linked datasets that cannot launch', { linkedDatasetError: 'Linked problem.' }, 'Linked problem.'],
+    ['a launch without the datasets the scenario requires', {
+      scenario: makeScenario({
+        scenario_name: 'any.renamed_policy', default_datasets: [],
+        dataset_defaults: { sources: [], max_per_dataset: 'all', max_total: 'all', fetch: 'if_missing', filters: {} },
+        dataset_options: {
+          mode: 'any', allowed_names: [], min_selected: 1, per_dataset_limit: true, total_limit: true,
+          supports_overrides: true, filters: true,
+        },
+      }),
+    }, 'Select a dataset.'],
+    ['fewer datasets than the scenario requires', {
+      scenario: makeScenario({
+        default_datasets: [],
+        dataset_defaults: { sources: [], max_per_dataset: 'all', max_total: 'all', fetch: 'if_missing', filters: {} },
+        dataset_options: {
+          mode: 'any', allowed_names: [], min_selected: 2, per_dataset_limit: true, total_limit: true,
+          supports_overrides: true, filters: true,
+        },
+      }),
+      datasetEdits: { sources: [{ name: 'ds_a' }] },
+    }, 'Select at least 2 datasets.'],
     ['an unsupported conversation', {
       supportsPrependedConversation: false,
       scenarioParamValues: { objective: '', prepended_conversation_id: 'saved' },
@@ -130,6 +153,20 @@ describe('scenario launch requests', () => {
 
   it('estimates without a target, since only the launch needs one', () => {
     expect(buildEstimateRequest(makeInput({ targetName: '' })).ok).toBe(true)
+  })
+
+  it('does not estimate a configuration whose linked datasets cannot launch', () => {
+    expect(buildEstimateRequest(makeInput({ linkedDatasetError: 'Linked problem.' })))
+      .toEqual({ ok: false, error: 'Linked problem.' })
+  })
+
+  it('reports only linked names the client knows cannot launch, keeping whitespace visible', () => {
+    expect(linkedDatasetProblem([], false)).toBeNull()
+    expect(linkedDatasetProblem([' returns ', 'returns ', 'missing'], true)).toBeNull()
+    expect(linkedDatasetProblem(['ds_a', ' returns ', ''], false)).toBe(
+      'This scenario does not take datasets, so it can\'t launch with the linked datasets: ds_a, " returns ", "".',
+    )
+    expect(linkedDatasetProblem(['ds_a', ' '], true)).toBeNull()
   })
 
   it('keeps run-only limits out of the estimate', () => {

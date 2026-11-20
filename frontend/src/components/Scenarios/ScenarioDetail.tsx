@@ -21,7 +21,7 @@ import {
   ArrowSyncRegular,
   SettingsRegular,
 } from '@fluentui/react-icons'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
@@ -63,7 +63,9 @@ import type {
 } from '@/types'
 import { findRegisteredScorer } from '@/utils/scorerPresentation'
 import { newDraftMessage, toConversationDraft } from '@/utils/conversationDraft'
-import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
+import {
+  DATASET_QUERY_PARAM, datasetNamesFromSearchParams, routerPathParamValue, scenarioRunRoutePath,
+} from '@/utils/routeParams'
 import { targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
@@ -96,9 +98,13 @@ import {
   OBJECTIVE_PARAMETER_NAMES,
   type ScenarioLaunchInput,
   scenarioDynamicParameters,
+  datasetSelectionError,
+  linkedDatasetProblem,
+  requiresDatasetSelection,
   supportsParameter,
 } from './scenarioLaunchRequest'
 import ScenarioDatasetTable from './ScenarioDatasetTable'
+import DatasetActions from './DatasetActions'
 
 function targetOptionLabel(target: TargetInstance): string {
   const modelName = targetModelName(target)
@@ -144,13 +150,15 @@ export default function ScenarioDetail(props: ScenarioDetailProps) {
   const conversationIds = searchParams.getAll('prepended_conversation_id')
   const initialConversationId = conversationIds.length === 1 ? (conversationIds[0]?.trim() ?? '') : ''
   const presetName = searchParams.get(PRESET_QUERY_PARAM)?.trim() ?? ''
+  const datasetNames = datasetNamesFromSearchParams(searchParams)
   if (presetName && props.sourceRunId) return <ScenarioDetailStateFrame>
     <MessageBar intent="error"><MessageBarBody>Choose a saved run or a preset, not both.</MessageBarBody></MessageBar>
   </ScenarioDetailStateFrame>
-  // A new scenario, conversation, preset, or saved-run link starts a fresh configuration form.
-  return <ScenarioDetailContent key={JSON.stringify([encodedScenarioName, initialConversationId, presetName, props.sourceRunId])}
+  // A new scenario, conversation, preset, dataset, or saved-run link starts a fresh configuration form.
+  return <ScenarioDetailContent
+    key={JSON.stringify([encodedScenarioName, initialConversationId, presetName, props.sourceRunId, datasetNames])}
     encodedScenarioName={encodedScenarioName} initialConversationId={initialConversationId}
-    presetName={presetName} {...props} />
+    presetName={presetName} datasetNames={datasetNames} {...props} />
 }
 
 interface ScenarioDetailContentProps extends ScenarioDetailProps {
@@ -158,6 +166,8 @@ interface ScenarioDetailContentProps extends ScenarioDetailProps {
   initialConversationId: string
   /** The saved preset that pre-fills the form, or empty for none. */
   presetName: string
+  /** Explicit dataset names from a link; the server validates them when estimating and launching. */
+  datasetNames: string[]
 }
 
 interface ScenarioDetailStateFrameProps {
@@ -184,6 +194,7 @@ function ScenarioDetailContent({
   encodedScenarioName,
   initialConversationId,
   presetName,
+  datasetNames,
   targets,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
@@ -312,6 +323,7 @@ function ScenarioDetailContent({
       initialRun={initialRun}
       sourceRunId={sourceRunId}
       initialConversationId={initialConversationId}
+      linkedDatasetNames={datasetNames}
       targets={targets}
       defaultObjectiveTarget={defaultObjectiveTarget}
       defaultAdversarialTarget={defaultAdversarialTarget}
@@ -333,6 +345,8 @@ interface ScenarioLaunchFormProps extends ScorerPickerData {
   /** Seeds the initial form state only; edits are never written back to the preset. */
   preset?: ScenarioPresetResponse | null
   initialConversationId: string
+  /** Explicit dataset names from a link; when the scenario takes datasets they replace the preset's sources. */
+  linkedDatasetNames?: readonly string[]
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
@@ -349,6 +363,7 @@ function ScenarioLaunchForm({
   scenario,
   preset = null,
   initialConversationId,
+  linkedDatasetNames = [],
   targets,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
@@ -405,6 +420,7 @@ function ScenarioLaunchForm({
   const supportsTechniques = supportsParameter(scenario, 'scenario_techniques')
   const supportsBaseline = supportsParameter(scenario, 'include_baseline')
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
+  const datasetRequired = requiresDatasetSelection(scenario)
   const supportsConcurrency = supportsParameter(scenario, 'max_concurrency')
   const supportsRetries = supportsParameter(scenario, 'max_retries')
   const isBaselineForbidden = scenario.baseline_policy === 'forbidden'
@@ -412,6 +428,18 @@ function ScenarioLaunchForm({
   const adversarialTargets = targets.filter(
     (target: TargetInstance) => target.capabilities?.supports_multi_turn === true,
   )
+  const [linkedNames] = useState(() => [...linkedDatasetNames])
+  const linkedDatasetError = useMemo(
+    () => linkedDatasetProblem(linkedNames, supportsDatasets),
+    [linkedNames, supportsDatasets],
+  )
+  const location = useLocation()
+  const searchWithoutDatasetLinks = new URLSearchParams()
+  for (const [key, value] of new URLSearchParams(location.search)) {
+    if (key !== DATASET_QUERY_PARAM) searchWithoutDatasetLinks.append(key, value)
+  }
+  const remainingSearch = searchWithoutDatasetLinks.toString()
+  const pathWithoutDatasetLinks = `${location.pathname}${remainingSearch ? `?${remainingSearch}` : ''}`
 
   const formRules = useMemo<ScenarioLaunchFormRules>(() => ({
     techniqueNames: techniqueOptions.map((technique) => technique.name),
@@ -435,6 +463,7 @@ function ScenarioLaunchForm({
       preset,
       seededTechniques: techniqueSeed.techniques,
       initialRun,
+      datasetNames: supportsDatasets && linkedDatasetNames.length > 0 ? linkedDatasetNames : undefined,
     }),
   )
   const {
@@ -522,6 +551,7 @@ function ScenarioLaunchForm({
     presetScenarioParams,
     datasetEdits,
     datasetError,
+    linkedDatasetError,
     maxConcurrency,
     maxRetries,
     includeBaseline: isBaselineForbidden ? false : baselineChecked,
@@ -550,9 +580,12 @@ function ScenarioLaunchForm({
     targetName,
     techniqueEditError,
     techniqueEditor.override,
+    linkedDatasetError,
   ])
   const estimateResult = useMemo(() => buildEstimateRequest(launchInput), [launchInput])
   const requestResult = useMemo(() => buildRunRequest(launchInput), [launchInput])
+  const datasetSelectionProblem = datasetSelectionError(scenario, datasetEdits)
+  const datasetPickerRef = useRef<HTMLInputElement>(null)
   const estimateRequest = useMemo(
     () => estimateResult.ok ? estimateResult.request : null,
     [estimateResult],
@@ -811,7 +844,14 @@ function ScenarioLaunchForm({
             id={formId}
             className={styles.formColumn}
             aria-label="Scenario run configuration"
-            onSubmit={submitForm}
+            onSubmit={(event) => {
+              submitForm(event)
+              // A missing dataset is reported on the picker, far below the button; focusing it scrolls the
+              // form there. scrollIntoView would also scroll the app shell, which can't scroll back.
+              if (!requestResult.ok && requestResult.error === datasetSelectionProblem) {
+                datasetPickerRef.current?.focus()
+              }
+            }}
             noValidate
           >
             {preset && (
@@ -838,9 +878,17 @@ function ScenarioLaunchForm({
                 </MessageBarBody>
               </MessageBar>
             )}
-            {validationError && !requestResult.ok && (
+            {validationError && !requestResult.ok && requestResult.error !== datasetSelectionProblem && (
               <MessageBar intent="warning">
                 <MessageBarBody role="alert">{requestResult.error}</MessageBarBody>
+              </MessageBar>
+            )}
+            {linkedDatasetError && (
+              <MessageBar intent="error" data-testid="linked-datasets-error">
+                <MessageBarBody>
+                  {linkedDatasetError}{' '}
+                  <Link to={pathWithoutDatasetLinks}>Open without the linked datasets</Link>
+                </MessageBarBody>
               </MessageBar>
             )}
             {(staleSelection || (targetName && unavailableSelection)) && (
@@ -977,11 +1025,14 @@ function ScenarioLaunchForm({
 
             {(supportsDatasets || datasetDefaults.sources.length > 0) && (
             <section className={styles.section} aria-labelledby="datasets-section-title">
-              <Text id="datasets-section-title" as="h2" aria-label="Datasets" size={400} weight="semibold">
-                <ContextualHelpLabel term="Datasets" labelProps={{ weight: 'semibold' }}>
-                  Seed examples used by this scan. Limits and filters control which examples are selected.
-                </ContextualHelpLabel>
-              </Text>
+              <div className={styles.sectionHeader}>
+                <Text id="datasets-section-title" as="h2" aria-label="Datasets" size={400} weight="semibold">
+                  <ContextualHelpLabel term="Datasets" labelProps={{ weight: 'semibold', required: datasetRequired }}>
+                    Seed examples used by this scan. Limits and filters control which examples are selected.
+                  </ContextualHelpLabel>
+                </Text>
+                <DatasetActions />
+              </div>
               <ScenarioDatasetTable
                 request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
@@ -993,6 +1044,8 @@ function ScenarioLaunchForm({
                   && !confirmedDatasetSettings.sources.some((source) => source.fetch === 'always'
                     && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
                 onLoad={() => { if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest) }}
+                required={datasetRequired} showCatalogLink={false}
+                selectionError={validationError !== null ? datasetSelectionProblem : null} pickerRef={datasetPickerRef}
                 onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
               />
             </section>
@@ -1061,7 +1114,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null) || linkedDatasetError !== null}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan

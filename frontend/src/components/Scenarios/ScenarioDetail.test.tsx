@@ -3293,5 +3293,263 @@ describe('ScenarioDetail', () => {
       expect(mockGetPreset).toHaveBeenNthCalledWith(2, 'second')
       expect(mockStartRun).not.toHaveBeenCalled()
     })
+
+    it('should replace the preset dataset sources with datasets from the link', async () => {
+      const user = userEvent.setup()
+      mockGetPreset.mockResolvedValue(makePresetResponse({
+        datasets: { sources: [{ name: 'harmbench' }], max_total: 5 },
+      }))
+      renderDetail(`${PRESET_PATH}&dataset=ds_b`)
+
+      expect(await screen.findByTestId('preset-seed-banner')).toBeInTheDocument()
+      expect(screen.getByText('ds_b (unknown)')).toBeInTheDocument()
+      expect(screen.queryByText('harmbench (unknown)')).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ sources: [{ name: 'ds_b' }], max_total: 5 })
+    })
+  })
+
+  describe('scenarios without default datasets', () => {
+    const POLICY_PATH = '/scanner/launch/foundry.assert_policy'
+
+    function policyScenario(): RegisteredScenario {
+      // The catalog lists dataset_config by name only; its external parameters omit the opaque input.
+      return makeScenario({
+        scenario_name: 'foundry.assert_policy',
+        default_datasets: [],
+        supported_parameters: [],
+        dataset_defaults: { sources: [], max_per_dataset: 'all', max_total: 'all', fetch: 'if_missing', filters: {} },
+        dataset_options: {
+          mode: 'any', allowed_names: [], min_selected: 1, max_selected: null, per_dataset_limit: true, total_limit: true,
+          supports_overrides: true, filters: true, source_settings: true,
+        },
+      })
+    }
+
+    it('should let the first stored dataset be chosen, estimated, and launched', async () => {
+      const user = userEvent.setup()
+      const scenario = policyScenario()
+      expect(scenario.supported_parameters.map((parameter) => parameter.name)).not.toContain('dataset_config')
+      mockGetScenario.mockResolvedValue(scenario)
+      mockEstimateRun.mockResolvedValue(makeEstimate(25))
+      renderDetail(POLICY_PATH)
+
+      expect(await screen.findByText('No dataset selected.')).toBeInTheDocument()
+      expect(screen.queryByText('This scenario has no named datasets.')).not.toBeInTheDocument()
+      await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+      await user.click(screen.getByRole('option', { name: 'ds_a (unknown)', exact: true }))
+
+      expect(within(screen.getByRole('table', { name: 'Selected datasets' })).getByText('ds_a (unknown)'))
+        .toBeInTheDocument()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
+        'foundry.assert_policy',
+        expect.objectContaining({ datasets: { sources: [{ name: 'ds_a' }] } }),
+        expect.any(AbortSignal),
+      ))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0]).toEqual(expect.objectContaining({
+        scenario_name: 'foundry.assert_policy',
+        target_name: 'target-a',
+        datasets: { sources: [{ name: 'ds_a' }] },
+      }))
+    })
+
+    it('should keep a dataset preselected by a link', async () => {
+      mockGetScenario.mockResolvedValue(policyScenario())
+      renderDetail(`${POLICY_PATH}?dataset=ds_b`)
+
+      expect(await screen.findByText('ds_b (unknown)')).toBeInTheDocument()
+      expect(screen.queryByText('No dataset selected.')).not.toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Add dataset' })).not.toBeRequired()
+    })
+
+    it('should report a missing required dataset on the picker when launching and move focus there', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(policyScenario())
+      renderDetail(POLICY_PATH)
+
+      const picker = await screen.findByRole('combobox', { name: 'Add dataset' })
+      jest.mocked(Element.prototype.scrollIntoView).mockClear()
+      expect(picker).toBeRequired()
+      expect(picker).not.toHaveAttribute('aria-invalid', 'true')
+      expect(screen.queryByText('Select a dataset.')).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+
+      expect(picker).toHaveAttribute('aria-invalid', 'true')
+      expect(picker).toHaveFocus()
+      // Focus scrolls the form to the picker; scrollIntoView would also scroll the app shell.
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+      expect(screen.getByText('Select a dataset.')).toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+      // The picker carries the error, so the banner at the top of the form stays empty.
+      expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(['Select a dataset.'])
+      expect(mockStartRun).not.toHaveBeenCalled()
+
+      await user.click(picker)
+      await user.click(screen.getByRole('option', { name: 'ds_a (unknown)', exact: true }))
+      expect(screen.queryByText('Select a dataset.')).not.toBeInTheDocument()
+    })
+
+    it('should offer Browse datasets in the Datasets header instead of below the table', async () => {
+      mockGetScenario.mockResolvedValue(policyScenario())
+      renderDetail(POLICY_PATH)
+
+      const actions = await screen.findByRole('group', { name: 'Dataset actions' })
+      expect(within(actions).getAllByRole('link').map((link) => link.textContent)).toEqual(['Browse datasets'])
+      expect(within(actions).getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+      expect(screen.getAllByRole('link', { name: 'Browse datasets' })).toHaveLength(1)
+    })
+  })
+
+  describe('dataset links', () => {
+    const SCENARIO_PATH = '/scanner/launch/foundry.red_team_agent'
+
+    it('keeps every linked dataset name, including unknown ones, for the server to validate', async () => {
+      const user = userEvent.setup()
+      renderDetail(`${SCENARIO_PATH}?dataset=ds_a&dataset=missing_set&dataset=ds_b&dataset=ds_a`)
+
+      expect(await screen.findByRole('button', { name: 'Remove missing_set' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Remove ds_a' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Remove ds_b' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Remove harmbench' })).not.toBeInTheDocument()
+      expect(await screen.findByText('Import the missing datasets into PyRIT first.')).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
+        sources: [{ name: 'ds_a' }, { name: 'missing_set' }, { name: 'ds_b' }],
+      })
+    })
+
+    it('keeps linked datasets when the catalog is unavailable', async () => {
+      jest.mocked(datasetsApi.listDatasets).mockRejectedValueOnce(new Error('Catalog offline'))
+      renderDetail(`${SCENARIO_PATH}?dataset=ds_a`)
+
+      expect(await screen.findByText(/Catalog offline/)).toBeInTheDocument()
+      expect(screen.getByText('ds_a (unknown)')).toBeInTheDocument()
+      expect(screen.queryByText('harmbench (unknown)')).not.toBeInTheDocument()
+    })
+
+    it('rejects a launch with linked datasets the scenario does not take, and launches without them', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(makeScenario({
+        default_datasets: [],
+        supported_parameter_names: ['objective_target', 'scenario_techniques', 'include_baseline'],
+      }))
+      renderDetail(`${SCENARIO_PATH}?preset_unrelated=1&dataset=ds_a&dataset=ds_b`)
+
+      const unsupported = await screen.findByTestId('linked-datasets-error')
+      expect(unsupported).toHaveTextContent(
+        "This scenario does not take datasets, so it can't launch with the linked datasets: ds_a, ds_b.",
+      )
+      const withoutDatasets = within(unsupported).getByRole('link', { name: 'Open without the linked datasets' })
+      expect(withoutDatasets).toHaveAttribute('href', `${SCENARIO_PATH}?preset_unrelated=1`)
+      await screen.findByRole('combobox', { name: 'Objective Target' })
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+      expect(mockStartRun).not.toHaveBeenCalled()
+
+      await user.click(withoutDatasets)
+      await waitFor(() => expect(screen.queryByTestId('linked-datasets-error')).not.toBeInTheDocument())
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].datasets).toBeUndefined()
+    })
+
+    it('launches linked names exactly, so whitespace still names a different dataset', async () => {
+      const user = userEvent.setup()
+      renderDetail(`${SCENARIO_PATH}?dataset=%20returns%20&dataset=returns%20&dataset=%20returns%20`)
+
+      const table = await screen.findByRole('table', { name: 'Selected datasets' })
+      expect(within(table).getAllByRole('row')).toHaveLength(3)
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ sources: [{ name: ' returns ' }, { name: 'returns ' }] })
+    })
+
+    it('passes a blank linked dataset to the server and shows its error', async () => {
+      // The backend's 422 problem body (middleware/error_handlers.py): a generic detail and the field message.
+      mockEstimateRun.mockRejectedValue({
+        isAxiosError: true,
+        response: {
+          status: 422,
+          data: {
+            type: '/errors/validation-error', title: 'Validation Error', status: 422,
+            detail: 'Request validation failed',
+            errors: [{
+              field: 'body.datasets.sources.0.name',
+              message: 'Value error, Dataset names must be non-empty.',
+              code: 'value_error',
+            }],
+          },
+        },
+      })
+      renderDetail(`${SCENARIO_PATH}?dataset=%20&preset_unrelated=1`)
+
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledWith(
+        'foundry.red_team_agent',
+        expect.objectContaining({ datasets: { sources: [{ name: ' ' }] } }),
+        expect.any(AbortSignal),
+      ))
+      const estimate = await screen.findByTestId('run-estimate')
+      await waitFor(() => expect(within(estimate).getByRole('status'))
+        .toHaveTextContent('Request validation failed: Dataset names must be non-empty.'))
+      expect(screen.queryByTestId('linked-datasets-error')).not.toBeInTheDocument()
+      expect(screen.queryByText('harmbench (unknown)')).not.toBeInTheDocument()
+    })
+    it('starts a fresh form when a link names different datasets', async () => {
+      const user = userEvent.setup()
+      render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+        <MemoryRouter initialEntries={[`${SCENARIO_PATH}?dataset=ds_a`]}>
+          <Link to={`${SCENARIO_PATH}?dataset=ds_b`}>Use ds_b</Link>
+          <Routes><Route path="/scanner/launch/:scenarioName" element={
+            <ScenarioDetail targets={[]} defaultObjectiveTarget={null} defaultAdversarialTarget={null}
+              labels={{ operator: 'roakey' }} defaultsReady onNavigate={jest.fn()} />
+          } /></Routes>
+        </MemoryRouter>
+      </UserPreferencesProvider></FluentProvider>)
+
+      expect(await screen.findByText('ds_a (unknown)')).toBeInTheDocument()
+      await user.click(screen.getByRole('link', { name: 'Use ds_b' }))
+
+      expect(await screen.findByText('ds_b (unknown)')).toBeInTheDocument()
+      expect(screen.queryByText('ds_a (unknown)')).not.toBeInTheDocument()
+    })
+
+    it.each([
+      ['fixes its datasets', 'fixed' as const, []],
+      ['allows only named alternatives', 'subset' as const, ['figstep', 'figstep_pro']],
+    ])('offers Browse datasets in the header when the scenario %s', async (_label, mode, allowedNames) => {
+      mockGetScenario.mockResolvedValue(makeScenario({
+        dataset_options: {
+          mode, allowed_names: allowedNames, max_selected: null, per_dataset_limit: false, total_limit: true,
+          supports_overrides: true, filters: true, source_settings: true,
+        },
+      }))
+      renderDetail(SCENARIO_PATH)
+
+      const actions = await screen.findByRole('group', { name: 'Dataset actions' })
+      expect(within(actions).getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+      expect(screen.getAllByRole('link', { name: 'Browse datasets' })).toHaveLength(1)
+    })
+
+    it('shows the shared dataset actions without an ASSERT requirement', async () => {
+      renderDetail(SCENARIO_PATH)
+
+      const actions = await screen.findByRole('group', { name: 'Dataset actions' })
+      expect(within(actions).getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+      expect(screen.getByRole('combobox', { name: 'Add dataset' })).not.toBeRequired()
+    })
   })
 })

@@ -2,7 +2,7 @@ import { type FormEvent, type RefObject, useRef, useState } from 'react'
 
 import type { BuildRunRequestResult } from '@/components/Scenarios/scenarioLaunchRequest'
 import { scenariosApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
+import { apiErrorMessage, toApiError } from '@/services/errors'
 import type { ScenarioRunSummary } from '@/types'
 
 interface UseScenarioLaunchInput {
@@ -105,7 +105,7 @@ export function useScenarioLaunch({
       setPreviewOpen(false)
       onLaunched(summary)
     } catch (err) {
-      setApiError(toApiError(err).detail)
+      setApiError(apiErrorMessage(toApiError(err)))
       setPreviewOpen(false)
       focusSoon(launchButtonRef)
     } finally {

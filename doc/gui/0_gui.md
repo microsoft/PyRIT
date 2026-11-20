@@ -124,6 +124,18 @@ Each scenario defines a test workflow with its techniques, data, and scoring.
 Open one to select a target and adjust the settings it supports, such as
 techniques, dataset selection, and concurrency.
 
+**Browse datasets** in the Datasets section header opens the dataset catalog. A
+scenario that needs a dataset and has no default, such as `foundry.assert_policy`,
+marks the Datasets section and its picker required; launching without one shows
+"Select a dataset." on the picker. **Reset datasets** returns the datasets and the
+per-dataset limit to the scenario's defaults, and appears only when they differ. To
+open a scanner with datasets already selected, add one `dataset` parameter per name,
+for example
+`/scanner/launch/foundry.red_team_agent?dataset=harmbench&dataset=my_dataset`. The
+names replace the default or preset datasets and keep their limits and filters. A
+scenario that doesn't take datasets won't launch with linked datasets and offers a
+link to open it without them.
+
 Use the chevron on the right of a technique to inspect its identity JSON.
 This does not change the checkbox selection on the left.
 
@@ -258,7 +270,8 @@ for shared behavior.
 
 Browse datasets already loaded into backend memory. Open a dataset to inspect
 its examples, search text, or filter by seed type. Supported media can be
-previewed on request.
+previewed on request. The **Origins** filter lists datasets whose seeds came from
+a given origin, such as local files or a remote provider.
 
 Use **Import into Chat** to stage an example directly into Chat without copying
 text or reattaching files:

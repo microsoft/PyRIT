@@ -1,4 +1,4 @@
-import { decodeBlobErrorAsync, isNotSaveableError, notSaveableReason, retryAfterMilliseconds, toApiError } from './errors'
+import { apiErrorMessage, decodeBlobErrorAsync, isNotSaveableError, notSaveableReason, retryAfterMilliseconds, toApiError } from './errors'
 import type { ApiError } from './errors'
 
 // ---------------------------------------------------------------------------
@@ -370,5 +370,22 @@ describe('notSaveableReason', () => {
     ['another bad request with a cause', 400, { detail: 'Bad endpoint.', not_saveable_reason: 'No.' }],
   ])('should give no cause for %s', (_, status, data) => {
     expect(notSaveableReason(toApiError(makeAxiosError({ status, data })))).toBeNull()
+  })
+})
+
+describe('apiErrorMessage', () => {
+  it('adds distinct field messages to the detail, without the pydantic prefix', () => {
+    const error = toApiError(makeAxiosError({
+      status: 422,
+      data: {
+        detail: 'Request validation failed',
+        errors: [
+          { field: 'body.datasets.sources.0.name', message: 'Value error, Dataset names must be non-empty.' },
+          { field: 'body.datasets.sources.1.name', message: 'Value error, Dataset names must be non-empty.' },
+        ],
+      },
+    }))
+    expect(apiErrorMessage(error)).toBe('Request validation failed: Dataset names must be non-empty.')
+    expect(apiErrorMessage(toApiError(new Error('Plain failure.')))).toBe('Plain failure.')
   })
 })
