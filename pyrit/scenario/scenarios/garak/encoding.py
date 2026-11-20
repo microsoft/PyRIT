@@ -51,6 +51,40 @@ from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import DecodingScorer, TrueFalseScorer
 
+# Pigpen (Freemason's / Masonic) cipher: a geometric monoalphabetic substitution of the Latin
+# alphabet; see https://en.wikipedia.org/wiki/Pigpen_cipher . Framing classical ciphers as an
+# LLM jailbreak vector: CipherChat (Yuan et al., 2023, arXiv:2308.06463).
+# Kept as a Leetspeak substitution table rather than a dedicated converter (reuse and compose
+# before adding).
+_PIGPEN_SUBSTITUTIONS: dict[str, list[str]] = {
+    "a": ["┌"],
+    "b": ["┬"],
+    "c": ["┐"],
+    "d": ["├"],
+    "e": ["┼"],
+    "f": ["┤"],
+    "g": ["└"],
+    "h": ["┴"],
+    "i": ["┘"],
+    "j": ["┌̇"],
+    "k": ["┬̇"],
+    "l": ["┐̇"],
+    "m": ["├̇"],
+    "n": ["┼̇"],
+    "o": ["┤̇"],
+    "p": ["└̇"],
+    "q": ["┴̇"],
+    "r": ["┘̇"],
+    "s": ["△"],
+    "t": ["▷"],
+    "u": ["▽"],
+    "v": ["◁"],
+    "w": ["△̇"],
+    "x": ["▷̇"],
+    "y": ["▽̇"],
+    "z": ["◁̇"],
+}
+
 
 class EncodingDatasetConfiguration(DatasetAttackConfiguration):
     """
@@ -129,6 +163,7 @@ class EncodingTechnique(ScenarioTechnique):
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
+    Pigpen = ("pigpen", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -317,6 +352,7 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
+            ([LeetspeakConverter(custom_substitutions=_PIGPEN_SUBSTITUTIONS)], "pigpen", "pigpen"),
         ]
 
     # These are the same as Garak encoding attacks
