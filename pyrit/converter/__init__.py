@@ -83,6 +83,7 @@ if TYPE_CHECKING:
     from pyrit.converter.malicious_question_generator_converter import MaliciousQuestionGeneratorConverter
     from pyrit.converter.math_obfuscation_converter import MathObfuscationConverter
     from pyrit.converter.math_prompt_converter import MathPromptConverter
+    from pyrit.converter.mirror_converter import MirrorConverter
     from pyrit.converter.morse_converter import MorseConverter
     from pyrit.converter.nato_converter import NatoConverter
     from pyrit.converter.negation_trap_converter import NegationTrapConverter
@@ -141,6 +142,7 @@ if TYPE_CHECKING:
     from pyrit.converter.unicode_confusable_converter import UnicodeConfusableConverter
     from pyrit.converter.unicode_replacement_converter import UnicodeReplacementConverter
     from pyrit.converter.unicode_sub_converter import UnicodeSubstitutionConverter
+    from pyrit.converter.upside_down_converter import UpsideDownConverter
     from pyrit.converter.url_converter import UrlConverter
     from pyrit.converter.variation_converter import VariationConverter
     from pyrit.converter.vigenere_converter import VigenereConverter
@@ -216,6 +218,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "MaliciousQuestionGeneratorConverter": "pyrit.converter.malicious_question_generator_converter",
     "MathObfuscationConverter": "pyrit.converter.math_obfuscation_converter",
     "MathPromptConverter": "pyrit.converter.math_prompt_converter",
+    "MirrorConverter": "pyrit.converter.mirror_converter",
     "MorseConverter": "pyrit.converter.morse_converter",
     "NatoConverter": "pyrit.converter.nato_converter",
     "NegationTrapConverter": "pyrit.converter.negation_trap_converter",
@@ -262,6 +265,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "UnicodeConfusableConverter": "pyrit.converter.unicode_confusable_converter",
     "UnicodeReplacementConverter": "pyrit.converter.unicode_replacement_converter",
     "UnicodeSubstitutionConverter": "pyrit.converter.unicode_sub_converter",
+    "UpsideDownConverter": "pyrit.converter.upside_down_converter",
     "UrlConverter": "pyrit.converter.url_converter",
     "VariationConverter": "pyrit.converter.variation_converter",
     "VariationSelectorSmugglerConverter": "pyrit.converter.token_smuggling",
