@@ -23,6 +23,7 @@ from pyrit.converter import (
     MorseConverter,
     NatoConverter,
     ROT13Converter,
+    SearchReplaceConverter,
     ZalgoConverter,
 )
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
@@ -129,6 +130,7 @@ class EncodingTechnique(ScenarioTechnique):
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
+    Disemvowel = ("disemvowel", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -317,6 +319,9 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
+            # "disemvowel": remove all vowels ("disemvoweling"), a comment-moderation technique
+            # popularized on the Making Light blog (https://nielsenhayden.com/makinglight/).
+            ([SearchReplaceConverter(pattern="[AEIOUaeiou]", replace="")], "disemvowel", "disemvowel"),
         ]
 
     # These are the same as Garak encoding attacks
