@@ -221,7 +221,7 @@ class ScorerService:
         Raises:
             ValueError: If the scorer type is unknown, a parameter names a file on the
                 server, or the registry or scorer rejects the parameters.
-            NotSaveableError: If a scorer to save would hold or use a credential, or names a Temporary entry.
+            NotSaveableError: If a scorer to save would hold a credential, or names a Temporary entry.
             SavedEntryConflictError: If a scorer to save has the name of a registered or saved scorer.
             SavedEntryStorageError: If a scorer to save can't be written to storage.
         """
@@ -272,7 +272,7 @@ class ScorerService:
 
         Raises:
             ValueError: If the scorer type is unknown, or the registry or scorer rejects the parameters.
-            NotSaveableError: If the scorer would hold or use a credential, or names a Temporary entry.
+            NotSaveableError: If the scorer would hold a credential, or names a Temporary entry.
             SavedEntryConflictError: If a saved or registered scorer already has the name.
             SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """

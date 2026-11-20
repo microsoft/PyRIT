@@ -120,7 +120,7 @@ class CreateConverterRequest(RegistrationRequest):
         description=(
             "Save the converter so it comes back after the backend restarts or is reinitialized (true), or keep it "
             "only until then (false). A saved converter needs a name of lowercase letters, digits, and underscores, "
-            "can't hold or use a key or an uploaded file, and can't be a copy made with source or private."
+            "can't hold a key or use an uploaded file, and can't be a copy made with source or private."
         ),
     )
     source: SourceInstanceSpec | None = None

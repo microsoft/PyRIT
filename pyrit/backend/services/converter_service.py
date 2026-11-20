@@ -286,7 +286,7 @@ class ConverterService:
         Raises:
             ValueError: If the converter type is not found or the registry name is
                 unavailable.
-            NotSaveableError: If a converter to save would hold or use a credential or an uploaded file, or
+            NotSaveableError: If a converter to save would hold a credential or use an uploaded file, or
                 names a Temporary entry.
             SavedEntryConflictError: If a converter to save has the name of a registered or saved converter.
             SavedEntryStorageError: If a converter to save can't be written to storage.
@@ -439,7 +439,7 @@ class ConverterService:
             ConverterInstance: The saved converter.
 
         Raises:
-            NotSaveableError: If the converter would hold or use a credential or an uploaded file, or names a
+            NotSaveableError: If the converter would hold a credential or use an uploaded file, or names a
                 Temporary entry.
             SavedEntryConflictError: If a saved or registered converter already has the name.
             SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
