@@ -315,7 +315,14 @@ def test_workflow_checks_current_docs_links_before_rendering() -> None:
 def test_workflow_link_check_retries_once_and_preserves_failure(
     *, tmp_path: Path, first_status: int, retry_status: int, expected_status: int, attempts: int
 ) -> None:
-    bash = shutil.which("bash")
+    if os.name == "nt":
+        candidates = [
+            Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Git" / "bin" / "bash.exe",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Git" / "bin" / "bash.exe",
+        ]
+        bash = next((str(candidate) for candidate in candidates if candidate.is_file()), None)
+    else:
+        bash = shutil.which("bash")
     assert bash is not None, "Bash is required to exercise the documentation workflow"
     command = _step(job="build", name="Check documentation links")["run"]
     stubs = f"""
