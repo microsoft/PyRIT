@@ -905,6 +905,8 @@ initialize_deployment_scope
             ({"PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/.pyrit_conf"}, separate),
             ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/test/seed"}, separate),
             ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles", "PYRIT_SOURCE_BRANCH": "refs/heads/test"}, separate),
+            ({"PYRIT_CONFIG_SEED_URI": BLOB}, separate),
+            ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/my%20seed"}, separate),
             ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/seed?sig=secret"}, "config seed URI"),
             ({"PYRIT_CONFIG_SEED_URI": "https://example.com/profiles/seed"}, "config seed URI"),
             ({"PYRIT_SOURCE_BRANCH": "refs/tags/v1.2.3"}, not_a_branch),

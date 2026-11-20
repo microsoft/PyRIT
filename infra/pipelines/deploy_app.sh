@@ -33,7 +33,7 @@ import uuid
 from urllib.parse import urlparse
 
 
-def require_blob_uri(value: str, *, minimum_path_parts: int) -> None:
+def blob_path_parts(value: str) -> list[str]:
     parsed = urlparse(value)
     hostname = parsed.hostname or ""
     suffixes = (
@@ -50,9 +50,9 @@ def require_blob_uri(value: str, *, minimum_path_parts: int) -> None:
         or parsed.port is not None
         or parsed.query
         or parsed.fragment
-        or len(parsed.path.strip("/").split("/")) < minimum_path_parts
     ):
         raise ValueError
+    return parsed.path.strip("/").split("/")
 
 
 try:
@@ -64,10 +64,10 @@ try:
     for group in groups:
         uuid.UUID(group)
     uuid.UUID(sys.argv[4])
-    if sys.argv[5]:
-        require_blob_uri(sys.argv[5], minimum_path_parts=2)
+    if sys.argv[5] and len(blob_path_parts(sys.argv[5])) < 2:
+        raise ValueError
     if sys.argv[6]:
-        require_blob_uri(sys.argv[6], minimum_path_parts=1)
+        blob_path_parts(sys.argv[6])
 except (ValueError, IndexError):
     raise SystemExit(1)
 PY
@@ -111,14 +111,13 @@ seed_folder = f"{seed_root}/{sys.argv[3]}".lstrip("/")
 config_folder, _, config_name = config_path.rpartition("/")
 # Each deployment replaces the whole config folder, so it must be a plain folder apart from the seed.
 nested = f"{seed_folder}/".startswith(f"{config_folder}/") or f"{config_folder}/".startswith(f"{seed_folder}/")
-if not (is_plain_folder(seed_folder) and is_plain_folder(config_folder)) or (
-    (seed_account, seed_container) == (config_account, config_container) and nested
-):
+plain = is_plain_folder(f"{seed_container}/{seed_folder}") and is_plain_folder(f"{config_container}/{config_folder}")
+if not plain or ((seed_account, seed_container) == (config_account, config_container) and nested):
     raise SystemExit(1)
 print("\t".join((seed_account, seed_container, seed_folder, config_account, config_container, config_folder, config_name)))
 PY
   ); then
-    deployment_error "pyritConfigSeedUri and pyritConfigFileUri need separate folders, with the config file in its own folder"
+    deployment_error "pyritConfigSeedUri and pyritConfigFileUri need separate folders named with letters, digits, '.', '_' or '-', and the config file must be in its own folder"
   fi
   IFS=$'\t' read -r -a config_seed <<< "$location"
 }
