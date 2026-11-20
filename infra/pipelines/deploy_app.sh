@@ -26,102 +26,22 @@ validate_app_inputs() {
     ! "$PYRIT_ENV_SECRET_NAME" =~ ^[a-zA-Z0-9-]{1,127}$ ]]; then
     deployment_error "Invalid SQL FQDN or Key Vault secret name"
   fi
-  if ! python3 - "$PYRIT_ENTRA_TENANT_ID" "$PYRIT_ENTRA_CLIENT_ID" "$PYRIT_ALLOWED_GROUP_OBJECT_IDS" \
-    "$PYRIT_ADMIN_GROUP_OBJECT_ID" "${PYRIT_CONFIG_FILE_URI:-}" "${PYRIT_CONFIG_SEED_URI:-}" << 'PY'; then
-import sys
-import uuid
-from urllib.parse import urlparse
-
-
-def blob_path_parts(value: str) -> list[str]:
-    parsed = urlparse(value)
-    hostname = parsed.hostname or ""
-    suffixes = (
-        ".blob.core.windows.net",
-        ".blob.core.chinacloudapi.cn",
-        ".blob.core.usgovcloudapi.net",
-        ".blob.core.cloudapi.de",
-    )
-    if (
-        parsed.scheme != "https"
-        or not any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in suffixes)
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.port is not None
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ValueError
-    return parsed.path.strip("/").split("/")
-
-
-try:
-    uuid.UUID(sys.argv[1])
-    uuid.UUID(sys.argv[2])
-    groups = [value.strip() for value in sys.argv[3].split(",") if value.strip()]
-    if not groups:
-        raise ValueError
-    for group in groups:
-        uuid.UUID(group)
-    uuid.UUID(sys.argv[4])
-    if sys.argv[5] and len(blob_path_parts(sys.argv[5])) < 2:
-        raise ValueError
-    if sys.argv[6]:
-        blob_path_parts(sys.argv[6])
-except (ValueError, IndexError):
-    raise SystemExit(1)
-PY
-    deployment_error "Invalid Entra ID, group ID, config URI, or config seed URI"
+  # The seed location is empty unless pyritConfigSeedUri is set; see app_inputs.py.
+  local seed_location
+  if ! seed_location=$(python3 "$PYRIT_SOURCE_DIRECTORY/infra/pipelines/app_inputs.py" \
+    --tenant-id="$PYRIT_ENTRA_TENANT_ID" --client-id="$PYRIT_ENTRA_CLIENT_ID" \
+    --allowed-group-ids="$PYRIT_ALLOWED_GROUP_OBJECT_IDS" --admin-group-id="$PYRIT_ADMIN_GROUP_OBJECT_ID" \
+    --config-uri="${PYRIT_CONFIG_FILE_URI:-}" --seed-uri="${PYRIT_CONFIG_SEED_URI:-}" \
+    --source-branch="${PYRIT_SOURCE_BRANCH:-}"); then
+    deployment_error "$seed_location"
   fi
+  config_seed=()
+  [[ -z "$seed_location" ]] || IFS=$'\t' read -r -a config_seed <<< "$seed_location"
   validate_immutable_image "$PYRIT_CONTAINER_IMAGE"
-  read_config_seed
 }
 
-# A seed folder holds the starting configuration for each deployed branch, for example <seed>/main/ or
-# <seed>/releases/v1.2.3/. Each deployment copies the deployed branch's seed over the folder that holds
-# pyritConfigFileUri, so configuration edits saved in the GUI last only until the next deployment.
-read_config_seed() {
-  [[ -n "${PYRIT_CONFIG_SEED_URI:-}" ]] || return 0
-  [[ -n "${PYRIT_CONFIG_FILE_URI:-}" ]] || deployment_error "pyritConfigSeedUri requires pyritConfigFileUri"
-  if [[ ! "${PYRIT_SOURCE_BRANCH:-}" =~ ^refs/heads/([A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*)$ ]]; then
-    deployment_error "pyritConfigSeedUri selects the configuration by branch; ${PYRIT_SOURCE_BRANCH:-this source} is not a branch"
-  fi
-  local location
-  if ! location=$(python3 - "$PYRIT_CONFIG_SEED_URI" "$PYRIT_CONFIG_FILE_URI" "${BASH_REMATCH[1]}" << 'PY'
-import re
-import sys
-from urllib.parse import urlparse
-
-
-def location(uri: str) -> tuple[str, str, str]:
-    parsed = urlparse(uri)
-    container, _, path = parsed.path.strip("/").partition("/")
-    return parsed.hostname.split(".")[0], container, path
-
-
-def is_plain_folder(folder: str) -> bool:
-    return bool(folder) and all(
-        re.fullmatch(r"[A-Za-z0-9._-]+", part) and part not in (".", "..") for part in folder.split("/")
-    )
-
-
-seed_account, seed_container, seed_root = location(sys.argv[1])
-config_account, config_container, config_path = location(sys.argv[2])
-seed_folder = f"{seed_root}/{sys.argv[3]}".lstrip("/")
-config_folder, _, config_name = config_path.rpartition("/")
-# Each deployment replaces the whole config folder, so it must be a plain folder apart from the seed.
-nested = f"{seed_folder}/".startswith(f"{config_folder}/") or f"{config_folder}/".startswith(f"{seed_folder}/")
-plain = is_plain_folder(f"{seed_container}/{seed_folder}") and is_plain_folder(f"{config_container}/{config_folder}")
-if not plain or ((seed_account, seed_container) == (config_account, config_container) and nested):
-    raise SystemExit(1)
-print("\t".join((seed_account, seed_container, seed_folder, config_account, config_container, config_folder, config_name)))
-PY
-  ); then
-    deployment_error "pyritConfigSeedUri and pyritConfigFileUri need separate folders named with letters, digits, '.', '_' or '-', and the config file must be in its own folder"
-  fi
-  IFS=$'\t' read -r -a config_seed <<< "$location"
-}
-
+# Copy the deployed branch's seed over the folder that holds pyritConfigFileUri, so configuration edits
+# saved in the GUI last only until the next deployment.
 reset_configuration_from_seed() {
   [[ -n "${PYRIT_CONFIG_SEED_URI:-}" ]] || return 0
   local seed_account=${config_seed[0]} seed_container=${config_seed[1]} seed_folder=${config_seed[2]}
