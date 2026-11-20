@@ -138,9 +138,13 @@ class ScenarioConfigurationResolver:
                 )
                 updates[field] = None
         if request.objective_scorer is not None:
+            remediation = "Select the current registered scorer and review its identity."
             try:
+                scenario_class = cls.resolve_scenario_class(scenario_name=scenario_name)
+                if not ScenarioRegistry.supports_objective_scorer(scenario_class):
+                    remediation = "Clear the objective scorer; this scenario always uses its built-in scorer."
                 cls.resolve_constructor_kwargs(
-                    scenario_class=cls.resolve_scenario_class(scenario_name=scenario_name),
+                    scenario_class=scenario_class,
                     objective_scorer=request.objective_scorer,
                 )
             except ValueError as exc:
@@ -149,7 +153,7 @@ class ScenarioConfigurationResolver:
                         role=REQUEST_FIELD_ROLES["objective_scorer"],
                         component=request.objective_scorer.registry_name,
                         reason=str(exc),
-                        remediation="Select the current registered scorer and review its identity.",
+                        remediation=remediation,
                     )
                 )
                 updates["objective_scorer"] = None

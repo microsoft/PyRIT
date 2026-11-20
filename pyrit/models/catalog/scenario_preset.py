@@ -16,7 +16,11 @@ to equal that default. Collapsing the two would silently pin a scenario default 
 the moment a preset was saved and stop it tracking upstream changes.
 
 ``launch_defaults`` is the one place a preset touches launch-owned settings. Those
-values are fallbacks: a launch that sets the same setting wins.
+values are fallbacks: a launch that sets the same setting wins. A pinned
+``launch_defaults.objective_scorer`` is the one exception to target-agnosticism: it
+records a scorer's complete identity, judge target included, so a preset that sets it
+runs only in deployments registering that exact scorer and must be re-pinned when the
+scorer's configuration changes. Leave it unset to keep a preset portable.
 """
 
 from typing import Literal
@@ -54,7 +58,11 @@ class ScenarioPresetLaunchDefaults(BaseModel):
     A field added here therefore needs no resolver change.
 
     ``objective_scorer`` pins a registered scorer's complete identity, including its
-    judge target. A preset that sets it runs only where that exact scorer is registered.
+    judge target, so a preset that sets it is deployment-specific: it runs only where
+    that exact scorer is registered, and any change to the scorer, such as a new judge
+    model or endpoint, makes it unresolvable until the preset is re-pinned. A launch
+    override still replaces it, and a scenario with a built-in scorer ignores a launch
+    override.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -79,6 +87,9 @@ class ScenarioPreset(BaseModel, Identifiable):
 
     A document names what to build by *registered name*, not by class identity, so a
     preset can move between deployments that register the same name from different code.
+    A pinned ``launch_defaults.objective_scorer`` is the exception: it also pins the
+    scorer's identity hash, which ties the preset to deployments registering that exact
+    scorer.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -259,7 +270,8 @@ class PresetIssue(BaseModel):
     Issues are reported, never enforced. A preset naming a scenario this deployment has
     not registered is still a valid preset; it simply cannot run here yet. Blocking the
     save would make presets un-portable between deployments, which is the one property
-    they exist to have.
+    they exist to have. A pinned objective scorer narrows that portability by choice;
+    whether it still resolves is checked at launch readiness rather than here.
     """
 
     field: str = Field(..., description="Preset field the issue applies to, e.g. 'scenario_name' or 'techniques'")

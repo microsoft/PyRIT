@@ -12,8 +12,13 @@ from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
 SCENARIO_ROLE_REFERENCES_METADATA_KEY = "scenario_role_references_v1"
 
-LaunchValueSource = Literal["launch", "preset", "scenario_default"]
-"""Where a launch-owned value came from: the launch, a preset's launch defaults, or neither."""
+LaunchValueSource = Literal["launch", "preset", "scenario_default", "unsupported"]
+"""
+Where a launch-owned value came from: the launch, a preset's launch defaults, or neither.
+
+``"unsupported"`` means a value was set but the scenario does not accept one, so it was
+not applied and the scenario uses its own.
+"""
 
 
 class ScenarioConfigurationIssue(BaseModel):

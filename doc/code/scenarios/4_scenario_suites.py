@@ -157,9 +157,12 @@ for entry in suite.entries:
 # Pass `launch_defaults` to `ScenarioPreset`, or pick **Objective scorer** in the GUI preset
 # editor. Each suite entry uses the launch request's `objective_scorer` when one is given,
 # otherwise its preset's scorer, otherwise the scenario default. A launch-level scorer
-# replaces every entry's scorer. Readiness and preflight report a missing or changed preset
-# scorer against its entry. The identifier hash includes any judge target, so a pinned
-# scorer is specific to the deployment whose scorer registry produced it.
+# replaces the scorer of every entry whose scenario accepts one; entries for scenarios with a
+# built-in scorer, such as `foundry.red_team_agent`, skip it and report the binding source
+# `unsupported`. Readiness and preflight report a missing or changed preset scorer against its
+# entry. The identifier hash includes any judge target, so a pinned scorer makes the preset
+# deployment-specific: it runs only where that exact scorer is registered, and must be
+# re-pinned after the scorer's configuration changes.
 
 # %% [markdown]
 # ## Run the suite

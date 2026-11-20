@@ -22,11 +22,13 @@ from pyrit.registry.components.scenario_suite_registry import ScenarioSuiteRegis
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from collections.abc import Set as AbstractSet
     from uuid import UUID
 
     from pyrit.models import ScenarioPreset
     from pyrit.models.catalog import ScenarioSuiteRegistryEntry
     from pyrit.models.scenario_readiness import LaunchValueSource
+    from pyrit.registry.components.scenario_registry import ScenarioRegistry
 
 
 class _RunDefaults(TypedDict, total=False):
@@ -59,12 +61,18 @@ class ResolvedLaunchDefaults:
     sources: Mapping[str, LaunchValueSource]
 
 
-def resolve_launch_defaults(*, preset: ScenarioPreset, launch: _LaunchSource) -> ResolvedLaunchDefaults:
+def resolve_launch_defaults(
+    *,
+    preset: ScenarioPreset,
+    launch: _LaunchSource,
+    unsupported_fields: AbstractSet[str] = frozenset(),
+) -> ResolvedLaunchDefaults:
     """
     Apply launch, then preset, then scenario-default precedence to each launch-default field.
 
-    A ``None`` value means neither the launch nor the preset set the field, so the
-    scenario applies its own default.
+    A ``None`` value means the scenario applies its own default. A field named in
+    ``unsupported_fields`` is never applied: if the launch or preset set it, its source is
+    ``"unsupported"`` so callers can say the scenario keeps its own value.
 
     Returns:
         ResolvedLaunchDefaults: The effective value and source of every launch-default field.
@@ -75,7 +83,10 @@ def resolve_launch_defaults(*, preset: ScenarioPreset, launch: _LaunchSource) ->
     for field_name in ScenarioPresetLaunchDefaults.model_fields:
         launch_value = getattr(launch, field_name)
         preset_value = None if preset_defaults is None else getattr(preset_defaults, field_name)
-        if launch_value is not None:
+        configured = launch_value is not None or preset_value is not None
+        if configured and field_name in unsupported_fields:
+            values[field_name], sources[field_name] = None, "unsupported"
+        elif launch_value is not None:
             values[field_name], sources[field_name] = launch_value, "launch"
         elif preset_value is not None:
             values[field_name], sources[field_name] = preset_value, "preset"
@@ -93,7 +104,20 @@ def resolve_scenario_preset_run_request(*, preset: ScenarioPreset, launch: _Laun
     Returns:
         RunScenarioRequest: An ordinary scenario run request.
     """
-    launch_defaults = resolve_launch_defaults(preset=preset, launch=launch)
+    return _build_run_request(
+        preset=preset, launch=launch, launch_defaults=resolve_launch_defaults(preset=preset, launch=launch)
+    )
+
+
+def _build_run_request(
+    *, preset: ScenarioPreset, launch: _LaunchSource, launch_defaults: ResolvedLaunchDefaults
+) -> RunScenarioRequest:
+    """
+    Build a run request from a preset, its launch, and the launch defaults already resolved for them.
+
+    Returns:
+        RunScenarioRequest: An ordinary scenario run request.
+    """
     run_defaults = _RunDefaults()
     if launch.max_concurrency is not None:
         run_defaults["max_concurrency"] = launch.max_concurrency
@@ -162,6 +186,7 @@ class ScenarioSuiteLaunchResolver:
         *,
         suite_registry: ScenarioSuiteRegistry | None = None,
         preset_registry: ScenarioPresetRegistry | None = None,
+        scenario_registry: ScenarioRegistry | None = None,
     ) -> None:
         """
         Initialize the resolver with optional registry overrides.
@@ -169,9 +194,12 @@ class ScenarioSuiteLaunchResolver:
         Args:
             suite_registry (ScenarioSuiteRegistry | None): Suite definitions to resolve.
             preset_registry (ScenarioPresetRegistry | None): Preset definitions to resolve.
+            scenario_registry (ScenarioRegistry | None): Scenario capabilities that decide
+                which launch defaults an entry accepts.
         """
         self._suite_registry = suite_registry
         self._preset_registry = preset_registry
+        self._scenario_registry = scenario_registry
 
     def resolve(
         self, *, name: str, request: LaunchScenarioSuiteRequest | ScenarioSuiteReadinessRequest
@@ -232,6 +260,11 @@ class ScenarioSuiteLaunchResolver:
                     f"Entry {position} scenario preset '{suite_entry.preset_name}' is not runnable: {details}"
                 )
 
+            launch_defaults = resolve_launch_defaults(
+                preset=preset.preset,
+                launch=request,
+                unsupported_fields=self._unsupported_launch_fields(preset=preset.preset, launch=request),
+            )
             resolved.append(
                 ResolvedScenarioSuiteEntry(
                     entry_id=suite_entry.entry_id,
@@ -239,12 +272,32 @@ class ScenarioSuiteLaunchResolver:
                     preset_name=suite_entry.preset_name,
                     preset_origin=preset.origin,
                     preset_version=preset.version,
-                    request=resolve_scenario_preset_run_request(preset=preset.preset, launch=request),
-                    launch_value_sources=resolve_launch_defaults(preset=preset.preset, launch=request).sources,
+                    request=_build_run_request(preset=preset.preset, launch=request, launch_defaults=launch_defaults),
+                    launch_value_sources=launch_defaults.sources,
                 )
             )
 
         return ResolvedScenarioSuiteLaunch(suite=suite, entries=tuple(resolved))
+
+    def _unsupported_launch_fields(self, *, preset: ScenarioPreset, launch: _LaunchSource) -> frozenset[str]:
+        """
+        Name the launch defaults this entry's scenario cannot accept.
+
+        One launch value covers every suite entry, so a value a scenario cannot accept is
+        skipped for that entry rather than failing the whole suite. A preset pinning such a
+        value is already rejected by ``check_preset``. The scenario registry is consulted
+        only when a launch default is set, and an unregistered scenario is left for
+        readiness to report.
+
+        Returns:
+            frozenset[str]: Launch-default field names to leave unset for this entry.
+        """
+        if all(getattr(launch, field_name) is None for field_name in ScenarioPresetLaunchDefaults.model_fields):
+            return frozenset()
+        metadata = self._get_scenario_registry().get_registered_class_metadata(preset.scenario_name)
+        if metadata is None or metadata.supports_objective_scorer:
+            return frozenset()
+        return frozenset({"objective_scorer"})
 
     def _get_suite_registry(self) -> ScenarioSuiteRegistry:
         """Return the injected suite registry or process singleton."""
@@ -259,3 +312,11 @@ class ScenarioSuiteLaunchResolver:
             if self._preset_registry is not None
             else ScenarioPresetRegistry.get_registry_singleton()
         )
+
+    def _get_scenario_registry(self) -> ScenarioRegistry:
+        """Return the injected scenario registry or process singleton."""
+        if self._scenario_registry is not None:
+            return self._scenario_registry
+        from pyrit.registry.components.scenario_registry import ScenarioRegistry
+
+        return ScenarioRegistry.get_registry_singleton()

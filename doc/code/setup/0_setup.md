@@ -29,7 +29,8 @@ scoring model, and techniques without generation do not need an adversarial mode
 
 In CoPyRIT, configure targets in the Registry and scorer defaults through initializers.
 Select registered targets and an objective scorer in the scan form. Suite entries use the
-launch's scorer override, otherwise their preset's scorer, otherwise the scenario default.
+launch's scorer override when their scenario accepts one, otherwise their preset's scorer,
+otherwise the scenario default.
 Missing launch requirements produce configuration errors
 rather than an implicit OpenAI target. Helper roles must be configured explicitly.
 See the [scanner options](../../scanner/0_scanner.md#running-scans) for CLI selections.

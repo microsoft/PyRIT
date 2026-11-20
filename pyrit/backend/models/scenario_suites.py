@@ -40,6 +40,13 @@ class ScenarioSuiteEntryStatus(BaseModel):
         None,
         description="The preset's fallbacks for launch-owned settings, or None when it sets none or is unresolved",
     )
+    supports_objective_scorer: bool | None = Field(
+        None,
+        description=(
+            "Whether the entry's scenario accepts an objective scorer; a launch scorer is not applied "
+            "to entries that do not. None when the preset or scenario cannot be resolved."
+        ),
+    )
 
 
 class ScenarioSuiteResponse(BaseModel):

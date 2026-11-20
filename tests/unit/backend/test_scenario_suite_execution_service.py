@@ -8,11 +8,12 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 
+import pyrit.backend.services.scenario_configuration_resolver as _configuration_mod
 import pyrit.backend.services.scenario_suite_execution_service as _execution_mod
 from pyrit.backend.services import (
     ScenarioRunService,
@@ -44,15 +45,26 @@ from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness, ScenarioRoleBinding
 from pyrit.registry import (
     ScenarioPresetRegistry,
+    ScenarioRegistry,
     ScenarioSuiteLaunchConflictError,
     ScenarioSuiteNotRunnableError,
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
+    ScorerRegistry,
 )
+from pyrit.scenario.scenarios.garak import ApiKey
+from pyrit.score import SubStringScorer
+from unit.mocks import MockPromptTarget
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ENTRY_TWO = UUID("22222222-2222-4222-8222-222222222222")
 OPERATION_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+_REAL_RESOLVE_READINESS = _configuration_mod.ScenarioConfigurationResolver.resolve_readiness
+
+
+class _BuiltInScorerScenario(ApiKey):
+    def __init__(self) -> None:
+        super().__init__()
 
 
 def _suite(*, name: str = "weekly") -> ScenarioSuite:
@@ -208,10 +220,13 @@ async def execution_context(
     run_service.start_run_async = AsyncMock(side_effect=start_run_async)
     run_service.get_run_async = AsyncMock(side_effect=get_run_async)
     run_service.cancel_run_async = AsyncMock(side_effect=cancel_run_async)
+    scenario_registry = MagicMock(spec=ScenarioRegistry)
+    scenario_registry.get_registered_class_metadata.return_value = None
 
     service = ScenarioSuiteExecutionService(
         suite_registry=suite_registry,
         preset_registry=preset_registry,
+        scenario_registry=scenario_registry,
         run_service=run_service,
     )
     try:
@@ -801,6 +816,69 @@ async def test_launch_scorer_override_replaces_preset_scorers_async(execution_co
     assert [binding.source for binding in readiness.bindings] == ["launch", "launch"]
     assert [binding.entry_id for binding in readiness.bindings] == [ENTRY_ONE, ENTRY_TWO]
     assert [request.objective_scorer for request, _ in calls] == [OVERRIDE_SCORER, OVERRIDE_SCORER]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_launch_scorer_skips_entries_whose_scenario_uses_a_built_in_scorer_async(execution_context) -> None:
+    _, suite_registry, preset_registry, run_service, calls, _ = execution_context
+    stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+    scenario_registry = MagicMock(spec=ScenarioRegistry)
+    scenario_registry.get_registered_class_metadata.side_effect = lambda name: MagicMock(
+        supports_objective_scorer=name != "scenario.second"
+    )
+    service = ScenarioSuiteExecutionService(
+        suite_registry=suite_registry,
+        preset_registry=preset_registry,
+        scenario_registry=scenario_registry,
+        run_service=run_service,
+    )
+    scorer = SubStringScorer(substring="expected")
+    scorer_registry = ScorerRegistry()
+    scorer_registry.instances.register(scorer, name="override")
+    override = RegisteredComponentReference(registry_name="override", identifier_hash=scorer.get_identifier().hash)
+    scenario_classes = {"scenario.first": ApiKey, "scenario.second": _BuiltInScorerScenario}
+    configured_requests: list[RunScenarioRequest] = []
+
+    def create_configured_scenario(*, scenario_name: str, request: RunScenarioRequest) -> MagicMock:
+        configured_requests.append(request)
+        scenario = MagicMock()
+        scenario.get_readiness.return_value = ScenarioReadiness(
+            bindings=[
+                ScenarioRoleBinding(
+                    role="objective_scorer",
+                    component=scenario_name,
+                    identifier=ComponentIdentifier(class_name="SubStringScorer"),
+                )
+            ]
+        )
+        return scenario
+
+    request = _launch_request(suite_version=stored.version).model_copy(update={"objective_scorer": override})
+    resolver = _execution_mod.ScenarioConfigurationResolver
+    try:
+        with (
+            patch.object(resolver, "resolve_readiness", _REAL_RESOLVE_READINESS),
+            patch.object(resolver, "resolve_target", return_value=MockPromptTarget()),
+            patch.object(
+                resolver, "resolve_scenario_class", side_effect=lambda *, scenario_name: scenario_classes[scenario_name]
+            ),
+            patch.object(resolver, "create_configured_scenario", side_effect=create_configured_scenario),
+            patch.object(_configuration_mod, "validate_default_adversarial_target"),
+            patch.object(ScorerRegistry, "get_registry_singleton", return_value=scorer_registry),
+        ):
+            readiness = await service.get_readiness_async(name="weekly", request=request)
+            await service.launch_async(name="weekly", request=request)
+            await _wait_for_submissions(service)
+    finally:
+        await service.shutdown_async()
+
+    assert readiness.issues == []
+    assert [(binding.entry_id, binding.source) for binding in readiness.bindings] == [
+        (ENTRY_ONE, "launch"),
+        (ENTRY_TWO, "unsupported"),
+    ]
+    assert [configured.objective_scorer for configured in configured_requests] == [override, None, override, None]
+    assert [child.objective_scorer for child, _ in calls] == [override, None]
 
 
 async def test_scenario_default_scorer_issue_keeps_the_generic_remediation_async(execution_context) -> None:

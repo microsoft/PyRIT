@@ -32,6 +32,7 @@ from pyrit.models.scenario_readiness import ScenarioReadiness
 from pyrit.registry import (
     ResolvedScenarioSuiteEntry,
     ScenarioPresetRegistry,
+    ScenarioRegistry,
     ScenarioSuiteLaunchResolver,
     ScenarioSuiteNotRunnableError,
     ScenarioSuiteRegistry,
@@ -161,12 +162,14 @@ class ScenarioSuiteExecutionService:
         *,
         suite_registry: ScenarioSuiteRegistry | None = None,
         preset_registry: ScenarioPresetRegistry | None = None,
+        scenario_registry: ScenarioRegistry | None = None,
         run_service: ScenarioRunService | None = None,
     ) -> None:
         """Initialize the coordinator with injectable registries and run service."""
         self._resolver = ScenarioSuiteLaunchResolver(
             suite_registry=suite_registry,
             preset_registry=preset_registry,
+            scenario_registry=scenario_registry,
         )
         self._run_service = run_service
         self._executions: OrderedDict[UUID, _ExecutionState] = OrderedDict()

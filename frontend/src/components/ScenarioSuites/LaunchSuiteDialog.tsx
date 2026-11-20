@@ -63,12 +63,18 @@ interface LaunchSuiteDialogProps {
   onSuiteChanged: () => void
 }
 
-/** Mirrors the server's precedence: a launch override, then the preset's scorer, then the scenario default. */
+/**
+ * Mirrors the server's precedence: a launch override, then the preset's scorer, then the scenario
+ * default. A scenario with a built-in scorer ignores the launch override.
+ */
 function entryScorerLabel(
   entry: ScenarioSuiteEntryStatus,
   override: RegisteredComponentReference | null,
   loadedScorers: ScorerInstance[] | null,
 ): string {
+  if (entry.supports_objective_scorer === false) {
+    return override ? 'Scenario default scorer (override not applicable)' : 'Scenario default scorer'
+  }
   const reference = override ?? entry.launch_defaults?.objective_scorer ?? null
   if (!reference) {
     return 'Scenario default scorer'
@@ -244,7 +250,7 @@ export default function LaunchSuiteDialog({
                 label="Objective scorer override"
                 usage="scenario"
                 emptyOptionLabel="Use each preset's scorer"
-                help="Replaces every entry's objective scorer for this launch. Entries without a preset scorer use their scenario default."
+                help="Replaces the objective scorer of every entry whose scenario accepts one, for this launch only. Other entries use their scenario default."
                 value={scorerOverride}
                 scorers={scorers ?? []}
                 loading={scorersLoading}

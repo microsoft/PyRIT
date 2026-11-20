@@ -1806,6 +1806,8 @@ export interface ScenarioSuiteEntryStatus {
   issues: PresetIssue[]
   /** The preset's pinned launch values, or null when it pins none or is unavailable. */
   launch_defaults?: ScenarioPresetLaunchDefaults | null
+  /** Whether the entry's scenario accepts an objective scorer, or null when it cannot be resolved. */
+  supports_objective_scorer?: boolean | null
 }
 
 export interface ScenarioSuiteResponse {

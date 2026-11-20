@@ -4,7 +4,7 @@
 """Tests for registry-backed scenario preset and suite launch resolution."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -26,6 +26,7 @@ from pyrit.registry import (
     ResolvedScenarioSuiteEntry,
     ScenarioPresetRegistry,
     ScenarioPresetStorage,
+    ScenarioRegistry,
     ScenarioSuiteExecutionNotFoundError,
     ScenarioSuiteLaunchConflictError,
     ScenarioSuiteLaunchResolver,
@@ -260,11 +261,22 @@ ALLOW_SCORER = RegisteredComponentReference(registry_name="refusal", identifier_
 OVERRIDE_SCORER = RegisteredComponentReference(registry_name="override", identifier_hash="c" * 64)
 
 
+def _scenario_registry(*, built_in_scorer_scenarios: frozenset[str] = frozenset()) -> MagicMock:
+    """Build a scenario registry whose named scenarios refuse a custom objective scorer."""
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.get_registered_class_metadata.side_effect = lambda name: MagicMock(
+        supports_objective_scorer=name not in built_in_scorer_scenarios
+    )
+    return registry
+
+
 def _resolve_two_scored_entries(
     registries: tuple[ScenarioSuiteRegistry, ScenarioPresetRegistry],
     *,
     objective_scorer: RegisteredComponentReference | None,
     second_scorer: RegisteredComponentReference | None,
+    second_scenario: str = "foundry.red_team_agent",
+    scenario_registry: MagicMock | None = None,
 ) -> tuple[ResolvedScenarioSuiteEntry, ...]:
     suite_registry, preset_registry = registries
     refuse = preset_registry.save_preset(
@@ -272,7 +284,11 @@ def _resolve_two_scored_entries(
         expected_version=None,
     )
     allow = preset_registry.save_preset(
-        preset=_preset(name="allow", launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer=second_scorer)),
+        preset=_preset(
+            name="allow",
+            scenario_name=second_scenario,
+            launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer=second_scorer),
+        ),
         expected_version=None,
     )
     suite = suite_registry.save_suite(
@@ -298,7 +314,11 @@ def _resolve_two_scored_entries(
         target_name="gpt4",
         objective_scorer=objective_scorer,
     )
-    resolver = ScenarioSuiteLaunchResolver(suite_registry=suite_registry, preset_registry=preset_registry)
+    resolver = ScenarioSuiteLaunchResolver(
+        suite_registry=suite_registry,
+        preset_registry=preset_registry,
+        scenario_registry=scenario_registry if scenario_registry is not None else _scenario_registry(),
+    )
     with patch.object(preset_registry, "check_preset", return_value=[]):
         return resolver.resolve(name="weekly", request=request).entries
 
@@ -334,6 +354,70 @@ def test_launch_scorer_overrides_every_entry(
 
     assert [entry.request.objective_scorer for entry in entries] == [OVERRIDE_SCORER, OVERRIDE_SCORER]
     assert [entry.launch_value_sources["objective_scorer"] for entry in entries] == ["launch", "launch"]
+
+
+def test_launch_scorer_skips_entries_whose_scenario_uses_a_built_in_scorer(
+    registries: tuple[ScenarioSuiteRegistry, ScenarioPresetRegistry],
+) -> None:
+    """Test that one launch scorer does not make a mixed-capability suite unlaunchable."""
+    scored, built_in = _resolve_two_scored_entries(
+        registries,
+        objective_scorer=OVERRIDE_SCORER,
+        second_scorer=None,
+        second_scenario="airt.psychosocial",
+        scenario_registry=_scenario_registry(built_in_scorer_scenarios=frozenset({"airt.psychosocial"})),
+    )
+
+    assert scored.request.objective_scorer == OVERRIDE_SCORER
+    assert scored.launch_value_sources["objective_scorer"] == "launch"
+    assert built_in.request.objective_scorer is None
+    assert built_in.launch_value_sources["objective_scorer"] == "unsupported"
+
+
+def test_suite_without_a_launch_scorer_does_not_consult_scenario_capabilities(
+    registries: tuple[ScenarioSuiteRegistry, ScenarioPresetRegistry],
+) -> None:
+    """Test that presets alone resolve exactly as before, without a scenario-registry lookup."""
+    scenario_registry = _scenario_registry()
+
+    _resolve_two_scored_entries(
+        registries, objective_scorer=None, second_scorer=ALLOW_SCORER, scenario_registry=scenario_registry
+    )
+
+    scenario_registry.get_registered_class_metadata.assert_not_called()
+
+
+def test_unregistered_scenario_keeps_the_launch_scorer_for_readiness_to_report(
+    registries: tuple[ScenarioSuiteRegistry, ScenarioPresetRegistry],
+) -> None:
+    """Test that an unknown scenario is not silently treated as using a built-in scorer."""
+    scenario_registry = MagicMock(spec=ScenarioRegistry)
+    scenario_registry.get_registered_class_metadata.return_value = None
+
+    entries = _resolve_two_scored_entries(
+        registries, objective_scorer=OVERRIDE_SCORER, second_scorer=None, scenario_registry=scenario_registry
+    )
+
+    assert [entry.request.objective_scorer for entry in entries] == [OVERRIDE_SCORER, OVERRIDE_SCORER]
+
+
+def test_unsupported_field_is_reported_only_when_set() -> None:
+    """Test that an unsupported field left unset still reads as the scenario default."""
+    preset = _preset(launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer=REFUSE_SCORER))
+    unset = resolve_launch_defaults(
+        preset=_preset(),
+        launch=ResolveScenarioPresetRequest(target_name="gpt4"),
+        unsupported_fields=frozenset({"objective_scorer"}),
+    )
+    pinned = resolve_launch_defaults(
+        preset=preset,
+        launch=ResolveScenarioPresetRequest(target_name="gpt4"),
+        unsupported_fields=frozenset({"objective_scorer"}),
+    )
+
+    assert unset.sources["objective_scorer"] == "scenario_default"
+    assert pinned.values["objective_scorer"] is None
+    assert pinned.sources["objective_scorer"] == "unsupported"
 
 
 def test_single_preset_resolution_uses_the_pinned_scorer_unless_overridden() -> None:

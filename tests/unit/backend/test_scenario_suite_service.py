@@ -23,6 +23,7 @@ from pyrit.models import (
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.registry import (
     ScenarioPresetRegistry,
+    ScenarioRegistry,
     ScenarioSuiteConflictError,
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
@@ -61,7 +62,16 @@ def preset_registry() -> Iterator[MagicMock]:
 
 
 @pytest.fixture
-def service(tmp_path: Path, preset_registry: MagicMock) -> ScenarioSuiteService:
+def scenario_registry() -> Iterator[MagicMock]:
+    """Install a scenario registry singleton whose scenarios accept an objective scorer."""
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.get_registered_class_metadata.return_value = MagicMock(supports_objective_scorer=True)
+    with patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry):
+        yield registry
+
+
+@pytest.fixture
+def service(tmp_path: Path, preset_registry: MagicMock, scenario_registry: MagicMock) -> ScenarioSuiteService:
     """Create a service backed by an isolated suite registry."""
     registry = ScenarioSuiteRegistry(storage=ScenarioSuiteStorage(source=str(tmp_path)))
     return ScenarioSuiteService(registry=registry)
@@ -238,6 +248,42 @@ async def test_entry_status_projects_the_preset_launch_defaults(
     launch_defaults = response.entry_statuses[0].launch_defaults
     assert launch_defaults is not None
     assert launch_defaults.objective_scorer == scorer
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        (MagicMock(supports_objective_scorer=True), True),
+        (MagicMock(supports_objective_scorer=False), False),
+        (None, None),
+    ],
+    ids=["supported", "built_in_scorer", "unregistered"],
+)
+async def test_entry_status_reports_whether_the_scenario_accepts_a_scorer(
+    service: ScenarioSuiteService,
+    scenario_registry: MagicMock,
+    metadata: MagicMock | None,
+    expected: bool | None,
+) -> None:
+    """Test that suite reads say which entries a launch scorer override applies to."""
+    scenario_registry.get_registered_class_metadata.return_value = metadata
+
+    response = await service.save_suite_async(suite=_suite(preset_names=("nightly",)), expected_version=None)
+
+    assert response.entry_statuses[0].supports_objective_scorer is expected
+    scenario_registry.get_registered_class_metadata.assert_called_once_with("foundry.red_team_agent")
+
+
+async def test_missing_preset_reports_unknown_scorer_support(
+    service: ScenarioSuiteService,
+    preset_registry: MagicMock,
+) -> None:
+    """Test that an unresolved preset does not claim scorer support either way."""
+    preset_registry.get_preset.return_value = None
+
+    response = await service.save_suite_async(suite=_suite(preset_names=("nightly",)), expected_version=None)
+
+    assert response.entry_statuses[0].supports_objective_scorer is None
 
 
 async def test_missing_preset_is_advisory_and_does_not_block_save(

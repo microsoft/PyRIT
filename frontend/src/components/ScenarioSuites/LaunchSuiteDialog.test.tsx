@@ -303,6 +303,25 @@ describe('LaunchSuiteDialog', () => {
     })))
   })
 
+  it('marks the launch scorer override as not applicable to a scenario with a built-in scorer', async () => {
+    const user = userEvent.setup()
+    const suite = makeSuite()
+    suite.entry_statuses[1].supports_objective_scorer = false
+    renderDialog({ suite, scorers: [OVERRIDE_SCORER] })
+    expect(screen.getByTestId(`launch-suite-entry-scorer-${SECOND_ENTRY_ID}`))
+      .toHaveTextContent('Scorer: Scenario default scorer')
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Objective scorer override' }),
+      'registered:override_scorer',
+    )
+
+    expect(screen.getByTestId(`launch-suite-entry-scorer-${FIRST_ENTRY_ID}`))
+      .toHaveTextContent('Scorer: override_scorer (launch override)')
+    expect(screen.getByTestId(`launch-suite-entry-scorer-${SECOND_ENTRY_ID}`))
+      .toHaveTextContent('Scorer: Scenario default scorer (override not applicable)')
+  })
+
   it('launches the reviewed suite and navigates to grouped progress', async () => {
     const user = userEvent.setup()
     renderDialog({ labels: { team: 'purple' }, operationId: OPERATION_ID })

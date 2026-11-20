@@ -2907,6 +2907,23 @@ describe('ScenarioDetail', () => {
         .toHaveValue('registered:inverted_refusal'))
     })
 
+    it('should not seed a preset scorer the scenario cannot use', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: false }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({
+        launch_defaults: { objective_scorer: { registry_name: 'deleted_scorer', identifier_hash: 'gone-hash' } },
+      }))
+      renderDetail(PRESET_PATH)
+
+      await waitFor(() => expect(mockGetPreset).toHaveBeenCalledWith('spanish_probe'))
+      expect(screen.queryByRole('combobox', { name: 'Objective scorer' })).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('objective_scorer')
+    })
+
     it.each([
       '/scanner/launch/foundry.red_team_agent',
       '/scanner/launch/foundry.red_team_agent?preset=%20%20',
