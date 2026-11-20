@@ -311,23 +311,31 @@ class PromptShieldTarget(PromptTarget):
                 if TYPE_CHECKING:
                     assert_never(unknown_field)
 
-        # This can also be accomplished using regex, but Python is flexible.
-        user_prompt = ""
+        # Scan linearly for matched <document>...</document> pairs so unmatched closing tags
+        # cannot misclassify userPrompt text as documents or drop trailing prompt text.
+        open_tag = "<document>"
+        close_tag = "</document>"
+        user_prompt_parts: list[str] = []
         documents: list[str] = []
-        split_input = input_str.split("<document>")
+        cursor = 0
 
-        for element in split_input:
-            contents = element.split("</document>")
+        while True:
+            open_idx = input_str.find(open_tag, cursor)
+            if open_idx == -1:
+                user_prompt_parts.append(input_str[cursor:])
+                break
 
-            if len(contents) == 1:
-                user_prompt += contents[0]
-            else:
-                # Text before the closing tag is the document; any text after it
-                # belongs to the user prompt and must not be silently dropped.
-                documents.append(contents[0])
-                user_prompt += contents[1]
+            content_start = open_idx + len(open_tag)
+            close_idx = input_str.find(close_tag, content_start)
+            if close_idx == -1:
+                user_prompt_parts.append(input_str[cursor:])
+                break
 
-        return {"userPrompt": user_prompt, "documents": documents if documents else []}
+            user_prompt_parts.append(input_str[cursor:open_idx])
+            documents.append(input_str[content_start:close_idx])
+            cursor = close_idx + len(close_tag)
+
+        return {"userPrompt": "".join(user_prompt_parts), "documents": documents}
 
     def _add_auth_param_to_headers(self, headers: dict[str, str]) -> None:
         """
