@@ -22,6 +22,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from pyrit.models import (
+    ScenarioRunPlanScorerBinding,
     Scorable,
     ScorerCapabilityName,
     ScorerIdentifier,
@@ -290,6 +291,19 @@ class ScorerSelection:
     def evaluation(self) -> str | None:
         """The selected candidate's evaluation key."""
         return self.candidate.evaluation
+
+    def to_run_plan_binding(self) -> ScenarioRunPlanScorerBinding:
+        """
+        Record this selection for a scenario run plan, so resume can verify it.
+
+        Returns:
+            ScenarioRunPlanScorerBinding: The selected candidate's index, evaluation, and scorer hash.
+        """
+        return ScenarioRunPlanScorerBinding(
+            candidate_index=self.candidate_index,
+            evaluation=self.evaluation,
+            scorer_hash=self.scorer.get_identifier().hash,
+        )
 
 
 class NoCompatibleScorerError(ValueError):

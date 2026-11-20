@@ -88,6 +88,9 @@ await output_scenario_async(scenario_result)
 # selected sub-harms' datasets; `--max-total` must cover each selected sub-harm.
 #
 # **Available techniques:** ALL, DEFAULT, tone, language, persuasion, deterministic, crescendo
+#
+# Each sub-harm is judged by its own scorer. To use your own in Python, pass `imminent_crisis_scorer` or
+# `licensed_therapist_scorer` to `Psychosocial(...)`.
 
 # %%
 from pyrit.scenario.airt import Psychosocial, PsychosocialTechnique
