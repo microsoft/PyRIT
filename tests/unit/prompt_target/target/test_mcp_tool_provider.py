@@ -515,6 +515,7 @@ async def test_openai_response_target_retries_request_inside_provider_scope() ->
     target._tool_providers = [provider]
     target._suppress_tools = False
     target._execute_tools = True
+    target._max_tool_rounds = 10
     target._get_json_response_config = MagicMock(return_value=JsonResponseConfig(enabled=False))  # type: ignore[method-assign]
     target._construct_request_body_async = AsyncMock(return_value={})  # type: ignore[method-assign]
     response = Message(
@@ -624,3 +625,25 @@ async def test_openai_response_target_rejects_provider_name_conflict(patch_centr
             conversation=[Message.from_prompt(prompt="Read a note", role="user")],
             json_config=JsonResponseConfig(enabled=False),
         )
+
+
+def test_openai_response_target_skips_malformed_function_call_pieces() -> None:
+    target = object.__new__(OpenAIResponseTarget)
+    response = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="not valid json",
+                original_value_data_type="function_call",
+            ),
+            MessagePiece(
+                role="assistant",
+                original_value='{"type":"function_call","call_id":"call-1","name":"get_note","arguments":"{}"}',
+                original_value_data_type="function_call",
+            ),
+        ]
+    )
+
+    calls = target._find_pending_tool_calls(response)
+
+    assert [call["call_id"] for call in calls] == ["call-1"]

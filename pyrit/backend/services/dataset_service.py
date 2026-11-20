@@ -75,7 +75,7 @@ class DatasetService:
         Raises:
             DatasetAPIException: If the selection is unnamed or has no stored seeds.
         """
-        name = self._parse_selection_key(selection_key)
+        name = parse_dataset_selection_key(selection_key)
         if name is None:
             raise DatasetAPIException(status_code=400, message="The unnamed aggregate cannot be deleted.")
         try:
@@ -218,7 +218,7 @@ class DatasetService:
         Raises:
             ValueError: If the selection key or the cursor is not valid.
         """
-        dataset_name = self._parse_selection_key(selection_key)
+        dataset_name = parse_dataset_selection_key(selection_key)
         validate_text_search(value=search, pattern=value_pattern)
         fingerprint = fingerprint_filters(
             filters={
@@ -301,7 +301,7 @@ class DatasetService:
         Raises:
             ValueError: If the selection key is not valid.
         """
-        name = self._parse_selection_key(selection_key)
+        name = parse_dataset_selection_key(selection_key)
         version = None
         if editable:
             snapshot = await self._editing_snapshot_async(name)
@@ -445,19 +445,6 @@ class DatasetService:
         """
         value_url = await resolve_client_media_url_async(value=seed.value, data_type=seed.data_type)
         return SeedMemberView.model_validate({**seed.model_dump(), "value_url": value_url})
-
-    @staticmethod
-    def _parse_selection_key(selection_key: str) -> str | None:
-        """
-        Get the dataset name of a selection key.
-
-        Returns:
-            str | None: The dataset name, or None for the unnamed population.
-
-        Raises:
-            ValueError: If the selection key is not valid.
-        """
-        return parse_dataset_selection_key(selection_key)
 
     @classmethod
     def _summarize(cls, *, selection_key: str, example_id: UUID, seeds: Sequence[SeedRecord]) -> SeedExampleSummary:

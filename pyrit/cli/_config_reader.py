@@ -71,7 +71,7 @@ def _resolve_config_paths(*, config_file: Path | None) -> list[Path]:
     return paths
 
 
-def _load_config_mapping(*, path: Path, yaml_module: Any) -> dict | None:
+def _load_config_mapping(*, path: Path, yaml_module: Any) -> dict[str, Any] | None:
     """
     Load a single YAML config file and return its top-level mapping.
 
@@ -81,7 +81,7 @@ def _load_config_mapping(*, path: Path, yaml_module: Any) -> dict | None:
             top-level import).
 
     Returns:
-        dict | None: The parsed mapping, or ``None`` for an empty file.
+        dict[str, Any] | None: The parsed mapping, or ``None`` for an empty file.
 
     Raises:
         ConfigError: If the file cannot be read, is not valid YAML, or has a
