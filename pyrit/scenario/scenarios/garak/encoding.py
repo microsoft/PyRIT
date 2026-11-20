@@ -13,8 +13,10 @@ from pyrit.converter import (
     AtbashConverter,
     Base64Converter,
     Base2048Converter,
+    BifidConverter,
     BinAsciiConverter,
     BrailleConverter,
+    ColumnarTranspositionConverter,
     Converter,
     EcojiConverter,
     LeetspeakConverter,
@@ -125,6 +127,8 @@ class EncodingTechnique(ScenarioTechnique):
     Zalgo = ("zalgo", set[str]())
     LeetSpeak = ("leet_speak", {"default"})
     AsciiSmuggler = ("ascii_smuggler", set[str]())
+    Bifid = ("bifid", set[str]())
+    ColumnarTransposition = ("columnar_transposition", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -311,6 +315,8 @@ class Encoding(Scenario):
             ([ZalgoConverter()], "zalgo", "zalgo"),
             ([LeetspeakConverter()], "leet_speak", "leet_speak"),
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
+            ([BifidConverter()], "bifid", "bifid"),
+            ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
         ]
 
     # These are the same as Garak encoding attacks
@@ -389,8 +395,19 @@ class Encoding(Scenario):
             )
         ]
 
+        # Keyed ciphers (e.g. columnar transposition) cannot be reversed from the encoding name alone,
+        # so a converter may expose ``decode_prompt_description`` disclosing its key and convention. Use
+        # it only in the decode prompts; the slug, selection, display grouping, and raw variant are
+        # unaffected since those still key off ``encoding_name``.
+        decode_name = encoding_name
+        for converter in converters:
+            description = getattr(converter, "decode_prompt_description", None)
+            if description:
+                decode_name = description
+                break
+
         for decode_index, decode_type in enumerate(self._encoding_templates):
-            converters_ = converters[:] + [AskToDecodeConverter(template=decode_type, encoding_name=encoding_name)]
+            converters_ = converters[:] + [AskToDecodeConverter(template=decode_type, encoding_name=decode_name)]
 
             converter_configs.append(
                 (

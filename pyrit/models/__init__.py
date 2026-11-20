@@ -150,6 +150,15 @@ if TYPE_CHECKING:
         StructuredParameterValue,
         display_choices,
     )
+    from pyrit.models.prompt_generation import (
+        ACTIVE_GENERATION_STATUSES,
+        DATASET_NAME_RELEASING_STATUSES,
+        RETRYABLE_GENERATION_STATUSES,
+        PromptGenerationProgress,
+        PromptGenerationRecord,
+        PromptGenerationStatus,
+        TargetObjectiveGenerationRequest,
+    )
     from pyrit.models.prompt_generation_estimate import PromptGenerationEstimate, PromptGenerationStageEstimate
     from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
     from pyrit.models.results.assert_policy_metrics import AssertBinaryRate, AssertPolicyMetrics
@@ -355,6 +364,7 @@ if TYPE_CHECKING:
         AssertTaxonomy,
         AssertTerm,
     )
+    from pyrit.models.seeds.gcg_seed_metadata import GCGSeedMetadata
     from pyrit.models.target import (
         COMMON_JSON_SCHEMAS,
         JSON_SCHEMA_METADATA_KEY,
@@ -382,6 +392,7 @@ if TYPE_CHECKING:
     from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "GCGSeedMetadata": "pyrit.models.seeds",
     "AdversarialPrompts": "pyrit.models.seeds.adversarial_prompts",
     "AssertBehaviorCategory": "pyrit.models.seeds.assert_generation",
     "AssertBehaviorDefinition": "pyrit.models.seeds.assert_generation",
@@ -416,6 +427,13 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AssertSystematization": "pyrit.models.seeds.assert_generation",
     "AssertTaxonomy": "pyrit.models.seeds.assert_generation",
     "AssertTerm": "pyrit.models.seeds.assert_generation",
+    "ACTIVE_GENERATION_STATUSES": "pyrit.models.prompt_generation",
+    "DATASET_NAME_RELEASING_STATUSES": "pyrit.models.prompt_generation",
+    "RETRYABLE_GENERATION_STATUSES": "pyrit.models.prompt_generation",
+    "PromptGenerationProgress": "pyrit.models.prompt_generation",
+    "PromptGenerationRecord": "pyrit.models.prompt_generation",
+    "PromptGenerationStatus": "pyrit.models.prompt_generation",
+    "TargetObjectiveGenerationRequest": "pyrit.models.prompt_generation",
     "PromptGenerationEstimate": "pyrit.models.prompt_generation_estimate",
     "PromptGenerationStageEstimate": "pyrit.models.prompt_generation_estimate",
     "WebSearchConfig": "pyrit.models.target.web_search_config",
