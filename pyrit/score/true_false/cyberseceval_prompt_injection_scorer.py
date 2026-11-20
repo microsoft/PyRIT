@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
-from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
@@ -14,14 +13,12 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
-    ScorerTargetResponsePayload,
     ScoringExpectation,
     SeedPrompt,
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.llm_scoring import _parse_judgment_observation
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
-from pyrit.score.observation.execution import NonReplayableObservationError
 from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
 from pyrit.score.response_handler import CallableResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -147,6 +144,10 @@ class CyberSecEvalPromptInjectionScorer(MessageTrueFalseScorer):
         self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
         self._judge_question = judge_question
         self._prompt_template = _resolve_prompt_template(prompt_template=prompt_template)
+        self._response_handler = CallableResponseHandler(
+            parser=parse_cyberseceval_prompt_injection_response,
+            parser_fingerprint=self.RESPONSE_PARSER_FINGERPRINT,
+        )
 
         super().__init__(
             validator=validator or self._DEFAULT_VALIDATOR,
@@ -224,9 +225,8 @@ class CyberSecEvalPromptInjectionScorer(MessageTrueFalseScorer):
             judge_question=judge_question,
             prompt_template=self._prompt_template,
         )
-        parser_scope = str(message_piece.original_prompt_id or message_piece.id)
         unvalidated_score = await self._judge.judge_async(
-            response_handler=self._response_handler(scope=parser_scope),
+            response_handler=self._response_handler,
             request=self._capture_judgment_evidence(
                 JudgmentRequest(
                     expectation=expectation,
@@ -237,7 +237,6 @@ class CyberSecEvalPromptInjectionScorer(MessageTrueFalseScorer):
                     scorer_identifier=self.get_identifier(),
                     judgment_replay_identifier=self._get_judgment_replay_identifier(),
                     category=self.SCORE_CATEGORY,
-                    observation_metadata={"cyberseceval_scope": parser_scope},
                 )
             ),
         )
@@ -247,12 +246,6 @@ class CyberSecEvalPromptInjectionScorer(MessageTrueFalseScorer):
                 score_type="true_false",
             )
         ]
-
-    def _response_handler(self, *, scope: str) -> CallableResponseHandler:
-        return CallableResponseHandler(
-            parser=partial(parse_cyberseceval_prompt_injection_response, scope=scope),
-            parser_fingerprint=self.RESPONSE_PARSER_FINGERPRINT,
-        )
 
     def _judgment_replay_identifier(self) -> dict[str, object]:
         """Return the CyberSecEval prompt injection judgment contract."""
@@ -270,17 +263,11 @@ class CyberSecEvalPromptInjectionScorer(MessageTrueFalseScorer):
 
         Returns:
             list[Score]: The replayed score.
-
-        Raises:
-            NonReplayableObservationError: If the payload is not a retained scorer target response.
         """
-        if not isinstance(observation.payload, ScorerTargetResponsePayload):
-            raise NonReplayableObservationError("CyberSecEval requires a scorer target response observation.")
-        scope = observation.metadata.get("cyberseceval_scope", str(observation.payload.scored_piece_id))
         unvalidated = _parse_judgment_observation(
             observation=observation,
             evidence=evidence,
-            response_handler=self._response_handler(scope=scope),
+            response_handler=self._response_handler,
             scorer_identifier=self.get_identifier(),
             judgment_replay_identifier=self._get_judgment_replay_identifier(),
             expectation=expectation,

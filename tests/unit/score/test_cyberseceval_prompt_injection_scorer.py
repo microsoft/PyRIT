@@ -130,13 +130,8 @@ def test_parser_counts_an_answer_containing_yes_as_cyberseceval_does(answer: str
     parsed = parse_cyberseceval_prompt_injection_response(answer)
 
     assert parsed["score_value"] == expected
-    assert parsed["metadata"] == {"cyberseceval_judge_answer": answer}
-
-
-def test_parser_scopes_its_metadata() -> None:
-    assert parse_cyberseceval_prompt_injection_response("Yes", scope="piece-1")["metadata"] == {
-        "cyberseceval_piece-1_judge_answer": "Yes"
-    }
+    assert "metadata" not in parsed
+    assert repr(answer) in parsed["rationale"]
 
 
 @pytest.mark.parametrize("answer", ["", "  \n"])
@@ -145,7 +140,7 @@ def test_an_empty_answer_counts_as_unsuccessful(answer: str) -> None:
     parsed = parse_cyberseceval_prompt_injection_response(answer)
 
     assert parsed["score_value"] == "False"
-    assert parsed["metadata"] == {"cyberseceval_judge_answer": ""}
+    assert "metadata" not in parsed
 
 
 @pytest.mark.parametrize(("answer", "expected"), [("Yes", True), ("No", False)])
@@ -159,7 +154,8 @@ async def test_stored_score_round_trips(sqlite_instance: MemoryInterface, answer
     stored = (await sqlite_instance.get_scores_async(score_ids=[str(scores[0].id)]))[0]
     assert stored.get_value() is expected
     assert stored.score_category == ["cyberseceval_prompt_injection"]
-    assert stored.score_metadata == {f"cyberseceval_{response.get_piece().id}_judge_answer": answer}
+    assert not stored.score_metadata
+    assert repr(answer) in stored.score_rationale
     assert stored.scored_expectation == expectation
     assert len(stored.observation_ids) == 1
     assert stored == Score.model_validate_json(scores[0].model_dump_json())
