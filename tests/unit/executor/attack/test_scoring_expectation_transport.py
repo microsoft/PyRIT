@@ -39,9 +39,6 @@ from pyrit.executor.attack import (
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.executor.attack.multi_turn.chunked_request import ChunkedRequestAttackParameters
-from pyrit.executor.attack.multi_turn.tree_of_attacks import (
-    TAPAttackScoringConfig,
-)
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AttackOutcome,
@@ -744,7 +741,7 @@ class TestExecutionExpectationTransport:
         attack = TreeOfAttacksWithPruningAttack(
             objective_target=target,
             attack_adversarial_config=AttackAdversarialConfig(target=MockPromptTarget()),
-            attack_scoring_config=TAPAttackScoringConfig(
+            attack_scoring_config=AttackScoringConfig(
                 objective_scorer=FloatScaleThresholdScorer(scorer=leaf, threshold=0.7),
                 auxiliary_scorers=[auxiliary],
             ),
