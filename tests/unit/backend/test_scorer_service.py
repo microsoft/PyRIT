@@ -582,25 +582,23 @@ async def test_saves_a_scorer_only_over_a_target_that_comes_back_after_a_restart
     assert _saved_scorer(tmp_path, "decision")["params"] == {"chat_target": "chat"}
 
 
-async def test_refuses_a_scorer_that_would_use_this_servers_key(tmp_path: Path) -> None:
+async def test_saves_a_scorer_that_uses_this_servers_key(tmp_path: Path) -> None:
     service = ScorerService()
-    request = _persist_scorer(
-        "content_safety", "AzureContentFilterScorer", {"endpoint": "https://contoso.cognitiveservices.azure.com/"}
-    )
+    endpoint = "https://contoso.cognitiveservices.azure.com/"
 
-    with (
-        patch.dict("os.environ", {"AZURE_CONTENT_SAFETY_API_KEY": "server-safety-key"}),
-        pytest.raises(NotSaveableError) as refusal,
-    ):
-        await service.create_scorer_async(request=request, recipes_source=str(tmp_path))
+    with patch.dict("os.environ", {"AZURE_CONTENT_SAFETY_API_KEY": "server-safety-key"}):
+        scorer = await service.create_scorer_async(
+            request=_persist_scorer("content_safety", "AzureContentFilterScorer", {"endpoint": endpoint}),
+            recipes_source=str(tmp_path),
+        )
+        ScorerRegistry.reset_registry_singleton()
+        report = await _restore(tmp_path)
 
-    assert str(refusal.value) == (
-        "'AzureContentFilterScorer' needs a credential in 'api_key', which saved entries can't hold or take from "
-        "this server yet. "
-        "It can still be created without saving it."
-    )
-    assert ScorerRegistry.get_registry_singleton().instances.get("content_safety") is None
-    assert not (tmp_path / "scorers").exists()
+    assert scorer.origin is RegistryEntryOrigin.SAVED
+    assert _saved_scorer(tmp_path, "content_safety")["params"] == {"endpoint": endpoint}
+    assert "server-safety-key" not in (tmp_path / "scorers" / "content_safety.json").read_text()
+    assert report.failures == []
+    assert ScorerRegistry.get_registry_singleton().instances.get("content_safety") is not None
 
 
 async def test_a_taken_scorer_name_is_a_conflict_only_when_saving(tmp_path: Path) -> None:
