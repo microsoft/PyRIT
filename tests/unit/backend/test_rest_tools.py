@@ -3,10 +3,12 @@
 
 import json
 from collections.abc import Iterator
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel
 
 from pyrit import _compatibility
 from pyrit.backend.main import app as backend_app
@@ -35,12 +37,28 @@ BACKEND_TOOLS = [
     ("get_conversation_messages", "GET", "/api/attacks/{attack_result_id}/messages"),
     ("query_analytics", "POST", "/api/analytics/attacks/query"),
 ]
+# Values that the backend's own IDs and names look like.
+BACKEND_PATH_VALUES = {
+    "scenario_name": "technique.execute",
+    "scenario_result_id": "4b9f3a52-6c1e-4d8a-9f2b-7e0c5d1a3b68",
+    "attack_result_id": "c2d7e8f1-0a3b-4c5d-8e9f-1a2b3c4d5e6f",
+}
+INVALID_THING_ID = "Invalid path parameters: thing_id. Pass IDs and names exactly as a tool returned them."
+
+
+class ThingRequest(BaseModel):
+    name: str
 
 
 @pytest.fixture
 def toolset() -> Iterator[RestToolset]:
     app = FastAPI()
     app.state.compatibility_id = COMPATIBILITY_ID
+
+    @app.get("/api/things/featured")
+    async def get_featured_thing() -> dict[str, object]:
+        """Get the featured thing, which is not offered and is matched before any thing ID."""
+        return {"featured": True}
 
     @app.get("/api/things/{thing_id}")
     async def get_thing_async(thing_id: str, request: Request) -> dict[str, object]:
@@ -81,17 +99,24 @@ def toolset() -> Iterator[RestToolset]:
         """Get a conversation whose first message alone is over the response limit."""
         return {"messages": [{"text": "q" * 50_000}, {"text": "Sure, here is the answer."}]}
 
-    with patch.object(RestToolset, "OPERATIONS", ("get_thing", "list_things", "get_notes", "get_conversation")):
+    @app.post("/api/things")
+    async def create_thing(thing: ThingRequest) -> dict[str, object]:
+        """Create a thing."""
+        return {"created": thing.model_dump()}
+
+    offered = ("get_thing", "list_things", "get_notes", "get_conversation", "create_thing")
+    with patch.object(RestToolset, "OPERATIONS", offered):
         yield RestToolset(app=app)
 
 
 def test_tools_are_rest_operations_named_after_their_route_functions(toolset: RestToolset) -> None:
     operations = {operation.name: operation for operation in toolset.operations}
 
-    assert list(operations) == ["get_thing", "list_things", "get_notes", "get_conversation"]
+    assert list(operations) == ["get_thing", "list_things", "get_notes", "get_conversation", "create_thing"]
     assert operations["get_thing"].description.startswith("GET /api/things/{thing_id}\n\nGet one thing.")
     assert operations["get_thing"].input_schema["required"] == ["thing_id"]
     assert set(operations["list_things"].input_schema["properties"]) == {"limit", RestToolset.RESPONSE_FIELDS}
+    assert operations["create_thing"].input_schema["required"] == ["body"]
 
 
 async def test_call_forwards_credentials_and_compacts_identifiers(toolset: RestToolset) -> None:
@@ -116,15 +141,28 @@ async def test_error_response_is_returned_whole_as_a_failed_result(toolset: Rest
     assert json.loads(text) == {"status": 404, "error": {"detail": "Thing 'missing' not found"}}
 
 
+async def test_call_sends_the_body(toolset: RestToolset) -> None:
+    text, failed = await toolset.call_async(name="create_thing", arguments={"body": {"name": "n"}}, authorization=None)
+
+    assert failed is False
+    assert json.loads(text) == {"created": {"name": "n"}}
+
+
 @pytest.mark.parametrize(
     ("name", "arguments", "error"),
     [
         ("no_such_tool", {}, "Unknown tool 'no_such_tool'."),
         ("get_thing", {"thing_id": None}, "Missing path parameters: thing_id."),
-        ("get_thing", {"thing_id": "a/secret"}, "Path parameters cannot contain '/': thing_id."),
+        # Each would reach another route or none: more segments, a static route registered first, the list
+        # route ("."), the API root (".."), and a path with a trailing slash.
+        ("get_thing", {"thing_id": "a/secret"}, INVALID_THING_ID),
+        ("get_thing", {"thing_id": "featured"}, INVALID_THING_ID),
+        ("get_thing", {"thing_id": "."}, INVALID_THING_ID),
+        ("get_thing", {"thing_id": ".."}, INVALID_THING_ID),
+        ("get_thing", {"thing_id": ""}, INVALID_THING_ID),
     ],
 )
-async def test_call_reports_unknown_tools_and_missing_path_parameters(
+async def test_call_reports_unknown_tools_and_invalid_path_parameters(
     toolset: RestToolset, name: str, arguments: dict[str, object], error: str
 ) -> None:
     text, failed = await toolset.call_async(name=name, arguments=arguments, authorization=None)
@@ -250,6 +288,41 @@ def test_backend_offers_the_selected_operations() -> None:
     operations = RestToolset(app=backend_app).operations
 
     assert [(operation.name, operation.method, operation.path) for operation in operations] == BACKEND_TOOLS
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("get_attack", {"attack_result_id": "attack-options"}),
+        ("get_attack", {"attack_result_id": "converter-options"}),
+        ("get_scenario_run", {"scenario_result_id": "queue"}),
+        ("get_conversation_messages", {"attack_result_id": "conversations", "conversation_id": "c"}),
+    ],
+)
+async def test_backend_tool_does_not_send_a_value_that_reaches_another_route(
+    name: str, arguments: dict[str, object]
+) -> None:
+    # Each value matches a route registered before the tool's own, such as GET /api/scenarios/runs/queue.
+    toolset = RestToolset(app=backend_app)
+    with patch.object(toolset, "_send_async", new_callable=AsyncMock) as send:
+        text, failed = await toolset.call_async(name=name, arguments=arguments, authorization=None)
+
+    assert failed is True
+    assert json.loads(text)["error"].startswith("Invalid path parameters")
+    send.assert_not_called()
+
+
+async def test_backend_tools_send_ids_and_names_to_their_own_routes() -> None:
+    toolset = RestToolset(app=backend_app)
+    rejected = []
+    with patch.object(toolset, "_send_async", new_callable=AsyncMock, return_value=httpx.Response(200, json={})):
+        for operation in toolset.operations:
+            arguments = {parameter: BACKEND_PATH_VALUES[parameter] for parameter in operation.path_parameters}
+            _, failed = await toolset.call_async(name=operation.name, arguments=arguments, authorization=None)
+            if failed:
+                rejected.append(operation.name)
+
+    assert rejected == []
 
 
 def _references(node: object) -> list[str]:

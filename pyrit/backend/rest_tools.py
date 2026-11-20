@@ -19,6 +19,7 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI
+from starlette.routing import compile_path
 
 from pyrit import _compatibility
 
@@ -104,6 +105,7 @@ How to work:
     _IDENTIFIER_BOOKKEEPING: ClassVar[frozenset[str]] = frozenset({"class_module", "eval_hash", "pyrit_version"})
     # Fields that continue a list after its last entry. After entries are cut, they would skip the cut ones.
     _NEXT_PAGE_FIELDS: ClassVar[frozenset[str]] = frozenset({"next_cursor", "next_group_offset"})
+    _BASE_URL: ClassVar[str] = "http://pyrit"
 
     def __init__(self, *, app: FastAPI) -> None:
         """
@@ -114,6 +116,7 @@ How to work:
         """
         self._app = app
         self._operations: dict[str, RestOperation] | None = None
+        self._routes: dict[str, list[tuple[str, re.Pattern[str]]]] | None = None
 
     @property
     def operations(self) -> list[RestOperation]:
@@ -141,25 +144,50 @@ How to work:
         missing = [parameter for parameter in operation.path_parameters if arguments.get(parameter) is None]
         if missing:
             return json.dumps({"error": f"Missing path parameters: {', '.join(missing)}."}), True
-        # A "/" would turn the value into more path segments and reach a different, unoffered route.
-        nested = [parameter for parameter in operation.path_parameters if "/" in str(arguments[parameter])]
-        if nested:
-            return json.dumps({"error": f"Path parameters cannot contain '/': {', '.join(nested)}."}), True
-        response = await self._send_async(operation=operation, arguments=arguments, authorization=authorization)
+        path = self._request_path(operation=operation, arguments=arguments)
+        if path is None:
+            invalid = ", ".join(operation.path_parameters)
+            error = f"Invalid path parameters: {invalid}. Pass IDs and names exactly as a tool returned them."
+            return json.dumps({"error": error}), True
+        response = await self._send_async(
+            operation=operation, path=path, arguments=arguments, authorization=authorization
+        )
         return self._format_response(response=response, fields=arguments.get(self.RESPONSE_FIELDS)), response.is_error
 
+    def _request_path(self, *, operation: RestOperation, arguments: Mapping[str, Any]) -> str | None:
+        """
+        Fill in the operation's path parameters.
+
+        Returns:
+            str | None: The path, or None when the backend would not route it to this operation.
+        """
+        path = operation.path
+        for parameter in operation.path_parameters:
+            path = path.replace(f"{{{parameter}}}", quote(str(arguments[parameter]), safe=""))
+        # The backend routes the decoded path with "." and ".." resolved, so a value such as "queue", ".", or
+        # "a/b" could match another route, such as a static one registered first. Only this route may match.
+        routed = httpx.URL(f"{self._BASE_URL}{path}").path
+        matched = [route for route, pattern in self._route_patterns(method=operation.method) if pattern.match(routed)]
+        return path if matched == [operation.path] else None
+
+    def _route_patterns(self, *, method: str) -> list[tuple[str, re.Pattern[str]]]:
+        if self._routes is None:
+            routes: dict[str, list[tuple[str, re.Pattern[str]]]] = {}
+            for route, path_item in self._app.openapi()["paths"].items():
+                for route_method in path_item:
+                    routes.setdefault(route_method.upper(), []).append((route, compile_path(route)[0]))
+            self._routes = routes
+        return self._routes.get(method, [])
+
     async def _send_async(
-        self, *, operation: RestOperation, arguments: Mapping[str, Any], authorization: str | None
+        self, *, operation: RestOperation, path: str, arguments: Mapping[str, Any], authorization: str | None
     ) -> httpx.Response:
         headers = {_compatibility.COMPATIBILITY_HEADER: self._app.state.compatibility_id}
         if authorization:
             headers["Authorization"] = authorization
-        path = operation.path
-        for parameter in operation.path_parameters:
-            path = path.replace(f"{{{parameter}}}", quote(str(arguments[parameter]), safe=""))
         query = {name: arguments[name] for name in operation.query_parameters if arguments.get(name) is not None}
         transport = httpx.ASGITransport(app=self._app, raise_app_exceptions=False)
-        async with httpx.AsyncClient(transport=transport, base_url="http://pyrit", timeout=None) as client:
+        async with httpx.AsyncClient(transport=transport, base_url=self._BASE_URL, timeout=None) as client:
             return await client.request(
                 operation.method,
                 path,

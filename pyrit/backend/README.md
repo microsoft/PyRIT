@@ -916,7 +916,9 @@ empty value is not.
 
 To offer another operation, add its name to `RestToolset.OPERATIONS`. The list is curated
 because every tool schema is sent with each model request, and some operations, such as
-reading environment files, must not be given to a model.
+reading environment files, must not be given to a model. A call is sent only if its path
+matches that operation's route and no other, so a path parameter such as `queue` or `.`
+can't reach another route.
 
 ### MCP
 
