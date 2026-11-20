@@ -377,10 +377,10 @@ class TestSampleControl:
 
 
 # Architectures built as tiny random models to exercise the embedding helpers.
-# The first three predate this generic path and must keep returning float16 from
-# get_embeddings; the rest were previously rejected outright.
-_HALF_PRECISION_ARCHITECTURES = ["gpt2", "gptj", "gpt_neox"]
-_OTHER_ARCHITECTURES = [
+_ARCHITECTURES = [
+    "gpt2",
+    "gptj",
+    "gpt_neox",
     "gemma2",
     "gemma3_text",
     "llama",
@@ -421,7 +421,7 @@ def _tiny_model(model_type: str) -> Any:
 class TestEmbeddingHelpers:
     """Tests for get_embedding_layer, get_embedding_matrix, get_embeddings."""
 
-    @pytest.mark.parametrize("model_type", _HALF_PRECISION_ARCHITECTURES + _OTHER_ARCHITECTURES)
+    @pytest.mark.parametrize("model_type", _ARCHITECTURES)
     def test_helpers_resolve_embeddings_for_any_causal_model(self, model_type: str) -> None:
         """Any model AutoModelForCausalLM can load should resolve through the helpers."""
         model = _tiny_model(model_type)
@@ -433,18 +433,12 @@ class TestEmbeddingHelpers:
         embedded = get_embeddings(model, torch.tensor([[1, 2, 3]]))
         assert embedded.shape[-1] == model.config.hidden_size
 
-    @pytest.mark.parametrize("model_type", _HALF_PRECISION_ARCHITECTURES)
-    def test_get_embeddings_keeps_half_precision_for_legacy_architectures(self, model_type: str) -> None:
-        """GPT-2, GPT-J and GPT-NeoX returned float16 before this path existed."""
-        model = _tiny_model(model_type)
-        assert get_embeddings(model, torch.tensor([[1, 2, 3]])).dtype == torch.float16
-
-    @pytest.mark.parametrize("model_type", _OTHER_ARCHITECTURES)
-    def test_get_embeddings_keeps_embedding_dtype_for_other_architectures(self, model_type: str) -> None:
-        """Everything else keeps the embedding dtype rather than being downcast."""
-        model = _tiny_model(model_type)
-        expected_dtype = model.get_input_embeddings().weight.dtype
-        assert get_embeddings(model, torch.tensor([[1, 2, 3]])).dtype == expected_dtype
+    @pytest.mark.parametrize("model_type", _ARCHITECTURES)
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+    def test_get_embeddings_keeps_the_model_dtype(self, model_type: str, dtype: torch.dtype) -> None:
+        """Embeddings match the one-hot embeddings token_gradients builds from the same matrix."""
+        model = _tiny_model(model_type).to(dtype)
+        assert get_embeddings(model, torch.tensor([[1, 2, 3]])).dtype == dtype
 
 
 class TestPromptManagerInit:
@@ -1604,6 +1598,7 @@ class _WorkerStub:
         self.model.device = "cpu"
         self.tokenizer = tokenizer
         self._vocabulary_identities: dict[int, str] = {}
+        self._unsampleable_toks: dict[int, torch.Tensor] = {}
         self.results = _Queue([])
         self._gradient = gradient
         self._logits = logits

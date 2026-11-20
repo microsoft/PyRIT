@@ -29,6 +29,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from pyrit.executor.promptgen.gcg.attack.base.attack_manager import clamp_unsampleable_toks
+
 logger = logging.getLogger(__name__)
 
 
@@ -322,8 +324,8 @@ class LengthPreservingFilter:
     ``filter_cand=True`` branch) and passthrough decode-only mode (legacy
     ``filter_cand=False`` branch).
 
-    Also performs the legacy out-of-vocab clamping: tokens above
-    ``tokenizer.vocab_size`` are replaced in-place by the id of ``"!"``,
+    Also performs the legacy out-of-vocab clamping: unsampleable ids (see
+    ``get_unsampleable_toks``) are replaced in-place by the id of ``"!"``,
     matching the safety pass at the top of ``get_filtered_cands``.
 
     Reproduces ``MultiPromptAttack.get_filtered_cands`` from
@@ -374,7 +376,7 @@ class LengthPreservingFilter:
             tokenizer (Any): HuggingFace-style tokenizer. ``tokenizer.decode``
                 renders each row to text; ``tokenizer(text,
                 add_special_tokens=False).input_ids`` is used to detect
-                re-tokenization drift; ``tokenizer("!").input_ids[0]``
+                re-tokenization drift; ``tokenizer("!", add_special_tokens=False).input_ids[0]``
                 provides the replacement id for out-of-vocab clamping.
             current_control (str): Current suffix string. When ``filter``
                 is True, candidates that decode to this string are dropped.
@@ -384,8 +386,7 @@ class LengthPreservingFilter:
             ``candidate_tokens.shape[0]``.
         """
         logger.info("Masking out of range token_id.")
-        vocab_size = tokenizer.vocab_size
-        candidate_tokens[candidate_tokens > vocab_size] = tokenizer("!").input_ids[0]
+        clamp_unsampleable_toks(candidate_tokens, tokenizer=tokenizer)
 
         candidates: list[str] = []
         for i in range(candidate_tokens.shape[0]):

@@ -17,7 +17,12 @@ from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
 
 from pyrit.executor.promptgen.gcg import CandidateFilter, LengthPreservingFilter, SamplingStrategy, StandardGCGSampling
-from pyrit.executor.promptgen.gcg.attack.base.attack_manager import ModelWorker, ModelWorkerOperation, PromptManager
+from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
+    ModelWorker,
+    ModelWorkerOperation,
+    PromptManager,
+    get_unsampleable_toks,
+)
 from pyrit.executor.promptgen.gcg.attack.gcg.candidate_proposer import (
     CandidateProposalBatch,
     GCGCandidateProposer,
@@ -29,10 +34,12 @@ def _create_mock_worker(gradient_shape: tuple[int, ...]) -> MagicMock:
     """Create a mock ModelWorker returning a gradient of the specified shape."""
     worker = MagicMock()
     worker._vocabulary_identities = {}
+    worker._unsampleable_toks = {}
     worker.tokenizer = MagicMock()
     worker.tokenizer.decode.side_effect = lambda ids, **kwargs: f"tok_{ids[0]}"
     worker.tokenizer.get_vocab.return_value = {f"tok_{i}": i for i in range(gradient_shape[-1])}
     worker.tokenizer.vocab_size = gradient_shape[-1]
+    worker.tokenizer.__len__.return_value = gradient_shape[-1]
     worker.results = MagicMock()
     # Return a tensor of ones for the specified gradient shape
     worker.results.get.side_effect = lambda: torch.ones(gradient_shape, dtype=torch.float32)
@@ -272,13 +279,15 @@ class TestGCGCandidateProposer:
 
         for worker in workers:
             assert worker.tokenizer.get_vocab.call_count == expected_reads
+        # Only the group representative samples; its unsampleable ids are cached per embedding width too.
+        assert workers[1].tokenizer.__len__.call_count == expected_reads
 
 
 @pytest.mark.parametrize(
     ("added_tokens", "embedding_rows", "representatives", "expected_candidates"),
     [
-        (("left", "right"), 5, [0, 1], [["left"], ["b"]]),
-        (("left", "left"), 5, [1], [["left"]]),
+        (("left", "right"), 5, [0, 1], [["a"], ["b"]]),
+        (("left", "left"), 5, [1], [["a"]]),
         (("left", "right"), 4, [1], [["b"]]),
         ((None, "<pad>"), 4, [1], [["b"]]),
     ],
@@ -307,9 +316,11 @@ def test_proposal_groups_by_vocabulary_within_embedding_rows(
             tokenizer.add_tokens([added_token])
         worker = MagicMock(spec=ModelWorker)
         worker._vocabulary_identities = {}
+        worker._unsampleable_toks = {}
         worker.tokenizer = tokenizer
         gradient = torch.ones((1, embedding_rows))
-        gradient[0, embedding_rows - 1 if index == 0 else 3] = -10.0 if index == 0 else -2.0
+        # The added tokens sit at vocab_size and are never sampled, so the first worker favors "a".
+        gradient[0, 2 if index == 0 else 3] = -10.0 if index == 0 else -2.0
         gradients.append(gradient / gradient.norm(dim=-1, keepdim=True))
         worker.results = MagicMock()
         worker.results.get.return_value = gradient
@@ -350,6 +361,9 @@ def test_proposal_groups_by_vocabulary_within_embedding_rows(
     group_start = 0
     for call, worker_index in zip(sampling.sample_candidates.call_args_list, representatives, strict=True):
         expected_gradient = torch.stack(gradients[group_start : worker_index + 1]).sum(dim=0)
+        # The proposer masks [UNK] (a special token) and any padding rows before sampling.
+        unsampleable = get_unsampleable_toks(tokenizer=workers[worker_index].tokenizer, num_embeddings=embedding_rows)
+        expected_gradient[..., unsampleable] = float("inf")
         torch.testing.assert_close(call.kwargs["gradient"], expected_gradient)
         group_start = worker_index + 1
 
@@ -375,12 +389,14 @@ def test_proposal_uses_last_worker_in_each_group(
         gradients.append(gradient / gradient.norm(dim=-1, keepdim=True))
         worker = MagicMock(spec=ModelWorker)
         worker._vocabulary_identities = {}
+        worker._unsampleable_toks = {}
         worker.results = MagicMock()
         worker.results.get.return_value = gradient
         worker.tokenizer = MagicMock()
         worker.tokenizer.decode.return_value = f"worker-{index}"
         worker.tokenizer.get_vocab.return_value = {str(i): i for i in range(vocab_size)}
         worker.tokenizer.vocab_size = vocab_size
+        worker.tokenizer.__len__.return_value = vocab_size
         workers.append(worker)
         prompt = MagicMock(spec=PromptManager)
         prompt.control_toks = torch.tensor([index, index + 1])

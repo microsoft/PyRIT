@@ -394,10 +394,11 @@ def _make_filter_tokenizer() -> MagicMock:
       string.
     - ``tokenizer("!").input_ids[0] == 0`` — provides the clamp
       replacement id.
-    - ``vocab_size == 100``.
+    - ``vocab_size == len(tokenizer) == 100``.
     """
     tokenizer = MagicMock()
     tokenizer.vocab_size = 100
+    tokenizer.__len__.return_value = 100
 
     def decode_fn(ids, **_kwargs):
         return "x" * int(ids[0].item())
@@ -482,11 +483,11 @@ class TestLengthPreservingFilter:
         assert legacy_out == ["xxx", "xxxxx", "xx"]
 
     def test_filter_candidates_clamps_out_of_vocab_tokens(self) -> None:
-        """Both code paths apply the legacy vocab-clamp in-place: tokens
-        above ``vocab_size`` are replaced by the id of ``"!"`` before any
+        """Both code paths apply the legacy vocab-clamp in-place: ids at or
+        above ``len(tokenizer)`` are replaced by the id of ``"!"`` before any
         decoding happens.
         """
-        candidate_template = torch.tensor([[150, 0, 1], [3, 0, 1]])  # 150 > vocab_size=100
+        candidate_template = torch.tensor([[150, 0, 1], [100, 0, 1], [3, 0, 1]])  # len(tokenizer) == 100
 
         legacy_input = candidate_template.clone()
         legacy_attack = self._make_legacy_attack(tokenizer=_make_filter_tokenizer())
@@ -501,7 +502,7 @@ class TestLengthPreservingFilter:
         )
 
         assert torch.equal(default_input, legacy_input)
-        assert default_input[0, 0].item() == 0
+        assert default_input[:, 0].tolist() == [0, 0, 3]
 
     def test_init_rejects_enabled_and_legacy_filter_together(self) -> None:
         with pytest.raises(TypeError, match="Specify either 'enabled' or 'filter', not both"):

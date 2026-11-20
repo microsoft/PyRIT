@@ -2,7 +2,8 @@
 # Licensed under the MIT license.
 
 import json
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -13,6 +14,9 @@ attack_manager_mod = pytest.importorskip(
 )
 NpEncoder = attack_manager_mod.NpEncoder
 get_nonascii_toks = attack_manager_mod.get_nonascii_toks
+get_unsampleable_toks = attack_manager_mod.get_unsampleable_toks
+clamp_unsampleable_toks = attack_manager_mod.clamp_unsampleable_toks
+torch = attack_manager_mod.torch
 
 
 class TestNpEncoder:
@@ -104,3 +108,65 @@ class TestGetNonasciiToks:
         # Only non-printable tokens should be present, no special tokens
         result_list = result.tolist()
         assert 0 not in result_list  # pad was None
+
+
+def _offline_tokenizer() -> Any:
+    """Word-level fast tokenizer: <s> (BOS, special), "!", "a", plus added tokens "<|ctl|>" (special) and "word"."""
+    from tokenizers import Tokenizer, models, pre_tokenizers, processors
+    from transformers import PreTrainedTokenizerFast
+
+    backend = Tokenizer(models.WordLevel({"<s>": 0, "!": 1, "a": 2}, unk_token="<s>"))
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    backend.post_processor = processors.TemplateProcessing(single="<s> $A", special_tokens=[("<s>", 0)])
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, bos_token="<s>")
+    tokenizer.add_special_tokens({"additional_special_tokens": ["<|ctl|>"]})  # id 3
+    tokenizer.add_tokens(["word"])  # id 4, not special
+    return tokenizer
+
+
+class TestGetUnsampleableToks:
+    """Tests for get_unsampleable_toks."""
+
+    def test_masks_special_tokens_and_padding_rows(self) -> None:
+        result = get_unsampleable_toks(tokenizer=_offline_tokenizer(), num_embeddings=8)
+
+        # <s> is special; <|ctl|> and the added non-special "word" sit at or above vocab_size (3), like
+        # <think> on Qwen checkpoints; rows 5-7 are padding past the tokenizer.
+        assert result.tolist() == [0, 3, 4, 5, 6, 7]
+
+    def test_tokenizer_longer_than_embedding_rows(self) -> None:
+        # Gemma 3 text checkpoints have one more tokenizer entry than embedding rows.
+        result = get_unsampleable_toks(tokenizer=_offline_tokenizer(), num_embeddings=4)
+
+        assert result.tolist() == [0, 3]
+
+
+class TestClampUnsampleableToks:
+    """Tests for clamp_unsampleable_toks."""
+
+    def test_replaces_unsampleable_ids_with_bang_not_bos(self) -> None:
+        candidates = torch.tensor([[2, 3, 4, 7]])
+
+        clamp_unsampleable_toks(candidates, tokenizer=_offline_tokenizer())
+
+        # <|ctl|>, the added token "word" and padding row 7 become "!" (id 1), not <s>; "a" (2) is kept.
+        assert candidates.tolist() == [[2, 1, 1, 1]]
+
+
+class TestModelWorkerDtype:
+    """ModelWorker loads in float16 unless model_kwargs picks a dtype."""
+
+    @pytest.mark.parametrize(
+        ("model_kwargs", "expected"),
+        [
+            ({}, {"dtype": torch.float16}),
+            ({"torch_dtype": torch.bfloat16}, {"torch_dtype": torch.bfloat16}),
+            ({"dtype": torch.float32}, {"dtype": torch.float32}),
+        ],
+    )
+    def test_model_kwargs_override_the_dtype(self, model_kwargs: dict, expected: dict) -> None:
+        with patch.object(attack_manager_mod.AutoModelForCausalLM, "from_pretrained") as from_pretrained:
+            attack_manager_mod.ModelWorker("m", None, dict(model_kwargs), MagicMock(), "cpu")
+
+        kwargs = from_pretrained.call_args.kwargs
+        assert {k: kwargs[k] for k in ("torch_dtype", "dtype") if k in kwargs} == expected

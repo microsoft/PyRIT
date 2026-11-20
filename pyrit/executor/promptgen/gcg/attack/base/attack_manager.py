@@ -22,9 +22,6 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 from transformers.models.auto.modeling_auto import AutoModelForCausalLM
 from transformers.models.auto.tokenization_auto import AutoTokenizer
-from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
-from transformers.models.gpt_neox.modeling_gpt_neox import GPTNeoXForCausalLM
-from transformers.models.gptj.modeling_gptj import GPTJForCausalLM
 
 from pyrit.executor.promptgen.gcg.attack.base.progressive_schedule import (
     ProgressiveScheduleController,
@@ -278,13 +275,43 @@ def get_embeddings(model: Any, input_ids: torch.Tensor) -> Any:
     Returns:
         Any: The embedded token tensor.
     """
-    embeddings = model.get_input_embeddings()(input_ids)
-    # GPT-2, GPT-J and GPT-NeoX have always returned half precision here, while
-    # the other supported architectures return the embedding dtype unchanged.
-    # That asymmetry is preserved so this change stays a compatibility fix.
-    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel, GPTNeoXForCausalLM)):
-        return embeddings.half()
-    return embeddings
+    # GPT-2, GPT-J and GPT-NeoX used to be cast to float16 here. That matched the float16 default but
+    # crashed token_gradients when model_kwargs picked another dtype, so every model keeps its own.
+    return model.get_input_embeddings()(input_ids)
+
+
+def get_unsampleable_toks(*, tokenizer: Any, num_embeddings: int) -> torch.Tensor:
+    """
+    Return the embedding rows GCG must never sample as candidate tokens.
+
+    The sampler draws ids from every row of the input embedding matrix. Those matrices are often
+    padded past the tokenizer (Qwen2.5 has 151,936 rows for 151,665 tokens), special tokens such
+    as ``<|im_start|>`` vanish when candidates are decoded with ``skip_special_tokens=True``, and
+    added tokens at or above ``vocab_size`` (``<think>``, ``<tool_call>``) are template markup even
+    when they are not flagged special.
+
+    Args:
+        tokenizer (Any): The worker's Hugging Face tokenizer.
+        num_embeddings (int): The number of rows in the paired model's embedding matrix.
+
+    Returns:
+        torch.Tensor: The special-token ids, then every id from ``vocab_size`` to the last embedding row.
+    """
+    num_tokens = min(tokenizer.vocab_size, len(tokenizer), num_embeddings)
+    special = set(tokenizer.all_special_ids)
+    special.update(i for i, token in tokenizer.added_tokens_decoder.items() if token.special)
+    ids = sorted(i for i in special if i < num_tokens) + list(range(num_tokens, num_embeddings))
+    return torch.tensor(ids, dtype=torch.long)
+
+
+def clamp_unsampleable_toks(candidate_tokens: torch.Tensor, *, tokenizer: Any) -> None:
+    """Replace unsampleable candidate ids (see ``get_unsampleable_toks``) with the id of ``"!"``, in place."""
+    if candidate_tokens.numel() == 0:
+        return
+    # Ids above the largest candidate cannot occur, so it can stand in for the embedding rows.
+    unsampleable = get_unsampleable_toks(tokenizer=tokenizer, num_embeddings=int(candidate_tokens.max()) + 1)
+    replacement = tokenizer("!", add_special_tokens=False).input_ids[0]
+    candidate_tokens[torch.isin(candidate_tokens, unsampleable.to(candidate_tokens.device))] = replacement
 
 
 def get_nonascii_toks(tokenizer: Any, device: str = "cpu") -> torch.Tensor:
@@ -1253,8 +1280,7 @@ class MultiPromptAttack:
         worker = self.workers[worker_index]
 
         logger.info("Masking out of range token_id.")
-        vocab_size = worker.tokenizer.vocab_size
-        control_cand[control_cand > vocab_size] = worker.tokenizer("!").input_ids[0]
+        clamp_unsampleable_toks(control_cand, tokenizer=worker.tokenizer)
 
         for i in range(control_cand.shape[0]):
             decoded_str = worker.tokenizer.decode(
@@ -2303,16 +2329,17 @@ class ModelWorker:
         device: str,
     ) -> None:
         """Load a model and prepare its worker queues."""
+        if "torch_dtype" not in model_kwargs and "dtype" not in model_kwargs:
+            model_kwargs = {"dtype": torch.float16, **model_kwargs}
         model = cast(
             "PreTrainedModel",
-            AutoModelForCausalLM.from_pretrained(
-                model_path, token=token, torch_dtype=torch.float16, trust_remote_code=False, **model_kwargs
-            ),
+            AutoModelForCausalLM.from_pretrained(model_path, token=token, trust_remote_code=False, **model_kwargs),
         )
         move_to_device = cast("Callable[[torch.device], PreTrainedModel]", model.to)
         self.model = move_to_device(torch.device(device)).eval()
         self.tokenizer = tokenizer
         self._vocabulary_identities: dict[int, str] = {}
+        self._unsampleable_toks: dict[int, torch.Tensor] = {}
         self.tasks: mp.JoinableQueue[ModelWorkerTask | None] = mp.JoinableQueue()
         self.results: mp.JoinableQueue[Any] = mp.JoinableQueue()
         self.process: mp.Process | None = None

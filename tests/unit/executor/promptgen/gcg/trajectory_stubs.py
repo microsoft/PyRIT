@@ -37,8 +37,13 @@ class IntTokenizer:
     """Tokens are ints rendered as space-joined text; ``"!"`` is token 0."""
 
     vocab_size = VOCAB_SIZE
+    all_special_ids: list[int] = []
+    added_tokens_decoder: dict[int, Any] = {}
     name_or_path = "int-tokenizer"
     chat_template = None
+
+    def __len__(self) -> int:
+        return VOCAB_SIZE
 
     def encode_ints(self, text: str) -> list[int]:
         return [0 if tok == "!" else int(tok) for tok in text.split()]
@@ -129,6 +134,7 @@ class TrajectoryWorker:
         self.events = events
         self.tokenizer = IntTokenizer()
         self._vocabulary_identities: dict[int, str] = {}
+        self._unsampleable_toks: dict[int, torch.Tensor] = {}
         self.model = SimpleNamespace(device=torch.device("cpu"), name_or_path=f"stub-model-{worker_id}")
         self.results: queue.SimpleQueue[Any] = queue.SimpleQueue()
 
