@@ -1064,6 +1064,7 @@ class ScenarioRunService:
                 else None,
                 memory_labels=request.labels,
                 scenario_params=request.scenario_params,
+                resume=request.scenario_result_id is not None,
             )
             init_kwargs["operation_id"] = request.operation_id
             metadata = dict(
@@ -1089,10 +1090,12 @@ class ScenarioRunService:
 
         Older runs have no saved launch body. The run API still accepts the caller's
         original configuration for those. A saved body wins, including when the caller
-        omits the field, and a different supplied selection is rejected.
+        omits the field, and a different supplied selection is rejected. On resume the
+        selection only keeps the run in exact mode: the scenario runs the seed groups stored
+        with the run and the examples are not resolved against memory again.
 
         Returns:
-            DatasetExampleSelection | None: The selection to resolve.
+            DatasetExampleSelection | None: The selection for this run.
 
         Raises:
             DatasetExampleSelectionError: If a resume request supplies a different selection.

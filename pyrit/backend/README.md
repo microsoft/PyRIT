@@ -220,9 +220,11 @@ conditions and decomposition relationships, prompt fields, and technique flags.
 Unsupported scenarios, group shapes, or techniques that would drop selected content
 return 400. `foundry.assert_policy` currently rejects REST exact selections because
 its tester and baseline policies can skip selected groups; use named datasets instead.
-Changed content or membership returns 409; oversized lists return 422.
-Resume rechecks the saved references and fingerprints rather than accepting a new
-selection. Omit `example_selection` to retain named-dataset behavior.
+Changed content or membership returns 409 from preview, estimate, and launch;
+oversized lists return 422. Resume keeps the saved selection and rejects a different
+one, then runs the seed groups stored with the run without reading the selected
+examples again, so editing or deleting a selected row after launch doesn't stop it.
+Omit `example_selection` to retain named-dataset behavior.
 
 ### Dataset creation, batch mutation, and deletion
 

@@ -276,6 +276,21 @@ class DatasetConstraintError(ValueError):
     """
 
 
+class MissingDatasetError(DatasetConstraintError):
+    """Raised when a dataset read finds no seeds in memory, naming that dataset."""
+
+    def __init__(self, message: str, *, dataset_name: str) -> None:
+        """
+        Initialize the error.
+
+        Args:
+            message (str): The error message.
+            dataset_name (str): The dataset that has no seeds in memory.
+        """
+        super().__init__(message)
+        self.dataset_name = dataset_name
+
+
 def require_nonempty() -> Callable[[ResolvedDataset], None]:
     """
     Build a validator that raises when a resolved dataset is empty.
@@ -885,7 +900,8 @@ class DatasetConfiguration:
             list[Seed]: The seeds for ``dataset_name``.
 
         Raises:
-            DatasetConstraintError: If the dataset is absent or its filters match no seeds.
+            MissingDatasetError: If the dataset has no seeds in memory.
+            DatasetConstraintError: If the configured filters match none of its seeds.
         """
         candidates = _candidate_populations.get()
         if candidates is not None and dataset_name in candidates:
@@ -906,9 +922,10 @@ class DatasetConfiguration:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' has seeds, but none match the configured filters {self._filters}."
                 )
-            raise DatasetConstraintError(
+            raise MissingDatasetError(
                 f"Dataset '{dataset_name}' could not be loaded: no seeds found in memory. "
-                "Call prepare_async() before reading a new selection, or import the dataset."
+                "Call prepare_async() before reading a new selection, or import the dataset.",
+                dataset_name=dataset_name,
             )
         return found
 
@@ -1220,6 +1237,24 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
         """
         super().__init__(max_per_dataset="all", max_total="all", fetch=DatasetFetchPolicy.NEVER)
         self._selected_examples = tuple((reference, tuple(members)) for reference, members in examples)
+        self._resume_only = False
+
+    @classmethod
+    def for_resume(cls) -> ExactExampleDatasetConfiguration:
+        """
+        Return the exact-selection configuration a resumed run passes to its scenario.
+
+        Resume rebuilds the population from the seed groups stored with the run, so the
+        selected examples are not read again and a later edit or delete of a selected row
+        doesn't affect the run. The configuration keeps the exact-selection identity the run
+        was planned with and holds no examples. Building groups from it raises.
+
+        Returns:
+            ExactExampleDatasetConfiguration: An exact-selection configuration for resume only.
+        """
+        configuration = cls(examples=())
+        configuration._resume_only = True
+        return configuration
 
     @property
     def source_kind(self) -> DatasetSourceKind:
@@ -1274,6 +1309,11 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
         Raises:
             DatasetExampleSelectionError: If a selected example cannot be built into one group.
         """
+        if self._resume_only:
+            raise DatasetExampleSelectionError(
+                code="unsupported",
+                detail="A resumed exact selection runs the seed groups stored with the run.",
+            )
         groups = await asyncio.to_thread(self._build_selected_groups)
         flattened = [seed for group in groups for seed in group.seeds]
         resolved = ResolvedDataset(seeds=flattened, source_kind=self.source_kind, dataset_names=())

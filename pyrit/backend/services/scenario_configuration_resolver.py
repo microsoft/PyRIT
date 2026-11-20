@@ -391,6 +391,7 @@ class ScenarioConfigurationResolver:
         reject_exact_selection: bool = False,
         scenario_params: Mapping[str, Any] | None = None,
         inspect_exact_selection: bool = False,
+        resume: bool = False,
     ) -> dict[str, Any]:
         """
         Resolve launch and estimate fields, including an exact example selection.
@@ -399,6 +400,11 @@ class ScenarioConfigurationResolver:
         the population and is rejected by the explicit dataset load route. Estimates pass
         ``inspect_exact_selection`` so the technique check uses stored inspection data only;
         launch leaves it off and checks the executable seeds.
+
+        Preview, estimate, and launch resolve the selection against memory and reject an
+        example whose fingerprint changed. A resumed run passes ``resume``: the scenario
+        rebuilds its population from the seed groups stored with the run, so the selection
+        is not resolved again and an edited or deleted row doesn't stop the run.
 
         Returns:
             dict[str, Any]: Values accepted by ``Scenario.set_params_from_args``.
@@ -432,10 +438,13 @@ class ScenarioConfigurationResolver:
                     code="unsupported",
                     detail="This scenario does not accept a dataset configuration.",
                 )
-            resolved_examples = await resolve_dataset_example_selection_async(
-                selection=example_selection, memory=memory
-            )
-            dataset_config = exact_example_dataset_configuration(resolved_examples)
+            if resume:
+                dataset_config = ExactExampleDatasetConfiguration.for_resume()
+            else:
+                resolved_examples = await resolve_dataset_example_selection_async(
+                    selection=example_selection, memory=memory
+                )
+                dataset_config = exact_example_dataset_configuration(resolved_examples)
             datasets_for_named_mode = None
         return await asyncio.to_thread(
             cls.resolve_configuration,

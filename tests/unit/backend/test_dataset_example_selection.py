@@ -26,6 +26,7 @@ from pyrit.backend.services.scenario_run_service import (
     _OPTIONAL_LAUNCH_FIELDS,
 )
 from pyrit.datasets import SeedDatasetProvider
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import (
     AnswerMatches,
@@ -45,15 +46,17 @@ from pyrit.models import (
 )
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.models.component_spec import RegisteredComponentReference
-from pyrit.registry import ScenarioRegistry, ScorerRegistry
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, ScorerRegistry
 from pyrit.scenario import (
     AtomicAttack,
+    AttackTechniqueFactory,
     BaselineAttackPolicy,
     DatasetAttackConfiguration,
     ExactExampleDatasetConfiguration,
     Scenario,
     ScenarioTechnique,
 )
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.scenarios.foundry import AssertPolicy
 from pyrit.scenario.scenarios.garak import ApiKey, Exploitation, LeakReplay, SystemPromptExtraction
@@ -706,7 +709,7 @@ async def test_exact_selection_keeps_scorer_staleness_check(sqlite_instance: Mem
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_launch_request_round_trip_keeps_selection_and_resume_goes_stale(
+async def test_launch_request_round_trip_keeps_selection_and_a_new_launch_goes_stale(
     sqlite_instance: MemoryInterface,
 ) -> None:
     seed = _objective("goal")
@@ -755,6 +758,21 @@ async def test_launch_request_round_trip_keeps_selection_and_resume_goes_stale(
         )
     assert caught.value.code == "stale"
     assert "SECRET_REPLACEMENT_2757" not in str(caught.value)
+    # Resuming the saved run doesn't resolve the edited row again; the scenario runs its stored groups.
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
+        patch.object(type(service._configuration_resolver), "resolve_target", return_value=MockPromptTarget()),
+        patch.object(service._memory, "get_scenario_result_header_async", new=AsyncMock(return_value=stored)),
+    ):
+        await service._prepare_run_async(
+            request=RunScenarioRequest(
+                scenario_name="test.exact", target_name="target", scenario_result_id=str(stored.id)
+            )
+        )
+    resumed_config = registry.create_and_initialize_async.call_args.kwargs["dataset_config"]
+    assert isinstance(resumed_config, ExactExampleDatasetConfiguration)
+    assert resumed_config.get_size_budget().value == 0
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -799,7 +817,7 @@ async def test_sampling_stays_off_and_legacy_files_wait_until_launch(sqlite_inst
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_resume_resolves_the_saved_selection_and_rejects_a_different_one(
+async def test_resume_keeps_the_saved_selection_and_rejects_a_different_one(
     sqlite_instance: MemoryInterface,
 ) -> None:
     group = uuid4()
@@ -861,6 +879,105 @@ async def test_resume_resolves_the_saved_selection_and_rejects_a_different_one(
         )
     assert stale.value.code == "stale"
     assert stale.value.example_id == group
+    # Resume runs the seed groups stored with the run, so it doesn't resolve the selection again.
+    with patch(
+        "pyrit.backend.services.scenario_configuration_resolver.resolve_dataset_example_selection_async",
+        new=AsyncMock(side_effect=AssertionError("resume must not re-resolve the selection")),
+    ):
+        resumed_kwargs = await ScenarioConfigurationResolver.resolve_configuration_async(
+            scenario_name="test.exact",
+            scenario_class=_ExactScenario,
+            example_selection=resumed,
+            memory=sqlite_instance,
+            resume=True,
+        )
+    assert isinstance(resumed_kwargs["dataset_config"], ExactExampleDatasetConfiguration)
+    with pytest.raises(DatasetExampleSelectionError, match="stored with the run"):
+        await resumed_kwargs["dataset_config"].get_attack_seed_groups_async(apply_sampling=True)
+
+
+class _PlannedRowsScenario(Scenario):
+    """Runs one technique and the baseline over the population, so the run plan lists every planned row."""
+
+    BASELINE_ATTACK_POLICY = BaselineAttackPolicy.Enabled
+
+    def __init__(self, *, scenario_result_id: str | None = None) -> None:
+        super().__init__(
+            version=1,
+            technique_class=_Technique,
+            objective_scorer=SubStringScorer(substring="yes"),
+            default_dataset_config=DatasetAttackConfiguration(dataset_names=["unused-default"]),
+            scenario_result_id=scenario_result_id,
+        )
+
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        return build_matrix_atomic_attacks(context=context, objective_scorer=self._objective_scorer)
+
+
+@pytest.mark.parametrize("change", ["edit", "delete"])
+@pytest.mark.usefixtures("patch_central_database")
+async def test_resume_runs_the_planned_rows_after_a_selected_row_changes(
+    sqlite_instance: MemoryInterface, change: str
+) -> None:
+    group = uuid4()
+    objective = _objective("planned goal", prompt_group_id=group)
+    prompt = _prompt("planned body", prompt_group_id=group, sequence=1, role="user")
+    other = _objective("second planned goal")
+    await _store(sqlite_instance, objective, prompt, other)
+    selection = await _selection(
+        sqlite_instance, selection_key=NAMED, example_ids=[group, other.id], dataset_name=DATASET
+    )
+    target = MockPromptTarget()
+
+    async def _initialize(*, resume_id: str | None) -> _PlannedRowsScenario:
+        kwargs = await ScenarioConfigurationResolver.resolve_configuration_async(
+            scenario_name="test.planned_rows",
+            scenario_class=_PlannedRowsScenario,
+            objective_target=target,
+            example_selection=selection,
+            memory=sqlite_instance,
+            resume=resume_id is not None,
+        )
+        scenario = _PlannedRowsScenario(scenario_result_id=resume_id)
+        scenario.set_params_from_args(args=kwargs)
+        await scenario.initialize_async()
+        return scenario
+
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    factory = AttackTechniqueFactory(name="direct", attack_class=PromptSendingAttack)
+    with patch.object(registry, "get_factories_or_raise", return_value={"direct": factory}):
+        original = await _initialize(resume_id=None)
+    planned = [group.objective.value for attack in original._atomic_attacks for group in attack.seed_groups]
+    assert len(original._atomic_attacks) == 2
+    assert sorted(planned) == ["planned goal", "planned goal", "second planned goal", "second planned goal"]
+
+    if change == "edit":
+        await _mutate(sqlite_instance, objective.id, value="EDITED_AFTER_LAUNCH_2757")
+    else:
+        async with await sqlite_instance.get_session_async() as session:
+            for seed_id in (objective.id, prompt.id):
+                entry = await session.get(SeedEntry, seed_id)
+                assert entry is not None
+                await session.delete(entry)
+            await session.commit()
+
+    # Preview, estimate, and launch still check the fingerprint of the selected rows.
+    with pytest.raises(DatasetExampleSelectionError) as caught:
+        await ScenarioConfigurationResolver.resolve_configuration_async(
+            scenario_name="test.planned_rows",
+            scenario_class=_PlannedRowsScenario,
+            example_selection=selection,
+            memory=sqlite_instance,
+        )
+    assert caught.value.example_id == group
+
+    # Resume rebuilds from the seed groups stored with the run and continues with the planned rows.
+    with patch.object(registry, "get_factories_or_raise", return_value={"direct": factory}):
+        resumed = await _initialize(resume_id=original._scenario_result_id)
+    assert resumed._build_run_plan() == original._build_run_plan()
+    resumed_rows = [group.objective.value for attack in resumed._atomic_attacks for group in attack.seed_groups]
+    assert resumed_rows == planned
+    assert "EDITED_AFTER_LAUNCH_2757" not in resumed_rows
 
 
 @pytest.mark.usefixtures("patch_central_database")

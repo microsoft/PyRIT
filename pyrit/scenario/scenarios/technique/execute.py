@@ -212,6 +212,15 @@ class Execute(Scenario):
             note=f"One objective. Up to {attempts} technique attempt(s) run inside one unit; baseline is not retried.",
         )
 
+    async def _prepare_resume_state_async(self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]) -> None:
+        """
+        Re-read the prepended conversation, so resume refuses a conversation that changed.
+
+        Args:
+            seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
+        """
+        await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
