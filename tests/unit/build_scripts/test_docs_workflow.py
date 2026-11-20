@@ -15,9 +15,9 @@ from typing import Any
 
 import pytest
 import yaml
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 from build_scripts import compose_docs_dist, inject_version_picker, resolve_docs_matrix
-from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = REPO_ROOT / ".github" / "docs-versions.yml"
