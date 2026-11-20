@@ -252,7 +252,9 @@ export default function ScenarioDatasetTable({
           validationMessage={selectionError ?? undefined} validationState={selectionError ? 'error' : 'none'}>
           {picker}
         </HelpField> : picker)}
-        {selected.length > 0 && <Button className={styles.button} disabled={busy} onClick={() => {
+        {/* Reset clears source and per-dataset edits, so it shows only when there are some. */}
+        {(request.sources !== undefined || request.max_per_dataset !== undefined) && <Button className={styles.button}
+          disabled={busy} onClick={() => {
           const edits = { ...request }
           delete edits.sources
           delete edits.max_per_dataset

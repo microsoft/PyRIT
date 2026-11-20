@@ -294,8 +294,8 @@ class AssertPolicy(Scenario):
         """
         if self._has_no_datasets():
             raise ValueError(
-                "foundry.assert_policy needs stored ASSERT seed groups. Pass their dataset names with "
-                "--datasets (or the deprecated --dataset-names), or supply dataset_config in Python. "
+                "Select a dataset. foundry.assert_policy needs stored ASSERT seed groups. Pass their dataset "
+                "names with --datasets (or the deprecated --dataset-names), or supply dataset_config in Python. "
                 "Generate groups with AssertGenerator and store them with AssertProvider."
             )
         selection = await self._dataset_config._resolve_attack_groups_async()

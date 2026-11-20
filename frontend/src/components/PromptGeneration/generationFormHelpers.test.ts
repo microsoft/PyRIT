@@ -46,4 +46,17 @@ describe('generationFormHelpers', () => {
     expect(preflightProblems([makePreflight(), makePreflight({ errors: ['Bad.'], valid: false })], ['a', 'b']))
       .toEqual({ messages: ['b: Bad.'], blocksGenerate: true })
   })
+
+  it('lists an error every dataset reports once, without a dataset prefix', () => {
+    const shared = 'Choose a target for: Generation target.'
+    const results = [
+      makePreflight({ errors: [shared], valid: false }),
+      makePreflight({ errors: [shared], valid: false, dataset_name_available: false }),
+      makePreflight({ errors: [shared], valid: false }),
+    ]
+    expect(preflightProblems(results, ['a', 'b', 'c'])).toEqual({
+      messages: [shared, 'b: A dataset named "b" already exists. Choose another name.'],
+      blocksGenerate: true,
+    })
+  })
 })

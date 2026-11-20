@@ -139,6 +139,18 @@ export function toApiError(err: unknown): ApiError {
   }
 }
 
+/** Pydantic's prefix on validator messages, which says nothing to the user. */
+const VALUE_ERROR_PREFIX = /^Value error, /
+
+/**
+ * The error's detail followed by its distinct field messages, so a 422's generic
+ * "Request validation failed" says what failed.
+ */
+export function apiErrorMessage(error: ApiError): string {
+  const messages = [...new Set(error.fieldErrors.map((item) => item.message.replace(VALUE_ERROR_PREFIX, '')))]
+  return messages.length > 0 ? `${error.detail}: ${messages.join(' ')}` : error.detail
+}
+
 /** Problem type the backend gives a target it refused to save, which can still be created without saving it. */
 const NOT_SAVEABLE_ERROR_TYPE = '/errors/not-saveable'
 

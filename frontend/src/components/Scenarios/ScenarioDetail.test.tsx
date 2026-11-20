@@ -3377,6 +3377,7 @@ describe('ScenarioDetail', () => {
       renderDetail(POLICY_PATH)
 
       const picker = await screen.findByRole('combobox', { name: 'Add dataset' })
+      jest.mocked(Element.prototype.scrollIntoView).mockClear()
       expect(picker).toBeRequired()
       expect(picker).not.toHaveAttribute('aria-invalid', 'true')
       expect(screen.queryByText('Select a dataset.')).not.toBeInTheDocument()
@@ -3384,6 +3385,8 @@ describe('ScenarioDetail', () => {
 
       expect(picker).toHaveAttribute('aria-invalid', 'true')
       expect(picker).toHaveFocus()
+      // Focus scrolls the form to the picker; scrollIntoView would also scroll the app shell.
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
       expect(screen.getByText('Select a dataset.')).toBeInTheDocument()
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
@@ -3486,9 +3489,21 @@ describe('ScenarioDetail', () => {
     })
 
     it('passes a blank linked dataset to the server and shows its error', async () => {
+      // The backend's 422 problem body (middleware/error_handlers.py): a generic detail and the field message.
       mockEstimateRun.mockRejectedValue({
         isAxiosError: true,
-        response: { status: 422, data: { detail: 'Dataset names must be non-empty.' } },
+        response: {
+          status: 422,
+          data: {
+            type: '/errors/validation-error', title: 'Validation Error', status: 422,
+            detail: 'Request validation failed',
+            errors: [{
+              field: 'body.datasets.sources.0.name',
+              message: 'Value error, Dataset names must be non-empty.',
+              code: 'value_error',
+            }],
+          },
+        },
       })
       renderDetail(`${SCENARIO_PATH}?dataset=%20&preset_unrelated=1`)
 
@@ -3499,7 +3514,7 @@ describe('ScenarioDetail', () => {
       ))
       const estimate = await screen.findByTestId('run-estimate')
       await waitFor(() => expect(within(estimate).getByRole('status'))
-        .toHaveTextContent('Dataset names must be non-empty.'))
+        .toHaveTextContent('Request validation failed: Dataset names must be non-empty.'))
       expect(screen.queryByTestId('linked-datasets-error')).not.toBeInTheDocument()
       expect(screen.queryByText('harmbench (unknown)')).not.toBeInTheDocument()
     })
@@ -3522,10 +3537,13 @@ describe('ScenarioDetail', () => {
       expect(screen.queryByText('ds_a (unknown)')).not.toBeInTheDocument()
     })
 
-    it('offers only Browse datasets when the scenario fixes its datasets', async () => {
+    it.each([
+      ['fixes its datasets', 'fixed' as const, []],
+      ['allows only named alternatives', 'subset' as const, ['figstep', 'figstep_pro']],
+    ])('offers only Browse datasets when the scenario %s', async (_label, mode, allowedNames) => {
       mockGetScenario.mockResolvedValue(makeScenario({
         dataset_options: {
-          mode: 'fixed', allowed_names: [], max_selected: null, per_dataset_limit: false, total_limit: true,
+          mode, allowed_names: allowedNames, max_selected: null, per_dataset_limit: false, total_limit: true,
           supports_overrides: true, filters: true, source_settings: true,
         },
       }))

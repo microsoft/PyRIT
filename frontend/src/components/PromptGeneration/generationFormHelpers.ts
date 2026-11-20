@@ -53,12 +53,18 @@ export interface PreflightProblems {
   readonly blocksGenerate: boolean
 }
 
-/** Summarizes preflight results for the datasets in a form. */
+/**
+ * Summarizes preflight results for the datasets in a form. An error every dataset reports, such as a
+ * missing target, is listed once without a dataset prefix.
+ */
 export function preflightProblems(
   results: readonly PromptGenerationPreflightResponse[],
   datasetNames: readonly string[],
 ): PreflightProblems {
-  const messages: string[] = []
+  const shared = results.length > 1
+    ? (results[0]?.errors ?? []).filter((error) => results.every((result) => result.errors.includes(error)))
+    : []
+  const messages: string[] = [...shared]
   let blocksGenerate = false
   for (const [index, result] of results.entries()) {
     const name = datasetNames[index] ?? ''
@@ -68,7 +74,7 @@ export function preflightProblems(
       blocksGenerate = true
     }
     if (!result.valid) blocksGenerate = true
-    for (const error of result.errors) messages.push(`${prefix}${error}`)
+    for (const error of result.errors) if (!shared.includes(error)) messages.push(`${prefix}${error}`)
   }
   return { messages: [...new Set(messages)], blocksGenerate }
 }

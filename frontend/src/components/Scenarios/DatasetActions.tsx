@@ -12,7 +12,7 @@ const CATALOG_PATH = '/datasets'
 
 interface DatasetActionsProps {
   readonly scenarioName: string
-  /** False when the scenario's datasets are fixed, so a generated dataset could never be selected. */
+  /** False when the scenario's datasets are fixed or limited to named choices, so a generated one can't be selected. */
   readonly canGenerate?: boolean
 }
 

@@ -25,6 +25,7 @@ jest.mock('@/services/api', () => ({
 const mockApi = jest.mocked(promptGenerationsApi)
 const GENERATION = makeGenerationDetail({ status: 'awaiting_review' })
 const SERVER_ERROR = { isAxiosError: true, response: { status: 500, data: { detail: 'memory unavailable' } } }
+const CONFLICT = { isAxiosError: true, response: { status: 409, data: { detail: "The generation isn't awaiting review." } } }
 
 function renderEditor(onGenerationChange: jest.Mock = jest.fn(), onReload: jest.Mock = jest.fn()) {
   render(
@@ -193,6 +194,32 @@ describe('AssertReviewEditor', () => {
     const estimate = screen.getByRole('region', { name: 'Remaining work' })
     await waitFor(() => expect(within(estimate).getByTestId('estimate-calls')).toHaveTextContent('25'))
     expect(screen.queryByTestId('assert-review-estimate-error')).not.toBeInTheDocument()
+  })
+
+  it('reloads the generation when loading the review finds it is no longer awaiting review', async () => {
+    const onReload = jest.fn()
+    mockApi.getReview.mockRejectedValue(CONFLICT)
+    renderEditor(jest.fn(), onReload)
+
+    expect(await screen.findByText(/The review could not be loaded: The generation isn't awaiting review\./))
+      .toBeInTheDocument()
+    expect(onReload).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['reloads the generation when Save finds it moved on', CONFLICT, "The generation isn't awaiting review.", 1],
+    ['keeps the generation when Save fails for another reason', SERVER_ERROR, 'memory unavailable', 0],
+  ])('%s', async (_label, failure, message, reloads) => {
+    const user = userEvent.setup()
+    const onReload = jest.fn()
+    mockApi.saveReview.mockRejectedValue(failure)
+    renderEditor(jest.fn(), onReload)
+
+    await replaceText(user, await screen.findByRole('textbox', { name: 'Category 1 name' }), 'renamed')
+    await user.click(screen.getByTestId('assert-review-save'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(message)
+    expect(onReload).toHaveBeenCalledTimes(reloads)
   })
 
   it('explains when the review has no taxonomy', async () => {

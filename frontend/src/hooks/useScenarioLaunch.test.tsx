@@ -13,6 +13,25 @@ const startRun = jest.mocked(scenariosApi.startRun)
 
 const VALID: BuildRunRequestResult = { ok: true, request: { scenario_name: 'scenario', target_name: 'target' } }
 const SUMMARY = { scenario_result_id: 'run-1' } as ScenarioRunSummary
+/** The backend's 422 problem body for a blank dataset name (middleware/error_handlers.py). */
+const BLANK_DATASET_NAME = {
+  isAxiosError: true,
+  response: {
+    status: 422,
+    data: {
+      type: '/errors/validation-error',
+      title: 'Validation Error',
+      status: 422,
+      detail: 'Request validation failed',
+      instance: '/api/scenarios/runs',
+      errors: [{
+        field: 'body.datasets.sources.0.name',
+        message: 'Value error, Dataset names must be non-empty.',
+        code: 'value_error',
+      }],
+    },
+  },
+}
 
 interface Props {
   requestResult?: BuildRunRequestResult
@@ -93,6 +112,16 @@ describe('useScenarioLaunch', () => {
     expect(view.result.current.apiError).toBe('Already running.')
     expect(view.result.current.previewOpen).toBe(false)
     expect(view.result.current.submitting).toBe(false)
+  })
+
+  it('shows the field messages of a rejected request', async () => {
+    startRun.mockRejectedValue(BLANK_DATASET_NAME)
+    const { view } = renderLaunch()
+    act(() => view.result.current.submitForm(submitEvent()))
+
+    await act(async () => { await view.result.current.confirmLaunch() })
+
+    expect(view.result.current.apiError).toBe('Request validation failed: Dataset names must be non-empty.')
   })
 
   it('does not start a run while launching is blocked', async () => {

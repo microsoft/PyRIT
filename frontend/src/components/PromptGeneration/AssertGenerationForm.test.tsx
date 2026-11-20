@@ -567,11 +567,26 @@ describe('AssertGenerationForm', () => {
 
     await replaceText(user, screen.getByTestId('assert-policy-text'), 'Explain return windows only.')
     expect(screen.getByRole('checkbox', { name: 'Reuse the reviewed taxonomy' })).toBeDisabled()
-    expect(screen.getByText(/The policy changed, so a new taxonomy is generated/)).toBeInTheDocument()
+    expect(screen.getByText(/The policy or its context changed, so a new taxonomy is generated/)).toBeInTheDocument()
     await waitFor(() => expect(lastPreflightBody()?.request).toEqual(expect.objectContaining({
       behavior_description: 'Explain return windows only.',
     })))
     expect(lastPreflightBody()?.request).not.toHaveProperty('taxonomy')
+  })
+
+  it.each([
+    ['application context', 'assert-context', 'A clinical assistant.'],
+    ['suggested category count', 'assert-category-count', '7'],
+  ])('generates a new taxonomy when the %s changes', async (_label, testId, value) => {
+    const user = userEvent.setup()
+    renderForm({ request: { ...SEEDED_REQUEST, taxonomy: REVIEWED_TAXONOMY }, datasetName: 'returns_v2' })
+    await waitFor(() => expect(lastPreflightBody()?.request).toHaveProperty('taxonomy'))
+
+    await replaceText(user, screen.getByTestId(testId), value)
+
+    expect(screen.getByRole('checkbox', { name: 'Reuse the reviewed taxonomy' })).toBeDisabled()
+    expect(screen.getByText(/The policy or its context changed, so a new taxonomy is generated/)).toBeInTheDocument()
+    await waitFor(() => expect(lastPreflightBody()?.request).not.toHaveProperty('taxonomy'))
   })
 
   it('still offers a blank policy when the template library cannot load', async () => {

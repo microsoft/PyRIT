@@ -254,7 +254,8 @@ test('dataset sources and explicit loading are separate from Parameters', async 
   await section.getByRole('button', { name: 'Edit Maximum objectives' }).click()
   await total.fill('0')
   await total.press('Escape')
-  await section.getByRole('button', { name: 'Reset datasets' }).click()
+  // Reset clears only source and per-dataset edits, so a total-only edit doesn't offer it.
+  await expect(section.getByRole('button', { name: 'Reset datasets' })).toHaveCount(0)
   await expect(section.getByRole('alert')).toContainText('Maximum objectives must be a positive integer')
   await expect(page.getByRole('button', { name: 'Launch scan', exact: true })).toBeDisabled()
   await section.screenshot({ path: testInfo.outputPath('datasets-invalid.png') })

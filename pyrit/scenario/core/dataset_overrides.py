@@ -94,7 +94,9 @@ def validate_dataset_selection(
     if options.mode is DatasetSelectionMode.SUBSET and (not names or set(names) - set(options.allowed_names)):
         raise DatasetConstraintError(f"Select datasets from: {', '.join(options.allowed_names)}.")
     if options.min_selected is not None and len(names) < options.min_selected:
-        raise DatasetConstraintError(f"Select at least {options.min_selected} dataset(s).")
+        # Clients show the same wording for the same rule.
+        minimum = options.min_selected
+        raise DatasetConstraintError("Select a dataset." if minimum == 1 else f"Select at least {minimum} datasets.")
     if options.max_selected is not None and len(names) > options.max_selected:
         raise DatasetConstraintError(f"Select at most {options.max_selected} dataset(s).")
 

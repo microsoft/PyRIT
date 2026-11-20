@@ -172,9 +172,12 @@ function AssertGenerationFormContent({
   const suitePrefix = suiteLabel
   const suiteItemName = (behaviorName: string): string =>
     suiteDatasetNames[behaviorName] ?? suiteDatasetName(suitePrefix, behaviorName)
-  // The reviewed taxonomy belongs to the stored behavior and policy; editing either generates a new one.
+  // The reviewed taxonomy was built for the stored behavior, policy, context, and category count;
+  // changing any of them generates a new one.
   const policyChanged = behavior.behaviorName.trim() !== initial.behavior.behaviorName.trim()
     || behavior.behaviorDescription !== initial.behavior.behaviorDescription
+    || settings.context !== initial.settings.context
+    || settings.behaviorCategoryCount !== initial.settings.behaviorCategoryCount
   const taxonomy = initial.taxonomy && reuseTaxonomy && !policyChanged ? initial.taxonomy : null
 
   const clientErrors: string[] = []
@@ -371,8 +374,9 @@ function AssertGenerationFormContent({
           {initial.taxonomy && (
             <Field
               hint={policyChanged
-                ? 'The policy changed, so a new taxonomy is generated.'
-                : 'Skips researching the behavior and building the taxonomy. Edit the policy to build a new one.'}
+                ? 'The policy or its context changed, so a new taxonomy is generated.'
+                : 'Skips researching the behavior and building the taxonomy. '
+                  + 'Changing the policy, context, or suggested categories builds a new one.'}
             >
               <Checkbox
                 checked={reuseTaxonomy && !policyChanged}

@@ -846,9 +846,9 @@ function ScenarioLaunchForm({
             aria-label="Scenario run configuration"
             onSubmit={(event) => {
               submitForm(event)
-              // A missing dataset is reported on the picker, far below the button, so take the user there.
+              // A missing dataset is reported on the picker, far below the button; focusing it scrolls the
+              // form there. scrollIntoView would also scroll the app shell, which can't scroll back.
               if (!requestResult.ok && requestResult.error === datasetSelectionProblem) {
-                datasetPickerRef.current?.scrollIntoView({ block: 'center' })
                 datasetPickerRef.current?.focus()
               }
             }}
@@ -1033,7 +1033,8 @@ function ScenarioLaunchForm({
                 </Text>
                 <DatasetActions
                   scenarioName={scenario.scenario_name}
-                  canGenerate={supportsDatasets && datasetOptions.supports_overrides && datasetOptions.mode !== 'fixed'}
+                  // Only a scenario that accepts any dataset name can select a newly generated one.
+                  canGenerate={supportsDatasets && datasetOptions.supports_overrides && datasetOptions.mode === 'any'}
                 />
               </div>
               <ScenarioDatasetTable

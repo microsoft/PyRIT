@@ -269,6 +269,17 @@ def test_inline_seeds_drop_a_declared_minimum_selection() -> None:
     assert options.min_selected is None
 
 
+@pytest.mark.usefixtures("patch_central_database")
+async def test_declared_minimum_selection_names_the_count() -> None:
+    class _RequiredScenario(_Scenario):
+        DATASET_OPTIONS = ScenarioDatasetOptions(min_selected=2)
+
+    scenario = _RequiredScenario()
+    scenario.set_params_from_args(args={"dataset_overrides": {"sources": [{"name": "a"}]}})
+    with pytest.raises(ValueError, match=r"^Select at least 2 datasets\.$"):
+        await scenario.get_run_size_estimate_async()
+
+
 def test_dataset_options_reject_a_minimum_above_the_maximum() -> None:
     assert ScenarioDatasetOptions(min_selected=2, max_selected=2).min_selected == 2
     with pytest.raises(ValueError, match="min_selected can't exceed max_selected"):

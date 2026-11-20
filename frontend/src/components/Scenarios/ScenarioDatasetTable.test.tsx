@@ -137,6 +137,7 @@ describe('ScenarioDatasetTable', () => {
   it('keeps invalid global drafts blocking when datasets reset', async () => {
     const user = userEvent.setup()
     render(<Harness />)
+    await addDataset(user, 'remote')
     await editLimit(user, 'Maximum objectives', '0')
     await user.keyboard('{Escape}')
     await user.click(screen.getByRole('button', { name: 'Reset datasets' }))
@@ -213,12 +214,19 @@ describe('ScenarioDatasetTable', () => {
     expect(onChange.mock.calls.at(-1)?.[0]).toEqual({})
   })
 
-  it('links to the dataset browser next to reset and for required sources', () => {
+  it('links to the dataset browser and offers reset only for edited sources or limits', async () => {
+    const user = userEvent.setup()
     const view = render(<Harness />)
     expect(screen.getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+    expect(screen.queryByRole('button', { name: 'Reset datasets' })).not.toBeInTheDocument()
+    await addDataset(user, 'remote')
     expect(screen.getByRole('button', { name: 'Reset datasets' })).toBeInTheDocument()
     view.rerender(<Harness options={{ ...OPTIONS, mode: 'fixed' }} />)
     expect(screen.getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+    view.unmount()
+
+    render(<Harness initialRequest={{ max_per_dataset: 1 }} />)
+    expect(screen.getByRole('button', { name: 'Reset datasets' })).toBeInTheDocument()
   })
 
   it('offers the picker but no reset when nothing is selected and there are no defaults', () => {

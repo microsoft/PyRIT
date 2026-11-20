@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import {
   Badge,
@@ -51,6 +51,11 @@ export default function AssertReviewEditor({
 }: PromptGenerationReviewProps) {
   const styles = usePromptGenerationStyles()
   const { review, estimate } = usePromptGenerationReview(generation.id)
+  // A conflict means the review was continued or cancelled elsewhere, so the page re-reads the generation.
+  const reviewConflict = review.errorStatus === CONFLICT_STATUS
+  useEffect(() => {
+    if (reviewConflict) onReload()
+  }, [reviewConflict, review.attempt, onReload])
   const loaded = review.loading ? null : review.value
   const payload = loaded ? parseAssertReviewPayload(loaded.payload) : null
   const stage = stageLabel(descriptor, loaded?.stage ?? 'dimensions')
