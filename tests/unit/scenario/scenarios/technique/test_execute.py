@@ -26,6 +26,7 @@ from pyrit.executor.attack import (
     SequenceCompletionPolicy,
     SequentialAttack,
     SequentialAttackResult,
+    TreeOfAttacksWithPruningAttack,
 )
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
@@ -39,8 +40,11 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    MessageScorable,
     RequestTraceContext,
+    Scorable,
     Score,
+    ScoringExpectation,
     SeedGroupRequirements,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
@@ -56,7 +60,7 @@ from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
 from pyrit.scenario.scenarios.technique import Execute
 from pyrit.scenario.scenarios.technique.execute import _build_execute_technique
-from pyrit.score import SubStringScorer, TrueFalseScorer
+from pyrit.score import FloatScaleScorer, FloatScaleThresholdScorer, SubStringScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 
@@ -84,6 +88,27 @@ def catalog(patch_central_database: MagicMock) -> Iterator[AttackTechniqueRegist
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
     reset_dynamic_technique_caches()
+
+
+class _Scale(FloatScaleScorer):
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable,)
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
+        return []
+
+
+class _NarrowScoringConfig(AttackScoringConfig):
+    pass
+
+
+class _NarrowScoringAttack(PromptSendingAttack):
+    def __init__(
+        self, *, objective_target: MockPromptTarget, attack_scoring_config: _NarrowScoringConfig | None = None
+    ) -> None:
+        super().__init__(objective_target=objective_target, attack_scoring_config=attack_scoring_config)
 
 
 @pytest.fixture
@@ -774,6 +799,29 @@ class TestExecute:
         with patch.object(factory, "create", side_effect=AssertionError("Constructed incompatible technique")):
             with pytest.raises(IncompatibleTechniqueError, match="objective target"):
                 await scenario.initialize_async()
+
+    async def test_tap_needs_a_scorer_that_keeps_float_feedback_async(self) -> None:
+        scenario = _scenario(scorer=SubStringScorer(substring="x"), scenario_techniques=["tap"])
+        with pytest.raises(IncompatibleTechniqueError, match="requires 'preserves_float_scale_value'"):
+            await scenario.initialize_async()
+
+    async def test_an_attack_that_would_drop_the_scenario_scorer_is_rejected_async(self, *, scorer: MagicMock) -> None:
+        factory = AttackTechniqueFactory(name="narrow_scoring", attack_class=_NarrowScoringAttack)
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        scenario = _scenario(scorer=scorer, scenario_techniques=["narrow_scoring"])
+        with patch.object(factory, "create", side_effect=AssertionError("Constructed incompatible technique")):
+            with pytest.raises(IncompatibleTechniqueError, match="requires _NarrowScoringConfig"):
+                await scenario.initialize_async()
+
+    async def test_tap_judges_with_the_scenario_scorer_async(self) -> None:
+        scorer = FloatScaleThresholdScorer(scorer=_Scale(), threshold=0.7)
+        with override_default_adversarial_target(MockPromptTarget()):
+            scenario = _scenario(scorer=scorer, scenario_techniques=["tap"])
+            await scenario.initialize_async()
+
+        attack = scenario._atomic_attacks[0].attack_technique.attack
+        assert isinstance(attack, TreeOfAttacksWithPruningAttack)
+        assert attack._objective_scorer is scorer
 
     @pytest.mark.parametrize("retries", [0, 2])
     async def test_permitted_history_adaptation_is_applied_to_each_attempt_async(self, *, retries: int) -> None:
