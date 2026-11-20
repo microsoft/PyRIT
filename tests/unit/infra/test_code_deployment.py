@@ -623,6 +623,7 @@ main
         assert lines[4:] == [
             "build_app_parameters",
             "preview app",
+            "reset_configuration_from_seed",
             "prepare_database_migration",
             "schema-check",
             *(
@@ -635,7 +636,6 @@ main
                 if check_exit
                 else ["Schema is current; deploying without stopping the app"]
             ),
-            "reset_configuration_from_seed",
             "az deployment group create",
             "start_unchanged_revision",
             "verify_readiness",
@@ -898,25 +898,42 @@ initialize_deployment_scope
                 assert message in result.stdout, result.stdout + result.stderr
 
     def test_config_seed_requires_separate_folders_and_a_branch(self) -> None:
-        cases = {
-            "no config file": {"PYRIT_CONFIG_FILE_URI": ""},
-            "config file at container root": {"PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/.pyrit_conf"},
-            "seed inside config folder": {"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/test/seed"},
-            "seed folder is config folder": {
-                "PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles",
-                "PYRIT_SOURCE_BRANCH": "refs/heads/test",
-            },
-            "seed with credentials": {"PYRIT_CONFIG_SEED_URI": f"{SEED_INPUTS['PYRIT_CONFIG_SEED_URI']}?sig=secret"},
-            "seed outside Blob Storage": {"PYRIT_CONFIG_SEED_URI": "https://example.com/profiles/seed"},
-            "tag instead of branch": {"PYRIT_SOURCE_BRANCH": "refs/tags/v1.2.3"},
-            "missing branch": {"PYRIT_SOURCE_BRANCH": ""},
-            "parent folder in branch": {"PYRIT_SOURCE_BRANCH": "refs/heads/releases/../main"},
-        }
-        for name, inputs in cases.items():
-            with self.subTest(name):
+        separate = "need separate folders"
+        not_a_branch = "is not a branch"
+        cases = [
+            ({"PYRIT_CONFIG_FILE_URI": ""}, "pyritConfigSeedUri requires pyritConfigFileUri"),
+            ({"PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/.pyrit_conf"}, separate),
+            ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/test/seed"}, separate),
+            ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles", "PYRIT_SOURCE_BRANCH": "refs/heads/test"}, separate),
+            ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/seed?sig=secret"}, "config seed URI"),
+            ({"PYRIT_CONFIG_SEED_URI": "https://example.com/profiles/seed"}, "config seed URI"),
+            ({"PYRIT_SOURCE_BRANCH": "refs/tags/v1.2.3"}, not_a_branch),
+            ({"PYRIT_SOURCE_BRANCH": ""}, not_a_branch),
+            ({"PYRIT_SOURCE_BRANCH": "refs/heads/releases/../main"}, not_a_branch),
+        ]
+        for inputs, message in cases:
+            with self.subTest(inputs=inputs):
                 result = self._run(script="deploy_app.sh", inputs=SEED_INPUTS | inputs, command="validate_app_inputs")
                 assert result.returncode != 0
-                assert "Invalid config seed" in result.stdout, result.stdout + result.stderr
+                assert message in result.stdout, result.stdout + result.stderr
+
+    def test_missing_seed_stops_the_deployment_before_the_migration_or_app_changes(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS,
+            command="""
+for step in validate_app_inputs initialize_deployment_scope read_existing_topology read_app_access_mode \
+  build_app_parameters prepare_database_migration stop_app run_database_migration; do
+  eval "$step() { echo $step; }"
+done
+preview_deployment() { echo "preview $1"; }
+reset_configuration_from_seed() { echo reset; return 1; }
+template_file=t parameters=(appName=test)
+main
+""",
+        )
+        assert result.returncode != 0
+        assert result.stdout.splitlines()[-2:] == ["preview app", "reset"]
 
     def test_deployment_replaces_the_config_folder_with_the_branch_seed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

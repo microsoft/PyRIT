@@ -26,11 +26,34 @@ validate_app_inputs() {
     ! "$PYRIT_ENV_SECRET_NAME" =~ ^[a-zA-Z0-9-]{1,127}$ ]]; then
     deployment_error "Invalid SQL FQDN or Key Vault secret name"
   fi
-  if ! python3 - "$PYRIT_ENTRA_TENANT_ID" "$PYRIT_ENTRA_CLIENT_ID" \
-    "$PYRIT_ALLOWED_GROUP_OBJECT_IDS" "$PYRIT_ADMIN_GROUP_OBJECT_ID" "${PYRIT_CONFIG_FILE_URI:-}" << 'PY'; then
+  if ! python3 - "$PYRIT_ENTRA_TENANT_ID" "$PYRIT_ENTRA_CLIENT_ID" "$PYRIT_ALLOWED_GROUP_OBJECT_IDS" \
+    "$PYRIT_ADMIN_GROUP_OBJECT_ID" "${PYRIT_CONFIG_FILE_URI:-}" "${PYRIT_CONFIG_SEED_URI:-}" << 'PY'; then
 import sys
 import uuid
 from urllib.parse import urlparse
+
+
+def require_blob_uri(value: str, *, minimum_path_parts: int) -> None:
+    parsed = urlparse(value)
+    hostname = parsed.hostname or ""
+    suffixes = (
+        ".blob.core.windows.net",
+        ".blob.core.chinacloudapi.cn",
+        ".blob.core.usgovcloudapi.net",
+        ".blob.core.cloudapi.de",
+    )
+    if (
+        parsed.scheme != "https"
+        or not any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in suffixes)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+        or len(parsed.path.strip("/").split("/")) < minimum_path_parts
+    ):
+        raise ValueError
+
 
 try:
     uuid.UUID(sys.argv[1])
@@ -42,95 +65,66 @@ try:
         uuid.UUID(group)
     uuid.UUID(sys.argv[4])
     if sys.argv[5]:
-        parsed = urlparse(sys.argv[5])
-        hostname = parsed.hostname or ""
-        suffixes = (
-            ".blob.core.windows.net",
-            ".blob.core.chinacloudapi.cn",
-            ".blob.core.usgovcloudapi.net",
-            ".blob.core.cloudapi.de",
-        )
-        if (
-            parsed.scheme != "https"
-            or not any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in suffixes)
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.port is not None
-            or parsed.query
-            or parsed.fragment
-            or len(parsed.path.strip("/").split("/")) < 2
-        ):
-            raise ValueError
+        require_blob_uri(sys.argv[5], minimum_path_parts=2)
+    if sys.argv[6]:
+        require_blob_uri(sys.argv[6], minimum_path_parts=1)
 except (ValueError, IndexError):
     raise SystemExit(1)
 PY
-    deployment_error "Invalid Entra ID, group ID, or config URI"
+    deployment_error "Invalid Entra ID, group ID, config URI, or config seed URI"
   fi
   validate_immutable_image "$PYRIT_CONTAINER_IMAGE"
   read_config_seed
 }
 
-# A seed folder holds the starting configuration for each deployable branch, for example
-# <seed>/main/ or <seed>/releases/v1.2.3/. Each deployment copies the deployed branch's seed over
-# the folder that holds pyritConfigFileUri, so configuration edits saved in the GUI last only until
-# the next deployment.
+# A seed folder holds the starting configuration for each deployed branch, for example <seed>/main/ or
+# <seed>/releases/v1.2.3/. Each deployment copies the deployed branch's seed over the folder that holds
+# pyritConfigFileUri, so configuration edits saved in the GUI last only until the next deployment.
 read_config_seed() {
-  config_seed=()
   [[ -n "${PYRIT_CONFIG_SEED_URI:-}" ]] || return 0
+  [[ -n "${PYRIT_CONFIG_FILE_URI:-}" ]] || deployment_error "pyritConfigSeedUri requires pyritConfigFileUri"
+  if [[ ! "${PYRIT_SOURCE_BRANCH:-}" =~ ^refs/heads/([A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*)$ ]]; then
+    deployment_error "pyritConfigSeedUri selects the configuration by branch; ${PYRIT_SOURCE_BRANCH:-this source} is not a branch"
+  fi
   local location
-  if ! location=$(python3 - "$PYRIT_CONFIG_SEED_URI" "${PYRIT_CONFIG_FILE_URI:-}" "${PYRIT_SOURCE_BRANCH:-}" << 'PY'
+  if ! location=$(python3 - "$PYRIT_CONFIG_SEED_URI" "$PYRIT_CONFIG_FILE_URI" "${BASH_REMATCH[1]}" << 'PY'
 import re
 import sys
 from urllib.parse import urlparse
 
-SUFFIXES = (".blob.core.windows.net", ".blob.core.chinacloudapi.cn", ".blob.core.usgovcloudapi.net", ".blob.core.cloudapi.de")
 
-
-def blob_location(uri: str) -> tuple[str, str, list[str]]:
+def location(uri: str) -> tuple[str, str, str]:
     parsed = urlparse(uri)
-    hostname = parsed.hostname or ""
-    path = parsed.path.strip("/").split("/")
-    if (
-        parsed.scheme != "https"
-        or not any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in SUFFIXES)
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.port is not None
-        or parsed.query
-        or parsed.fragment
-        or not all(re.fullmatch(r"[A-Za-z0-9._-]+", part) and part not in (".", "..") for part in path)
-    ):
-        raise ValueError
-    return hostname.split(".")[0], path[0], path[1:]
+    container, _, path = parsed.path.strip("/").partition("/")
+    return parsed.hostname.split(".")[0], container, path
 
 
-try:
-    seed_account, seed_container, seed_root = blob_location(sys.argv[1])
-    config_account, config_container, config_path = blob_location(sys.argv[2])
-    branch = re.fullmatch(r"refs/heads/((?:[A-Za-z0-9][A-Za-z0-9._-]*/)*[A-Za-z0-9][A-Za-z0-9._-]*)", sys.argv[3])
-    # The config file must sit in its own folder, because each deployment replaces that whole folder.
-    if branch is None or len(config_path) < 2 or ".." in branch[1]:
-        raise ValueError
-    seed_folder = "/".join([*seed_root, branch[1]])
-    config_folder = "/".join(config_path[:-1])
-    if (seed_account, seed_container) == (config_account, config_container) and (
-        seed_folder == config_folder
-        or seed_folder.startswith(f"{config_folder}/")
-        or config_folder.startswith(f"{seed_folder}/")
-    ):
-        raise ValueError
-except (ValueError, IndexError):
+def is_plain_folder(folder: str) -> bool:
+    return bool(folder) and all(
+        re.fullmatch(r"[A-Za-z0-9._-]+", part) and part not in (".", "..") for part in folder.split("/")
+    )
+
+
+seed_account, seed_container, seed_root = location(sys.argv[1])
+config_account, config_container, config_path = location(sys.argv[2])
+seed_folder = f"{seed_root}/{sys.argv[3]}".lstrip("/")
+config_folder, _, config_name = config_path.rpartition("/")
+# Each deployment replaces the whole config folder, so it must be a plain folder apart from the seed.
+nested = f"{seed_folder}/".startswith(f"{config_folder}/") or f"{config_folder}/".startswith(f"{seed_folder}/")
+if not (is_plain_folder(seed_folder) and is_plain_folder(config_folder)) or (
+    (seed_account, seed_container) == (config_account, config_container) and nested
+):
     raise SystemExit(1)
-print("\t".join((seed_account, seed_container, seed_folder, config_account, config_container, config_folder, config_path[-1])))
+print("\t".join((seed_account, seed_container, seed_folder, config_account, config_container, config_folder, config_name)))
 PY
   ); then
-    deployment_error "Invalid config seed: pyritConfigSeedUri and pyritConfigFileUri must be separate credential-free Blob folders, and the config file must be in its own folder"
+    deployment_error "pyritConfigSeedUri and pyritConfigFileUri need separate folders, with the config file in its own folder"
   fi
   IFS=$'\t' read -r -a config_seed <<< "$location"
 }
 
 reset_configuration_from_seed() {
-  [[ -n "${config_seed+x}" ]] || return 0
+  [[ -n "${PYRIT_CONFIG_SEED_URI:-}" ]] || return 0
   local seed_account=${config_seed[0]} seed_container=${config_seed[1]} seed_folder=${config_seed[2]}
   local config_account=${config_seed[3]} config_container=${config_seed[4]} config_folder=${config_seed[5]}
   local config_name=${config_seed[6]} seed_directory
@@ -369,6 +363,8 @@ main() {
   read_app_access_mode
   build_app_parameters
   preview_deployment app "$template_file" "${parameters[@]}"
+  # Before the migration, so it loads the new configuration and a missing seed stops nothing.
+  reset_configuration_from_seed
   prepare_database_migration
   if schema_is_current; then
     echo "Schema is current; deploying without stopping the app"
@@ -378,7 +374,6 @@ main() {
     stop_app
     run_database_migration
   fi
-  reset_configuration_from_seed
   az deployment group create \
     --name "$deployment_name" --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
     --template-file "$template_file" --mode Incremental --parameters "${parameters[@]}"
