@@ -51,6 +51,40 @@ from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import DecodingScorer, TrueFalseScorer
 
+# Baconian cipher (Francis Bacon, 1605): each letter maps to a 5-symbol a/b group; see
+# https://en.wikipedia.org/wiki/Bacon%27s_cipher . Framing classical ciphers as an LLM jailbreak
+# vector: CipherChat (Yuan et al., 2023, arXiv:2308.06463).
+# Kept as a Leetspeak substitution table rather than a dedicated converter (reuse and compose
+# before adding).
+_BACONIAN_SUBSTITUTIONS: dict[str, list[str]] = {
+    "a": ["aaaaa"],
+    "b": ["aaaab"],
+    "c": ["aaaba"],
+    "d": ["aaabb"],
+    "e": ["aabaa"],
+    "f": ["aabab"],
+    "g": ["aabba"],
+    "h": ["aabbb"],
+    "i": ["abaaa"],
+    "j": ["abaaa"],
+    "k": ["abaab"],
+    "l": ["ababa"],
+    "m": ["ababb"],
+    "n": ["abbaa"],
+    "o": ["abbab"],
+    "p": ["abbba"],
+    "q": ["abbbb"],
+    "r": ["baaaa"],
+    "s": ["baaab"],
+    "t": ["baaba"],
+    "u": ["baabb"],
+    "v": ["baabb"],
+    "w": ["babaa"],
+    "x": ["babab"],
+    "y": ["babba"],
+    "z": ["babbb"],
+}
+
 
 class EncodingDatasetConfiguration(DatasetAttackConfiguration):
     """
@@ -129,6 +163,7 @@ class EncodingTechnique(ScenarioTechnique):
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
+    Baconian = ("baconian", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -317,6 +352,7 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
+            ([LeetspeakConverter(custom_substitutions=_BACONIAN_SUBSTITUTIONS)], "baconian", "baconian"),
         ]
 
     # These are the same as Garak encoding attacks
