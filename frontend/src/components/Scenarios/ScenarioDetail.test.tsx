@@ -2811,7 +2811,9 @@ describe('ScenarioDetail', () => {
     await screen.findByText('boom')
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument())
     expect(screen.getByRole('alert')).toHaveTextContent('boom')
-    await waitFor(() => expect(screen.getByTestId('launch-scenario-btn')).toHaveFocus())
+    // Focus moves to the banner at the top of the form so the browser scrolls the reason into view.
+    await waitFor(() => expect(screen.getByRole('alert').closest('[tabindex="-1"]')).toHaveFocus())
+    expect(screen.getByTestId('launch-scenario-btn')).not.toHaveFocus()
     expect(screen.getByTestId('scenario-target-select')).toHaveValue('target-b')
     expect(screen.getByTestId('technique-crescendo')).toBeChecked()
     expect(screen.getByTestId('technique-default_technique')).not.toBeChecked()
@@ -3382,6 +3384,10 @@ describe('ScenarioDetail', () => {
 
       const estimate = await screen.findByTestId('run-estimate')
       await waitFor(() => expect(within(estimate).getByRole('status')).toHaveTextContent('Select a dataset.'))
+      // The 400 rejects the configuration, not the backend.
+      expect(within(estimate).getByRole('status'))
+        .toHaveTextContent('Complete the required configuration to request an estimate.')
+      expect(estimate).not.toHaveTextContent('The backend estimate could not be refreshed.')
       await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
       await confirmRunPreview(user)
 

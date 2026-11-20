@@ -666,6 +666,7 @@ function ScenarioLaunchForm({
     clearValidationError,
     isSubmitting,
     launchButtonRef,
+    apiErrorRef,
     submitForm,
     dismissPreview,
     changePreviewOpen,
@@ -900,7 +901,7 @@ function ScenarioLaunchForm({
               </MessageBar>
             )}
             {apiError && (
-              <MessageBar intent="error">
+              <MessageBar intent="error" ref={apiErrorRef} tabIndex={-1}>
                 <MessageBarBody role="alert">{apiError}</MessageBarBody>
               </MessageBar>
             )}

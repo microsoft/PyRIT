@@ -1,6 +1,6 @@
 import type { FormEvent } from 'react'
 
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 
 import type { BuildRunRequestResult } from '@/components/Scenarios/scenarioLaunchRequest'
 import { scenariosApi } from '@/services/api'
@@ -112,6 +112,24 @@ describe('useScenarioLaunch', () => {
     expect(view.result.current.apiError).toBe('Already running.')
     expect(view.result.current.previewOpen).toBe(false)
     expect(view.result.current.submitting).toBe(false)
+  })
+
+  it('focuses the error banner, not Launch scan, when the launch is rejected', async () => {
+    startRun.mockRejectedValue({ isAxiosError: true, response: { status: 400, data: { detail: 'Select a dataset.' } } })
+    const { view } = renderLaunch()
+    const banner = document.createElement('div')
+    banner.tabIndex = -1
+    const button = document.createElement('button')
+    document.body.append(banner, button)
+    view.result.current.apiErrorRef.current = banner
+    view.result.current.launchButtonRef.current = button
+    act(() => view.result.current.submitForm(submitEvent()))
+
+    await act(async () => { await view.result.current.confirmLaunch() })
+
+    await waitFor(() => expect(banner).toHaveFocus())
+    banner.remove()
+    button.remove()
   })
 
   it('shows the field messages of a rejected request', async () => {

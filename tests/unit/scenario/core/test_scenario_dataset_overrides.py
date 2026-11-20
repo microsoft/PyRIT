@@ -270,6 +270,30 @@ def test_inline_seeds_drop_a_declared_minimum_selection() -> None:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+async def test_default_estimate_ignores_an_earlier_inline_configuration() -> None:
+    class _RequiredScenario(_Scenario):
+        DATASET_OPTIONS = ScenarioDatasetOptions(min_selected=1)
+
+        def __init__(self) -> None:
+            Scenario.__init__(
+                self,
+                version=1,
+                technique_class=_Technique,
+                default_dataset_config=DatasetAttackConfiguration(max_per_dataset="all", max_total="all"),
+                objective_scorer=SubStringScorer(substring="yes"),
+            )
+
+    scenario = _RequiredScenario()
+    inline = DatasetAttackConfiguration(seeds=[SeedObjective(value="x")], max_total=1)
+    scenario.set_params_from_args(args={"dataset_config": inline})
+    await scenario.get_run_size_estimate_async()
+
+    estimate = await scenario.get_default_run_size_estimate_async()
+    assert estimate.status.value == "unavailable"
+    assert estimate.note == "Select a dataset."
+
+
+@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("args", [{}, {"dataset_overrides": {"sources": [{"name": "a"}]}}])
 async def test_declared_minimum_selection_applies_with_or_without_overrides(args: dict[str, object]) -> None:
     class _RequiredScenario(_Scenario):

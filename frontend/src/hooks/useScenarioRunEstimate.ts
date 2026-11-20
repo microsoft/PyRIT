@@ -13,12 +13,14 @@ import type {
 
 export const ESTIMATE_DEBOUNCE_MS = 300
 
+const REQUIRED_CONFIGURATION_LABEL = 'Complete the required configuration to request an estimate.'
+
 type SuccessfulEstimateResult = Extract<ScenarioRunEstimateResult, { status: 'available' | 'conditional' }>
 
 /** The backend answer for one request key. */
 export type EstimateRequestState =
   | { status: 'resolved', requestKey: string, result: ScenarioRunEstimateResult, datasetSettings?: ScenarioDatasetSettings }
-  | { status: 'error', requestKey: string, error: string }
+  | { status: 'error', requestKey: string, error: string, httpStatus: number | null }
 
 interface UseScenarioRunEstimateInput {
   scenarioName: string
@@ -88,7 +90,7 @@ export function useScenarioRunEstimate({
         .catch((err: unknown) => {
           if (isStale()) return
           const error = toApiError(err)
-          setRequestState({ status: 'error', requestKey, error: apiErrorMessage(error) })
+          setRequestState({ status: 'error', requestKey, error: apiErrorMessage(error), httpStatus: error.status })
           if (request.datasets && (error.status === 400 || error.status === 422)) {
             const { datasets, ...defaultRequest } = request
             void datasets
@@ -133,7 +135,7 @@ function estimateState({
     return {
       status: 'unavailable',
       scope: 'request',
-      label: 'Complete the required configuration to request an estimate.',
+      label: REQUIRED_CONFIGURATION_LABEL,
       note: invalidReason,
     }
   }
@@ -151,7 +153,10 @@ function estimateState({
       : {
           status: 'unavailable',
           scope: 'request',
-          label: 'The backend estimate could not be refreshed.',
+          // A 400 or 422 rejects the configuration itself; the backend is working.
+          label: current.httpStatus === 400 || current.httpStatus === 422
+            ? REQUIRED_CONFIGURATION_LABEL
+            : 'The backend estimate could not be refreshed.',
           note: current.error,
         }
   }

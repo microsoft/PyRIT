@@ -24,13 +24,15 @@ export interface ScenarioLaunch {
   /** Synchronous submit state, for guards that run before React re-renders. */
   isSubmitting: () => boolean
   launchButtonRef: RefObject<HTMLButtonElement | null>
+  /** The banner for a rejected launch; it takes focus so the reason scrolls into view. */
+  apiErrorRef: RefObject<HTMLDivElement | null>
   submitForm: (event: FormEvent<HTMLFormElement>) => void
   dismissPreview: () => void
   changePreviewOpen: (open: boolean) => void
   confirmLaunch: () => Promise<void>
 }
 
-function focusSoon(ref: RefObject<HTMLButtonElement | null>): void {
+function focusSoon(ref: RefObject<HTMLElement | null>): void {
   const focus = () => {
     ref.current?.focus()
   }
@@ -55,6 +57,7 @@ export function useScenarioLaunch({
   // Synchronous guard against a double-submit racing ahead of the state update.
   const isSubmittingRef = useRef(false)
   const launchButtonRef = useRef<HTMLButtonElement | null>(null)
+  const apiErrorRef = useRef<HTMLDivElement | null>(null)
 
   const submitForm = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
@@ -107,7 +110,7 @@ export function useScenarioLaunch({
     } catch (err) {
       setApiError(apiErrorMessage(toApiError(err)))
       setPreviewOpen(false)
-      focusSoon(launchButtonRef)
+      focusSoon(apiErrorRef)
     } finally {
       isSubmittingRef.current = false
       setSubmitting(false)
@@ -122,6 +125,7 @@ export function useScenarioLaunch({
     clearValidationError: () => setValidationError(null),
     isSubmitting: () => isSubmittingRef.current,
     launchButtonRef,
+    apiErrorRef,
     submitForm,
     dismissPreview,
     changePreviewOpen,

@@ -820,10 +820,10 @@ class Scenario(ABC):
             allow_missing_required=True,
         )
         self._params_resolved = True
+        # Options depend on the current configuration, so drop any left by an earlier call on this instance.
+        self._dataset_config = self._resolve_default_dataset_config()
         try:
-            validate_minimum_selection(
-                config=self._resolve_default_dataset_config(), options=self.get_dataset_options()
-            )
+            validate_minimum_selection(config=self._dataset_config, options=self.get_dataset_options())
         except DatasetConstraintError as error:
             # A scenario that needs a dataset and has no default has no default run to size.
             return ScenarioRunSizeEstimate.unavailable(note=str(error))

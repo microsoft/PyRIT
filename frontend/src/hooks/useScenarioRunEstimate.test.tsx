@@ -143,6 +143,18 @@ describe('useScenarioRunEstimate', () => {
     expect(view.result.current.datasetProjection?.effective_datasets?.max_total).toBe(7)
   })
 
+  it.each([
+    [400, 'Complete the required configuration to request an estimate.'],
+    [422, 'Complete the required configuration to request an estimate.'],
+    [503, 'The backend estimate could not be refreshed.'],
+  ])('labels a %i without an earlier estimate as %s', async (status, label) => {
+    estimateRun.mockRejectedValueOnce({ isAxiosError: true, response: { status, data: { detail: 'Select a dataset.' } } })
+    const view = renderEstimate({ request: { techniques: ['a'] } })
+    await settle()
+
+    expect(view.result.current.state).toMatchObject({ status: 'unavailable', label, note: 'Select a dataset.' })
+  })
+
   it('reports why no request could be built instead of calling the backend', async () => {
     const view = renderEstimate({ request: null, invalidReason: 'Select a target.' })
     await settle()
