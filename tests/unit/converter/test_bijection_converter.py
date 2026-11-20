@@ -662,6 +662,28 @@ def test_token_converter_decode_ignores_code_word_inside_longer_word():
 
     assert converter.decode(f"x{code_word}") == f"x{code_word}"
     assert converter.decode(f"{code_word}y") == f"{code_word}y"
+    # A non-ASCII letter next to the code word does not make it a separate word when the
+    # rest of the word is not code words.
+    assert converter.decode(f"{code_word}éxyz") == f"{code_word}éxyz"
+    assert converter.decode(f"xyzé{code_word}") == f"xyzé{code_word}"
+
+
+# "cat" is a prefix of "caté", and "écat" ends with "cat". "cat" comes first in the mapping, so
+# without longest-first matching "caté" decoded as "a" followed by a literal "é".
+_PREFIX_SHARING_MAPPING = dict(
+    zip(string.ascii_lowercase, ["cat", "caté", "écat", *_PLAIN_VOCAB_WORDS[1:24]], strict=True)
+)
+
+
+@pytest.mark.parametrize("original", ["b", "bd", "Bd", "aéd", "c", "dc", "café", "naïve"])
+async def test_token_converter_round_trips_tokens_that_share_a_unicode_prefix(original: str):
+    converter = TokenBijectionConverter(
+        tokenizer=_mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)}),
+        mapping=_PREFIX_SHARING_MAPPING,
+    )
+
+    encoded = await converter.convert_async(prompt=original)
+    assert converter.decode(encoded.output_text) == original
 
 
 async def test_token_converter_literal_hyphen_is_distinct_from_delimiter():
