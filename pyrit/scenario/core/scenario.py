@@ -88,7 +88,11 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetSource,
     DatasetSourceKind,
 )
-from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
+from pyrit.scenario.core.dataset_overrides import (
+    apply_dataset_overrides,
+    project_dataset_settings,
+    validate_minimum_selection,
+)
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.required_data import ScenarioRequiredData
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -1082,6 +1086,7 @@ class Scenario(ABC):
             )
         self._load_required_data_like_dataset_config()
         self._validate_runtime_configuration()
+        validate_minimum_selection(config=self._dataset_config, options=options)
 
     def _validate_dataset_scorer_requirements(self) -> None:
         """

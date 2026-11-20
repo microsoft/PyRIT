@@ -36,7 +36,7 @@ from pyrit.scenario.core import DatasetConstraintError, resolve_technique_factor
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSourceKind
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.technique_requirements import (
     IncompatibleTechniqueError,
@@ -51,7 +51,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from pyrit.models import ScenarioDatasetSizeEstimate
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -249,12 +248,6 @@ class AssertPolicy(Scenario):
         if prompt is not None and not prompt.strip():
             raise ValueError("target_system_prompt must not be blank.")
 
-    def _has_no_datasets(self) -> bool:
-        return self._dataset_config.source_kind is DatasetSourceKind.MEMORY and not self._dataset_config.dataset_names
-
-    def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
-        return BoundedDatasetSize(value=1) if self._has_no_datasets() else super()._get_run_size_budget()
-
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
         components = [
@@ -267,9 +260,6 @@ class AssertPolicy(Scenario):
             "At most one unit per selected group for each technique; groups a technique can't use are skipped. "
             f"Techniques that take a turn count make up to {self.params['max_turns']} target turns."
         )
-        if self._has_no_datasets():
-            datasets = []
-            note = "No ASSERT dataset is selected; pass stored dataset names with --datasets. " + note
         return ScenarioRunSizeEstimate(
             status=ScenarioRunSizeEstimateStatus.Approximate,
             total_attack_count=sum(component.count for component in components),
@@ -288,16 +278,10 @@ class AssertPolicy(Scenario):
             dict[str, list[AttackSeedGroup]]: Selected groups keyed by dataset.
 
         Raises:
-            ValueError: If no dataset is selected, a group lacks ASSERT metadata or conflicts with
-                ``target_system_prompt``, or a stored objective seed appears more than once.
+            ValueError: If a group lacks ASSERT metadata or conflicts with ``target_system_prompt``,
+                or a stored objective seed appears more than once.
             DatasetConstraintError: If the selected datasets contain no groups.
         """
-        if self._has_no_datasets():
-            raise ValueError(
-                "Select a dataset. foundry.assert_policy needs stored ASSERT seed groups. Pass their dataset "
-                "names with --datasets (or the deprecated --dataset-names), or supply dataset_config in Python. "
-                "Generate groups with AssertGenerator and store them with AssertProvider."
-            )
         selection = await self._dataset_config._resolve_attack_groups_async()
         population = selection.select(apply_sampling=False)
         if not any(population.values()):

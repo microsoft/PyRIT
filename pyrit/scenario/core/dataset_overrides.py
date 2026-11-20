@@ -93,12 +93,22 @@ def validate_dataset_selection(
         raise DatasetConstraintError(f"Dataset sources are fixed: {', '.join(defaults.dataset_names)}.")
     if options.mode is DatasetSelectionMode.SUBSET and (not names or set(names) - set(options.allowed_names)):
         raise DatasetConstraintError(f"Select datasets from: {', '.join(options.allowed_names)}.")
-    if options.min_selected is not None and len(names) < options.min_selected:
-        # Clients show the same wording for the same rule.
-        minimum = options.min_selected
-        raise DatasetConstraintError("Select a dataset." if minimum == 1 else f"Select at least {minimum} datasets.")
+    validate_minimum_selection(config=config, options=options)
     if options.max_selected is not None and len(names) > options.max_selected:
         raise DatasetConstraintError(f"Select at most {options.max_selected} dataset(s).")
+
+
+def validate_minimum_selection(*, config: DatasetAttackConfiguration, options: ScenarioDatasetOptions) -> None:
+    """
+    Require the declared minimum of named datasets, with or without overrides. Inline seeds need none.
+
+    Raises:
+        DatasetConstraintError: If fewer datasets are selected than the scenario requires.
+    """
+    minimum = options.min_selected
+    if minimum is None or config.source_kind is DatasetSourceKind.INLINE or len(config.dataset_names) >= minimum:
+        return
+    raise DatasetConstraintError("Select a dataset." if minimum == 1 else f"Select at least {minimum} datasets.")
 
 
 def project_dataset_settings(

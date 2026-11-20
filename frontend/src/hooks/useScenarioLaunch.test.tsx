@@ -121,7 +121,8 @@ describe('useScenarioLaunch', () => {
 
     await act(async () => { await view.result.current.confirmLaunch() })
 
-    expect(view.result.current.apiError).toBe('Request validation failed: Dataset names must be non-empty.')
+    expect(view.result.current.apiError)
+      .toBe('Request validation failed: datasets.sources.0.name: Dataset names must be non-empty.')
   })
 
   it('does not start a run while launching is blocked', async () => {

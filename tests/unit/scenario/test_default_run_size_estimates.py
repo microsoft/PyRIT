@@ -32,6 +32,7 @@ from pyrit.scenario.core import (
     AtomicAttack,
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
+    DatasetConstraintError,
     DatasetSource,
     Scenario,
     ScenarioTechnique,
@@ -365,6 +366,11 @@ async def test_all_builtin_default_size_contracts_are_bounded_async() -> None:
                 if not scenario_class.__module__.startswith("pyrit.scenario.scenarios."):
                     continue
                 scenario = registry.create_instance(name)
+                if scenario.get_dataset_options().min_selected and not scenario.get_default_dataset_names():
+                    # A scenario that needs a dataset and has no default has no default run to size.
+                    with pytest.raises(DatasetConstraintError, match=r"^Select "):
+                        await scenario.get_default_run_size_estimate_async()
+                    continue
                 estimate = await scenario.get_default_run_size_estimate_async()
                 assert isinstance(estimate.dataset_size, BoundedDatasetSize), name
                 assert estimate.status is not ScenarioRunSizeEstimateStatus.Unavailable, name

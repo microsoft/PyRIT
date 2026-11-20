@@ -270,13 +270,14 @@ def test_inline_seeds_drop_a_declared_minimum_selection() -> None:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_declared_minimum_selection_names_the_count() -> None:
+@pytest.mark.parametrize("args", [{}, {"dataset_overrides": {"sources": [{"name": "a"}]}}])
+async def test_declared_minimum_selection_applies_with_or_without_overrides(args: dict[str, object]) -> None:
     class _RequiredScenario(_Scenario):
-        DATASET_OPTIONS = ScenarioDatasetOptions(min_selected=2)
+        DATASET_OPTIONS = ScenarioDatasetOptions(min_selected=3)
 
     scenario = _RequiredScenario()
-    scenario.set_params_from_args(args={"dataset_overrides": {"sources": [{"name": "a"}]}})
-    with pytest.raises(ValueError, match=r"^Select at least 2 datasets\.$"):
+    scenario.set_params_from_args(args=args)
+    with pytest.raises(ValueError, match=r"^Select at least 3 datasets\.$"):
         await scenario.get_run_size_estimate_async()
 
 
