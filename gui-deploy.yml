@@ -74,13 +74,15 @@ stages:
           - checkout: self
             fetchDepth: 1
 
+          # The hosted image preinstalls an Android SDK that the build does not use.
           - bash: |
               set -euo pipefail
               df -h /
               docker system df
+              sudo rm -rf /usr/local/lib/android
               docker system prune --all --force
               df -h /
-            displayName: 'Reclaim Docker disk space before build'
+            displayName: 'Reclaim disk space before build'
 
           - task: AzureCLI@2
             name: BuildImage
