@@ -322,13 +322,6 @@ unsound-assignment = "ignore"
 [[tool.ty.overrides]]
 include = [
     "pyrit/auth/browser_session_copilot_authenticator.py",
-    "pyrit/backend/middleware/runtime.py",
-    "pyrit/backend/routes/targets.py",
-    "pyrit/backend/routes/version.py",
-    "pyrit/backend/services/attack_service.py",
-    "pyrit/backend/services/finding_export.py",
-    "pyrit/backend/services/prompt_generation_service.py",
-    "pyrit/backend/services/scenario_service.py",
     "pyrit/cli/api_client.py",
     "pyrit/cli/pyrit_scan.py",
     "pyrit/common/cli_helpers.py",
