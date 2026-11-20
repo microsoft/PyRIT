@@ -175,7 +175,7 @@ class TestTransparencyAttackConverter:
             mock_factory.assert_called_once_with(category="prompt-memory-entries", data_type="image_path")
             mock_serializer.save_b64_image_async.assert_called_once()
 
-    async def test_blending_helpers_reject_positional_second_argument(self, sample_benign_image):
+    async def test_blending_helpers_reject_positional_second_argument_async(self, sample_benign_image: str) -> None:
         converter = TransparencyAttackConverter(benign_image_path=sample_benign_image)
         image = np.ones((2, 2), dtype=np.float32) * 0.5
         alpha = np.ones((2, 2), dtype=np.float32) * 0.7
