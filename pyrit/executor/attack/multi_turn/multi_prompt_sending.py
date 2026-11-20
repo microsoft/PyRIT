@@ -46,7 +46,7 @@ class MultiPromptSendingAttackParameters(AttackParameters):
     Parameters for MultiPromptSendingAttack.
 
     Extends AttackParameters to include user_messages field for multi-turn attacks.
-    Seed preparation accepts objective, user_messages, memory_labels, and expectation, and carries the
+    Seed preparation accepts objective, user_messages, memory_labels, operation_id, and expectation, and carries the
     seed group's harm categories into targeted_harm_categories.
     """
 
@@ -89,7 +89,7 @@ class MultiPromptSendingAttackParameters(AttackParameters):
             )
 
         # Validate overrides only contain valid fields
-        valid_fields = {"objective", "user_messages", "memory_labels", "expectation"}
+        valid_fields = {"objective", "user_messages", "memory_labels", "operation_id", "expectation"}
         invalid_fields = set(overrides.keys()) - valid_fields
         if invalid_fields:
             raise ValueError(
@@ -100,6 +100,7 @@ class MultiPromptSendingAttackParameters(AttackParameters):
         return cls(
             objective=seed_group.objective.value,
             memory_labels=overrides.get("memory_labels", {}),
+            operation_id=overrides.get("operation_id"),
             user_messages=user_messages,
             expectation=AttackParameters._resolve_seed_expectation(seed_group=seed_group, overrides=overrides),
             targeted_harm_categories=list(seed_group.harm_categories),
@@ -181,6 +182,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
 
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
         self._objective_scorer = attack_scoring_config.objective_scorer
+        self._validate_objective_scorer(scorer=self._objective_scorer)
 
         # Initialize prompt normalizer and conversation manager
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
