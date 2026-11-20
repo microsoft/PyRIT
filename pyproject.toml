@@ -162,7 +162,7 @@ speech = [
 ]
 
 litellm = [
-    "litellm>=1.104.2",
+    "litellm>=1.108.0",
 ]
 
 github-copilot = [
@@ -182,7 +182,7 @@ all = [
     "github-copilot-sdk>=1.0.28",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "litellm>=1.104.2",
+    "litellm>=1.108.0",
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
@@ -219,6 +219,8 @@ filterwarnings = [
     "error:pyrit\\.models\\.(finding\\.)?FindingSeverity:DeprecationWarning",
     "error:Finding\\w*[.(](description|severity|harm_type):DeprecationWarning",
     "error:GET /operations/finding-options:DeprecationWarning",
+    # TAP and PAIR take a plain AttackScoringConfig; compatibility tests capture the warning.
+    "error:TAPAttackScoringConfig:DeprecationWarning",
 ]
 
 [tool.ty]
@@ -230,13 +232,6 @@ all = "error"
 # Most rules under `all = "error"` are already clean for pyrit/. A few remain
 # suppressed below; the remaining finding counts are noted so they can be
 # re-enabled as the code is cleaned up.
-# missing-type-argument is clean under numpy>=2.4 (Python 3.14) but flags 38
-# bare `np.ndarray` generics under numpy 2.2.6 -- the version the lock pins for
-# Python 3.11-3.13, i.e. CI's 3.11 -- across 5 files (analytics/conversation_analytics,
-# converter/transparency_attack_converter, score/scorer_evaluation/*).
-# Annotating those generics is real code work, so keep the rule deferred until
-# that numpy-generics debt is addressed.
-missing-type-argument = "ignore"
 unsound-assignment = "ignore"
 # unused-type-ignore-comment is environment-dependent: a `# type: ignore`
 # on an optional-dependency import (torch, playwright, etc.) is "used" when the
@@ -307,6 +302,9 @@ invalid-argument-type = "ignore"
 invalid-method-override = "ignore"
 no-matching-overload = "ignore"
 unresolved-attribute = "ignore"
+# Enabled for pyrit/ (clean) but still relaxed here: tests/unit has 318 bare
+# generics (mostly `dict` and the attack context/strategy classes) across ~70 files.
+missing-type-argument = "ignore"
 
 [tool.uv]
 constraint-dependencies = [
