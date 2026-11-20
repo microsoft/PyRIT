@@ -162,7 +162,7 @@ speech = [
 ]
 
 litellm = [
-    "litellm>=1.104.2",
+    "litellm>=1.108.0",
 ]
 
 github-copilot = [
@@ -182,7 +182,7 @@ all = [
     "github-copilot-sdk>=1.0.28",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "litellm>=1.104.2",
+    "litellm>=1.108.0",
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
@@ -215,6 +215,8 @@ filterwarnings = [
     "error:MessageScorableResolver\\.resolve:DeprecationWarning",
     # True/false verdicts are set through Score.set_value; compatibility tests capture the warning.
     "error:Assigning Score\\.score_value:DeprecationWarning",
+    # TAP and PAIR take a plain AttackScoringConfig; compatibility tests capture the warning.
+    "error:TAPAttackScoringConfig:DeprecationWarning",
 ]
 
 [tool.ty]
