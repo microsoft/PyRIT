@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +17,7 @@ import pytest
 import yaml
 
 from build_scripts import compose_docs_dist, inject_version_picker, resolve_docs_matrix
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = REPO_ROOT / ".github" / "docs-versions.yml"
@@ -300,9 +302,45 @@ def test_workflow_checks_current_docs_links_before_rendering() -> None:
     check = _step(job="build", name="Check documentation links")
     assert check["if"] == "steps.cache.outputs.cache-hit != 'true' && matrix.slug == 'latest'"
     assert check["working-directory"] == "doc"
-    assert check["run"] == "uv run --frozen --no-sync jupyter-book build --site --strict --check-links"
+    assert "uv run --frozen --no-sync jupyter-book build --site --strict --check-links" in check["run"]
     assert steps.index(_step(job="build", name="Generate API reference (pydoc2json + gen_api_md)")) < steps.index(check)
     assert steps.index(check) < steps.index(_step(job="build", name="Build the static HTML site"))
+
+
+@pytest.mark.parametrize(
+    ("first_status", "retry_status", "expected_status", "attempts"),
+    [(0, 9, 0, 1), (7, 0, 0, 2), (7, 9, 9, 2)],
+    ids=["initial-success", "retry-success", "persistent-failure"],
+)
+def test_workflow_link_check_retries_once_and_preserves_failure(
+    *, tmp_path: Path, first_status: int, retry_status: int, expected_status: int, attempts: int
+) -> None:
+    bash = shutil.which("bash")
+    assert bash is not None, "Bash is required to exercise the documentation workflow"
+    command = _step(job="build", name="Check documentation links")["run"]
+    stubs = f"""
+calls=0
+uv() {{
+    printf 'uv:%s\\n' "$*"
+    calls=$((calls + 1))
+    if [ "$calls" -eq 1 ]; then return {first_status}; fi
+    return {retry_status}
+}}
+sleep() {{ printf 'sleep:%s\\n' "$*"; }}
+"""
+    result = subprocess.run(
+        [bash, "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", stubs + command],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=TEST_WATCHDOG_SECONDS,
+        env=dict(os.environ),
+    )
+
+    assert result.returncode == expected_status, result.stderr
+    invocation = "uv:run --frozen --no-sync jupyter-book build --site --strict --check-links"
+    events = [line for line in result.stdout.splitlines() if line.startswith(("uv:", "sleep:"))]
+    assert events == ([invocation] if attempts == 1 else [invocation, "sleep:30", invocation])
 
 
 def test_docs_and_dependency_inputs_trigger_pr_validation_and_main_publication() -> None:
