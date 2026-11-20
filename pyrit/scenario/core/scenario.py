@@ -188,6 +188,11 @@ class Scenario(ABC):
     #: scenarios reject pools and declared dataset requirements explicitly, so neither is silently ignored.
     SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = False
 
+    # Whether building gives every selected technique the scenario's objective scoring and, under
+    # SKIP, skips a technique no objective scorer can judge. Readiness then ignores what such a
+    # technique alone needs.
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = False
+
     #: Whether the scenario applies ``technique_converters``. Scenarios that don't set this to
     #: False so the parameter isn't declared, and passing it fails instead of being ignored.
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = True
@@ -1354,6 +1359,35 @@ class Scenario(ABC):
         """
         return []
 
+    def _skips_technique(self, factory: "AttackTechniqueFactory") -> bool:
+        """
+        Whether building would skip this technique, so readiness ignores what it alone needs.
+
+        Args:
+            factory (AttackTechniqueFactory): The selected attack technique.
+
+        Returns:
+            bool: True under SKIP when the objective target, or every objective scorer in a scenario
+                that judges each technique with its own scoring, fails the technique's requirements.
+        """
+        if self._incompatible_technique_policy is not IncompatibleTechniquePolicy.SKIP:
+            return False
+        if self._objective_target is not None and self._get_target_requirements(factory).check_target(
+            target=self._objective_target, attack_class=factory.attack_class
+        ):
+            return True
+        if not type(self)._SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE:
+            return False
+        if self._objective_scorer_pool is not None:
+            scorers: list[TrueFalseScorer] = [candidate.scorer for candidate in self._objective_scorer_pool.candidates]
+        else:
+            try:
+                scorers = [self._objective_scorer]
+            except ValueError:
+                # Readiness reports the unresolved scorer; only the scoring config can be checked.
+                return bool(factory.check_objective_scorer())
+        return all(factory.check_objective_scorer(scorer=scorer) for scorer in scorers)
+
     def _requires_default_adversarial_target(self) -> bool:
         if self._supplied_adversarial_target is not None:
             return True
@@ -1361,19 +1395,7 @@ class Scenario(ABC):
             return self._uses_default_adversarial_target
         factories = self._get_readiness_factories()
         selected = [factories.get(technique.value) for technique in self._scenario_techniques]
-        if (
-            self._incompatible_technique_policy is IncompatibleTechniquePolicy.SKIP
-            and self._objective_target is not None
-        ):
-            selected = [
-                factory
-                for factory in selected
-                if factory is None
-                or not self._get_target_requirements(factory).check_target(
-                    target=self._objective_target,
-                    attack_class=factory.attack_class,
-                )
-            ]
+        selected = [factory for factory in selected if factory is None or not self._skips_technique(factory)]
         return any(factory is not None and factory.uses_default_adversarial_target for factory in selected) or (
             any(factory is None for factory in selected) and self.uses_default_adversarial_target
         )
@@ -1499,11 +1521,7 @@ class Scenario(ABC):
                             remediation="Select a compatible target or technique.",
                         )
                     )
-            if factory.adversarial_chat is not None and (
-                self._objective_target is None
-                or not errors
-                or self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE
-            ):
+            if factory.adversarial_chat is not None and not self._skips_technique(factory):
                 try:
                     validate_default_adversarial_target(factory.adversarial_chat)
                     errors = factory.check_adversarial_target(target=factory.adversarial_chat)
@@ -1548,15 +1566,7 @@ class Scenario(ABC):
                 errors = self._check_adversarial_target(target=target)
                 for technique in self._scenario_techniques:
                     factory = factories.get(technique.value)
-                    if factory is None or not factory.uses_default_adversarial_target:
-                        continue
-                    if (
-                        self._objective_target is not None
-                        and self._incompatible_technique_policy is IncompatibleTechniquePolicy.SKIP
-                        and self._get_target_requirements(factory).check_target(
-                            target=self._objective_target, attack_class=factory.attack_class
-                        )
-                    ):
+                    if factory is None or not factory.uses_default_adversarial_target or self._skips_technique(factory):
                         continue
                     errors.extend(factory.check_adversarial_target(target=target))
                 for reason in dict.fromkeys(errors):
