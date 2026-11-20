@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.models import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, ScorerCapabilityName
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration
@@ -35,7 +35,9 @@ def mock_objective_scorer() -> MagicMock:
     mock = MagicMock(spec=TrueFalseScorer)
     mock.get_identifier.return_value = _mock_id("MockObjectiveScorer")
     # Like the default composite scorer, it keeps no float value on its verdicts.
-    mock.capabilities.preserves_float_scale_value = False
+    mock.capabilities.includes.side_effect = lambda *, capability: (
+        capability is not ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE
+    )
     return mock
 
 

@@ -13,8 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.assert_mocks import make_assert_config, make_assert_result
 
-from pyrit.executor.attack import AttackStrategy, PromptSendingAttack, RedTeamingAttack
-from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
+from pyrit.executor.attack import AttackScoringConfig, AttackStrategy, PromptSendingAttack, RedTeamingAttack
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
@@ -25,6 +24,7 @@ from pyrit.models import (
     ComponentIdentifier,
     ScenarioEvaluationIdentifier,
     ScenarioRunPlanGroupKind,
+    ScorerCapabilityName,
     SeedGroupRequirements,
     SeedObjective,
     SeedPrompt,
@@ -51,7 +51,7 @@ from pyrit.scenario.scenarios.adaptive import (
 )
 from pyrit.score import SubStringScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques.core import get_technique_factories
-from tests.unit.mocks import MockPromptTarget
+from tests.unit.mocks import MockPromptTarget, accept_scenario_scoring
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -77,7 +77,9 @@ def mock_objective_scorer() -> MagicMock:
     mock = MagicMock(spec=TrueFalseScorer)
     mock.get_identifier.return_value = _mock_id("MockObjectiveScorer")
     # Like the default composite scorer, it keeps no float value on its verdicts.
-    mock.capabilities.preserves_float_scale_value = False
+    mock.capabilities.includes.side_effect = lambda *, capability: (
+        capability is not ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE
+    )
     return mock
 
 
@@ -122,18 +124,27 @@ def _make_seed_group(*, value: str, harm_categories: list[str] | None = None) ->
     return AttackSeedGroup(seeds=[SeedObjective(value=value, harm_categories=harm_categories)])
 
 
+class _NarrowScoringConfig(AttackScoringConfig):
+    pass
+
+
+class _NarrowScoringAttack(PromptSendingAttack):
+    def __init__(
+        self, *, objective_target: PromptTarget, attack_scoring_config: _NarrowScoringConfig | None = None
+    ) -> None:
+        super().__init__(objective_target=objective_target, attack_scoring_config=attack_scoring_config)
+
+
 def _make_fake_factory(
     *,
     seed_technique: AttackTechniqueSeedGroup | None = None,
     adversarial_chat: PromptTarget | None = None,
-    scoring_config_type: type | None = None,
     requirements: TechniqueRequirements | None = None,
 ) -> MagicMock:
     """Return a stub attack-technique factory that produces a fake ``AttackTechnique``.
 
     Mocks the surface ``AdaptiveScenario._build_techniques_dict`` consumes
-    (``factory.create(...)``, ``factory.adversarial_chat``, and
-    ``factory.scoring_config_type``). Each call assigns a unique fake
+    (``factory.create(...)`` and ``factory.adversarial_chat``). Each call assigns a unique fake
     attack identifier (via a fresh UUID) so the bundle dict keys (eval
     hashes) don't collide across calls — no shared mutable test state, so
     test execution order doesn't shift hash values.
@@ -155,8 +166,7 @@ def _make_fake_factory(
     factory.create.return_value = fake_technique
     factory.adversarial_chat = adversarial_chat
     factory.resolve_adversarial_chat.return_value = adversarial_chat
-    factory.scoring_config_type = scoring_config_type
-    return factory
+    return accept_scenario_scoring(factory)
 
 
 FIXTURES = ["patch_central_database", "mock_runtime_env", "mock_dataset_preparation"]
@@ -815,99 +825,6 @@ class TestTextAdaptiveAtomicAttacks:
         assert len(attacks) == 1
         assert any("dataset 'hate': skipped 1 seed group" in record.getMessage() for record in caplog.records)
 
-    async def test_factory_with_narrowed_scoring_config_type_receives_subtype(
-        self, mock_objective_target, mock_objective_scorer
-    ):
-        """When a factory's attack class narrows ``attack_scoring_config`` to a
-        subtype, the scenario builds and passes that subtype to ``create``."""
-        from pyrit.executor.attack import AttackScoringConfig
-
-        class NarrowScoringConfig(AttackScoringConfig):
-            pass
-
-        groups = {"violence": [_make_seed_group(value="obj")]}
-        narrow_factory = _make_fake_factory(scoring_config_type=NarrowScoringConfig)
-        with (
-            patch.object(
-                DatasetAttackConfiguration,
-                "get_attack_groups_by_dataset_async",
-                new_callable=AsyncMock,
-                return_value=groups,
-            ),
-        ):
-            scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            technique_class = scenario.get_technique_class()
-            with patch.object(
-                scenario,
-                "_get_attack_technique_factories",
-                return_value={"role_play_movie_script": narrow_factory},
-            ):
-                scenario.set_params_from_args(
-                    args={
-                        "objective_target": mock_objective_target,
-                        "include_baseline": False,
-                        "scenario_techniques": [technique_class("role_play_movie_script")],
-                    }
-                )
-                await scenario.initialize_async()
-
-        narrow_factory.create.assert_called_once()
-        kwargs = narrow_factory.create.call_args.kwargs
-        passed_config = kwargs["attack_scoring_config"]
-        assert isinstance(passed_config, NarrowScoringConfig)
-        assert passed_config.objective_scorer is mock_objective_scorer
-
-    async def test_factory_with_incompatible_narrowed_scoring_config_is_skipped(
-        self, mock_objective_target, mock_objective_scorer, caplog
-    ):
-        """When the narrowed ``attack_scoring_config`` subtype rejects the
-        scenario's objective scorer, the technique is skipped with a warning
-        rather than silently falling back to the base config (which could let
-        a WARN-policy factory substitute its internal default scorer)."""
-        import logging
-
-        class StrictScoringConfig(TAPAttackScoringConfig):
-            pass
-
-        groups = {"violence": [_make_seed_group(value="obj")]}
-        good_factory = _make_fake_factory()
-        strict_factory = _make_fake_factory(scoring_config_type=StrictScoringConfig)
-
-        with (
-            patch.object(
-                DatasetAttackConfiguration,
-                "get_attack_groups_by_dataset_async",
-                new_callable=AsyncMock,
-                return_value=groups,
-            ),
-        ):
-            scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            technique_class = scenario.get_technique_class()
-            factories = {"role_play_movie_script": good_factory, "tap": strict_factory}
-            with patch.object(scenario, "_get_attack_technique_factories", return_value=factories):
-                with caplog.at_level(logging.WARNING):
-                    scenario.set_params_from_args(
-                        args={
-                            "objective_target": mock_objective_target,
-                            "include_baseline": False,
-                            "scenario_techniques": [technique_class("role_play_movie_script"), technique_class("tap")],
-                        }
-                    )
-                    await scenario.initialize_async()
-                    techniques = scenario._build_techniques_dict(
-                        context=scenario._build_scenario_context(seed_groups_by_dataset={})
-                    )
-
-        # Strict factory's create is never called — incompatibility surfaces
-        # before construction, not via the factory's override policy.
-        strict_factory.create.assert_not_called()
-        # Only the compatible technique remains in the pool.
-        technique_names = {b.name for b in techniques.values()}
-        assert technique_names == {"role_play_movie_script"}
-        # The skip reason mentions the required config type so operators can
-        # diagnose the mismatch.
-        assert any("tap" in r.getMessage() and "StrictScoringConfig" in r.getMessage() for r in caplog.records)
-
     async def test_a_technique_needing_float_feedback_is_skipped_with_its_reason(
         self, mock_objective_target, mock_objective_scorer, caplog
     ):
@@ -946,7 +863,48 @@ class TestTextAdaptiveAtomicAttacks:
 
         ranking_factory.create.assert_not_called()
         assert {b.name for b in techniques.values()} == {"role_play_movie_script"}
-        assert any("does not keep the float value" in r.getMessage() for r in caplog.records)
+        assert any("requires 'preserves_float_scale_value'" in r.getMessage() for r in caplog.records)
+
+    async def test_a_technique_that_would_drop_the_scenario_scorer_is_skipped(
+        self, mock_objective_target, mock_objective_scorer, caplog
+    ):
+        """An attack whose annotation drops a plain scoring config never runs with its own judge."""
+        import logging
+
+        groups = {"violence": [_make_seed_group(value="obj")]}
+        narrow = AttackTechniqueFactory(name="many_shot", attack_class=_NarrowScoringAttack)
+        factories = {"role_play_movie_script": _make_fake_factory(), "many_shot": narrow}
+
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
+            scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
+            technique_class = scenario.get_technique_class()
+            with (
+                patch.object(scenario, "_get_attack_technique_factories", return_value=factories),
+                patch.object(narrow, "create", side_effect=AssertionError("Constructed incompatible technique")),
+                caplog.at_level(logging.WARNING),
+            ):
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                        "scenario_techniques": [
+                            technique_class("role_play_movie_script"),
+                            technique_class("many_shot"),
+                        ],
+                    }
+                )
+                await scenario.initialize_async()
+                techniques = scenario._build_techniques_dict(
+                    context=scenario._build_scenario_context(seed_groups_by_dataset={})
+                )
+
+        assert {b.name for b in techniques.values()} == {"role_play_movie_script"}
+        assert any("requires _NarrowScoringConfig" in r.getMessage() for r in caplog.records)
 
     async def test_factory_create_failure_propagates_async(self, mock_objective_target, mock_objective_scorer):
         """Unrelated factory construction errors must not become skipped work."""

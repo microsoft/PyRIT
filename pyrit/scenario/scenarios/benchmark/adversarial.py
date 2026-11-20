@@ -43,7 +43,6 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import (
 )
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
-from pyrit.scenario.core.technique_requirements import IncompatibleTechniquePolicy
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -160,6 +159,7 @@ class AdversarialBenchmark(Scenario):
     #: as v8. Cache reuse also requires this version so implementation changes cannot
     #: silently reuse results produced by an incompatible benchmark definition.
     VERSION: int = 8
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = True
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.
@@ -582,15 +582,7 @@ class AdversarialBenchmark(Scenario):
                 errors.append(str(exc))
             for technique in self._scenario_techniques:
                 factory = factories.get(technique.value)
-                if factory is None:
-                    continue
-                if (
-                    self._objective_target is not None
-                    and self._incompatible_technique_policy is IncompatibleTechniquePolicy.SKIP
-                    and factory.requirements.check_target(
-                        target=self._objective_target, attack_class=factory.attack_class
-                    )
-                ):
+                if factory is None or self._skips_technique(factory):
                     continue
                 errors.extend(factory.check_adversarial_target(target=target))
             for reason in dict.fromkeys(errors):

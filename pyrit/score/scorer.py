@@ -30,6 +30,7 @@ from pyrit.models import (
     ScorableUnion,
     Score,
     ScorerCapabilities,
+    ScorerCapabilityName,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
     ScoreStatus,
@@ -306,6 +307,9 @@ class Scorer(Identifiable, abc.ABC):
     #: Wrappers expose their children instead of declaring their own criterion.
     CONDITION_TYPE: ClassVar[type[Condition] | None] = None
     SUPPORTED_SCORABLE_TYPES: ClassVar[tuple[type[Scorable], ...]] = ()
+    #: The result family every instance of the class returns: ``TRUE_FALSE`` or ``FLOAT_SCALE``.
+    #: Float feedback is promised only through ``_preserves_float_scale_value``, which scoring enforces.
+    CAPABILITIES: ClassVar[frozenset[ScorerCapabilityName]] = frozenset()
 
     _identifier: ComponentIdentifier | None = None
 
@@ -316,7 +320,8 @@ class Scorer(Identifiable, abc.ABC):
         See ``.github/instructions/scorers.instructions.md`` for the contract.
 
         Raises:
-            TypeError: If a subclass declares invalid or independently derived condition capabilities.
+            TypeError: If a subclass declares invalid or independently derived condition capabilities,
+                or a ``CAPABILITIES`` set other than its result family.
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
@@ -335,7 +340,29 @@ class Scorer(Identifiable, abc.ABC):
             "_get_child_scorers" in base.__dict__ for base in cls.__mro__ if base is not Scorer
         ):
             raise TypeError(f"{cls.__name__} wraps scorers and cannot declare its own CONDITION_TYPE.")
+        cls._check_result_family()
         _adapt_legacy_message_scorer(cls)
+
+    @classmethod
+    def _check_result_family(cls) -> None:
+        """
+        Require ``CAPABILITIES`` to name at most one result family, keeping any family a base declares.
+
+        Raises:
+            TypeError: If it names another guarantee, combines both families, or drops an inherited family.
+        """
+        families = frozenset({ScorerCapabilityName.TRUE_FALSE, ScorerCapabilityName.FLOAT_SCALE})
+        declared = frozenset(cls.CAPABILITIES)
+        if declared - families:
+            raise TypeError(
+                f"{cls.__name__}.CAPABILITIES may name only its result family. Override "
+                "_preserves_float_scale_value to promise float feedback, so scoring enforces the promise."
+            )
+        inherited = families & frozenset().union(*[getattr(base, "CAPABILITIES", ()) for base in cls.__mro__[1:]])
+        if len(declared | inherited) > 1:
+            raise TypeError(f"{cls.__name__} cannot return both true/false and float-scale results.")
+        if not inherited <= declared:
+            raise TypeError(f"{cls.__name__}.CAPABILITIES must keep the result family its base declares.")
 
     def __init__(
         self,
@@ -567,20 +594,16 @@ class Scorer(Identifiable, abc.ABC):
     @property
     def scorer_type(self) -> ScoreType:
         """
-        The scorer type based on class hierarchy.
+        The scorer type, from the result family the scorer declares.
 
         Returns:
-            ScoreType: "true_false" for TrueFalseScorerBase subclasses,
-                      "float_scale" for FloatScaleScorerBase subclasses,
+            ScoreType: "true_false" for scorers declaring ``TRUE_FALSE``,
+                      "float_scale" for scorers declaring ``FLOAT_SCALE``,
                       "unknown" for other scorers.
         """
-        # Import here to avoid circular imports
-        from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
-        from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
-
-        if isinstance(self, TrueFalseScorer):
+        if ScorerCapabilityName.TRUE_FALSE in self.CAPABILITIES:
             return "true_false"
-        if isinstance(self, FloatScaleScorer):
+        if ScorerCapabilityName.FLOAT_SCALE in self.CAPABILITIES:
             return "float_scale"
         return "unknown"
 
@@ -590,18 +613,20 @@ class Scorer(Identifiable, abc.ABC):
         Describe what this configured scorer accepts and guarantees, without scoring.
 
         The view is derived from the scorer's existing contracts (supported evidence types,
-        condition coverage, result family) plus ``_preserves_float_scale_value``, so it is
-        never a second declaration that can drift. Building it constructs nothing and calls
-        no model.
+        condition coverage, declared ``CAPABILITIES``) plus ``_preserves_float_scale_value``,
+        so it is never a second declaration that can drift. Building it constructs nothing
+        and calls no model.
 
         Returns:
             ScorerCapabilities: The derived capability view.
         """
+        supported = set(self.CAPABILITIES)
+        if self._preserves_float_scale_value():
+            supported.add(ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE)
         return ScorerCapabilities(
             scorable_types=self.get_supported_scorable_types(),
             condition_types=self.get_condition_types(),
-            result_family=self.scorer_type,
-            preserves_float_scale_value=self._preserves_float_scale_value(),
+            supported=frozenset(supported),
         )
 
     def _validate_float_feedback(self, *, scores: Sequence[Score]) -> None:

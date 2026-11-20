@@ -10,6 +10,7 @@ and memory_labels consistently according to the established contracts.
 
 import dataclasses
 import importlib
+import inspect
 import pkgutil
 import uuid
 from contextlib import suppress
@@ -25,14 +26,17 @@ from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackParameters,
     AttackScoringConfig,
+    AttackStrategy,
+    ChunkedRequestAttack,
     CrescendoAttack,
+    MultiPromptSendingAttack,
+    PAIRAttack,
     PromptSendingAttack,
     RedTeamingAttack,
     RTASystemPromptPaths,
     TAPSystemPromptPaths,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackSeedGroup,
@@ -42,13 +46,14 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
     Score,
+    ScorerCapabilityName,
     SeedDataset,
     SeedObjective,
     SeedPrompt,
     get_common_json_schema,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
+from pyrit.score import FloatScaleThresholdScorer, ScorerRequirements, TrueFalseScorer
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
@@ -345,7 +350,7 @@ def tap_attack(
     """Create a pre-configured TreeOfAttacksWithPruningAttack with mocked normalizer."""
     mock_objective_scorer.score_async.return_value = [success_score]
 
-    # TAP requires a FloatScaleThresholdScorer for objective_scorer
+    # TAP requires a verdict that keeps its float value, as a FloatScaleThresholdScorer's does
     mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
     mock_threshold_scorer.threshold = 0.8
     mock_threshold_scorer.scorer_type = "true_false"
@@ -355,7 +360,7 @@ def tap_attack(
     mock_threshold_scorer.get_identifier.return_value = _mock_scorer_id("FloatScaleThresholdScorer")
 
     adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
-    scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
+    scoring_config = AttackScoringConfig(objective_scorer=mock_threshold_scorer)
 
     attack = TreeOfAttacksWithPruningAttack(
         objective_target=mock_chat_target,
@@ -564,7 +569,7 @@ class TestNextMessageSentFirst:
         """Test that TreeOfAttacksWithPruningAttack uses next_message for the first turn on all nodes."""
         mock_objective_scorer.score_async.return_value = [success_score]
 
-        # TAP requires a FloatScaleThresholdScorer for objective_scorer
+        # TAP requires a verdict that keeps its float value, as a FloatScaleThresholdScorer's does
         mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
         mock_threshold_scorer.threshold = 0.8
         mock_threshold_scorer.scorer_type = "true_false"
@@ -574,7 +579,7 @@ class TestNextMessageSentFirst:
         mock_threshold_scorer.get_identifier.return_value = _mock_scorer_id("FloatScaleThresholdScorer")
 
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
-        scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
+        scoring_config = AttackScoringConfig(objective_scorer=mock_threshold_scorer)
 
         attack = TreeOfAttacksWithPruningAttack(
             objective_target=mock_chat_target,
@@ -917,7 +922,7 @@ class TestPrependedConversationInMemory:
         """Test that TreeOfAttacksWithPruningAttack preserves prepended conversation in memory."""
         mock_objective_scorer.score_async.return_value = [success_score]
 
-        # TAP requires a FloatScaleThresholdScorer for objective_scorer
+        # TAP requires a verdict that keeps its float value, as a FloatScaleThresholdScorer's does
         mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
         mock_threshold_scorer.threshold = 0.8
         mock_threshold_scorer.scorer_type = "true_false"
@@ -927,7 +932,7 @@ class TestPrependedConversationInMemory:
         mock_threshold_scorer.get_identifier.return_value = _mock_scorer_id("FloatScaleThresholdScorer")
 
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
-        scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
+        scoring_config = AttackScoringConfig(objective_scorer=mock_threshold_scorer)
 
         attack = TreeOfAttacksWithPruningAttack(
             objective_target=mock_chat_target,
@@ -1277,3 +1282,69 @@ async def test_params_types_propagate_targeted_harm_categories(params_type) -> N
     params = await params_type.from_seed_group_async(seed_group=seed_group)
 
     assert params.targeted_harm_categories == ["violence"]
+
+
+# =============================================================================
+# Test: Every attack enforces its declared objective scorer requirements
+# =============================================================================
+
+_REQUIRES_FLOAT_FEEDBACK = ScorerRequirements(
+    required=frozenset({ScorerCapabilityName.TRUE_FALSE, ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE})
+)
+
+
+def _plain_true_false_scorer() -> MagicMock:
+    """A true/false scorer that keeps no float value on its verdicts."""
+    scorer = MagicMock(spec=TrueFalseScorer)
+    scorer.get_identifier.return_value = _mock_scorer_id("PlainJudge")
+    scorer.capabilities.includes.side_effect = lambda *, capability: capability is ScorerCapabilityName.TRUE_FALSE
+    return scorer
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestObjectiveScorerRequirementsAcrossAttacks:
+    """Attacks check the objective scorer against OBJECTIVE_SCORER_REQUIREMENTS when constructed."""
+
+    @pytest.mark.parametrize(
+        "attack_class",
+        [
+            PromptSendingAttack,
+            MultiPromptSendingAttack,
+            ChunkedRequestAttack,
+            RedTeamingAttack,
+            CrescendoAttack,
+            TreeOfAttacksWithPruningAttack,
+            PAIRAttack,
+        ],
+        ids=lambda attack_class: attack_class.__name__,
+    )
+    def test_each_attack_rejects_a_scorer_missing_a_declared_capability(
+        self,
+        attack_class: type[AttackStrategy],
+        monkeypatch: pytest.MonkeyPatch,
+        mock_chat_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+    ) -> None:
+        monkeypatch.setattr(attack_class, "OBJECTIVE_SCORER_REQUIREMENTS", _REQUIRES_FLOAT_FEEDBACK)
+        kwargs = {
+            "objective_target": mock_chat_target,
+            "attack_scoring_config": AttackScoringConfig(objective_scorer=_plain_true_false_scorer()),
+        }
+        if "attack_adversarial_config" in inspect.signature(attack_class).parameters:
+            kwargs["attack_adversarial_config"] = AttackAdversarialConfig(target=mock_adversarial_chat)
+
+        with pytest.raises(
+            ValueError, match=rf"{attack_class.__name__} objective scorer: .*'preserves_float_scale_value'"
+        ):
+            attack_class(**kwargs)
+
+    def test_attacks_decide_success_from_a_true_false_verdict(self) -> None:
+        for module_info in pkgutil.walk_packages(pyrit.executor.attack.__path__, "pyrit.executor.attack."):
+            importlib.import_module(module_info.name)
+        pending: list[type] = [AttackStrategy]
+        while pending:
+            attack_class = pending.pop()
+            pending.extend(attack_class.__subclasses__())
+            assert ScorerCapabilityName.TRUE_FALSE in attack_class.OBJECTIVE_SCORER_REQUIREMENTS.required, (
+                attack_class.__name__
+            )

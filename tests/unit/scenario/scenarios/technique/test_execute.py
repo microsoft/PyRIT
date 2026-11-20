@@ -100,6 +100,17 @@ class _Scale(FloatScaleScorer):
         return []
 
 
+class _NarrowScoringConfig(AttackScoringConfig):
+    pass
+
+
+class _NarrowScoringAttack(PromptSendingAttack):
+    def __init__(
+        self, *, objective_target: MockPromptTarget, attack_scoring_config: _NarrowScoringConfig | None = None
+    ) -> None:
+        super().__init__(objective_target=objective_target, attack_scoring_config=attack_scoring_config)
+
+
 @pytest.fixture
 def scorer() -> MagicMock:
     result = MagicMock(spec=TrueFalseScorer)
@@ -791,8 +802,16 @@ class TestExecute:
 
     async def test_tap_needs_a_scorer_that_keeps_float_feedback_async(self) -> None:
         scenario = _scenario(scorer=SubStringScorer(substring="x"), scenario_techniques=["tap"])
-        with pytest.raises(IncompatibleTechniqueError, match="'tap' ranks by float feedback"):
+        with pytest.raises(IncompatibleTechniqueError, match="requires 'preserves_float_scale_value'"):
             await scenario.initialize_async()
+
+    async def test_an_attack_that_would_drop_the_scenario_scorer_is_rejected_async(self, *, scorer: MagicMock) -> None:
+        factory = AttackTechniqueFactory(name="narrow_scoring", attack_class=_NarrowScoringAttack)
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        scenario = _scenario(scorer=scorer, scenario_techniques=["narrow_scoring"])
+        with patch.object(factory, "create", side_effect=AssertionError("Constructed incompatible technique")):
+            with pytest.raises(IncompatibleTechniqueError, match="requires _NarrowScoringConfig"):
+                await scenario.initialize_async()
 
     async def test_tap_judges_with_the_scenario_scorer_async(self) -> None:
         scorer = FloatScaleThresholdScorer(scorer=_Scale(), threshold=0.7)
@@ -802,17 +821,7 @@ class TestExecute:
 
         attack = scenario._atomic_attacks[0].attack_technique.attack
         assert isinstance(attack, TreeOfAttacksWithPruningAttack)
-        # A plain config is dropped for an attack that narrows its config type, which would
-        # leave TAP judging with its own default scorer.
         assert attack._objective_scorer is scorer
-
-    async def test_a_config_type_that_cannot_carry_the_scorer_is_rejected_async(self, scorer: MagicMock) -> None:
-        scenario = _scenario(scorer=scorer)
-        with (
-            patch("pyrit.scenario.scenarios.technique.execute.build_technique_scoring_config", return_value=None),
-            pytest.raises(IncompatibleTechniqueError, match="cannot carry the objective scorer"),
-        ):
-            await scenario.initialize_async()
 
     @pytest.mark.parametrize("retries", [0, 2])
     async def test_permitted_history_adaptation_is_applied_to_each_attempt_async(self, *, retries: int) -> None:
