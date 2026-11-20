@@ -4,7 +4,6 @@
 import asyncio
 import hashlib
 import math
-import string
 from collections import Counter
 from io import BytesIO
 from pathlib import Path
@@ -27,35 +26,29 @@ async def _read_image_async(path: str) -> Image.Image:
         return image.convert("RGB")
 
 
-def test_bundled_font_is_unmodified() -> None:
-    data = TextToImageConverter._UGLY_GERRY_FONT_PATH.read_bytes()
-    assert hashlib.sha256(data).hexdigest() == "38332905de7a8bcbda48038edd7cc5dfd26924b3991eebfc9f8ca84b0b35f1e4"
-    font = ImageFont.truetype(BytesIO(data), size=64)
-    assert font.getname() == ("Gerry", "Regular")
-    for character in string.ascii_uppercase + "!',.?":
-        assert font.getmask(character).getbbox() is not None
+def _write_local_font(*, path: Path, size: int = 64) -> ImageFont.FreeTypeFont:
+    font = ImageFont.load_default(size=size)
+    assert isinstance(font, ImageFont.FreeTypeFont)
+    path.write_bytes(font.font_bytes)
+    return ImageFont.truetype(BytesIO(font.font_bytes), size=size)
 
 
-@pytest.mark.usefixtures("patch_central_database")
-async def test_convert_async_renders_the_bundled_district_glyphs() -> None:
-    converter = TextToImageConverter(font="ugly_gerry")
-    result = await converter.convert_async(prompt="Hello, World!")
-    with await _read_image_async(result.output_text) as actual:
-        font = ImageFont.truetype(str(converter._UGLY_GERRY_FONT_PATH), size=64)
-        left, top, right, bottom = font.getbbox("HELLO, WORLD!")
-        with Image.new("RGB", (right - left + 40, bottom - top + 40), "white") as expected:
-            ImageDraw.Draw(expected).text((20 - left, 20 - top), "HELLO, WORLD!", fill="black", font=font)
-            assert actual.size == expected.size
-            assert actual.tobytes() == expected.tobytes()
-        assert result.output_type == "image_path"
-        assert ImageChops.difference(actual, Image.new("RGB", actual.size, "white")).getbbox() is not None
+def _max_repeated_characters_that_fit(
+    *, converter: TextToImageConverter, font: ImageFont.FreeTypeFont, character: str
+) -> int:
+    width = converter._max_width - 2 * converter._padding
+    count = 1
+    while True:
+        left, _, right, _ = font.getbbox(character * (count + 1))
+        if right - left > width:
+            return count
+        count += 1
 
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("concurrent", [False, True])
-@pytest.mark.parametrize("font", [None, "ugly_gerry"])
-async def test_convert_async_uses_unique_files(concurrent: bool, font: str | None) -> None:
-    converter = TextToImageConverter(font=font)
+async def test_convert_async_uses_unique_files(concurrent: bool) -> None:
+    converter = TextToImageConverter()
     if concurrent:
         results = await asyncio.gather(*(converter.convert_async(prompt="Same prompt") for _ in range(3)))
     else:
@@ -69,31 +62,10 @@ async def test_convert_async_uses_unique_files(concurrent: bool, font: str | Non
             image.close()
 
 
-@pytest.mark.usefixtures("patch_central_database")
-async def test_convert_async_normalizes_case_and_line_endings() -> None:
-    converter = TextToImageConverter(font="ugly_gerry")
-    results = [
-        await converter.convert_async(prompt=prompt)
-        for prompt in ("hello\n\nworld!", "HELLO\r\n\r\nWORLD!", "Hello\r\rWorld!")
-    ]
-    images = [await _read_image_async(result.output_text) for result in results]
-    try:
-        assert all(image.tobytes() == images[0].tobytes() for image in images)
-    finally:
-        for image in images:
-            image.close()
-
-
 @pytest.mark.parametrize("prompt", ["", " ", "\n\r"])
 async def test_convert_async_rejects_blank_prompt(prompt: str) -> None:
     with pytest.raises(ValueError, match="valid text"):
         await TextToImageConverter().convert_async(prompt=prompt)
-
-
-@pytest.mark.parametrize("character", ["0", "9", ":", "-", "\t", "\u00e9", "\u00df", "\U0001f600", "\x00"])
-async def test_convert_async_rejects_unsupported_characters(character: str) -> None:
-    with pytest.raises(ValueError, match="does not support"):
-        await TextToImageConverter(font="ugly_gerry").convert_async(prompt=f"Hello{character}")
 
 
 async def test_convert_async_rejects_non_text_input() -> None:
@@ -121,27 +93,12 @@ def test_init_rejects_invalid_parameters(parameters: dict[str, object]) -> None:
         TextToImageConverter(**parameters)  # type: ignore[arg-type]
 
 
-def test_init_does_not_fall_back_when_bundled_font_is_missing(tmp_path: Path) -> None:
-    with patch.object(TextToImageConverter, "_UGLY_GERRY_FONT_PATH", tmp_path / "missing.otf"):
-        with pytest.raises(FileNotFoundError):
-            TextToImageConverter(font="ugly_gerry")
-
-
-def test_init_does_not_fall_back_when_bundled_font_is_corrupt(tmp_path: Path) -> None:
-    font_path = tmp_path / "corrupt.otf"
-    font_path.write_bytes(b"not a font")
-    with patch.object(TextToImageConverter, "_UGLY_GERRY_FONT_PATH", font_path):
-        with pytest.raises(OSError):
-            TextToImageConverter(font="ugly_gerry")
-
-
 @pytest.mark.parametrize(
     "text",
-    ["W" * 50, "I" * 100, string.ascii_uppercase, "HI THERE\n\nWORLD!", "VV\nAA\nYY\nGG"],
+    ["W" * 50, "I" * 100, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "HI THERE\n\nWORLD!", "VV\nAA\nYY\nGG"],
 )
-@pytest.mark.parametrize("font_name", [None, "ugly_gerry"])
-def test_wrapping_preserves_characters_and_fits_pixel_width(text: str, font_name: str | None) -> None:
-    converter = TextToImageConverter(font=font_name, max_width=180)
+def test_wrapping_preserves_characters_and_fits_pixel_width(text: str) -> None:
+    converter = TextToImageConverter(max_width=180)
     font = converter._load_font()
     lines = [line for line, _ in converter._iter_wrapped_lines(text=text, font=font)]
     assert "".join(lines) == text.replace("\n", "")
@@ -157,23 +114,25 @@ def test_wrapping_preserves_characters_and_fits_pixel_width(text: str, font_name
 
 
 def test_wrapping_measures_repeated_candidates_once() -> None:
-    converter = TextToImageConverter(font="ugly_gerry")
-    font = ImageFont.truetype(str(converter._UGLY_GERRY_FONT_PATH), size=64)
+    converter = TextToImageConverter()
+    font = converter._load_font()
     prompt = "A" * 10_000
+    characters_per_line = _max_repeated_characters_that_fit(converter=converter, font=font, character="A")
     with patch.object(font, "getbbox", wraps=font.getbbox) as measure:
         wrapped = list(converter._iter_wrapped_lines(text=prompt, font=font))
     lines = [line for line, _ in wrapped]
     assert "".join(lines) == prompt
-    assert lines[:-1] == ["A" * 14] * (len(lines) - 1)
-    assert lines[-1] == "A" * 4
+    assert lines[:-1] == ["A" * characters_per_line] * (len(lines) - 1)
+    assert lines[-1] == "A" * (len(prompt) % characters_per_line)
     counts = Counter(call.args[0] for call in measure.call_args_list)
-    assert len(counts) == 15
+    assert len(counts) == characters_per_line + 1
     assert all(count == 1 for count in counts.values())
 
 
 def test_wrapping_measurement_cache_is_bounded() -> None:
-    converter = TextToImageConverter(font="ugly_gerry", max_width=122)
-    font = ImageFont.truetype(str(converter._UGLY_GERRY_FONT_PATH), size=64)
+    font = TextToImageConverter()._load_font()
+    single_width = max(font.getlength("A"), font.getlength("B"))
+    converter = TextToImageConverter(max_width=math.ceil(single_width) + 40)
     with (
         patch.object(converter, "_MEASUREMENT_CACHE_SIZE", 2),
         patch.object(font, "getbbox", wraps=font.getbbox) as measure,
@@ -186,8 +145,8 @@ def test_wrapping_measurement_cache_is_bounded() -> None:
 
 
 def test_wrapping_measurement_cache_is_local_to_each_layout() -> None:
-    converter = TextToImageConverter(font="ugly_gerry")
-    font = ImageFont.truetype(str(converter._UGLY_GERRY_FONT_PATH), size=64)
+    converter = TextToImageConverter()
+    font = converter._load_font()
     with patch.object(font, "getbbox", wraps=font.getbbox) as measure:
         first = list(converter._iter_wrapped_lines(text="AAA", font=font))
         second = list(converter._iter_wrapped_lines(text="AAA", font=font))
@@ -197,35 +156,37 @@ def test_wrapping_measurement_cache_is_local_to_each_layout() -> None:
 
 
 def test_rendering_reuses_measurements_for_completed_lines() -> None:
-    converter = TextToImageConverter(font="ugly_gerry")
-    font = ImageFont.truetype(str(converter._UGLY_GERRY_FONT_PATH), size=64)
+    converter = TextToImageConverter()
+    font = converter._load_font()
+    characters_per_line = _max_repeated_characters_that_fit(converter=converter, font=font, character="A")
     with (
-        patch.object(ImageFont, "truetype", return_value=font),
+        patch.object(converter, "_load_font", return_value=font),
         patch.object(font, "getbbox", wraps=font.getbbox) as measure,
     ):
         converter._render_png("A" * 70)
     counts = Counter(call.args[0] for call in measure.call_args_list)
-    assert len(counts) == 15
+    assert len(counts) == characters_per_line + 1
     assert all(count == 1 for count in counts.values())
 
 
 def test_rendering_rejects_oversized_layout_before_consuming_all_lines() -> None:
-    converter = TextToImageConverter(font="ugly_gerry")
-    font = ImageFont.truetype(str(converter._UGLY_GERRY_FONT_PATH), size=64)
+    converter = TextToImageConverter()
+    font = converter._load_font()
+    characters_per_line = _max_repeated_characters_that_fit(converter=converter, font=font, character="A")
     prompt = "A" * 10_000
     layout = converter._iter_wrapped_lines(text=prompt, font=font)
     with (
         patch.object(converter, "_iter_wrapped_lines", return_value=layout),
-        patch.object(ImageFont, "truetype", return_value=font),
+        patch.object(converter, "_load_font", return_value=font),
         patch.object(Image, "new", side_effect=AssertionError("Oversized images must not be allocated")),
     ):
         with pytest.raises(ValueError, match="exceeds 16 million pixels"):
             converter._render_png(prompt)
     remaining = list(layout)
-    total_lines = math.ceil(len(prompt) / 14)
+    total_lines = math.ceil(len(prompt) / characters_per_line)
     assert 0 < len(remaining) < total_lines
     completed = total_lines - len(remaining)
-    left, top, right, bottom = font.getbbox("A" * 14)
+    left, top, right, bottom = font.getbbox("A" * characters_per_line)
     width = right - left + 40
     line_height = bottom - top + 16
     assert width * (bottom - top + (completed - 2) * line_height + 40) <= converter._MAX_PIXELS
@@ -235,8 +196,8 @@ def test_rendering_rejects_oversized_layout_before_consuming_all_lines() -> None
 @pytest.mark.parametrize("line_count", [1, 3])
 @pytest.mark.parametrize("padding", [0, 20])
 def test_rendering_preserves_the_exact_pixel_budget_boundary(line_count: int, padding: int) -> None:
-    converter = TextToImageConverter(font="ugly_gerry", padding=padding)
-    font = ImageFont.truetype(str(converter._UGLY_GERRY_FONT_PATH), size=64)
+    converter = TextToImageConverter(padding=padding)
+    font = converter._load_font()
     left, top, right, bottom = font.getbbox("A")
     width = right - left + 2 * padding
     height = bottom - top + (line_count - 1) * (bottom - top + 16) + 2 * padding
@@ -250,8 +211,10 @@ def test_rendering_preserves_the_exact_pixel_budget_boundary(line_count: int, pa
 
 
 async def test_convert_async_rejects_width_smaller_than_one_glyph() -> None:
+    font = TextToImageConverter()._load_font()
+    left, _, right, _ = font.getbbox("W")
     with pytest.raises(ValueError, match="too small to render"):
-        await TextToImageConverter(font="ugly_gerry", max_width=41).convert_async(prompt="W")
+        await TextToImageConverter(max_width=math.ceil(right - left) + 39).convert_async(prompt="W")
 
 
 def test_rendering_keeps_custom_colors() -> None:
@@ -313,7 +276,7 @@ def test_identifier_includes_rendering_parameters(parameters: dict[str, object])
         assert configured.get_identifier().params[name] == expected
 
 
-@pytest.mark.parametrize("font", [None, "default", "ugly_gerry", str(TextToImageConverter._UGLY_GERRY_FONT_PATH)])
+@pytest.mark.parametrize("font", [None, "default"])
 def test_converter_is_discoverable_and_buildable(font: str | None) -> None:
     registry = ConverterRegistry()
     converter = registry.create_instance("TextToImageConverter", font=font, font_size=32)
@@ -342,9 +305,8 @@ async def test_convert_async_default_font_preserves_case_and_supports_normal_tex
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("font", [None, "ugly_gerry"])
-async def test_convert_async_normalizes_line_endings_for_each_font(font: str | None) -> None:
-    converter = TextToImageConverter(font=font)
+async def test_convert_async_normalizes_line_endings() -> None:
+    converter = TextToImageConverter()
     results = [
         await converter.convert_async(prompt=prompt)
         for prompt in ("Hello\n\nWorld!", "Hello\r\n\r\nWorld!", "Hello\r\rWorld!")
@@ -369,9 +331,7 @@ async def test_convert_async_default_font_expands_tabs() -> None:
 @pytest.mark.parametrize("extension", [".ttf", ".otf", ".TTF", ".OTF"])
 @pytest.mark.parametrize("as_string", [False, True])
 @pytest.mark.usefixtures("patch_central_database")
-async def test_convert_async_uses_local_font_without_gerry_restrictions(
-    tmp_path: Path, extension: str, as_string: bool
-) -> None:
+async def test_convert_async_uses_local_font(tmp_path: Path, extension: str, as_string: bool) -> None:
     pillow_font = ImageFont.load_default(size=32)
     assert isinstance(pillow_font, ImageFont.FreeTypeFont)
     font_path = tmp_path / f"local{extension}"
@@ -392,13 +352,6 @@ async def test_convert_async_uses_local_font_without_gerry_restrictions(
     assert converter.get_identifier().params["font_sha256"] == hashlib.sha256(font_path.read_bytes()).hexdigest()
 
 
-@pytest.mark.usefixtures("patch_central_database")
-async def test_local_otf_does_not_apply_the_bundled_presets_validation() -> None:
-    converter = TextToImageConverter(font=TextToImageConverter._UGLY_GERRY_FONT_PATH)
-    result = await converter.convert_async(prompt="123")
-    assert result.output_type == "image_path"
-
-
 def test_init_does_not_fall_back_when_local_font_is_missing(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         TextToImageConverter(font=tmp_path / "missing.ttf")
@@ -411,41 +364,35 @@ def test_init_does_not_fall_back_when_local_font_is_corrupt(tmp_path: Path) -> N
         TextToImageConverter(font=font_path)
 
 
-@pytest.mark.parametrize("font", ["", "unknown", "ugly-gerry", "font.woff"])
-def test_init_rejects_unknown_presets_and_unsupported_font_files(font: str) -> None:
+@pytest.mark.parametrize("font", ["", "unknown", "ugly_gerry", "font.woff"])
+def test_init_rejects_non_font_paths(font: str) -> None:
     with pytest.raises(ValueError, match="local .ttf or .otf path"):
         TextToImageConverter(font=font)
 
 
-def test_default_font_does_not_require_the_bundled_font(tmp_path: Path) -> None:
-    with patch.object(TextToImageConverter, "_UGLY_GERRY_FONT_PATH", tmp_path / "missing.otf"):
-        with Image.open(BytesIO(TextToImageConverter()._render_png("Default 123"))) as image:
-            assert image.format == "PNG"
-
-
 def test_local_font_data_is_loaded_once_and_included_in_the_identifier(tmp_path: Path) -> None:
     font_path = tmp_path / "local.otf"
-    font_path.write_bytes(TextToImageConverter._UGLY_GERRY_FONT_PATH.read_bytes())
+    original_font = _write_local_font(path=font_path)
     converter = TextToImageConverter(font=font_path)
     before = converter._render_png("Hello")
     original_hash = converter.get_identifier().hash
-    pillow_font = ImageFont.load_default(size=64)
-    assert isinstance(pillow_font, ImageFont.FreeTypeFont)
-    font_path.write_bytes(pillow_font.font_bytes)
+    font_path.write_bytes(font_path.read_bytes() + b"\0")
     replacement = TextToImageConverter(font=font_path)
     assert replacement.get_identifier().hash != original_hash
-    assert replacement._render_png("Hello") != before
+    assert replacement._render_png("Hello") == before
     font_path.unlink()
     assert converter._render_png("Hello") == before
+    assert original_font.getname() == converter._load_font().getname()
 
 
-def test_identifier_distinguishes_font_choices_and_normalizes_the_default_alias() -> None:
+def test_identifier_distinguishes_local_font_and_normalizes_the_default_alias(tmp_path: Path) -> None:
+    font_path = tmp_path / "local.otf"
+    _write_local_font(path=font_path)
     default = TextToImageConverter().get_identifier()
     named_default = TextToImageConverter(font="default").get_identifier()
-    bundled = TextToImageConverter(font="ugly_gerry").get_identifier()
-    local = TextToImageConverter(font=TextToImageConverter._UGLY_GERRY_FONT_PATH).get_identifier()
+    local = TextToImageConverter(font=font_path).get_identifier()
     assert default.hash == named_default.hash
-    assert len({default.hash, bundled.hash, local.hash}) == 3
+    assert default.hash != local.hash
 
 
 @pytest.mark.parametrize("grapheme", ["e\u0301", "\U0001f469\u200d\U0001f4bb"])
@@ -460,14 +407,18 @@ def test_wrapping_keeps_grapheme_clusters_together(grapheme: str) -> None:
 
 def test_rendering_bounds_measurement_work_for_a_local_font_with_zero_width_glyphs(tmp_path: Path) -> None:
     font_path = tmp_path / "zero_width.otf"
-    font_path.write_bytes(TextToImageConverter._UGLY_GERRY_FONT_PATH.read_bytes())
+    _write_local_font(path=font_path)
     converter = TextToImageConverter(font=font_path)
     font = converter._load_font()
     prompt = "A" + "\u00ad" * 2048
-    assert font.getbbox(prompt) == font.getbbox("A")
+    getbbox = font.getbbox
+
+    def _measure_with_zero_width_glyphs(text: str) -> tuple[float, float, float, float]:
+        return getbbox(text.replace("\u00ad", ""))
+
     with (
         patch.object(converter, "_load_font", return_value=font),
-        patch.object(font, "getbbox", wraps=font.getbbox) as measure,
+        patch.object(font, "getbbox", side_effect=_measure_with_zero_width_glyphs) as measure,
         patch.object(Image, "new", side_effect=AssertionError("Rejected layouts must not allocate an image")),
         pytest.raises(ValueError, match="measurement budget"),
     ):
@@ -480,8 +431,9 @@ def test_rendering_bounds_measurement_work_for_a_local_font_with_zero_width_glyp
 
 @pytest.mark.parametrize("cache_size", [2, 1024])
 def test_wrapping_enforces_the_exact_measurement_budget_including_evictions(cache_size: int) -> None:
-    converter = TextToImageConverter(font="ugly_gerry", max_width=122)
-    font = converter._load_font()
+    font = TextToImageConverter()._load_font()
+    single_width = max(font.getlength("A"), font.getlength("B"))
+    converter = TextToImageConverter(max_width=math.ceil(single_width) + 40)
     # "A", "AB", "B", "BA" are measured; a two-entry cache then remeasures "A", "AB", and "B".
     expected_work = 10 if cache_size == 2 else 6
     with (

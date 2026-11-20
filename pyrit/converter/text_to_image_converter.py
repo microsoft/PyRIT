@@ -4,7 +4,6 @@
 import asyncio
 import hashlib
 import math
-import string
 from collections.abc import Iterator
 from functools import lru_cache
 from io import BytesIO
@@ -22,19 +21,15 @@ from pyrit.models import ComponentIdentifier, PromptDataType
 
 class TextToImageConverter(_BaseImageTextConverter):
     """
-    Render text as a PNG using Pillow's default font, a bundled font, or a local font file.
+    Render text as a PNG using Pillow's default font or a local font file.
 
     Text retains its case, tabs expand to four-column stops, and lines wrap at
     grapheme boundaries to fit the maximum image width. Glyph coverage depends on
-    the selected font. The bundled ``ugly_gerry`` option instead renders ASCII
-    letters as capitals and rejects characters outside its limited repertoire.
-    No font installation, network access, or model is required for bundled fonts.
+    the selected font. No network access or model is required.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("image_path",)
-    _UGLY_GERRY_FONT_PATH = Path(__file__).parent / "fonts" / "Gerry.otf"
-    _UGLY_GERRY_CHARACTERS = frozenset(string.ascii_letters + " \n\r!',.?")
     _MAX_PIXELS = 16_000_000
     _MEASUREMENT_CACHE_SIZE = 1024
     _MAX_MEASUREMENT_CHARACTERS = 1_000_000
@@ -53,9 +48,8 @@ class TextToImageConverter(_BaseImageTextConverter):
         Initialize the local font renderer.
 
         Args:
-            font (str | Path | None): ``None`` or ``default`` uses Pillow's built-in font;
-                ``ugly_gerry`` selects the bundled district-shaped font. Otherwise,
-                provide a local ``.ttf`` or ``.otf`` file. Defaults to None.
+            font (str | Path | None): ``None`` or ``default`` uses Pillow's built-in font.
+                Otherwise, provide a local ``.ttf`` or ``.otf`` file. Defaults to None.
             font_size (int): Font size in pixels. Defaults to 64.
             max_width (int): Maximum image width, including padding. Defaults to 1200.
             padding (int): Blank border in pixels. Defaults to 20.
@@ -83,12 +77,10 @@ class TextToImageConverter(_BaseImageTextConverter):
         self._background_color = background_color
         self._font_name = "default" if font is None else str(font)
         self._font_data: bytes | None = None
-        if isinstance(font, str) and font == "ugly_gerry":
-            self._font_data = self._UGLY_GERRY_FONT_PATH.read_bytes()
-        elif font is not None and not (isinstance(font, str) and font == "default"):
+        if font is not None and not (isinstance(font, str) and font == "default"):
             font_path = Path(font)
             if font_path.suffix.lower() not in (".ttf", ".otf"):
-                raise ValueError("font must be 'default', 'ugly_gerry', or a local .ttf or .otf path")
+                raise ValueError("font must be 'default' or a local .ttf or .otf path")
             self._font_data = font_path.read_bytes()
         self._load_font()
 
@@ -104,22 +96,15 @@ class TextToImageConverter(_BaseImageTextConverter):
             ConverterResult: The generated PNG path with output type ``image_path``.
 
         Raises:
-            ValueError: If the input type or characters are unsupported, the prompt is blank,
-                a character cannot fit the width, the image would exceed 16 million pixels,
-                or layout requires measuring more than one million characters in total.
+            ValueError: If the input type is unsupported, the prompt is blank, a character
+                cannot fit the width, the image would exceed 16 million pixels, or layout
+                requires measuring more than one million characters in total.
         """
         if not self.input_supported(input_type):
             raise ValueError(f"Input type {input_type} not supported")
         if not prompt.strip():
             raise ValueError("Please provide valid text value")
-        text = prompt.replace("\r\n", "\n").replace("\r", "\n")
-        if self._font_name == "ugly_gerry":
-            unsupported = set(prompt) - self._UGLY_GERRY_CHARACTERS
-            if unsupported:
-                raise ValueError(f"Ugly Gerry does not support these characters: {sorted(unsupported)!r}")
-            text = text.upper()
-        else:
-            text = text.expandtabs(4)
+        text = prompt.replace("\r\n", "\n").replace("\r", "\n").expandtabs(4)
         image_bytes = await asyncio.to_thread(self._render_png, text)
         serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path", extension="png")
         await serializer.save_data_async(data=image_bytes)

@@ -11,10 +11,10 @@ from itertools import product
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageFont
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.converter import CodeAttackConverter, TextToImageConverter
+from pyrit.converter import CodeAttackConverter
 from pyrit.converter.text_selection_strategy import (
     AllWordsSelectionStrategy,
     ContentWordSelectionStrategy,
@@ -253,6 +253,9 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
     code_attack_templates[1].write_text(
         code_attack.replace("{{ wrapped_input }}", "{{ wrapped_input }} ", 1), encoding="utf-8"
     )
+    font = ImageFont.load_default(size=32)
+    for name in ("first_font.ttf", "second_font.otf"):
+        (folder / name).write_bytes(font.font_bytes)
     return {
         "img_to_add": (pngs[0], pngs[1], str(other_png)),
         "base_image": (pngs[0], pngs[1], str(other_png)),
@@ -288,8 +291,8 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
         ),
         "AddImageTextConverter.font_size": (16, (18, 30), (19, 30), (18, 31)),
         "TextToImageConverter.font": (
-            "ugly_gerry",
-            TextToImageConverter._UGLY_GERRY_FONT_PATH,
+            folder / "first_font.ttf",
+            folder / "second_font.otf",
         ),
         "CodeAttackConverter.template": code_attack_templates,
         "CodeAttackConverter.encoding": tuple(CodeAttackConverter.Encoding),

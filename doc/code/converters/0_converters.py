@@ -66,8 +66,8 @@ print(df)
 # [LSB steganography example](3_image_converters.ipynb#lsb-image-steganography)
 # using `LSBImageStegoConverter` and `LSBImageStegoDecodeConverter`.
 #
-# `TextToImageConverter` converts `text` to `image_path` with a configurable font,
-# including the bundled Ugly Gerry font's congressional-district shapes. See the
+# `TextToImageConverter` converts `text` to `image_path` with Pillow's default font
+# or a caller-provided local `.ttf` or `.otf` file. See the
 # [font rendering examples](3_image_converters.ipynb#text-to-image-converter).
 
 # %% [markdown]

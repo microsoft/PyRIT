@@ -31,8 +31,8 @@
 #
 # `TextToImageConverter` renders text into a PNG on a new blank canvas; unlike
 # `AddImageTextConverter`, it does not require an existing background image.
-# By default it uses Pillow's built-in font. Set `font="ugly_gerry"` for the bundled
-# district-shaped font, or pass a local `.ttf` or `.otf` path as a string or `Path`.
+# By default it uses Pillow's built-in font. Pass a local `.ttf` or `.otf` path
+# as a string or `Path` to use another font.
 # Missing or corrupt font files raise an error instead of falling back to another font.
 #
 # The default and custom-font modes preserve case and expand tabs to four-column
@@ -46,14 +46,8 @@
 # Layout also rejects prompts requiring more than one million measured characters
 # across cache misses, bounding work and cached text even for zero-width runs.
 # Shorten the prompt or reduce `max_width` if this measurement budget is exceeded.
-#
-# (ugly-gerry)=
-# The `ugly_gerry` preset uses [Ugly Gerry](https://en.wikipedia.org/wiki/Ugly_Gerry),
-# whose letters resemble United States congressional districts. Only this preset
-# uppercases ASCII letters and restricts input to letters, spaces, newlines, and
-# `! ' , . ?`; unsupported characters raise `ValueError`. Its font is bundled,
-# so no installation, download, model, or credentials are needed. Attribution and
-# the original "No Rights Reserved" statement are in `LICENSES/Ugly-Gerry.txt`.
+# Third-party fonts such as [Ugly Gerry](https://en.wikipedia.org/wiki/Ugly_Gerry)
+# must be obtained separately and supplied by local path; PyRIT does not distribute them.
 #
 # ```python
 # from pathlib import Path
@@ -64,11 +58,9 @@
 # await initialize_pyrit_async(memory_db_type=IN_MEMORY)
 # converter = TextToImageConverter()
 # result = await converter.convert_async(prompt="Mixed CASE: 123")
-# # Or select the bundled font:
-# converter = TextToImageConverter(font="ugly_gerry", font_size=64, max_width=1200, padding=20)
-# result = await converter.convert_async(prompt="Hello, world!")
 # # result.output_text is the PNG path; result.output_type is "image_path".
-# # For your own font: TextToImageConverter(font=Path("custom_font.otf"))
+# # Use any locally available .ttf or .otf:
+# converter = TextToImageConverter(font=Path("Gerry.otf"), font_size=64)
 # ```
 #
 # ### GridCompositeConverter
