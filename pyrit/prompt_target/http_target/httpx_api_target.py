@@ -113,7 +113,7 @@ class HTTPXAPITarget(HTTPTarget):
             http_url (str): The URL to send the HTTP request to.
             method (str): The HTTP method to use (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS). Defaults to "POST".
             file_path (str, Optional): Path to a file to upload. If not provided, we attempt to pull it from the
-            prompt's `converted_value`.
+                prompt's `converted_value`.
             allowed_upload_directory (str | Path | None): Directory containing files this target may upload.
                 Required when uploading files. Defaults to None.
             json_data (dict, Optional): JSON data to send in the request body (for POST/PUT/PATCH).
@@ -126,8 +126,7 @@ class HTTPXAPITarget(HTTPTarget):
             callback_function (Callable, Optional): Function to parse the HTTP response.
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for this target
-            instance.
-            Defaults to None.
+                instance. Defaults to None.
             trace_config: Request tracing configuration. Tracing is disabled by default because an
                 arbitrary HTTP endpoint is not known to support W3C trace context. Pass
                 ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint.

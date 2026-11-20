@@ -240,7 +240,7 @@ async def test_unlistable_directory_leaves_coverage_incomplete_async(tmp_path: P
     denied = (tmp_path / "data" / "nested").resolve()
     real_scandir = source_module._scandir
 
-    def scandir(path: Path) -> os._ScandirIterator[str]:  # noqa: SLF001
+    def scandir(path: Path) -> os._ScandirIterator[str]:
         if path == denied:
             raise PermissionError("denied")
         return real_scandir(path)

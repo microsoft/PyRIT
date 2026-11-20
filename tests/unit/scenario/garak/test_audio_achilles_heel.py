@@ -10,7 +10,7 @@ import pytest
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.garak import AudioAchillesHeel, AudioAchillesHeelTechnique  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import AudioAchillesHeel, AudioAchillesHeelTechnique  # type: ignore[ty:import-not-found]
 from pyrit.scenario.scenarios.garak.audio_achilles_heel import (
     DEFAULT_MAX_DATASET_SIZE,
     DEFAULT_TEXT_PROMPT,
@@ -86,7 +86,7 @@ class TestAudioAchillesHeelInitialization:
 
     def test_default_dataset_config_caps_size(self, mock_objective_scorer):
         config = AudioAchillesHeel(objective_scorer=mock_objective_scorer)._default_dataset_config
-        assert config.max_dataset_size == DEFAULT_MAX_DATASET_SIZE
+        assert config.max_total == DEFAULT_MAX_DATASET_SIZE
 
     def test_default_technique_is_all(self, mock_objective_scorer):
         scenario = AudioAchillesHeel(objective_scorer=mock_objective_scorer)

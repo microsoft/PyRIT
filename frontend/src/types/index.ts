@@ -122,6 +122,9 @@ export interface PendingComposerDraft {
 
 export interface ConversationEditState {
   messages: ConversationDraftMessage[]
+  baselineMessages?: ConversationDraftMessage[]
+  baselineTargetKey?: string | null
+  converters?: ChatConverterSnapshot
   objective?: string
   initialObjective?: string
   sourceConversationId?: string | null
@@ -143,6 +146,17 @@ export interface ChatDraftContent {
   converters?: ChatConverterSnapshot
   textMetadata?: Record<string, unknown>
   conversation?: ConversationEditState
+  /** Backend send ID for status verification before reconciling this snapshot with history. */
+  acceptedSendId?: string
+  /** Where the accepted send belongs in history, so only this send's saved request reconciles the draft. */
+  acceptedSendHistory?: AcceptedSendHistory
+}
+
+export interface AcceptedSendHistory {
+  /** Turn the backend assigned to the request, when known before leaving Chat. */
+  requestTurnNumber?: number
+  /** User piece IDs saved before the send; new pieces only prompt an exact status check. */
+  priorUserPieceIds: string[]
 }
 
 export interface ChatDraftContextState {
@@ -479,6 +493,7 @@ export interface TargetCapabilities {
   supports_editable_history?: boolean
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
+  supports_prefill?: boolean
   supports_temperature?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
@@ -500,8 +515,13 @@ export interface TargetIdentifier {
   [key: string]: unknown
 }
 
+/** Where a registered target comes from, and so whether it is still there after a restart. */
+export type TargetOrigin = 'saved' | 'configuration' | 'temporary'
+
 export interface TargetInstance {
   target_registry_name: string
+  /** Saved, from the server's configuration, or Temporary. Absent for inner targets. */
+  origin?: TargetOrigin | null
   binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
@@ -514,6 +534,12 @@ export interface TargetInstance {
   target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */
   inner_targets?: TargetInstance[] | null
+  /** True when only the requesting user, who created it, can see and use the target. */
+  private?: boolean
+  /** True when the target's API key or request headers can be updated in place. */
+  allow_credential_updates?: boolean
+  /** Whether the provider rejected the target's credentials on the last request; null until it is used. */
+  credentials_rejected?: boolean | null
 }
 
 export interface TargetListResponse {
@@ -522,9 +548,30 @@ export interface TargetListResponse {
 }
 
 export interface CreateTargetRequest {
+  /** Registry name; required with `persist`. */
+  name?: string
   type: string
   params: Record<string, unknown>
   auth_mode?: TargetAuthMode
+  /** Save the target so it comes back after a restart. */
+  persist?: boolean
+  /** Makes the target visible to and usable by only its creator. */
+  private?: boolean
+  /** Lets the target's API key or request headers be updated later; defaults to true only when private. */
+  allow_credential_updates?: boolean
+}
+
+/** A target to check before saving it, as a create request would give it. */
+export interface TargetSaveabilityRequest {
+  type: string
+  params: Record<string, unknown>
+  auth_mode?: TargetAuthMode
+}
+
+/** Whether an entry could be saved as asked, decided by the checks saving it runs. */
+export interface SaveabilityResponse {
+  /** Why it can't be saved, though it can be created without saving it; null if it can. */
+  not_saveable_reason: string | null
 }
 
 // --- Initializers ---
@@ -757,6 +804,8 @@ export interface Parameter {
   multiline?: boolean
   /** Whether the value must be omitted when identity-based authentication is selected. */
   identity_conflicting?: boolean
+  /** Whether a private copy keeps its source's value, because it sets where requests go or how they sign in. */
+  copy_locked?: boolean
   description?: string | null
 }
 
@@ -808,6 +857,10 @@ export interface TargetTypeEntry {
   target_type: string
   parameters: Parameter[]
   supported_auth_modes: TargetAuthMode[]
+  /** Auth modes a saved target of this type can use; empty when it can't be saved. */
+  saveable_auth_modes?: TargetAuthMode[]
+  /** Why a target of this type can't be saved. */
+  not_saveable_reason?: string | null
   description?: string | null
 }
 
@@ -841,6 +894,9 @@ export type AttackTargetResolutionStatus =
   | 'legacy'
 
 export type AttackOutcome = 'undetermined' | 'success' | 'failure' | 'error'
+
+/** An attack's saved outcome, or where it is before one exists. */
+export type AttackDisplayOutcome = AttackOutcome | 'in_progress' | 'preparing'
 
 // Wire contracts from pyrit.models.analytics. The SDK selects and counts the cohort.
 export type AttackAnalyticsDimensionName =
@@ -1119,6 +1175,7 @@ export interface ConversationDraftPiece extends MessagePieceRequest {
 }
 
 export interface ConversationSaveInput {
+  initialConverters?: ChatConverterSnapshot
   sourcePieceIds?: string[]
   messages: ConversationDraftMessage[]
   objective: string
@@ -1128,6 +1185,7 @@ export interface ConversationSaveInput {
   sourceConversationId: string | null
   labels?: Record<string, string>
   baselineMessages?: ConversationDraftMessage[]
+  baselineTargetKey?: string | null
   unsavedImport?: boolean
   pendingPromptId?: string
 }
@@ -1244,6 +1302,16 @@ export interface DisplayScore extends BackendScore {
   pieceIndex: number
   pieceType: string
   sourceLabel: string
+}
+
+/** Message-score fields displayed by ScoreDetails. */
+export interface ScoreSummary {
+  scorer: string
+  value?: string | null
+  status?: string
+  rationale?: string | null
+  categories?: string[] | null
+  isObjective?: boolean
 }
 
 export interface BackendMessagePiece {
@@ -1410,6 +1478,20 @@ export interface AttackConversationsResponse {
   total_count?: number | null
 }
 
+/** Read-only display references may lack saved-result counts and a main conversation. */
+export interface ConversationReferenceView extends Omit<ConversationSummary, 'message_count'> {
+  message_count: number | null
+}
+
+export interface AttackConversationReferencesView extends Omit<AttackConversationsResponse, 'main_conversation_id' | 'conversations'> {
+  main_conversation_id: string | null
+  conversations: ConversationReferenceView[]
+}
+
+export type ReadAttackConversationReferences = (
+  attackResultId: string, params?: ConversationPageParams,
+) => Promise<AttackConversationReferencesView>
+
 
 export interface CreateConversationRequest {
   source_conversation_id?: string
@@ -1430,16 +1512,31 @@ export interface ChangeMainConversationResponse {
  * Wire shape of `DatasetInfo` from `GET /api/datasets`.
  * Null counts mean the total is unknown, not zero.
  */
+export interface DatasetProviderInfo {
+  description: string | null
+  source_url: string | null
+  license_url: string | null
+  access_url: string | null
+  required_environment_variables: string[]
+  modalities: string[]
+  harm_categories: string[]
+  size: string[]
+  load_time: string[]
+  unavailable_reason: string | null
+}
+
 export interface DatasetInfo {
   name: string
   selection_key: string
   loaded: boolean
   provider_available: boolean
+  provider?: DatasetProviderInfo | null
   origins?: string[]
   logical_examples: number | null
   seed_pieces: number | null
   objectives: number | null
   modalities: string[]
+  modality_aliases?: Readonly<Record<string, string>>
   harm_categories: string[]
   has_unlabeled_harm_categories: boolean
 }
@@ -2272,6 +2369,8 @@ export interface PairedOutcomeDetailPage {
 }
 
 export interface ScenarioRunPlanAtomicGroup {
+  /** Absent in legacy plans, whose topology is unknown. */
+  is_compound?: boolean | null
   kind?: 'baseline' | 'attack' | 'adaptive' | 'unknown' | null
   id: string
   atomic_attack_name: string
@@ -2496,6 +2595,25 @@ export interface RuntimeReadiness {
   ready: boolean
   state: string
   generation: string
+  /** How many saved entries couldn't be restored; administrators see why in the runtime status. */
+  restore_failures?: number
+}
+
+export type RegistryRecipeKind = 'targets' | 'converters' | 'scorers' | 'techniques'
+
+export interface SavedEntryRef {
+  kind: RegistryRecipeKind
+  name: string
+}
+
+/** A saved entry, or a whole folder of them when `name` is null, that couldn't be restored. */
+export interface RestoreFailure {
+  kind: RegistryRecipeKind
+  name: string | null
+  reason: string
+  message: string
+  version: string | null
+  dependency: SavedEntryRef | null
 }
 
 export interface RuntimeStatus {
@@ -2506,6 +2624,8 @@ export interface RuntimeStatus {
   applying: boolean
   outcome: string
   message: string
+  /** The saved entries that couldn't be restored; only administrators can read the runtime status. */
+  restore_failures?: RestoreFailure[]
 }
 export type FindingSeverity = 'critical' | 'important' | 'moderate' | 'low' | 'informational' | 'other'
 
@@ -2551,6 +2671,10 @@ export interface FindingCreate {
   severity_other?: string | null
   harm_type?: string | null
   harm_type_other?: string | null
+  /** The finding this one is a sub-finding of, in the same Operation. Null or omitted for a top-level finding. */
+  parent_finding_id?: string | null
+  /** Whether the operator demonstrated it. A path is complete only when every step was. Defaults to true. */
+  demonstrated?: boolean
 }
 
 /** Resending the same id and content returns the finding an earlier, unanswered request saved. */
@@ -2564,10 +2688,37 @@ export interface FindingOptionsResponse {
   harm_types: string[]
 }
 
+/** One ordered chain of a finding's direct sub-findings that together demonstrate it. */
+export interface FindingPath {
+  id: string
+  name?: string | null
+  description?: string
+  /** Direct sub-finding IDs, in order. */
+  steps: string[]
+}
+
+/** A saved path, with whether every step is a demonstrated sub-finding. Completeness is derived, never stored. */
+export interface FindingPathItem extends FindingPath {
+  complete: boolean
+}
+
+/** A path to save. Omit `id` to add a new path. */
+export interface FindingPathRequest extends Omit<FindingPath, 'id'> {
+  id?: string
+}
+
+/** Every path of a finding, in order, replacing the saved ones. */
+export interface FindingPathsUpdateRequest {
+  paths: FindingPathRequest[]
+}
+
 export interface Finding extends FindingCreate {
   id: string
   operation_id: string
   created_at: string
+  parent_finding_id: string | null
+  demonstrated: boolean
+  paths: FindingPath[]
 }
 
 export interface FindingListResponse {
@@ -2578,6 +2729,22 @@ export interface FindingListResponse {
 
 export interface FindingListItem extends Finding {
   evidence_count: number
+  /** The number of direct sub-findings. */
+  child_count: number
+  paths: FindingPathItem[]
+}
+
+/** Optional filters for listing findings. Without one, findings at every depth are listed. */
+export interface FindingListParams {
+  limit: number
+  offset: number
+  title?: string
+  /** Full LIKE pattern instead of literal title search (% and _, / escaping). */
+  title_pattern?: string
+  /** Only the direct sub-findings of this finding, oldest first. */
+  parent_finding_id?: string
+  /** Only findings without a parent. */
+  top_level?: boolean
 }
 
 /** A finding that links an attack as evidence. */
@@ -2633,10 +2800,74 @@ export interface FindingEvidenceListResponse {
 
 export type FindingExportFormat = 'docx' | 'markdown'
 
-/** Selected findings of one Operation to download as a single document. */
+/** Selected findings of one Operation to download as a single document. Each includes all of its sub-findings. */
 export interface FindingExportRequest {
   finding_ids: string[]
   format: FindingExportFormat
   /** The dashboard origin that evidence links open. */
   dashboard_origin: string
+}
+
+/** A flagged share of applicable conversations with a 90% Wilson interval; `rate` is null when none apply. */
+export interface AssertBinaryRate {
+  rate: number | null
+  flagged_count: number
+  applicable_count: number
+  not_applicable_count: number
+  ci_lower: number | null
+  ci_upper: number | null
+  /** False below 5 applicable conversations, ASSERT's minimum support. */
+  sufficient_support: boolean
+}
+
+export interface AssertCategoryMetrics {
+  behavior_name: string
+  /** Identifies the judged policy (taxonomy, context, instructions), so same-named policies stay separate. */
+  policy_id: string
+  name: string
+  permissible: boolean
+  /** Violated share of conversations that judged this category relevant. */
+  node_violation: AssertBinaryRate
+}
+
+/** Grade counts in declared scale order and the median grade for a graded judge dimension. */
+export interface AssertGradeDistribution {
+  scale: Array<number | string>
+  counts: Record<string, number>
+  median: number | string | null
+}
+
+export interface AssertNotJudgedCounts {
+  target_input_refused: number
+  target_error: number
+  judge_no_verdict: number
+  attack_error: number
+  not_scored: number
+}
+
+export interface AssertTechniqueMetrics {
+  technique: string
+  total: number
+  scored_total: number
+  not_judged: AssertNotJudgedCounts
+  unresolved_policy: number
+  rows_without_node_judgments: number
+  policy_violation_on_not_permissible: AssertBinaryRate | null
+  policy_violation_on_permissible: AssertBinaryRate | null
+  /** One violation rate per judge dimension; not-applicable answers stay out of the denominator. */
+  dimensions: Record<string, AssertBinaryRate>
+  /** Judged conversations where that dimension's judge gave no verdict, such as a blocked reply. */
+  dimension_no_verdict: Record<string, number>
+  dimension_grades: Record<string, AssertGradeDistribution[]>
+  categories: AssertCategoryMetrics[]
+}
+
+/** ASSERT's headline metrics for one completed foundry.assert_policy run. */
+export interface AssertPolicyMetrics {
+  scenario_result_id: string
+  judgment_mode: string | null
+  split_unavailable_reason: string | null
+  total: number
+  scored_total: number
+  techniques: Record<string, AssertTechniqueMetrics>
 }

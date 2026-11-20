@@ -18,6 +18,7 @@ _EC_KEY_HEADER = "-----BEGIN " + "EC PRIVATE KEY-----"
 _DSA_KEY_HEADER = "-----BEGIN " + "DSA PRIVATE KEY-----"
 _OPENSSH_KEY_HEADER = "-----BEGIN " + "OPENSSH PRIVATE KEY-----"
 _PKCS8_KEY_HEADER = "-----BEGIN " + "PRIVATE KEY-----"
+_PGP_KEY_HEADER = "-----BEGIN " + "PGP PRIVATE KEY BLOCK-----"
 _AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
 _GH_TOKEN = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh1234"
 _GH_PAT_TOKEN = "github_pat_" + "11AAAAAAA_" + "b" * 72
@@ -152,6 +153,8 @@ async def test_credential_detected(text: str, patch_central_database):
         "myglpat-" + "a" * 25,
         "-----BEGIN PUBLIC KEY-----",
         "-----BEGIN CERTIFICATE-----",
+        "-----BEGIN PGP PUBLIC KEY BLOCK-----",
+        "-----BEGIN " + "PGP PRIVATE KEY-----",  # OpenPGP armor requires the BLOCK suffix.
         "sk-shortkey",
         "sk-proj-short",
         "sk-admin-short",
@@ -205,6 +208,7 @@ async def test_credential_scorer_garak_patterns_detects_fine_grained_github_toke
         (_DSA_KEY_HEADER, "Private Key Header"),
         (_OPENSSH_KEY_HEADER, "Private Key Header"),
         (_PKCS8_KEY_HEADER, "Private Key Header"),
+        (_PGP_KEY_HEADER, "Private Key Header"),
     ],
 )
 async def test_credential_scorer_detects_private_key_headers(

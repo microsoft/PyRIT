@@ -27,7 +27,7 @@ from pydantic import (
 from pyrit.common import print_deprecation_message
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.score.expectation import ScoringExpectation
-from pyrit.models.score.scorable import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+from pyrit.models.score.scorable import (  # runtime-required by Pydantic field annotations
     MessageScorable,
     ScorableUnion,
 )
@@ -67,7 +67,7 @@ _TRUE_FALSE_VALUES = ("true", "false")
 ComponentIdentifierField = Annotated[
     ComponentIdentifier,
     BeforeValidator(lambda v: ComponentIdentifier.model_validate(v) if isinstance(v, dict) else v),
-    PlainSerializer(lambda v: v.model_dump() if v is not None else None, return_type=dict | None),
+    PlainSerializer(lambda v: v.model_dump() if v is not None else None, return_type=dict[str, Any] | None),
 ]
 
 

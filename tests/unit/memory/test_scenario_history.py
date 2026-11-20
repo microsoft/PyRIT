@@ -278,3 +278,34 @@ async def test_get_page_single_query_execution_async(sqlite_instance: MemoryInte
 
     assert spy.call_count == 1
     assert len(records) == 2 and has_more is True  # the query really ran and used limit + 1
+
+
+def _seed_summary_row(**overrides: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "id": "attack-1",
+        "objective": "objective",
+        "objective_sha256": "abc",
+        "atomic_attack_identifier": None,
+        "outcome": "success",
+        "timestamp": datetime(2026, 1, 1, tzinfo=UTC),
+        "total_retries": 0,
+        "attribution_data": {},
+        "attack_metadata": None,
+    }
+    row.update(overrides)
+    return row
+
+
+@pytest.mark.parametrize(
+    ("raw_metadata", "expected_attempt_index"),
+    [
+        ('{"attempt_index": 3}', 3),
+        ("not valid json", None),
+    ],
+)
+def test_row_to_scenario_attempt_seed_summary_parses_or_ignores_string_metadata(
+    *, raw_metadata: str, expected_attempt_index: int | None
+) -> None:
+    summary = MemoryInterface._row_to_scenario_attempt_seed_summary(_seed_summary_row(attack_metadata=raw_metadata))
+
+    assert summary.attribution_data.get("attempt_index") == expected_attempt_index

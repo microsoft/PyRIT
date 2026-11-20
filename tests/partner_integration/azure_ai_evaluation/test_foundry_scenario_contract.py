@@ -13,7 +13,7 @@ The azure-ai-evaluation red team module uses the scenario framework for attack e
 
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.scenario import ScenarioTechnique
-from pyrit.scenario.foundry import FoundryTechnique, RedTeamAgent  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.foundry import FoundryTechnique, RedTeamAgent  # type: ignore[ty:import-not-found]
 
 
 class TestRedTeamStrategyContract:

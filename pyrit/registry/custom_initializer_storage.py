@@ -67,6 +67,16 @@ class CustomInitializerStorage(FileDocumentStorage):
                 logger.warning(f"Skipping stored initializer '{name}': it is not valid UTF-8 text.")
         return scripts
 
+    def list_script_names(self) -> set[str]:
+        """
+        List the names of every stored script, including ones that can't be read or decoded.
+
+        Returns:
+            set[str]: The registry names of the stored scripts.
+        """
+        listing = self._list_documents_with_issues()
+        return set(listing.documents) | {unreadable.name for unreadable in listing.unreadable}
+
     def save_script(self, *, name: str, content: str) -> None:
         """Persist one custom initializer script."""
         self._save_document(name=name, content=content.encode("utf-8"))
