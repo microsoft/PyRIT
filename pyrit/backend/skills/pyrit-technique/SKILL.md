@@ -32,19 +32,25 @@ one technique per run.
 
 ## Plan
 
-1. Find the target with `list_targets` and `response_fields: ["items.target_registry_name"]`.
-   Use the exact registry name.
+`list_targets`, `list_scorers`, and `list_techniques` return 50 entries at a time. Keep
+`pagination` in `response_fields`, and while `pagination.has_more` is true, call again with
+`cursor` set to `pagination.next_cursor`: the target may be on a later page, and so may the
+best scorer or technique.
+
+1. Find the target with `list_targets` and `response_fields: ["items.target_registry_name",
+   "pagination"]`. Use the exact registry name.
 2. Choose an objective scorer with `list_scorers` and `response_fields:
-   ["items.scorer_registry_name", "items.description", "items.identifier.hash"]`. Prefer a
-   true/false scorer that judges whether a response achieves the objective, such as one named
-   `task_achieved...`. Without one, `technique.execute` uses the server's default objective
+   ["items.scorer_registry_name", "items.description", "items.identifier.hash", "pagination"]`.
+   Prefer a true/false scorer that judges whether a response achieves the objective, such as one
+   named `task_achieved...`. Without one, `technique.execute` uses the server's default objective
    scorer, which may judge something other than the objective, such as harm categories or only
    whether the target refused. Say which scorer you chose and why.
 3. Choose techniques with `list_techniques` and `response_fields: ["items.name",
-   "items.description", "items.tags", "items.uses_default_adversarial_target"]`. Pick up to three
-   that fit the objective and say why. A technique with `uses_default_adversarial_target: true`
-   needs an attacker model: ask the user which registered target to use as
-   `adversarial_target_name`. Other techniques either need none or bring their own.
+   "items.description", "items.tags", "items.uses_default_adversarial_target", "pagination"]`.
+   Pick up to three that fit the objective and say why. A technique with
+   `uses_default_adversarial_target: true` needs an attacker model: ask the user which
+   registered target to use as `adversarial_target_name`. Other techniques either need none or
+   bring their own.
 4. Show the plan: target, objective, scorer, techniques, and attacker model.
 
 ## Run
