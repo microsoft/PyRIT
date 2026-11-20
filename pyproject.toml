@@ -400,6 +400,8 @@ fixable = [
 ]
 select = [
     "A",  # https://docs.astral.sh/ruff/rules/#flake8-builtins-a
+    "ASYNC240",  # blocking-path-method-in-async-function
+    "ASYNC250",  # blocking-input-in-async-function
     "B",  # https://docs.astral.sh/ruff/rules/#flake8-bugbear-b
     "C4",  # https://docs.astral.sh/ruff/rules/#flake8-comprehensions-c4
     "CPY001",  # missing-copyright-notice
@@ -494,12 +496,14 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 # ERA001: jupytext markdown cells look like commented-out code
 # LOG: notebooks use root logger for convenience
 # PLE1142: top-level await is valid in Jupyter notebooks
-"doc/**" = ["ANN", "CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142"]
+# ASYNC240: example code favors readability over off-loop path calls
+"doc/**" = ["ANN", "CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142", "ASYNC240"]
 # Backend API routes raise HTTPException handled by FastAPI, not true exceptions
 "pyrit/backend/**/*.py" = ["DOC501", "B008"]
 "pyrit/__init__.py" = ["D104"]
 # Allow broad pytest.raises(Exception) in tests
-"tests/**/*.py" = ["ANN", "B017"]
+# ASYNC240: blocking path calls in test setup do not affect library users
+"tests/**/*.py" = ["ANN", "B017", "ASYNC240"]
 # Migration revisions are immutable once added. Keep RUF100 enabled for new
 # revisions while exempting only existing files with stale noqa directives.
 "pyrit/memory/alembic/versions/1b3d5f7a9c2e_persist_scored_expectation.py" = ["RUF100"]
@@ -520,6 +524,8 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 "build_scripts/**/*.py" = ["ANN"]
 "docker/**/*.py" = ["ANN"]
 "frontend/dev.py" = ["ANN"]
+# ASYNC240: e2e fixture backends are test code, like tests/
+"frontend/e2e/**/*.py" = ["ASYNC240"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
