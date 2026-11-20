@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from pyrit.converter.code_attack_converter import CodeAttackConverter
     from pyrit.converter.codechameleon_converter import CodeChameleonConverter
     from pyrit.converter.colloquial_wordswap_converter import ColloquialWordswapConverter
+    from pyrit.converter.columnar_transposition_converter import ColumnarTranspositionConverter
     from pyrit.converter.converter import Converter, ConverterResult, get_converter_modalities
     from pyrit.converter.decomposition_converter import DecompositionConverter
     from pyrit.converter.denylist_converter import DenylistConverter
@@ -188,6 +189,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "CodeAttackConverter": "pyrit.converter.code_attack_converter",
     "CodeChameleonConverter": "pyrit.converter.codechameleon_converter",
     "ColloquialWordswapConverter": "pyrit.converter.colloquial_wordswap_converter",
+    "ColumnarTranspositionConverter": "pyrit.converter.columnar_transposition_converter",
     "ContentWordSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "ConverterResult": "pyrit.converter.converter",
     "DecompositionConverter": "pyrit.converter.decomposition_converter",

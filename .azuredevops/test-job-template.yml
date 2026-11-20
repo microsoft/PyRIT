@@ -14,6 +14,9 @@ parameters:
   - name: testBatches
     type: object
     default: []
+  - name: pytestDeselect
+    type: string
+    default: ''
 
 jobs:
 - job: ${{ parameters.jobName }}
@@ -146,6 +149,9 @@ jobs:
         else
           make ${{ parameters.makeTarget }}
         fi
+    ${{ if ne(parameters.pytestDeselect, '') }}:
+      env:
+        PYTEST_ADDOPTS: '--deselect=${{ parameters.pytestDeselect }}'
   - bash: |
       set -uo pipefail
       artifact_dir="$(Build.ArtifactStagingDirectory)/backend-logs"
