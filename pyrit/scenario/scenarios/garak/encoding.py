@@ -23,6 +23,7 @@ from pyrit.converter import (
     MorseConverter,
     NatoConverter,
     ROT13Converter,
+    TapCodeConverter,
     ZalgoConverter,
 )
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
@@ -129,6 +130,7 @@ class EncodingTechnique(ScenarioTechnique):
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
+    TapCode = ("tap_code", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -317,6 +319,7 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
+            ([TapCodeConverter()], "tap_code", "tap_code"),
         ]
 
     # These are the same as Garak encoding attacks
