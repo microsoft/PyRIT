@@ -116,9 +116,11 @@ test('keeps expanded pairs usable at a narrow viewport and with keyboard control
   await expect(button).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(panel.getByRole('region', { name: 'Paired comparison' })).toBeVisible()
-  const baselineMetric = await panel.getByRole('group', { name: 'Baseline success rate' }).boundingBox()
-  const attackMetric = await panel.getByRole('group', { name: 'Attack success rate' }).boundingBox()
-  expect(baselineMetric?.y).toBe(attackMetric?.y)
+  const metricTops = await panel.getByRole('group', { name: /^(Baseline|Attack) success rate$/ }).evaluateAll(
+    (elements: Element[]) => elements.map((element: Element) => element.getBoundingClientRect().top),
+  )
+  expect(metricTops).toHaveLength(2)
+  expect(metricTops[0]).toBe(metricTops[1])
   const overflow = await panel.evaluate((element) => element.scrollWidth > element.clientWidth)
   expect(overflow).toBe(false)
   const size = await button.boundingBox()
