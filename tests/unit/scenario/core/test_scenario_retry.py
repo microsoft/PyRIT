@@ -1092,6 +1092,72 @@ class TestGetCompletedObjectiveHashesByAttack:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+class TestRemainingAttackOrdering:
+    """Resume ordering: unstarted attacks before attacks that already failed."""
+
+    async def test_unstarted_attacks_are_queued_before_started_ones(self):
+        failed = create_mock_atomic_attack("failed", ["poison", "healthy"])
+        unstarted_a = create_mock_atomic_attack("unstarted-a", ["a"])
+        unstarted_b = create_mock_atomic_attack("unstarted-b", ["b"])
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [failed, unstarted_a, unstarted_b]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+
+        failed_row = MagicMock()
+        failed_row.outcome = AttackOutcome.ERROR
+        failed_row.attribution_data = {
+            "parent_collection": failed.atomic_attack_name,
+            "parent_eval_hash": failed.technique_eval_hash,
+        }
+        failed_row.objective = "poison"
+        failed_row.metadata = {}
+        failed_row.outcome_reason = None
+        scenario._memory.get_attack_results_async.return_value = [failed_row]
+
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+
+        assert [attack.atomic_attack_name for attack in remaining] == [
+            "unstarted-a",
+            "unstarted-b",
+            "failed",
+        ]
+
+    async def test_interrupted_attack_is_not_queued_behind_a_failed_one(self):
+        failed = create_mock_atomic_attack("failed", ["poison", "healthy"])
+        partial = create_mock_atomic_attack("partial", ["done", "pending"])
+        unstarted = create_mock_atomic_attack("unstarted", ["u"])
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [failed, partial, unstarted]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+
+        def row(attack, objective, outcome):
+            r = MagicMock()
+            r.outcome = outcome
+            r.attribution_data = {
+                "parent_collection": attack.atomic_attack_name,
+                "parent_eval_hash": attack.technique_eval_hash,
+            }
+            r.objective = objective
+            r.metadata = {}
+            r.outcome_reason = None
+            return r
+
+        scenario._memory.get_attack_results_async.return_value = [
+            row(failed, "poison", AttackOutcome.ERROR),
+            row(partial, "done", AttackOutcome.SUCCESS),
+        ]
+
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+
+        # "partial" was only interrupted, so it keeps its place ahead of "failed".
+        assert [attack.atomic_attack_name for attack in remaining] == ["partial", "unstarted", "failed"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestApplyPersistedObjectives:
     """Direct tests for ``Scenario._apply_persisted_objectives`` — the
     resume-time replay that locks subsequent runs to the originally-sampled
