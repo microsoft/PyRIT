@@ -3,6 +3,7 @@ import type {
   AssertGenerationRequest,
   AssertReplication,
   AssertSamplingMethod,
+  AssertTaxonomy,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 
@@ -14,6 +15,7 @@ import {
   readString,
   readStringList,
 } from './generationFormHelpers'
+import { parseAssertTaxonomy } from './assertReview'
 import { datasetNameFromText, MAX_DATASET_NAME_LENGTH } from './promptGenerationPresentation'
 
 export type AssertDimensionMode = 'describe' | 'explicit'
@@ -135,7 +137,7 @@ export function assertDraftFromRequest(request: Record<string, unknown>): {
   readonly behavior: AssertBehaviorDraft
   readonly settings: AssertSettingsDraft
   /** The reviewed taxonomy the request carries, sent back unchanged to skip regenerating it. */
-  readonly taxonomy: Record<string, unknown> | null
+  readonly taxonomy: AssertTaxonomy | null
 } {
   const defaults = defaultAssertSettings()
   const sampling = asRecord(request.sampling)
@@ -167,7 +169,7 @@ export function assertDraftFromRequest(request: Record<string, unknown>): {
         : typeof systemPrompt === 'string' ? 'custom' : 'default',
       targetSystemPrompt: typeof systemPrompt === 'string' ? systemPrompt : '',
     },
-    taxonomy: typeof request.taxonomy === 'object' && request.taxonomy !== null ? asRecord(request.taxonomy) : null,
+    taxonomy: parseAssertTaxonomy(request.taxonomy),
   }
 }
 
@@ -254,7 +256,7 @@ export function assertBehaviorErrors(behavior: AssertBehaviorDraft): string[] {
 export function buildAssertRequest(
   settings: AssertSettingsDraft,
   behavior: AssertBehaviorDraft,
-  taxonomy: Record<string, unknown> | null = null,
+  taxonomy: AssertTaxonomy | null = null,
 ): AssertGenerationRequest {
   const method = settings.samplingMethod
   const options = stratifyOptions(settings)

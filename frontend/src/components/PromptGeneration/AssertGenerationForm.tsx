@@ -38,6 +38,7 @@ import { type PromptGenerationSubmission, usePromptGenerationSubmit } from '@/ho
 import type {
   AssertBehaviorPreset,
   AssertSuitePreset,
+  AssertTaxonomy,
   PromptGenerationBatchItem,
   PromptGenerationCreateRequest,
 } from '@/types'
@@ -86,7 +87,7 @@ interface InitialAssertForm {
   readonly settings: AssertSettingsDraft
   readonly suite: AssertSuitePreset | undefined
   /** A reviewed taxonomy from the stored request, reused while the policy is unchanged. */
-  readonly taxonomy: Record<string, unknown> | null
+  readonly taxonomy: AssertTaxonomy | null
 }
 
 function initialAssertForm(

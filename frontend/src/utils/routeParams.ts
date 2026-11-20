@@ -92,7 +92,6 @@ export function datasetNamesFromSearchParams(params: URLSearchParams): string[] 
   return [...new Set(params.getAll(DATASET_QUERY_PARAM))]
 }
 
-
 function appendScenarioRunProvenance(path: string, scenarioResultId?: string | null): string {
   if (!scenarioResultId || !UUID_PATTERN.test(scenarioResultId)) {
     return path

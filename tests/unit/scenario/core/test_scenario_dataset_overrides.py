@@ -23,6 +23,7 @@ from pyrit.models import (
     DatasetFetchPolicy,
     DatasetSelectionMode,
     DatasetSourceInput,
+    ScenarioDatasetOptions,
     ScenarioDatasetRequest,
     SeedObjective,
     SeedPrompt,
@@ -256,6 +257,22 @@ async def test_inline_default_seeds_fix_sources_but_keep_other_overrides() -> No
     replaced.set_params_from_args(args={"dataset_overrides": {"sources": [{"name": "harmbench"}]}})
     with pytest.raises(ValueError, match="Cannot replace inline seeds"):
         await replaced.get_run_size_estimate_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_inline_seeds_drop_a_declared_minimum_selection() -> None:
+    class _RequiredInlineScenario(_InlineScenario):
+        DATASET_OPTIONS = ScenarioDatasetOptions(min_selected=1)
+
+    options = _RequiredInlineScenario().get_dataset_options()
+    assert options.mode is DatasetSelectionMode.FIXED
+    assert options.min_selected is None
+
+
+def test_dataset_options_reject_a_minimum_above_the_maximum() -> None:
+    assert ScenarioDatasetOptions(min_selected=2, max_selected=2).min_selected == 2
+    with pytest.raises(ValueError, match="min_selected can't exceed max_selected"):
+        ScenarioDatasetOptions(min_selected=2, max_selected=1)
 
 
 @pytest.mark.usefixtures("patch_central_database")

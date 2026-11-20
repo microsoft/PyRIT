@@ -109,7 +109,7 @@ print(f"Stored {len(assert_result.seed_groups)} seed groups.")
 # the dimensions stage to review the taxonomy. `with_reviewed_policy` applies the edits. The reviewed
 # policy becomes part of the request that each seed group stores, so a rerun from that request skips
 # the research stages. The GUI runs this flow
-# from **Datasets > Generate dataset**.
+# from **Datasets > Generate datasets**.
 
 # %%
 from pyrit.datasets import load_assert_behavior_preset

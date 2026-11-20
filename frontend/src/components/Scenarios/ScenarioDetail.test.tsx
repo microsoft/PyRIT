@@ -3485,14 +3485,21 @@ describe('ScenarioDetail', () => {
       expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ sources: [{ name: ' returns ' }, { name: 'returns ' }] })
     })
 
-    it('passes a blank linked dataset to the server to validate', async () => {
+    it('passes a blank linked dataset to the server and shows its error', async () => {
+      mockEstimateRun.mockRejectedValue({
+        isAxiosError: true,
+        response: { status: 422, data: { detail: 'Dataset names must be non-empty.' } },
+      })
       renderDetail(`${SCENARIO_PATH}?dataset=%20&preset_unrelated=1`)
 
-      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledWith(
         'foundry.red_team_agent',
         expect.objectContaining({ datasets: { sources: [{ name: ' ' }] } }),
         expect.any(AbortSignal),
       ))
+      const estimate = await screen.findByTestId('run-estimate')
+      await waitFor(() => expect(within(estimate).getByRole('status'))
+        .toHaveTextContent('Dataset names must be non-empty.'))
       expect(screen.queryByTestId('linked-datasets-error')).not.toBeInTheDocument()
       expect(screen.queryByText('harmbench (unknown)')).not.toBeInTheDocument()
     })

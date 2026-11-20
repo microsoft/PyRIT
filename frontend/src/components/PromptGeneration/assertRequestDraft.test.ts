@@ -167,7 +167,11 @@ describe('assertRequestDraft', () => {
   })
 
   it('sends back a reviewed taxonomy from a stored request', () => {
-    const taxonomy = { behavior: { name: 'returns', definition: 'Returns.' }, behavior_categories: [] }
+    const taxonomy = {
+      behavior: { name: 'returns', definition: 'Returns.' },
+      definition_of_terms: [{ term: 'order', definition: 'A purchase.', examples: ['order 123'] }],
+      behavior_categories: [{ name: 'policy_question', definition: 'Asks.', examples: ['Window?'], permissible: true }],
+    }
     const request = { ...buildAssertRequest(defaultAssertSettings(), BEHAVIOR), taxonomy }
     const draft = assertDraftFromRequest(request)
     expect(draft.taxonomy).toEqual(taxonomy)

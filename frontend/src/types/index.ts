@@ -3092,8 +3092,8 @@ export interface AssertGenerationRequest {
   web_search: boolean
   target_system_prompt: string | null
   target_owns_instructions: boolean
-  /** A reviewed taxonomy (an `AssertTaxonomy`) to reuse; generation then skips the research stages. */
-  taxonomy?: Record<string, unknown>
+  /** A reviewed taxonomy to reuse; generation then skips the research stages. */
+  taxonomy?: AssertTaxonomy
 }
 
 export interface AssertTerm {

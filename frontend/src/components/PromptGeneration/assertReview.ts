@@ -62,11 +62,33 @@ function draftExamples(item: { readonly examples: readonly string[]; readonly ex
   return item.examplesText.split('\n').map((line) => line.trim()).filter(Boolean)
 }
 
-/** Reads an ASSERT review payload, or returns null when it has no taxonomy to edit. */
-export function parseAssertReviewPayload(payload: Record<string, unknown>): AssertReviewPayload | null {
-  const taxonomy = asRecord(payload.taxonomy)
+/** Reads an ASSERT taxonomy, or returns null when the value has no behavior categories. */
+export function parseAssertTaxonomy(value: unknown): AssertTaxonomy | null {
+  const taxonomy = asRecord(value)
   const behavior = asRecord(taxonomy.behavior)
   if (!Array.isArray(taxonomy.behavior_categories)) return null
+  return {
+    behavior: { name: readString(behavior.name), definition: readString(behavior.definition) },
+    definition_of_terms: (Array.isArray(taxonomy.definition_of_terms) ? taxonomy.definition_of_terms : []).map((item) => {
+      const term = asRecord(item)
+      return { term: readString(term.term), definition: readString(term.definition), examples: readStringList(term.examples) }
+    }),
+    behavior_categories: taxonomy.behavior_categories.map((item) => {
+      const category = asRecord(item)
+      return {
+        name: readString(category.name),
+        definition: readString(category.definition),
+        examples: readStringList(category.examples),
+        permissible: readBoolean(category.permissible, false),
+      }
+    }),
+  }
+}
+
+/** Reads an ASSERT review payload, or returns null when it has no taxonomy to edit. */
+export function parseAssertReviewPayload(payload: Record<string, unknown>): AssertReviewPayload | null {
+  const taxonomy = parseAssertTaxonomy(payload.taxonomy)
+  if (taxonomy === null) return null
   const systematization = payload.systematization === null || payload.systematization === undefined
     ? null
     : asRecord(payload.systematization)
@@ -74,22 +96,7 @@ export function parseAssertReviewPayload(payload: Record<string, unknown>): Asse
     systematization: systematization
       ? { scope: readString(systematization.scope), reasoning_summary: readString(systematization.reasoning_summary) }
       : null,
-    taxonomy: {
-      behavior: { name: readString(behavior.name), definition: readString(behavior.definition) },
-      definition_of_terms: (Array.isArray(taxonomy.definition_of_terms) ? taxonomy.definition_of_terms : []).map((item) => {
-        const term = asRecord(item)
-        return { term: readString(term.term), definition: readString(term.definition), examples: readStringList(term.examples) }
-      }),
-      behavior_categories: taxonomy.behavior_categories.map((item) => {
-        const category = asRecord(item)
-        return {
-          name: readString(category.name),
-          definition: readString(category.definition),
-          examples: readStringList(category.examples),
-          permissible: readBoolean(category.permissible, false),
-        }
-      }),
-    },
+    taxonomy,
     dimensions: (Array.isArray(payload.dimensions) ? payload.dimensions : []).map((item) => {
       const dimension = asRecord(item)
       return {
