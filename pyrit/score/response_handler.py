@@ -16,8 +16,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel
 
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
-from pyrit.models import JsonResponseConfig, UnvalidatedScore
-from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
+from pyrit.models import FloatFeedback, JsonResponseConfig, UnvalidatedScore
 
 if TYPE_CHECKING:
     import uuid
@@ -171,7 +170,7 @@ def _build_unvalidated_score(
         # this key itself after parsing (float_scale_threshold_scorer), and
         # true_false_score_aggregator / true_false_inverter_scorer already
         # strip it defensively on the same grounds.
-        normalized_md.pop(ORIGINAL_FLOAT_VALUE_KEY, None)
+        normalized_md = FloatFeedback.remove_from(normalized_md)
 
     return UnvalidatedScore(
         raw_score_value=str(parsed_response[score_value_output_key]),
