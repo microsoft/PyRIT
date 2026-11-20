@@ -4,6 +4,8 @@
 import re
 import string
 
+import regex
+
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
 
@@ -127,8 +129,9 @@ class InsertPunctuationConverter(Converter):
         Returns:
             str: The modified prompt with inserted punctuation from helper method.
         """
-        # Words list contains single spaces, single word without punctuations, single punctuations
-        words = re.findall(r"\w+|[^\w\s]|\s", prompt)
+        # Words list contains single spaces, single word without punctuations, single punctuations.
+        # Combining marks (accents, vowel signs) are not \w but belong to the word they follow.
+        words = regex.findall(r"\w[\w\p{M}]*|[^\w\s]|\s", prompt)
         # Maintains indices for actual "words", i.e. letters and numbers not divided by punctuations
         word_indices = [i for i in range(len(words)) if not re.match(r"\W", words[i])]
         # Calculate the number of insertions
