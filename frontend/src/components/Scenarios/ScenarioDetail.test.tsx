@@ -3373,27 +3373,76 @@ describe('ScenarioDetail', () => {
       expect(screen.getByRole('combobox', { name: 'Add dataset' })).not.toBeRequired()
     })
 
-    it('should show the server message for a missing required dataset in the estimate and on launch', async () => {
+    it('should show the server message for a missing required dataset on the focused picker before any preview', async () => {
       const user = userEvent.setup()
       // The library rejects a selection below the scenario's declared minimum with this 400.
       const missingDataset = { isAxiosError: true, response: { status: 400, data: { detail: 'Select a dataset.' } } }
       mockGetScenario.mockResolvedValue(policyScenario())
       mockEstimateRun.mockRejectedValue(missingDataset)
-      mockStartRun.mockRejectedValue(missingDataset)
       renderDetail(POLICY_PATH)
 
       const estimate = await screen.findByTestId('run-estimate')
       await waitFor(() => expect(within(estimate).getByRole('status')).toHaveTextContent('Select a dataset.'))
       // The 400 rejects the configuration, not the backend.
-      expect(within(estimate).getByRole('status'))
-        .toHaveTextContent('Complete the required configuration to request an estimate.')
+      expect(within(estimate).getByRole('status')).toHaveTextContent('Fix the configuration to request an estimate.')
       expect(estimate).not.toHaveTextContent('The backend estimate could not be refreshed.')
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
-      await confirmRunPreview(user)
+      const picker = screen.getByRole('combobox', { name: 'Add dataset' })
+      expect(picker).toBeRequired()
+      expect(picker).not.toHaveAttribute('aria-invalid', 'true')
+      jest.mocked(Element.prototype.scrollIntoView).mockClear()
 
-      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
-      await waitFor(() => expect(screen.getAllByRole('alert').map((alert) => alert.textContent))
-        .toContain('Select a dataset.'))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+
+      await waitFor(() => expect(picker).toHaveFocus())
+      expect(picker).toHaveAttribute('aria-invalid', 'true')
+      expect(picker).toHaveAccessibleDescription('Select a dataset.')
+      // Focus scrolls the form to the picker; scrollIntoView would also scroll the app shell.
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      // The picker carries the error, so the banner at the top of the form stays empty.
+      expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(['Select a dataset.'])
+      expect(mockStartRun).not.toHaveBeenCalled()
+
+      mockEstimateRun.mockResolvedValue(makeEstimate(25))
+      await user.click(picker)
+      await user.click(screen.getByRole('option', { name: 'ds_a (Unknown)', exact: true }))
+      expect(picker).not.toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByRole('combobox', { name: 'Add dataset' })).not.toHaveAccessibleDescription('Select a dataset.')
+    })
+
+    it('should word a shortfall as the library does while the server has not rejected the selection', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(makeScenario({
+        ...policyScenario(),
+        dataset_options: { ...policyScenario().dataset_options!, min_selected: 2 },
+      }))
+      mockEstimateRun.mockResolvedValue(makeEstimate(25))
+      renderDetail(`${POLICY_PATH}?dataset=ds_a`)
+
+      expect(await screen.findByText('ds_a (Unknown)')).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+
+      const picker = screen.getByRole('combobox', { name: 'Add dataset' })
+      await waitFor(() => expect(picker).toHaveFocus())
+      expect(picker).toHaveAccessibleDescription('Select at least 2 datasets.')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('should not offer Launch scan in the preview for a request the server rejected', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(policyScenario())
+      mockEstimateRun.mockRejectedValue({
+        isAxiosError: true, response: { status: 400, data: { detail: 'max_turns must be at least 1.' } },
+      })
+      renderDetail(`${POLICY_PATH}?dataset=ds_a`)
+
+      const dialog = await openRunPreview(user)
+      await waitFor(() => expect(dialog).toHaveTextContent('max_turns must be at least 1.'))
+      expect(dialog).toHaveTextContent('Fix the configuration to request an estimate.')
+      expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeDisabled()
+      expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeEnabled()
     })
 
     it('should open Browse datasets from the Datasets header in a new tab', async () => {

@@ -144,15 +144,31 @@ describe('useScenarioRunEstimate', () => {
   })
 
   it.each([
-    [400, 'Complete the required configuration to request an estimate.'],
-    [422, 'Complete the required configuration to request an estimate.'],
-    [503, 'The backend estimate could not be refreshed.'],
-  ])('labels a %i without an earlier estimate as %s', async (status, label) => {
+    [400, 'Fix the configuration to request an estimate.', 'Select a dataset.'],
+    [422, 'Fix the configuration to request an estimate.', 'Select a dataset.'],
+    [503, 'The backend estimate could not be refreshed.', null],
+  ])('labels a %i without an earlier estimate as %s', async (status, label, rejection) => {
     estimateRun.mockRejectedValueOnce({ isAxiosError: true, response: { status, data: { detail: 'Select a dataset.' } } })
     const view = renderEstimate({ request: { techniques: ['a'] } })
     await settle()
 
     expect(view.result.current.state).toMatchObject({ status: 'unavailable', label, note: 'Select a dataset.' })
+    // Only a rejected configuration, not an unavailable backend, reports the server's rejection.
+    expect(view.result.current.rejection).toBe(rejection)
+  })
+
+  it('reports a rejection only for the request the server rejected', async () => {
+    estimateRun
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 400, data: { detail: 'Select a dataset.' } } })
+      .mockResolvedValueOnce(response(3))
+    const view = renderEstimate({ request: { techniques: ['a'] } })
+    await settle()
+    expect(view.result.current.rejection).toBe('Select a dataset.')
+
+    view.rerender({ request: { techniques: ['a'], datasets: { sources: [{ name: 'ds_a' }] } } })
+    expect(view.result.current.rejection).toBeNull()
+    await settle()
+    expect(view.result.current.rejection).toBeNull()
   })
 
   it('reports why no request could be built instead of calling the backend', async () => {
@@ -160,7 +176,12 @@ describe('useScenarioRunEstimate', () => {
     await settle()
 
     expect(estimateRun).not.toHaveBeenCalled()
-    expect(view.result.current.state).toMatchObject({ status: 'unavailable', note: 'Select a target.' })
+    expect(view.result.current.state).toMatchObject({
+      status: 'unavailable',
+      label: 'Complete the required configuration to request an estimate.',
+      note: 'Select a target.',
+    })
+    expect(view.result.current.rejection).toBeNull()
   })
 
   it.each([

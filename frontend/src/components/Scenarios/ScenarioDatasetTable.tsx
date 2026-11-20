@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { type Ref, useEffect, useId, useState } from 'react'
 
 import {
   Badge, Button, Combobox, Divider, mergeClasses, MessageBar, MessageBarBody, Option, Radio, RadioGroup,
@@ -32,6 +32,9 @@ interface ScenarioDatasetTableProps {
   onLoad?: () => void
   /** Marks the picker required until the first dataset is chosen. */
   required?: boolean
+  /** The server's reason the required picker has too few datasets, shown as its validation message. */
+  selectionError?: string | null
+  pickerRef?: Ref<HTMLInputElement>
   onReload: () => void
   onChange: (request: ScenarioDatasetRequest) => void
   onValidationChange: (error: string | null) => void
@@ -39,7 +42,7 @@ interface ScenarioDatasetTableProps {
 
 export default function ScenarioDatasetTable({
   request, defaults, effective, options, datasets, disabled, loading, metadataError,
-  preparing = false, loadError, loadEnabled = false, onLoad, required = false,
+  preparing = false, loadError, loadEnabled = false, onLoad, required = false, selectionError = null, pickerRef,
   onReload, onChange, onValidationChange,
 }: ScenarioDatasetTableProps) {
   const styles = useScenarioDatasetTableStyles()
@@ -142,7 +145,7 @@ export default function ScenarioDatasetTable({
     : policies[0] === 'always' ? 'Refresh datasets for each new scan'
     : policies[0] === 'never' ? 'Only use datasets already in memory'
     : 'Load missing datasets'
-  const picker = <Combobox aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
+  const picker = <Combobox ref={pickerRef} aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
     placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]} disabled={busy}
     onOpenChange={(_, data) => { if (data.open) onReload() }}
     onChange={(event) => setSearch(event.target.value)}
@@ -242,7 +245,8 @@ export default function ScenarioDatasetTable({
       </div>}
       {canSelect && <div className={styles.controls}>
         {(canAdd || replaceSingleSource) && (required ? <HelpField
-          label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} required={selected.length === 0}>
+          label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} required={selected.length === 0}
+          validationMessage={selectionError ?? undefined} validationState={selectionError ? 'error' : 'none'}>
           {picker}
         </HelpField> : picker)}
         {/* Reset clears source and per-dataset edits, so it shows only when there are some. Saved presets

@@ -99,6 +99,7 @@ import {
   type ScenarioLaunchInput,
   scenarioDynamicParameters,
   linkedDatasetProblem,
+  minimumSelectionMessage,
   requiresDatasetSelection,
   supportsParameter,
 } from './scenarioLaunchRequest'
@@ -616,6 +617,13 @@ function ScenarioLaunchForm({
   const datasetOptions: ScenarioDatasetOptions = datasetProjection?.dataset_options
     ?? scenarioDatasetOptions(scenario)
   const selectedDatasetNames = (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name)
+  // The server enforces the scenario's declared minimum. Launch scan presents it on the required picker,
+  // preferring the server's own rejection of this request over the library's wording for the minimum.
+  const minimumDatasets = scenario.dataset_options?.min_selected ?? 0
+  const datasetPickerShown = supportsDatasets && datasetOptions.supports_overrides && datasetOptions.mode !== 'fixed'
+  const datasetSelectionMessage = datasetPickerShown && selectedDatasetNames.length < minimumDatasets
+    ? runEstimate.rejection ?? minimumSelectionMessage(minimumDatasets)
+    : null
   const datasetSelectionKey = JSON.stringify(selectedDatasetNames)
   const reloadDatasetMetadata = datasetMetadata.reload
   const previousDatasetSelection = useRef(datasetSelectionKey)
@@ -663,16 +671,19 @@ function ScenarioLaunchForm({
     submitting,
     apiError,
     validationError,
+    datasetSelectionError,
     clearValidationError,
     isSubmitting,
     launchButtonRef,
     apiErrorRef,
+    datasetPickerRef,
     submitForm,
     dismissPreview,
     changePreviewOpen,
     confirmLaunch,
   } = useScenarioLaunch({
     requestResult,
+    datasetSelectionMessage,
     submitBlocked: conversationBusy || Boolean(techniqueEditError),
     launchBlocked: conversationBusy || Boolean(techniqueEditError) || !runtime.ready || !defaultsReady
       || staleSelection || unavailableSelection || checkingRefreshPolicies,
@@ -1039,7 +1050,7 @@ function ScenarioLaunchForm({
                   && !confirmedDatasetSettings.sources.some((source) => source.fetch === 'always'
                     && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
                 onLoad={() => { if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest) }}
-                required={datasetRequired}
+                required={datasetRequired} selectionError={datasetSelectionError} pickerRef={datasetPickerRef}
                 onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
               />
             </section>
@@ -1158,7 +1169,7 @@ function ScenarioLaunchForm({
             open={previewOpen}
             submitting={submitting}
             confirmDisabled={submitting || conversationBusy || !runtime.ready || !defaultsReady || !requestResult.ok
-              || checkingRefreshPolicies}
+              || checkingRefreshPolicies || runEstimate.rejection !== null}
             onOpenChange={changePreviewOpen}
             onCancel={dismissPreview}
             onConfirm={() => void confirmLaunch()}

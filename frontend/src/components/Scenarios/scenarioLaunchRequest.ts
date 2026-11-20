@@ -49,6 +49,15 @@ export function requiresDatasetSelection(scenario: RegisteredScenario): boolean 
   return (scenario.dataset_options?.min_selected ?? 0) > 0
 }
 
+/**
+ * The library's message for fewer datasets than a declared minimum, worded as ``validate_minimum_selection``
+ * in pyrit/scenario/core/dataset_overrides.py words it. The server enforces the minimum; the form shows this
+ * only while it has no estimate rejection of its own to show.
+ */
+export function minimumSelectionMessage(minimum: number): string {
+  return minimum === 1 ? 'Select a dataset.' : `Select at least ${minimum} datasets.`
+}
+
 function linkedDatasetLabel(name: string): string {
   return name !== '' && name === name.trim() ? name : JSON.stringify(name)
 }

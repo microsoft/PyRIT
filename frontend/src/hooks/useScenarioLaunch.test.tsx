@@ -35,6 +35,7 @@ const BLANK_DATASET_NAME = {
 
 interface Props {
   requestResult?: BuildRunRequestResult
+  datasetSelectionMessage?: string | null
   submitBlocked?: boolean
   launchBlocked?: boolean
 }
@@ -42,9 +43,8 @@ interface Props {
 function renderLaunch(initial: Props = {}) {
   const onLaunched = jest.fn()
   const view = renderHook(
-    ({ requestResult = VALID, submitBlocked = false, launchBlocked = false }: Props) => useScenarioLaunch({
-      requestResult, submitBlocked, launchBlocked, onLaunched,
-    }),
+    ({ requestResult = VALID, datasetSelectionMessage = null, submitBlocked = false, launchBlocked = false }: Props) =>
+      useScenarioLaunch({ requestResult, datasetSelectionMessage, submitBlocked, launchBlocked, onLaunched }),
     { initialProps: initial },
   )
   return { view, onLaunched }
@@ -67,6 +67,27 @@ describe('useScenarioLaunch', () => {
     act(() => view.result.current.submitForm(submitEvent()))
     expect(view.result.current.previewOpen).toBe(true)
     expect(view.result.current.validationError).toBeNull()
+  })
+
+  it('shows too few datasets on the focused picker instead of opening the confirmation', async () => {
+    const { view } = renderLaunch({ datasetSelectionMessage: 'Select a dataset.' })
+    const picker = document.createElement('input')
+    document.body.append(picker)
+    view.result.current.datasetPickerRef.current = picker
+    expect(view.result.current.datasetSelectionError).toBeNull()
+
+    act(() => view.result.current.submitForm(submitEvent()))
+
+    expect(view.result.current.previewOpen).toBe(false)
+    expect(view.result.current.datasetSelectionError).toBe('Select a dataset.')
+    await waitFor(() => expect(picker).toHaveFocus())
+
+    // Enough datasets clear the message; a later shortfall waits for the next Launch scan.
+    view.rerender({ datasetSelectionMessage: null })
+    expect(view.result.current.datasetSelectionError).toBeNull()
+    view.rerender({ datasetSelectionMessage: 'Select a dataset.' })
+    expect(view.result.current.datasetSelectionError).toBeNull()
+    picker.remove()
   })
 
   it('does not open the confirmation while submitting is blocked', () => {

@@ -4,6 +4,7 @@ import {
   buildEstimateRequest,
   buildRunRequest,
   linkedDatasetProblem,
+  minimumSelectionMessage,
   scenarioDynamicParameters,
   type ScenarioLaunchInput,
 } from './scenarioLaunchRequest'
@@ -156,4 +157,11 @@ describe('scenario launch requests', () => {
     // An identical payload keeps the estimate key, so editing launch-only fields sends no new estimate.
     expect(after).toEqual(before)
   })
+
+  it.each([[1, 'Select a dataset.'], [2, 'Select at least 2 datasets.']])(
+    'words a minimum of %i datasets as validate_minimum_selection does',
+    (minimum, message) => {
+      expect(minimumSelectionMessage(minimum)).toBe(message)
+    },
+  )
 })
