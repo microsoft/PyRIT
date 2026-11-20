@@ -217,17 +217,19 @@ jobs:
         # docs retain their historical build tolerance.
         if: steps.cache.outputs.cache-hit != 'true' && matrix.slug == 'latest'
         working-directory: doc
-        # github.com intermittently answers CI link checks with 503. MyST
-        # caches only links that resolved, so each retry re-checks just the
-        # failures; a genuinely broken link still fails all three attempts.
+        # github.com intermittently answers CI link checks with 503. Retry once
+        # only when every error is a github.com 503; anything else fails now.
+        # MyST caches links that resolved, so the retry re-checks only failures.
         run: |
-          for attempt in 1 2 3; do
-            uv run --frozen --no-sync jupyter-book build --site --strict --check-links && exit 0
-            if [ "$attempt" -lt 3 ]; then
-              echo "::warning::Link check attempt $attempt failed; retrying in 60 seconds."
-              sleep 60
-            fi
-          done
+          set -o pipefail
+          log="$RUNNER_TEMP/link-check.log"
+          check() { uv run --frozen --no-sync jupyter-book build --site --strict --check-links 2>&1 | tee "$log"; }
+          check && exit 0
+          if grep -q '⛔' "$log" && ! grep '⛔' "$log" | grep -qv 'github\.com.*(503, Service Unavailable)'; then
+            echo "::warning::Only github.com 503s failed; retrying the link check once."
+            sleep 30
+            check && exit 0
+          fi
           exit 1
 
       - name: Build the static HTML site
