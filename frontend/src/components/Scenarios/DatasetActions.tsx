@@ -12,10 +12,12 @@ const CATALOG_PATH = '/datasets'
 
 interface DatasetActionsProps {
   readonly scenarioName: string
+  /** False when the scenario's datasets are fixed, so a generated dataset could never be selected. */
+  readonly canGenerate?: boolean
 }
 
 /** Catalog actions beside a scenario's dataset selection; Generate opens the scenario's own generator when it has one. */
-export default function DatasetActions({ scenarioName }: DatasetActionsProps) {
+export default function DatasetActions({ scenarioName, canGenerate = true }: DatasetActionsProps) {
   const styles = useDatasetActionsStyles()
   const { ready } = useRuntime()
   const { generators, loading, refreshing } = usePromptGenerators()
@@ -32,7 +34,7 @@ export default function DatasetActions({ scenarioName }: DatasetActionsProps) {
       <Button as="a" href={CATALOG_PATH} onClick={browse} role="link" appearance="secondary" icon={<FolderOpenRegular />}>
         Browse datasets
       </Button>
-      {resolved ? (
+      {!canGenerate ? null : resolved ? (
         <Button as="a" href={destination} onClick={generate} role="link" appearance="secondary" icon={<AddRegular />}>
           Generate datasets
         </Button>

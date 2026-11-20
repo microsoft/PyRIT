@@ -14,6 +14,8 @@ export interface CategoryDraft {
   readonly id: string
   readonly name: string
   readonly definition: string
+  /** The examples as loaded; sent unchanged unless their text was edited. */
+  readonly examples: readonly string[]
   /** One example per line. */
   readonly examplesText: string
   readonly permissible: boolean
@@ -23,6 +25,8 @@ export interface TermDraft {
   readonly id: string
   readonly term: string
   readonly definition: string
+  /** The examples as loaded; sent unchanged unless their text was edited. */
+  readonly examples: readonly string[]
   /** One example per line. */
   readonly examplesText: string
 }
@@ -52,8 +56,10 @@ function readNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
-function examplesFromText(text: string): string[] {
-  return text.split('\n').map((line) => line.trim()).filter(Boolean)
+/** An item's examples: as loaded unless edited, so a multi-line example isn't split into several. */
+function draftExamples(item: { readonly examples: readonly string[]; readonly examplesText: string }): string[] {
+  if (item.examplesText === item.examples.join('\n')) return [...item.examples]
+  return item.examplesText.split('\n').map((line) => line.trim()).filter(Boolean)
 }
 
 /** Reads an ASSERT review payload, or returns null when it has no taxonomy to edit. */
@@ -106,12 +112,14 @@ export function reviewDraftFromPayload(payload: AssertReviewPayload): AssertRevi
       id: generateClientId(),
       term: term.term,
       definition: term.definition,
+      examples: term.examples,
       examplesText: term.examples.join('\n'),
     })),
     categories: payload.taxonomy.behavior_categories.map((category) => ({
       id: generateClientId(),
       name: category.name,
       definition: category.definition,
+      examples: category.examples,
       examplesText: category.examples.join('\n'),
       permissible: category.permissible,
     })),
@@ -125,11 +133,11 @@ export function reviewDraftFromPayload(payload: AssertReviewPayload): AssertRevi
 }
 
 export function newCategoryDraft(): CategoryDraft {
-  return { id: generateClientId(), name: '', definition: '', examplesText: '', permissible: false }
+  return { id: generateClientId(), name: '', definition: '', examples: [], examplesText: '', permissible: false }
 }
 
 export function newTermDraft(): TermDraft {
-  return { id: generateClientId(), term: '', definition: '', examplesText: '' }
+  return { id: generateClientId(), term: '', definition: '', examples: [], examplesText: '' }
 }
 
 export function newReviewLevelDraft(): ReviewLevelDraft {
@@ -146,7 +154,7 @@ function duplicates(values: readonly string[]): string[] {
   return [...repeated]
 }
 
-/** Problems the server would reject when saving the review. */
+/** Problems that leave nothing to save, such as an empty name; the server checks the rest. */
 export function reviewDraftErrors(draft: AssertReviewDraft): string[] {
   const errors: string[] = []
   if (!draft.behaviorDefinition.trim()) errors.push('The behavior needs a definition.')
@@ -155,16 +163,13 @@ export function reviewDraftErrors(draft: AssertReviewDraft): string[] {
     const label = category.name.trim() ? `Category "${category.name.trim()}"` : `Category ${index + 1}`
     if (!category.name.trim()) errors.push(`${label} needs a name.`)
     if (!category.definition.trim()) errors.push(`${label} needs a definition.`)
-    if (examplesFromText(category.examplesText).length === 0) errors.push(`${label} needs at least one example.`)
+    if (draftExamples(category).length === 0) errors.push(`${label} needs at least one example.`)
   }
   for (const name of duplicates(draft.categories.map((category) => category.name.trim()).filter(Boolean))) {
     errors.push(`Category names must be unique; "${name}" is repeated.`)
   }
   for (const [index, term] of draft.terms.entries()) {
     if (!term.term.trim() || !term.definition.trim()) errors.push(`Term ${index + 1} needs a term and a definition.`)
-  }
-  for (const name of duplicates(draft.terms.map((term) => term.term.trim()).filter(Boolean))) {
-    errors.push(`Terms must be unique; "${name}" is repeated.`)
   }
   for (const dimension of draft.dimensions) {
     if (dimension.levels.length < MIN_LEVELS) errors.push(`Dimension "${dimension.name}" needs at least ${MIN_LEVELS} levels.`)
@@ -186,12 +191,12 @@ export function reviewPayloadFromDraft(draft: AssertReviewDraft): { taxonomy: As
       definition_of_terms: draft.terms.map((term) => ({
         term: term.term.trim(),
         definition: term.definition.trim(),
-        examples: examplesFromText(term.examplesText),
+        examples: draftExamples(term),
       })),
       behavior_categories: draft.categories.map((category) => ({
         name: category.name.trim(),
         definition: category.definition.trim(),
-        examples: examplesFromText(category.examplesText),
+        examples: draftExamples(category),
         permissible: category.permissible,
       })),
     },

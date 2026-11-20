@@ -1,4 +1,5 @@
 import { makeAssertReview } from '@/test-utils/promptGenerationFixtures'
+import type { AssertTaxonomy } from '@/types'
 
 import {
   newCategoryDraft,
@@ -38,7 +39,7 @@ describe('assertReview', () => {
     })
   })
 
-  it('splits examples by line and reports what the server would reject', () => {
+  it('splits edited examples by line and reports what leaves nothing to save', () => {
     const draft = reviewDraftFromPayload(parseAssertReviewPayload(makeAssertReview().payload)!)
     const edited = {
       ...draft,
@@ -59,7 +60,6 @@ describe('assertReview', () => {
       'Category 3 needs at least one example.',
       'Category names must be unique; "policy_question" is repeated.',
       'Term 1 needs a term and a definition.',
-      'Terms must be unique; "order" is repeated.',
       'Dimension "channel" needs at least 2 levels.',
       'Every level of dimension "channel" needs a name and a definition.',
     ])
@@ -69,6 +69,31 @@ describe('assertReview', () => {
       dimensions: [{ ...draft.dimensions[0]!, levels: [draft.dimensions[0]!.levels[0]!, draft.dimensions[0]!.levels[0]!] }],
     }
     expect(reviewDraftErrors(repeatedLevels)).toEqual(['Dimension "channel" repeats the level "chat".'])
+  })
+
+  it('accepts repeated term names, which the library allows', () => {
+    const draft = reviewDraftFromPayload(parseAssertReviewPayload(makeAssertReview().payload)!)
+    expect(reviewDraftErrors({ ...draft, terms: [draft.terms[0]!, { ...draft.terms[0]!, id: 'copy' }] })).toEqual([])
+  })
+
+  it('keeps multi-line examples unchanged unless their text is edited', () => {
+    const review = makeAssertReview()
+    const taxonomy = review.payload.taxonomy as AssertTaxonomy
+    const exchange = 'User: Where is my order?\nAssistant: It ships tomorrow.'
+    const payload = parseAssertReviewPayload({
+      ...review.payload,
+      taxonomy: {
+        ...taxonomy,
+        definition_of_terms: [{ ...taxonomy.definition_of_terms[0]!, examples: [exchange] }],
+        behavior_categories: [{ ...taxonomy.behavior_categories[0]!, examples: [exchange, 'Second.'] }],
+      },
+    })!
+    const draft = reviewDraftFromPayload(payload)
+    expect(reviewPayloadFromDraft(draft).taxonomy).toEqual(payload.taxonomy)
+
+    const edited = { ...draft, categories: [{ ...draft.categories[0]!, examplesText: 'one\ntwo' }] }
+    expect(reviewPayloadFromDraft(edited).taxonomy.behavior_categories[0]?.examples).toEqual(['one', 'two'])
+    expect(reviewPayloadFromDraft(edited).taxonomy.definition_of_terms[0]?.examples).toEqual([exchange])
   })
 
   it('reads a completed summary with defaults for missing values', () => {

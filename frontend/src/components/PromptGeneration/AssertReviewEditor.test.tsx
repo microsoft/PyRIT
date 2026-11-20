@@ -24,11 +24,17 @@ jest.mock('@/services/api', () => ({
 
 const mockApi = jest.mocked(promptGenerationsApi)
 const GENERATION = makeGenerationDetail({ status: 'awaiting_review' })
+const SERVER_ERROR = { isAxiosError: true, response: { status: 500, data: { detail: 'memory unavailable' } } }
 
-function renderEditor(onGenerationChange: jest.Mock = jest.fn()) {
+function renderEditor(onGenerationChange: jest.Mock = jest.fn(), onReload: jest.Mock = jest.fn()) {
   render(
     <FluentProvider theme={webLightTheme}>
-      <AssertReviewEditor generation={GENERATION} descriptor={ASSERT_DESCRIPTOR} onGenerationChange={onGenerationChange} />
+      <AssertReviewEditor
+        generation={GENERATION}
+        descriptor={ASSERT_DESCRIPTOR}
+        onGenerationChange={onGenerationChange}
+        onReload={onReload}
+      />
     </FluentProvider>,
   )
   return onGenerationChange
@@ -170,6 +176,23 @@ describe('AssertReviewEditor', () => {
     expect(await screen.findByText(/The review could not be loaded: Review unavailable/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await screen.findByRole('textbox', { name: 'Category 1 name' })).toBeInTheDocument()
+  })
+
+  it('shows why the estimate could not be loaded and checks again', async () => {
+    const user = userEvent.setup()
+    mockApi.getEstimate.mockReset()
+    mockApi.getEstimate.mockRejectedValueOnce(SERVER_ERROR)
+      .mockResolvedValue(makeGenerationEstimate({ exact_calls: true, min_calls: 25, max_calls: 25 }))
+    renderEditor()
+
+    const failed = await screen.findByTestId('assert-review-estimate-error')
+    expect(failed).toHaveTextContent('The estimate could not be loaded: memory unavailable')
+    expect(screen.getByRole('region', { name: 'Remaining work' })).not.toHaveTextContent('No estimate is available.')
+    await user.click(within(failed).getByRole('button', { name: 'Check again' }))
+
+    const estimate = screen.getByRole('region', { name: 'Remaining work' })
+    await waitFor(() => expect(within(estimate).getByTestId('estimate-calls')).toHaveTextContent('25'))
+    expect(screen.queryByTestId('assert-review-estimate-error')).not.toBeInTheDocument()
   })
 
   it('explains when the review has no taxonomy', async () => {

@@ -95,9 +95,10 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   const name = datasetName('returns_privacy', testInfo)
   await page.goto('/datasets')
   await expect(page.getByRole('heading', { level: 1, name: 'Datasets' })).toBeVisible()
-  await page.getByRole('button', { name: 'Generate dataset', exact: true }).click()
-  await expect(page.getByRole('heading', { level: 1, name: 'Generate datasets' })).toBeVisible()
-  await chooseGenerator(page, 'ASSERT policy dataset')
+  await page.getByRole('button', { name: 'Generate datasets', exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'New generation' })).toBeVisible()
+  await page.getByRole('link', { name: 'Start ASSERT policy dataset', exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'New ASSERT policy dataset' })).toBeVisible()
 
   await page.getByRole('textbox', { name: /^Behavior name/ }).fill('returns_privacy')
   await page.getByRole('textbox', { name: /^Policy text/ }).fill(POLICY)
@@ -220,8 +221,8 @@ test('generates an objective dataset that appears in the catalog', async ({ page
     request: { count: 3, harm_categories: ['privacy'] },
   })
   await expect(statusBadge(page)).toHaveText('Completed', { timeout: JOB_TIMEOUT_MS })
+  await expect(page.getByTestId('generation-progress')).toContainText('3 of 3 items generated')
   const complete = page.getByTestId('generation-complete')
-  await expect(complete.getByTestId('target-objective-summary')).toHaveText('Objectives3')
   await expect(complete.getByRole('link', { name: /^Run / })).toHaveCount(0)
   await complete.getByRole('link', { name: 'Browse dataset', exact: true }).click()
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })

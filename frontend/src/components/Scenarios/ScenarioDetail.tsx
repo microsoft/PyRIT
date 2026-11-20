@@ -64,7 +64,7 @@ import type {
 import { findRegisteredScorer } from '@/utils/scorerPresentation'
 import { newDraftMessage, toConversationDraft } from '@/utils/conversationDraft'
 import {
-  DATASET_QUERY_PARAM, datasetNamesFromSearchParams, isBlankDatasetName, routerPathParamValue, scenarioRunRoutePath,
+  DATASET_QUERY_PARAM, datasetNamesFromSearchParams, routerPathParamValue, scenarioRunRoutePath,
 } from '@/utils/routeParams'
 import { targetModelName } from '@/utils/targetIdentity'
 
@@ -98,6 +98,7 @@ import {
   OBJECTIVE_PARAMETER_NAMES,
   type ScenarioLaunchInput,
   scenarioDynamicParameters,
+  datasetSelectionError,
   linkedDatasetProblem,
   requiresDatasetSelection,
   supportsParameter,
@@ -433,15 +434,12 @@ function ScenarioLaunchForm({
     [linkedNames, supportsDatasets],
   )
   const location = useLocation()
-  // Without dataset input every linked name goes; otherwise only the blank ones do.
-  const searchWithoutBadLinks = new URLSearchParams()
+  const searchWithoutDatasetLinks = new URLSearchParams()
   for (const [key, value] of new URLSearchParams(location.search)) {
-    if (key !== DATASET_QUERY_PARAM || (supportsDatasets && !isBlankDatasetName(value))) {
-      searchWithoutBadLinks.append(key, value)
-    }
+    if (key !== DATASET_QUERY_PARAM) searchWithoutDatasetLinks.append(key, value)
   }
-  const remainingSearch = searchWithoutBadLinks.toString()
-  const pathWithoutBadLinks = `${location.pathname}${remainingSearch ? `?${remainingSearch}` : ''}`
+  const remainingSearch = searchWithoutDatasetLinks.toString()
+  const pathWithoutDatasetLinks = `${location.pathname}${remainingSearch ? `?${remainingSearch}` : ''}`
 
   const formRules = useMemo<ScenarioLaunchFormRules>(() => ({
     techniqueNames: techniqueOptions.map((technique) => technique.name),
@@ -465,8 +463,7 @@ function ScenarioLaunchForm({
       preset,
       seededTechniques: techniqueSeed.techniques,
       initialRun,
-      datasetNames: supportsDatasets && linkedDatasetNames.length > 0
-        ? linkedDatasetNames.filter((name) => !isBlankDatasetName(name)) : undefined,
+      datasetNames: supportsDatasets && linkedDatasetNames.length > 0 ? linkedDatasetNames : undefined,
     }),
   )
   const {
@@ -587,6 +584,8 @@ function ScenarioLaunchForm({
   ])
   const estimateResult = useMemo(() => buildEstimateRequest(launchInput), [launchInput])
   const requestResult = useMemo(() => buildRunRequest(launchInput), [launchInput])
+  const datasetSelectionProblem = datasetSelectionError(scenario, datasetEdits)
+  const datasetPickerRef = useRef<HTMLInputElement>(null)
   const estimateRequest = useMemo(
     () => estimateResult.ok ? estimateResult.request : null,
     [estimateResult],
@@ -845,7 +844,14 @@ function ScenarioLaunchForm({
             id={formId}
             className={styles.formColumn}
             aria-label="Scenario run configuration"
-            onSubmit={submitForm}
+            onSubmit={(event) => {
+              submitForm(event)
+              // A missing dataset is reported on the picker, far below the button, so take the user there.
+              if (!requestResult.ok && requestResult.error === datasetSelectionProblem) {
+                datasetPickerRef.current?.scrollIntoView({ block: 'center' })
+                datasetPickerRef.current?.focus()
+              }
+            }}
             noValidate
           >
             {preset && (
@@ -872,7 +878,7 @@ function ScenarioLaunchForm({
                 </MessageBarBody>
               </MessageBar>
             )}
-            {validationError && !requestResult.ok && (
+            {validationError && !requestResult.ok && requestResult.error !== datasetSelectionProblem && (
               <MessageBar intent="warning">
                 <MessageBarBody role="alert">{requestResult.error}</MessageBarBody>
               </MessageBar>
@@ -881,9 +887,7 @@ function ScenarioLaunchForm({
               <MessageBar intent="error" data-testid="linked-datasets-error">
                 <MessageBarBody>
                   {linkedDatasetError}{' '}
-                  <Link to={pathWithoutBadLinks}>
-                    {supportsDatasets ? 'Open without the blank dataset names' : 'Open without the linked datasets'}
-                  </Link>
+                  <Link to={pathWithoutDatasetLinks}>Open without the linked datasets</Link>
                 </MessageBarBody>
               </MessageBar>
             )}
@@ -1027,7 +1031,10 @@ function ScenarioLaunchForm({
                     Seed examples used by this scan. Limits and filters control which examples are selected.
                   </ContextualHelpLabel>
                 </Text>
-                <DatasetActions scenarioName={scenario.scenario_name} />
+                <DatasetActions
+                  scenarioName={scenario.scenario_name}
+                  canGenerate={supportsDatasets && datasetOptions.supports_overrides && datasetOptions.mode !== 'fixed'}
+                />
               </div>
               <ScenarioDatasetTable
                 request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
@@ -1041,6 +1048,7 @@ function ScenarioLaunchForm({
                     && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
                 onLoad={() => { if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest) }}
                 required={datasetRequired} showCatalogLink={false}
+                selectionError={validationError !== null ? datasetSelectionProblem : null} pickerRef={datasetPickerRef}
                 onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
               />
             </section>

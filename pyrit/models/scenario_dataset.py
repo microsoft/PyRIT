@@ -53,6 +53,7 @@ class ScenarioDatasetOptions(BaseModel):
 
     mode: DatasetSelectionMode = DatasetSelectionMode.ANY
     allowed_names: list[str] = Field(default_factory=list)
+    min_selected: int | None = Field(None, ge=1)
     max_selected: int | None = Field(None, ge=1)
     per_dataset_limit: bool = True
     total_limit: bool = True

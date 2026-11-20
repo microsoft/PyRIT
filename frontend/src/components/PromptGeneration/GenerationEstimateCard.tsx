@@ -57,7 +57,7 @@ export default function GenerationEstimateCard({
             {datasetCount === 1 && estimate.stages.map((stage) => (
               <div className={styles.estimateRow} key={`${stage.stage}:${stage.target_role}`}>
                 <dt>{stageLabel(descriptor, stage.stage)} <span className={styles.muted}>({stage.target_role} target)</span></dt>
-                <dd>{formatRange(stage.min_calls, stage.max_calls)} calls</dd>
+                <dd>{formatRange(stage.min_calls, stage.max_calls)} {stage.max_calls === 1 ? 'call' : 'calls'}</dd>
               </div>
             ))}
           </dl>

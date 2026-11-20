@@ -9,8 +9,6 @@ import type {
   TechniqueOverride,
 } from '@/types'
 
-import { isBlankDatasetName } from '@/utils/routeParams'
-
 import { scenarioDatasetDefaults } from './datasetPresentation'
 
 /**
@@ -48,9 +46,18 @@ export function supportsParameter(scenario: RegisteredScenario, name: string): b
   return scenario.supported_parameter_names.includes(name)
 }
 
-/** ASSERT has no default dataset, so its launch needs one selected. */
+/** Whether the scenario declares that a launch needs datasets selected, such as one without defaults. */
 export function requiresDatasetSelection(scenario: RegisteredScenario): boolean {
-  return scenario.scenario_name === 'foundry.assert_policy'
+  return (scenario.dataset_options?.min_selected ?? 0) > 0
+}
+
+/** Why the selected datasets are too few for the scenario's declared minimum, or null. */
+export function datasetSelectionError(scenario: RegisteredScenario, datasetEdits: ScenarioDatasetRequest): string | null {
+  const minimum = scenario.dataset_options?.min_selected ?? 0
+  if (minimum === 0) return null
+  const selected = (datasetEdits.sources ?? scenarioDatasetDefaults(scenario).sources).length
+  if (selected >= minimum) return null
+  return minimum === 1 ? 'Select a dataset.' : `Select at least ${minimum} datasets.`
 }
 
 function linkedDatasetLabel(name: string): string {
@@ -58,8 +65,8 @@ function linkedDatasetLabel(name: string): string {
 }
 
 /**
- * Why a link's dataset names can't launch, or null. A scenario without dataset input can't take
- * any, and no dataset can have a blank name. Other names are left for the server to validate.
+ * Why a link's dataset names can't launch, or null. A scenario without dataset input would drop
+ * them silently; other names, including blank ones, are left for the server to validate.
  */
 export function linkedDatasetProblem(names: readonly string[], supportsDatasets: boolean): string | null {
   if (names.length === 0) return null
@@ -67,7 +74,7 @@ export function linkedDatasetProblem(names: readonly string[], supportsDatasets:
     return "This scenario does not take datasets, so it can't launch with the linked datasets: "
       + `${names.map(linkedDatasetLabel).join(', ')}.`
   }
-  return names.some(isBlankDatasetName) ? "The link includes a blank dataset name, so this scan can't launch with it." : null
+  return null
 }
 
 /** The scenario-specific parameters the launch form renders, without the common ones. */
@@ -211,10 +218,8 @@ export function buildRunRequest(input: ScenarioLaunchInput): BuildRunRequestResu
   if (supportsParameter(input.scenario, 'objective_target') && !input.targetName) {
     return { ok: false, error: 'Select a target.' }
   }
-  if (requiresDatasetSelection(input.scenario)
-    && (input.datasetEdits.sources ?? scenarioDatasetDefaults(input.scenario).sources).length === 0) {
-    return { ok: false, error: 'Select an ASSERT dataset.' }
-  }
+  const datasetProblem = datasetSelectionError(input.scenario, input.datasetEdits)
+  if (datasetProblem) return { ok: false, error: datasetProblem }
   const estimateResult = buildEstimateRequest(input)
   if (!estimateResult.ok) {
     return estimateResult

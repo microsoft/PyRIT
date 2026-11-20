@@ -94,6 +94,7 @@ function RefreshableRoutes() {
         <Route path="/datasets" element={<DatasetCatalog />} />
         <Route path="/datasets/detail" element={<DatasetSelection />} />
         <Route path="/datasets/generate" element={<p>Dataset generations</p>} />
+        <Route path="/datasets/generate/new" element={<p>Choose a generator</p>} />
       </Routes>
       <output aria-label="Current URL">{`${location.pathname}${location.search}${location.hash}`}</output>
       <button type="button" onClick={() => navigate(-1)}>History back</button>
@@ -308,14 +309,14 @@ describe('DatasetCatalog', () => {
     expect(await screen.findByText('Page 1')).toBeVisible()
   })
 
-  it('opens dataset generation from the catalog header', async () => {
+  it('opens the generator chooser from the catalog header', async () => {
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
     render(<Harness initialPath="/datasets" />)
 
-    await user.click(await screen.findByRole('button', { name: 'Generate dataset' }))
+    await user.click(await screen.findByRole('button', { name: 'Generate datasets' }))
 
-    expect(await screen.findByText('Dataset generations')).toBeInTheDocument()
-    expect(currentUrl().pathname).toBe('/datasets/generate')
+    expect(await screen.findByText('Choose a generator')).toBeInTheDocument()
+    expect(currentUrl().pathname).toBe('/datasets/generate/new')
   })
 
   it('renders summary cards from the catalog response', async () => {

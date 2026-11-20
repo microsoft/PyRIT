@@ -44,6 +44,13 @@ const SEARCHER = makeTarget({
 
 const SEEDED_REQUEST = { behavior_name: 'returns', behavior_description: 'Explain published return policies.' }
 const CHANNEL_DIMENSION = { name: 'channel', description: 'Where users write from.', levels: [] }
+const REVIEWED_TAXONOMY = {
+  behavior: { name: 'returns', definition: 'Explaining return policies.' },
+  definition_of_terms: [],
+  behavior_categories: [
+    { name: 'policy_question', definition: 'Asks about policy.', examples: ['What is the window?'], permissible: true },
+  ],
+}
 
 function LocationReadout() {
   const location = useLocation()
@@ -235,6 +242,16 @@ describe('AssertGenerationForm', () => {
     expect(screen.queryByTestId('generation-preflight-failed')).not.toBeInTheDocument()
   })
 
+  it('still lets the user generate after a failed check', async () => {
+    const user = userEvent.setup()
+    mockApi.preflight.mockRejectedValue(new Error('Network unavailable'))
+    renderForm()
+    await fillPolicy(user)
+
+    expect(await screen.findByTestId('generation-preflight-failed')).toHaveTextContent('You can still try to generate.')
+    expect(screen.getByTestId('generate-btn')).toBeEnabled()
+  })
+
   it('blocks a dataset name that is already taken', async () => {
     const user = userEvent.setup()
     mockApi.preflight.mockResolvedValue(makePreflight({ dataset_name_available: false, valid: false }))
@@ -335,39 +352,18 @@ describe('AssertGenerationForm', () => {
     expect(screen.getAllByRole('textbox', { name: /^Dataset name for/ })).toHaveLength(2)
   })
 
-  it('offers only web-search targets for research when web search is on', async () => {
+  it('requires a suite label and a different dataset name per behavior', async () => {
     const user = userEvent.setup()
-    renderForm({}, [GPT, SEARCHER])
+    renderForm({ suite: 'travel_planner' })
 
-    const research = await screen.findByTestId('generation-target-research')
-    expect(within(research).getAllByRole('option').map((option) => option.textContent))
-      .toEqual(['Use the generator default', 'gpt (gpt-4o)', 'searcher'])
-    await user.selectOptions(research, 'gpt')
-    await user.click(screen.getByRole('button', { name: 'Advanced settings' }))
-    await user.click(screen.getByRole('switch', { name: 'Research with web search' }))
-
-    expect(within(research).getAllByRole('option').map((option) => option.textContent))
-      .toEqual(['Use the generator default', 'gpt', 'searcher'])
-    expect(screen.getAllByText(/only targets that support web search are listed/).length).toBeGreaterThan(0)
-    expect(screen.getByTestId('generation-form-errors')).toHaveTextContent('Research target: Web search is on')
-    await user.selectOptions(research, 'searcher')
-    expect(screen.queryByText(/Research target: Web search is on/)).not.toBeInTheDocument()
-  })
-
-  it('requires a web-search generation target when no research target is chosen', async () => {
-    const user = userEvent.setup()
-    const noSearch = makeTarget({
-      target_registry_name: 'gpt',
-      capabilities: capabilities({ supports_web_search: false }),
-    })
-    renderForm({}, [noSearch])
-
-    await user.selectOptions(await screen.findByTestId('generation-target-research'), '')
-    await user.click(screen.getByRole('button', { name: 'Advanced settings' }))
-    await user.click(screen.getByRole('switch', { name: 'Research with web search' }))
+    await user.clear(await screen.findByTestId('assert-suite-label'))
+    expect(screen.getByTestId('generation-form-errors')).toHaveTextContent('Enter a suite label.')
+    await replaceText(user, screen.getByTestId('assert-suite-label'), 'travel')
+    await replaceText(user, screen.getByRole('textbox', { name: 'Dataset name for prompt_injection' }), 'travel_sycophancy')
 
     expect(screen.getByTestId('generation-form-errors'))
-      .toHaveTextContent('Web search is on: choose a research target that supports web search')
+      .toHaveTextContent('Each behavior in the suite needs a different dataset name.')
+    expect(screen.getByRole('button', { name: 'Generate 2 datasets' })).toBeDisabled()
   })
 
   describe('target defaults', () => {
@@ -414,20 +410,6 @@ describe('AssertGenerationForm', () => {
 
       expect(await screen.findByTestId('generation-target-generation')).toHaveValue('')
       expect(screen.getByTestId('generation-target-research')).toHaveValue('')
-    })
-
-    it('should flag a default research target without web search instead of replacing it', async () => {
-      const user = userEvent.setup()
-      renderForm()
-      await fillPolicy(user)
-
-      await user.click(screen.getByRole('button', { name: 'Advanced settings' }))
-      await user.click(screen.getByRole('switch', { name: 'Research with web search' }))
-
-      expect(screen.getByTestId('generation-target-research')).toHaveValue('gpt')
-      expect(screen.getByText(/"gpt" can't be used for this role/)).toBeInTheDocument()
-      expect(screen.getByTestId('generation-form-errors')).toHaveTextContent('Research target: Web search is on')
-      expect(screen.getByTestId('generate-btn')).toBeDisabled()
     })
   })
 
@@ -551,6 +533,45 @@ describe('AssertGenerationForm', () => {
       targets: { generation: 'gpt' },
     })))
     expect(await screen.findByText('Generation page')).toBeInTheDocument()
+  })
+
+  it('lets the server check web-search support instead of hiding or rejecting targets', async () => {
+    const user = userEvent.setup()
+    renderForm({}, [GPT, SEARCHER])
+    await fillPolicy(user)
+
+    await user.click(screen.getByRole('button', { name: 'Advanced settings' }))
+    await user.click(screen.getByRole('switch', { name: 'Research with web search' }))
+    const research = screen.getByTestId('generation-target-research')
+    expect(within(research).getAllByRole('option').map((option) => option.textContent))
+      .toEqual(['Use the generator default', 'gpt (gpt-4o)', 'searcher'])
+    expect(research).toHaveValue('gpt')
+
+    await waitFor(() => expect(lastPreflightBody()?.request).toEqual(expect.objectContaining({ web_search: true })))
+    expect(lastPreflightBody()?.targets).toEqual({ generation: 'gpt', research: 'gpt' })
+    expect(screen.queryByTestId('generation-form-errors')).not.toBeInTheDocument()
+  })
+
+  it('reuses the reviewed taxonomy of a stored request until the policy changes', async () => {
+    const user = userEvent.setup()
+    renderForm({ request: { ...SEEDED_REQUEST, taxonomy: REVIEWED_TAXONOMY }, datasetName: 'returns_v2' })
+
+    const reuse = await screen.findByRole('checkbox', { name: 'Reuse the reviewed taxonomy' })
+    expect(reuse).toBeChecked()
+    await waitFor(() => expect(lastPreflightBody()?.request).toEqual(expect.objectContaining({ taxonomy: REVIEWED_TAXONOMY })))
+
+    await user.click(reuse)
+    await waitFor(() => expect(lastPreflightBody()?.request).not.toHaveProperty('taxonomy'))
+    await user.click(reuse)
+    await waitFor(() => expect(lastPreflightBody()?.request).toHaveProperty('taxonomy'))
+
+    await replaceText(user, screen.getByTestId('assert-policy-text'), 'Explain return windows only.')
+    expect(screen.getByRole('checkbox', { name: 'Reuse the reviewed taxonomy' })).toBeDisabled()
+    expect(screen.getByText(/The policy changed, so a new taxonomy is generated/)).toBeInTheDocument()
+    await waitFor(() => expect(lastPreflightBody()?.request).toEqual(expect.objectContaining({
+      behavior_description: 'Explain return windows only.',
+    })))
+    expect(lastPreflightBody()?.request).not.toHaveProperty('taxonomy')
   })
 
   it('still offers a blank policy when the template library cannot load', async () => {

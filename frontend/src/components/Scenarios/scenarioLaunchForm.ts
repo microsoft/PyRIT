@@ -103,9 +103,8 @@ interface InitialFormInput {
   /** A saved run to start from. Its values win over the preset's. Seeds initial state only. */
   initialRun?: RunScenarioRequest
   /**
-   * Dataset names a link preselected. When given, even empty because every linked name was
-   * blank, they replace the sources from the saved run or preset, so a link never falls back to
-   * the defaults; that request's other dataset settings, such as limits, still apply.
+   * Dataset names a link preselected. When given, they replace the sources from the saved run or
+   * preset; that request's other dataset settings, such as limits, still apply.
    */
   datasetNames?: readonly string[]
 }

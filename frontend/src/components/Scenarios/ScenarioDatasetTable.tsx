@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { type Ref, useEffect, useId, useState } from 'react'
 
 import {
   Badge, Button, Combobox, Divider, mergeClasses, MessageBar, MessageBarBody, Option, Radio, RadioGroup,
@@ -33,6 +33,9 @@ interface ScenarioDatasetTableProps {
   onLoad?: () => void
   /** Marks the picker required until the first dataset is chosen. */
   required?: boolean
+  /** Why the selection can't launch, shown on the picker. */
+  selectionError?: string | null
+  pickerRef?: Ref<HTMLInputElement>
   showCatalogLink?: boolean
   onReload: () => void
   onChange: (request: ScenarioDatasetRequest) => void
@@ -41,7 +44,8 @@ interface ScenarioDatasetTableProps {
 
 export default function ScenarioDatasetTable({
   request, defaults, effective, options, datasets, disabled, loading, metadataError,
-  preparing = false, loadError, loadEnabled = false, onLoad, required = false, showCatalogLink = true,
+  preparing = false, loadError, loadEnabled = false, onLoad, required = false, selectionError = null, pickerRef,
+  showCatalogLink = true,
   onReload, onChange, onValidationChange,
 }: ScenarioDatasetTableProps) {
   const styles = useScenarioDatasetTableStyles()
@@ -144,7 +148,7 @@ export default function ScenarioDatasetTable({
     : policies[0] === 'always' ? 'Refresh datasets for each new scan'
     : policies[0] === 'never' ? 'Only use datasets already in memory'
     : 'Load missing datasets'
-  const picker = <Combobox aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
+  const picker = <Combobox ref={pickerRef} aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
     placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]} disabled={busy}
     onOpenChange={(_, data) => { if (data.open) onReload() }}
     onChange={(event) => setSearch(event.target.value)}
@@ -243,18 +247,19 @@ export default function ScenarioDatasetTable({
       </div>}
       {(selected.length > 0 || canSelect) && <div className={styles.controls}>
         {canSelect && <>
-        {(canAdd || replaceSingleSource) && (required ? <HelpField
-          label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} required={selected.length === 0}>
+        {(canAdd || replaceSingleSource) && (required || selectionError ? <HelpField
+          label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} required={required && selected.length === 0}
+          validationMessage={selectionError ?? undefined} validationState={selectionError ? 'error' : 'none'}>
           {picker}
         </HelpField> : picker)}
-        <Button className={styles.button} disabled={busy} onClick={() => {
+        {selected.length > 0 && <Button className={styles.button} disabled={busy} onClick={() => {
           const edits = { ...request }
           delete edits.sources
           delete edits.max_per_dataset
           clearSourceDrafts()
           setSearch('')
           onChange(edits)
-        }}>Reset datasets</Button>
+        }}>Reset datasets</Button>}
         </>}
         {showCatalogLink && <Link className={styles.browseLink} to="/datasets">Browse datasets</Link>}
       </div>}

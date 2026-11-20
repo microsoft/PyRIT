@@ -1,34 +1,8 @@
 import type {
   PromptGenerationPreflightResponse,
   PromptGeneratorDescriptor,
-  PromptGeneratorTargetRole,
   TargetInstance,
 } from '@/types'
-
-/** Limits the targets offered for one role and says why. */
-export interface TargetRoleFilter {
-  readonly allows: (target: TargetInstance) => boolean
-  readonly reason: string
-}
-
-/** The selected target for each role must be registered and pass its filter. */
-export function targetSelectionErrors(
-  roles: readonly PromptGeneratorTargetRole[],
-  targets: readonly TargetInstance[],
-  value: Readonly<Record<string, string>>,
-  filters: Readonly<Record<string, TargetRoleFilter>> = {},
-): string[] {
-  const errors: string[] = []
-  for (const role of roles) {
-    const name = value[role.role]
-    if (!name) continue
-    const target = targets.find((item) => item.target_registry_name === name)
-    const filter = filters[role.role]
-    if (!target) errors.push(`${role.label}: "${name}" is not a registered target.`)
-    else if (filter && !filter.allows(target)) errors.push(`${role.label}: ${filter.reason}`)
-  }
-  return errors
-}
 
 /** The default target for every role of a new generation, or no targets when there is no default. */
 export function defaultTargetSelection(

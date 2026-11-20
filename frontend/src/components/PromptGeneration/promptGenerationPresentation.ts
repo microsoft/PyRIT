@@ -8,7 +8,7 @@ import type {
 
 type BadgeColor = 'informative' | 'brand' | 'success' | 'danger' | 'warning'
 
-const ACTIVE_STATUSES: ReadonlySet<PromptGenerationStatus> = new Set(['queued', 'running', 'saving'])
+const ACTIVE_STATUSES: ReadonlySet<PromptGenerationStatus> = new Set(['queued', 'running'])
 const RETRYABLE_STATUSES: ReadonlySet<PromptGenerationStatus> = new Set(['failed', 'cancelled', 'interrupted'])
 const CANCELLABLE_STATUSES: ReadonlySet<PromptGenerationStatus> = new Set(['queued', 'running', 'awaiting_review'])
 
@@ -16,7 +16,6 @@ export const GENERATION_STATUS_LABELS: Record<PromptGenerationStatus, string> = 
   queued: 'Queued',
   running: 'Running',
   awaiting_review: 'Review needed',
-  saving: 'Saving',
   completed: 'Completed',
   failed: 'Failed',
   cancelled: 'Cancelled',
@@ -27,7 +26,6 @@ export const GENERATION_STATUS_COLORS: Record<PromptGenerationStatus, BadgeColor
   queued: 'informative',
   running: 'brand',
   awaiting_review: 'warning',
-  saving: 'brand',
   completed: 'success',
   failed: 'danger',
   cancelled: 'warning',
@@ -36,7 +34,7 @@ export const GENERATION_STATUS_COLORS: Record<PromptGenerationStatus, BadgeColor
 
 /** Matches the server's dataset name rule. */
 export const DATASET_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
-const MAX_DATASET_NAME_LENGTH = 128
+export const MAX_DATASET_NAME_LENGTH = 128
 const VERSION_SUFFIX_PATTERN = /^(.*)_v(\d+)$/
 
 /** Generations the server is working on; their pages poll. */
@@ -73,8 +71,11 @@ export function datasetNameFromText(text: string): string {
 /** Suggests the next name for a regenerated dataset: `name` becomes `name_v2`, `name_v2` becomes `name_v3`. */
 export function nextDatasetName(name: string): string {
   const match = VERSION_SUFFIX_PATTERN.exec(name)
-  const suffix = `_v${match ? Number(match[2]) + 1 : 2}`
-  const base = datasetNameFromText(match ? match[1] ?? '' : name) || 'dataset'
+  // A suffix too large to count exactly is part of the name, not a version.
+  const version = match ? Number(match[2]) : Number.NaN
+  const counted = Number.isSafeInteger(version + 1)
+  const suffix = `_v${counted ? version + 1 : 2}`
+  const base = datasetNameFromText(counted && match ? match[1] ?? '' : name) || 'dataset'
   // Shorten the base, not the suffix, so a maximum-length name still gets a new name.
   return `${base.slice(0, MAX_DATASET_NAME_LENGTH - suffix.length)}${suffix}`
 }
@@ -184,7 +185,7 @@ export function countGenerationStatuses(items: readonly PromptGenerationSummary[
 export function aggregateGenerationStatus(items: readonly PromptGenerationSummary[]): PromptGenerationStatus {
   const statuses = new Set(items.map((item) => item.status))
   const order: readonly PromptGenerationStatus[] = [
-    'awaiting_review', 'running', 'saving', 'queued', 'failed', 'interrupted', 'cancelled',
+    'awaiting_review', 'running', 'queued', 'failed', 'interrupted', 'cancelled',
   ]
   return order.find((status) => statuses.has(status)) ?? 'completed'
 }

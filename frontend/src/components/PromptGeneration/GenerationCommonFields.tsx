@@ -3,7 +3,7 @@ import { Checkbox, Field, Input, Text } from '@fluentui/react-components'
 import type { PromptGeneratorDescriptor, TargetInstance } from '@/types'
 
 import GenerationTargetFields from './GenerationTargetFields'
-import { hasReviewableStage, type TargetRoleFilter } from './generationFormHelpers'
+import { hasReviewableStage } from './generationFormHelpers'
 import { usePromptGenerationStyles } from './PromptGeneration.styles'
 
 interface DatasetNameField {
@@ -21,7 +21,6 @@ interface GenerationCommonFieldsProps {
   readonly targetsError: string | null
   readonly selectedTargets: Readonly<Record<string, string>>
   readonly onTargetsChange: (value: Record<string, string>) => void
-  readonly targetFilters?: Readonly<Record<string, TargetRoleFilter>>
   readonly pauseForReview: boolean
   readonly onPauseForReviewChange: (value: boolean) => void
   readonly disabled: boolean
@@ -36,7 +35,6 @@ export default function GenerationCommonFields({
   targetsError,
   selectedTargets,
   onTargetsChange,
-  targetFilters,
   pauseForReview,
   onPauseForReviewChange,
   disabled,
@@ -71,7 +69,6 @@ export default function GenerationCommonFields({
         error={targetsError}
         value={selectedTargets}
         onChange={onTargetsChange}
-        filters={targetFilters}
         disabled={disabled}
       />
       {hasReviewableStage(descriptor) && (

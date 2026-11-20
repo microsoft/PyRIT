@@ -197,7 +197,7 @@ describe('DatasetSelection', () => {
     })
     renderSelection(datasetDetailPath(LOADED.selection_key))
 
-    const link = await screen.findByRole('link', { name: /edit policy & regenerate/i })
+    const link = await screen.findByRole('link', { name: /edit & regenerate/i })
     expect(link).toHaveAttribute(
       'href',
       '/datasets/generate/new?generator=assert&selection_key=dataset%3Anamed%3Aharmbench',

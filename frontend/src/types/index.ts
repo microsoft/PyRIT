@@ -1680,6 +1680,8 @@ export interface ScenarioDatasetRequest {
 export interface ScenarioDatasetOptions {
   mode: 'any' | 'subset' | 'fixed'
   allowed_names: string[]
+  /** The fewest named datasets a run needs, when the scenario has no usable defaults. */
+  min_selected?: number | null
   max_selected?: number | null
   per_dataset_limit: boolean
   total_limit: boolean
@@ -2881,7 +2883,6 @@ export type PromptGenerationStatus =
   | 'queued'
   | 'running'
   | 'awaiting_review'
-  | 'saving'
   | 'completed'
   | 'failed'
   | 'cancelled'
@@ -3091,6 +3092,8 @@ export interface AssertGenerationRequest {
   web_search: boolean
   target_system_prompt: string | null
   target_owns_instructions: boolean
+  /** A reviewed taxonomy (an `AssertTaxonomy`) to reuse; generation then skips the research stages. */
+  taxonomy?: Record<string, unknown>
 }
 
 export interface AssertTerm {

@@ -259,6 +259,14 @@ async def test_default_estimate_is_bounded_without_datasets_async() -> None:
     assert "--datasets" in (estimate.note or "")
 
 
+async def test_dataset_overrides_must_select_a_dataset_async() -> None:
+    scenario = AssertPolicy()
+    assert scenario.get_dataset_options().min_selected == 1
+    scenario.set_params_from_args(args={"dataset_overrides": {"max_total": 3}})
+    with pytest.raises(ValueError, match="Select at least 1 dataset"):
+        await scenario.get_run_size_estimate_async()
+
+
 @pytest.mark.parametrize(
     ("args", "message"),
     [

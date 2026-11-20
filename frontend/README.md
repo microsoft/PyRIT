@@ -437,7 +437,7 @@ $env:PYRIT_PYTHON = uv run --no-sync python -c "import sys; print(sys.executable
 npm run test:e2e:prompt-generation
 ```
 
-This builds the current frontend and drives **Datasets > Generate dataset** against
+This builds the current frontend and drives **Datasets > Generate datasets** against
 the real prompt generation routes, `PromptGenerationService`, `AssertGenerator`, and
 `TargetObjectiveGenerator` over disposable SQLite data. A registered offline target
 returns deterministic ASSERT stage and objective JSON, so no provider is called.

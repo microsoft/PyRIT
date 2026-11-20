@@ -19,6 +19,7 @@ from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
     Parameter,
+    ScenarioDatasetOptions,
     ScenarioRunPlanGroupKind,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
@@ -126,6 +127,8 @@ class AssertPolicy(Scenario):
     TESTER_FIRST_MESSAGE: ClassVar[str] = "Begin the conversation now with the user's first message only."
     TESTER_FEEDBACK_TEMPLATE: ClassVar[str] = "<target_response>\n{{ feedback_text }}\n</target_response>"
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
+    #: There are no default ASSERT datasets, so a run needs at least one stored dataset selected.
+    DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions(min_selected=1)
 
     @apply_defaults
     def __init__(

@@ -221,6 +221,13 @@ describe('ScenarioDatasetTable', () => {
     expect(screen.getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
   })
 
+  it('offers the picker but no reset when nothing is selected and there are no defaults', () => {
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} />)
+    expect(screen.getByText('No dataset selected.')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Add dataset' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reset datasets' })).not.toBeInTheDocument()
+  })
+
   it('blocks an empty selection instead of sending an empty list that means include all', async () => {
     const user = userEvent.setup()
     const onChange = jest.fn()

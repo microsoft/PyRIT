@@ -287,7 +287,7 @@ Load data through PyRIT; the visible catalog checks for changes each minute. See
 
 ### Generate datasets
 
-**Generate dataset** creates a new dataset with one of PyRIT's
+**Generate datasets** creates a new dataset with one of PyRIT's
 [prompt generators](../code/executor/7_promptgen.ipynb):
 
 - **ASSERT policy dataset**: write a policy, such as "Explain published return
@@ -308,12 +308,14 @@ request and targets and estimates the model calls and tokens without calling a t
 can leave the page, cancel, or retry. Retry resumes from the last completed stage,
 including after a backend restart. Generations are stored with the memory's
 results, next to media output. Each completed generation stores a new dataset; to
-change a dataset, edit its policy and regenerate it under a new name. When an ASSERT
+change a dataset, choose **Edit & regenerate** and save it under a new name. An ASSERT
+dataset whose taxonomy was reviewed reuses that taxonomy until you change the policy. When an ASSERT
 dataset is ready, **Run foundry.assert_policy** opens the scanner with it selected.
 To list the datasets you generated, set the catalog's **Origins** filter to
 **Generated**. A scanner's Datasets section also has **Browse datasets** and
 **Generate datasets**; Generate opens the ASSERT form for `foundry.assert_policy`,
-which needs at least one dataset, and the generator list for other scanners.
+which needs at least one dataset, and the generator list for other scanners whose
+datasets can be chosen.
 
 ## History
 

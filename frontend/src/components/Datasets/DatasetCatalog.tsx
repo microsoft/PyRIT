@@ -14,7 +14,7 @@ import {
 import { SearchRegular, SparkleRegular } from '@fluentui/react-icons'
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
 
-import { PROMPT_GENERATIONS_PATH } from '@/components/PromptGeneration/promptGenerationRoutes'
+import { newPromptGenerationRoutePath } from '@/components/PromptGeneration/promptGenerationRoutes'
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
 import { useLoadedDatasets } from '@/hooks/useLoadedDatasets'
 import type { DatasetInfo, FilterOption } from '@/types'
@@ -133,10 +133,10 @@ export default function DatasetCatalog() {
           className={styles.touchTarget}
           appearance="primary"
           icon={<SparkleRegular />}
-          onClick={() => navigate(PROMPT_GENERATIONS_PATH)}
+          onClick={() => navigate(newPromptGenerationRoutePath())}
           data-testid="generate-dataset-btn"
         >
-          Generate dataset
+          Generate datasets
         </Button>
       </div>
 
