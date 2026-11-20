@@ -487,9 +487,7 @@ print(f"Trace the backend does not have: {missing.acquisition.value}")
 # scenario = RapidResponse(objective_scorer=scorers)
 # ```
 #
-# When no candidate can evaluate a dataset's conditions, initialization stops with each
-# candidate's reason, whatever the `incompatible_technique_policy`, so no prompt is sent only to
-# be judged by a scorer that would ignore the condition. The selected `MessageToolCallScorer` then
-# reads the run as described above: an invocation attempt counts even when the tool reported an
-# error, while a claim in the reply, a request that never ran, a dispatch failure, or simulated
-# history leaves the result undetermined.
+# One scorer must judge every objective in a dataset, so keep `ToolsCalled` objectives in their
+# own dataset: a dataset that mixes them with ordinary objectives stops initialization.
+# [Judging Each Dataset With Its Own Scorer](../scenarios/1_common_scenario_parameters.ipynb#judging-each-dataset-with-its-own-scorer)
+# shows how selection works and when it fails.
