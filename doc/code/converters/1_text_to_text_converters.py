@@ -47,6 +47,7 @@ from types import SimpleNamespace
 
 from pyrit.common.path import DOCS_CODE_PATH
 from pyrit.converter import (
+    AffineConverter,
     AsciiArtConverter,
     AskToDecodeConverter,
     AtbashConverter,
@@ -89,6 +90,7 @@ print("BinAscii:", await BinAsciiConverter().convert_async(prompt=prompt))  # ty
 print("Morse:", await MorseConverter().convert_async(prompt=prompt))  # type: ignore
 print("NATO:", await NatoConverter().convert_async(prompt=prompt))  # type: ignore
 print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=prompt))  # type: ignore
+print("Affine:", await AffineConverter().convert_async(prompt=prompt))  # type: ignore
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
 print("Vigenere:", await VigenereConverter(key="key").convert_async(prompt=prompt))  # type: ignore
 print("Bifid:", await BifidConverter().convert_async(prompt=prompt))  # type: ignore

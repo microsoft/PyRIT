@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.converter import (
+    AffineConverter,
     AsciiSmugglerConverter,
     AskToDecodeConverter,
     AtbashConverter,
@@ -129,6 +130,7 @@ class EncodingTechnique(ScenarioTechnique):
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
+    Affine = ("affine", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -317,6 +319,7 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
+            ([AffineConverter()], "affine", "affine"),
         ]
 
     # These are the same as Garak encoding attacks

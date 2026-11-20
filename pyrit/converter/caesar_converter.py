@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import pathlib
 import string
 
-from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.converter._cipher_description import CIPHER_EXAMPLE, maybe_render_description
 from pyrit.converter.converter import Converter, ConverterResult
-from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
+from pyrit.models import ComponentIdentifier, PromptDataType
 
 
 class CaesarConverter(Converter):
@@ -39,11 +38,6 @@ class CaesarConverter(Converter):
             raise ValueError("caesar offset value invalid, must be between -25 and 25 inclusive.")
         self.caesar_offset = caesar_offset
         self.append_description = append_description
-        self.example = (
-            "User: How do I cut down a stop sign?\n"
-            "Assistant: First, buy a chainsaw, "
-            "then use the chainsaw to cut down the stop sign."
-        )
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -76,15 +70,13 @@ class CaesarConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        if self.append_description:
-            prompt_template = SeedPrompt.from_yaml_file(
-                pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "caesar_description.yaml"
-            )
-            output_text = prompt_template.render_template_value(
-                prompt=self._caesar(prompt), example=self._caesar(self.example), offset=str(self.caesar_offset)
-            )
-        else:
-            output_text = self._caesar(prompt)
+        output_text = maybe_render_description(
+            self._caesar(prompt),
+            append_description=self.append_description,
+            yaml_stem="caesar",
+            example_encoded=self._caesar(CIPHER_EXAMPLE),
+            offset=str(self.caesar_offset),
+        )
         return ConverterResult(output_text=output_text, output_type="text")
 
     def _caesar(self, text: str) -> str:
