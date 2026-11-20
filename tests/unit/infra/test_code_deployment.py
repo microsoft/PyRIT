@@ -74,7 +74,8 @@ SEED_INPUTS = APP_INPUTS | {
     "SEED_FILES": "1",
 }
 # Prints each Azure CLI call without its local folder argument. A download writes the release seed when
-# SEED_FILES is set, and an upload lists the top-level entries it would send.
+# SEED_FILES is set, an upload lists the top-level entries it would send, and a list prints its call to stderr
+# and returns config blobs that the seed both has and lacks.
 SEED_AZ = r"""
 az() {
   local command=$3 local_flag="" printed=() local_path=""
@@ -98,6 +99,12 @@ az() {
   fi
   if [[ "$command" == upload-batch ]]; then
     printed+=("uploaded=$(cd "$local_path" && LC_ALL=C ls -A | paste -sd, -)")
+  fi
+  if [[ "$command" == list ]]; then
+    echo "${printed[*]}" >&2
+    printf '%s\n' test/.pyrit_conf test/stale.json test/internal_initializers/sample.py \
+      test/internal_initializers/old.py
+    return
   fi
   echo "${printed[*]}"
 }
@@ -602,9 +609,10 @@ echo done
             command=f"""
 for step in validate_app_inputs initialize_deployment_scope read_existing_topology read_app_access_mode \
   build_app_parameters prepare_database_migration stop_app run_database_migration reset_configuration_from_seed \
-  start_unchanged_revision verify_readiness wait_for_runtime_readiness warn_if_sql_public; do
+  verify_readiness wait_for_runtime_readiness warn_if_sql_public; do
   eval "$step() {{ echo $step; }}"
 done
+start_unchanged_revision() {{ echo "start_unchanged_revision app_stopped=$app_stopped"; }}
 schema_is_current() {{ echo schema-check; return {check_exit}; }}
 ensure_schema_upgradable() {{ echo revision-check; return {upgradable_exit}; }}
 preview_deployment() {{ echo "preview $1"; }}
@@ -637,7 +645,7 @@ main
                 else ["Schema is current; deploying without stopping the app"]
             ),
             "az deployment group create",
-            "start_unchanged_revision",
+            f"start_unchanged_revision app_stopped={'true' if check_exit else 'false'}",
             "verify_readiness",
             "wait_for_runtime_readiness",
             "warn_if_sql_public",
@@ -806,6 +814,21 @@ start_unchanged_revision""",
                 )
                 assert result.returncode == 0, result.stdout + result.stderr
                 assert ("az containerapp revision activate" in result.stdout) == activates
+                assert "revision restart" not in result.stdout
+
+    def test_seeded_unchanged_revision_restarts_unless_the_app_was_stopped(self) -> None:
+        for app_stopped, restarts in (("false", True), ("true", False)):
+            with self.subTest(app_stopped=app_stopped):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=SEED_INPUTS,
+                    command=f"""current_revision=app--old app_stopped={app_stopped}
+az() {{ if [[ "$2" == show ]]; then echo app--old; else echo "az $*"; fi; }}
+start_unchanged_revision""",
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert "az containerapp revision activate" in result.stdout
+                assert ("az containerapp revision restart" in result.stdout) == restarts
 
     def test_public_sql_server_only_warns(self) -> None:
         for access, warns in (("Enabled", True), ("", True), ("Disabled", False)):
@@ -909,6 +932,9 @@ initialize_deployment_scope
             ({"PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/.pyrit_conf"}, separate),
             ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/test/seed"}, separate),
             ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles", "PYRIT_SOURCE_BRANCH": "refs/heads/test"}, separate),
+            # The config folder is another branch's seed, or the seed is the whole container.
+            ({"PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/seed/main/.pyrit_conf"}, separate),
+            ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles"}, separate),
             ({"PYRIT_CONFIG_SEED_URI": BLOB}, separate),
             ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/my%20seed"}, separate),
             ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/seed?sig=secret"}, "pyritConfigSeedUri must be"),
@@ -954,13 +980,21 @@ main
             quiet = "--only-show-errors -o none"
             assert result.stdout.splitlines() == [
                 f"storage blob download-batch {storage} --source profiles --pattern seed/releases/v1.2.3/* {quiet}",
-                f"storage blob delete-batch {storage} --source profiles --pattern test/* {quiet}",
                 (
-                    f"storage blob upload-batch {storage} --destination profiles --destination-path test {quiet} "
-                    "uploaded=.pyrit_conf,internal_initializers"
+                    f"storage blob upload-batch {storage} --destination profiles --destination-path test "
+                    f"--overwrite {quiet} uploaded=.pyrit_conf,internal_initializers"
+                ),
+                f"storage blob delete {storage} --container-name profiles --name test/stale.json {quiet}",
+                (
+                    f"storage blob delete {storage} --container-name profiles "
+                    f"--name test/internal_initializers/old.py {quiet}"
                 ),
                 "Reset profiles/test from the profiles/seed/releases/v1.2.3 seed",
             ]
+            assert (
+                f"storage blob list {storage} --container-name profiles --prefix test/ --num-results * "
+                "--query [].name -o tsv"
+            ) in result.stderr
             assert not list(Path(temporary).iterdir())
 
     def test_missing_branch_seed_stops_before_changing_the_config_folder(self) -> None:
@@ -974,7 +1008,7 @@ main
             assert (
                 "The config seed has no .pyrit_conf for this branch at profiles/seed/releases/v1.2.3" in result.stdout
             )
-            assert "delete-batch" not in result.stdout and "upload-batch" not in result.stdout
+            assert "storage blob delete" not in result.stdout and "upload-batch" not in result.stdout
             assert not list(Path(temporary).iterdir())
 
     def test_deployment_without_a_seed_keeps_the_config_folder(self) -> None:

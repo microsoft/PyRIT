@@ -45,6 +45,11 @@ def _is_plain_folder(folder: str) -> bool:
     return all(re.fullmatch(r"[A-Za-z0-9._-]+", part) and part not in (".", "..") for part in folder.split("/"))
 
 
+def _overlaps(first: str, second: str) -> bool:
+    """Return whether two folders in one container are the same, nested, or either is the container root."""
+    return not first or not second or f"{first}/".startswith(f"{second}/") or f"{second}/".startswith(f"{first}/")
+
+
 def validate_identities(*, tenant_id: str, client_id: str, allowed_group_ids: str, admin_group_id: str) -> None:
     """Require the Entra tenant, client, and group object IDs to be GUIDs, with at least one allowed group."""
     groups = [value.strip() for value in allowed_group_ids.split(",") if value.strip()]
@@ -62,8 +67,8 @@ def seed_location(*, seed_uri: str, config_uri: str, source_branch: str) -> tupl
     Return where each deployment copies the deployed branch's configuration seed from and to.
 
     The seed holds one starting configuration per deployed branch, such as <seed>/main/ or <seed>/releases/v1.2.3/.
-    Each deployment replaces the whole folder that holds the config file with it, so that folder and the seed must
-    be separate, plainly named folders.
+    Each deployment replaces the whole folder that holds the config file with it, so that folder and the whole seed,
+    not just this branch's subfolder, must be separate, plainly named folders.
 
     Returns:
         tuple[str, ...]: Seed account, container, and folder, then config account, container, folder, and file name.
@@ -78,7 +83,7 @@ def seed_location(*, seed_uri: str, config_uri: str, source_branch: str) -> tupl
     config_account, config_container, config_path = _blob_location(config_uri, name="pyritConfigFileUri")
     seed_folder = f"{seed_root}/{branch[1]}".lstrip("/")
     config_folder, _, config_name = config_path.rpartition("/")
-    nested = f"{seed_folder}/".startswith(f"{config_folder}/") or f"{config_folder}/".startswith(f"{seed_folder}/")
+    nested = _overlaps(seed_root, config_folder)
     plain = _is_plain_folder(f"{seed_container}/{seed_folder}") and _is_plain_folder(
         f"{config_container}/{config_folder}"
     )

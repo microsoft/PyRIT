@@ -54,10 +54,17 @@ reset_configuration_from_seed() {
     rm -rf -- "$seed_directory"
     deployment_error "The config seed has no $config_name for this branch at $seed_container/$seed_folder"
   fi
-  az storage blob delete-batch --auth-mode login --account-name "$config_account" --source "$config_container" \
-    --pattern "$config_folder/*" --only-show-errors -o none
+  # Overwrite first and then delete only what the seed lacks, so a failed upload never leaves the folder empty.
   az storage blob upload-batch --auth-mode login --account-name "$config_account" --destination "$config_container" \
-    --destination-path "$config_folder" --source "$seed_directory/$seed_folder" --only-show-errors -o none
+    --destination-path "$config_folder" --source "$seed_directory/$seed_folder" --overwrite --only-show-errors -o none
+  local config_blobs blob_name
+  config_blobs=$(az storage blob list --auth-mode login --account-name "$config_account" \
+    --container-name "$config_container" --prefix "$config_folder/" --num-results '*' --query '[].name' -o tsv)
+  while IFS= read -r blob_name; do
+    [[ -z "$blob_name" || -f "$seed_directory/$seed_folder/${blob_name#"$config_folder"/}" ]] && continue
+    az storage blob delete --auth-mode login --account-name "$config_account" --container-name "$config_container" \
+      --name "$blob_name" --only-show-errors -o none
+  done <<< "$config_blobs"
   rm -rf -- "$seed_directory"
   echo "Reset $config_container/$config_folder from the $seed_container/$seed_folder seed"
 }
@@ -150,6 +157,12 @@ start_unchanged_revision() {
     echo "App template is unchanged; starting revision $current_revision"
     az containerapp revision activate \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" --revision "$current_revision" -o none
+    # A revision that kept running loaded its configuration at startup, before the seed reset.
+    if [[ -n "${PYRIT_CONFIG_SEED_URI:-}" && "${app_stopped:-false}" != true ]]; then
+      echo "Restarting revision $current_revision so it loads the seeded configuration"
+      az containerapp revision restart \
+        --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" --revision "$current_revision" -o none
+    fi
   fi
 }
 
@@ -285,11 +298,13 @@ main() {
   # Before the migration, so it loads the new configuration and a missing seed stops nothing.
   reset_configuration_from_seed
   prepare_database_migration
+  app_stopped=false
   if schema_is_current; then
     echo "Schema is current; deploying without stopping the app"
   else
     ensure_schema_upgradable
     echo "This image can upgrade the database; migrating with the app stopped"
+    app_stopped=true
     stop_app
     run_database_migration
   fi
