@@ -60,12 +60,16 @@ from pyrit.converter import (
     ColumnarTranspositionConverter,
     DigitBijectionConverter,
     EcojiConverter,
+    FourSquareConverter,
     LetterBijectionConverter,
     MorseConverter,
     NatoConverter,
     NegationTrapConverter,
+    PlayfairConverter,
     ROT13Converter,
     TokenBijectionConverter,
+    TrifidConverter,
+    TwoSquareConverter,
     VigenereConverter,
 )
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -84,6 +88,13 @@ token_bijection_tokenizer = SimpleNamespace(
 print("ROT13:", await ROT13Converter().convert_async(prompt=prompt))  # type: ignore
 print("Base64:", await Base64Converter().convert_async(prompt=prompt))  # type: ignore
 print("Base2048:", await Base2048Converter().convert_async(prompt=prompt))  # type: ignore
+print("Playfair:", await PlayfairConverter(key="playfair example").convert_async(prompt=prompt))  # type: ignore
+print(
+    "Four-square:",
+    await FourSquareConverter(top_right_key="example", bottom_left_key="keyword").convert_async(prompt=prompt),
+)  # type: ignore
+print("Trifid:", await TrifidConverter().convert_async(prompt=prompt))  # type: ignore
+print("Two-square:", await TwoSquareConverter().convert_async(prompt=prompt))  # type: ignore
 print("Binary:", await BinaryConverter().convert_async(prompt=prompt))  # type: ignore
 print("BinAscii:", await BinAsciiConverter().convert_async(prompt=prompt))  # type: ignore
 print("Morse:", await MorseConverter().convert_async(prompt=prompt))  # type: ignore

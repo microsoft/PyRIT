@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from pyrit.converter.emoji_converter import EmojiConverter
     from pyrit.converter.first_letter_converter import FirstLetterConverter
     from pyrit.converter.flip_converter import FlipConverter
+    from pyrit.converter.four_square_converter import FourSquareConverter
     from pyrit.converter.fullwidth_converter import FullwidthConverter
     from pyrit.converter.grid_composite_converter import GridCompositeConverter
     from pyrit.converter.image_color_saturation_converter import ImageColorSaturationConverter
@@ -90,6 +91,7 @@ if TYPE_CHECKING:
     from pyrit.converter.pdf_converter import PDFConverter
     from pyrit.converter.persuasion_converter import PersuasionConverter
     from pyrit.converter.pinyin_converter import PinyinConverter
+    from pyrit.converter.playfair_converter import PlayfairConverter
     from pyrit.converter.policy_puppetry_converter import PolicyPuppetryConverter, PolicyPuppetryTemplate
     from pyrit.converter.prompt_template_converter import PromptTemplateConverter
     from pyrit.converter.puzzled import PuzzledConverter, PuzzleType
@@ -138,6 +140,8 @@ if TYPE_CHECKING:
     from pyrit.converter.toxic_sentence_generator_converter import ToxicSentenceGeneratorConverter
     from pyrit.converter.translation_converter import TranslationConverter
     from pyrit.converter.transparency_attack_converter import TransparencyAttackConverter
+    from pyrit.converter.trifid_converter import TrifidConverter
+    from pyrit.converter.two_square_converter import TwoSquareConverter
     from pyrit.converter.unicode_confusable_converter import UnicodeConfusableConverter
     from pyrit.converter.unicode_replacement_converter import UnicodeReplacementConverter
     from pyrit.converter.unicode_sub_converter import UnicodeSubstitutionConverter
@@ -195,6 +199,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "EmojiConverter": "pyrit.converter.emoji_converter",
     "FirstLetterConverter": "pyrit.converter.first_letter_converter",
     "FlipConverter": "pyrit.converter.flip_converter",
+    "FourSquareConverter": "pyrit.converter.four_square_converter",
     "FullwidthConverter": "pyrit.converter.fullwidth_converter",
     "GridCompositeConverter": "pyrit.converter.grid_composite_converter",
     "ImageColorSaturationConverter": "pyrit.converter.image_color_saturation_converter",
@@ -223,6 +228,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PDFConverter": "pyrit.converter.pdf_converter",
     "PersuasionConverter": "pyrit.converter.persuasion_converter",
     "PinyinConverter": "pyrit.converter.pinyin_converter",
+    "PlayfairConverter": "pyrit.converter.playfair_converter",
     "PolicyPuppetryConverter": "pyrit.converter.policy_puppetry_converter",
     "PolicyPuppetryTemplate": "pyrit.converter.policy_puppetry_converter",
     "PositionSelectionStrategy": "pyrit.converter.text_selection_strategy",
@@ -259,6 +265,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ToxicSentenceGeneratorConverter": "pyrit.converter.toxic_sentence_generator_converter",
     "TranslationConverter": "pyrit.converter.translation_converter",
     "TransparencyAttackConverter": "pyrit.converter.transparency_attack_converter",
+    "TrifidConverter": "pyrit.converter.trifid_converter",
+    "TwoSquareConverter": "pyrit.converter.two_square_converter",
     "UnicodeConfusableConverter": "pyrit.converter.unicode_confusable_converter",
     "UnicodeReplacementConverter": "pyrit.converter.unicode_replacement_converter",
     "UnicodeSubstitutionConverter": "pyrit.converter.unicode_sub_converter",

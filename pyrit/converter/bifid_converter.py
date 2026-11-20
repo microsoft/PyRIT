@@ -1,8 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import string
-
+from pyrit.converter._polybius_square import (
+    IJ_MERGED_ALPHABET,
+    PolybiusSquare,
+    build_keyed_alphabet,
+    sanitize_to_alphabet,
+)
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
 
@@ -45,8 +49,6 @@ class BifidConverter(Converter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
-    _ALPHABET = "ABCDEFGHIKLMNOPQRSTUVWXYZ"  # 25 letters, I/J merged (no J)
-
     def __init__(self, *, key: str = "", period: int = 0) -> None:
         """
         Initialize the converter with an optional keyword and period.
@@ -68,38 +70,9 @@ class BifidConverter(Converter):
 
         self.key = key
         self.period = period
-        self._square = self._build_square(key)
-        # Map each letter to its (row, col) coordinates and each coordinate pair back to a letter.
-        self._letter_to_coords: dict[str, tuple[int, int]] = {}
-        self._coords_to_letter: dict[tuple[int, int], str] = {}
-        for index, letter in enumerate(self._square):
-            row, col = divmod(index, 5)
-            self._letter_to_coords[letter] = (row, col)
-            self._coords_to_letter[(row, col)] = letter
-
-    @classmethod
-    def _build_square(cls, key: str) -> str:
-        """
-        Build the 25-letter Polybius square ordering from an optional keyword.
-
-        Args:
-            key (str): The keyword to seed the square. Non-letters are ignored, ``J`` folds to
-                ``I``, and letters are de-duplicated keeping first occurrence.
-
-        Returns:
-            str: A 25-character string of unique uppercase letters (no ``J``).
-        """
-        seen: list[str] = []
-        for char in key.upper():
-            if char not in string.ascii_uppercase:
-                continue
-            letter = "I" if char == "J" else char
-            if letter not in seen:
-                seen.append(letter)
-        for letter in cls._ALPHABET:
-            if letter not in seen:
-                seen.append(letter)
-        return "".join(seen)
+        # Build the keyed 5x5 Polybius square (I/J merged). The shared helper owns the
+        # keyword de-duplication and the J->I fold; ``PolybiusSquare`` owns the coordinate lookups.
+        self._square = PolybiusSquare(build_keyed_alphabet(key, merge=("J", "I")))
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -145,7 +118,7 @@ class BifidConverter(Converter):
         Returns:
             str: The Bifid-encoded ciphertext (uppercase letters only).
         """
-        letters = ["I" if char == "J" else char for char in text.upper() if char in string.ascii_uppercase]
+        letters = sanitize_to_alphabet(text, alphabet_set=set(IJ_MERGED_ALPHABET), merge=("J", "I"))
         if not letters:
             return ""
 
@@ -153,12 +126,10 @@ class BifidConverter(Converter):
         result_chars: list[str] = []
         for start in range(0, len(letters), block_size):
             block = letters[start : start + block_size]
-            rows = [self._letter_to_coords[letter][0] for letter in block]
-            cols = [self._letter_to_coords[letter][1] for letter in block]
+            rows = [self._square.position[letter][0] for letter in block]
+            cols = [self._square.position[letter][1] for letter in block]
             # Fractionate: concatenate all rows then all columns, then read off coordinate pairs.
             sequence = rows + cols
-            result_chars.extend(
-                self._coords_to_letter[(sequence[i], sequence[i + 1])] for i in range(0, len(sequence), 2)
-            )
+            result_chars.extend(self._square.grid[sequence[i]][sequence[i + 1]] for i in range(0, len(sequence), 2))
 
         return "".join(result_chars)
