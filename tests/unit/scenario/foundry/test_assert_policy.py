@@ -626,7 +626,10 @@ async def test_groups_with_identical_content_keep_their_own_units_and_stances_as
     assert sorted(attack.atomic_attack_name for attack in remaining) == sorted(set(by_name) - {names[0]})
 
 
-async def test_sampled_identical_content_resumes_the_same_stored_group_async(harness: _Harness) -> None:
+@pytest.mark.parametrize("replace_dataset", [False, True])
+async def test_sampled_identical_content_resumes_the_same_stored_group_async(
+    harness: _Harness, replace_dataset: bool
+) -> None:
     await _store_async(name="assert_a", result=_duplicate_result())
     args = {
         "scenario_techniques": [_technique("red_teaming")],
@@ -641,7 +644,17 @@ async def test_sampled_identical_content_resumes_the_same_stored_group_async(har
     assert _group_id(planned) == "group_2"
     assert planned.display_group == "red_teaming"
 
-    resumed = await harness.initialize_async(harness.scenario(scenario_result_id=original._scenario_result_id), **args)
+    memory = CentralMemory.get_memory_instance()
+    if replace_dataset:
+        await memory.delete_dataset_async(dataset_name="assert_a")
+        await _store_async(
+            name="assert_a", result=_result(group_count=1, include_adversarial_prompt=False, system_prompt=_SYSTEM_B)
+        )
+    with patch.object(memory, "get_seeds_async", wraps=memory.get_seeds_async) as reads:
+        resumed = await harness.initialize_async(
+            harness.scenario(scenario_result_id=original._scenario_result_id), **args
+        )
+    reads.assert_not_awaited()
     (restored,) = resumed._atomic_attacks
     assert restored.atomic_attack_name == planned.atomic_attack_name
     assert _group_id(restored) == "group_2"
@@ -983,7 +996,7 @@ async def test_incompatible_scoring_config_uses_scenario_policy_async(harness: _
         **_datasets("assert_a"),
     }
     if policy == "raise":
-        with pytest.raises(ScenarioConfigurationError, match="TAPAttackScoringConfig"):
+        with pytest.raises(ScenarioConfigurationError, match="requires 'preserves_float_scale_value'"):
             await harness.initialize_async(harness.scenario(), **args)
     else:
         scenario = await harness.initialize_async(harness.scenario(), **args)
@@ -991,12 +1004,17 @@ async def test_incompatible_scoring_config_uses_scenario_policy_async(harness: _
 
     scenario = harness.scenario()
     scenario.set_params_from_args(
-        args={"objective_target": harness.objective, "scenario_techniques": [_technique("tap")]}
+        args={
+            "objective_target": harness.objective,
+            "scoring_target": harness.judge,
+            "scenario_techniques": [_technique("tap")],
+        }
     )
     assert any(issue.role == "objective_scorer" for issue in scenario.get_readiness().issues)
     scenario.set_params_from_args(
         args={
             "objective_target": harness.objective,
+            "scoring_target": harness.judge,
             "scenario_techniques": [_technique("prompt_sending"), _technique("tap")],
             "incompatible_technique_policy": policy,
         }

@@ -54,7 +54,7 @@ def _undetermined_result(
     scores: list[Score],
     *,
     name: str,
-    metadata: dict,
+    metadata: dict[str, str | int | float],
     category: list[str],
 ) -> ScoreAggregatorResult:
     """
@@ -63,7 +63,7 @@ def _undetermined_result(
     Args:
         scores (list[Score]): The constituent scores, reported in the rationale.
         name (str): Name of the aggregator variant.
-        metadata (dict): Combined metadata of the constituents.
+        metadata (dict[str, str | int | float]): Combined metadata of the constituents.
         category (list[str]): Combined categories of the constituents.
 
     Returns:

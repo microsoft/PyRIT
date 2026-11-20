@@ -44,7 +44,7 @@ from pyrit.scenario.core.technique_requirements import (
     check_target_compatibility,
     filter_seed_groups,
 )
-from pyrit.score import AssertJudgeScorer, AssertScoringDimension, TrueFalseScorer
+from pyrit.score import AssertJudgeScorer, AssertScoringDimension, Scorer, TrueFalseScorer
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -171,6 +171,11 @@ class AssertPolicy(Scenario):
             ScenarioReadiness: Execution-role bindings and configuration issues.
         """
         readiness = super().get_readiness()
+        try:
+            scorer: Scorer | None = self._objective_scorer
+        except (TypeError, ValueError):
+            # The base readiness already reports why the scorer cannot be resolved.
+            scorer = None
         factories = self._get_readiness_factories()
         selected = {
             technique.value: factories[technique.value]
@@ -178,7 +183,9 @@ class AssertPolicy(Scenario):
             if technique.value in factories
         }
         incompatible = {
-            name: reason for name, factory in selected.items() if (reason := self._get_scoring_incompatibility(factory))
+            name: reason
+            for name, factory in selected.items()
+            if (reason := self._get_scoring_incompatibility(factory, scorer=scorer))
         }
         usable = any(
             name not in incompatible
@@ -302,8 +309,6 @@ class AssertPolicy(Scenario):
         for dataset_name, dataset_groups in population.items():
             for group in dataset_groups:
                 self._validate_group(group=group, dataset_name=dataset_name)
-        counts = Counter(group.logical_id for group in groups)
-        self._repeated_ids = {logical_id for logical_id, count in counts.items() if count > 1}
         return selection.select(apply_sampling=True) if apply_sampling else population
 
     def _validate_group(self, *, group: AttackSeedGroup, dataset_name: str) -> None:
@@ -396,6 +401,8 @@ class AssertPolicy(Scenario):
         return (AssertJudgeScorer(chat_target=target, dimension=AssertScoringDimension.OVERREFUSAL),)
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        counts = Counter(group.logical_id for group in context.seed_groups)
+        self._repeated_ids = {logical_id for logical_id, count in counts.items() if count > 1}
         self._auxiliary_scorers = self._get_auxiliary_scorers()
         attacks = self._build_baselines(context=context) if context.include_baseline else []
         local = {_ASSERT_PACKAGE: _build_assert_package_factory()}
@@ -408,7 +415,7 @@ class AssertPolicy(Scenario):
                 policy=context.incompatible_technique_policy,
             ):
                 continue
-            if reason := self._get_scoring_incompatibility(factory):
+            if reason := self._get_scoring_incompatibility(factory, scorer=self._objective_scorer):
                 message = f"Technique '{name}' is incompatible: {reason}"
                 if context.incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
                     raise IncompatibleTechniqueError(message)
@@ -456,20 +463,18 @@ class AssertPolicy(Scenario):
         return replace(requirements, objective_target=replace(target, native_required=native))
 
     @staticmethod
-    def _get_scoring_incompatibility(factory: AttackTechniqueFactory) -> str | None:
+    def _get_scoring_incompatibility(factory: AttackTechniqueFactory, *, scorer: Scorer | None) -> str | None:
         """
-        Describe a narrowed scoring contract that cannot accept ASSERT's configuration.
+        Describe why a technique cannot run with ASSERT's scoring configuration.
 
         Args:
             factory (AttackTechniqueFactory): The selected attack technique.
+            scorer (Scorer | None): ASSERT's objective scorer, or None when it cannot be resolved yet.
 
         Returns:
             str | None: The incompatibility reason, or None when ASSERT's scoring is accepted.
         """
-        required = factory.scoring_config_type
-        if required is not None and not issubclass(AttackScoringConfig, required):
-            return f"{required.__name__} cannot accept ASSERT's scoring configuration."
-        return None
+        return " ".join(factory.check_objective_scorer(scorer=scorer)) or None
 
     def _apply_turn_limit(self, factory: AttackTechniqueFactory) -> AttackTechniqueFactory:
         """
