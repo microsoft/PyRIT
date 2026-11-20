@@ -58,6 +58,7 @@ from pyrit.converter import (
     BinAsciiConverter,
     BrailleConverter,
     CaesarConverter,
+    ColumnarTranspositionConverter,
     DigitBijectionConverter,
     EcojiConverter,
     GronsfeldConverter,
@@ -97,6 +98,10 @@ print("Porta:", await PortaConverter(key="pyrit").convert_async(prompt=prompt)) 
 print("Gronsfeld:", await GronsfeldConverter().convert_async(prompt=prompt))  # type: ignore
 print("Beaufort:", await BeaufortConverter(key="pyrit").convert_async(prompt=prompt))  # type: ignore
 print("Bifid:", await BifidConverter().convert_async(prompt=prompt))  # type: ignore
+print(
+    "ColumnarTransposition:",
+    await ColumnarTranspositionConverter(key="SECRET").convert_async(prompt=prompt),  # type: ignore
+)
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
 print("LetterBijectionConverter:", await LetterBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
 print("DigitBijectionConverter:", await DigitBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
