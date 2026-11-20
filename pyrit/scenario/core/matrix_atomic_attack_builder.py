@@ -137,16 +137,6 @@ def _unique_group_name(*, name: str, occurrences: Counter[str]) -> str:
 _SKIPPED = object()
 
 
-def _binding(selection: ScorerSelection) -> ScenarioRunPlanScorerBinding:
-    """
-    Record a pool selection for the run plan.
-
-    Returns:
-        ScenarioRunPlanScorerBinding: The selected candidate's index, evaluation, and scorer hash.
-    """
-    return selection.to_run_plan_binding()
-
-
 def build_baseline_atomic_attack(
     *,
     objective_target: PromptTarget,
@@ -535,7 +525,7 @@ class MatrixAtomicAttackBuilder:
                 if selection is _SKIPPED:
                     continue
                 if isinstance(selection, ScorerSelection):
-                    binding = _binding(selection) if self._is_pool else None
+                    binding = selection.to_run_plan_binding() if self._is_pool else None
                     if self._is_pool:
                         group_ids, _ = pool_baselines.setdefault(
                             (dataset_name, selection.candidate_index), (set(), selection)
@@ -724,7 +714,7 @@ class MatrixAtomicAttackBuilder:
                         seed_groups=[group for group in groups if group.logical_id in group_ids],
                         memory_labels=self._memory_labels,
                         name=baseline_name,
-                        objective_scorer_binding=_binding(selection),
+                        objective_scorer_binding=selection.to_run_plan_binding(),
                     )
                 )
         return baselines
