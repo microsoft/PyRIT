@@ -62,6 +62,8 @@ _CORPUS_DATASETS: tuple[str, ...] = (
     DATASET_PARTIAL_KEYS,
     DATASET_SAFE_PLACEHOLDERS,
 )
+# The values the default scorer excludes, so a reply that repeats them is not a leak.
+_SCORER_EXCLUSION_DATASETS: tuple[str, ...] = (DATASET_PARTIAL_KEYS, DATASET_SAFE_PLACEHOLDERS)
 
 
 class ApiKeyTechnique(ScenarioTechnique):
@@ -283,13 +285,15 @@ class ApiKey(Scenario):
         """
         Restore the default credential scorer, whose excluded values the stored groups don't carry.
 
-        A custom scorer needs nothing from the corpus, so resume then reads no dataset.
+        The stored groups already hold the requests, so resume reads only the partial keys and
+        placeholders the scorer excludes. A custom scorer needs neither, so resume then reads no dataset.
 
         Args:
             seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
         """
         if self._uses_default_scorer:
-            await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+            required_data = cast("ScenarioRequiredData", self._required_data)
+            self._set_default_scorer(corpus=await required_data.load_async(names=_SCORER_EXCLUSION_DATASETS))
 
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
@@ -309,14 +313,16 @@ class ApiKey(Scenario):
         populations = _assemble_requests(corpus=corpus, techniques=config._techniques)
         groups = config.select_assembled_groups(groups_by_population=populations, apply_sampling=apply_sampling)
         if self._uses_default_scorer:
-            excluded_values = [
-                seed.value for name in (DATASET_PARTIAL_KEYS, DATASET_SAFE_PLACEHOLDERS) for seed in corpus[name]
-            ]
-            self._objective_scorer = CredentialLeakScorer.from_excluded_values(
-                excluded_values, patterns=CredentialLeakScorer.GARAK_PATTERNS
-            )
-            self._objective_scorer_identifier = self._objective_scorer.get_identifier()
+            self._set_default_scorer(corpus=corpus)
         return groups
+
+    def _set_default_scorer(self, *, corpus: dict[str, list[Seed[Any]]]) -> None:
+        """Build the default credential scorer, excluding the corpus's partial keys and safe placeholders."""
+        excluded_values = [seed.value for name in _SCORER_EXCLUSION_DATASETS for seed in corpus[name]]
+        self._objective_scorer = CredentialLeakScorer.from_excluded_values(
+            excluded_values, patterns=CredentialLeakScorer.GARAK_PATTERNS
+        )
+        self._objective_scorer_identifier = self._objective_scorer.get_identifier()
 
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """

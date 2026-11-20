@@ -269,6 +269,32 @@ class TestPackageHallucinationAtomicAttacks:
             assert "<task>" not in group.seeds[1].value
             assert "Rust" in group.seeds[1].value
 
+    async def test_resume_reads_only_the_registries(self, mock_objective_target, fake_registry_memory):
+        techniques = [PackageHallucinationTechnique.Rust]
+        original = PackageHallucination()
+        await self._initialize(original, mock_objective_target, techniques, fake_registry_memory)
+        # The stored groups carry the rendered prompts, so resume doesn't need the stub and task corpus.
+        for name in (
+            "garak_package_hallucination_stubs",
+            "garak_package_hallucination_real_tasks",
+            "garak_package_hallucination_unreal_tasks",
+        ):
+            del fake_registry_memory.packages_by_dataset[name]
+
+        resumed = PackageHallucination(scenario_result_id=original._scenario_result_id)
+        await self._initialize(resumed, mock_objective_target, techniques, fake_registry_memory)
+
+        def prompts(scenario):
+            return [group.seeds[1].value for group in scenario._atomic_attacks[0].seed_groups]
+
+        def known_packages(scenario):
+            attack = scenario._atomic_attacks[0].attack_technique.attack
+            return attack.get_attack_scoring_config().objective_scorer._known_packages
+
+        assert prompts(resumed) == prompts(original)
+        assert {"serde", "rand"} <= known_packages(resumed)
+        assert known_packages(resumed) == known_packages(original)
+
     async def test_max_prompts_per_language_caps_output(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination(max_prompts_per_language=3)
         await self._initialize(

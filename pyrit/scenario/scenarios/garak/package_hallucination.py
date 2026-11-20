@@ -328,10 +328,29 @@ class PackageHallucination(Scenario):
         """
         Restore the known-package registries the scorers use, which the stored groups don't carry.
 
+        The stored groups already hold the rendered prompts, so resume doesn't read the stub and task corpus.
+
         Args:
             seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
         """
-        await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+        await self._load_known_packages_async()
+
+    async def _load_known_packages_async(self) -> None:
+        """
+        Read each selected language's package registry for its scorer.
+
+        Raises:
+            TypeError: If the scenario contains a technique from another catalog.
+        """
+        known_packages: dict[str, set[str]] = {}
+        for technique in self._scenario_techniques:
+            if not isinstance(technique, PackageHallucinationTechnique):
+                raise TypeError(f"Unexpected package hallucination technique: {type(technique).__name__}")
+            registry = await self._dataset_config._collect_seeds_for_dataset_async(
+                dataset_name=_LANGUAGE_SPECS[technique.value].dataset_name
+            )
+            known_packages[technique.value] = {seed.value for seed in registry}
+        self._known_packages_by_technique = known_packages
 
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
@@ -346,8 +365,7 @@ class PackageHallucination(Scenario):
 
         Args:
             apply_sampling (bool): Accepted for base-class compatibility but unused — the
-                synthesized seeds are already deterministic (``random.Random(self._random_seed)``),
-                so resume reproduces the same set without a ``max_dataset_size`` sampling path.
+                synthesized seeds are already deterministic (``random.Random(self._random_seed)``).
 
         Returns:
             dict[str, list[AttackSeedGroup]]: Seed groups keyed by technique value (language).
@@ -355,24 +373,18 @@ class PackageHallucination(Scenario):
         Raises:
             TypeError: If the scenario contains a technique from another catalog.
         """
-        specs_by_technique: dict[str, _LanguageSpec] = {}
-        for technique in self._scenario_techniques:
-            if not isinstance(technique, PackageHallucinationTechnique):
-                raise TypeError(f"Unexpected package hallucination technique: {type(technique).__name__}")
-            specs_by_technique[technique.value] = _LANGUAGE_SPECS[technique.value]
-        seeds_by_dataset = await self._dataset_config._collect_named_seeds_async()
-        dataset_values = {name: [seed.value for seed in seeds] for name, seeds in seeds_by_dataset.items()}
+        await self._load_known_packages_async()
+        read = self._dataset_config._collect_seeds_for_dataset_async
+        dataset_values = {name: [seed.value for seed in await read(dataset_name=name)] for name in _CORPUS_DATASETS}
 
         rng = random.Random(self._random_seed)
         stubs, tasks = self._load_corpus(dataset_values=dataset_values)
-        self._known_packages_by_technique = {
-            name: set(dataset_values[spec.dataset_name]) for name, spec in specs_by_technique.items()
-        }
 
         seed_groups_by_language: dict[str, list[AttackSeedGroup]] = {}
-        for technique_name, spec in specs_by_technique.items():
+        for technique in self._scenario_techniques:
+            spec = _LANGUAGE_SPECS[technique.value]
             prompts = self._build_prompts_for_language(spec=spec, stubs=stubs, tasks=tasks, rng=rng)
-            seed_groups_by_language[technique_name] = self._build_seed_groups(spec=spec, prompts=prompts)
+            seed_groups_by_language[technique.value] = self._build_seed_groups(spec=spec, prompts=prompts)
 
         return seed_groups_by_language
 

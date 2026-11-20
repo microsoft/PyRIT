@@ -212,6 +212,8 @@ Options:
 - Resume never prepares or resamples datasets and doesn't call the seed resolver. If your resolver
   sets state the atomic attacks need, override `_prepare_resume_state_async(seed_groups_by_dataset=...)`
   to restore it. Derive that state from the stored groups when they carry it (see `LatentInjection`).
+  Otherwise read only the datasets it needs, never the population the stored groups already hold
+  (see `PromptInject`, which reads its technique templates with `load_async(names=...)`).
 - Keep custom shaping in `_build_attack_groups()` or `_build_groups_by_dataset_async()`.
   Reads use `_collect_seeds_for_dataset_async()` and must not fetch.
 - Build synthesized prompts from those filtered seeds, not a second unfiltered memory query.

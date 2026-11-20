@@ -347,6 +347,21 @@ class TestPromptInjectAtomicAttacks:
         assert _objective_values(resumed) == initial_objectives
         assert sum(len(attack.seed_groups) for attack in resumed._atomic_attacks) == 60
 
+    async def test_resume_reads_only_technique_templates(
+        self, mock_objective_target: PromptTarget, sqlite_instance: SQLiteMemory
+    ) -> None:
+        initial = PromptInject()
+        await _initialize_async(initial, target=mock_objective_target, goal_texts=["custom goal"])
+        # The stored groups carry the contexts, so deleting their dataset doesn't block resume.
+        await sqlite_instance.delete_dataset_async(dataset_name=PromptInjectDatasetConfiguration.CONTEXT_DATASET_NAME)
+
+        resumed = PromptInject(scenario_result_id=initial._scenario_result_id)
+        await _initialize_async(resumed, target=mock_objective_target, goal_texts=["custom goal"])
+
+        assert _objective_values(resumed) == _objective_values(initial)
+        assert resumed._objective_scorer_identifier == initial._objective_scorer_identifier
+        assert resumed._technique_templates.keys() == initial._technique_templates.keys()
+
     async def test_custom_scorer_replaces_goal_scorer(
         self, mock_objective_target: PromptTarget, mock_objective_scorer: TrueFalseScorer
     ) -> None:

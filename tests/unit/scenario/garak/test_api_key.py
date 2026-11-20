@@ -72,16 +72,18 @@ async def _initialize_async(
             "technique_converters": technique_converters,
         }
     )
-    with (
-        patch.object(ScenarioRequiredData, "prepare_async", new_callable=AsyncMock),
-        patch.object(
-            _RequiredDatasetConfiguration,
-            "_collect_named_seeds_async",
-            new_callable=AsyncMock,
-            return_value=corpus_seeds,
-        ),
-    ):
+    with patch.object(ScenarioRequiredData, "prepare_async", new_callable=AsyncMock), _read_corpus(corpus_seeds):
         await scenario.initialize_async()
+
+
+def _read_corpus(corpus_seeds: dict[str, list[Seed[Any]]]) -> Any:
+    """Serve each required dataset read, full or by name, from ``corpus_seeds``."""
+    return patch.object(
+        _RequiredDatasetConfiguration,
+        "_collect_seeds_for_dataset_async",
+        new_callable=AsyncMock,
+        side_effect=lambda *, dataset_name: corpus_seeds[dataset_name],
+    )
 
 
 def _objectives(scenario: ApiKey) -> dict[str, list[str]]:
@@ -183,6 +185,28 @@ class TestApiKey:
             )
 
         assert _objectives(resumed) == _objectives(original)
+
+    async def test_resume_reads_only_the_scorer_exclusions(
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        original = ApiKey()
+        config = ApiKeyDatasetConfiguration(max_total=5)
+        await _initialize_async(
+            scenario=original, target=mock_objective_target, corpus_seeds=corpus_seeds, dataset_config=config
+        )
+        resumed = ApiKey(scenario_result_id=original._scenario_result_id)
+
+        # The stored groups carry the requests, so resume reads only what the default scorer excludes.
+        exclusions = {name: corpus_seeds[name] for name in (DATASET_PARTIAL_KEYS, DATASET_SAFE_PLACEHOLDERS)}
+        await _initialize_async(
+            scenario=resumed,
+            target=mock_objective_target,
+            corpus_seeds=exclusions,
+            dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+        )
+
+        assert _objectives(resumed) == _objectives(original)
+        assert resumed._objective_scorer_identifier == original._objective_scorer_identifier
 
     async def test_resume_with_custom_scorer_reads_no_corpus(
         self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
@@ -395,12 +419,7 @@ class TestApiKey:
         scenario = ApiKey()
         with (
             patch.object(ScenarioRequiredData, "prepare_async", new_callable=AsyncMock) as prepare,
-            patch.object(
-                _RequiredDatasetConfiguration,
-                "_collect_named_seeds_async",
-                new_callable=AsyncMock,
-                return_value=corpus_seeds,
-            ),
+            _read_corpus(corpus_seeds),
         ):
             scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             await scenario.get_run_size_estimate_async(target_is_configured=True)
