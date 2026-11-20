@@ -85,6 +85,7 @@ from pyrit.registry.resolution import resolve_declared_params, resolve_reference
 from pyrit.scenario.core.atomic_attack import AtomicAttack, compute_atomic_group_id
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
+    DatasetConstraintError,
     DatasetSource,
     DatasetSourceKind,
 )
@@ -819,6 +820,13 @@ class Scenario(ABC):
             allow_missing_required=True,
         )
         self._params_resolved = True
+        try:
+            validate_minimum_selection(
+                config=self._resolve_default_dataset_config(), options=self.get_dataset_options()
+            )
+        except DatasetConstraintError as error:
+            # A scenario that needs a dataset and has no default has no default run to size.
+            return ScenarioRunSizeEstimate.unavailable(note=str(error))
         return await self.get_run_size_estimate_async(target_is_configured=False)
 
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = True
