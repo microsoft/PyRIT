@@ -397,8 +397,8 @@ it('displays and preserves both custom classifications when editing a finding', 
   const card = screen.getByRole('heading', { level: 2, name: FINDING.title }).closest('li') as HTMLElement
   expect(describedValues(card)).toEqual([['Harm-type:', 'Team harm']])
   await user.click(screen.getByRole('button', { name: `Edit finding: ${FINDING.title}` }))
-  expect(screen.getByRole('textbox', { name: 'Other Severity' })).toHaveValue('Team severity')
-  expect(screen.getByRole('textbox', { name: 'Other Harm-type' })).toHaveValue('Team harm')
+  expect(screen.getByRole('textbox', { name: 'Other value for Severity' })).toHaveValue('Team severity')
+  expect(screen.getByRole('textbox', { name: 'Other value for Harm-type' })).toHaveValue('Team harm')
   await user.click(screen.getByRole('button', { name: 'Save finding' }))
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
@@ -435,11 +435,11 @@ it('retains an edited draft on update failure and shows why the backend rejected
   const dialog = screen.getByRole('dialog')
   await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), ' changed')
   await pick(user, 'Severity', 'Other')
-  await user.type(within(dialog).getByRole('textbox', { name: 'Other Severity' }), 'Critical')
+  await user.type(within(dialog).getByRole('textbox', { name: 'Other value for Severity' }), 'Critical')
   await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
   expect(await within(dialog).findByText(detail)).toBeInTheDocument()
   expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue(`${FINDING.title} changed`)
-  expect(within(dialog).getByRole('textbox', { name: 'Other Severity' })).toHaveValue('Critical')
+  expect(within(dialog).getByRole('textbox', { name: 'Other value for Severity' })).toHaveValue('Critical')
   expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
     title: `${FINDING.title} changed`, severity: 'Critical', field_values: {}, demonstrated: true,
     parent_finding_id: null, keep_retired_keys: [], remove_retired_keys: [],

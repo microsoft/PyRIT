@@ -175,7 +175,7 @@ function ChoiceFieldInput({
             onSelect={(optionValue: string) => { select(depth, optionValue) }} />
         )
       })}
-      {otherChosen && <Field label={`${OTHER_TEXT} ${field.label}`} required>
+      {otherChosen && <Field label={`${OTHER_TEXT} value for ${field.label}`} required>
         <Input className={styles.input} value={ownValue(values, field.key) ?? ''} disabled={disabled} name={field.key}
           autoComplete="off" onChange={(_, data) => {
             onOtherBlankChange?.(data.value.trim() === '')
@@ -190,23 +190,22 @@ function TextFieldInput({ field, values, disabled, onChange }: FieldControlProps
   const styles = useFindingFieldInputStyles()
   const value = ownValue(values, field.key) ?? ''
   const report = (text: string): void => { onChange({ [field.key]: text }) }
-  const isNumber = field.type === 'number'
   return (
     <Field label={field.label} hint={field.hint ?? undefined} required={field.required}>
       {field.type === 'multiline'
         ? <Textarea value={value} disabled={disabled} resize="vertical" name={field.key} autoComplete="off"
           onChange={(_, data) => { report(data.value) }} />
+        // A number field stays a text box: a native number box shows a stored value that is not a number as empty.
         : <Input className={styles.input} value={value} disabled={disabled} name={field.key} autoComplete="off"
-          type={isNumber ? 'number' : 'text'} step={isNumber ? 'any' : undefined}
+          inputMode={field.type === 'number' ? 'decimal' : undefined}
           onChange={(_, data) => { report(data.value) }} />}
     </Field>
   )
 }
 
 /**
- * The input for one finding field: a text box for a `text` or `multiline` field, a number box for a `number` field,
- * and one searchable dropdown per level for a `choice` field. A single-level choice with `allow_other` also takes
- * typed Other text.
+ * The input for one finding field: a text box for a `text`, `multiline` or `number` field, and one searchable
+ * dropdown per level for a `choice` field. A single-level choice with `allow_other` also takes typed Other text.
  */
 export default function FindingFieldInput({
   field, values, disabled = false, onChange, onOtherBlankChange,

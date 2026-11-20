@@ -82,4 +82,25 @@ describe('AttackAttemptDetails', () => {
     expect(attacksApi.getAttackFindings).toHaveBeenCalledTimes(2)
     expect(screen.queryByText(/Could not load attached findings/)).not.toBeInTheDocument()
   })
+
+  it('should report a failed finding fields read beside the attached findings and recover with a retry', async () => {
+    const user = userEvent.setup()
+    jest.mocked(attacksApi.getAttackFindings).mockResolvedValue({
+      attack_result_id: attempt.attack_result_id, items: [{
+        id: 'finding', operation_id: 'operation', operation_name: 'Recorded operation', evidence_id: 'evidence',
+        title: 'Rated attached finding', severity: 'low', field_values: {}, created_at: attempt.timestamp,
+      }],
+    })
+    jest.mocked(operationsApi.getFindingFields).mockRejectedValueOnce({
+      isAxiosError: true, response: { status: 503, data: { detail: 'Fields unavailable' } },
+    })
+    render(<TestWrapper><AttackAttemptDetails attempt={attempt} conversationPath="/saved" /></TestWrapper>)
+    expect(await screen.findByText(/Could not load finding fields: Fields unavailable/)).toBeVisible()
+    const findings = screen.getByRole('list', { name: 'Attached findings' })
+    expect(findings).toHaveTextContent('Rated attached finding')
+
+    await user.click(screen.getByRole('button', { name: 'Retry finding fields' }))
+    expect(await within(findings).findByText('Low')).toBeVisible()
+    expect(screen.queryByText(/Could not load finding fields/)).not.toBeInTheDocument()
+  })
 })

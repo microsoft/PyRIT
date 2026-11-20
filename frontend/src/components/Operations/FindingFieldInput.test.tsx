@@ -109,16 +109,16 @@ describe('FindingFieldInput', () => {
     expect(onChange).toHaveBeenLastCalledWith({ owner: 'C' })
   })
 
-  it('renders a number field as a spin button that accepts a decimal', async () => {
+  it('renders a number field as a decimal text box', async () => {
     const user = userEvent.setup()
     const score: FindingField = { ...OWNER, key: 'cvss_score', label: 'CVSS score', type: 'number' }
     render(<TestWrapper><FieldHarness field={score} initialValues={{}} onChange={onChange} /></TestWrapper>)
 
-    const input = screen.getByRole('spinbutton', { name: 'CVSS score' })
+    // A native number box would show a stored value that is not a number as empty; the server checks the format.
+    const input = screen.getByRole('textbox', { name: 'CVSS score' })
+    expect(input).toHaveAttribute('inputmode', 'decimal')
     await user.type(input, '9.8')
     expect(onChange).toHaveBeenLastCalledWith({ cvss_score: '9.8' })
-    // The dialog is a native form, and a browser blocks saving a decimal on the default step of 1.
-    expect(input).toHaveAttribute('step', 'any')
   })
 
   it('picks a cascade path level by level and disables a level until its parent has a value', async () => {
@@ -184,7 +184,7 @@ describe('FindingFieldInput', () => {
     expect(onChange).toHaveBeenLastCalledWith({ technique: '' })
     expect(screen.getByRole('combobox', { name: 'Technique' })).toHaveValue('Other')
 
-    const otherText = screen.getByRole('textbox', { name: 'Other Technique' })
+    const otherText = screen.getByRole('textbox', { name: 'Other value for Technique' })
     expect(otherText).toBeRequired()
     await user.type(otherText, 'Many-shot')
     expect(onChange).toHaveBeenLastCalledWith({ technique: 'Many-shot' })
@@ -193,7 +193,7 @@ describe('FindingFieldInput', () => {
 
     await pick(user, 'Technique', 'Role play')
     expect(onChange).toHaveBeenLastCalledWith({ technique: 'role_play' })
-    expect(screen.queryByRole('textbox', { name: 'Other Technique' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Other value for Technique' })).not.toBeInTheDocument()
   })
 
   it('opens a stored Other value with its text', async () => {
@@ -203,7 +203,7 @@ describe('FindingFieldInput', () => {
     </TestWrapper>)
 
     expect(screen.getByRole('combobox', { name: 'Technique' })).toHaveValue('Other')
-    expect(screen.getByRole('textbox', { name: 'Other Technique' })).toHaveValue('Model extraction')
+    expect(screen.getByRole('textbox', { name: 'Other value for Technique' })).toHaveValue('Model extraction')
     expect(screen.queryByText(UNMATCHED_HINT)).not.toBeInTheDocument()
 
     await openPicker(user, 'Technique')
@@ -211,7 +211,7 @@ describe('FindingFieldInput', () => {
     await user.tab()
     expect(onChange).not.toHaveBeenCalled()
     expect(screen.getByRole('combobox', { name: 'Technique' })).toHaveValue('Other')
-    expect(screen.getByRole('textbox', { name: 'Other Technique' })).toHaveValue('Model extraction')
+    expect(screen.getByRole('textbox', { name: 'Other value for Technique' })).toHaveValue('Model extraction')
   })
 
   it('shows a stored value that is no longer an option and keeps it until changed', async () => {
@@ -290,7 +290,7 @@ describe('FindingFieldInput', () => {
 
     await user.click(screen.getByRole('option', { name: 'Other' }))
     expect(onChange).toHaveBeenLastCalledWith({ technique: '' })
-    expect(screen.getByRole('textbox', { name: 'Other Technique' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Other value for Technique' })).toHaveValue('')
   })
 
   it('reports whether the Other text is blank', async () => {
@@ -307,7 +307,7 @@ describe('FindingFieldInput', () => {
 
     await pick(user, 'Technique', 'Other')
     expect(onOtherBlankChange).toHaveBeenLastCalledWith(true)
-    const otherText = screen.getByRole('textbox', { name: 'Other Technique' })
+    const otherText = screen.getByRole('textbox', { name: 'Other value for Technique' })
     await user.type(otherText, 'Many-shot')
     expect(onOtherBlankChange).toHaveBeenLastCalledWith(false)
     await user.clear(otherText)
@@ -315,7 +315,7 @@ describe('FindingFieldInput', () => {
     await pick(user, 'Technique', 'Role play')
     expect(onOtherBlankChange).toHaveBeenLastCalledWith(false)
 
-    await user.clear(screen.getByRole('textbox', { name: 'Other Tactic' }))
+    await user.clear(screen.getByRole('textbox', { name: 'Other value for Tactic' }))
     expect(onStoredOtherBlankChange).toHaveBeenCalledTimes(1)
     expect(onStoredOtherBlankChange).toHaveBeenLastCalledWith(true)
   })

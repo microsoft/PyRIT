@@ -715,4 +715,39 @@ describe('FindingExportDialog', () => {
     expect(await within(dialog).findByRole('checkbox', { name: GAMMA.title })).toBeChecked()
     expect(within(dialog).getByRole('checkbox', { name: 'Select all' })).toBeChecked()
   })
+
+  it('keeps Download unavailable until the list reloads for changed finding fields', async () => {
+    const user = userEvent.setup()
+    const delta = syntheticFinding(4, { title: 'Delta', severity: 'critical' })
+    const reload = deferred<FindingListResponse>()
+    jest.mocked(operationsApi.listFindings)
+      .mockResolvedValueOnce(onePage([ALPHA, BETA, GAMMA]))
+      .mockReturnValueOnce(reload.promise)
+    const view = renderDialog(OPERATION)
+    const dialog = await openDialog(user)
+    await within(dialog).findByRole('checkbox', { name: 'Select all' })
+    const download = within(dialog).getByRole('button', { name: 'Download Word' })
+    download.focus()
+
+    view.rerender(
+      <FluentProvider theme={webLightTheme}>
+        <FindingExportDialog key={OPERATION.id} operation={OPERATION} fields={DEFAULT_FINDING_FIELDS_FIXTURE}
+          fieldsRevision={1} />
+      </FluentProvider>,
+    )
+    // The list from the earlier fields can miss a finding that the reload adds to Select all.
+    expect(within(dialog).getByText('Loading findings…')).toBeInTheDocument()
+    expect(download).toHaveAttribute('aria-disabled', 'true')
+    expect(download).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(operationsApi.exportFindings).not.toHaveBeenCalled()
+
+    await act(async () => { reload.resolve(onePage([delta, ALPHA, BETA, GAMMA])) })
+    expect(within(dialog).getByRole('checkbox', { name: delta.title })).toBeChecked()
+    expect(download).not.toHaveAttribute('aria-disabled')
+    await user.click(download)
+    expect(operationsApi.exportFindings).toHaveBeenCalledWith(OPERATION.id, expect.objectContaining({
+      finding_ids: [delta.id, ALPHA.id, BETA.id, GAMMA.id],
+    }), expect.anything())
+  })
 })

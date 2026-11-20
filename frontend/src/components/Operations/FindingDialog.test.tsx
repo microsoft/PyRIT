@@ -149,7 +149,7 @@ describe('FindingDialog', () => {
     expect(reproduction.compareDocumentPosition(category) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
   })
 
-  it('arms the unsaved changes guard for a severity only change in a new finding', async () => {
+  it('arms the unsaved changes guard for a severity only change in a new finding until it is changed back', async () => {
     const user = userEvent.setup()
     renderDialog()
 
@@ -157,6 +157,8 @@ describe('FindingDialog', () => {
 
     await pick(user, 'Severity', 'Critical')
     expect(requestPageUnload().defaultPrevented).toBe(true)
+    await pick(user, 'Severity', 'Moderate')
+    expect(requestPageUnload().defaultPrevented).toBe(false)
   })
 
   it('does not arm the unsaved changes guard for an untouched edit dialog', () => {
@@ -168,9 +170,9 @@ describe('FindingDialog', () => {
   it.each([
     ['Title', 'Existing'],
     ['Description', 'Details'],
-    ['Other Severity', 'Team severity'],
-    ['Other Harm-type', 'Team harm'],
-  ])('protects a %s edit and disarms the guard when its original value is restored', async (label: string, originalValue: string) => {
+    ['Other value for Severity', 'Team severity'],
+    ['Other value for Harm-type', 'Team harm'],
+  ])('protects an edit to %s and disarms the guard when its original value is restored', async (label: string, originalValue: string) => {
     const user = userEvent.setup()
     renderDialog({
       editing: true,
@@ -263,16 +265,16 @@ describe('FindingDialog', () => {
     expect(saveButton()).toBeDisabled()
     fireEvent.submit(saveButton().closest('form') as HTMLFormElement)
     expect(onSave).not.toHaveBeenCalled()
-    await user.type(screen.getByRole('textbox', { name: 'Other Harm-type' }), 'Team harm')
+    await user.type(screen.getByRole('textbox', { name: 'Other value for Harm-type' }), 'Team harm')
     expect(saveButton()).toBeEnabled()
 
     await pick(user, 'Severity', 'Other')
     expect(saveButton()).toBeDisabled()
-    await user.type(screen.getByRole('textbox', { name: 'Other Severity' }), 'Team severity')
+    await user.type(screen.getByRole('textbox', { name: 'Other value for Severity' }), 'Team severity')
     expect(saveButton()).toBeEnabled()
-    await user.clear(screen.getByRole('textbox', { name: 'Other Harm-type' }))
+    await user.clear(screen.getByRole('textbox', { name: 'Other value for Harm-type' }))
     expect(saveButton()).toBeDisabled()
-    await user.type(screen.getByRole('textbox', { name: 'Other Harm-type' }), 'Team harm')
+    await user.type(screen.getByRole('textbox', { name: 'Other value for Harm-type' }), 'Team harm')
 
     await user.click(saveButton())
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({
@@ -403,7 +405,7 @@ describe('FindingDialog', () => {
     renderDialog({ onSave })
     await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Typed severity')
     await pick(user, 'Severity', 'Other')
-    await user.type(screen.getByRole('textbox', { name: 'Other Severity' }), 'Critical')
+    await user.type(screen.getByRole('textbox', { name: 'Other value for Severity' }), 'Critical')
     await user.click(saveButton())
 
     const banner = await screen.findByText(detail)
@@ -412,28 +414,29 @@ describe('FindingDialog', () => {
       expect(input.compareDocumentPosition(banner)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     }
     expect(banner.compareDocumentPosition(saveButton())).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(screen.getByRole('textbox', { name: 'Other Severity' })).toHaveValue('Critical')
+    expect(screen.getByRole('textbox', { name: 'Other value for Severity' })).toHaveValue('Critical')
     expect(saveButton()).toBeEnabled()
   })
 
-  it('arms the unsaved changes guard once the draft differs from how it opened', async () => {
+  it('shows a stored value that is not a number in a number field, and saves a title change with it', async () => {
     const user = userEvent.setup()
-    const events: Event[] = []
-    const listener = (event: Event): void => { events.push(event) }
-    window.addEventListener('beforeunload', listener)
-    renderDialog()
+    const onSave = jest.fn().mockResolvedValue(undefined)
+    const fields: FindingFields = {
+      ...DEFAULT_FINDING_FIELDS_FIXTURE,
+      fields: [...DEFAULT_FINDING_FIELDS_FIXTURE.fields, {
+        key: 'cvss_score', label: 'CVSS score', type: 'number', required: true, options: [], levels: [],
+        default: null, allow_other: false, colors: {}, hint: null, section: null,
+      }],
+    }
+    // Saved while the field was a text field, before the deployment made it a number field.
+    renderDialog({ fields, editing: true, onSave, initialValues: current('Existing', 'low', { cvss_score: 'High' }) })
 
-    // The prevented flag is read after the dispatch, when every listener has run.
-    fireEvent(window, new Event('beforeunload', { cancelable: true }))
-    expect(events[0].defaultPrevented).toBe(false)
-    await pick(user, 'Severity', 'Critical')
-    fireEvent(window, new Event('beforeunload', { cancelable: true }))
-    expect(events[1].defaultPrevented).toBe(true)
-    await pick(user, 'Severity', 'Moderate')
-    fireEvent(window, new Event('beforeunload', { cancelable: true }))
-    expect(events[2].defaultPrevented).toBe(false)
-
-    window.removeEventListener('beforeunload', listener)
+    expect(screen.getByRole('textbox', { name: 'CVSS score' })).toHaveValue('High')
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), ' edited')
+    await user.click(saveButton())
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Existing edited', field_values: { cvss_score: 'High' },
+    }), ATTEMPT))
   })
 
   it('offers an optional evidence attack only when asked and sends it trimmed', async () => {

@@ -300,9 +300,9 @@ it('shows a custom severity but not the harm type in the picker, and creates and
   await user.click(screen.getByRole('button', { name: 'New finding' }))
   await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Custom')
   await pick(user, 'Severity', 'Other')
-  await user.type(screen.getByRole('textbox', { name: 'Other Severity' }), 'Team severity')
+  await user.type(screen.getByRole('textbox', { name: 'Other value for Severity' }), 'Team severity')
   await pick(user, 'Harm-type', 'Other')
-  await user.type(screen.getByRole('textbox', { name: 'Other Harm-type' }), 'Team harm')
+  await user.type(screen.getByRole('textbox', { name: 'Other value for Harm-type' }), 'Team harm')
   await user.click(screen.getByRole('button', { name: 'Save finding' }))
   expect(await screen.findByText(/Finding created and attack attached/)).toBeInTheDocument()
   expect(operationsApi.createFinding).toHaveBeenCalledWith('saved', {

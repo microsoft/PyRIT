@@ -628,7 +628,7 @@ test.describe('finding dialog on a touch screen', () => {
       dialog.getByRole('textbox', { name: 'Title' }),
       dialog.getByRole('combobox', { name: 'Severity' }),
       dialog.getByRole('combobox', { name: 'Harm-type' }),
-      dialog.getByRole('textbox', { name: 'Other Harm-type' }),
+      dialog.getByRole('textbox', { name: 'Other value for Harm-type' }),
       dialog.getByRole('textbox', { name: 'Evidence attack ID' }),
     ]) {
       await expect(field).toBeVisible()

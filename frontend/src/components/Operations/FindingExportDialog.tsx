@@ -25,10 +25,11 @@ const FORMATS: Record<FindingExportFormat, { option: string; name: string; exten
 const NO_SELECTION: ReadonlySet<string> = new Set()
 const NOT_FOUND = 404
 
+// A list or error carries the field revision it was loaded for; one from earlier fields counts as still loading.
 type FindingsLoad =
   | { status: 'loading' }
-  | { status: 'error'; error: string }
-  | { status: 'loaded'; findings: FindingListItem[] }
+  | { status: 'error'; error: string; fieldsRevision: number }
+  | { status: 'loaded'; findings: FindingListItem[]; fieldsRevision: number }
 
 /** The selection to restore after reloading for a deleted finding, and why the export failed. */
 interface SelectionRecovery {
@@ -54,7 +55,7 @@ export default function FindingExportDialog({ operation, fields, fieldsRevision 
   const styles = useFindingExportDialogStyles()
   const [open, setOpen] = useState(false)
   const [loadRevision, setLoadRevision] = useState(0)
-  const [load, setLoad] = useState<FindingsLoad>({ status: 'loading' })
+  const [loadState, setLoad] = useState<FindingsLoad>({ status: 'loading' })
   const [selected, setSelected] = useState<ReadonlySet<string>>(NO_SELECTION)
   const [format, setFormat] = useState<FindingExportFormat>('docx')
   const [exportError, setExportError] = useState('')
@@ -70,6 +71,9 @@ export default function FindingExportDialog({ operation, fields, fieldsRevision 
   // Aborted when the dialog closes or unmounts, so a late export never downloads into a later view.
   const session = useRef<AbortController | null>(null)
 
+  // Until the reload for changed fields settles, the earlier list can miss a finding that Select all should include.
+  const reloadingForFields = loadState.status !== 'loading' && loadState.fieldsRevision !== fieldsRevision
+  const load: FindingsLoad = reloadingForFields ? { status: 'loading' } : loadState
   const findings = load.status === 'loaded' ? load.findings : []
   const children = findingChildren(findings)
   const roots = children.get(null) ?? []
@@ -83,9 +87,10 @@ export default function FindingExportDialog({ operation, fields, fieldsRevision 
   const allSelected = included.length === findings.length
   const selectAllChecked = allSelected ? true : included.length === 0 ? false : 'mixed'
   const tooMany = included.length > MAX_EXPORT_FINDINGS
-  // A natively disabled button drops keyboard focus out of the dialog, so while an export runs, and while the list
-  // reloads or shows nothing selected after a deleted finding, Download stays focusable but unavailable.
-  const downloadKeepsFocus = exporting || (selectedIds.length === 0 && (recovering || removedTitles.length > 0))
+  // A natively disabled button drops keyboard focus out of the dialog, so while an export runs, while the list reloads,
+  // and while it shows nothing selected after a deleted finding, Download stays focusable but unavailable.
+  const downloadKeepsFocus = exporting || reloadingForFields
+    || (selectedIds.length === 0 && (recovering || removedTitles.length > 0))
 
   useEffect(() => {
     if (!open) return
@@ -122,7 +127,7 @@ export default function FindingExportDialog({ operation, fields, fieldsRevision 
         }
         offset = page.has_more ? page.next_offset : null
       }
-      setLoad({ status: 'loaded', findings: [...loaded.values()] })
+      setLoad({ status: 'loaded', findings: [...loaded.values()], fieldsRevision })
       setRecovering(false)
       const kept = recovery.current
       recovery.current = null
@@ -149,7 +154,7 @@ export default function FindingExportDialog({ operation, fields, fieldsRevision 
     }
     loadAllPages().catch((cause: unknown) => {
       if (ignore) return
-      setLoad({ status: 'error', error: toApiError(cause).detail })
+      setLoad({ status: 'error', error: toApiError(cause).detail, fieldsRevision })
       setRecovering(false)
     })
     return () => { ignore = true }
