@@ -2890,10 +2890,7 @@ async def test_types_say_why_a_converter_type_cant_be_saved() -> None:
     types = await ConverterService().list_converter_types_async()
     reasons = {item.converter_type: item.not_saveable_reason for item in types.items}
 
-    assert reasons["AzureSpeechTextToAudioConverter"] == (
-        "'AzureSpeechTextToAudioConverter' needs a credential in 'azure_speech_key', which saved entries can't hold "
-        "or take from this server yet."
-    )
+    assert reasons["AzureSpeechTextToAudioConverter"] is None
     assert reasons["ImageOverlayConverter"] == (
         "'ImageOverlayConverter' can't be saved. It needs an uploaded file, which saved converters can't keep yet."
     )
@@ -2902,8 +2899,6 @@ async def test_types_say_why_a_converter_type_cant_be_saved() -> None:
     assert {name for name, reason in reasons.items() if reason is not None} == {
         "AddImageTextConverter",
         "AddImageVideoConverter",
-        "AzureSpeechAudioToTextConverter",
-        "AzureSpeechTextToAudioConverter",
         "ImageOverlayConverter",
         "TransparencyAttackConverter",
     }
