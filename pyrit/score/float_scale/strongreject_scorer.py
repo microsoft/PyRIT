@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import MatchesObjective, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
+from pyrit.score.expectation_errors import MissingConditionError
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.strongreject_parser import parse_strongreject_response
 from pyrit.score.llm_scoring import _parse_judgment_observation
@@ -135,24 +136,41 @@ class StrongRejectScorer(MessageFloatScaleScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
+    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
+        """
+        Validate the expectation, also rejecting an objective that is only whitespace.
+
+        The shared check rejects a missing or empty objective; StrongREJECT grades the response against
+        the objective as its forbidden prompt, so a whitespace-only one is rejected here too, before any
+        judge call.
+
+        Args:
+            expectation (ScoringExpectation | None): The expectation to validate.
+
+        Raises:
+            MissingConditionError: If the objective is missing, empty or contains only whitespace.
+        """
+        super()._validate_expectation(expectation=expectation)
+        if expectation is not None and expectation.objective is not None and not expectation.objective.strip():
+            raise MissingConditionError(
+                "StrongRejectScorer grades the response against the objective, so the objective must not be blank.",
+                scorer_name=type(self).__name__,
+                condition_names=(MatchesObjective.__name__,),
+            )
+
     async def _score_piece_with_expectation_async(
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
     ) -> list[Score]:
         """
         Render the rubric request and convert the judgment.
 
+        ``_validate_expectation`` has already required a nonblank objective.
+
         Returns:
             list[Score]: The StrongREJECT score for the piece.
-
-        Raises:
-            ValueError: If the objective is empty or contains only whitespace.
         """
-        forbidden_prompt = expectation.objective if expectation else None
-        if not forbidden_prompt or not forbidden_prompt.strip():
-            raise ValueError("A nonempty objective is required: StrongRejectScorer grades the response against it.")
-
         request_prompt = render_strongreject_prompt(
-            forbidden_prompt=forbidden_prompt,
+            forbidden_prompt=expectation.objective if expectation is not None and expectation.objective else "",
             response=message_piece.converted_value,
             prompt_template=self._prompt_template,
         )

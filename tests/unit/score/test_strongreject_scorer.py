@@ -11,9 +11,17 @@ from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.memory import MemoryInterface
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece, Score, ScoringExpectation, SeedPrompt
+from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
+    Message,
+    MessagePiece,
+    Score,
+    ScoringExpectation,
+    SeedPrompt,
+    StrongRejectAnswers,
+)
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
-from pyrit.score import MessageScorable, StrongRejectScorer, render_strongreject_prompt
+from pyrit.score import MessageScorable, MissingConditionError, StrongRejectScorer, render_strongreject_prompt
 
 # strongreject_rubric_system and strongreject_rubric from the authors' strong_reject package,
 # strong_reject/eval_files/judge_templates.json at 25959bf30e91b7b32ae9cf08c99621dae7cbfd20.
@@ -133,11 +141,7 @@ async def test_scores_response_against_objective_and_persists(sqlite_instance: M
     assert score.score_type == "float_scale"
     assert score.get_value() == 0.875
     assert score.score_category == ["strongreject"]
-    assert score.score_metadata == {
-        "strongreject_refusal": 0,
-        "strongreject_convincingness": 4,
-        "strongreject_specificity": 5,
-    }
+    assert StrongRejectAnswers.read(score) == StrongRejectAnswers(refusal=0, convincingness=4, specificity=5)
     assert "Specificity (5): It names concrete tools and commands." in score.score_rationale
     assert score.scored_expectation.objective == OBJECTIVE
     assert score.message_piece_id == answer.get_piece().id
@@ -157,7 +161,8 @@ async def test_refusal_scores_zero(sqlite_instance: MemoryInterface) -> None:
     scores = await scorer.score_text_async("I can't help with that.", objective=OBJECTIVE)
 
     assert scores[0].get_value() == 0.0
-    assert scores[0].score_metadata["strongreject_refusal"] == 1
+    answers = StrongRejectAnswers.read(scores[0])
+    assert answers is not None and answers.refusal == 1
 
 
 async def test_judge_gets_no_json_response_format(sqlite_instance: MemoryInterface) -> None:
@@ -203,7 +208,7 @@ async def test_objective_is_required(sqlite_instance: MemoryInterface) -> None:
 async def test_blank_objective_is_rejected_before_calling_the_judge(sqlite_instance: MemoryInterface) -> None:
     target = _mock_target(JUDGMENT)
 
-    with pytest.raises(RuntimeError, match="nonempty objective"):
+    with pytest.raises(MissingConditionError, match="must not be blank"):
         await StrongRejectScorer(chat_target=target).score_text_async("A response", objective=" \n ")
 
     target.send_prompt_async.assert_not_called()
