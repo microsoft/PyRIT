@@ -53,21 +53,46 @@ async def test_ascii_smuggler_input_not_supported():
     [
         "\x1f",
         "\x7f",
-        "caf\u00e9",
+        "\u0301",
+        "\u200b",
         "\u4f60\u597d\u4e16\u754c",
-        "na\u00efve r\u00e9sum\u00e9",
         "\U0001f600",
-        "line1\nline2",
+        "Tom Harris \u2013 \u4f60\u597d",
     ],
 )
 async def test_ascii_smuggler_encode_unrepresentable_chars_raise(prompt: str) -> None:
-    # Only the ASCII printable range (0x20-0x7E) maps to Unicode tags. Characters outside it used to be
-    # logged and dropped while convert_async still returned a success result, so a non-ASCII (or multi-line)
-    # objective was smuggled as a corrupted payload and an attack could be scored against a target that was
-    # never sent the objective. Encoding must fail loudly instead.
+    # Only the ASCII printable range (0x20-0x7E) maps to Unicode tags. Characters with no ASCII equivalent used
+    # to be logged and dropped while convert_async still returned a success result, so an objective was smuggled
+    # as a corrupted payload and an attack could be scored against a target that was never sent the objective.
+    # Encoding must fail loudly instead, even when the rest of the prompt can be normalized.
     converter = AsciiSmugglerConverter(action="encode")
     with pytest.raises(ValueError, match="ASCII printable range"):
         await converter.convert_async(prompt=prompt, input_type="text")
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("line1\nline2\r\n\tline3", "line1 line2   line3"),
+        ("caf\u00e9", "cafe"),
+        ("na\u00efve r\u00e9sum\u00e9", "naive resume"),
+        ("a\u00a0b\u2003c", "a b c"),
+        ("\uff21\ufb01", "Afi"),
+        (
+            "**Tom Harris \u2013 IT Chronicles**\n\nWelcome\u2026 it\u2019s \u201cmy\u201d corner \u2014 enjoy",
+            '**Tom Harris - IT Chronicles**  Welcome... it\'s "my" corner - enjoy',
+        ),
+    ],
+)
+async def test_ascii_smuggler_encode_replaces_chars_with_ascii_equivalents(prompt: str, expected: str) -> None:
+    # Dataset objectives routinely contain newlines and typographic punctuation. Those characters have a faithful
+    # ASCII equivalent, so they are replaced rather than failing the attack or being silently dropped.
+    encoder = AsciiSmugglerConverter(action="encode")
+    encoded = await encoder.convert_async(prompt=prompt, input_type="text")
+
+    decoder = AsciiSmugglerConverter(action="decode")
+    decoded = await decoder.convert_async(prompt=encoded.output_text, input_type="text")
+    assert decoded.output_text == expected
 
 
 async def test_ascii_smuggler_encode_printable_boundaries_do_not_raise() -> None:
