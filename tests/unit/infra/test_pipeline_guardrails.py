@@ -40,6 +40,13 @@ class TestPipelineGuardrails(unittest.TestCase):
             if "template" in stage
         }
 
+    def test_test_deploys_daily_from_main_instead_of_on_every_merge(self) -> None:
+        assert (self.pipeline["trigger"], self.pipeline["pr"]) == ("none", "none")
+        [schedule] = self.pipeline["schedules"]
+        assert schedule["cron"] == "0 15 * * *"
+        assert schedule["branches"] == {"include": ["main"]}
+        assert schedule["always"] is True
+
     def test_published_images_require_verified_clean_source_provenance(self) -> None:
         assert "source_commit=$(git rev-parse HEAD)" in self.pipeline_text
         assert '"$source_commit" != "$PYRIT_SOURCE_VERSION"' in self.pipeline_text
