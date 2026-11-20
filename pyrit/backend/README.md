@@ -211,10 +211,10 @@ A created converter or scorer is Temporary unless the request sets `"persist": t
 targets: it needs `register` left on and a name of lowercase letters, digits, and underscores (otherwise **422**), the
 entry is saved under `registry_recipes_source` with the signed-in user recorded, and it's restored at every start. A
 request receives **400** with `"type": "/errors/not-saveable"`, and can be sent again without `persist`, if the entry
-would save a key, use one of this server's keys or its Azure identity (the Azure Speech converters, the Azure Content
-Safety scorer, and the audio scorers), or a model from this server (the local refusal classifier scorer), use a
+would save a key, use a
 Temporary target, converter, or scorer, be of a type that only a scan's launch scripts added, or, for a converter, need
-or keep an uploaded file. A target left out of the
+or keep an uploaded file. A saved converter or scorer can use this server's keys and Azure identity, as the ones from
+the configuration do. A target left out of the
 request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
 converter copy made with `source` is saved as its changes and the name of the converter it copies, which can't be
 Temporary (otherwise **400** as above); it's rebuilt from that converter at every start, so it keeps where that

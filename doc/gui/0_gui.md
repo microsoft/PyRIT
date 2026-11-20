@@ -244,9 +244,9 @@ The Targets table labels each target **Saved**, **From configuration**
 New converters are saved the same way, wherever you add one: **New Converter** in
 the Converters tab, the converter panel in chat, or **New converter** in the
 technique editor. The dialog suggests a name such as `base64_converter`. A
-converter type that can't be saved yet (the Azure Speech converters, and types
-that need an uploaded file), a converter with an uploaded file, or one that uses a
-Temporary target is created as **Temporary** instead, and the dialog says why.
+converter type that needs an uploaded file, a converter with an uploaded file, or
+one that uses a Temporary target is created as **Temporary** instead, and the
+dialog says why.
 **Save to registry** on a converter's changed settings, in chat or in a technique
 edit, saves a copy that comes back after a restart, rebuilt from the original
 converter with your changes; a copy of a Temporary converter is created as

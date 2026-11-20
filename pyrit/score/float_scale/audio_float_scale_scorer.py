@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import ClassVar
 
 from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
@@ -17,10 +16,6 @@ class AudioFloatScaleScorer(MessageFloatScaleScorer):
     The AudioFloatScaleScorer transcribes audio to text using Azure Speech-to-Text,
     then scores the transcript using a FloatScaleScorer.
     """
-
-    not_saveable_reason: ClassVar[str | None] = (
-        "It transcribes audio with the Azure Speech key or Azure identity this server is set up with."
-    )
 
     _default_validator: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["audio_path"])
 

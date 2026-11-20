@@ -333,7 +333,7 @@ def test_create_scorer_marks_a_save_refusal_so_it_can_be_created_without_saving(
     body = {
         "name": "content_safety",
         "type": "AzureContentFilterScorer",
-        "params": {"endpoint": "https://contoso.cognitiveservices.azure.com/"},
+        "params": {"endpoint": "https://contoso.cognitiveservices.azure.com/", "api_key": "typed-safety-key"},
         "persist": True,
     }
 
@@ -345,16 +345,11 @@ def test_create_scorer_marks_a_save_refusal_so_it_can_be_created_without_saving(
         "type": "/errors/not-saveable",
         "title": "Can't be saved",
         "status": 400,
-        "detail": (
-            "'AzureContentFilterScorer' needs a credential in 'api_key', which saved entries can't hold or take from "
-            "this server yet. It can still be created without saving it."
-        ),
+        "detail": "Saved entries can't hold credentials ('api_key'). It can still be created without saving it.",
         "instance": "/api/scorers",
-        "not_saveable_reason": (
-            "'AzureContentFilterScorer' needs a credential in 'api_key', which saved entries can't hold or take from "
-            "this server yet."
-        ),
+        "not_saveable_reason": "Saved entries can't hold credentials ('api_key').",
     }
+    assert "typed-safety-key" not in response.text
     assert not (tmp_path / "scorers").exists()
 
 

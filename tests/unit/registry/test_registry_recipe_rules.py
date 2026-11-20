@@ -8,7 +8,7 @@ from urllib.parse import quote
 import pytest
 
 from pyrit.models.catalog import RestoreFailureReason
-from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import ConverterRegistry, TargetRegistry
 from pyrit.registry.registry_recipe_rules import (
     SavedEntryRefusedError,
     check_saveable_class,
@@ -26,17 +26,14 @@ _OPENAI_CLASSES = (
     "OpenAIVideoTarget",
     "RealtimeTarget",
 )
-_SPEECH_CONVERTERS = ("AzureSpeechAudioToTextConverter", "AzureSpeechTextToAudioConverter")
-_CONTENT_SAFETY_ENDPOINT = "https://contoso.cognitiveservices.azure.com/"
-_REGISTRIES = (TargetRegistry, ConverterRegistry, ScorerRegistry)
 
 
 @pytest.fixture(autouse=True)
 def isolated_target_registry() -> Iterator[None]:
-    for registry in _REGISTRIES:
+    for registry in (TargetRegistry, ConverterRegistry):
         registry.reset_registry_singleton()
     yield
-    for registry in _REGISTRIES:
+    for registry in (TargetRegistry, ConverterRegistry):
         registry.reset_registry_singleton()
 
 
@@ -469,177 +466,12 @@ def test_check_saveable_class_refuses_an_openai_class_while_the_server_sets_sdk_
     assert "server-secret" not in str(refusal.value)
 
 
-def _component_refusal(registry_class: Any, class_name: str, params: dict[str, Any]) -> SavedEntryRefusedError:
-    registry = registry_class.get_registry_singleton()
-    cls = registry.get_class(class_name)
-    values = dict(params)
-    auth_mode = values.pop("auth_mode", None)
-    with pytest.raises(SavedEntryRefusedError) as refusal:
-        check_saved_entry_params(
-            cls=cls, parameters=registry.get_class_metadata(cls).parameters, params=values, auth_mode=auth_mode
-        )
-    return refusal.value
-
-
-@pytest.mark.parametrize("class_name", _SPEECH_CONVERTERS)
-@pytest.mark.parametrize(
-    ("params", "message"),
-    [
-        (
-            {"azure_speech_region": "eastus"},
-            "'azure_speech_key' is empty, so '{class_name}' can use this server's credential instead.",
-        ),
-        (
-            {"azure_speech_region": "eastus", "azure_speech_resource_id": "/subscriptions/contoso/speech"},
-            "'azure_speech_key' is empty, so '{class_name}' can use this server's credential instead.",
-        ),
-        (
-            {"azure_speech_region": "eastus", "azure_speech_key": "typed-speech-key"},
-            "Saved entries can't hold credentials ('azure_speech_key').",
-        ),
-        (
-            {"azure_speech_region": "eastus", "auth_mode": "identity"},
-            "'{class_name}' only supports auth_mode 'api_key'.",
-        ),
-    ],
-)
-def test_check_saved_entry_params_refuses_a_speech_converter_that_would_use_a_credential(
-    class_name: str, params: dict[str, Any], message: str
-) -> None:
-    refusal = _component_refusal(ConverterRegistry, class_name, params)
-
-    assert refusal.reason is RestoreFailureReason.UNSUPPORTED_CREDENTIAL
-    assert str(refusal) == message.format(class_name=class_name)
-
-
-@pytest.mark.parametrize(
-    ("params", "message"),
-    [
-        ({}, "'api_key' is empty, so 'AzureContentFilterScorer' can use this server's credential instead."),
-        (
-            {"endpoint": _CONTENT_SAFETY_ENDPOINT},
-            "'api_key' is empty, so 'AzureContentFilterScorer' can use this server's credential instead.",
-        ),
-        (
-            {"endpoint": _CONTENT_SAFETY_ENDPOINT, "api_key": "typed-safety-key"},
-            "Saved entries can't hold credentials ('api_key').",
-        ),
-        ({"auth_mode": "identity"}, "'AzureContentFilterScorer' only supports auth_mode 'api_key'."),
-        ({"auth_mode": "none"}, "'AzureContentFilterScorer' only supports auth_mode 'api_key'."),
-    ],
-)
-def test_check_saved_entry_params_refuses_a_content_filter_scorer_that_would_use_a_credential(
-    params: dict[str, Any], message: str
-) -> None:
-    refusal = _component_refusal(ScorerRegistry, "AzureContentFilterScorer", params)
-
-    assert refusal.reason is RestoreFailureReason.UNSUPPORTED_CREDENTIAL
-    assert str(refusal) == message
-
-
-def test_check_saved_entry_params_refuses_an_auth_mode_on_a_class_that_declares_none() -> None:
-    refusal = _component_refusal(ConverterRegistry, "CaesarConverter", {"caesar_offset": 3, "auth_mode": "identity"})
-
-    assert refusal.reason is RestoreFailureReason.UNSUPPORTED_CREDENTIAL
-    assert str(refusal) == "'CaesarConverter' only supports auth_mode 'api_key'."
-
-
-@pytest.mark.parametrize(
-    ("class_name", "params"),
-    [
-        ("AudioTrueFalseScorer", {"text_capable_scorer": "leak_substring"}),
-        ("AudioFloatScaleScorer", {"text_capable_scorer": "harm_likert"}),
-        ("LocalRefusalClassifierScorer", {}),
-        ("LocalRefusalClassifierScorer", {"model_id": "/srv/models/laya"}),
-    ],
-)
-def test_check_saved_entry_params_refuses_a_scorer_type_that_cant_be_saved(
-    class_name: str, params: dict[str, Any]
-) -> None:
-    refusal = _component_refusal(ScorerRegistry, class_name, params)
-
-    assert refusal.reason is RestoreFailureReason.UNSUPPORTED_CLASS
-    assert str(refusal) == ScorerRegistry.get_registry_singleton().get_class(class_name).not_saveable_reason
-
-
-@pytest.mark.parametrize(
-    ("registry_class", "class_name", "params"),
-    [
-        (ConverterRegistry, "CaesarConverter", {"caesar_offset": 3}),
-        (ConverterRegistry, "TranslationConverter", {"converter_target": "contoso_gpt4o", "language": "French"}),
-        (ScorerRegistry, "SubStringScorer", {"substring": "secret", "categories": ["leak"]}),
-        (ScorerRegistry, "RobloxPiiScorer", {}),
-        (ScorerRegistry, "LocalViolenceClassifierScorer", {}),
-    ],
-)
-def test_check_saved_entry_params_accepts_converters_and_scorers_that_need_no_credential(
-    registry_class: Any, class_name: str, params: dict[str, Any]
-) -> None:
-    registry = registry_class.get_registry_singleton()
-    cls = registry.get_class(class_name)
-
-    check_saved_entry_params(cls=cls, parameters=registry.get_class_metadata(cls).parameters, params=params)
-
-
-def test_check_saveable_class_refuses_only_the_converters_and_scorers_that_use_this_servers_credentials() -> None:
-    refused: dict[str, tuple[RestoreFailureReason, str]] = {}
-    for registry_class in (ConverterRegistry, ScorerRegistry):
-        registry = registry_class.get_registry_singleton()
-        for metadata in registry.get_all_registered_class_metadata():
-            try:
-                check_saveable_class(registry.get_class(metadata.class_name))
-            except SavedEntryRefusedError as error:
-                refused[metadata.class_name] = (error.reason, str(error))
-
-    assert refused == {
-        "AzureSpeechAudioToTextConverter": (
-            RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
-            (
-                "'AzureSpeechAudioToTextConverter' needs a credential in 'azure_speech_key', which saved entries can't "
-                "hold or take from this server yet."
-            ),
-        ),
-        "AzureSpeechTextToAudioConverter": (
-            RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
-            (
-                "'AzureSpeechTextToAudioConverter' needs a credential in 'azure_speech_key', which saved entries can't "
-                "hold or take from this server yet."
-            ),
-        ),
-        "AzureContentFilterScorer": (
-            RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
-            (
-                "'AzureContentFilterScorer' needs a credential in 'api_key', which saved entries can't hold or take "
-                "from this server yet."
-            ),
-        ),
-        "AudioFloatScaleScorer": (
-            RestoreFailureReason.UNSUPPORTED_CLASS,
-            ("It transcribes audio with the Azure Speech key or Azure identity this server is set up with."),
-        ),
-        "AudioTrueFalseScorer": (
-            RestoreFailureReason.UNSUPPORTED_CLASS,
-            ("It transcribes audio with the Azure Speech key or Azure identity this server is set up with."),
-        ),
-        "LocalRefusalClassifierScorer": (
-            RestoreFailureReason.UNSUPPORTED_CLASS,
-            (
-                "Its model can come from a folder on this server, or be "
-                "downloaded with this server's Hugging Face sign-in."
-            ),
-        ),
-    }
-
-
 def test_check_saved_copy_params_refuses_only_a_change_that_holds_a_credential() -> None:
     registry = ConverterRegistry.get_registry_singleton()
     cls = registry.get_class("AzureSpeechTextToAudioConverter")
     parameters = registry.get_class_metadata(cls).parameters
     changes = {"synthesis_voice_name": "en-US-AvaNeural"}
 
-    # A copy signs in the way the converter it copies does, so an empty key isn't refused as on a saved entry.
     check_saved_copy_params(parameters=parameters, params=changes)
-    with pytest.raises(SavedEntryRefusedError, match="can use this server's credential"):
-        check_saved_entry_params(cls=cls, parameters=parameters, params=changes)
     with pytest.raises(SavedEntryRefusedError, match=r"Saved entries can't hold credentials \('azure_speech_key'\)"):
         check_saved_copy_params(parameters=parameters, params={**changes, "azure_speech_key": "copy-key"})
