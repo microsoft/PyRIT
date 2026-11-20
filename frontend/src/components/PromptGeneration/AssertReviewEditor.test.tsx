@@ -169,14 +169,18 @@ describe('AssertReviewEditor', () => {
     expect(screen.getByTestId('assert-review-save')).toBeEnabled()
   })
 
-  it('offers a retry when the review cannot be loaded', async () => {
+  it('offers a retry when the review cannot be loaded, without reloading the generation', async () => {
     const user = userEvent.setup()
-    mockApi.getReview.mockRejectedValueOnce(new Error('Review unavailable')).mockResolvedValue(makeAssertReview())
-    renderEditor()
+    const onReload = jest.fn()
+    mockApi.getReview.mockRejectedValueOnce(SERVER_ERROR).mockResolvedValue(makeAssertReview())
+    renderEditor(jest.fn(), onReload)
 
-    expect(await screen.findByText(/The review could not be loaded: Review unavailable/)).toBeInTheDocument()
+    expect(await screen.findByText(/The review could not be loaded: memory unavailable/)).toBeInTheDocument()
+    // Only a 409 means the generation moved on; other failures retry the review itself.
+    expect(onReload).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await screen.findByRole('textbox', { name: 'Category 1 name' })).toBeInTheDocument()
+    expect(onReload).not.toHaveBeenCalled()
   })
 
   it('shows why the estimate could not be loaded and checks again', async () => {
