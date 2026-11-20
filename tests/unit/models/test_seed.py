@@ -879,8 +879,8 @@ def test_enforce_consistent_role_with_undefined_role_by_sequence():
         SeedGroup(seeds=prompts)
 
     assert (
-        f"No roles set for sequence 2 in a multi-sequence group. Please ensure at least one prompt within a sequence"
-        f" has an assigned role."
+        "No roles set for sequence 2 in a multi-sequence group. Please ensure at least one prompt within a sequence"
+        " has an assigned role."
     ) in str(exc_info.value)
 
 
@@ -1534,7 +1534,7 @@ def test_seed_group_mixed_prompt_types():
     assert group.objective.value == "Test objective"
 
 
-def test_seed_group_dict_with_seed_type_objective():
+def test_seed_group_dict_with_seed_type_objective_keeps_value():
     """Test that a dictionary with seed_type='objective' creates an objective."""
     prompt_dict = {
         "value": "Test objective from dict with seed_type",
@@ -1551,7 +1551,7 @@ def test_seed_group_dict_with_seed_type_objective():
     assert len(group.prompts) == 0
 
 
-def test_seed_group_dict_with_seed_type_prompt():
+def test_seed_group_dict_with_seed_type_prompt_keeps_value():
     """Test that a dictionary with seed_type='prompt' creates a prompt."""
     prompt_dict = {"value": "Test prompt from dict with seed_type", "seed_type": "prompt", "sequence": 1}
 

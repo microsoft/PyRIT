@@ -131,7 +131,6 @@ async def interact_with_my_app(page: Page, message: Message) -> str:
 # We'll use the `PromptSendingAttack` to send prompts to the target and collects responses.
 # %%
 import asyncio
-import sys
 
 from pyrit.executor.attack import PromptSendingAttack
 

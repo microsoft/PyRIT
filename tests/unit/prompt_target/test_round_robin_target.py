@@ -538,7 +538,7 @@ async def test_full_send_prompt_async_keeps_round_robin_identifier():
         piece.conversation_id = conv_id
         # Simulate what PromptNormalizer does
 
-    responses = await rr.send_prompt_async(message=message)
+    await rr.send_prompt_async(message=message)
 
     # The request should still have the round-robin's identifier
 

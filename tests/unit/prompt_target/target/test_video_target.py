@@ -821,7 +821,7 @@ class TestVideoTargetEdgeCases:
             mock_create.return_value = mock_video
             mock_download.return_value = mock_video_response
 
-            response = await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_image]))
+            await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_image]))
 
             # Verify JPEG MIME type is used
             call_kwargs = mock_create.call_args.kwargs
@@ -872,7 +872,7 @@ class TestVideoTargetEdgeCases:
             mock_create.return_value = mock_video
             mock_download.return_value = mock_video_response
 
-            response = await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_image]))
+            await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_image]))
 
             # Verify webp MIME type is correctly resolved via the explicit mapping
             call_kwargs = mock_create.call_args.kwargs
@@ -928,7 +928,7 @@ class TestVideoTargetEdgeCases:
 
         with (
             patch.object(video_target._async_client.videos, "remix", new_callable=AsyncMock) as mock_remix,
-            patch.object(video_target._async_client.videos, "poll", new_callable=AsyncMock) as mock_poll,
+            patch.object(video_target._async_client.videos, "poll", new_callable=AsyncMock),
         ):
             mock_remix.return_value = mock_video
             # Don't need poll since status is already "failed"

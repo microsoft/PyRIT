@@ -115,7 +115,6 @@ from pyrit.score import (
 
 if TYPE_CHECKING:
     from pyrit.converter import Converter
-    from pyrit.models import ComponentIdentifier
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
