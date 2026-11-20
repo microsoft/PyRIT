@@ -996,7 +996,7 @@ async def test_incompatible_scoring_config_uses_scenario_policy_async(harness: _
         **_datasets("assert_a"),
     }
     if policy == "raise":
-        with pytest.raises(ScenarioConfigurationError, match="TAPAttackScoringConfig"):
+        with pytest.raises(ScenarioConfigurationError, match="requires 'preserves_float_scale_value'"):
             await harness.initialize_async(harness.scenario(), **args)
     else:
         scenario = await harness.initialize_async(harness.scenario(), **args)
@@ -1004,12 +1004,17 @@ async def test_incompatible_scoring_config_uses_scenario_policy_async(harness: _
 
     scenario = harness.scenario()
     scenario.set_params_from_args(
-        args={"objective_target": harness.objective, "scenario_techniques": [_technique("tap")]}
+        args={
+            "objective_target": harness.objective,
+            "scoring_target": harness.judge,
+            "scenario_techniques": [_technique("tap")],
+        }
     )
     assert any(issue.role == "objective_scorer" for issue in scenario.get_readiness().issues)
     scenario.set_params_from_args(
         args={
             "objective_target": harness.objective,
+            "scoring_target": harness.judge,
             "scenario_techniques": [_technique("prompt_sending"), _technique("tap")],
             "incompatible_technique_policy": policy,
         }

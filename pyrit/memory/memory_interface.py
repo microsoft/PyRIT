@@ -18,7 +18,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, NoReturn, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse
 
 from sqlalchemy import (
@@ -112,6 +112,7 @@ from pyrit.memory.memory_models import (
     ObservationMessagePieceEntry,
     OperationEntry,
     PromptConverterIdentifierEntry,
+    PromptGenerationEntry,
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
     ScenarioPlanSeedGroupEntry,
@@ -132,6 +133,7 @@ from pyrit.memory.storage import (
     set_seed_sha256_async,
 )
 from pyrit.models import (
+    DATASET_NAME_RELEASING_STATUSES,
     MEDIA_PATH_DATA_TYPES,
     AdversarialPrompts,
     AtomicAttackEvaluationIdentifier,
@@ -166,6 +168,8 @@ from pyrit.models import (
     Operation,
     OperationUsage,
     PromptDataType,
+    PromptGenerationRecord,
+    PromptGenerationStatus,
     RequestTraceContext,
     RetryEvent,
     ScenarioAttackResultDelta,
@@ -321,6 +325,39 @@ def _operation_ids(items: Sequence[object]) -> set[uuid.UUID]:
         for item in items
         if isinstance(item, (AttackResult, AttackResultEntry, ScenarioResultEntry)) and item.operation_id is not None
     }
+
+
+def _prompt_generation_filters(
+    *,
+    generation_id: uuid.UUID,
+    expected_statuses: Collection[PromptGenerationStatus],
+    expected_execution_id: uuid.UUID | None,
+) -> "list[ColumnElement[bool]]":
+    """
+    Match a generation that is still in an expected status and, optionally, owned by a run attempt.
+
+    Returns:
+        list[ColumnElement[bool]]: Conditions for a compare-and-set statement.
+    """
+    filters = [
+        PromptGenerationEntry.id == generation_id,
+        PromptGenerationEntry.status.in_([status.value for status in expected_statuses]),
+    ]
+    if expected_execution_id is not None:
+        filters.append(PromptGenerationEntry.execution_id == expected_execution_id)
+    return filters
+
+
+def _raise_dataset_name_taken(dataset_name: str) -> NoReturn:
+    """
+    Reject a dataset name that the shared create-only name rule reports as taken.
+
+    Raises:
+        DatasetNameConflictError: Always.
+    """
+    from pyrit.memory.dataset_lifecycle import DatasetNameConflictError
+
+    raise DatasetNameConflictError(f"A dataset or generation named '{dataset_name}' already exists.")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1019,6 +1056,258 @@ class MemoryInterface(abc.ABC):
             raise OperationInUseError(operation_id=operation_id, usage=usage) from exc
         usage = await self.get_operation_usage_async(operation_id=operation_id)
         raise OperationInUseError(operation_id=operation_id, usage=usage)
+
+    async def add_prompt_generations_async(self, *, generations: Sequence[PromptGenerationRecord]) -> None:
+        """
+        Save new prompt generations together, holding each one's dataset name.
+
+        Each generation is checked after the ones before it are written, so the database's own name
+        comparison also rejects two members of one batch that it treats as the same name.
+
+        Args:
+            generations (Sequence[PromptGenerationRecord]): The generations to save.
+
+        Raises:
+            DatasetNameConflictError: If a dataset name is used by stored seeds, a staging upload, another
+                unfinished generation, or an earlier member of the batch. Nothing is saved.
+        """
+        from pyrit.memory.dataset_lifecycle import is_dataset_name_taken_async, lock_dataset_lifecycle
+
+        entries = [PromptGenerationEntry(generation) for generation in generations]
+        async with await self.get_session_async() as session:
+            await session.run_sync(lock_dataset_lifecycle)
+            for generation, entry in zip(generations, entries, strict=True):
+                if generation.status not in DATASET_NAME_RELEASING_STATUSES and await is_dataset_name_taken_async(
+                    session, dataset_name=generation.dataset_name
+                ):
+                    await session.rollback()
+                    _raise_dataset_name_taken(generation.dataset_name)
+                session.add(entry)
+                await session.flush()
+            await session.commit()
+
+    async def get_prompt_generations_async(self) -> list[PromptGenerationRecord]:
+        """
+        Read every prompt generation, newest first.
+
+        Generations created at the same time, such as the members of one batch, keep their batch order:
+        by batch position, first member first, and then by ID.
+
+        Returns:
+            list[PromptGenerationRecord]: The generations.
+        """
+        statement = select(PromptGenerationEntry).order_by(
+            PromptGenerationEntry.created_at.desc(), PromptGenerationEntry.group_index, PromptGenerationEntry.id
+        )
+        async with await self.get_session_async() as session:
+            return [entry.get_prompt_generation() for entry in (await session.scalars(statement)).all()]
+
+    async def get_prompt_generation_async(self, *, generation_id: uuid.UUID) -> PromptGenerationRecord | None:
+        """
+        Read one prompt generation.
+
+        Args:
+            generation_id (uuid.UUID): The generation to read.
+
+        Returns:
+            PromptGenerationRecord | None: The generation, or None if it doesn't exist.
+        """
+        async with await self.get_session_async() as session:
+            entry = await session.get(PromptGenerationEntry, generation_id)
+            return entry.get_prompt_generation() if entry is not None else None
+
+    async def is_dataset_name_available_async(self, *, dataset_name: str) -> bool:
+        """
+        Report whether a new dataset can use a name, without reserving it.
+
+        A name is taken when stored seeds use it, a staging upload reserved it, or an unfinished prompt
+        generation holds it. Uploads and generations enforce the same rule when they reserve a name.
+
+        Args:
+            dataset_name (str): The name to check.
+
+        Returns:
+            bool: True if no stored dataset, staging upload, or unfinished generation uses the name.
+        """
+        from pyrit.memory.dataset_lifecycle import is_dataset_name_taken_async
+
+        async with await self.get_session_async() as session:
+            return not await is_dataset_name_taken_async(session, dataset_name=dataset_name)
+
+    async def try_update_prompt_generation_async(
+        self,
+        *,
+        generation: PromptGenerationRecord,
+        expected_statuses: Collection[PromptGenerationStatus],
+        expected_execution_id: uuid.UUID | None = None,
+        fields: Collection[str],
+        reserve_dataset_name: bool = False,
+    ) -> bool:
+        """
+        Update a stored generation only while it is in one of ``expected_statuses``.
+
+        The compare and the write are one UPDATE, so a generation that another task or process moved
+        on is never overwritten.
+
+        Args:
+            generation (PromptGenerationRecord): The new state of the generation.
+            expected_statuses (Collection[PromptGenerationStatus]): Statuses the stored generation may be in.
+            expected_execution_id (uuid.UUID | None): When set, the run attempt that must still own the
+                generation.
+            fields (Collection[str]): The record fields to write. Other fields keep their stored values, so a
+                write built from an older read can't revert a concurrent change to them.
+            reserve_dataset_name (bool): Whether to recheck, under the dataset lifecycle lock, that no
+                stored dataset, staging upload, or other generation took the name. Use it when a
+                generation that released its name is queued again.
+
+        Returns:
+            bool: True if the generation was updated, False if it is missing or moved on.
+
+        Raises:
+            ValueError: If ``expected_statuses`` or ``fields`` is empty, or a field can't be changed.
+            DatasetNameConflictError: If ``reserve_dataset_name`` is set and the name is taken. Nothing changes.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        from pyrit.memory.dataset_lifecycle import is_dataset_name_taken_async, lock_dataset_lifecycle
+
+        if not expected_statuses:
+            raise ValueError("expected_statuses must not be empty")
+        if not fields:
+            raise ValueError("fields must not be empty")
+        values = PromptGenerationEntry.column_values(generation)
+        unknown = sorted(set(fields) - set(values))
+        if unknown:
+            raise ValueError(f"Prompt generation fields {unknown} can't be changed.")
+        values = {field: values[field] for field in fields}
+        statement = (
+            update(PromptGenerationEntry)
+            .where(
+                *_prompt_generation_filters(
+                    generation_id=generation.id,
+                    expected_statuses=expected_statuses,
+                    expected_execution_id=expected_execution_id,
+                )
+            )
+            .values(values)
+            .execution_options(synchronize_session=False)
+        )
+        async with await self.get_session_async() as session:
+            if reserve_dataset_name:
+                await session.run_sync(lock_dataset_lifecycle)
+            result = await session.execute(statement)
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("Prompt generation update did not return a database cursor result.")
+            if (
+                result.rowcount
+                and reserve_dataset_name
+                and await is_dataset_name_taken_async(
+                    session, dataset_name=generation.dataset_name, exclude_generation_id=generation.id
+                )
+            ):
+                await session.rollback()
+                _raise_dataset_name_taken(generation.dataset_name)
+            await session.commit()
+        return bool(result.rowcount)
+
+    async def commit_prompt_generation_dataset_async(
+        self,
+        *,
+        generation: PromptGenerationRecord,
+        expected_execution_id: uuid.UUID,
+        dataset: SeedDataset,
+        added_by: str,
+    ) -> bool:
+        """
+        Create a generation's dataset and record its completion in one transaction.
+
+        The dataset is created only: seeds are inserted as they are, never deduplicated or added to
+        an existing dataset. A generation therefore never has a saved dataset with an unfinished record.
+
+        Args:
+            generation (PromptGenerationRecord): The completed generation to store.
+            expected_execution_id (uuid.UUID): The run attempt that must still own the running generation.
+            dataset (SeedDataset): The dataset to create, named ``generation.dataset_name``.
+            added_by (str): Who the seeds are attributed to.
+
+        Returns:
+            bool: True if the dataset and the generation were saved, False if the generation is missing,
+                isn't running, or another run attempt owns it. Nothing is saved then.
+
+        Raises:
+            ValueError: If the dataset is empty or a seed belongs to another dataset.
+            DatasetNameConflictError: If stored seeds, a staging upload, or another generation use the
+                dataset name. Nothing is saved.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        from pyrit.memory.dataset_lifecycle import is_dataset_name_taken_async, lock_dataset_lifecycle
+
+        seeds = (await self.prepare_seed_batch_async(seeds=dataset.seeds, added_by=added_by)).seeds
+        if not seeds or any(seed.dataset_name != generation.dataset_name or not seed.value_sha256 for seed in seeds):
+            raise ValueError(
+                "A generated dataset needs storage-ready seeds that all belong to the generation's dataset."
+            )
+        filters = _prompt_generation_filters(
+            generation_id=generation.id,
+            expected_statuses=[PromptGenerationStatus.RUNNING],
+            expected_execution_id=expected_execution_id,
+        )
+        completion = (
+            update(PromptGenerationEntry)
+            .where(*filters)
+            .values(PromptGenerationEntry.column_values(generation))
+            .execution_options(synchronize_session=False)
+        )
+        async with await self.get_session_async() as session:
+            await session.run_sync(lock_dataset_lifecycle)
+            # The conditional update holds the generation row until commit, so a cancel can't land in between.
+            result = await session.execute(completion)
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("Prompt generation completion did not return a database cursor result.")
+            if not result.rowcount:
+                await session.rollback()
+                return False
+            if await is_dataset_name_taken_async(
+                session, dataset_name=generation.dataset_name, exclude_generation_id=generation.id
+            ):
+                await session.rollback()
+                _raise_dataset_name_taken(generation.dataset_name)
+            session.add_all(SeedEntry(entry=seed) for seed in seeds)
+            await session.commit()
+        return True
+
+    async def delete_prompt_generation_async(
+        self, *, generation_id: uuid.UUID, expected_statuses: Collection[PromptGenerationStatus]
+    ) -> bool:
+        """
+        Delete a generation only while it is in one of ``expected_statuses``. Its dataset is kept.
+
+        Args:
+            generation_id (uuid.UUID): The generation to delete.
+            expected_statuses (Collection[PromptGenerationStatus]): Statuses the generation may be in.
+
+        Returns:
+            bool: True if the generation was deleted, False if it is missing or in another status.
+
+        Raises:
+            ValueError: If ``expected_statuses`` is empty.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        if not expected_statuses:
+            raise ValueError("expected_statuses must not be empty")
+        statement = (
+            delete(PromptGenerationEntry)
+            .where(
+                *_prompt_generation_filters(
+                    generation_id=generation_id, expected_statuses=expected_statuses, expected_execution_id=None
+                )
+            )
+            .execution_options(synchronize_session=False)
+        )
+        async with await self.get_session_async() as session, session.begin():
+            result = await session.execute(statement)
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("Prompt generation deletion did not return a database cursor result.")
+            return bool(result.rowcount)
 
     async def resolve_operation_id_async(
         self, *, operation_id: uuid.UUID | str | None, operation_name: str | None = None
@@ -8966,7 +9255,7 @@ class MemoryInterface(abc.ABC):
         )
 
     @staticmethod
-    def _scenario_attack_result_delta_statement() -> Select:
+    def _scenario_attack_result_delta_statement() -> Select[*tuple[Any, ...]]:
         """Return the shared lightweight result/score projection, without filters or pagination."""
         return select(
             AttackResultEntry.id,
@@ -9006,7 +9295,7 @@ class MemoryInterface(abc.ABC):
         scenario_result_id: str,
         cursor: AttackResultKeysetCursor | None = None,
         limit: int = 100,
-    ) -> Select:
+    ) -> Select[*tuple[Any, ...]]:
         """
         Page saved roots directly instead of hydrating a chronological prefix and searching for its ancestors.
 
@@ -9252,7 +9541,7 @@ class MemoryInterface(abc.ABC):
         *,
         scenario_result_id: str,
         attack_result_ids: Sequence[str],
-    ) -> Select:
+    ) -> Select[*tuple[Any, ...]]:
         """
         Build the batched SELECT statement for scenario result deltas by ID.
 
@@ -9339,7 +9628,7 @@ class MemoryInterface(abc.ABC):
         conversation_id: str,
         cursor: MessagePieceKeysetCursor | None = None,
         limit: int = 100,
-    ) -> Select:
+    ) -> Select[PromptMemoryEntry]:
         """
         Build a canonical message-piece page, including continuation within a multimodal turn.
 

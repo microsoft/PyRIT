@@ -15,7 +15,7 @@ from pyrit.converter import StringJoinConverter, TranslationConverter
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import HistorySquashNormalizer
-from pyrit.models import ScenarioResult, ScenarioRunSizeEstimateRequest, SeedPrompt
+from pyrit.models import AttackSeedGroup, ScenarioResult, ScenarioRunSizeEstimateRequest, SeedObjective, SeedPrompt
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import CapabilityName, TargetCapabilities, TargetConfiguration, TargetRequirements
@@ -26,7 +26,7 @@ from pyrit.scenario.core import (
     get_default_adversarial_target,
     override_default_adversarial_target,
 )
-from pyrit.scenario.scenarios.airt import Jailbreak, Multilingual
+from pyrit.scenario.scenarios.airt import Cyber, Jailbreak, Multilingual
 from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
 from pyrit.scenario.scenarios.garak import Doctor
 from pyrit.scenario.scenarios.technique import Execute
@@ -573,6 +573,24 @@ class TestScenarioReadiness:
         assert readiness.ready
         assert any(binding.role == "adversarial_target" for binding in readiness.bindings)
         assert not helper.prompt_sent
+
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    def test_a_technique_the_scorer_cannot_judge_does_not_need_its_helper_when_skipped(self, policy: str) -> None:
+        group = AttackSeedGroup(seeds=[SeedObjective(value="objective")])
+        scenario = Cyber(objective_scorer=SubStringScorer(substring="default"))
+        scenario.set_params_from_args(
+            args={
+                "objective_target": MockPromptTarget(),
+                "scenario_techniques": [scenario._technique_class(name) for name in ("prompt_sending", "tap")],
+                "dataset_config": DatasetAttackConfiguration(seed_groups=[group]),
+                "incompatible_technique_policy": policy,
+                "include_baseline": False,
+            }
+        )
+        readiness = scenario.get_readiness()
+        assert readiness.ready is (policy == "skip")
+        if policy == "raise":
+            assert [issue.role for issue in readiness.issues] == ["adversarial_target"]
 
     def test_benchmark_technique_overrides_are_effective_readiness_bindings(self) -> None:
         TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="generator")

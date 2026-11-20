@@ -42,13 +42,12 @@ def test_dataset_lifecycle_migration_and_guarded_downgrade() -> None:
             command.upgrade(config, PREVIOUS)
             before = set(sa.inspect(connection).get_table_names())
             command.upgrade(config, REVISION)
-            command.upgrade(config, "head")
             assert set(sa.inspect(connection).get_table_names()) == before | {
                 "DatasetLifecycleLock",
                 "DatasetLifecycleEntries",
                 "DatasetMediaEntries",
-                "ScenarioPlanSeedGroupEntries",
             }
+            command.upgrade(config, "head")
             assert connection.scalar(sa.select(DatasetLifecycleLock.id)) == 1
             command.downgrade(config, PREVIOUS)
             assert set(sa.inspect(connection).get_table_names()) == before
