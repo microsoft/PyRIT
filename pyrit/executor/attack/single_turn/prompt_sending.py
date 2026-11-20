@@ -131,6 +131,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
         self._objective_scorer = attack_scoring_config.objective_scorer
+        self._validate_objective_scorer(scorer=self._objective_scorer)
 
         # Skip criteria could be set directly in the injected prompt normalizer
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
