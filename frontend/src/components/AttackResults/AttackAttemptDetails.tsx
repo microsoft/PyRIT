@@ -105,13 +105,13 @@ export default function AttackAttemptDetails({
         </DetailFact>
         {(findings.length > 0 || findingsLoading || findingsError) && <DetailFact label="Findings">
           {findingsLoading && <Text role="status">Loading attached findings...</Text>}
-          {findingsError && <MessageBar intent="error">
+          {findingsError && <MessageBar intent="error" className={styles.error}>
             <MessageBarBody>Could not load attached findings: {findingsError}</MessageBarBody>
             <MessageBarActions><Button className={styles.retry} disabled={findingsLoading} onClick={refreshFindings}>
               Retry findings
             </Button></MessageBarActions>
           </MessageBar>}
-          {findings.length > 0 && findingFieldsError && <MessageBar intent="error">
+          {findings.length > 0 && findingFieldsError && <MessageBar intent="error" className={styles.error}>
             <MessageBarBody>Could not load finding fields: {findingFieldsError}</MessageBarBody>
             <MessageBarActions><Button className={styles.retry} onClick={retryFindingFields}>
               Retry finding fields
