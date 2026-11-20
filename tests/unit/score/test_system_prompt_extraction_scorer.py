@@ -220,6 +220,26 @@ class TestSystemPromptExtractionScorer:
 
         assert scores[0].get_value() == pytest.approx(0.9)
 
+    @pytest.mark.parametrize(
+        "response",
+        [
+            "  You are a" + " " * 15,
+            "You are\n\n\n\n\n\n\n\n\n\n\n\n\n a",
+        ],
+    )
+    async def test_whitespace_padding_does_not_lift_short_excerpt_over_min_len(self, response):
+        # Each response is longer than min_prompt_len only because of whitespace. Sanitized it is
+        # "You are a" (9 characters), so the excerpt rule must not apply.
+        memory = _memory_with_system_prompt(SYSTEM_PROMPT)
+
+        with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+            scorer = SystemPromptExtractionScorer(min_prompt_len=20, excerpt_threshold=0.95)
+            scores = await scorer._score_piece_with_expectation_async(_assistant_piece(response), expectation=None)
+
+        assert len(response) > 20
+        assert scores[0].get_value() < 0.95
+        assert "excerpt" not in scores[0].score_rationale.lower()
+
     def test_mildly_sanitize_collapses_whitespace_runs(self):
         assert SystemPromptExtractionScorer._mildly_sanitize(" a\r\n\r\nb \t c\n") == "a b c"
 
