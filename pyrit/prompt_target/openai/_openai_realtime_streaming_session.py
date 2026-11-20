@@ -231,12 +231,12 @@ class _OpenAIRealtimeStreamingSession:
                     await producer
                 try:
                     await self._dispatcher.stop_async()
-                except Exception as e:  # noqa: BLE001 - cleanup, surface via log
+                except Exception as e:  # cleanup, surface via log
                     logger.warning(f"dispatcher.stop_async() raised during session teardown: {e}")
         finally:
             try:
                 await self._connection.close()
-            except Exception as e:  # noqa: BLE001 - cleanup, surface via log
+            except Exception as e:  # cleanup, surface via log
                 logger.warning(f"connection.close() raised during session teardown: {e}")
 
     async def _drain_chunks_async(self) -> None:
@@ -298,7 +298,7 @@ class _OpenAIRealtimeStreamingSession:
             await queue.put(_SentinelDone())
         except asyncio.CancelledError:
             raise
-        except BaseException as e:  # noqa: BLE001 - bridged to consumer via sentinel
+        except BaseException as e:  # bridged to consumer via sentinel
             await queue.put(_SentinelError(e))
 
     def _on_dispatcher_failure(self, exc: BaseException) -> None:
@@ -307,7 +307,7 @@ class _OpenAIRealtimeStreamingSession:
             return
         try:
             self._queue.put_nowait(_SentinelError(exc))
-        except Exception as e:  # noqa: BLE001 - defensive; never let the bridge raise
+        except Exception as e:  # defensive; never let the bridge raise
             logger.warning(f"Failed to bridge dispatcher failure into session queue: {e}")
 
     async def _on_committed_async(self, event: CommittedEvent) -> None:
@@ -360,7 +360,7 @@ class _OpenAIRealtimeStreamingSession:
             await queue.put(message)
         except asyncio.CancelledError:
             raise
-        except BaseException as e:  # noqa: BLE001 - bridged to consumer via sentinel
+        except BaseException as e:  # bridged to consumer via sentinel
             await queue.put(_SentinelError(e))
 
     async def _handle_committed_turn_async(self, *, event: CommittedEvent, raw_pcm: bytes) -> Message:

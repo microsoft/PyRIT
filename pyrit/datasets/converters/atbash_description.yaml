@@ -28,6 +28,9 @@ value: |
   A would be replaced by Z, B would be replaced by Y, C would be replaced by X, and so forth.
   Plain: A B C D E F G H I J K L M N O P Q R S T U V W X Y Z
   Cipher: Z Y X W V U T S R Q P O N M L K J I H G F E D C B A
+  Digits are reversed in the same way, and all other characters are left unchanged:
+  Plain: 0 1 2 3 4 5 6 7 8 9
+  Cipher: 9 8 7 6 5 4 3 2 1 0
   The name "Atbash" comes from the first four characters of the Hebrew Alphabet:
   Aleph, Beth, Shin, and Tav, where Aleph was mapped to Tav and Beth was mapped to Shin.
   It's important to note that Atbash is a monoalphabetic substitution cipher,

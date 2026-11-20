@@ -149,7 +149,7 @@ async def test_resume_replays_saved_selection_without_preparation() -> None:
     selected = [group.logical_id for group in scenario._atomic_attacks[0].seed_groups]
     assert len(selected) == 4
 
-    # Changed caps do not matter on resume: the stored run plan fixes the selected seed groups.
+    # Changed caps do not matter on resume: the stored population fixes the selected seed groups.
     resumed = _Scenario(scenario_result_id=scenario._scenario_result_id)
     resumed._default_dataset_config = resumed._default_dataset_config.with_overrides(max_total=1, max_per_dataset=1)
     resumed.set_params_from_args(args={"objective_target": target, "dataset_overrides": overrides})
@@ -165,7 +165,7 @@ async def test_resume_replays_saved_selection_without_preparation() -> None:
             "dataset_overrides": ScenarioDatasetRequest(sources=[DatasetSourceInput(name="a")]),
         }
     )
-    with pytest.raises(ValueError, match="cannot resume: missing .* planned seed group"):
+    with pytest.raises(ValueError, match="does not match the current '_Scenario' configuration"):
         await diverged.initialize_async()
 
 

@@ -27,7 +27,7 @@ from pyrit.executor.attack import (
 from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
 )
-from pyrit.models import ComponentIdentifier
+from pyrit.models import AttackOutcome, ComponentIdentifier, ScorerCapabilityName
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 
@@ -41,7 +41,13 @@ def _make_mock_objective_target() -> PromptTarget:
     )
     target.capabilities.supports_multi_turn = True
     target.capabilities.output_modalities = frozenset({frozenset(["text"])})
-    target.configuration.includes.side_effect = lambda capability: capability == CapabilityName.MULTI_TURN
+    target.configuration.includes.side_effect = lambda capability: (
+        capability
+        in {
+            CapabilityName.MULTI_TURN,
+            CapabilityName.RESPONSES,
+        }
+    )
     target.configuration.capabilities.output_modalities = frozenset({frozenset(["text"])})
     return cast("PromptTarget", target)
 
@@ -72,6 +78,10 @@ def _make_threshold_scorer(threshold: float = 0.7) -> FloatScaleThresholdScorer:
 def _make_true_false_scorer() -> TrueFalseScorer:
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.scorer_type = "true_false"
+    # A plain true/false scorer makes no float feedback promise.
+    scorer.capabilities.includes.side_effect = lambda *, capability: (
+        capability is not ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE
+    )
     scorer.score_async = AsyncMock(return_value=[])
     scorer.get_identifier.return_value = ComponentIdentifier(
         class_name="MockScorer",
@@ -181,27 +191,60 @@ class TestPAIRAttackInit:
                 attack_adversarial_config=AttackAdversarialConfig(target=bad_adversarial),
             )
 
-    def test_pair_rejects_non_float_scale_threshold_scorer(self, objective_target, adversarial_config):
-        """TAPAttackScoringConfig requires a FloatScaleThresholdScorer; PAIR inherits this requirement."""
+    def test_pair_rejects_a_scorer_that_does_not_keep_its_float_value(self, objective_target, adversarial_config):
+        """PAIR inherits TAP's requirement that the verdict keep its float value."""
         non_threshold_scorer = _make_true_false_scorer()
-        with pytest.raises(ValueError, match="FloatScaleThresholdScorer"):
+        with pytest.raises(ValueError, match="PAIRAttack objective scorer: .*preserves_float_scale_value"):
             PAIRAttack(
                 objective_target=objective_target,
                 attack_adversarial_config=adversarial_config,
                 attack_scoring_config=AttackScoringConfig(objective_scorer=non_threshold_scorer),
             )
 
-    def test_pair_accepts_tap_scoring_config(self, objective_target, adversarial_config):
-        """A pre-built TAPAttackScoringConfig with the right scorer is accepted unchanged."""
-        scoring_config = TAPAttackScoringConfig(objective_scorer=_make_threshold_scorer(threshold=0.85))
+    def test_pair_accepts_the_deprecated_tap_scoring_config(self, objective_target, adversarial_config):
+        """A pre-built TAPAttackScoringConfig with the right scorer is still accepted unchanged."""
+        with pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig is deprecated"):
+            scoring_config = TAPAttackScoringConfig(objective_scorer=_make_threshold_scorer(threshold=0.85))
         attack = PAIRAttack(
             objective_target=objective_target,
             attack_adversarial_config=adversarial_config,
             attack_scoring_config=scoring_config,
         )
-        result = attack.get_attack_scoring_config()
-        assert isinstance(result, TAPAttackScoringConfig)
-        assert result.threshold == 0.85
+        assert attack.get_attack_scoring_config() is scoring_config
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestPAIRErrorOutcome:
+    """PAIR inherits TAP's ERROR reporting when every branch crashed before a score (#4154)."""
+
+    async def test_pair_reports_error_when_no_branch_was_scored_async(self, objective_target, adversarial_config):
+        attack = PAIRAttack(
+            objective_target=objective_target,
+            attack_adversarial_config=adversarial_config,
+        )
+        context = attack._context_type(params=AttackParameters(objective="Test objective"))
+        context.tree_visualization.create_node("root", "root")
+        context.node_errors = ["Execution error: simulated crash", "JSON parsing error: bad payload"]
+
+        result = await attack._create_failure_result_async(context)
+
+        assert result.outcome == AttackOutcome.ERROR
+        assert "2 branches failed to execute" in result.outcome_reason
+        assert result.error_message == "JSON parsing error: bad payload"
+        assert result.error_type == "JSON parsing error"
+
+    async def test_pair_reports_failure_when_no_branch_errored_async(self, objective_target, adversarial_config):
+        attack = PAIRAttack(
+            objective_target=objective_target,
+            attack_adversarial_config=adversarial_config,
+        )
+        context = attack._context_type(params=AttackParameters(objective="Test objective"))
+        context.tree_visualization.create_node("root", "root")
+
+        result = await attack._create_failure_result_async(context)
+
+        assert result.outcome == AttackOutcome.FAILURE
+        assert result.error_message is None
 
 
 @pytest.mark.usefixtures("patch_central_database")
