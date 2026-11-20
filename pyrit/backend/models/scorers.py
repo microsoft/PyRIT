@@ -50,7 +50,7 @@ class CreateScorerRequest(RegistrationRequest):
         description=(
             "Save the scorer so it comes back after the backend restarts or is reinitialized (true), or keep it "
             "only until then (false). A saved scorer needs a name of lowercase letters, digits, and underscores, "
-            "and can't hold or use a key or be private."
+            "and can't hold a key or be private."
         ),
     )
     type: IdentifierStr = Field(..., description="Scorer class name")
