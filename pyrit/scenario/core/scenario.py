@@ -87,6 +87,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetConstraintError,
     DatasetSource,
     DatasetSourceKind,
+    MissingDatasetError,
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
@@ -1999,30 +2000,27 @@ class Scenario(ABC):
 
     async def _raise_if_datasets_deleted_async(self, *, cause: DatasetConstraintError) -> None:
         """
-        Explain a resume whose dataset resolution failed because a dataset was deleted.
+        Explain a resume whose state restoration failed because a dataset it reads was deleted.
 
-        Only an absent population or required dataset is reported this way; any other resolution
-        error is left for the caller to re-raise unchanged. Names are compared case-insensitively,
-        so a backend with a case-insensitive collation never reports a present dataset as deleted.
+        Only the dataset whose read failed is reported, because resume doesn't need the population
+        datasets and they may be gone. Any other error is left for the caller to re-raise unchanged.
+        Names are compared case-insensitively, so a backend with a case-insensitive collation never
+        reports a present dataset as deleted.
 
         Args:
-            cause (DatasetConstraintError): The error raised while resolving the planned datasets.
+            cause (DatasetConstraintError): The error raised while restoring the resume state.
 
         Raises:
-            ValueError: If any population or required dataset has no seeds in memory.
+            ValueError: If the dataset whose read failed has no seeds in memory.
         """
-        configured = list(self._dataset_config.dataset_names)
-        if self._required_data is not None:
-            configured.extend(name for name in self._required_data.dataset_names if name not in configured)
-        if not configured:
+        if not isinstance(cause, MissingDatasetError):
             return
         stored = {name.casefold() for name in await self._memory.get_seed_dataset_names_async()}
-        missing = [name for name in configured if name.casefold() not in stored]
-        if missing:
+        if cause.dataset_name.casefold() not in stored:
             raise ValueError(
                 self._resume_error_message(
-                    reason=f"dataset(s) {', '.join(repr(name) for name in missing)} are no longer in memory; "
-                    "they were deleted after the run was planned"
+                    reason=f"dataset {cause.dataset_name!r} is no longer in memory; "
+                    "it was deleted after the run was planned"
                 )
             ) from cause
 

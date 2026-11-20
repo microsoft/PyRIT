@@ -59,6 +59,7 @@ from pyrit.scenario import (
     TechniqueRequirements,
 )
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, DatasetConstraintError, Scenario, ScenarioTechnique
+from pyrit.scenario.core.dataset_configuration import MissingDatasetError
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack, build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.scenarios.airt import Psychosocial
@@ -2059,7 +2060,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         _, resumed = await self._plan_then_delete_dataset_async(
             scenario_class=_StatefulScenario, mock_objective_target=mock_objective_target
         )
-        with pytest.raises(ValueError, match=r"dataset\(s\) 'owned' are no longer in memory") as error:
+        with pytest.raises(ValueError, match=r"dataset 'owned' is no longer in memory") as error:
             await resumed.initialize_async()
         assert isinstance(error.value.__cause__, DatasetConstraintError)
         assert [sorted(group.objective.value for group in groups) for groups in received[0].values()] == [
@@ -2080,17 +2081,22 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
             await scenario._prepare_resume_state_async(seed_groups_by_dataset={})
         resolve.assert_not_awaited()
 
-    async def test_resume_reports_only_absent_datasets_as_deleted(self) -> None:
+    async def test_resume_reports_only_the_absent_dataset_that_failed_to_load(self) -> None:
         scenario = self._StrategyScenario(name="Named sources", version=1, scenario_result_id=str(uuid.uuid4()))
-        scenario._dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="Fixture")])
-        cause = DatasetConstraintError("resolution failed")
-        with patch.object(scenario._memory, "get_seed_dataset_names_async", AsyncMock(return_value=["fixture"])):
+        scenario._dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="Population")])
+        cause = MissingDatasetError("no seeds", dataset_name="Fixture")
+        stored = AsyncMock(return_value=["fixture"])
+        with patch.object(scenario._memory, "get_seed_dataset_names_async", stored):
             await scenario._raise_if_datasets_deleted_async(cause=cause)
+        # Other errors are re-raised unchanged by the caller, even when a population dataset is gone.
+        with patch.object(scenario._memory, "get_seed_dataset_names_async", AsyncMock(return_value=[])):
+            await scenario._raise_if_datasets_deleted_async(cause=DatasetConstraintError("templates are invalid"))
         with (
             patch.object(scenario._memory, "get_seed_dataset_names_async", AsyncMock(return_value=["other"])),
-            pytest.raises(ValueError, match=r"dataset\(s\) 'Fixture' are no longer in memory") as error,
+            pytest.raises(ValueError, match=r"dataset 'Fixture' is no longer in memory") as error,
         ):
             await scenario._raise_if_datasets_deleted_async(cause=cause)
+        assert "Population" not in str(error.value)
         assert error.value.__cause__ is cause
 
     async def test_resume_reconstructs_persisted_subset_without_resampling(self, mock_objective_target):
