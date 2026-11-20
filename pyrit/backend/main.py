@@ -40,6 +40,7 @@ from pyrit.backend.routes import (
     media,
     message_sends,
     operations,
+    prompt_generations,
     scenario_presets,
     scenario_suites,
     scenarios,
@@ -145,6 +146,7 @@ app.include_router(converters.router, prefix="/api", tags=["converters"])
 app.include_router(techniques.router, prefix="/api", tags=["techniques"])
 app.include_router(datasets.router, prefix="/api", tags=["datasets"])
 app.include_router(operations.router, prefix="/api", tags=["operations"])
+app.include_router(prompt_generations.router, prefix="/api", tags=["prompt-generations"])
 app.include_router(scenarios.router, prefix="/api", tags=["scenarios"])
 app.include_router(scenario_presets.router, prefix="/api", tags=["scenario-presets"])
 app.include_router(scenario_suites.router, prefix="/api", tags=["scenario-suites"])
