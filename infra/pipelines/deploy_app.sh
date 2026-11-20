@@ -61,7 +61,7 @@ reset_configuration_from_seed() {
   config_blobs=$(az storage blob list --auth-mode login --account-name "$config_account" \
     --container-name "$config_container" --prefix "$config_folder/" --num-results '*' --query '[].name' -o tsv)
   while IFS= read -r blob_name; do
-    [[ -z "$blob_name" || -f "$seed_directory/$seed_folder/${blob_name#"$config_folder"/}" ]] && continue
+    [[ -z "$blob_name" || -e "$seed_directory/$seed_folder/${blob_name#"$config_folder"/}" ]] && continue
     az storage blob delete --auth-mode login --account-name "$config_account" --container-name "$config_container" \
       --name "$blob_name" --only-show-errors -o none
   done <<< "$config_blobs"
@@ -120,7 +120,7 @@ stop_app() {
   fi
   while IFS= read -r revision; do
     if jq -e --arg name "$revision" '.[] | select(.name == $name and .properties.active == true)' <<< "$revisions" > /dev/null; then
-      echo "Stopping revision $revision for the database migration"
+      echo "Stopping revision $revision"
       az containerapp revision deactivate \
         --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" --revision "$revision" -o none
     fi
@@ -145,7 +145,7 @@ stop_app() {
     echo "Waiting for app shutdown: $active_count active revisions, $replica_count replicas"
     sleep "${PYRIT_STOP_POLL_SECONDS:-5}"
   done
-  deployment_error "App shutdown was not confirmed; the database migration was not started"
+  deployment_error "App shutdown was not confirmed; the deployment was not continued"
 }
 
 start_unchanged_revision() {
@@ -154,15 +154,15 @@ start_unchanged_revision() {
     --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" \
     --query properties.latestRevisionName -o tsv)
   if [[ "$latest_revision" == "$current_revision" ]]; then
+    # A revision that kept running loaded its configuration before the seed reset. Stop it fully, so readiness
+    # can only come from a replica started afterwards.
+    if [[ -n "${PYRIT_CONFIG_SEED_URI:-}" && "${app_stopped:-false}" != true ]]; then
+      echo "Stopping revision $current_revision so it starts with the seeded configuration"
+      stop_app
+    fi
     echo "App template is unchanged; starting revision $current_revision"
     az containerapp revision activate \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" --revision "$current_revision" -o none
-    # A revision that kept running loaded its configuration at startup, before the seed reset.
-    if [[ -n "${PYRIT_CONFIG_SEED_URI:-}" && "${app_stopped:-false}" != true ]]; then
-      echo "Restarting revision $current_revision so it loads the seeded configuration"
-      az containerapp revision restart \
-        --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" --revision "$current_revision" -o none
-    fi
   fi
 }
 

@@ -814,21 +814,21 @@ start_unchanged_revision""",
                 )
                 assert result.returncode == 0, result.stdout + result.stderr
                 assert ("az containerapp revision activate" in result.stdout) == activates
-                assert "revision restart" not in result.stdout
 
-    def test_seeded_unchanged_revision_restarts_unless_the_app_was_stopped(self) -> None:
-        for app_stopped, restarts in (("false", True), ("true", False)):
+    def test_seeded_unchanged_revision_is_stopped_before_starting_unless_already_stopped(self) -> None:
+        for app_stopped, stops in (("false", True), ("true", False)):
             with self.subTest(app_stopped=app_stopped):
                 result = self._run(
                     script="deploy_app.sh",
                     inputs=SEED_INPUTS,
                     command=f"""current_revision=app--old app_stopped={app_stopped}
-az() {{ if [[ "$2" == show ]]; then echo app--old; else echo "az $*"; fi; }}
+az() {{ if [[ "$2" == show ]]; then echo app--old; else echo "az $2 $3"; fi; }}
+stop_app() {{ echo stop_app; }}
 start_unchanged_revision""",
                 )
                 assert result.returncode == 0, result.stdout + result.stderr
-                assert "az containerapp revision activate" in result.stdout
-                assert ("az containerapp revision restart" in result.stdout) == restarts
+                calls = [line for line in result.stdout.splitlines() if line in ("stop_app", "az revision activate")]
+                assert calls == (["stop_app"] if stops else []) + ["az revision activate"]
 
     def test_public_sql_server_only_warns(self) -> None:
         for access, warns in (("Enabled", True), ("", True), ("Disabled", False)):
