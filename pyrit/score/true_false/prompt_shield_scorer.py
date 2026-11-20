@@ -111,10 +111,15 @@ class PromptShieldScorer(MessageTrueFalseScorer):
 
         Returns:
             list[bool]: A list of boolean values indicating whether an attack was detected.
+
+        Raises:
+            ValueError: If ``userPromptAnalysis`` is neither absent/false nor an object.
         """
         response_json: dict[str, Any] = json.loads(response)
 
-        user_prompt_attack: dict[str, bool] = response_json.get("userPromptAnalysis", False)
+        user_prompt_attack = response_json.get("userPromptAnalysis", False)
+        if user_prompt_attack is not False and not isinstance(user_prompt_attack, dict):
+            raise ValueError(f"Unexpected 'userPromptAnalysis' in Prompt Shield response: {user_prompt_attack!r}")
         documents_attack: list[dict[str, Any]] = response_json.get("documentsAnalysis", False)
 
         user_detections: list[bool] = (

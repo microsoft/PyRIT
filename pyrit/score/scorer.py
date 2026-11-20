@@ -9,7 +9,7 @@ import uuid
 from abc import abstractmethod
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, final, overload
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final, overload
 
 from pyrit.common import print_deprecation_message
 from pyrit.common.task_utils import gather_with_cleanup_async
@@ -211,9 +211,13 @@ async def _legacy_score_scorable_async(
     message = await resolver.resolve_async(scorable=scorable, memory=self._memory)
     legacy_score_async = self._score_async  # type: ignore[ty:unresolved-attribute]
     with _scoring_message_context(message):
-        scores: list[Score] = await legacy_score_async(
-            message,
-            objective=expectation.objective if expectation else None,
+        # The legacy hook contract returns list[Score]; the call is Any because the hook is read dynamically.
+        scores: list[Score] = cast(
+            "list[Score]",
+            await legacy_score_async(
+                message,
+                objective=expectation.objective if expectation else None,
+            ),
         )
     return scores
 
@@ -551,8 +555,8 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             PromptTarget | None: The chat target, or None if not applicable.
         """
-        prompt_target: PromptTarget | None = getattr(self, "_prompt_target", None)
-        return prompt_target
+        # Only scorers that hold a target define _prompt_target; absence means no target.
+        return cast("PromptTarget | None", getattr(self, "_prompt_target", None))
 
     def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
         """

@@ -67,6 +67,14 @@ def test_prompt_shield_scorer_parsing_without_documents_analysis(promptshield_sc
     assert result == [False, False]
 
 
+def test_prompt_shield_scorer_parsing_rejects_unexpected_user_prompt_analysis(
+    promptshield_scorer: PromptShieldScorer,
+):
+    response_json_str = '{"userPromptAnalysis":"attack","documentsAnalysis":[{"attackDetected":false}]}'
+    with pytest.raises(ValueError, match="userPromptAnalysis"):
+        promptshield_scorer._parse_response_to_boolean_list(response_json_str)
+
+
 async def test_prompt_shield_scorer_metadata_is_the_response_text(sqlite_instance, sample_response_json_str: str):
     """The Score model only accepts flat str/int/float metadata values, so the endpoint
     body has to be stored as the JSON text it arrived as rather than as a parsed object."""
