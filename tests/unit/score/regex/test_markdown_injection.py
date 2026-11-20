@@ -341,7 +341,34 @@ async def test_md_injection_scales_on_shortcut_candidates(text: str, patch_centr
     assert score.get_value() is False
 
 
-_SHORTCUT_PATTERN = MarkdownInjectionScorer._DEFAULT_PATTERNS["Markdown Image (shortcut reference)"]
+_SHORTCUT_NAME = "Markdown Image (shortcut reference)"
+_SHORTCUT_PATTERN = MarkdownInjectionScorer._DEFAULT_PATTERNS[_SHORTCUT_NAME]
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize(
+    "text",
+    [
+        # One image keeps the check reading every definition line in the block.
+        "![b]\n```\n" + "[a]: x\n" * 50_000,
+        # Image labels and definition labels that each share one closing bracket.
+        "![" * 50_000 + "a]\n```\n" + "[\n" * 50_000 + "b]: x\n",
+    ],
+    ids=["image-and-definition-lines", "nested-labels"],
+)
+async def test_md_injection_scales_on_unpaired_shortcut_labels(text: str, patch_central_database):
+    # The non-image default patterns are slow on many brackets, so only the shortcut check runs.
+    scorer = MarkdownInjectionScorer(patterns={_SHORTCUT_NAME: _SHORTCUT_PATTERN})
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is False
+
+
+async def test_md_injection_detects_shortcut_pair_only_the_pattern_matches(patch_central_database):
+    # The CommonMark pass skips the definition inside the code block, while the default pattern matches it.
+    scorer = MarkdownInjectionScorer()
+    score = (await scorer.score_text_async("![a]\n```\n[a]: x\n```"))[0]
+    assert score.get_value() is True
+    assert score.score_rationale == f"Matched: {_SHORTCUT_NAME}"
 
 
 @pytest.mark.parametrize(
