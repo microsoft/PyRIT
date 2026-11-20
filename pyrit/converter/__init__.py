@@ -94,6 +94,7 @@ if TYPE_CHECKING:
     from pyrit.converter.prompt_template_converter import PromptTemplateConverter
     from pyrit.converter.puzzled import PuzzledConverter, PuzzleType
     from pyrit.converter.qr_code_converter import QRCodeConverter
+    from pyrit.converter.rail_fence_converter import RailFenceConverter
     from pyrit.converter.random_capital_letters_converter import RandomCapitalLettersConverter
     from pyrit.converter.random_translation_converter import RandomTranslationConverter
     from pyrit.converter.repeat_token_converter import RepeatTokenConverter
@@ -232,6 +233,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PuzzleType": "pyrit.converter.puzzled",
     "PuzzledConverter": "pyrit.converter.puzzled",
     "QRCodeConverter": "pyrit.converter.qr_code_converter",
+    "RailFenceConverter": "pyrit.converter.rail_fence_converter",
     "ROT13Converter": "pyrit.converter.rot13_converter",
     "RandomCapitalLettersConverter": "pyrit.converter.random_capital_letters_converter",
     "RandomTranslationConverter": "pyrit.converter.random_translation_converter",
