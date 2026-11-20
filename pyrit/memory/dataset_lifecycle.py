@@ -115,7 +115,7 @@ def media_key(value: str, *, storage: StorageIO | None = None) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _media_key_map(session: Session, values: Sequence[str]) -> dict[str, str]:
+def _media_key_map(session: Session, *, values: Sequence[str]) -> dict[str, str]:
     def canonicalize() -> dict[str, str]:
         return {value: media_key(value, storage=session.info.get("dataset_storage_io")) for value in values}
 
@@ -125,7 +125,7 @@ def _media_key_map(session: Session, values: Sequence[str]) -> dict[str, str]:
 
 
 def _media_keys(session: Session, values: Sequence[str]) -> set[str]:
-    return set(_media_key_map(session, values).values())
+    return set(_media_key_map(session, values=values).values())
 
 
 def lock_dataset_lifecycle(session: Session) -> None:
@@ -308,7 +308,7 @@ def planned_media_key_counts(session: Session) -> Counter[str]:
     )
     with session.no_autoflush:
         groups = [{value for value in planned_media_values(group) if value} for group in session.scalars(planned)]
-    keys = _media_key_map(session, sorted(set().union(*groups)))
+    keys = _media_key_map(session, values=sorted(set().union(*groups)))
     return Counter(key for values in groups for key in {keys[value] for value in values})
 
 
