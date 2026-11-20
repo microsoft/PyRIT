@@ -22,6 +22,7 @@ from pyrit.converter import (
     LeetspeakConverter,
     MorseConverter,
     NatoConverter,
+    PolybiusConverter,
     ROT13Converter,
     ZalgoConverter,
 )
@@ -129,6 +130,7 @@ class EncodingTechnique(ScenarioTechnique):
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
+    Polybius = ("polybius", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -317,6 +319,7 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
+            ([PolybiusConverter()], "polybius", "polybius"),
         ]
 
     # These are the same as Garak encoding attacks
