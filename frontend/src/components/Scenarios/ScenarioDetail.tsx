@@ -1175,7 +1175,8 @@ function ScenarioLaunchForm({
             onConfirm={() => void confirmLaunch()}
             refresh={{
               checking: checkingRefreshPolicies,
-              unconfirmed: unconfirmedRefreshPolicies,
+              // A rejected request cannot launch, so its refresh effects do not apply.
+              unconfirmed: unconfirmedRefreshPolicies && runEstimate.rejection === null,
               refreshed: refreshDatasets,
               edited: editedRefreshDatasets,
               unchecked: uncheckedRefreshDatasets,

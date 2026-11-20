@@ -3462,6 +3462,7 @@ describe('ScenarioDetail', () => {
       const dialog = await openRunPreview(user)
       await waitFor(() => expect(dialog).toHaveTextContent('max_turns must be at least 1.'))
       expect(dialog).toHaveTextContent('Fix the configuration to request an estimate.')
+      expect(dialog).not.toHaveTextContent('Cannot confirm which datasets will refresh')
       expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeDisabled()
       expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeEnabled()
     })
