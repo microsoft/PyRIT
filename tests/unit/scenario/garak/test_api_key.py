@@ -208,6 +208,31 @@ class TestApiKey:
         assert _objectives(resumed) == _objectives(original)
         assert resumed._objective_scorer_identifier == original._objective_scorer_identifier
 
+    async def test_resume_names_the_exclusion_datasets_after_they_change(
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        original = ApiKey()
+        await _initialize_async(
+            scenario=original,
+            target=mock_objective_target,
+            corpus_seeds=corpus_seeds,
+            dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+        )
+        resumed = ApiKey(scenario_result_id=original._scenario_result_id)
+        # The default scorer excludes these values, so an edit to them changes it, and no configuration can match.
+        edited = {**corpus_seeds, DATASET_SAFE_PLACEHOLDERS: corpus_seeds[DATASET_SAFE_PLACEHOLDERS][1:]}
+
+        with pytest.raises(ValueError, match="changed since the run was planned") as error:
+            await _initialize_async(
+                scenario=resumed,
+                target=mock_objective_target,
+                corpus_seeds=edited,
+                dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+            )
+        assert DATASET_PARTIAL_KEYS in str(error.value)
+        assert DATASET_SAFE_PLACEHOLDERS in str(error.value)
+        assert "re-import the dataset content this run used" in str(error.value)
+
     async def test_resume_with_custom_scorer_reads_no_corpus(
         self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:

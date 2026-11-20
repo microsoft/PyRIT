@@ -2060,9 +2060,11 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         _, resumed = await self._plan_then_delete_dataset_async(
             scenario_class=_StatefulScenario, mock_objective_target=mock_objective_target
         )
-        with pytest.raises(ValueError, match=r"dataset 'owned' is no longer in memory") as error:
+        with pytest.raises(
+            ValueError, match=r"dataset 'owned', which this run read when it was planned, is no longer in memory"
+        ) as error:
             await resumed.initialize_async()
-        assert isinstance(error.value.__cause__, DatasetConstraintError)
+        assert isinstance(error.value.__cause__, MissingDatasetError)
         assert [sorted(group.objective.value for group in groups) for groups in received[0].values()] == [
             ["objective-0", "objective-1"]
         ]
@@ -2081,23 +2083,36 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
             await scenario._prepare_resume_state_async(seed_groups_by_dataset={})
         resolve.assert_not_awaited()
 
-    async def test_resume_reports_only_the_absent_dataset_that_failed_to_load(self) -> None:
-        scenario = self._StrategyScenario(name="Named sources", version=1, scenario_result_id=str(uuid.uuid4()))
-        scenario._dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="Population")])
-        cause = MissingDatasetError("no seeds", dataset_name="Fixture")
-        stored = AsyncMock(return_value=["fixture"])
-        with patch.object(scenario._memory, "get_seed_dataset_names_async", stored):
-            await scenario._raise_if_datasets_deleted_async(cause=cause)
-        # Other errors are re-raised unchanged by the caller, even when a population dataset is gone.
-        with patch.object(scenario._memory, "get_seed_dataset_names_async", AsyncMock(return_value=[])):
-            await scenario._raise_if_datasets_deleted_async(cause=DatasetConstraintError("templates are invalid"))
-        with (
-            patch.object(scenario._memory, "get_seed_dataset_names_async", AsyncMock(return_value=["other"])),
-            pytest.raises(ValueError, match=r"dataset 'Fixture' is no longer in memory") as error,
-        ):
-            await scenario._raise_if_datasets_deleted_async(cause=cause)
-        assert "Population" not in str(error.value)
-        assert error.value.__cause__ is cause
+    async def test_resume_reports_a_dataset_the_plan_never_read_as_a_configuration_mismatch(
+        self, mock_objective_target
+    ) -> None:
+        missing = MissingDatasetError("no seeds", dataset_name="unplanned")
+
+        class _ChangedScenario(self._OverridingScenario):
+            async def _prepare_resume_state_async(self, *, seed_groups_by_dataset):
+                raise missing
+
+        _, resumed = await self._plan_then_delete_dataset_async(
+            scenario_class=_ChangedScenario, mock_objective_target=mock_objective_target
+        )
+        with pytest.raises(ValueError, match="does not match the current '_ChangedScenario' configuration") as error:
+            await resumed.initialize_async()
+        assert "no longer in memory" not in str(error.value)
+        assert error.value.__cause__ is missing
+
+    async def test_resume_reraises_other_dataset_errors_unchanged(self, mock_objective_target) -> None:
+        invalid = DatasetConstraintError("templates are invalid")
+
+        class _InvalidScenario(self._OverridingScenario):
+            async def _prepare_resume_state_async(self, *, seed_groups_by_dataset):
+                raise invalid
+
+        _, resumed = await self._plan_then_delete_dataset_async(
+            scenario_class=_InvalidScenario, mock_objective_target=mock_objective_target
+        )
+        with pytest.raises(DatasetConstraintError) as error:
+            await resumed.initialize_async()
+        assert error.value is invalid
 
     async def test_resume_reconstructs_persisted_subset_without_resampling(self, mock_objective_target):
         config = self._make_config()

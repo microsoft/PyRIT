@@ -141,6 +141,11 @@ async def test_named_read_reads_only_those_datasets_without_validators_async(*, 
     seeds = await required.load_async(names=["b"])
 
     assert {name: [seed.value for seed in values] for name, values in seeds.items()} == {"b": ["b-0", "b-1"]}
+
+
+async def test_named_read_rejects_a_dataset_that_is_not_required_async() -> None:
+    required = ScenarioRequiredData(sources=[DatasetSource(name="a")])
+
     with pytest.raises(DatasetConstraintError, match=r"Not required datasets: \['c'\]"):
         await required.load_async(names=["c"])
 

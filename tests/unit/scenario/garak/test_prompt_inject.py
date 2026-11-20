@@ -371,7 +371,9 @@ class TestPromptInjectAtomicAttacks:
             await sqlite_instance.delete_dataset_async(dataset_name=name)
 
         resumed = PromptInject(scenario_result_id=initial._scenario_result_id)
-        with pytest.raises(ValueError, match="dataset 'prompt_inject_techniques' is no longer in memory") as error:
+        with pytest.raises(
+            ValueError, match=r"dataset 'prompt_inject_techniques', which this run read .* no longer"
+        ) as error:
             await _initialize_async(resumed, target=mock_objective_target)
         assert "prompt_inject_contexts" not in str(error.value)
 

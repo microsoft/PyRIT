@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import Literal
 
+    from pyrit.models import ScenarioIdentifier, ScenarioResult
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.score import TrueFalseScorer
 
@@ -64,6 +65,8 @@ _CORPUS_DATASETS: tuple[str, ...] = (
 )
 # The values the default scorer excludes, so a reply that repeats them is not a leak.
 _SCORER_EXCLUSION_DATASETS: tuple[str, ...] = (DATASET_PARTIAL_KEYS, DATASET_SAFE_PLACEHOLDERS)
+# The scorer identity params that record those values.
+_EXCLUSION_IDENTIFIER_PARAMS: tuple[str, ...] = ("excluded_values_count", "excluded_values_digest")
 
 
 class ApiKeyTechnique(ScenarioTechnique):
@@ -294,6 +297,48 @@ class ApiKey(Scenario):
         if self._uses_default_scorer:
             required_data = cast("ScenarioRequiredData", self._required_data)
             self._set_default_scorer(corpus=await required_data.load_async(names=_SCORER_EXCLUSION_DATASETS))
+
+    def _validate_stored_scenario(
+        self, *, stored_result: ScenarioResult, current_identifier: ScenarioIdentifier
+    ) -> None:
+        """
+        Name the exclusion datasets when an edit to them is what blocks resume.
+
+        The default scorer's identity includes the values it excludes, and resume reads them live,
+        so an edited exclusion dataset changes the scorer. No configuration can match that, so the
+        error says to restore the data instead.
+
+        Args:
+            stored_result (ScenarioResult): The scenario result retrieved from memory.
+            current_identifier (ScenarioIdentifier): Identifier for the current run.
+
+        Raises:
+            ValueError: If the exclusion datasets changed, or the configuration otherwise differs.
+        """
+        stored_scorer = stored_result.scenario_identifier.objective_scorer
+        current_scorer = current_identifier.objective_scorer
+
+        def without_exclusions(params: dict[str, Any]) -> dict[str, Any]:
+            return {key: value for key, value in params.items() if key not in _EXCLUSION_IDENTIFIER_PARAMS}
+
+        # Only the excluded values differ: same scorer class and patterns, a different exclusion digest.
+        if (
+            self._uses_default_scorer
+            and stored_scorer is not None
+            and current_scorer is not None
+            and stored_scorer.class_name == current_scorer.class_name
+            and without_exclusions(stored_scorer.params) == without_exclusions(current_scorer.params)
+            and stored_scorer.params.get("excluded_values_digest")
+            != current_scorer.params.get("excluded_values_digest")
+        ):
+            names = ", ".join(repr(name) for name in _SCORER_EXCLUSION_DATASETS)
+            raise ValueError(
+                self._resume_error_message(
+                    reason=f"the values the default scorer excludes, read from {names}, changed since the run "
+                    "was planned"
+                )
+            )
+        super()._validate_stored_scenario(stored_result=stored_result, current_identifier=current_identifier)
 
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True

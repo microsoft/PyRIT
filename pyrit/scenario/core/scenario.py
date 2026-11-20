@@ -84,7 +84,6 @@ from pyrit.registry.resolution import resolve_declared_params, resolve_reference
 from pyrit.scenario.core.atomic_attack import AtomicAttack, compute_atomic_group_id
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     DatasetSource,
     DatasetSourceKind,
     MissingDatasetError,
@@ -1632,7 +1631,7 @@ class Scenario(ABC):
 
         Raises:
             DatasetConstraintError: If the configured datasets can't be resolved for a reason other
-                than a dataset having been deleted after a resumed run was planned.
+                than a resumed run's missing dataset.
             IncompatibleTechniqueError: If techniques were selected but none can run.
             ValueError: If ``objective_target`` is declared but not resolvable (neither supplied
                 nor registered as a default), if a supplied target name is not registered in
@@ -1949,6 +1948,20 @@ class Scenario(ABC):
             "otherwise drop scenario_result_id to start a new run."
         )
 
+    def _configuration_mismatch_message(self) -> str:
+        """
+        Build the error for a resume whose configuration differs from the stored run.
+
+        Returns:
+            str: The message, ending with the two ways to recover.
+        """
+        return (
+            f"Scenario result id '{self._scenario_result_id}' does not match the current "
+            f"'{type(self).__name__}' configuration (a different scenario, or its version, "
+            f"techniques, datasets, parameters, or objective target / scorer changed). "
+            f"Drop scenario_result_id to start a new scenario, or pass matching configuration to resume."
+        )
+
     async def _load_planned_population_async(
         self, *, stored_result: ScenarioResult, stored_plan: ScenarioRunPlan | None
     ) -> dict[str, list[AttackSeedGroup]]:
@@ -1966,8 +1979,9 @@ class Scenario(ABC):
             dict[str, list[AttackSeedGroup]]: The planned population, by dataset name.
 
         Raises:
-            ValueError: If the run stored no plan or planned seed groups, or a dataset the
-                scenario reads to restore its state was deleted.
+            ValueError: If the run stored no plan or planned seed groups, if restoring its state
+                needs a dataset the planned run never read (the configuration changed), or if a
+                dataset the planned run read is no longer in memory.
             DatasetConstraintError: If restoring the scenario's state fails for another reason.
         """
         if stored_plan is None or stored_plan.stores_seed_groups is not True:
@@ -1978,9 +1992,17 @@ class Scenario(ABC):
         population = await self._memory.get_planned_seed_groups_async(scenario_result_id=str(stored_result.id))
         try:
             await self._prepare_resume_state_async(seed_groups_by_dataset=population)
-        except DatasetConstraintError as error:
-            await self._raise_if_datasets_deleted_async(cause=error)
-            raise
+        except MissingDatasetError as error:
+            # The stored identity lists the datasets the planned run read, so a missing dataset outside
+            # it means the current selection differs from the plan, not that anything was deleted.
+            if error.dataset_name not in (stored_result.scenario_identifier.datasets or []):
+                raise ValueError(self._configuration_mismatch_message()) from error
+            raise ValueError(
+                self._resume_error_message(
+                    reason=f"dataset {error.dataset_name!r}, which this run read when it was planned, "
+                    "is no longer in memory"
+                )
+            ) from error
         return population
 
     async def _prepare_resume_state_async(  # noqa: B027
@@ -1997,32 +2019,6 @@ class Scenario(ABC):
         Args:
             seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
         """
-
-    async def _raise_if_datasets_deleted_async(self, *, cause: DatasetConstraintError) -> None:
-        """
-        Explain a resume whose state restoration failed because a dataset it reads was deleted.
-
-        Only the dataset whose read failed is reported, because resume doesn't need the population
-        datasets and they may be gone. Any other error is left for the caller to re-raise unchanged.
-        Names are compared case-insensitively, so a backend with a case-insensitive collation never
-        reports a present dataset as deleted.
-
-        Args:
-            cause (DatasetConstraintError): The error raised while restoring the resume state.
-
-        Raises:
-            ValueError: If the dataset whose read failed has no seeds in memory.
-        """
-        if not isinstance(cause, MissingDatasetError):
-            return
-        stored = {name.casefold() for name in await self._memory.get_seed_dataset_names_async()}
-        if cause.dataset_name.casefold() not in stored:
-            raise ValueError(
-                self._resume_error_message(
-                    reason=f"dataset {cause.dataset_name!r} is no longer in memory; "
-                    "it was deleted after the run was planned"
-                )
-            ) from cause
 
     def _apply_persisted_run_plan(self, *, stored_plan: ScenarioRunPlan) -> None:
         """
@@ -2148,12 +2144,7 @@ class Scenario(ABC):
         current_eval_hash = ScenarioEvaluationIdentifier(current_identifier).eval_hash
 
         if stored_eval_hash != current_eval_hash:
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' does not match the current "
-                f"'{type(self).__name__}' configuration (a different scenario, or its version, "
-                f"techniques, datasets, parameters, or objective target / scorer changed). "
-                f"Drop scenario_result_id to start a new scenario, or pass matching configuration to resume."
-            )
+            raise ValueError(self._configuration_mismatch_message())
 
         logger.info(
             f"Resuming scenario '{self._name}' from existing result "

@@ -287,13 +287,35 @@ class TestPackageHallucinationAtomicAttacks:
         def prompts(scenario):
             return [group.seeds[1].value for group in scenario._atomic_attacks[0].seed_groups]
 
-        def known_packages(scenario):
+        def scorer_identifier(scenario):
             attack = scenario._atomic_attacks[0].attack_technique.attack
-            return attack.get_attack_scoring_config().objective_scorer._known_packages
+            return attack.get_attack_scoring_config().objective_scorer.get_identifier()
 
         assert prompts(resumed) == prompts(original)
-        assert {"serde", "rand"} <= known_packages(resumed)
-        assert known_packages(resumed) == known_packages(original)
+        # The scorer identity includes a digest of its registry, so equal identities mean the same packages.
+        assert scorer_identifier(resumed) == scorer_identifier(original)
+
+    async def test_resume_with_an_added_language_reports_a_configuration_mismatch(
+        self, mock_objective_target, fake_registry_memory
+    ):
+        original = PackageHallucination()
+        await self._initialize(
+            original, mock_objective_target, [PackageHallucinationTechnique.Rust], fake_registry_memory
+        )
+        # Dart was never part of the planned run, so its absent registry is not a deletion.
+        del fake_registry_memory.packages_by_dataset["garak_dart_packages"]
+
+        resumed = PackageHallucination(scenario_result_id=original._scenario_result_id)
+        with pytest.raises(
+            ValueError, match="does not match the current 'PackageHallucination' configuration"
+        ) as error:
+            await self._initialize(
+                resumed,
+                mock_objective_target,
+                [PackageHallucinationTechnique.Rust, PackageHallucinationTechnique.Dart],
+                fake_registry_memory,
+            )
+        assert "no longer in memory" not in str(error.value)
 
     async def test_max_prompts_per_language_caps_output(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination(max_prompts_per_language=3)

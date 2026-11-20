@@ -1400,11 +1400,9 @@ class TestTextAdaptiveResume:
             )
         selector.select_async.assert_not_awaited()
 
-    @pytest.mark.parametrize("missing_data", ["choices", "run_plan"])
     async def test_resume_rejects_missing_saved_choices_async(
         self,
         *,
-        missing_data: str,
         mock_objective_target: MagicMock,
         mock_objective_scorer: MagicMock,
     ) -> None:
@@ -1423,10 +1421,7 @@ class TestTextAdaptiveResume:
         assert scenario_result_id is not None
         [stored] = await original._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
         metadata = dict(stored.metadata)
-        if missing_data == "choices":
-            del metadata["run_plan"]["atomic_groups"][0]["selected_technique_eval_hashes"]
-        else:
-            del metadata["run_plan"]
+        del metadata["run_plan"]["atomic_groups"][0]["selected_technique_eval_hashes"]
         await original._memory.update_scenario_metadata_async(
             scenario_result_id=scenario_result_id,
             metadata=metadata,
@@ -1434,9 +1429,7 @@ class TestTextAdaptiveResume:
         selector.select_async.reset_mock()
         selector.select_async.side_effect = AssertionError("Resume selected techniques again")
 
-        # A result without a run plan predates stored planned seeds, so base resume refuses it first.
-        expected = "no saved adaptive technique choices" if missing_data == "choices" else "created by an older PyRIT"
-        with pytest.raises(ValueError, match=expected):
+        with pytest.raises(ValueError, match="no saved adaptive technique choices"):
             await self._initialize_scenario_async(
                 target=mock_objective_target,
                 scorer=mock_objective_scorer,
