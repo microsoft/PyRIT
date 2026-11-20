@@ -20,7 +20,7 @@ from sqlalchemy.schema import CreateTable
 from pyrit.memory.memory_models import FindingEntry
 from pyrit.memory.migration import check_schema_migrations
 
-PREVIOUS_REVISION = "ccf97e771f04"
+PREVIOUS_REVISION = "3e55dd099e38"
 REVISION = "d43b1bcf9c56"
 CHECKS = ("ck_findings_severity", "ck_findings_severity_other", "ck_findings_harm_type_other")
 OPERATION_ID = "00000000-0000-0000-0000-000000000001"

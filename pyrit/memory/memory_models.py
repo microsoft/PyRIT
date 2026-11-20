@@ -47,6 +47,7 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
     AttackTechniqueIdentifier,
     ChatMessageRole,
     ComponentIdentifier,
@@ -2790,3 +2791,71 @@ class ScenarioResultEntry(Base):
             str: String representation of the scenario result entry
         """
         return f"ScenarioResultEntry: {self.scenario_name} (version {self.scenario_version})"
+
+
+class ScenarioPlanSeedGroupEntry(Base):
+    """
+    One seed group a scenario run planned, stored when the run is created.
+
+    Resume rebuilds the run's population from these rows instead of reading its datasets, so
+    editing, refreshing, or deleting a dataset doesn't change what a run resumes on. Rows are
+    deleted with their scenario result.
+    """
+
+    __tablename__ = "ScenarioPlanSeedGroupEntries"
+    __table_args__ = (
+        Index("ix_ScenarioPlanSeedGroupEntries_scenario_result_id_position", "scenario_result_id", "position"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    scenario_result_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID, ForeignKey("ScenarioResultEntries.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The population key the group was planned under, usually its dataset name.
+    dataset_name: Mapped[str] = mapped_column(Unicode, nullable=False)
+    #: The group's order in the planned population, across all datasets.
+    position: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    #: The ``AttackSeedGroup`` as JSON.
+    seed_group: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    def __init__(
+        self, *, scenario_result_id: uuid.UUID, dataset_name: str, position: int, seed_group: AttackSeedGroup
+    ) -> None:
+        """
+        Store one planned seed group.
+
+        Args:
+            scenario_result_id (uuid.UUID): The run that planned the group.
+            dataset_name (str): The population key the group was planned under.
+            position (int): The group's order in the planned population.
+            seed_group (AttackSeedGroup): The planned group.
+        """
+        self.id = uuid.uuid4()
+        self.scenario_result_id = scenario_result_id
+        self.dataset_name = dataset_name
+        self.position = position
+        self.seed_group = seed_group.model_dump(mode="json")
+
+    def get_seed_group(self) -> AttackSeedGroup:
+        """
+        Rebuild the planned seed group.
+
+        Returns:
+            AttackSeedGroup: The original planned inputs, without reapplying template preparation.
+        """
+        seeds: list[Any] = []
+        for seed in self.seed_group["seeds"]:
+            if seed["seed_type"] == "simulated_conversation":
+                seed = dict(seed)
+                # The stored prompt values have already had their one-shot template substitution.
+                for field in (
+                    "adversarial_chat_system_prompt",
+                    "simulated_target_system_prompt",
+                    "next_message_system_prompt",
+                ):
+                    if (prompt := seed.get(field)) is not None:
+                        seed[field] = {**prompt, "is_jinja_template": False}
+                # Group validation strips prompt-only keys such as ``sequence`` from dicts, so pass an instance.
+                seed = SeedSimulatedConversation.model_validate(seed)
+            seeds.append(seed)
+        return AttackSeedGroup.model_validate({**self.seed_group, "seeds": seeds})
