@@ -79,7 +79,7 @@ class FindingResponse(Finding):
     @computed_field(json_schema_extra={"deprecated": True})
     @property
     def description(self) -> str:
-        """Deprecated: read field_values["description"] instead."""
+        """Deprecated: read field_values["description"] instead, which is absent when not set."""
         return self._deprecated_values().description
 
     @computed_field(json_schema_extra={"deprecated": True})
@@ -91,13 +91,13 @@ class FindingResponse(Finding):
     @computed_field(json_schema_extra={"deprecated": True})
     @property
     def harm_type(self) -> HarmCategory | None:
-        """Deprecated: read field_values["harm_type"] instead."""
+        """Deprecated: read field_values["harm_type"] instead, which is absent when not set."""
         return self._deprecated_values().harm_type
 
     @computed_field(json_schema_extra={"deprecated": True})
     @property
     def harm_type_other(self) -> str | None:
-        """Deprecated: read field_values["harm_type"] instead."""
+        """Deprecated: read field_values["harm_type"] instead, which is absent when not set."""
         return self._deprecated_values().harm_type_other
 
 

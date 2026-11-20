@@ -115,7 +115,10 @@ class FindingCreate(BaseModel):
             ValueError: If Other text is missing or not allowed, as in PyRIT 1.2, or a moved value conflicts with
                 ``field_values``.
         """
-        if not isinstance(data, dict) or data.keys().isdisjoint(_DEPRECATED_FIELDS):
+        if not isinstance(data, dict):
+            return data
+        # FindingSeverity.OTHER needs its text as in PyRIT 1.2, even without another PyRIT 1.2 field.
+        if data.keys().isdisjoint(_DEPRECATED_FIELDS) and data.get("severity") is not _FindingSeverity.OTHER:
             return data
         data = dict(data)
         old = {name: data.pop(name) for name in _DEPRECATED_FIELDS if name in data}
@@ -152,10 +155,10 @@ class FindingCreate(BaseModel):
 
     @property
     def description(self) -> str:
-        """The Description field's value, or an empty string. Deprecated: read ``field_values["description"]``."""
+        """The description, or an empty string. Deprecated: read ``field_values.get("description", "")``."""
         print_deprecation_message(
             old_item=f"{type(self).__name__}.description",
-            new_item=f"{type(self).__name__}.field_values['description']",
+            new_item=f"{type(self).__name__}.field_values.get('description', '')",
             removed_in=_REMOVED_IN,
         )
         return self._deprecated_values().description
@@ -172,20 +175,20 @@ class FindingCreate(BaseModel):
 
     @property
     def harm_type(self) -> HarmCategory | None:
-        """The harm category, Other for typed text, or None. Deprecated: read ``field_values["harm_type"]``."""
+        """The harm category, Other for typed text, or None. Deprecated: read ``field_values.get("harm_type")``."""
         print_deprecation_message(
             old_item=f"{type(self).__name__}.harm_type",
-            new_item=f"{type(self).__name__}.field_values['harm_type']",
+            new_item=f"{type(self).__name__}.field_values.get('harm_type')",
             removed_in=_REMOVED_IN,
         )
         return self._deprecated_values().harm_type
 
     @property
     def harm_type_other(self) -> str | None:
-        """The typed harm type text, or None. Deprecated: read ``field_values["harm_type"]``."""
+        """The typed harm type text, or None. Deprecated: read ``field_values.get("harm_type")``."""
         print_deprecation_message(
             old_item=f"{type(self).__name__}.harm_type_other",
-            new_item=f"{type(self).__name__}.field_values['harm_type']",
+            new_item=f"{type(self).__name__}.field_values.get('harm_type')",
             removed_in=_REMOVED_IN,
         )
         return self._deprecated_values().harm_type_other

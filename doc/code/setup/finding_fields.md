@@ -104,12 +104,14 @@ PyRIT 1.2 had fixed finding fields. Code that uses them still works, with a depr
 | PyRIT 1.2 | Use instead |
 |---|---|
 | `FindingSeverity` | The option keys of `FindingFields.severity`, such as `"critical"` |
-| `description` | `field_values["description"]` |
-| `harm_type` and `harm_type_other` | `field_values["harm_type"]`, which holds the category or its Other text |
+| `description` | `field_values.get("description", "")` |
+| `harm_type` and `harm_type_other` | `field_values.get("harm_type")`, which holds the category or its Other text |
 | `severity_other` | `severity`, which holds Other text itself |
 | `finding.severity.value` | `finding.severity` |
 | `GET /api/operations/finding-options` | `GET /api/operations/{operation_id}/finding-fields` |
 
+An optional field that isn't set has no key in `field_values`, so read it with `get`.
+
 Creating or updating a finding with the old fields moves their values the way the migration does, so they fill the default fields' keys. A deployment whose fields don't use those keys rejects them. API responses still include the old fields, marked deprecated in the API schema.
 
-Two checks can't keep working. A severity with Other text is that text, so it no longer equals `FindingSeverity.OTHER`. A severity is now a string, so it isn't an instance of `FindingSeverity`.
+Three things can't keep working. A severity with Other text is that text, so it no longer equals `FindingSeverity.OTHER`. A severity is now a string, so it isn't an instance of `FindingSeverity`. `Finding.model_dump()` and `model_dump_json()` no longer include the old fields; read `severity` and `field_values` instead.

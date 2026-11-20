@@ -194,6 +194,15 @@ def test_finding_create_rejects_invalid_deprecated_fields(old_fields: dict[str, 
         FindingCreate.model_validate({"title": "Leak", **old_fields})
 
 
+def test_finding_create_requires_text_for_the_deprecated_other_severity() -> None:
+    with pytest.warns(DeprecationWarning):
+        severity = importlib.import_module("pyrit.models").FindingSeverity
+    with pytest.raises(ValidationError, match="severity_other must not be blank when severity is Other"):
+        FindingCreate(title="Leak", severity=severity.OTHER)
+    # A deployment's own option key "other" is not the PyRIT 1.2 severity.
+    assert FindingCreate(title="Leak", severity="other").severity == "other"
+
+
 @pytest.mark.parametrize(
     ("severity", "field_values", "expected"),
     [

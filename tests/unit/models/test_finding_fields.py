@@ -212,6 +212,17 @@ def test_finding_fields_accept_keys_up_to_the_request_limits_and_reject_more() -
         FindingFields.model_validate({"severity": SEVERITY, "fields": [*fields, _choice(key="one_more")]})
 
 
+def test_finding_fields_count_field_and_level_keys_together_against_the_request_limit() -> None:
+    # Each cascade uses two keys, so counting only fields or only levels would allow one key too many.
+    cascades = [
+        _choice(key=f"field_{number}", levels=[(f"level_{number}", "Level")], options=NESTED)
+        for number in range(MAX_ITEMS // 2)
+    ]
+    FindingFields.model_validate({"severity": SEVERITY, "fields": cascades})
+    with pytest.raises(ValidationError, match=f"use {MAX_ITEMS + 1} keys besides 'severity'"):
+        FindingFields.model_validate({"severity": SEVERITY, "fields": [*cascades, _choice(key="one_more")]})
+
+
 def test_describe_values_lists_filled_values_in_configured_order_and_retired_keys() -> None:
     description = CONTOSO.describe_values(
         severity="sev1",

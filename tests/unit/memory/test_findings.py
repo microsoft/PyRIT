@@ -287,8 +287,8 @@ async def test_get_findings_sorts_unlisted_severities_after_listed_ones(sqlite_i
     assert [finding.title for finding in found] == ["low", "moderate", "critical"]
 
 
-async def test_get_findings_without_severity_order_sorts_newest_first(sqlite_instance: SQLiteMemory) -> None:
-    operation = await sqlite_instance.add_operation_async(Operation(name="Newest first"))
+async def test_get_findings_without_severity_order_uses_the_default_fields_order(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Default order"))
     for number, (title, severity) in enumerate([("Old critical", "critical"), ("New low", "low")], start=1):
         await sqlite_instance.add_finding_async(
             finding=Finding.model_validate(
@@ -300,7 +300,9 @@ async def test_get_findings_without_severity_order_sorts_newest_first(sqlite_ins
                 }
             )
         )
-    assert [finding.title for finding in await sqlite_instance.get_findings_async()] == ["New low", "Old critical"]
+    assert [finding.title for finding in await sqlite_instance.get_findings_async()] == ["Old critical", "New low"]
+    newest_first = await sqlite_instance.get_findings_async(severity_order=())
+    assert [finding.title for finding in newest_first] == ["New low", "Old critical"]
 
 
 async def test_finding_mutations_are_scoped_and_delete_only_the_finding(sqlite_instance: SQLiteMemory) -> None:
