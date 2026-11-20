@@ -9,8 +9,8 @@ interface UseScenarioLaunchInput {
   /** The run request built from the current form, or why it can't be built. */
   requestResult: BuildRunRequestResult
   /**
-   * The server's reason the selected datasets are fewer than the scenario's declared minimum, or null when
-   * there are enough. Launch scan shows it on the dataset picker instead of opening the confirmation.
+   * The library's message for fewer datasets than the scenario's declared minimum, or null when there are
+   * enough. Launch scan shows it on the dataset picker instead of opening the confirmation.
    */
   datasetSelectionMessage: string | null
   /** True when the form can't open the confirmation, for example while a conversation is being edited. */

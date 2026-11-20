@@ -32,7 +32,7 @@ interface ScenarioDatasetTableProps {
   onLoad?: () => void
   /** Marks the picker required until the first dataset is chosen. */
   required?: boolean
-  /** The server's reason the required picker has too few datasets, shown as its validation message. */
+  /** Why the required picker has too few datasets, shown as its validation message. */
   selectionError?: string | null
   pickerRef?: Ref<HTMLInputElement>
   onReload: () => void

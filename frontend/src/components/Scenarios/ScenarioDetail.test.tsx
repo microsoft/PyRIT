@@ -3430,6 +3430,27 @@ describe('ScenarioDetail', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
 
+    it('should keep another field\'s estimate rejection off the dataset picker', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(policyScenario())
+      // The server checks parameters before the dataset count, so this rejection is not about datasets.
+      mockEstimateRun.mockRejectedValue({
+        isAxiosError: true, response: { status: 400, data: { detail: 'max_turns must be at least 1.' } },
+      })
+      renderDetail(POLICY_PATH)
+
+      const estimate = await screen.findByTestId('run-estimate')
+      await waitFor(() => expect(estimate).toHaveTextContent('max_turns must be at least 1.'))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+
+      const picker = screen.getByRole('combobox', { name: 'Add dataset' })
+      await waitFor(() => expect(picker).toHaveFocus())
+      expect(picker).toHaveAccessibleDescription('Select a dataset.')
+      expect(picker).not.toHaveAccessibleDescription(expect.stringContaining('max_turns'))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
     it('should not offer Launch scan in the preview for a request the server rejected', async () => {
       const user = userEvent.setup()
       mockGetScenario.mockResolvedValue(policyScenario())

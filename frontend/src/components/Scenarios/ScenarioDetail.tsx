@@ -617,12 +617,12 @@ function ScenarioLaunchForm({
   const datasetOptions: ScenarioDatasetOptions = datasetProjection?.dataset_options
     ?? scenarioDatasetOptions(scenario)
   const selectedDatasetNames = (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name)
-  // The server enforces the scenario's declared minimum. Launch scan presents it on the required picker,
-  // preferring the server's own rejection of this request over the library's wording for the minimum.
+  // The server enforces the scenario's declared minimum. Launch scan presents it on the required picker in the
+  // library's wording; the estimate's own rejection can be about another field, so it stays in the run estimate.
   const minimumDatasets = scenario.dataset_options?.min_selected ?? 0
   const datasetPickerShown = supportsDatasets && datasetOptions.supports_overrides && datasetOptions.mode !== 'fixed'
   const datasetSelectionMessage = datasetPickerShown && selectedDatasetNames.length < minimumDatasets
-    ? runEstimate.rejection ?? minimumSelectionMessage(minimumDatasets)
+    ? minimumSelectionMessage(minimumDatasets)
     : null
   const datasetSelectionKey = JSON.stringify(selectedDatasetNames)
   const reloadDatasetMetadata = datasetMetadata.reload
