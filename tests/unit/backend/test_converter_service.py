@@ -2478,21 +2478,36 @@ class TestPersistConverter:
         }
 
     @pytest.mark.parametrize("converter_type", ["AzureSpeechTextToAudioConverter", "AzureSpeechAudioToTextConverter"])
-    async def test_refuses_a_converter_that_would_use_this_servers_key(
+    async def test_saves_a_converter_that_uses_this_servers_key(
         self, upload_service: ConverterService, tmp_path: Path, converter_type: str
     ) -> None:
-        with (
-            patch.dict("os.environ", {"AZURE_SPEECH_KEY": "server-speech-key"}),
-            pytest.raises(NotSaveableError) as refusal,
-        ):
-            await upload_service.create_converter_async(
+        with patch.dict("os.environ", {"AZURE_SPEECH_KEY": "server-speech-key"}):
+            converter = await upload_service.create_converter_async(
                 request=_persist("speech", converter_type, {"azure_speech_region": "eastus"}),
                 recipes_source=str(tmp_path),
             )
+            ConverterRegistry.reset_registry_singleton()
+            report = await _restore(tmp_path)
+
+        assert converter.origin is RegistryEntryOrigin.SAVED
+        assert _saved_converter(tmp_path, "speech")["params"] == {"azure_speech_region": "eastus"}
+        assert "server-speech-key" not in (tmp_path / "converters" / "speech.json").read_text()
+        assert report.failures == []
+        assert ConverterRegistry.get_registry_singleton().instances.get("speech") is not None
+
+    @pytest.mark.parametrize("converter_type", ["AzureSpeechTextToAudioConverter", "AzureSpeechAudioToTextConverter"])
+    async def test_refuses_a_converter_that_would_save_a_key(
+        self, upload_service: ConverterService, tmp_path: Path, converter_type: str
+    ) -> None:
+        params = {"azure_speech_region": "eastus", "azure_speech_key": "typed-speech-key"}
+
+        with pytest.raises(NotSaveableError) as refusal:
+            await upload_service.create_converter_async(
+                request=_persist("speech", converter_type, params), recipes_source=str(tmp_path)
+            )
 
         assert str(refusal.value) == (
-            f"'{converter_type}' needs a credential in 'azure_speech_key', which saved entries can't hold or take "
-            "from this server yet. It can still be created without saving it."
+            "Saved entries can't hold credentials ('azure_speech_key'). It can still be created without saving it."
         )
         assert upload_service._registry.instances.get("speech") is None
         assert not (tmp_path / "converters").exists()

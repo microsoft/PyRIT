@@ -244,8 +244,6 @@ A saved file never holds a credential: restore refuses a file that stores a valu
 - In identity mode, an OpenAI target file sets `"headers": "{}"` in its `params` so that the server's `OPENAI_ADDITIONAL_REQUEST_HEADERS` aren't added. The OpenAI SDK adds the headers in `OPENAI_CUSTOM_HEADERS` to every request, so while the server sets it, OpenAI targets can't be saved and saved ones aren't restored. The SDK's `OPENAI_ORG_ID` and `OPENAI_PROJECT_ID` still apply to every OpenAI target on this server.
 - GitHub Copilot, Hugging Face, HackAPrompt, LiteLLM, HTTP, and Copilot WebSocket targets can't be saved yet.
 
-Converters and scorers follow the same rules. The Azure Speech converters, the Azure Content Safety scorer, and the audio scorers can't be saved yet, because they sign in with this server's key or Azure identity, and neither can the local refusal classifier scorer, whose model can come from this server.
-
 ### `initialization_scripts`
 
 Local paths to custom Python scripts containing `PyRITInitializer` subclasses. Paths can be absolute or relative to the current working directory.
