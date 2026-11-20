@@ -269,11 +269,23 @@ describe('ScenarioDatasetTable', () => {
     expect(within(row).queryByText('1 of 8', { exact: true })).not.toBeInTheDocument()
   })
 
-  it('does not expose loading or source selection for an inline-only scenario', () => {
-    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} />)
+  it('does not expose loading or source selection when a scenario without named datasets accepts no overrides', () => {
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} options={{ ...OPTIONS, supports_overrides: false }} />)
     expect(screen.getByText('This scenario has no named datasets.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'Add dataset' })).not.toBeInTheDocument()
+  })
+
+  it('lets an editable scenario without default datasets add its first dataset', async () => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} onChange={onChange} />)
+    expect(screen.getByText('No datasets selected. Add a dataset to run this scenario.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reset datasets' })).not.toBeInTheDocument()
+    await addDataset(user, 'stored')
+    expect(onChange.mock.calls.at(-1)?.[0]).toEqual({ sources: [{ name: 'stored' }] })
+    expect(screen.getByRole('row', { name: /stored/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset datasets' })).toBeInTheDocument()
   })
 
   it('does not pretend a global policy can replace protected source-specific loading rules', () => {

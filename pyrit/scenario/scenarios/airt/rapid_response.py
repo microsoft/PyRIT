@@ -2,11 +2,15 @@
 # Licensed under the MIT license.
 
 """
-RapidResponse scenario — technique-based rapid content-harms testing.
+Deprecated RapidResponse scenario — technique-based rapid content-harms testing.
+
+``airt.rapid_response`` is deprecated and will be removed in 1.5.0. Use ``technique.sweep``
+with the harm datasets you need, or launch the ``rapid_response`` scenario suite, which runs
+one sweep per packaged harm dataset with an explicit technique list.
 
 Techniques select **attack techniques** (PromptSending, RolePlay,
 ManyShot, TAP). Datasets select **harm categories** (hate, fairness,
-violence, …). Use ``--dataset-names`` to narrow which harm categories
+violence, …). Use ``--datasets`` to narrow which harm categories
 to test.
 """
 
@@ -15,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, ClassVar
 
-from pyrit.common import apply_defaults
+from pyrit.common import apply_defaults, print_deprecation_message
 from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
@@ -55,10 +59,11 @@ def _build_rapid_response_technique() -> type[ScenarioTechnique]:
 
 class RapidResponse(Scenario):
     """
-    Rapid Response scenario for content-harms testing.
+    Deprecated rapid response scenario for content-harms testing; use ``technique.sweep`` instead.
 
     Tests model behavior across multiple harm categories using selectable attack
-    techniques.
+    techniques. This scenario will be removed in 1.5.0. Run ``technique.sweep`` with
+    the harm datasets you need, or launch the ``rapid_response`` scenario suite.
     """
 
     SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = True
@@ -77,7 +82,7 @@ class RapidResponse(Scenario):
         scenario_result_id: str | None = None,
     ) -> None:
         """
-        Initialize the Rapid Response scenario.
+        Initialize the deprecated Rapid Response scenario.
 
         Args:
             objective_scorer: Scorer for evaluating attack success.
@@ -88,6 +93,7 @@ class RapidResponse(Scenario):
             scenario_result_id: Optional ID of an existing scenario
                 result to resume.
         """
+        print_deprecation_message(old_item="airt.rapid_response", new_item="technique.sweep", removed_in="1.5.0")
         technique_class = _build_rapid_response_technique()
 
         super().__init__(

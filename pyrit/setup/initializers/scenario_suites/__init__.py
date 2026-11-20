@@ -10,9 +10,11 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.setup.initializers.scenario_suites.horizontal_techniques import HorizontalTechniquesSuite
+    from pyrit.setup.initializers.scenario_suites.rapid_response import RapidResponseSuite
     from pyrit.setup.initializers.scenario_suites.scenario_suite_initializer import ScenarioSuiteInitializer
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "RapidResponseSuite": "pyrit.setup.initializers.scenario_suites.rapid_response",
     "HorizontalTechniquesSuite": "pyrit.setup.initializers.scenario_suites.horizontal_techniques",
     "ScenarioSuiteInitializer": "pyrit.setup.initializers.scenario_suites.scenario_suite_initializer",
 }

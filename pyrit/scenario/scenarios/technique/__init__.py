@@ -2,19 +2,22 @@
 # Licensed under the MIT license.
 # ruff: noqa: F401
 
-"""Scenario for executing one catalog technique."""
+"""Scenarios for executing individual techniques or sweeping objective populations."""
 
 from typing import TYPE_CHECKING
 
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
-    from pyrit.scenario.scenarios._dynamic_techniques import ExecuteTechnique
+    from pyrit.scenario.scenarios._dynamic_techniques import ExecuteTechnique, SweepTechnique
     from pyrit.scenario.scenarios.technique.execute import Execute
+    from pyrit.scenario.scenarios.technique.sweep import Sweep
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "Execute": "pyrit.scenario.scenarios.technique.execute",
     "ExecuteTechnique": "pyrit.scenario.scenarios._dynamic_techniques",
+    "Sweep": "pyrit.scenario.scenarios.technique.sweep",
+    "SweepTechnique": "pyrit.scenario.scenarios._dynamic_techniques",
 }
 
 __all__ = list(_LAZY_EXPORTS)

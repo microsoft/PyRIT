@@ -197,13 +197,13 @@
 #
 # ```shell
 # # Add the registered "translation_spanish" converter to role_play_movie_script only
-# pyrit_scan run airt.rapid_response --target openai_chat --initializers target my_converters --techniques role_play_movie_script:converter.translation_spanish
+# pyrit_scan run technique.sweep --target openai_chat --initializers target scorer my_converters --datasets airt_hate --techniques role_play_movie_script:converter.translation_spanish
 #
 # ```
 #
 # #### Chain multiple converters (applied in order) and combine with plain techniques
 # ```shell
-# pyrit_scan run airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
+# pyrit_scan run technique.sweep --target openai_chat --initializers load_default_datasets target scorer my_converters --datasets airt_hate --techniques role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
 # ```
 
 # %% [markdown]

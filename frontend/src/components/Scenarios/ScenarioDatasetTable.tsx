@@ -45,7 +45,7 @@ export default function ScenarioDatasetTable({
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [emptySelections, setEmptySelections] = useState<string[]>([])
   const selected: ScenarioDatasetSourceInput[] = request.sources ?? defaults.sources.map((source) => ({ name: source.name }))
-  const canSelect = options.supports_overrides && options.mode !== 'fixed' && selected.length > 0
+  const canSelect = options.supports_overrides && options.mode !== 'fixed'
   const canEditSources = options.supports_overrides && options.source_settings !== false
   const canLimit = canEditSources && options.per_dataset_limit
   const canFilter = options.supports_overrides && options.filters
@@ -158,7 +158,9 @@ export default function ScenarioDatasetTable({
       </div>}
       {[metadataError, loadError, ...errors].filter((error): error is string => Boolean(error))
         .map((error) => <MessageBar key={error} intent="error"><MessageBarBody role="alert">{error}</MessageBarBody></MessageBar>)}
-      {selected.length === 0 ? <Text>This scenario has no named datasets.</Text> : <div className={styles.scroll}>
+      {selected.length === 0 ? <Text>
+        {canSelect ? 'No datasets selected. Add a dataset to run this scenario.' : 'This scenario has no named datasets.'}
+      </Text> : <div className={styles.scroll}>
         <Table className={styles.table} aria-label="Selected datasets">
           <TableHeader><TableRow>
             <TableHeaderCell>Dataset</TableHeaderCell>
@@ -219,7 +221,7 @@ export default function ScenarioDatasetTable({
           })}</TableBody>
         </Table>
       </div>}
-      {selected.length > 0 && <div className={styles.controls}>
+      {(selected.length > 0 || canSelect) && <div className={styles.controls}>
         {canSelect && <>
         {(canAdd || replaceSingleSource) && <Combobox aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
           placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]} disabled={busy}
@@ -237,14 +239,14 @@ export default function ScenarioDatasetTable({
             return <Option key={name} value={name} text={label}>{label}</Option>
           })}
         </Combobox>}
-        <Button className={styles.button} disabled={busy} onClick={() => {
+        {selected.length > 0 && <Button className={styles.button} disabled={busy} onClick={() => {
           const edits = { ...request }
           delete edits.sources
           delete edits.max_per_dataset
           clearSourceDrafts()
           setSearch('')
           onChange(edits)
-        }}>Reset datasets</Button>
+        }}>Reset datasets</Button>}
         </>}
         <Link className={styles.browseLink} to="/datasets">Browse datasets</Link>
       </div>}

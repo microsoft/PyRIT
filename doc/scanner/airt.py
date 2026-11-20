@@ -34,6 +34,10 @@ objective_target = OpenAIChatTarget()
 # %% [markdown]
 # ## Rapid Response
 #
+# > **Deprecated:** `airt.rapid_response` will be removed in 1.5.0. Use `technique.sweep` with the
+# > harm datasets you need, or launch the `rapid_response` scenario suite, which runs one sweep per
+# > packaged harm dataset. See [Technique Scenarios](technique.ipynb).
+#
 # Tests whether a target can be induced to generate harmful content across seven categories: hate,
 # fairness, violence, sexual, harassment, misinformation, and leakage. Each technique applies a
 # different attack technique to the full set of harm datasets.

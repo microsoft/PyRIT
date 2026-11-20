@@ -11,6 +11,7 @@ from typing import ClassVar
 from pyrit.models import ScenarioPreset, ScenarioSuite
 from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
 from pyrit.setup.initializers.scenario_suites.horizontal_techniques import HorizontalTechniquesSuite
+from pyrit.setup.initializers.scenario_suites.rapid_response import RapidResponseSuite
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ class ScenarioSuiteInitializer(PyRITInitializer):
 
     SUITE_BUILDERS: ClassVar[tuple[Callable[[], tuple[ScenarioSuite, list[ScenarioPreset]]], ...]] = (
         HorizontalTechniquesSuite.build,
+        RapidResponseSuite.build,
     )
 
     async def initialize_async(self) -> None:

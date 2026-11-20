@@ -79,10 +79,10 @@ the technique produces, on top of any converters the technique already bakes in.
 
 ```bash
 # Add the registered "translation_spanish" converter to role_play_movie_script only
-pyrit> run airt.rapid_response --target my_target --initializers target -t role_play_movie_script:converter.translation_spanish
+pyrit> run technique.sweep --target my_target --initializers target scorer --datasets airt_hate -t role_play_movie_script:converter.translation_spanish
 
 # Chain multiple converters (applied in order) and combine with plain techniques
-pyrit> run airt.rapid_response --target my_target --initializers target -t role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
+pyrit> run technique.sweep --target my_target --initializers target scorer --datasets airt_hate -t role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
 ```
 
 ### With Runtime Parameters

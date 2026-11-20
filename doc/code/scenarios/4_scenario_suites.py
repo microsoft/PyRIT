@@ -68,6 +68,18 @@ for entry in suite.entries:
         print(f"  {key} ({len(value)}): {', '.join(value)}")
 
 # %% [markdown]
+# ## The rapid response suite
+#
+# `RapidResponseSuite` contains one `technique.sweep` preset per packaged harm dataset,
+# from `rapid_response_hate` to `rapid_response_leakage`, so each harm runs, resumes,
+# and reports separately. Every preset applies the same 11 core techniques (`bijection`,
+# `code_attack`, `context_compliance`, `flip`, `many_shot`, `red_teaming`, and five role-play
+# variants) to every objective in its `airt_<harm>` dataset, plus a baseline.
+#
+# These presets name no scorer. Select an objective scorer at launch, or register a default
+# objective scorer; a sweep without either fails rather than treating any non-refusal as success.
+
+# %% [markdown]
 # ## Register suites from YAML
 #
 # ```yaml
