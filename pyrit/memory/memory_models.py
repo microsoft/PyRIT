@@ -66,6 +66,9 @@ from pyrit.models import (
     Observation,
     Operation,
     PromptDataType,
+    PromptGenerationProgress,
+    PromptGenerationRecord,
+    PromptGenerationStatus,
     ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
@@ -293,6 +296,109 @@ class DatasetMediaEntry(Base):
         CustomUUID, ForeignKey("DatasetLifecycleEntries.id"), nullable=True, index=True
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class PromptGenerationEntry(Base):
+    """A prompt generation job: its request, status, resumable checkpoint, and the dataset name it holds."""
+
+    __tablename__ = "PromptGenerationEntries"
+    __table_args__ = (
+        Index("ix_PromptGenerationEntries_created_at_id", "created_at", "id"),
+        Index("ix_PromptGenerationEntries_dataset_name", "dataset_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    generator: Mapped[str] = mapped_column(String(64), nullable=False)
+    dataset_name: Mapped[str] = mapped_column(Unicode(256), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    execution_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True)
+    request: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    targets: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
+    pause_for_review: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    review_completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    group_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True)
+    group_label: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    group_index: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    progress: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    checkpoint: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    pyrit_version: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    def __init__(self, generation: PromptGenerationRecord) -> None:
+        """Store a validated generation and the PyRIT version that created it."""
+        self.id = generation.id
+        self.created_at = generation.created_at
+        self.pyrit_version = pyrit.__version__
+        for column, value in self.column_values(generation).items():
+            setattr(self, column, value)
+
+    @staticmethod
+    def column_values(generation: PromptGenerationRecord) -> dict[str, Any]:
+        """
+        Map a generation's changeable fields to column values.
+
+        Args:
+            generation (PromptGenerationRecord): The generation to store.
+
+        Returns:
+            dict[str, Any]: Values for every column except the ID, creation time, and PyRIT version.
+        """
+        validated = PromptGenerationRecord.model_validate(generation.model_dump())
+        stored = validated.model_dump(mode="json", include={"request", "targets", "progress", "checkpoint", "summary"})
+        return {
+            **stored,
+            "generator": validated.generator,
+            "dataset_name": validated.dataset_name,
+            "status": validated.status.value,
+            "execution_id": validated.execution_id,
+            "pause_for_review": validated.pause_for_review,
+            "review_completed": validated.review_completed,
+            "group_id": validated.group_id,
+            "group_label": validated.group_label,
+            "group_index": validated.group_index,
+            "error": validated.error,
+            "created_by": validated.created_by,
+            "updated_at": validated.updated_at,
+            "started_at": validated.started_at,
+            "completed_at": validated.completed_at,
+        }
+
+    def get_prompt_generation(self) -> PromptGenerationRecord:
+        """
+        Rebuild the generation model.
+
+        Returns:
+            PromptGenerationRecord: The stored generation.
+        """
+        return PromptGenerationRecord(
+            id=self.id,
+            generator=self.generator,
+            dataset_name=self.dataset_name,
+            status=PromptGenerationStatus(self.status),
+            execution_id=self.execution_id,
+            request=self.request,
+            targets=self.targets,
+            pause_for_review=self.pause_for_review,
+            review_completed=self.review_completed,
+            group_id=self.group_id,
+            group_label=self.group_label,
+            group_index=self.group_index,
+            progress=PromptGenerationProgress.model_validate(self.progress),
+            checkpoint=self.checkpoint,
+            summary=self.summary,
+            error=self.error,
+            created_by=self.created_by,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+            started_at=self.started_at,
+            completed_at=self.completed_at,
+        )
 
 
 class OperationEntry(Base):
