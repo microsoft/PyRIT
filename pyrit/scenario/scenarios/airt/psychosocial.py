@@ -63,8 +63,6 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atom
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.core.technique_requirements import (
-    IncompatibleTechniqueError,
-    IncompatibleTechniquePolicy,
     TechniqueRequirements,
     check_target_compatibility,
     filter_seed_groups,
@@ -691,8 +689,6 @@ class Psychosocial(Scenario):
         Raises:
             ValueError: If a selected sub-harm has no seed groups, or no scorer can judge its
                 objectives, whatever the incompatible technique policy.
-            IncompatibleTechniqueError: If a technique's scorer needs fit no candidate and the
-                policy is RAISE.
         """
         # Resolved lazily so a no-arg ``Psychosocial()`` works for registry metadata introspection.
         adversarial_chat = self._adversarial_chat or get_default_adversarial_target()
@@ -703,9 +699,9 @@ class Psychosocial(Scenario):
         seed_groups_by_dataset = context.seed_groups_by_dataset
 
         # A resumed run rebuilds only the sub-harms its saved plan holds. One the original run did
-        # not plan (no baseline, and every technique cell skipped) has no planned objective, so it
-        # is left out before seeds are checked. The pool
-        # still spans every selected sub-harm, which keeps each candidate at its saved position.
+        # not plan (baselines off, and every technique cell filtered out) has no planned objective,
+        # so it is left out before seeds are checked. The pool still spans every selected sub-harm,
+        # which keeps each candidate at its saved position.
         planned_harms = (
             {group.display_group for group in context.stored_run_plan.atomic_groups}
             if context.stored_run_plan is not None
@@ -733,11 +729,13 @@ class Psychosocial(Scenario):
             # it off the event loop.
             base_factory = await asyncio.to_thread(_build_simulated_base_factory, harm=harm, max_turns=max_turns)
 
-            harm_requirements = ScorerRequirements.combine(
+            # PromptSendingAttack and CrescendoAttack need only a true/false verdict, which every
+            # candidate guarantees, so the sub-harm's own requirements decide the selection.
+            requirements = ScorerRequirements.combine(
                 harm.scorer_requirements, source_requirements.get(harm.dataset_name)
             )
             try:
-                selection = self._select_harm_scorer(pool=pool, requirements=harm_requirements, seed_groups=seed_groups)
+                selection = self._select_harm_scorer(pool=pool, requirements=requirements, seed_groups=seed_groups)
             except NoCompatibleScorerError as exc:
                 # This is about the sub-harm's objectives, not a technique, so it ignores the
                 # incompatible technique policy: skipping would drop requested objectives silently.
@@ -762,10 +760,9 @@ class Psychosocial(Scenario):
             for technique in techniques:
                 live = technique is PsychosocialTechnique.Crescendo
                 requirements = TechniqueRequirements() if live else base_factory.requirements
-                attack_class = CrescendoAttack if live else base_factory.attack_class
                 if not check_target_compatibility(
                     target=context.objective_target,
-                    attack_class=attack_class,
+                    attack_class=CrescendoAttack if live else base_factory.attack_class,
                     requirements=requirements,
                     technique_name=technique.value,
                     policy=context.incompatible_technique_policy,
@@ -780,20 +777,6 @@ class Psychosocial(Scenario):
                     policy=context.incompatible_technique_policy,
                 )
                 if not compatible_groups:
-                    continue
-                try:
-                    self._select_harm_scorer(
-                        pool=pool,
-                        requirements=ScorerRequirements.combine(
-                            harm_requirements, requirements.objective_scorer_for(attack_class=attack_class)
-                        ),
-                        seed_groups=compatible_groups,
-                    )
-                except NoCompatibleScorerError as exc:
-                    message = f"Technique '{technique.value}', sub-harm '{harm.name}': {exc}"
-                    if context.incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
-                        raise IncompatibleTechniqueError(message) from exc
-                    logger.warning("Skipping %s", message)
                     continue
                 if technique is PsychosocialTechnique.Crescendo:
                     attack_technique = await asyncio.to_thread(

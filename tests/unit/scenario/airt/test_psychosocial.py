@@ -20,14 +20,12 @@ from pyrit.converter import (
     ToneConverter,
     TranslationConverter,
 )
-from pyrit.executor.attack import CrescendoAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackSeedGroup,
     ComponentIdentifier,
     ScenarioDatasetRequest,
     ScenarioRunSizeEstimateStatus,
-    ScorerCapabilityName,
     SeedObjective,
     SeedPrompt,
     ToolCallRequirement,
@@ -49,7 +47,6 @@ from pyrit.scenario import (
 from pyrit.scenario.core import (
     DatasetConstraintError,
 )
-from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 from pyrit.scenario.scenarios.airt import (
     Psychosocial,
     PsychosocialTechnique,
@@ -1011,7 +1008,6 @@ async def _initialize_with_real_scorers_async(
     groups: dict[str, list[AttackSeedGroup]] | None = None,
     dataset_config: DatasetAttackConfiguration | None = None,
     policy: str = "skip",
-    techniques: list[PsychosocialTechnique] | None = None,
 ) -> tuple[Psychosocial, dict[str, SubStringScorer]]:
     scorers = {
         "imminent_crisis": SubStringScorer(substring="crisis"),
@@ -1022,7 +1018,7 @@ async def _initialize_with_real_scorers_async(
     )
     args: dict[str, Any] = {
         "objective_target": target,
-        "scenario_techniques": techniques or [PsychosocialTechnique.NoConverter],
+        "scenario_techniques": [PsychosocialTechnique.NoConverter],
         "incompatible_technique_policy": policy,
     }
     if dataset_config is not None:
@@ -1119,44 +1115,10 @@ class TestPsychosocialSharedSelection:
             await _initialize_with_real_scorers_async(target=mock_objective_target, groups=groups, policy=policy)
         assert not isinstance(raised.value, IncompatibleTechniqueError)
 
-    @pytest.mark.parametrize("policy", ["skip", "raise"])
-    async def test_a_technique_whose_scorer_needs_fit_no_candidate_follows_policy(self, mock_objective_target, policy):
-        real_objective_scorer_for = TechniqueRequirements.objective_scorer_for
-
-        def crescendo_needs_float_feedback(requirements, *, attack_class):
-            if attack_class is CrescendoAttack:
-                return ScorerRequirements(required={ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE})
-            return real_objective_scorer_for(requirements, attack_class=attack_class)
-
-        techniques = [PsychosocialTechnique.NoConverter, PsychosocialTechnique.Crescendo]
-        with patch.object(
-            TechniqueRequirements, "objective_scorer_for", autospec=True, side_effect=crescendo_needs_float_feedback
-        ):
-            if policy == "raise":
-                with pytest.raises(
-                    IncompatibleTechniqueError, match="Technique 'crescendo', sub-harm 'imminent_crisis'"
-                ):
-                    await _initialize_with_real_scorers_async(
-                        target=mock_objective_target, policy=policy, techniques=techniques
-                    )
-                return
-            scenario, scorers = await _initialize_with_real_scorers_async(
-                target=mock_objective_target, policy=policy, techniques=techniques
-            )
-
-        # Only the crescendo cells are skipped; the baselines and other cells keep each sub-harm's scorer.
-        assert [a.atomic_attack_name for a in scenario._atomic_attacks] == [
-            "imminent_crisis_baseline",
-            "licensed_therapist_baseline",
-            "imminent_crisis_none",
-            "licensed_therapist_none",
-        ]
-        assert all(a._objective_scorer is scorers[_harm_name(a)] for a in scenario._atomic_attacks)
-
     async def test_resume_leaves_out_a_sub_harm_the_original_run_did_not_plan(self, mock_objective_target):
         scenario, _ = await _initialize_with_real_scorers_async(target=mock_objective_target)
         full_plan = scenario._build_run_plan()
-        # A run whose technique cells all filtered out one sub-harm, with no baseline, plans only the other.
+        # A run with baselines off whose technique cells all filtered out one sub-harm never plans it.
         plan = full_plan.model_copy(
             update={
                 "atomic_groups": [
