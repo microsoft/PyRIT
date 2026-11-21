@@ -1,7 +1,7 @@
+import { MAX_SEED_SEARCH_LENGTH } from '@/services/seedSearch'
 import type { SeedType } from '@/types'
 import { catalogPathFromNavigationState, chatOriginFromNavigationState, type DatasetChatOrigin } from '@/utils/routeParams'
 
-export const MAX_SEED_SEARCH_LENGTH = 1_000
 export const DEFAULT_SEED_PAGE_SIZE = 20
 const MIN_SEED_PAGE_SIZE = 1
 const MAX_SEED_PAGE_SIZE = 100

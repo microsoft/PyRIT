@@ -4,7 +4,7 @@ import { generateClientId } from '@/utils/clientId'
 import { decodeBlobErrorAsync, toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
-import { MAX_SEED_SEARCH_LENGTH } from '@/components/Datasets/seedExampleQuery'
+import { MAX_SEED_SEARCH_LENGTH } from './seedSearch'
 import type {
   ApplyChatScorerRequest,
   ApplyChatScorerResponse,
