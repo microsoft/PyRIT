@@ -326,6 +326,29 @@ class TestPoolBaselines:
         assert baselines(("send", "tap")) == baselines(("tap", "send"))
         assert [name for name, scorer in baselines(("send", "tap")) if scorer is threshold] == ["baseline_d__1"]
 
+    @pytest.mark.parametrize("order", [("send", "tap"), ("tap", "send")])
+    def test_a_shared_baseline_keeps_every_technique_requirement(self, order: tuple[str, ...]) -> None:
+        threshold = _threshold_scorer()
+        pool = CompatibleScorers(candidates=[threshold, SubStringScorer(substring="x")])
+        factories = {
+            name: _factory(
+                name=name, attack_class=TreeOfAttacksWithPruningAttack if name == "tap" else PromptSendingAttack
+            )
+            for name in order
+        }
+        attacks = _builder(pool).build(
+            technique_factories=factories, dataset_groups={"d": [_group("o1")]}, include_baseline=True
+        )
+
+        (baseline,) = [a for a in attacks if a.group_kind is ScenarioRunPlanGroupKind.BASELINE]
+        tap = next(a for a in attacks if a.technique_name == "tap")
+        assert baseline.objective_scorer_selection.requirements == tap.objective_scorer_selection.requirements
+        assert (
+            ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE
+            in baseline.objective_scorer_selection.requirements.required
+        )
+        assert baseline.objective_scorer_binding == tap.objective_scorer_binding
+
     def test_single_scorer_keeps_the_legacy_baseline(self) -> None:
         scorer = SubStringScorer(substring="x")
         attacks = _builder(scorer).build(

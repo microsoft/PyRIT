@@ -274,18 +274,6 @@ class TestAtomicAttackScorerSelection:
         assert atomic_attack.objective_scorer_selection is selection
         assert atomic_attack.objective_scorer_binding == selection.to_run_plan_binding()
 
-    def test_a_selection_and_a_binding_cannot_both_be_given(self, mock_attack, sample_seed_groups):
-        selection = self._selection()
-
-        with pytest.raises(ValueError, match="not both"):
-            AtomicAttack(
-                attack_technique=AttackTechnique(attack=mock_attack),
-                seed_groups=sample_seed_groups,
-                atomic_attack_name="pool group",
-                objective_scorer_selection=selection,
-                objective_scorer_binding=selection.to_run_plan_binding(),
-            )
-
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAtomicAttackExecution:

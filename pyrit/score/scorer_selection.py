@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING
 
 from pyrit.models import (
@@ -28,6 +27,7 @@ from pyrit.models import (
     ScorerCandidateVerdict,
     ScorerCapabilityName,
     ScorerIdentifier,
+    ScorerMismatchKind,
     ScorerSelectionEntry,
     ScorerVerdictStatus,
     ScoringExpectation,
@@ -233,19 +233,6 @@ class ScorerCandidate:
         return f"{type(self.scorer).__name__}{tag}"
 
 
-class ScorerMismatchKind(str, Enum):
-    """Why a candidate cannot judge a population."""
-
-    #: The scorer does not accept the evidence family the attack supplies.
-    EVIDENCE = "evidence"
-    #: The candidate's evaluation binding differs from what the population requires.
-    EVALUATION = "evaluation"
-    #: The scorer lacks a required capability, such as float feedback for ranking.
-    CAPABILITY = "capability"
-    #: The scorer cannot evaluate a condition or criterion an input carries.
-    CONDITION = "condition"
-
-
 @dataclass(frozen=True, kw_only=True)
 class ScorerMismatch:
     """
@@ -340,7 +327,7 @@ class ScorerSelection:
                 candidate_index=mismatch.candidate_index,
                 candidate_label=mismatch.candidate_label,
                 status=ScorerVerdictStatus.REJECTED,
-                reason_kind=mismatch.kind.value,
+                reason_kind=mismatch.kind,
                 reason=mismatch.detail,
             )
             for mismatch in self.rejected
@@ -357,7 +344,7 @@ class ScorerSelection:
             display_group=display_group,
             technique=technique,
             group_kind=group_kind,
-            required_capabilities=sorted(capability.value for capability in self.requirements.required),
+            required_capabilities=sorted(self.requirements.required, key=lambda capability: capability.value),
             required_evaluation=self.requirements.evaluation,
             candidates=sorted(verdicts, key=lambda verdict: verdict.candidate_index),
         )

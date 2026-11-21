@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
@@ -28,7 +28,6 @@ from pyrit.models import (
     AttackSeedGroup,
     MessageScorable,
     ScenarioRunPlanGroupKind,
-    ScenarioRunPlanScorerBinding,
     ScorerCapabilityName,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
@@ -145,7 +144,6 @@ def build_baseline_atomic_attack(
     memory_labels: dict[str, str] | None = None,
     atomic_attack_name: str = "baseline",
     display_group: str | None = None,
-    objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None,
     objective_scorer_selection: ScorerSelection | None = None,
 ) -> AtomicAttack:
     """
@@ -166,10 +164,8 @@ def build_baseline_atomic_attack(
         display_group (str | None): Report grouping for the baseline. Defaults to ``None`` so it
             groups on its own; pass a technique cell's ``display_group`` to roll the baseline up
             with that population.
-        objective_scorer_binding (ScenarioRunPlanScorerBinding | None): The pool selection of the
-            attack population this baseline compares against, for pool runs.
-        objective_scorer_selection (ScorerSelection | None): That pool selection itself, so the
-            scenario can report it. Pass this or ``objective_scorer_binding``, not both.
+        objective_scorer_selection (ScorerSelection | None): The pool selection of the attack
+            population this baseline compares against, for pool runs.
 
     Returns:
         AtomicAttack: The baseline atomic attack.
@@ -186,7 +182,6 @@ def build_baseline_atomic_attack(
         memory_labels=memory_labels or {},
         display_group=display_group,
         group_kind=ScenarioRunPlanGroupKind.BASELINE,
-        objective_scorer_binding=objective_scorer_binding,
         objective_scorer_selection=objective_scorer_selection,
     )
 
@@ -198,7 +193,6 @@ def build_baseline_atomic_attacks(
     seed_groups: list[AttackSeedGroup],
     memory_labels: dict[str, str] | None = None,
     name: str = "baseline",
-    objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None,
     objective_scorer_selection: ScorerSelection | None = None,
 ) -> list[AtomicAttack]:
     """
@@ -210,10 +204,8 @@ def build_baseline_atomic_attacks(
         seed_groups (list[AttackSeedGroup]): Seed groups to attack. Used as-is.
         memory_labels (dict[str, str] | None): Labels applied to the baseline's prompts.
         name (str): Base name for the units. Defaults to ``"baseline"``.
-        objective_scorer_binding (ScenarioRunPlanScorerBinding | None): The pool selection
-            this baseline shares with its attack population, for pool runs.
-        objective_scorer_selection (ScorerSelection | None): That pool selection itself, so the
-            scenario can report it. Pass this or ``objective_scorer_binding``, not both.
+        objective_scorer_selection (ScorerSelection | None): The pool selection this baseline
+            shares with its attack population, for pool runs.
 
     Returns:
         list[AtomicAttack]: One batch or independently named groups with a shared display group.
@@ -233,7 +225,6 @@ def build_baseline_atomic_attacks(
                 else name
             ),
             display_group=name if repeated else None,
-            objective_scorer_binding=objective_scorer_binding,
             objective_scorer_selection=objective_scorer_selection,
         )
         for population in populations
@@ -535,10 +526,17 @@ class MatrixAtomicAttackBuilder:
                 if isinstance(selection, ScorerSelection):
                     pool_selection = selection if self._is_pool else None
                     if self._is_pool:
-                        group_ids, _ = pool_baselines.setdefault(
-                            (dataset_name, selection.candidate_index), (set(), selection)
-                        )
+                        # The shared baseline reports what every technique using this judge required.
+                        key = (dataset_name, selection.candidate_index)
+                        group_ids, stored = pool_baselines.get(key, (set(), selection))
                         group_ids.update(group.logical_id for group in compatible_groups)
+                        pool_baselines[key] = (
+                            group_ids,
+                            replace(
+                                stored,
+                                requirements=ScorerRequirements.combine(stored.requirements, selection.requirements),
+                            ),
+                        )
                     cells[dataset_name] = (
                         compatible_groups,
                         selection.scorer,

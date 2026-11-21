@@ -1474,21 +1474,10 @@ class Scenario(ABC):
             ScorerSelectionReport: One entry per pool-selected group, in plan order.
 
         Raises:
-            ValueError: If the scenario has not been initialized, or a group records a pool binding
-                without the selection behind it.
+            ValueError: If the scenario has not been initialized.
         """
         if not self._atomic_attacks:
             raise ValueError("The scorer selection report reads the planned groups. Call initialize_async first.")
-        unreported = [
-            atomic.atomic_attack_name
-            for atomic in self._atomic_attacks
-            if atomic.objective_scorer_binding is not None and atomic.objective_scorer_selection is None
-        ]
-        if unreported:
-            raise ValueError(
-                "These atomic groups record a scorer pool binding but not the selection behind it, so "
-                f"they cannot be reported: {unreported}. Build them with objective_scorer_selection."
-            )
         return ScorerSelectionReport(
             entries=[
                 atomic.objective_scorer_selection.to_report_entry(

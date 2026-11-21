@@ -6,10 +6,25 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.models.scenario_progress import ScenarioRunPlanGroupKind
+from pyrit.models.score.scorer_capabilities import ScorerCapabilityName  # noqa: TC001 (runtime-required by Pydantic)
+
+
+class ScorerMismatchKind(str, Enum):
+    """Why a candidate cannot judge a population."""
+
+    #: The scorer does not accept the evidence family the attack supplies.
+    EVIDENCE = "evidence"
+    #: The candidate's evaluation binding differs from what the population requires.
+    EVALUATION = "evaluation"
+    #: The scorer lacks a required capability, such as float feedback for ranking.
+    CAPABILITY = "capability"
+    #: The scorer cannot evaluate a condition or criterion an input carries.
+    CONDITION = "condition"
 
 
 class ScorerVerdictStatus(str, Enum):
@@ -32,7 +47,7 @@ class ScorerCandidateVerdict(BaseModel):
         candidate_index (int): The candidate's position in the pool.
         candidate_label (str): The scorer class and evaluation key, for display.
         status (ScorerVerdictStatus): Whether the candidate was selected or rejected.
-        reason_kind (str | None): For a rejection, the kind of mismatch, such as ``evaluation``.
+        reason_kind (ScorerMismatchKind | None): For a rejection, the kind of mismatch.
         reason (str | None): For a rejection, why the candidate cannot judge the group.
     """
 
@@ -41,7 +56,7 @@ class ScorerCandidateVerdict(BaseModel):
     candidate_index: int = Field(ge=0)
     candidate_label: str
     status: ScorerVerdictStatus
-    reason_kind: str | None = None
+    reason_kind: ScorerMismatchKind | None = None
     reason: str | None = None
 
 
@@ -54,7 +69,8 @@ class ScorerSelectionEntry(BaseModel):
         display_group (str): The group's report grouping.
         technique (str | None): The technique that built the group, when known.
         group_kind (ScenarioRunPlanGroupKind): What the group runs.
-        required_capabilities (list[str]): Every output guarantee the selection required, sorted.
+        required_capabilities (list[ScorerCapabilityName]): Every output guarantee the selection required,
+            sorted.
         required_evaluation (str | None): The evaluation the selection required, if any.
         candidates (list[ScorerCandidateVerdict]): The rejected candidates and the selected one,
             in pool order.
@@ -66,9 +82,25 @@ class ScorerSelectionEntry(BaseModel):
     display_group: str
     technique: str | None = None
     group_kind: ScenarioRunPlanGroupKind = ScenarioRunPlanGroupKind.ATTACK
-    required_capabilities: list[str] = Field(default_factory=list)
+    required_capabilities: list[ScorerCapabilityName] = Field(default_factory=list)
     required_evaluation: str | None = None
     candidates: list[ScorerCandidateVerdict]
+
+    @model_validator(mode="after")
+    def _validate_one_selected(self) -> Self:
+        """
+        Require exactly one selected candidate.
+
+        Returns:
+            Self: The validated entry.
+
+        Raises:
+            ValueError: If no candidate, or more than one, is selected.
+        """
+        selected = sum(verdict.status is ScorerVerdictStatus.SELECTED for verdict in self.candidates)
+        if selected != 1:
+            raise ValueError(f"A scorer selection entry needs exactly one selected candidate; got {selected}.")
+        return self
 
     @property
     def selected(self) -> ScorerCandidateVerdict:

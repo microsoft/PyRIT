@@ -51,19 +51,20 @@ class PrettyScorerSelectionReportPrinter(_PrettyPrinterMixin, PrinterBase):
         details = [f"group {entry.display_group}"]
         if entry.technique is not None:
             details.append(f"technique {entry.technique}")
-        needs = list(entry.required_capabilities)
+        needs = [capability.value for capability in entry.required_capabilities]
         if entry.required_evaluation is not None:
             needs.append(f"evaluation '{entry.required_evaluation}'")
         details.append(f"requires {', '.join(needs)}" if needs else "no requirements")
         lines.append(self._format_colored(f"{self._indent}{'; '.join(details)}", Fore.CYAN))
-        lines.extend(
-            self._format_colored(
-                f"{self._indent}rejected #{verdict.candidate_index} {verdict.candidate_label} "
-                f"({verdict.reason_kind}): {verdict.reason}",
-                Fore.YELLOW,
+        for verdict in entry.rejected:
+            reason_kind = "" if verdict.reason_kind is None else f" ({verdict.reason_kind.value})"
+            lines.append(
+                self._format_colored(
+                    f"{self._indent}rejected #{verdict.candidate_index} {verdict.candidate_label}{reason_kind}: "
+                    f"{verdict.reason}",
+                    Fore.YELLOW,
+                )
             )
-            for verdict in entry.rejected
-        )
         return "".join(lines)
 
     async def render_async(self, report: ScorerSelectionReport) -> str:

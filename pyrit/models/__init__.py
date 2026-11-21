@@ -318,6 +318,7 @@ if TYPE_CHECKING:
     )
     from pyrit.models.scorer_selection_report import (
         ScorerCandidateVerdict,
+        ScorerMismatchKind,
         ScorerSelectionEntry,
         ScorerSelectionReport,
         ScorerVerdictStatus,
@@ -705,6 +706,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioRunPlanAtomicGroup": "pyrit.models.scenario_progress",
     "ScenarioRunPlanScorerBinding": "pyrit.models.scenario_progress",
     "ScorerCandidateVerdict": "pyrit.models.scorer_selection_report",
+    "ScorerMismatchKind": "pyrit.models.scorer_selection_report",
     "ScorerSelectionEntry": "pyrit.models.scorer_selection_report",
     "ScorerSelectionReport": "pyrit.models.scorer_selection_report",
     "ScorerVerdictStatus": "pyrit.models.scorer_selection_report",

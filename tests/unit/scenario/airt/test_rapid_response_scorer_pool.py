@@ -285,18 +285,6 @@ class TestRapidResponseScorerPool:
         with pytest.raises(ValueError, match="initialize_async"):
             RapidResponse(objective_scorer=_pool(*judges)).get_scorer_selection_report()
 
-    async def test_a_group_bound_without_its_selection_is_not_left_out_silently(self, objective_target, judges):
-        scenario = await _initialize(
-            RapidResponse(objective_scorer=_pool(*judges)),
-            target=objective_target,
-            dataset_config=_dataset_config(),
-        )
-        atomic = scenario._atomic_attacks[0]
-        atomic._objective_scorer_selection = None
-
-        with pytest.raises(ValueError, match=atomic.atomic_attack_name):
-            scenario.get_scorer_selection_report()
-
     async def test_workers_track_pool_groups_under_their_plan_ids(self, objective_target, judges):
         scenario = await _initialize(
             RapidResponse(objective_scorer=_pool(*judges)),

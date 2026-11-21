@@ -469,6 +469,7 @@ async def output_conversation_async(
 async def output_scorer_selection_report_async(
     report: ScorerSelectionReport,
     *,
+    format: OutputFormat = "pretty",  # noqa: A002
     sink: Sink | None = None,
 ) -> None:
     """
@@ -476,8 +477,15 @@ async def output_scorer_selection_report_async(
 
     Args:
         report (ScorerSelectionReport): The report, from ``Scenario.get_scorer_selection_report()``.
+        format (OutputFormat): Output format. Only "pretty" is supported, so it is the default.
         sink (Sink | None): Output sink. Defaults to StdoutSink.
+
+    Raises:
+        ValueError: If ``format`` is not "pretty".
     """
+    if format != "pretty":
+        raise ValueError(f"Unsupported format for scorer selection reports: {format!r}. Only 'pretty' is available.")
+
     printer = PrettyScorerSelectionReportPrinter(sink=sink or get_default_sink(StdoutSink))
     await printer.write_async(report)
 
