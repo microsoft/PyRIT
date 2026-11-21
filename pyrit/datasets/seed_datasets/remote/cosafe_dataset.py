@@ -89,6 +89,8 @@ class _CoSafeDataset(_RemoteDatasetLoader):
     offensive content.
     """
 
+    source_url = _DATASET_URL
+
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     harm_categories: list[str] = [category.value for category in CoSafeCategory]
     size: str = "large"
