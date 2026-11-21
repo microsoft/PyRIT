@@ -465,6 +465,8 @@ export interface ScorerInstance {
   evaluation_identifier?: ComponentIdentifier | null
   metrics?: ScorerEvaluationMetrics | null
   chat_scoring_disabled_reason?: string | null
+  /** Saved, from the server's configuration, or Temporary. */
+  origin?: RegistryEntryOrigin | null
 }
 
 export type ScorerEvaluationMetrics = Record<string, number | string | null | undefined>
@@ -515,13 +517,13 @@ export interface TargetIdentifier {
   [key: string]: unknown
 }
 
-/** Where a registered target comes from, and so whether it is still there after a restart. */
-export type TargetOrigin = 'saved' | 'configuration' | 'temporary'
+/** Where a registered target, converter, or scorer comes from, and so whether it is still there after a restart. */
+export type RegistryEntryOrigin = 'saved' | 'configuration' | 'temporary'
 
 export interface TargetInstance {
   target_registry_name: string
   /** Saved, from the server's configuration, or Temporary. Absent for inner targets. */
-  origin?: TargetOrigin | null
+  origin?: RegistryEntryOrigin | null
   binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
@@ -638,6 +640,8 @@ export interface ConverterInstance {
   identifier: ConverterIdentifier
   is_llm_based?: boolean
   description?: string | null
+  /** Saved, from the server's configuration, or Temporary. */
+  origin?: RegistryEntryOrigin | null
 }
 
 export interface ConverterListResponse {
@@ -650,9 +654,12 @@ export type CreateConverterRequest = {
 } & ({
   params?: Record<string, unknown>
   source?: never
+  /** Save the converter so it comes back after a restart; a copy made with `source` can't be saved yet. */
+  persist?: boolean
 } | {
   source: SourceInstanceSpec
   params?: never
+  persist?: never
 })
 
 export interface SourceInstanceSpec {
@@ -693,6 +700,8 @@ export interface TechniqueInstance {
   identifier: ComponentIdentifier
   /** Supplied factory creation inputs, with live component credentials omitted. */
   creation_statement: string
+  /** Whether the technique comes back after a restart. */
+  origin?: RegistryEntryOrigin | null
 }
 
 export interface TechniqueTypeEntry {
@@ -714,6 +723,8 @@ export interface TechniqueTypeResponse {
 
 export interface CreateTechniqueRequest {
   name: string
+  /** Save the technique so it comes back after the backend restarts or is reinitialized. */
+  persist?: boolean
   description?: string
   tags: string[]
   type: string
@@ -816,6 +827,8 @@ export interface ConverterTypeEntry {
   parameters: Parameter[]
   is_llm_based: boolean
   description?: string | null
+  /** Why a converter of this type can't be saved, or null when it can be. */
+  not_saveable_reason?: string | null
 }
 
 export interface ConverterTypeListResponse {
@@ -2606,6 +2619,18 @@ export type RegistryRecipeKind = 'targets' | 'converters' | 'scorers' | 'techniq
 export interface SavedEntryRef {
   kind: RegistryRecipeKind
   name: string
+}
+
+/** A saved entry's file, as GET /api/saved-entries/{kind}/{name} describes it. */
+export interface SavedEntry {
+  kind: RegistryRecipeKind
+  name: string
+  /** The file's version, sent back when deleting it; null when the file can't be read. */
+  version: string | null
+  /** Why the file can't be used, when it can't be read or isn't a valid entry. */
+  problem: string | null
+  /** Whether the person asking may change or delete it, which takes an administrator. */
+  can_change: boolean
 }
 
 /** A saved entry, or a whole folder of them when `name` is null, that couldn't be restored. */

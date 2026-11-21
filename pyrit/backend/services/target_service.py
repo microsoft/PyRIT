@@ -41,6 +41,7 @@ from pyrit.backend.models.targets import (
     UnregisteredTarget,
 )
 from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
+from pyrit.backend.services.saved_entries import save_then_register_locked_async
 from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
 from pyrit.models import Parameter, PromptDataType, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import (
@@ -66,6 +67,7 @@ from pyrit.registry import (
     NotSaveableError,
     RegistryEntry,
     SavedEntryConflictError,
+    SavedEntryReplacement,
     TargetRegistry,
     allows_credential_updates,
     creator_metadata,
@@ -74,7 +76,6 @@ from pyrit.registry import (
     is_private_entry,
     prepare_saved_params_async,
     record_private_references,
-    save_then_register_async,
 )
 from pyrit.registry.instance_registry import (
     PRIVATE_METADATA_KEY,
@@ -567,6 +568,7 @@ class TargetService:
         is_admin: bool = False,
         owner: SavedEntryOwner | None = None,
         recipes_source: str | None = None,
+        replacing: SavedEntryReplacement | None = None,
     ) -> TargetInstance | UnregisteredTarget:
         """
         Create a new target instance from API request.
@@ -602,6 +604,7 @@ class TargetService:
                 authenticates with this server's stored credentials.
             owner: The signed-in user, recorded on a saved target, or None when sign-in is off.
             recipes_source: Where saved entries are stored, or None for the default folder.
+            replacing: The saved target an edit rebuilds, whose recipe is overwritten instead of created, or None.
 
         Returns:
             TargetInstance with the new target's details.
@@ -686,7 +689,7 @@ class TargetService:
                 private_references=private_references,
             )
             if request.persist:
-                return await self._save_and_register_async(
+                target = await self._save_and_register_async(
                     name=target_registry_name,
                     type_name=request.type,
                     target_cls=target_cls,
@@ -696,20 +699,25 @@ class TargetService:
                     owner=owner,
                     recipes_source=recipes_source,
                     creator=creator,
+                    replacing=replacing,
                 )
-            allowed = self._credential_updates_allowed(
-                requested=request.allow_credential_updates,
-                target=target_obj,
-                private=bool(creator.get(PRIVATE_METADATA_KEY)),
-            )
-            metadata = {**creator, **credential_update_metadata(allowed=allowed)}
-            entry = RegistryEntry(name=target_registry_name, instance=target_obj, metadata=metadata)
-            target = self._build_instance_from_entry(entry, origin=RegistryEntryOrigin.TEMPORARY)
-            self._registry.instances.register(target_obj, name=target_registry_name, metadata=entry.metadata)
-            return target
+            else:
+                allowed = self._credential_updates_allowed(
+                    requested=request.allow_credential_updates,
+                    target=target_obj,
+                    private=bool(creator.get(PRIVATE_METADATA_KEY)),
+                )
+                metadata = {**creator, **credential_update_metadata(allowed=allowed)}
+                entry = RegistryEntry(name=target_registry_name, instance=target_obj, metadata=metadata)
+                target = self._build_instance_from_entry(entry, origin=RegistryEntryOrigin.TEMPORARY)
+                self._registry.instances.register(target_obj, name=target_registry_name, metadata=entry.metadata)
         except Exception:
             await release_component_async(target_obj)
             raise
+        if replacing is not None and not replacing.running:
+            # An edit of an entry that isn't running only rewrote its file, so nothing holds what was built to check it.
+            await release_component_async(target_obj)
+        return target
 
     async def check_saveability_async(
         self,
@@ -960,6 +968,7 @@ class TargetService:
         owner: SavedEntryOwner | None,
         recipes_source: str | None,
         creator: Mapping[str, Any],
+        replacing: SavedEntryReplacement | None = None,
     ) -> TargetInstance:
         """
         Save the target's recipe through the registry library, then return the saved target.
@@ -979,21 +988,21 @@ class TargetService:
             RegistryEntry(name=name, instance=target_obj, metadata=dict(creator)), origin=RegistryEntryOrigin.SAVED
         )
         auth_parameters = target_cls.get_auth_mode_parameters(auth_mode=auth_mode)
-        recipe = ComponentRecipe(
-            class_module=target_cls.__module__,
-            class_name=type_name,
-            auth_mode=auth_mode,
-            params={key: value for key, value in params.items() if key not in auth_parameters},
-            owner=owner,
-        )
-        await save_then_register_async(
+        await save_then_register_locked_async(
             kind=RegistryRecipeKind.TARGETS,
             name=name,
-            recipe=recipe,
+            recipe=ComponentRecipe(
+                class_module=target_cls.__module__,
+                class_name=type_name,
+                auth_mode=auth_mode,
+                params={key: value for key, value in params.items() if key not in auth_parameters},
+                owner=owner,
+            ),
             register=lambda metadata: self._registry.instances.register(
                 target_obj, name=name, metadata={**creator, **metadata}
             ),
             source=recipes_source,
+            replacing=replacing,
         )
         return target
 

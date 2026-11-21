@@ -36,6 +36,8 @@ import { toApiError } from '@/services/errors'
 import type { ConverterInstance } from '@/types'
 
 import CreateConverterDialog from './CreateConverterDialog'
+import DeleteSavedEntryButton from './DeleteSavedEntryButton'
+import OriginBadge from './OriginBadge'
 import { useConverterRegistryPageStyles } from './ConverterRegistry.styles'
 import RegistryIdentityRow from './RegistryIdentityRow'
 import { useConverterRegistryStyles } from './Registry.styles'
@@ -339,7 +341,7 @@ export default function ConverterRegistry() {
           <Table className={mergeClasses(styles.table, pageStyles.table)} aria-label="Converter instances">
             <TableHeader>
               <TableRow>
-                <TableHeaderCell aria-label="Name" className={pageStyles.nameColumn}><ContextualHelpLabel term="Name">The registry name used to select this configured converter.</ContextualHelpLabel></TableHeaderCell>
+                <TableHeaderCell aria-label="Name" className={pageStyles.nameColumn}><ContextualHelpLabel term="Name">The registry name used to select this configured converter. Saved converters come back after the backend restarts or is reinitialized, converters from configuration come back because the server registers them again, and Temporary converters are gone.</ContextualHelpLabel></TableHeaderCell>
                 <TableHeaderCell aria-label="Type"><ContextualHelpLabel term="Type">The converter class that performs the transformation.</ContextualHelpLabel></TableHeaderCell>
                 <TableHeaderCell aria-label="Inputs" className={pageStyles.modalityColumn}><ContextualHelpLabel term="Inputs">Content types this converter accepts.</ContextualHelpLabel></TableHeaderCell>
                 <TableHeaderCell aria-label="Outputs" className={pageStyles.modalityColumn}><ContextualHelpLabel term="Outputs">Content types this converter can produce.</ContextualHelpLabel></TableHeaderCell>
@@ -350,7 +352,8 @@ export default function ConverterRegistry() {
               {visible.map((converter: ConverterInstance) => (
                 <RegistryIdentityRow key={converter.converter_id} name={converter.converter_id}
                   identity={converter.identifier} columns={5} expanded={expanded.has(converter.converter_id)}
-                  onToggle={() => toggleDetails(converter.converter_id)}>
+                  onToggle={() => toggleDetails(converter.converter_id)}
+                  nameContent={converter.origin && <OriginBadge origin={converter.origin} />}>
                   <TableCell>
                     <div className={pageStyles.type}>
                     <Text>{converter.identifier.class_name}</Text>
@@ -364,15 +367,29 @@ export default function ConverterRegistry() {
                     <DataTypeBadges dataTypes={converter.identifier.supported_output_types} />
                   </TableCell>
                   <TableCell className={pageStyles.actionCell}>
-                    <Button
-                      {...restoreFocusTarget}
-                      className={pageStyles.removeButton}
-                      appearance="subtle"
-                      size="small"
-                      icon={<DismissRegular className={pageStyles.dismissIcon} />}
-                      aria-label={`Remove ${converter.converter_id}`}
-                      onClick={(event) => openRemoveDialog(event, converter)}
-                    />
+                    {converter.origin === 'saved' ? (
+                      <DeleteSavedEntryButton
+                        kind="converters"
+                        name={converter.converter_id}
+                        iconOnly
+                        className={pageStyles.removeButton}
+                        onDeleted={() => {
+                          // The row is about to unmount, so focus goes to New Converter, as after a removal.
+                          restoreFocus(newConverterRef.current)
+                          void loadConverters(true)
+                        }}
+                      />
+                    ) : (
+                      <Button
+                        {...restoreFocusTarget}
+                        className={pageStyles.removeButton}
+                        appearance="subtle"
+                        size="small"
+                        icon={<DismissRegular className={pageStyles.dismissIcon} />}
+                        aria-label={`Remove ${converter.converter_id}`}
+                        onClick={(event) => openRemoveDialog(event, converter)}
+                      />
+                    )}
                   </TableCell>
                 </RegistryIdentityRow>
               ))}

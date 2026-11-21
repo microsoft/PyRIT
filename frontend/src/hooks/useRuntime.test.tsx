@@ -69,8 +69,8 @@ describe('RuntimeBanner', () => {
 
     expect(await screen.findByText(new RegExp(
       "Some saved entries couldn't be restored, so new runs and sends are unavailable\\. An administrator has to "
-      + 'view the failures in Configuration, fix or delete the files in registry_recipes_source, then reinitialize '
-      + 'PyRIT or restart the backend\\. Drafts are preserved\\.',
+      + 'delete them in Configuration or fix their files in registry_recipes_source, then reinitialize PyRIT or '
+      + 'restart the backend\\. Drafts are preserved\\.',
     ))).toBeInTheDocument()
     expect(screen.queryByRole('region')).not.toBeInTheDocument()
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
@@ -102,6 +102,22 @@ describe('RuntimeBanner', () => {
     renderBanner()
 
     await waitFor(() => expect(screen.queryByText(/PyRIT runtime/)).not.toBeInTheDocument())
+    expect(screen.queryByText(/couldn't be restored/)).not.toBeInTheDocument()
+  })
+
+  it('should say to reinitialize or restart once every entry that failed to restore is deleted', async () => {
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
+      ready: false,
+      state: 'failed',
+      generation: 'first',
+      restore_failures: 0,
+    })
+
+    renderBanner()
+
+    expect(await screen.findByText(
+      /PyRIT isn't ready.*An administrator can reinitialize PyRIT or restart the backend\./,
+    )).toBeInTheDocument()
     expect(screen.queryByText(/couldn't be restored/)).not.toBeInTheDocument()
   })
 })
