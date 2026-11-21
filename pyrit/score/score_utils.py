@@ -3,11 +3,12 @@
 
 
 from pyrit.common.utils import is_numeric_value
-from pyrit.models import Score, UndeterminedScoreError
+from pyrit.models import FloatFeedback, Score, UndeterminedScoreError
 
 # Key used by FloatScaleThresholdScorer to store the original float value
-# in score_metadata when converting float_scale to true_false
-ORIGINAL_FLOAT_VALUE_KEY = "original_float_value"
+# in score_metadata when converting float_scale to true_false. ``FloatFeedback``
+# owns the key and its readers and writers; this name is kept for existing imports.
+ORIGINAL_FLOAT_VALUE_KEY = FloatFeedback.METADATA_KEY
 
 
 def score_is_true(score: Score | None) -> bool:
@@ -110,10 +111,9 @@ def normalize_score_to_float(score: Score | None) -> float:
 
     # Check for original float value in metadata (from FloatScaleThresholdScorer)
     # This preserves granularity when using threshold scorers
-    if score.score_metadata:
-        original_float = score.score_metadata.get(ORIGINAL_FLOAT_VALUE_KEY)
-        if original_float is not None:
-            return float(original_float)
+    feedback = FloatFeedback.read(score)
+    if feedback is not None:
+        return feedback.value
 
     # Fall back to the score value itself
     try:

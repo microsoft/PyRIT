@@ -75,7 +75,8 @@ async function editLimit(user: ReturnType<typeof userEvent.setup>, label: string
 async function addDataset(user: ReturnType<typeof userEvent.setup>, name: string): Promise<void> {
   await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
   const dataset = DATASETS.find((item) => item.name === name)
-  await user.click(screen.getByRole('option', { name: `${name} (${dataset?.origins?.join(', ') || 'unknown'})`, exact: true }))
+  const origin = dataset?.origins?.length ? 'Local files' : 'Unknown'
+  await user.click(screen.getByRole('option', { name: `${name} (${origin})`, exact: true }))
 }
 
 describe('ScenarioDatasetTable', () => {
@@ -137,6 +138,7 @@ describe('ScenarioDatasetTable', () => {
   it('keeps invalid global drafts blocking when datasets reset', async () => {
     const user = userEvent.setup()
     render(<Harness />)
+    await addDataset(user, 'remote')
     await editLimit(user, 'Maximum objectives', '0')
     await user.keyboard('{Escape}')
     await user.click(screen.getByRole('button', { name: 'Reset datasets' }))
@@ -172,7 +174,7 @@ describe('ScenarioDatasetTable', () => {
     render(<Harness options={{ ...OPTIONS, mode: 'subset', allowed_names: ['stored', 'remote'], max_selected: 1 }} onChange={onChange} />)
     await user.click(screen.getByRole('combobox', { name: 'Choose dataset' }))
     expect(screen.queryByRole('option', { name: 'other', exact: true })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('option', { name: 'remote (unknown)', exact: true }))
+    await user.click(screen.getByRole('option', { name: 'remote (Unknown)', exact: true }))
     expect(onChange.mock.calls.at(-1)?.[0]).toEqual({ sources: [{ name: 'remote' }] })
   })
 
@@ -213,12 +215,23 @@ describe('ScenarioDatasetTable', () => {
     expect(onChange.mock.calls.at(-1)?.[0]).toEqual({})
   })
 
-  it('links to the dataset browser next to reset and for required sources', () => {
+  it('offers reset only for edited sources or limits', async () => {
+    const user = userEvent.setup()
     const view = render(<Harness />)
-    expect(screen.getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+    expect(screen.queryByRole('button', { name: 'Reset datasets' })).not.toBeInTheDocument()
+    await addDataset(user, 'remote')
     expect(screen.getByRole('button', { name: 'Reset datasets' })).toBeInTheDocument()
-    view.rerender(<Harness options={{ ...OPTIONS, mode: 'fixed' }} />)
-    expect(screen.getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+    view.unmount()
+
+    render(<Harness initialRequest={{ max_per_dataset: 1 }} />)
+    expect(screen.getByRole('button', { name: 'Reset datasets' })).toBeInTheDocument()
+  })
+
+  it('does not offer reset for a saved request that leaves sources and per-dataset limits unset', () => {
+    // Saved presets and runs send every dataset field, with null or 'default' for the unset ones.
+    render(<Harness initialRequest={{ sources: null, max_per_dataset: 'default', max_total: 5, fetch: null, filters: null }} />)
+    expect(screen.getByText('stored (Local files)')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reset datasets' })).not.toBeInTheDocument()
   })
 
   it('blocks an empty selection instead of sending an empty list that means include all', async () => {
@@ -269,11 +282,37 @@ describe('ScenarioDatasetTable', () => {
     expect(within(row).queryByText('1 of 8', { exact: true })).not.toBeInTheDocument()
   })
 
-  it('does not expose loading or source selection for an inline-only scenario', () => {
-    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} />)
+  it('keeps an inline-only scenario from choosing named datasets while its limits stay editable', () => {
+    // The backend reports inline seeds as fixed sources and keeps the other overrides.
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} options={{ ...OPTIONS, mode: 'fixed' }} />)
     expect(screen.getByText('This scenario has no named datasets.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'Add dataset' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toBeEnabled()
+  })
+
+  it('lets a scenario without default datasets choose its first dataset', async () => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} onChange={onChange} />)
+
+    expect(screen.queryByText('This scenario has no named datasets.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: 'Selected datasets' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reset datasets' })).not.toBeInTheDocument()
+    await addDataset(user, 'stored')
+
+    expect(onChange).toHaveBeenLastCalledWith({ sources: [{ name: 'stored' }] })
+    const table = screen.getByRole('table', { name: 'Selected datasets' })
+    expect(within(table).getByText('stored (Local files)')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove stored' })).not.toBeInTheDocument()
+  })
+
+  it('offers only permitted datasets when choosing the first one for a subset scenario', async () => {
+    const user = userEvent.setup()
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} options={{ ...OPTIONS, mode: 'subset', allowed_names: ['other'] }} />)
+
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['other (Local files)'])
   })
 
   it('does not pretend a global policy can replace protected source-specific loading rules', () => {
@@ -330,10 +369,10 @@ describe('ScenarioDatasetTable', () => {
   it('shows recorded origins in both rows and selection without changing source names', async () => {
     const user = userEvent.setup()
     render(<Harness />)
-    expect(screen.getByText('stored (local)')).toBeInTheDocument()
+    expect(screen.getByText('stored (Local files)')).toBeInTheDocument()
     await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
-    expect(screen.getByRole('option', { name: 'other (local)' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'remote (unknown)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'other (Local files)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'remote (Unknown)' })).toBeInTheDocument()
   })
 
   it('supports keyboard selection and terse policy descriptions', async () => {
