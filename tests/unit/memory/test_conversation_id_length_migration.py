@@ -27,16 +27,33 @@ def test_every_table_stores_the_longest_conversation_id(entry_type: type) -> Non
     assert entry_type.__table__.c.conversation_id.type.length == CONVERSATION_ID_MAX_LENGTH
 
 
-def test_sql_server_migration_rebuilds_the_conversation_key_and_widens_both_tables() -> None:
+def _sql_server_ddl(step: str) -> str:
     output = io.StringIO()
     context = MigrationContext.configure(dialect_name="mssql", opts={"as_sql": True, "output_buffer": output})
     with Operations.context(context):
-        importlib.import_module(_MIGRATION).upgrade()
-    ddl = output.getvalue()
+        getattr(importlib.import_module(_MIGRATION), step)()
+    return output.getvalue()
+
+
+def test_sql_server_migration_rebuilds_the_conversation_key_and_widens_both_tables() -> None:
+    ddl = _sql_server_ddl("upgrade")
     assert "DROP CONSTRAINT ' + QUOTENAME(@pk)" in ddl
     assert "ALTER TABLE [Conversations] ALTER COLUMN [conversation_id] VARCHAR(128) NOT NULL" in ddl
     assert "PRIMARY KEY '\n    + @pk_type" in ddl
     assert "ALTER TABLE [AttackResultEntries] ALTER COLUMN [conversation_id] VARCHAR(128) NOT NULL" in ddl
+
+
+def test_sql_server_downgrade_refuses_long_ids_then_restores_both_columns_and_indexes() -> None:
+    ddl = _sql_server_ddl("downgrade")
+    guard = ddl.index("DATALENGTH([conversation_id]) > 36")
+    narrowed_key = ddl.index("ALTER TABLE [Conversations] ALTER COLUMN [conversation_id] VARCHAR(36) NOT NULL")
+    dropped = ddl.index("DROP INDEX [ix_AttackResultEntries_conversation_timestamp_id]")
+    narrowed = ddl.index("ALTER TABLE [AttackResultEntries] ALTER COLUMN conversation_id VARCHAR(36) NOT NULL")
+    recreated = ddl.index(
+        "CREATE INDEX [ix_AttackResultEntries_operation_timestamp_id] ON [AttackResultEntries] "
+        "(operation, timestamp, id) INCLUDE (conversation_id)"
+    )
+    assert guard < narrowed_key < dropped < narrowed < recreated
 
 
 async def test_memory_accepts_the_longest_conversation_id(sqlite_instance: SQLiteMemory) -> None:
@@ -63,6 +80,35 @@ async def test_memory_rejects_a_conversation_id_no_table_can_store(sqlite_instan
         AttackResultEntry(
             entry=AttackResult(conversation_id=conversation_id, objective="o", outcome=AttackOutcome.UNDETERMINED)
         )
+
+
+async def test_memory_rejects_updates_to_a_conversation_id_no_table_can_store(sqlite_instance: SQLiteMemory) -> None:
+    too_long = "c" * (CONVERSATION_ID_MAX_LENGTH + 1)
+    await sqlite_instance.add_message_pieces_to_memory_async(
+        message_pieces=[MessagePiece(conversation_id="kept", role="user", original_value="hi")]
+    )
+    result = AttackResult(conversation_id="kept", objective="o", outcome=AttackOutcome.UNDETERMINED)
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[result])
+
+    with pytest.raises(ValueError, match="conversation_id is 129 characters"):
+        await sqlite_instance.update_prompt_entries_by_conversation_id_async(
+            conversation_id="kept", update_fields={"conversation_id": too_long}
+        )
+    with pytest.raises(ValueError, match="conversation_id is 129 characters"):
+        await sqlite_instance.update_attack_result_async(
+            conversation_id="kept", update_fields={"conversation_id": too_long}
+        )
+    with pytest.raises(ValueError, match="conversation_id is 129 characters"):
+        await sqlite_instance.update_attack_result_conditionally_async(
+            attack_result_id=result.attack_result_id,
+            expected_fields={},
+            update_fields={"conversation_id": too_long},
+        )
+
+    messages = await sqlite_instance.get_conversation_messages_async(conversation_id="kept")
+    results = await sqlite_instance.get_attack_results_async(attack_result_ids=[result.attack_result_id])
+    assert [message.message_pieces[0].original_value for message in messages] == ["hi"]
+    assert [stored.conversation_id for stored in results] == ["kept"]
 
 
 def _conversation_id_lengths(connection: sa.Connection) -> dict[str, int]:

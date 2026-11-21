@@ -124,7 +124,6 @@ from pyrit.memory.memory_models import (
     SeedEntry,
     SeedIdentifierEntry,
     TargetIdentifierEntry,
-    validate_conversation_id_length,
 )
 from pyrit.memory.memory_session import MemorySession, _begin_sqlite_write, _lock_observations
 from pyrit.memory.storage import (
@@ -2315,8 +2314,8 @@ class MemoryInterface(abc.ABC):
                 (``not_in_memory`` pieces should already be filtered out).
 
         Raises:
-            ValueError: If any piece has a ``None``, empty, whitespace-only, or
-                too-long ``conversation_id``.
+            ValueError: If any piece has a ``None``, empty, or whitespace-only
+                ``conversation_id``.
         """
         for piece in message_pieces:
             if piece.conversation_id is None or not piece.conversation_id.strip():
@@ -2324,7 +2323,6 @@ class MemoryInterface(abc.ABC):
                     f"MessagePiece {piece.id} has no conversation_id. A conversation_id must be set by "
                     "the caller before a piece is persisted; the memory layer does not generate one."
                 )
-            validate_conversation_id_length(piece.conversation_id)
 
     def _insert_conversation(self, *, conversation: Conversation) -> None:
         """

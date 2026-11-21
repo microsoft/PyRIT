@@ -30,9 +30,8 @@ depends_on: str | Sequence[str] | None = None
 _TABLES = ("Conversations", "AttackResultEntries")
 
 # SQL Server cannot alter a primary-key column in place, so the key is dropped and
-# re-created with its original name and clustering. Widening a VARCHAR that only
-# participates in ordinary indexes is allowed in place.
-_WIDEN_CONVERSATION_IDS_SQL = """
+# re-created with its original name and clustering.
+_RESIZE_CONVERSATION_KEY_SQL = """
 DECLARE @pk sysname, @pk_type nvarchar(60), @sql nvarchar(max);
 SELECT @pk = key_constraint.name, @pk_type = idx.type_desc
 FROM sys.key_constraints AS key_constraint
@@ -42,33 +41,59 @@ WHERE key_constraint.parent_object_id = OBJECT_ID(N'Conversations') AND key_cons
 IF @pk IS NULL THROW 50000, 'Conversations primary key is missing.', 1;
 SET @sql = N'ALTER TABLE [Conversations] DROP CONSTRAINT ' + QUOTENAME(@pk);
 EXEC sp_executesql @sql;
-ALTER TABLE [Conversations] ALTER COLUMN [conversation_id] VARCHAR(128) NOT NULL;
+ALTER TABLE [Conversations] ALTER COLUMN [conversation_id] VARCHAR({length}) NOT NULL;
 SET @sql = N'ALTER TABLE [Conversations] ADD CONSTRAINT ' + QUOTENAME(@pk) + N' PRIMARY KEY '
     + @pk_type + N' ([conversation_id])';
 EXEC sp_executesql @sql;
-ALTER TABLE [AttackResultEntries] ALTER COLUMN [conversation_id] VARCHAR(128) NOT NULL;
 """
+
+_REJECT_LONG_CONVERSATION_IDS_SQL = """
+IF EXISTS (SELECT 1 FROM [Conversations] WHERE DATALENGTH([conversation_id]) > 36)
+    OR EXISTS (SELECT 1 FROM [AttackResultEntries] WHERE DATALENGTH([conversation_id]) > 36)
+    THROW 50000, 'Conversation ids longer than 36 characters are stored; earlier releases cannot hold them.', 1;
+"""
+
+# SQL Server widens an indexed VARCHAR in place but cannot narrow one, so the
+# downgrade re-creates the AttackResultEntries indexes that cover conversation_id.
+_ATTACK_RESULT_INDEXES = (
+    ("ix_AttackResultEntries_conversation_timestamp_id", ["conversation_id", "timestamp", "id"], []),
+    ("ix_AttackResultEntries_operator_timestamp_id", ["operator", "timestamp", "id"], ["conversation_id"]),
+    ("ix_AttackResultEntries_operation_timestamp_id", ["operation", "timestamp", "id"], ["conversation_id"]),
+)
 
 
 def upgrade() -> None:
     """Widen conversation ids to match ``PromptMemoryEntries``."""
     if op.get_bind().dialect.name == "mssql":
-        op.execute(sa.text(_WIDEN_CONVERSATION_IDS_SQL))
+        op.execute(sa.text(_RESIZE_CONVERSATION_KEY_SQL.format(length=128)))
+        op.execute(sa.text("ALTER TABLE [AttackResultEntries] ALTER COLUMN [conversation_id] VARCHAR(128) NOT NULL"))
         return
     _set_sqlite_declared_length(old_length=36, new_length=128)
 
 
 def downgrade() -> None:
     """
-    Keep SQL Server's wider columns and restore SQLite's declared types.
+    Restore the 36-character columns earlier releases' schema checks expect.
 
-    Earlier revisions read and write ids of up to 36 characters in a 128-character
-    SQL Server column unchanged, while narrowing would truncate or reject ids stored
-    since the upgrade. SQLite never enforced the length, so its declaration is
-    restored without touching stored ids.
+    SQL Server refuses when longer ids are stored, since narrowing would lose them.
+    SQLite never enforced the length, so only its declaration is restored.
     """
     if op.get_bind().dialect.name == "sqlite":
         _set_sqlite_declared_length(old_length=128, new_length=36)
+        return
+    op.execute(sa.text(_REJECT_LONG_CONVERSATION_IDS_SQL))
+    op.execute(sa.text(_RESIZE_CONVERSATION_KEY_SQL.format(length=36)))
+    for name, _, _ in _ATTACK_RESULT_INDEXES:
+        op.drop_index(name, table_name="AttackResultEntries")
+    op.alter_column(
+        "AttackResultEntries",
+        "conversation_id",
+        existing_type=sa.String(length=128),
+        type_=sa.String(length=36),
+        existing_nullable=False,
+    )
+    for name, columns, include in _ATTACK_RESULT_INDEXES:
+        op.create_index(name, "AttackResultEntries", columns, mssql_include=include)
 
 
 def _set_sqlite_declared_length(*, old_length: int, new_length: int) -> None:

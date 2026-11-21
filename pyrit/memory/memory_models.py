@@ -34,6 +34,7 @@ from sqlalchemy.orm import (
     Mapped,
     mapped_column,
     relationship,
+    validates,
 )
 from sqlalchemy.types import Uuid
 
@@ -101,27 +102,30 @@ LEGACY_PYRIT_VERSION = "<0.10.0"
 
 #: Longest conversation_id any table stores. Conversation ids are free-form
 #: caller-supplied strings, not necessarily UUIDs, so every table that stores one
-#: uses this bound. SQL Server enforces it; SQLite does not, so
-#: ``validate_conversation_id_length`` checks it before any write.
+#: uses this bound. SQL Server enforces it; SQLite does not, so each entry's
+#: ``conversation_id`` validator checks it on every assignment, including updates.
 CONVERSATION_ID_MAX_LENGTH = 128
 _LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY = "__pyrit_legacy_unsupported_identifier__"
 
 
-def validate_conversation_id_length(conversation_id: str) -> None:
+def _bounded_conversation_id(  # pyrit-keyword-only-exempt SQLAlchemy @validates callback
+    _entry: object, _key: str, conversation_id: str | None
+) -> str | None:
     """
     Reject a conversation_id that no database column can store.
 
-    Args:
-        conversation_id (str): The id about to be persisted.
+    Returns:
+        str | None: The unchanged id.
 
     Raises:
         ValueError: If the id is longer than ``CONVERSATION_ID_MAX_LENGTH``.
     """
-    if len(conversation_id) > CONVERSATION_ID_MAX_LENGTH:
+    if conversation_id is not None and len(conversation_id) > CONVERSATION_ID_MAX_LENGTH:
         raise ValueError(
             f"conversation_id is {len(conversation_id)} characters; the most memory stores is "
             f"{CONVERSATION_ID_MAX_LENGTH}: {conversation_id[:CONVERSATION_ID_MAX_LENGTH]}..."
         )
+    return conversation_id
 
 
 def _load_identifier(
@@ -662,6 +666,7 @@ class PromptMemoryEntry(Base):
     role: Mapped[ChatMessageRole] = mapped_column(String, nullable=False)
     # Bounded so SQL Server accepts it as an index key.
     conversation_id = mapped_column(String(CONVERSATION_ID_MAX_LENGTH), nullable=False)
+    _validate_conversation_id = validates("conversation_id")(_bounded_conversation_id)
     sequence = mapped_column(INTEGER, nullable=False)
     timestamp = mapped_column(UTCDateTime, nullable=False)
     prompt_metadata: Mapped[dict[str, str | int]] = mapped_column(JSON)
@@ -1412,6 +1417,7 @@ class ConversationEntry(Base):
     __table_args__ = {"extend_existing": True}
 
     conversation_id = mapped_column(String(CONVERSATION_ID_MAX_LENGTH), primary_key=True, nullable=False)
+    _validate_conversation_id = validates("conversation_id")(_bounded_conversation_id)
     target_identifier: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     #: Foreign key to the content-addressed ``TargetIdentifiers`` row. Nullable:
     #: a conversation may be registered without a known target.
@@ -1439,7 +1445,6 @@ class ConversationEntry(Base):
         Args:
             conversation (Conversation): The conversation metadata to persist.
         """
-        validate_conversation_id_length(conversation.conversation_id)
         self.conversation_id = conversation.conversation_id
         self.target_identifier = conversation.target_identifier.model_dump() if conversation.target_identifier else None
         self.target_identifier_hash = conversation.target_identifier.hash if conversation.target_identifier else None
@@ -2317,6 +2322,7 @@ class AttackResultEntry(Base):
     )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
     conversation_id = mapped_column(String(CONVERSATION_ID_MAX_LENGTH), nullable=False)
+    _validate_conversation_id = validates("conversation_id")(_bounded_conversation_id)
     objective = mapped_column(Unicode, nullable=False)
     atomic_attack_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
@@ -2412,7 +2418,6 @@ class AttackResultEntry(Base):
         Raises:
             ValueError: If mutated legacy attribution labels are invalid or conflict.
         """
-        validate_conversation_id_length(entry.conversation_id)
         self.id = uuid.UUID(entry.attack_result_id)
         self.conversation_id = entry.conversation_id
         self.objective = entry.objective
