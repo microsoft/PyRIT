@@ -1,6 +1,6 @@
 # Frequently Asked Questions
 
-Short answers to questions that come up often, each with a link to the page that covers the topic in depth. If your question is not here, ask on [Discord](https://discord.gg/9fMpq3tc8u) or [open an issue](https://github.com/microsoft/PyRIT/issues).
+Short answers to questions that come up often, each with a link to the page that covers the topic in depth. Use the documentation that matches your installed PyRIT version. If your question is not here, ask on [Discord](https://discord.gg/9fMpq3tc8u) or [open an issue](https://github.com/microsoft/PyRIT/issues).
 
 ## Getting Started
 
@@ -34,23 +34,47 @@ No. `await initialize_pyrit_async(memory_db_type=IN_MEMORY)` gives you an in-mem
 
 In `~/.pyrit/.env`. PyRIT finds it there automatically. Values in `~/.pyrit/.env.local` override it, which is useful for local changes. To load files from other locations, list them under `env_files` in `~/.pyrit/.pyrit_conf`. See [Populating Secrets](./getting_started/populating_secrets.md) and [Configuration File](./getting_started/pyrit_conf.md).
 
+### Do I need all optional dependencies and credentials?
+
+No. Install the extras that the components you choose need, and configure credentials only for the services those components call. For example, `pip install "pyrit[litellm]"` and `pip install "pyrit[playwright]"` are separate extras, and Playwright also needs `playwright install` for the browsers. Calling Hugging Face's hosted OpenAI-compatible endpoint needs no extra, but loading model weights locally needs the `huggingface` extra.
+
+A workflow may need credentials for helper models, such as the adversarial model and the scorer, as well as for the system you test. You do not need to fill in every entry of the example environment file. See [Install PyRIT](./getting_started/install.md) and [Populating Secrets](./getting_started/populating_secrets.md), then the guide of each component you use.
+
+### Is PyRIT free, and what can a run cost?
+
+PyRIT is open source under the [MIT license](https://github.com/microsoft/PyRIT/blob/main/LICENSE). The services it calls are not necessarily free: external APIs, hosted infrastructure, and local compute can all cost money.
+
+One objective can lead to many calls. Generating attack prompts, scoring responses, converting inputs, and retrying requests all add to the calls sent to the system you test. Start with a small run, and check the usage and billing controls of every service involved. [Request rate limits](./code/targets/9_rate_limiting.ipynb) control how often PyRIT sends requests. They are not a spending cap.
+
 ## Models and Providers
 
-### Does PyRIT only work with OpenAI and Azure OpenAI? Do I need Azure?
+### Do I need a Microsoft, Azure, or OpenAI account? Which providers can I connect to?
 
-No to both. The `OpenAI*` targets, such as `OpenAIChatTarget`, are named after the OpenAI API, not the company. Many providers serve that API, the chat completions part in particular: Anthropic, Amazon Bedrock, Google Gemini, Groq, OpenRouter, and local runners such as Ollama all do. `OpenAIChatTarget` works with any of them.
+No particular provider account is required. The accounts and credentials you need depend on the services you choose. For example, you can connect to a local Ollama endpoint without an Azure subscription or an OpenAI API key.
+
+The `OpenAI*` targets, such as `OpenAIChatTarget`, are named after the OpenAI API, not the company. Many providers serve that API, the chat completions part in particular: OpenAI, Azure OpenAI, Anthropic, Amazon Bedrock, Google Gemini, Groq, OpenRouter, Hugging Face's hosted router, and local runners such as Ollama all do. `OpenAIChatTarget` works with any of them.
 
 Set `OPENAI_CHAT_ENDPOINT`, `OPENAI_CHAT_KEY`, and `OPENAI_CHAT_MODEL` for the provider you use. For OpenAI itself, the endpoint is `https://api.openai.com/v1`. [Populating Secrets](./getting_started/populating_secrets.md) has a tab with the exact values for each provider.
 
-You do not need an Azure subscription. Some optional features use Azure services, such as Azure SQL as a memory backend or Azure AI Content Safety for scoring.
+The optional `LiteLLMChatTarget` is another route. It reaches providers such as Anthropic, AWS Bedrock, Google Vertex AI, and Cohere through LiteLLM, with each provider's own authentication. The [target API reference](./api/pyrit_prompt_target.md) lists the targets available in your version.
 
-### Can I run everything against a local model?
+These are ways to connect. They do not guarantee that every model supports the same features or request parameters. Some optional features use Azure services, such as Azure SQL as a memory backend or Azure AI Content Safety for scoring.
+
+### Can I use local models or run without cloud services?
 
 Yes. [Ollama](./getting_started/populating_secrets.md) and [LM Studio](./code/targets/1_openai_chat_target.ipynb) serve local models through an OpenAI-compatible endpoint, so `OpenAIChatTarget` works with both. `HuggingFaceChatTarget` loads a Hugging Face model directly in your Python process. See [HuggingFace Chat Target](./code/targets/use_huggingface_chat_target.ipynb).
 
-### My application is not a chat model API. Can I still test it?
+A local target alone does not make a run offline. The system you test is only one part of a workflow. The model that generates attack prompts, a model-based scorer, or a converter may each call a separate service, and datasets or model weights may need to be downloaded. Check every component you selected before you assume that nothing leaves your machine. The [Framework](./code/framework.md) overview shows how the components fit together.
 
-Yes. A target is anything you can send a prompt to. Start with [`HTTPTarget`](./code/targets/10_http_target.ipynb) if the application is a plain HTTP endpoint, or the [Playwright target](./code/targets/10_1_playwright_target.ipynb) if it only has a web UI. If neither fits, [write a custom target](./code/targets/6_custom_targets.ipynb) by subclassing `PromptTarget` and implementing `_send_prompt_to_target_async`.
+### Can I test a complete application instead of a bare model?
+
+Yes. A target is anything you can send a prompt to, so PyRIT can send prompts to your application's own interface and evaluate its responses. Which target to use depends on how the application is exposed:
+
+- [`HTTPTarget`](./code/targets/10_http_target.ipynb) for an HTTP endpoint.
+- [`WebsocketTarget`](./code/targets/websocket_target.ipynb) for a WebSocket protocol.
+- The [Playwright target](./code/targets/10_1_playwright_target.ipynb) for an application that only has a web UI.
+
+PyRIT does not discover how to operate an arbitrary application. You may need to supply authentication, request builders, response parsers, session handling, or browser interaction logic. If none of these targets fit, [write a custom target](./code/targets/6_custom_targets.ipynb) by subclassing `PromptTarget` and implementing `_send_prompt_to_target_async`.
 
 If your application returns its answer through a second request, for example by polling with a conversation ID, make both calls inside that method and return the final text. PyRIT stores and scores whatever the target returns.
 
@@ -63,6 +87,12 @@ Before you test a hosted agent or copilot, read its terms of service and find ou
 ### Can I test image, audio, or video?
 
 Yes. Targets, converters, and scorers can all be multimodal. [Prompt Targets](./code/targets/0_prompt_targets.md) lists the multimodal targets, and the [Realtime target](./code/targets/realtime_target.ipynb) holds audio conversations. Converters can turn a text prompt into another modality. See the [audio](./code/converters/2_audio_converters.ipynb), [image](./code/converters/3_image_converters.ipynb), and [video](./code/converters/4_video_converters.ipynb) converter guides.
+
+### Does every target support every attack and modality?
+
+No. Compatibility depends on both the PyRIT target and the endpoint or model behind it: the input and output types, system messages, structured output, and how conversations are handled. For example, a text-only WebSocket application does not accept audio, and an application that remembers a conversation does not necessarily let an attack edit that history.
+
+Some attacks need capabilities that others do not, so choosing a provider is not enough to establish compatibility. See [Target Capabilities](#target-capabilities) for what each capability means, and the [capability guide](./code/targets/6_1_target_capabilities.ipynb) for how to inspect and validate a target.
 
 ### Do the adversarial model and the scorer have to be the same model as the target?
 
@@ -165,9 +195,11 @@ Class and module names have changed between releases. For example, orchestrators
 
 ## Versions and Upgrading
 
-### The docs do not match what I have installed. Why?
+### Which package and documentation versions should I use? The docs do not match what I have installed.
 
-The documentation site hosts several versions. Use the version picker to choose the release that matches your installation, or `latest` if you installed from the `main` branch. You can check your version with `python -c "import pyrit; print(pyrit.__version__)"`.
+The documentation site hosts several versions. Use the version picker to choose the release that matches your installation, and use notebooks from that same release. `latest` describes development on the `main` branch, which is not necessarily the package published on PyPI. You can check your version with `python -c "import pyrit; print(pyrit.__version__)"`.
+
+Python requirements, optional dependencies, target APIs, and provider SDK compatibility can differ between releases. Do not assume that an example from `latest` works unchanged with an older installation. See "Matching Notebooks to Your Version" in [User Local Installation](./getting_started/install_local.md).
 
 ### How do I install the latest code from `main`?
 
