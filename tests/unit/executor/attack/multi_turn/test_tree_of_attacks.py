@@ -42,6 +42,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    ScorerCapabilityName,
     ScoreStatus,
     ScoringExpectation,
     SeedPrompt,
@@ -297,7 +298,7 @@ class AttackBuilder:
             class_module="pyrit.score",
         )
 
-        scoring_config = TAPAttackScoringConfig(
+        scoring_config = AttackScoringConfig(
             objective_scorer=mock_threshold_scorer,
             auxiliary_scorers=self.auxiliary_scorers,
         )
@@ -667,7 +668,7 @@ class TestTreeOfAttacksInitialization:
         assert len(attack._auxiliary_scorers) == 2
 
     def test_init_accepts_base_attack_scoring_config(self, attack_builder):
-        """Test that TAP accepts AttackScoringConfig and converts to TAPAttackScoringConfig."""
+        """TAP keeps the AttackScoringConfig it is given."""
         # Set up attack builder with default mocks
         attack_builder.with_default_mocks()
 
@@ -681,7 +682,6 @@ class TestTreeOfAttacksInitialization:
             class_module="pyrit.score",
         )
 
-        # Pass base AttackScoringConfig (not TAPAttackScoringConfig)
         base_config = AttackScoringConfig(
             objective_scorer=mock_threshold_scorer,
             use_score_as_feedback=False,
@@ -694,10 +694,8 @@ class TestTreeOfAttacksInitialization:
             attack_scoring_config=base_config,
         )
 
-        # Verify it was converted to TAPAttackScoringConfig
         result = attack.get_attack_scoring_config()
-        assert isinstance(result, TAPAttackScoringConfig)
-        assert result.threshold == 0.8
+        assert result is base_config
         assert result.use_score_as_feedback is False
 
     def test_get_objective_target_returns_correct_target(self, attack_builder):
@@ -713,12 +711,10 @@ class TestTreeOfAttacksInitialization:
         result = attack.get_attack_scoring_config()
 
         assert result is not None
-        assert isinstance(result, TAPAttackScoringConfig)
-        # The objective_scorer should be a FloatScaleThresholdScorer (or mock of one)
+        assert isinstance(result, AttackScoringConfig)
         assert result.objective_scorer is not None
+        assert result.objective_scorer.threshold == 0.75
         assert len(result.auxiliary_scorers) == 1
-        # TAPAttackScoringConfig exposes threshold property
-        assert result.threshold == 0.75
 
     async def test_tree_depth_validation_with_prepended_conversation(self, attack_builder, helpers):
         """Test that prepended conversation turns are validated against tree_depth."""
@@ -2949,15 +2945,12 @@ def test_tap_init_raises_when_objective_scorer_is_none():
         )
 
 
-def test_tap_scoring_config_threshold_raises_for_reassigned_invalid_scorer():
-    """threshold re-validates objective_scorer at access time, not just at construction.
-
-    __init__ already rejects a non-FloatScaleThresholdScorer objective_scorer, so this
-    exercises the defensive re-check by mutating the attribute after construction.
-    """
+def test_tap_scoring_config_threshold_raises_for_a_scorer_without_a_threshold():
+    """The deprecated threshold property reads only a FloatScaleThresholdScorer objective scorer."""
     mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
     mock_threshold_scorer.threshold = 0.8
-    scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
+    with pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig is deprecated"):
+        scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
 
     scoring_config.objective_scorer = MagicMock(spec=Scorer)
 
@@ -3407,14 +3400,18 @@ class TestModalityRouterIntegration:
             ]
         )
 
-    async def test_node_send_prompt_to_target_forwards_prev_image(self, node_components):
-        """Objective accepting {text, image_path} gets prev image attached on turn N."""
+    @pytest.mark.parametrize("supports_multi_turn", [True, False])
+    async def test_node_send_prompt_to_target_forwards_prev_image(self, node_components, supports_multi_turn):
+        """Objective accepting {text, image_path} gets prev image attached on turn N, also when it is single-turn."""
         # Override the router to point at an image-capable objective.
         node_components["objective_target"].configuration.capabilities.input_modalities = frozenset(
             {frozenset({"text"}), frozenset({"text", "image_path"})}
         )
         node_components["objective_target"].configuration.capabilities.output_modalities = frozenset(
             {frozenset({"image_path"})}
+        )
+        node_components["objective_target"].configuration.includes.side_effect = lambda capability: (
+            capability == CapabilityName.MULTI_TURN and supports_multi_turn
         )
         node_components["modality_router"] = _ModalityFeedbackRouter(
             adversarial_chat=node_components["adversarial_chat"],
@@ -3772,31 +3769,45 @@ class TestVerdictFirstSuccess:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestFloatFeedbackScorers:
-    def test_any_scorer_that_keeps_the_value_qualifies(self):
+    @staticmethod
+    def _build(builder, scoring_config: AttackScoringConfig) -> TreeOfAttacksWithPruningAttack:
+        return TreeOfAttacksWithPruningAttack(
+            objective_target=builder.objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=builder.adversarial_chat),
+            attack_scoring_config=scoring_config,
+        )
+
+    def test_any_scorer_that_keeps_the_value_qualifies(self, attack_builder):
         fallback = TrueFalseFallbackScorer(
             scorer=_FloatFeedbackJudge(promises=True), fallback_scorer=_FloatFeedbackJudge(promises=True)
         )
-        assert TAPAttackScoringConfig(objective_scorer=fallback).objective_scorer is fallback
+        attack = self._build(attack_builder.with_default_mocks(), AttackScoringConfig(objective_scorer=fallback))
+        assert attack.get_attack_scoring_config().objective_scorer is fallback
 
-    def test_a_scorer_that_does_not_keep_the_value_is_rejected(self):
-        with pytest.raises(ValueError, match="_FloatFeedbackJudge does not guarantee one"):
-            TAPAttackScoringConfig(objective_scorer=_FloatFeedbackJudge(promises=False))
+    def test_a_scorer_that_does_not_keep_the_value_is_rejected(self, attack_builder):
+        config = AttackScoringConfig(objective_scorer=_FloatFeedbackJudge(promises=False))
+        with pytest.raises(
+            ValueError,
+            match=r"TreeOfAttacksWithPruningAttack objective scorer: _FloatFeedbackJudge does not keep a float value",
+        ):
+            self._build(attack_builder.with_default_mocks(), config)
 
-    def test_a_base_config_is_checked_the_same_way(self, attack_builder):
-        builder = attack_builder.with_default_mocks()
-        with pytest.raises(ValueError, match="does not guarantee one"):
-            TreeOfAttacksWithPruningAttack(
-                objective_target=builder.objective_target,
-                attack_adversarial_config=AttackAdversarialConfig(target=builder.adversarial_chat),
-                attack_scoring_config=AttackScoringConfig(objective_scorer=_FloatFeedbackJudge(promises=False)),
-            )
+    def test_the_deprecated_config_is_checked_the_same_way(self, attack_builder):
+        with pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig is deprecated"):
+            config = TAPAttackScoringConfig(objective_scorer=_FloatFeedbackJudge(promises=False))
+        with pytest.raises(ValueError, match="preserves_float_scale_value"):
+            self._build(attack_builder.with_default_mocks(), config)
 
-    def test_tap_declares_its_float_feedback_requirement(self):
-        assert TreeOfAttacksWithPruningAttack.OBJECTIVE_SCORER_REQUIREMENTS.preserves_float_scale_value is True
+    def test_tap_requires_a_verdict_that_keeps_its_float_value(self):
+        assert TreeOfAttacksWithPruningAttack.OBJECTIVE_SCORER_REQUIREMENTS.required == {
+            ScorerCapabilityName.TRUE_FALSE,
+            ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE,
+        }
 
     def test_reading_the_threshold_is_deprecated(self):
-        config = TAPAttackScoringConfig(
-            objective_scorer=FloatScaleThresholdScorer(scorer=MagicMock(spec=FloatScaleScorer), threshold=0.6)
-        )
+        with pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig is deprecated"):
+            config = TAPAttackScoringConfig(
+                objective_scorer=FloatScaleThresholdScorer(scorer=MagicMock(spec=FloatScaleScorer), threshold=0.6)
+            )
         with pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig.threshold"):
             assert config.threshold == 0.6

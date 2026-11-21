@@ -202,7 +202,7 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 - Adapt messages to what the target supports with its `TargetConfiguration` and message normalizer.
 - Return what the target produced. A response can hold several pieces or tool calls, or none.
 - Return a content-filter block as a blocked response (`error="blocked"`), not an exception, so scorers can detect it.
-- If the target runs tools itself, bound its tool loop. When the target's own tool infrastructure fails (`ToolInfrastructureError`), answer every pending call and end the turn with an error response that says why (`ToolLoopStop`), instead of asking the model to fix it.
+- If the target runs tools itself, bound its tool loop with the shared `run_tool_loop_async` in `pyrit/prompt_target/common/tool_loop.py`, so a tool behaves the same on every target. When the target's own tool infrastructure fails (`ToolInfrastructureError`), answer every pending call and end the turn with an error response that says why (`ToolLoopStop`), instead of asking the model to fix it.
 - Retry only transient target errors, such as rate limits.
 - **Does not own**: what to send or what to do with the response. Converting (converters), scoring (scorers), conversation flow (attacks), and persistence (the prompt normalizer) belong elsewhere.
 

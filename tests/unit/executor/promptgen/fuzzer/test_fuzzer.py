@@ -20,7 +20,7 @@ from pyrit.executor.promptgen.fuzzer import (
     FuzzerResult,
     FuzzerShortenConverter,
 )
-from pyrit.executor.promptgen.fuzzer.fuzzer import _PromptNode
+from pyrit.executor.promptgen.fuzzer.fuzzer import _MCTSExplorer, _PromptNode
 from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.models import (
     ComponentIdentifier,
@@ -39,6 +39,43 @@ from pyrit.score import (
     ScorerPromptValidator,
     TrueFalseScorer,
 )
+
+
+def _true_false_score(piece: MessagePiece, value: str) -> Score:
+    return Score(
+        score_value=value,
+        score_value_description="",
+        score_type="true_false",
+        score_category=[],
+        score_rationale="",
+        score_metadata={},
+        message_piece_id=piece.id,
+        scorer_class_identifier=get_mock_scorer_identifier(),
+    )
+
+
+class _PerCategoryScorer(MessageFloatScaleScorer):
+    """Return one passing score per harm category, two for every response."""
+
+    def __init__(self) -> None:
+        super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, *, message_piece: MessagePiece, objective: str | None = None) -> list[Score]:
+        return [
+            Score(
+                score_value="0.9",
+                score_type="float_scale",
+                score_category=[category],
+                score_rationale="",
+                score_metadata={},
+                message_piece_id=message_piece.id,
+                scorer_class_identifier=self.get_identifier(),
+            )
+            for category in ("hate", "violence")
+        ]
 
 
 class _DeterministicBatchScorer(MessageFloatScaleScorer):
@@ -89,6 +126,7 @@ class _DeterministicBatchScorer(MessageFloatScaleScorer):
         pytest.param([], [1.0], id="skipped-first-response"),
         pytest.param([], [], id="no-scores"),
         pytest.param([1.0], [1.0], id="both-successful"),
+        pytest.param([1.0, 1.0], [0.0, 1.0], id="several-successful-scores"),
     ],
 )
 @pytest.mark.parametrize(
@@ -181,12 +219,12 @@ async def test_execute_async_preserves_score_attribution_and_query_limit_async(
     assert acquired_prompts == [first_acquired_prompt, second_acquired_prompt] * 2
     assert clock_offset == acquisition_clock_jump
     assert scorer.completed_prompts == ["second", "first"] * 2
+    # A response is one jailbreak however many of its scores pass.
     expected_conversations = [
         responses_by_prompt[prompt][turn].conversation_id
         for turn in range(2)
         for prompt, values in values_by_prompt.items()
-        for value in values
-        if value >= 0.8
+        if any(value >= 0.8 for value in values)
     ]
     assert result.jailbreak_conversation_ids == expected_conversations
     assert result.successful_templates == (["{{ prompt }}"] if expected_conversations else [])
@@ -196,7 +234,7 @@ async def test_execute_async_preserves_score_attribution_and_query_limit_async(
     stored_responses = await sqlite_instance.get_message_pieces_async(role="assistant")
     assert len(stored_responses) == max_queries
     responses_by_id = {str(piece.id): piece for piece in stored_responses}
-    successful_conversations = []
+    successful_conversations = set()
     for score in stored_scores:
         response = responses_by_id[str(score.message_piece_id)]
         prompt = response.converted_value
@@ -205,7 +243,7 @@ async def test_execute_async_preserves_score_attribution_and_query_limit_async(
         assert score.score_metadata == {"prompt": prompt}
         assert score.get_value() in values_by_prompt[prompt]
         if score.get_value() >= 0.8:
-            successful_conversations.append(response.conversation_id)
+            successful_conversations.add(response.conversation_id)
     assert sorted(successful_conversations) == sorted(result.jailbreak_conversation_ids)
 
 
@@ -523,20 +561,13 @@ class TestFuzzerGenerator:
         mock_scorer: MagicMock,
         fuzzer_context: FuzzerContext,
     ) -> None:
-        """The reward is a rate over scored queries, so it stays in [0, 1].
-
-        A scorer may return several scores for one response, so dividing the
-        flattened jailbreak count by the configured prompt count produced
-        rewards above 1 and inflated the MCTS exploitation term.
-        """
-        from unittest.mock import MagicMock as _MagicMock
-
+        """The reward is the jailbroken share of a template's responses, so it stays in [0, 1]."""
         generator = FuzzerGenerator(
             objective_target=scoring_target,
             template_converters=template_converters,
             scorer=mock_scorer,
         )
-        explorer = _MagicMock()
+        explorer = MagicMock(spec=_MCTSExplorer)
         generator._mcts_explorer = explorer
 
         generator._update_mcts_rewards(context=fuzzer_context, jailbreak_count=3, num_queries=3)
@@ -565,23 +596,15 @@ class TestFuzzerGenerator:
         second_piece = MessagePiece(role="assistant", original_value="second", conversation_id="conv-second")
         responses = [first_piece.to_message(), second_piece.to_message()]
 
-        def _score(piece: MessagePiece, value: str) -> Score:
-            return Score(
-                score_value=value,
-                score_value_description="",
-                score_type="true_false",
-                score_category=[],
-                score_rationale="",
-                score_metadata={},
-                message_piece_id=piece.id,
-                scorer_class_identifier=get_mock_scorer_identifier(),
-            )
-
         node = _PromptNode(template="template", parent=None)
 
         # A scorer can return several scores for one response, so the flattened
         # batch list does not line up with the responses by position.
-        scores = [_score(first_piece, "false"), _score(first_piece, "false"), _score(second_piece, "true")]
+        scores = [
+            _true_false_score(first_piece, "false"),
+            _true_false_score(first_piece, "false"),
+            _true_false_score(second_piece, "true"),
+        ]
         jailbreak_count = generator._process_scoring_results(
             context=fuzzer_context,
             scores=scores,
@@ -598,7 +621,7 @@ class TestFuzzerGenerator:
         fuzzer_context.total_target_query_count = 0
         jailbreak_count = generator._process_scoring_results(
             context=fuzzer_context,
-            scores=[_score(second_piece, "true")],
+            scores=[_true_false_score(second_piece, "true")],
             responses=responses,
             template_node=node,
             current_seed=node,
@@ -606,6 +629,133 @@ class TestFuzzerGenerator:
         assert jailbreak_count == 1
         assert fuzzer_context.jailbreak_conversation_ids == ["conv-second"]
         assert fuzzer_context.total_target_query_count == 2
+
+    def test_process_scoring_results_counts_each_jailbroken_response_once(
+        self,
+        scoring_target: MockPromptTarget,
+        template_converters: list[FuzzerConverter],
+        mock_scorer: MagicMock,
+        fuzzer_context: FuzzerContext,
+    ) -> None:
+        """A scorer that returns one score per harm category must not count one response several times."""
+        generator = FuzzerGenerator(
+            objective_target=scoring_target,
+            template_converters=template_converters,
+            scorer=mock_scorer,
+        )
+
+        first_piece = MessagePiece(role="assistant", original_value="first", conversation_id="conv-first")
+        second_piece = MessagePiece(role="assistant", original_value="second", conversation_id="conv-second")
+        third_piece = MessagePiece(role="assistant", original_value="third", conversation_id="conv-third")
+        responses = [first_piece.to_message(), second_piece.to_message(), third_piece.to_message()]
+
+        node = _PromptNode(template="template", parent=None)
+        scores = [
+            _true_false_score(first_piece, "true"),
+            _true_false_score(first_piece, "true"),
+            _true_false_score(second_piece, "false"),
+            _true_false_score(second_piece, "true"),
+            _true_false_score(third_piece, "false"),
+            _true_false_score(third_piece, "false"),
+        ]
+
+        jailbreak_count = generator._process_scoring_results(
+            context=fuzzer_context,
+            scores=scores,
+            responses=responses,
+            template_node=node,
+            current_seed=node,
+        )
+
+        assert jailbreak_count == 2
+        assert fuzzer_context.total_jailbreak_count == 2
+        assert fuzzer_context.jailbreak_conversation_ids == ["conv-first", "conv-second"]
+        assert fuzzer_context.total_target_query_count == 3
+
+    @pytest.mark.parametrize(
+        "verdicts",
+        [
+            # Two scores per response, for example two harm categories; only the first response passes one.
+            pytest.param({"first": ["true", "false"], "second": ["false", "false"]}, id="two-scores-per-response"),
+            # A response the scorer skipped still counts as a response the template produced.
+            pytest.param({"first": ["true"], "second": []}, id="unscored-response"),
+        ],
+    )
+    async def test_mcts_reward_is_the_jailbreak_rate_over_responses(
+        self,
+        scoring_target: MockPromptTarget,
+        template_converters: list[FuzzerConverter],
+        mock_scorer: MagicMock,
+        verdicts: dict[str, list[str]],
+    ) -> None:
+        """One of two responses jailbroken is a reward of 0.5, whatever the number of scores per response."""
+        generator = FuzzerGenerator(
+            objective_target=scoring_target,
+            template_converters=template_converters,
+            scorer=mock_scorer,
+        )
+        explorer = MagicMock(spec=_MCTSExplorer)
+        generator._mcts_explorer = explorer
+        context = FuzzerContext(prompts=["first", "second"], prompt_templates=["{{ prompt }}"], max_query_limit=100)
+
+        first_piece = MessagePiece(role="assistant", original_value="first", conversation_id="conv-first")
+        second_piece = MessagePiece(role="assistant", original_value="second", conversation_id="conv-second")
+        pieces = {"first": first_piece, "second": second_piece}
+        scores = [_true_false_score(pieces[name], value) for name, values in verdicts.items() for value in values]
+        node = _PromptNode(template="{{ prompt }}", parent=None)
+        with (
+            patch.object(generator, "_select_template_with_mcts", return_value=(node, [node])),
+            patch.object(
+                generator, "_apply_template_converter_async", new_callable=AsyncMock, return_value="{{ prompt }}"
+            ),
+            patch.object(
+                generator,
+                "_send_prompts_to_target_async",
+                new_callable=AsyncMock,
+                return_value=[first_piece.to_message(), second_piece.to_message()],
+            ),
+            patch.object(generator, "_score_responses_async", new_callable=AsyncMock, return_value=scores),
+        ):
+            await generator._execute_generation_iteration_async(context)
+
+        assert explorer.update_rewards.call_args.kwargs["reward"] == 0.5
+        assert context.total_jailbreak_count == 1
+        assert context.jailbreak_conversation_ids == ["conv-first"]
+
+    async def test_jailbreak_goal_counts_responses_not_scores(self, sqlite_instance: SQLiteMemory) -> None:
+        """A goal of two jailbreaks needs two jailbroken responses, not two passing scores on one response."""
+
+        async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            conversation_id = normalized_conversation[-1].get_piece().conversation_id
+            return [
+                MessagePiece(role="assistant", original_value="answer", conversation_id=conversation_id).to_message()
+            ]
+
+        target = MockPromptTarget()
+        converter = FuzzerShortenConverter(converter_target=target)
+        generator = FuzzerGenerator(
+            objective_target=target,
+            template_converters=[converter],
+            scorer=_PerCategoryScorer(),
+            scoring_success_threshold=0.8,
+            target_jailbreak_goal_count=2,
+        )
+        with (
+            patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=respond_async),
+            patch.object(
+                converter,
+                "convert_async",
+                new_callable=AsyncMock,
+                return_value=ConverterResult(output_text="{{ prompt }}", output_type="text"),
+            ),
+        ):
+            result = await generator.execute_async(
+                prompts=["objective"], prompt_templates=["{{ prompt }}"], max_query_limit=10
+            )
+
+        assert result.total_queries == 2
+        assert len(result.jailbreak_conversation_ids) == 2
+        assert len(set(result.jailbreak_conversation_ids)) == 2
 
     def test_is_jailbreak_float_scale_scorer(
         self, scoring_target: MockPromptTarget, template_converters: list[FuzzerConverter]

@@ -18,6 +18,7 @@ import { useNavigate, useParams } from 'react-router'
 
 import ParameterField from '@/components/Parameters/ParameterField'
 import type { ParameterFormValue } from '@/components/Parameters/parameterForm'
+import DatasetActions from '@/components/Scenarios/DatasetActions'
 import ScenarioDatasetTable from '@/components/Scenarios/ScenarioDatasetTable'
 import ScenarioTechniqueSelector from '@/components/Scenarios/ScenarioTechniqueSelector'
 import { scenarioDatasetDefaults, scenarioDatasetOptions } from '@/components/Scenarios/datasetPresentation'
@@ -507,7 +508,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                     </MessageBarBody>
                   </MessageBar>
                 )}
-                {datasetBaseline && (
+                {datasetBaseline && <>
                   <ScenarioDatasetTable
                     request={config.datasets}
                     defaults={datasetBaseline.defaults}
@@ -521,7 +522,8 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                     onChange={(datasets) => updateConfig({ datasets })}
                     onValidationChange={setDatasetError}
                   />
-                )}
+                  <DatasetActions />
+                </>}
               </div>
             </section>
           </>

@@ -27,7 +27,7 @@ from pyrit.executor.attack import (
 from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
 )
-from pyrit.models import AttackOutcome, ComponentIdentifier
+from pyrit.models import AttackOutcome, ComponentIdentifier, ScorerCapabilityName
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 
@@ -79,7 +79,9 @@ def _make_true_false_scorer() -> TrueFalseScorer:
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.scorer_type = "true_false"
     # A plain true/false scorer makes no float feedback promise.
-    scorer.capabilities.preserves_float_scale_value = False
+    scorer.capabilities.includes.side_effect = lambda *, capability: (
+        capability is not ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE
+    )
     scorer.score_async = AsyncMock(return_value=[])
     scorer.get_identifier.return_value = ComponentIdentifier(
         class_name="MockScorer",
@@ -189,27 +191,26 @@ class TestPAIRAttackInit:
                 attack_adversarial_config=AttackAdversarialConfig(target=bad_adversarial),
             )
 
-    def test_pair_rejects_non_float_scale_threshold_scorer(self, objective_target, adversarial_config):
-        """TAPAttackScoringConfig requires a FloatScaleThresholdScorer; PAIR inherits this requirement."""
+    def test_pair_rejects_a_scorer_that_does_not_keep_its_float_value(self, objective_target, adversarial_config):
+        """PAIR inherits TAP's requirement that the verdict keep its float value."""
         non_threshold_scorer = _make_true_false_scorer()
-        with pytest.raises(ValueError, match="FloatScaleThresholdScorer"):
+        with pytest.raises(ValueError, match="PAIRAttack objective scorer: .*preserves_float_scale_value"):
             PAIRAttack(
                 objective_target=objective_target,
                 attack_adversarial_config=adversarial_config,
                 attack_scoring_config=AttackScoringConfig(objective_scorer=non_threshold_scorer),
             )
 
-    def test_pair_accepts_tap_scoring_config(self, objective_target, adversarial_config):
-        """A pre-built TAPAttackScoringConfig with the right scorer is accepted unchanged."""
-        scoring_config = TAPAttackScoringConfig(objective_scorer=_make_threshold_scorer(threshold=0.85))
+    def test_pair_accepts_the_deprecated_tap_scoring_config(self, objective_target, adversarial_config):
+        """A pre-built TAPAttackScoringConfig with the right scorer is still accepted unchanged."""
+        with pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig is deprecated"):
+            scoring_config = TAPAttackScoringConfig(objective_scorer=_make_threshold_scorer(threshold=0.85))
         attack = PAIRAttack(
             objective_target=objective_target,
             attack_adversarial_config=adversarial_config,
             attack_scoring_config=scoring_config,
         )
-        result = attack.get_attack_scoring_config()
-        assert isinstance(result, TAPAttackScoringConfig)
-        assert result.threshold == 0.85
+        assert attack.get_attack_scoring_config() is scoring_config
 
 
 @pytest.mark.usefixtures("patch_central_database")

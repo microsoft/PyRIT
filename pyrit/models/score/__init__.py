@@ -70,7 +70,7 @@ if TYPE_CHECKING:
         UndeterminedScoreError,
         UnvalidatedScore,
     )
-    from pyrit.models.score.scorer_capabilities import ScorerCapabilities
+    from pyrit.models.score.scorer_capabilities import ScorerCapabilities, ScorerCapabilityName
     from pyrit.models.score.surface import SurfaceBaseline, SurfaceCoverage, SurfaceEntry, SurfaceMatch
     from pyrit.models.score.text_matcher import Contains, Equals, Regex, StartsWith, TextMatcher
     from pyrit.models.score.trace import (
@@ -123,6 +123,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScoreStatus": "pyrit.models.score.score",
     "ScoreType": "pyrit.models.score.score",
     "ScorerCapabilities": "pyrit.models.score.scorer_capabilities",
+    "ScorerCapabilityName": "pyrit.models.score.scorer_capabilities",
     "ScoringExpectation": "pyrit.models.score.expectation",
     "SurfaceBaseline": "pyrit.models.score.surface",
     "SurfaceCoverage": "pyrit.models.score.surface",
