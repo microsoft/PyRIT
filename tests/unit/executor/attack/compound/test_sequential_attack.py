@@ -26,6 +26,7 @@ from pyrit.executor.attack import (
     SequentialChildAttack,
 )
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+from pyrit.executor.core.strategy import _StrategyRuntimeError
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AttackOutcome,
@@ -179,22 +180,21 @@ class TestFirstSuccess:
         assert result.outcome is AttackOutcome.SUCCESS
         assert len(calls) == 2
 
-    async def test_error_outcome_does_not_stop(self, target, seed_group):
-        """FIRST_SUCCESS is resilient: a transient ERROR should not abort the sequence."""
-        a = _make_strategy(outcomes=[AttackOutcome.ERROR], name="a")
-        b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        child_attacks = [
-            SequentialChildAttack(strategy=a, seed_group=seed_group),
-            SequentialChildAttack(strategy=b, seed_group=seed_group),
-        ]
-        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
-        patcher, calls = _patch_run_child_attack(strategies_by_id={id(a): a, id(b): b})
+    async def test_error_outcome_does_not_stop(self, seed_group, sqlite_instance):
+        """FIRST_SUCCESS is resilient: a child attack that raises should not abort the sequence."""
+        target = MockPromptTarget()
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(strategy=_BoomChildStrategy(objective_target=target), seed_group=seed_group),
+                SequentialChildAttack(strategy=_OkChildStrategy(objective_target=target), seed_group=seed_group),
+            ],
+        )
 
-        with patcher:
-            result = await compound._perform_async(context=_make_context())
+        result = await compound.execute_async(objective="obj")
 
         assert result.outcome is AttackOutcome.SUCCESS
-        assert len(calls) == 2
+        assert [r.outcome for r in result.child_attack_results] == [AttackOutcome.ERROR, AttackOutcome.SUCCESS]
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -862,15 +862,263 @@ class _OkChildStrategy(AttackStrategy[AttackContext[AttackParameters], AttackRes
 class _BoomChildStrategy(_OkChildStrategy):
     """Minimal real strategy that raises from ``_perform_async`` (no live target)."""
 
+    def __init__(self, *, objective_target: PromptTarget, message: str = "child boom") -> None:
+        super().__init__(objective_target=objective_target)
+        self._message = message
+
     async def _perform_async(self, *, context: AttackContext[AttackParameters]) -> AttackResult:
-        raise RuntimeError("child boom")
+        raise RuntimeError(self._message)
+
+
+class _ErrorResultChildStrategy(_OkChildStrategy):
+    """Minimal real strategy that completes with an ERROR outcome instead of raising."""
+
+    async def _perform_async(self, *, context: AttackContext[AttackParameters]) -> AttackResult:
+        return AttackResult(
+            conversation_id=str(uuid.uuid4()),
+            objective=context.objective,
+            outcome=AttackOutcome.ERROR,
+            labels=context.memory_labels,
+        )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestChildExceptions:
+    """FIRST_SUCCESS and EXHAUSTIVE continue past a child attack that raises; the other policies stop (#4238)."""
+
+    async def test_exhaustive_runs_the_rest_and_links_the_failed_child(
+        self, seed_group: AttackSeedGroup, sqlite_instance: MemoryInterface, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        target = MockPromptTarget()
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(strategy=_OkChildStrategy(objective_target=target), seed_group=seed_group),
+                SequentialChildAttack(strategy=_BoomChildStrategy(objective_target=target), seed_group=seed_group),
+                SequentialChildAttack(strategy=_OkChildStrategy(objective_target=target), seed_group=seed_group),
+            ],
+            completion_policy=SequenceCompletionPolicy.EXHAUSTIVE,
+        )
+
+        result = await compound.execute_async(objective="obj")
+
+        assert result.outcome is AttackOutcome.SUCCESS
+        assert [r.outcome for r in result.child_attack_results] == [
+            AttackOutcome.SUCCESS,
+            AttackOutcome.ERROR,
+            AttackOutcome.SUCCESS,
+        ]
+        [child_error] = await sqlite_instance.get_attack_results_async(objective="obj", outcome="error")
+        assert result.child_attack_results[1].attack_result_id == child_error.attack_result_id
+        rows = await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
+        [parent] = [row for row in rows if row.attribution_data["result_role"] == "orchestration"]
+        assert parent.outcome is AttackOutcome.SUCCESS
+        assert parent.metadata[SequentialAttack.CHILD_ATTACK_RESULT_IDS_KEY] == result.child_attack_result_ids
+        assert "Child attack 2 of 3 raised" in caplog.text
+
+    @pytest.mark.parametrize(
+        "completion_policy", [SequenceCompletionPolicy.FIRST_SUCCESS, SequenceCompletionPolicy.EXHAUSTIVE]
+    )
+    async def test_every_child_raising_reraises_the_last_error_with_a_note(
+        self,
+        seed_group: AttackSeedGroup,
+        sqlite_instance: MemoryInterface,
+        completion_policy: SequenceCompletionPolicy,
+    ) -> None:
+        target = MockPromptTarget()
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(
+                    strategy=_BoomChildStrategy(objective_target=target, message="first boom"), seed_group=seed_group
+                ),
+                SequentialChildAttack(
+                    strategy=_BoomChildStrategy(objective_target=target, message="second boom"), seed_group=seed_group
+                ),
+            ],
+            completion_policy=completion_policy,
+        )
+
+        # AttackExecutor still sees an incomplete objective, raised as the last child's exception.
+        with pytest.raises(RuntimeError, match="second boom") as raised:
+            await compound.execute_async(objective="obj")
+
+        last_child_error = raised.value.__cause__
+        assert "second boom" in str(last_child_error)
+        [note] = last_child_error.__notes__
+        assert f"All 2 child attacks of this SequentialAttack ({completion_policy.value}) raised" in note
+        assert "child 1: _StrategyRuntimeError" in note
+        assert "first boom" in note
+        error_results = await sqlite_instance.get_attack_results_async(objective="obj", outcome="error")
+        parent = max(error_results, key=lambda r: r.timestamp)
+        children = sorted((r for r in error_results if r is not parent), key=lambda r: r.timestamp)
+        assert parent.metadata[SequentialAttack.CHILD_ATTACK_RESULT_IDS_KEY] == [c.attack_result_id for c in children]
+
+    @pytest.mark.parametrize(
+        "completion_policy",
+        [
+            SequenceCompletionPolicy.FIRST_DECISIVE,
+            SequenceCompletionPolicy.STRICT_ALL,
+            SequenceCompletionPolicy.LAST_RESULT,
+        ],
+    )
+    async def test_other_policies_stop_at_a_child_that_raises(
+        self,
+        seed_group: AttackSeedGroup,
+        sqlite_instance: MemoryInterface,
+        completion_policy: SequenceCompletionPolicy,
+    ) -> None:
+        target = MockPromptTarget()
+        next_child = _OkChildStrategy(objective_target=target)
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(strategy=_BoomChildStrategy(objective_target=target), seed_group=seed_group),
+                SequentialChildAttack(strategy=next_child, seed_group=seed_group),
+            ],
+            completion_policy=completion_policy,
+        )
+
+        with (
+            patch.object(next_child, "_perform_async", new_callable=AsyncMock) as next_perform,
+            pytest.raises(RuntimeError, match="child boom") as raised,
+        ):
+            await compound.execute_async(objective="obj")
+
+        next_perform.assert_not_awaited()
+        assert not getattr(raised.value.__cause__, "__notes__", [])
+
+    @pytest.mark.parametrize(
+        "completion_policy", [SequenceCompletionPolicy.FIRST_SUCCESS, SequenceCompletionPolicy.EXHAUSTIVE]
+    )
+    async def test_cancellation_is_not_swallowed(
+        self,
+        seed_group: AttackSeedGroup,
+        sqlite_instance: MemoryInterface,
+        completion_policy: SequenceCompletionPolicy,
+    ) -> None:
+        target = MockPromptTarget()
+        cancelled_child = _OkChildStrategy(objective_target=target)
+        next_child = _OkChildStrategy(objective_target=target)
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(strategy=cancelled_child, seed_group=seed_group),
+                SequentialChildAttack(strategy=next_child, seed_group=seed_group),
+            ],
+            completion_policy=completion_policy,
+        )
+
+        with (
+            patch.object(cancelled_child, "_perform_async", new_callable=AsyncMock, side_effect=asyncio.CancelledError),
+            patch.object(next_child, "_perform_async", new_callable=AsyncMock) as next_perform,
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await compound.execute_async(objective="obj")
+
+        next_perform.assert_not_awaited()
+
+    async def test_completed_error_result_whose_write_fails_still_stops(
+        self, seed_group: AttackSeedGroup, sqlite_instance: MemoryInterface
+    ) -> None:
+        """A completed child with an ERROR result whose write failed is a persistence failure, not a raise."""
+        target = MockPromptTarget()
+        skipped_child = _OkChildStrategy(objective_target=target)
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(
+                    strategy=_ErrorResultChildStrategy(objective_target=target),
+                    seed_group=seed_group,
+                    memory_labels={"child": "uncertain"},
+                ),
+                SequentialChildAttack(strategy=skipped_child, seed_group=seed_group),
+            ],
+            completion_policy=SequenceCompletionPolicy.EXHAUSTIVE,
+        )
+        persist = sqlite_instance.add_attack_results_to_memory_async
+        persistence_error = RuntimeError("commit acknowledgement lost")
+
+        async def committed_but_unacknowledged_async(*, attack_results: Sequence[AttackResult]) -> None:
+            await persist(attack_results=attack_results)
+            if attack_results[0].labels.get("child") == "uncertain":
+                raise persistence_error
+
+        with (
+            patch.object(
+                sqlite_instance, "add_attack_results_to_memory_async", side_effect=committed_but_unacknowledged_async
+            ),
+            patch.object(skipped_child, "_perform_async", new_callable=AsyncMock) as skipped,
+            pytest.raises(RuntimeError) as raised,
+        ):
+            await compound.execute_async(objective="obj")
+
+        skipped.assert_not_awaited()
+        assert raised.value.__cause__ is persistence_error
+
+    async def test_child_failure_without_a_confirmed_error_result_still_stops(self, target, seed_group) -> None:
+        """A failure the executor could not record (no confirmed row) propagates even under FIRST_SUCCESS."""
+        a = _make_strategy(outcomes=[], name="a")
+        b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(strategy=a, seed_group=seed_group),
+                SequentialChildAttack(strategy=b, seed_group=seed_group),
+            ],
+        )
+        run_child = AsyncMock(side_effect=ValueError("child preparation failed"))
+
+        with (
+            patch.object(SequentialAttack, "_run_child_attack_async", run_child),
+            pytest.raises(ValueError, match="child preparation failed"),
+        ):
+            await compound._perform_async(context=_make_context())
+
+        run_child.assert_awaited_once()
+
+    async def test_unreadable_error_result_propagates_the_child_error(
+        self, target, seed_group, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        a = _make_strategy(outcomes=[], name="a")
+        b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(strategy=a, seed_group=seed_group),
+                SequentialChildAttack(strategy=b, seed_group=seed_group),
+            ],
+        )
+
+        async def fail_after_linking_async(self, *, child_result_ids, **kwargs):
+            child_result_ids.append("stored-error-id")
+            raise _StrategyRuntimeError("child failed")
+
+        with (
+            patch.object(SequentialAttack, "_run_child_attack_async", fail_after_linking_async),
+            patch.object(
+                compound._memory,
+                "get_attack_results_async",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("read failed"),
+            ),
+            pytest.raises(RuntimeError, match="child failed"),
+        ):
+            await compound._perform_async(context=_make_context())
+
+        assert "Unable to load error result stored-error-id" in caplog.text
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestChildFailurePreservesLinks:
     """The parent error result must retain child-result links (issue #3039)."""
 
-    async def test_parent_error_result_links_completed_and_failed_children(self, seed_group, sqlite_instance):
+    @pytest.mark.parametrize(
+        "completion_policy", [SequenceCompletionPolicy.STRICT_ALL, SequenceCompletionPolicy.LAST_RESULT]
+    )
+    async def test_parent_error_result_links_completed_and_failed_children(
+        self, seed_group, sqlite_instance, completion_policy
+    ):
         target = MockPromptTarget()
         compound = SequentialAttack(
             objective_target=target,
@@ -878,10 +1126,10 @@ class TestChildFailurePreservesLinks:
                 SequentialChildAttack(strategy=_OkChildStrategy(objective_target=target), seed_group=seed_group),
                 SequentialChildAttack(strategy=_BoomChildStrategy(objective_target=target), seed_group=seed_group),
             ],
-            completion_policy=SequenceCompletionPolicy.EXHAUSTIVE,
+            completion_policy=completion_policy,
         )
 
-        # Exception propagation is preserved: the child error still raises.
+        # Under a policy that stops at a raising child, the child error still raises.
         with pytest.raises(RuntimeError, match="child boom"):
             await compound.execute_async(objective="obj")
 
