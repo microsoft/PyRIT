@@ -102,6 +102,19 @@ async def test_every_style_emits_only_assigned_codepoints_async(style: str) -> N
         assert unicodedata.name(char)
 
 
+@pytest.mark.parametrize("style", sorted(_STYLE_BASES))
+async def test_nfkc_normalization_round_trips_to_plaintext_async(style: str) -> None:
+    # Every mapped glyph must carry a compatibility decomposition back to its plain ASCII
+    # letter/digit, so NFKC-normalizing the converted alphabet restores the original input.
+    # This pins the *represented* character of each glyph, not just that it is assigned: a one-off
+    # base shift (for example, AZ -> Ba) is caught here even though the glyphs stay in the block.
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+    result = await MathematicalAlphanumericConverter(style=style).convert_async(prompt=alphabet, input_type="text")
+
+    assert unicodedata.normalize("NFKC", result.output_text) == alphabet
+
+
 async def test_invalid_style_raises_async() -> None:
     with pytest.raises(ValueError):
         MathematicalAlphanumericConverter(style="not_a_style")
