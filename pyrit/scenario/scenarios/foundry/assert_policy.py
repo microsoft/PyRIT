@@ -120,6 +120,7 @@ class AssertPolicy(Scenario):
 
     #: Version 3 passes each group's policy to the scorers as a condition.
     VERSION: int = 3
+    SUPPORTS_EXACT_EXAMPLE_SELECTION: ClassVar[bool] = False
     #: ASSERT's tester prompts. The system prompt is ASSERT's text, and the first message and reply
     #: framing match ASSERT's tester loop, which shows each reply in ``<target_response>`` tags.
     TESTER_SYSTEM_PROMPT_PATH: ClassVar[Path] = EXECUTOR_RED_TEAM_PATH / "assert_tester_system.yaml"

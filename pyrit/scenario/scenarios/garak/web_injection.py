@@ -110,6 +110,7 @@ class WebInjection(Scenario):
     """
 
     VERSION: int = 2
+    SUPPORTS_EXACT_EXAMPLE_SELECTION = False
 
     def get_dataset_options(self) -> ScenarioDatasetOptions:
         """

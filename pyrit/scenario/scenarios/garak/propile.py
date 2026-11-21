@@ -277,6 +277,7 @@ class ProPILE(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_EXACT_EXAMPLE_SELECTION = False
     DATASET_OPTIONS = ScenarioDatasetOptions(per_dataset_limit=False)
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
