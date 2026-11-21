@@ -47,7 +47,7 @@ describe('ChatInputArea seed inspiration', () => {
           onClearMediaConversion={jest.fn()} fileDropEnabled={false} />
       </FluentProvider>,
     )
-    const browse = screen.getByRole('button', { name: 'Browse seed prompts from composer' })
+    const browse = screen.getByRole('button', { name: 'Need inspiration? Browse seed prompts' })
     await user.click(browse)
     browse.focus()
     await user.keyboard('{Enter}')
@@ -56,7 +56,7 @@ describe('ChatInputArea seed inspiration', () => {
     expect(screen.queryByRole('dialog', { name: 'Prompt input is disabled' })).not.toBeInTheDocument()
   })
 
-  it('shows a compact helper beside the persistent browse action without sending', async () => {
+  it('shows only the compact browse helper without sending', async () => {
     const user = userEvent.setup()
     const onBrowseSeedPrompts = jest.fn()
     const onSend = jest.fn().mockResolvedValue({ status: 'sent', clearDraft: false })
@@ -64,11 +64,11 @@ describe('ChatInputArea seed inspiration', () => {
     render(
       <FluentProvider theme={webLightTheme}>
         <ChatInputArea {...defaultProps} onSend={onSend}
-          onBrowseSeedPrompts={onBrowseSeedPrompts} showSeedInspiration />
+          onBrowseSeedPrompts={onBrowseSeedPrompts} />
       </FluentProvider>,
     )
 
-    expect(screen.getByRole('button', { name: 'Browse seed prompts from composer' })).toBeVisible()
+    expect(screen.queryByText('Seed prompts', { exact: true })).not.toBeInTheDocument()
     expect(screen.queryByTestId('seed-inspiration-callout')).not.toBeInTheDocument()
     const helper = screen.getByRole('button', { name: 'Need inspiration? Browse seed prompts' })
     await user.click(helper)
@@ -79,7 +79,7 @@ describe('ChatInputArea seed inspiration', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  it('keeps the composer entry keyboard accessible after the first turn without sending', async () => {
+  it('keeps the helper keyboard accessible for a nonempty draft without sending', async () => {
     const user = userEvent.setup()
     const onBrowseSeedPrompts = jest.fn()
     const onSend = jest.fn().mockResolvedValue({ status: 'sent', clearDraft: false })
@@ -96,14 +96,12 @@ describe('ChatInputArea seed inspiration', () => {
           onClearMediaConversion={jest.fn()}
           onBrowseSeedPrompts={onBrowseSeedPrompts}
           initialText="Keep this draft"
-          showSeedInspiration={false}
           fileDropEnabled={false}
         />
       </FluentProvider>,
     )
 
-    expect(screen.queryByRole('button', { name: 'Need inspiration? Browse seed prompts' })).not.toBeInTheDocument()
-    const browse = screen.getByRole('button', { name: 'Browse seed prompts from composer' })
+    const browse = screen.getByRole('button', { name: 'Need inspiration? Browse seed prompts' })
     browse.focus()
     await user.keyboard('{Enter}')
     expect(onBrowseSeedPrompts).toHaveBeenCalledTimes(1)
@@ -115,7 +113,7 @@ describe('ChatInputArea seed inspiration', () => {
     const user = userEvent.setup()
     render(
       <FluentProvider theme={webLightTheme}>
-        <ChatInputArea {...defaultProps} showSeedInspiration />
+        <ChatInputArea {...defaultProps} />
       </FluentProvider>,
     )
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'My first draft')

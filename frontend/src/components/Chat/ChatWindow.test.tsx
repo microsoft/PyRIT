@@ -352,7 +352,7 @@ describe("ChatWindow Integration", () => {
     labels: { operator: 'testuser', operation: 'test_op' },
   };
 
-  it("should keep seed inspiration for the first draft and hide it after the first turn", async () => {
+  it("should keep the seed inspiration helper after sending the first draft", async () => {
     const user = userEvent.setup();
     mockSendResult.mockResolvedValue(makeTextResponse("First reply"));
     render(<TestWrapper><ChatWindow {...defaultProps} /></TestWrapper>);
@@ -366,8 +366,8 @@ describe("ChatWindow Integration", () => {
 
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await screen.findByText("First reply");
-    expect(screen.queryByRole("button", { name: helperName })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Browse seed prompts from composer" })).toBeVisible();
+    expect(screen.getByRole("button", { name: helperName })).toBeVisible();
+    expect(screen.queryByText("Seed prompts", { exact: true })).not.toBeInTheDocument();
   });
 
   it("should keep the first send's transcript when the created attack route commits mid-send", async () => {

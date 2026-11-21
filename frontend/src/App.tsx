@@ -82,6 +82,8 @@ import { ChatDraftProvider, useChatDraftHandoff } from './hooks/useChatDraftHand
 import {
   attackConversationRoutePath,
   attackRoutePath,
+  catalogPathFromNavigationState,
+  chatOriginFromNavigationState,
   DATASET_DETAIL_PATH,
   DATASETS_PATH,
   isChatPath,
@@ -693,7 +695,12 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       return
     }
     if (view === 'datasets') {
-      if (isChatPath(location.pathname)) {
+      if (matchPath(DATASET_DETAIL_PATH, location.pathname)) {
+        const chatOrigin = chatOriginFromNavigationState(location.state)
+        navigate(catalogPathFromNavigationState(location.state), {
+          state: chatOrigin ? { chatOrigin } : null,
+        })
+      } else if (isChatPath(location.pathname)) {
         const previousState = lastDatasetsLocation.current.state
         const inheritedState = previousState !== null && typeof previousState === 'object' ? previousState : {}
         navigate(lastDatasetsLocation.current.path || VIEW_PATHS.datasets, {
