@@ -3,6 +3,8 @@ import type { Parameter, RegisteredScenario } from '@/types'
 import {
   buildEstimateRequest,
   buildRunRequest,
+  linkedDatasetProblem,
+  minimumSelectionMessage,
   scenarioDynamicParameters,
   type ScenarioLaunchInput,
 } from './scenarioLaunchRequest'
@@ -118,6 +120,7 @@ describe('scenario launch requests', () => {
     ['pending technique edits', { techniqueEditError: 'Wait for valid technique settings before launch.' },
       'Wait for valid technique settings before launch.'],
     ['invalid datasets', { datasetError: 'Bad dataset limit.' }, 'Bad dataset limit.'],
+    ['linked datasets that cannot launch', { linkedDatasetError: 'Linked problem.' }, 'Linked problem.'],
     ['an unsupported conversation', {
       supportsPrependedConversation: false,
       scenarioParamValues: { objective: '', prepended_conversation_id: 'saved' },
@@ -132,6 +135,20 @@ describe('scenario launch requests', () => {
     expect(buildEstimateRequest(makeInput({ targetName: '' })).ok).toBe(true)
   })
 
+  it('does not estimate a configuration whose linked datasets cannot launch', () => {
+    expect(buildEstimateRequest(makeInput({ linkedDatasetError: 'Linked problem.' })))
+      .toEqual({ ok: false, error: 'Linked problem.' })
+  })
+
+  it('reports only linked names the client knows cannot launch, keeping whitespace visible', () => {
+    expect(linkedDatasetProblem([], false)).toBeNull()
+    expect(linkedDatasetProblem([' returns ', 'returns ', 'missing'], true)).toBeNull()
+    expect(linkedDatasetProblem(['ds_a', ' returns ', ''], false)).toBe(
+      'This scenario can\'t take the linked datasets: ds_a, " returns ", "".',
+    )
+    expect(linkedDatasetProblem(['ds_a', ' '], true)).toBeNull()
+  })
+
   it('keeps run-only limits out of the estimate', () => {
     const before = buildEstimateRequest(makeInput())
     const after = buildEstimateRequest(makeInput({ maxConcurrency: 0, maxRetries: -1 }))
@@ -140,4 +157,11 @@ describe('scenario launch requests', () => {
     // An identical payload keeps the estimate key, so editing launch-only fields sends no new estimate.
     expect(after).toEqual(before)
   })
+
+  it.each([[1, 'Select a dataset.'], [2, 'Select at least 2 datasets.']])(
+    'words a minimum of %i datasets as validate_minimum_selection does',
+    (minimum, message) => {
+      expect(minimumSelectionMessage(minimum)).toBe(message)
+    },
+  )
 })
