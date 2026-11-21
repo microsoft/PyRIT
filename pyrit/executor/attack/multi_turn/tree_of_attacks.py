@@ -303,8 +303,15 @@ class TAPAttackResult(AttackResult):
 
     @property
     def tree_visualization(self) -> Tree | None:
-        """The tree visualization from metadata."""
-        tree: Tree | None = self.metadata.get("tree_visualization")
+        """
+        The tree visualization from metadata.
+
+        Raises:
+            TypeError: If the stored visualization is neither a tree nor None.
+        """
+        tree = self.metadata.get("tree_visualization")
+        if tree is not None and not isinstance(tree, Tree):
+            raise TypeError("tree_visualization must be a Tree or None")
         return tree
 
     @tree_visualization.setter
