@@ -204,7 +204,9 @@ async def test_file_content_uses_configured_azure_results_storage(
     assert entry.value_sha256 == digest
 
 
-async def test_failed_media_copy_cancels_the_other_copies(sqlite_instance: MemoryInterface, tmp_path: Path):
+async def test_failed_media_copy_cancels_the_other_copies_async(
+    sqlite_instance: MemoryInterface, tmp_path: Path
+) -> None:
     sibling_started = asyncio.Event()
     sibling_cancelled = asyncio.Event()
     failure = OSError("disk full")

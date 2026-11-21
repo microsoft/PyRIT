@@ -146,7 +146,7 @@ class TestSeedDatasetProvider:
         assert exc_info.value is failure
         assert exc_info.value.__notes__ == ["Failed to fetch dataset 'empty_dataset' using provider FailingProvider."]
 
-    async def test_fetch_datasets_async_failure_cancels_sibling_fetches(self) -> None:
+    async def test_fetch_datasets_async_failure_cancels_sibling_fetches_async(self) -> None:
         sibling_started = asyncio.Event()
         sibling_cancelled = asyncio.Event()
         failure = RuntimeError("Status code: 503")
