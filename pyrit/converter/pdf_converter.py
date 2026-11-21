@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import ast
+import asyncio
 import hashlib
 import json
 import time
@@ -181,7 +182,10 @@ class PDFConverter(Converter):
         content = self._prepare_content(prompt)
 
         # Step 2: Generate or modify the PDF (Overlay, if existing PDF)
-        pdf_bytes = self._modify_existing_pdf() if self._existing_pdf_bytes else self._generate_pdf(content)
+        if self._existing_pdf_bytes:
+            pdf_bytes = await asyncio.to_thread(self._modify_existing_pdf)
+        else:
+            pdf_bytes = await asyncio.to_thread(self._generate_pdf, content)
 
         # Step 3: Serialize PDF
         pdf_serializer = await self._serialize_pdf_async(pdf_bytes, content)
@@ -314,7 +318,7 @@ class PDFConverter(Converter):
         if not self._existing_pdf_bytes or not self._injection_items:
             raise ValueError("Existing PDF and injection items are required for modification.")
 
-        reader = PdfReader(self._existing_pdf_bytes)
+        reader = PdfReader(BytesIO(self._existing_pdf_bytes.getvalue()))
         # clone_from attaches all pages to the writer up-front, avoiding
         # the deprecated PageObject.replace_contents() call on unattached pages.
         writer = PdfWriter(clone_from=reader)
