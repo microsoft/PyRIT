@@ -50,7 +50,25 @@ async def test_connect_success(target):
     with patch.object(target, "_get_openai_client", return_value=mock_client):
         connection = await target._connect_async(conversation_id="test_conv")
         assert connection == mock_connection
-        mock_client.realtime.connect.assert_called_once_with(model="test")
+        mock_client.realtime.connect.assert_called_once_with(model="test", extra_headers=target._headers)
+    await target.cleanup_target_async()
+
+
+@patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
+async def test_connect_sends_configured_headers(sqlite_instance):
+    target = RealtimeTarget(
+        api_key="test_key",
+        endpoint="wss://test_url",
+        model_name="test",
+        headers='{"X-Gateway-Key": "gateway-key"}',
+    )
+    mock_client = MagicMock()
+    mock_client.realtime.connect.return_value.__aenter__ = AsyncMock(return_value=AsyncMock())
+
+    with patch.object(target, "_get_openai_client", return_value=mock_client):
+        await target._connect_async(conversation_id="test_conv")
+
+    mock_client.realtime.connect.assert_called_once_with(model="test", extra_headers={"X-Gateway-Key": "gateway-key"})
     await target.cleanup_target_async()
 
 
