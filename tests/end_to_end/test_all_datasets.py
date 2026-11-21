@@ -49,6 +49,7 @@ from pyrit.datasets.seed_datasets.remote import (
     _VLGuardDataset,
     _VLSUMultimodalDataset,
     _WildGuardMixDataset,
+    _WildJailbreakDataset,
 )
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -89,6 +90,7 @@ _HF_GATED_PROVIDERS: set[type] = {
     _SorryBenchDataset,
     _VLGuardDataset,
     _WildGuardMixDataset,
+    _WildJailbreakDataset,
 }
 
 
