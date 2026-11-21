@@ -96,6 +96,7 @@ python infra/deploy_instance.py \
 | `--owner-tag` | Conditional | `Owner` tag value applied to all per-instance resources. **Required when the target subscription enforces a "Require a tag on resources" Azure Policy** (this is the case for the AI Red Team Tooling subscription — deployments without it fail with `RequestDisallowedByPolicy`). Optional only on subscriptions without such a policy |
 | `--service-management-reference` | No | Service Tree ID (required by some tenants for Entra app creation) |
 | `--aoai-resource-names` | No | Comma-separated Cognitive Services account names for automatic AOAI RBAC. Grants `Cognitive Services OpenAI User` to the MI on each resource. Does **not** cover Content Safety — see step 3 for that. If omitted, all AOAI roles must be granted manually |
+| `--sql-service-objective` | No | Azure SQL database tier (default `Basic`). Basic (5 DTU) saturates when several people run campaigns, which makes attack history and conversations slow to load; use `S3` or larger for a shared instance. The tier can also be changed later with `az sql db update --service-objective` |
 | `--dry-run` | No | Preview what will be created without executing |
 
 > **Instance name constraints:** 1–13 lowercase letters, numbers, or internal hyphens; the name must start and end with a letter or number. The Key Vault name `copyrit-{name}-kv` has a 24-character limit.
