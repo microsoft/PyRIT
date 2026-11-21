@@ -295,6 +295,10 @@ invalid-argument-type = "ignore"
 incompatible-method-override = "ignore"
 no-matching-overload = "ignore"
 missing-attribute = "ignore"
+# ty 0.0.105 split these out of missing-attribute (unions) and not-callable
+# (abstract classes); keep them relaxed here for the same reasons as their parents.
+missing-union-attribute = "ignore"
+abstract-class-instantiation = "ignore"
 # Enabled for pyrit/ (clean) but still relaxed here: tests/unit has 318 bare
 # generics (mostly `dict` and the attack context/strategy classes) across ~70 files.
 missing-type-argument = "ignore"
