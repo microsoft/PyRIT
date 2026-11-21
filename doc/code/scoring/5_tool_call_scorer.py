@@ -467,7 +467,21 @@ print(f"Trace the backend does not have: {missing.acquisition.value}")
 # ```
 #
 # `MessageToolCallScorer` reads the arguments from the stored `function_call`
-# piece of each execution. Trace events do not retain arguments, so
+# piece of each execution. `OtelTraceSource` keeps no arguments by default, so
 # `OtelToolCallScorer` cannot confirm an argument requirement and leaves it
 # undetermined. Complete trace evidence with no execution of the tool still makes
 # it false, because no call means no matching call.
+#
+# To match arguments from traces, name the arguments the source may keep:
+#
+# ```python
+# OtelTraceSource(trace_client=client, kept_arguments=("to",))
+# ```
+#
+# The source reads each span's `gen_ai.tool.call.arguments` attribute, keeps the
+# named top-level arguments, and redacts the rest before the evidence is stored.
+# A redacted argument is unknown, not absent: a requirement on it can neither
+# confirm nor refute a call, so the score stays undetermined even when the trace
+# evidence is complete, and the rationale names the arguments the source did not
+# keep. A kept argument that the call lacks, or whose value does not match, still
+# refutes the call.

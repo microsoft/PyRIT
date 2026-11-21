@@ -61,6 +61,8 @@ def match_tools_called(
 
     A requirement with argument constraints needs an execution whose retained arguments match.
     Its absence can still be refuted from complete evidence, because no call means no matching call.
+    An argument the source did not keep was redacted at write time: a constraint on it can neither
+    confirm a call nor refute one, so a negative that would rest on it is undetermined.
 
     Returns:
         bool | None: True for observed calls, false for complete absence, otherwise None. An
@@ -90,9 +92,11 @@ def _match_tools_called(
         return None, False
     calls: dict[str, list[Mapping[str, JsonValue] | None]] = {}
     for event in payload.events:
-        # Trace events do not retain arguments, so they cannot confirm an argument requirement.
-        calls.setdefault(event.name, []).append(None)
-    verdicts = [match_tool_requirement(requirement=tool, calls=calls.get(tool.name, [])) for tool in condition.tools]
+        calls.setdefault(event.name, []).append(event.arguments)
+    verdicts = [
+        match_tool_requirement(requirement=tool, calls=calls.get(tool.name, []), kept=payload.kept_arguments)
+        for tool in condition.tools
+    ]
     complete = acquisition is Acquisition.COMPLETE and payload.coverage.complete
     if all(verdict is True for verdict in verdicts):
         if not condition.exhaustive:
@@ -332,11 +336,23 @@ class OtelToolCallScorer(_OtelToolEvidenceScorer):
         condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalled)
         value = match_tools_called(condition=condition, payload=evidence, acquisition=observation.acquisition)
         names = ", ".join(describe_tool_requirement(tool) for tool in condition.tools)
-        constrains_arguments = any(tool.arguments for tool in condition.tools)
-        if constrains_arguments:
+        redacted = sorted(
+            {
+                argument.name
+                for tool in condition.tools
+                for argument in tool.arguments
+                if argument.name not in evidence.kept_arguments
+            }
+        )
+        if redacted and not evidence.kept_arguments:
             logger.warning(
                 "OtelToolCallScorer received a requirement with argument constraints, which trace evidence "
                 "cannot confirm. Use MessageToolCallScorer to match arguments."
+            )
+        elif redacted:
+            logger.warning(
+                "OtelToolCallScorer received argument constraints on arguments its trace source does not keep: %s.",
+                ", ".join(redacted),
             )
         if condition.exhaustive:
             rationale = _rationale(condition=condition, payload=evidence, value=value)
@@ -348,8 +364,10 @@ class OtelToolCallScorer(_OtelToolEvidenceScorer):
                 if value is False
                 else f"Trace evidence cannot establish invocation of all required tools: {names}."
             )
-        if value is None and constrains_arguments:
+        if value is None and redacted and not evidence.kept_arguments:
             rationale = f"{rationale} {_NO_TRACE_ARGUMENTS_REASON}"
+        elif value is None and redacted:
+            rationale = f"{rationale} The trace source did not keep these arguments: {', '.join(redacted)}."
         return [
             Score(
                 score_value=None if value is None else str(value).lower(),

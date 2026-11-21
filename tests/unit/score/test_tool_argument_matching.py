@@ -108,3 +108,48 @@ def test_requirement_description_names_constrained_arguments() -> None:
         describe_tool_requirement(_requirement(to=Equals(value="x"), body=Contains(value="y")))
         == "send_email(to, body)"
     )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ({"to": "a@example.com"}, None),
+        ({"to": "b@example.com"}, False),
+        ({}, False),
+    ],
+)
+def test_a_redacted_argument_can_neither_confirm_nor_refute_a_call(
+    arguments: dict[str, JsonValue], expected: bool | None
+) -> None:
+    requirement = _requirement(to=Equals(value="a@example.com"), body=Contains(value="invoice"))
+
+    # ``body`` was redacted at write time: the verdict can rest only on the kept ``to``.
+    assert match_tool_arguments(requirement=requirement, arguments=arguments, kept=("to",)) is expected
+
+
+def test_a_kept_argument_the_call_lacks_is_absent_not_redacted() -> None:
+    requirement = _requirement(to=Equals(value="a@example.com"))
+
+    assert match_tool_arguments(requirement=requirement, arguments={}, kept=("to",)) is False
+    assert match_tool_arguments(requirement=requirement, arguments={}, kept=()) is None
+    assert match_tool_arguments(requirement=requirement, arguments={}) is False
+
+
+def test_redaction_leaves_name_only_requirements_unaffected() -> None:
+    assert match_tool_arguments(requirement=ToolCallRequirement(name="send_email"), arguments=None, kept=()) is True
+
+
+@pytest.mark.parametrize(
+    ("calls", "expected"),
+    [
+        ([{"to": "b@example.com"}, {"to": "a@example.com"}], None),
+        ([{"to": "b@example.com"}, {}], False),
+        ([], False),
+    ],
+)
+def test_redaction_makes_a_negative_that_rests_on_it_undetermined(
+    calls: list[dict[str, JsonValue] | None], expected: bool | None
+) -> None:
+    requirement = _requirement(to=Equals(value="a@example.com"), body=Contains(value="invoice"))
+
+    assert match_tool_requirement(requirement=requirement, calls=calls, kept=("to",)) is expected
