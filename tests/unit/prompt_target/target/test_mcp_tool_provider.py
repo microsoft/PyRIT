@@ -379,6 +379,33 @@ async def test_get_tools_async_discovers_all_pages() -> None:
     assert session.list_tools.call_args_list[1].kwargs["params"].cursor == "page-2"
 
 
+async def test_get_tools_async_maps_mcp_names_to_valid_tool_names() -> None:
+    tool_names_by_mcp_name = {
+        "get_note": "get_note",
+        "a" * 64: "a" * 64,
+        "admin.tools.list": "admin_tools_list",
+        "a" * 65: "a" * 55 + "_635361c4",
+        "a" * 66: "a" * 55 + "_ac137fce",
+    }
+    provider = _http_provider()
+    provider._tools = [Tool(name=name, input_schema={"type": "object"}) for name in tool_names_by_mcp_name]
+
+    tools = await provider.get_tools_async()
+
+    assert [tool.name for tool in tools] == list(tool_names_by_mcp_name.values())
+
+
+async def test_get_tools_async_rejects_mcp_names_that_map_to_one_tool_name() -> None:
+    provider = _http_provider()
+    provider._tools = [
+        Tool(name="notes_search", input_schema={"type": "object"}),
+        Tool(name="notes.search", input_schema={"type": "object"}),
+    ]
+
+    with pytest.raises(ValueError, match="tools 'notes_search' and 'notes.search' that both map to the tool name"):
+        await provider.get_tools_async()
+
+
 async def test_call_tool_async_returns_mcp_result() -> None:
     provider = _http_provider()
     provider._tools = [
@@ -601,6 +628,45 @@ async def test_openai_response_target_uses_mcp_tools(patch_central_database) -> 
     assert first_body["tools"][0]["name"] == "get_note"
     provider.call_tool_async.assert_awaited_once_with(name="get_note", arguments={"id": "welcome"})
     assert output.output == {"structured_content": {"text": "Welcome"}}
+    assert output.invoked is True
+
+
+async def test_openai_response_target_calls_mapped_mcp_tool_by_mcp_name(patch_central_database) -> None:
+    provider = _http_provider()
+    provider._tools = [
+        Tool(name="get_note", input_schema={"type": "object"}),
+        Tool(name="notes.search", input_schema={"type": "object", "properties": {"query": {"type": "string"}}}),
+    ]
+    session = MagicMock(spec=ClientSession)
+    session.call_tool = AsyncMock(return_value=CallToolResult(content=[]))
+
+    @asynccontextmanager
+    async def create_session():
+        yield session
+
+    provider._create_session_async = create_session  # type: ignore[method-assign]
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tool_providers=[provider],
+    )
+
+    body = await target._construct_request_body_async(
+        conversation=[Message.from_prompt(prompt="Search the notes", role="user")],
+        json_config=JsonResponseConfig(enabled=False),
+    )
+    output = await target._execute_call_section_async(
+        {
+            "type": "function_call",
+            "name": "notes_search",
+            "arguments": '{"query":"welcome"}',
+            "call_id": "call-1",
+        }
+    )
+
+    assert [tool["name"] for tool in body["tools"]] == ["get_note", "notes_search"]
+    session.call_tool.assert_awaited_once_with(name="notes.search", arguments={"query": "welcome"})
     assert output.invoked is True
 
 
