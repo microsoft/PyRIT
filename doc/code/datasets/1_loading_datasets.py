@@ -21,6 +21,7 @@
 # 0DIN [@odin2024],
 # Aegis [@ghosh2025aegis],
 # Agent Threat Rules [@atr2026],
+# AIR-Bench 2024 [@zeng2024airbench],
 # ALERT [@tedeschi2024alert],
 # Anthropic Model-Written Evals [@perez2022modelwritten],
 # BeaverTails [@ji2023beavertails],
