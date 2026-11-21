@@ -62,6 +62,22 @@ describe('ScorerRegistry', () => {
     expect(readUserPreferences('alice').chatScorer).toBeUndefined()
   })
 
+  it('labels each scorer with where it comes from', async () => {
+    const labeled: ScorerInstance[] = [
+      { ...scorers[0], scorer_registry_name: 'saved_judge', origin: 'saved' },
+      { ...scorers[0], scorer_registry_name: 'startup_judge', origin: 'configuration' },
+      { ...scorers[0], scorer_registry_name: 'launch_judge', origin: 'temporary' },
+    ]
+    render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="alice">
+      <ScorerRegistry scorers={labeled} loading={false} error={null} onRefresh={jest.fn()} />
+    </UserPreferencesProvider></FluentProvider>)
+
+    const row = (name: string) => screen.getByRole('row', { name: new RegExp(name) })
+    expect(within(row('saved_judge')).getByText('Saved')).toBeInTheDocument()
+    expect(within(row('startup_judge')).getByText('From configuration')).toBeInTheDocument()
+    expect(within(row('launch_judge')).getByText('Temporary')).toBeInTheDocument()
+  })
+
   it('shows nested types, canonical identity JSON, primary metrics, and average time', async () => {
     const user = userEvent.setup()
     const evaluated: ScorerInstance = {

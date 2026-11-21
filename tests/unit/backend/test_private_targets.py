@@ -318,9 +318,9 @@ async def test_a_technique_using_a_private_converter_is_private_async() -> None:
     request = CreateTechniqueRequest(name="encoded", type="PromptSendingAttack", request_converters=["mine"])
 
     with caller_principal_scope("bob"), pytest.raises(ValueError):
-        await TechniqueService().create_async(request)
+        await TechniqueService().create_async(request=request)
     with caller_principal_scope("alice"):
-        await TechniqueService().create_async(request)
+        await TechniqueService().create_async(request=request)
 
     with caller_principal_scope("bob"):
         assert await TechniqueService().get_async("encoded") is None

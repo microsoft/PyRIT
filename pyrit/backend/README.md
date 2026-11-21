@@ -199,6 +199,29 @@ PUT /api/targets/my-claude/credentials
 - Like other targets created through the API, private targets are gone after the backend
   restarts or reinitializes.
 
+### Converters and scorers
+
+- `GET /api/converters/types` - List the converter types that can be created, with their parameters, and why a
+  type can't be saved at all (`not_saveable_reason`)
+- `POST /api/converters` - Create a converter
+- `DELETE /api/converters/{converter_id}` - Remove a converter
+- `POST /api/scorers` - Create a scorer
+
+A created converter or scorer is Temporary unless the request sets `"persist": true`, which works as it does for
+targets: it needs `register` left on and a name of lowercase letters, digits, and underscores (otherwise **422**), the
+entry is saved under `registry_recipes_source` with the signed-in user recorded, and it's restored at every start. A
+request receives **400** with `"type": "/errors/not-saveable"`, and can be sent again without `persist`, if the entry
+would save a key, use a
+Temporary target, converter, or scorer, be of a type that only a scan's launch scripts added, or, for a converter, need
+or keep an uploaded file. A saved converter or scorer can use this server's keys and Azure identity, as the ones from
+the configuration do. A target left out of the
+request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
+converter copy made with `source` can't be saved yet, and a private converter or scorer can't be saved (**422**). A
+taken name receives **409**, and storage that can't
+be written receives **503**. Each listed converter's and scorer's `origin` is `saved`, `configuration`, or
+`temporary`, as for targets. A saved converter can't be removed through the API yet (**409**): delete its file under
+`registry_recipes_source` and restart the backend.
+
 ### Dataset creation, batch mutation, and deletion
 
 `POST /api/datasets` creates a named dataset synchronously from multipart form data.
@@ -697,7 +720,7 @@ IDs remain available through the single-node and saved-conversation APIs.
 | `GET /api/techniques` | A page of active registered technique factories |
 | `GET /api/techniques/types` | Attack-class parameters and supported converter/adversarial controls |
 | `GET /api/techniques/{name}` | Safe settings for one factory; 404 if not registered |
-| `POST /api/techniques` | Validate and register a basic runtime technique; 201 on success |
+| `POST /api/techniques` | Validate and register a basic runtime technique, saving it with `persist`; 201 on success |
 
 The list accepts `limit` (default 50, range 1-200) and `cursor` (the last returned
 registry name). Results use registry-name order. Follow `pagination.next_cursor`
@@ -724,6 +747,16 @@ or executing attacks. Target and scorer compatibility stays an initialization ch
 Constrained list inputs are resolved to their declared enum or literal values.
 Deferred Python validation uses the same configured-default rules as decorated
 constructors; the factory retains omitted arguments and explicit `None` values.
+
+A created technique is Temporary unless the request sets `"persist": true`. A technique to save needs a name of
+lowercase letters, digits, and underscores that starts with a letter (otherwise **422**). Its request, without the
+name, is saved under `registry_recipes_source` with the signed-in user recorded, and it's rebuilt with the same call
+at every start. A request receives **400** with `"type": "/errors/not-saveable"`, and can be sent again without
+`persist`, if its attack type was added by a scan's launch scripts, or a converter or the adversarial target it names
+is Temporary. A name or tag that clashes with a
+registered technique receives **409**, and storage that can't be written receives **503**. Each listed technique's
+`origin` is `saved`, `configuration` (registered by a startup script), or `temporary`, as for targets. Settings
+changed for a single run aren't saved.
 
 The basic GUI supports scalar inputs and one level of declared structured settings.
 It hides nested structured settings that the shared resolver cannot construct.
