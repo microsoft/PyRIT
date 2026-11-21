@@ -43,9 +43,10 @@ import json
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Generator, Iterable, Mapping
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+from typing import Any
 
 from pyrit.common.attack_result_scope import get_current_attack_result_id
 from pyrit.common.path import DATASETS_PATH
@@ -148,15 +149,17 @@ def _permissive_configuration(
     extra_input_modalities: Iterable[frozenset[PromptDataType]] | None = None,
 ) -> Generator[None, None, None]:
     """
-    Temporarily replace ``target``'s configuration with one that declares every
-    boolean capability as natively supported.
+    For this task only, give ``target`` a configuration that declares every
+    boolean capability as natively supported, and keep configured tools out of
+    probe requests.
 
     This bypasses ``PromptTarget._validate_request``, which would otherwise
     short-circuit probes for capabilities the target declares as unsupported
-    before any API call is made. The original configuration is restored on exit.
+    before any API call is made. The target itself is never modified, so
+    probes can run on a live target while other tasks use it.
 
     Args:
-        target (PromptTarget): The target whose configuration is temporarily replaced.
+        target (PromptTarget): The target to probe.
         extra_input_modalities (Iterable[frozenset[PromptDataType]] | None):
             Additional modality combinations to include in ``input_modalities``
             during the override. Used by modality probes so that
@@ -184,40 +187,34 @@ def _permissive_configuration(
     # probes bypass preflight validation without inheriting ADAPT policy or
     # custom normalizer overrides from the target's runtime configuration.
     probe_configuration = TargetConfiguration(capabilities=permissive_caps)
-    target._configuration = probe_configuration
-    try:
-        with _disable_probe_tools(target=target):
-            yield
-    finally:
-        target._configuration = original
+    # Both overrides apply to this task only, so other requests to a live target are unaffected.
+    with target._probe_scope(configuration=probe_configuration, attributes=_probe_tool_settings(target=target)):
+        yield
 
 
-@contextmanager
-def _disable_probe_tools(*, target: PromptTarget) -> Generator[None, None, None]:
-    """Disable configured tools during probes and restore all settings on exit."""
+def _probe_tool_settings(*, target: PromptTarget) -> dict[str, Any]:
+    """
+    Return task-local settings that keep configured tools out of probe requests.
+
+    Returns:
+        dict[str, Any]: Attribute values for ``PromptTarget._probe_scope``.
+    """
     from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
     from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
     from pyrit.prompt_target.openai.openai_response_target import OpenAIResponseTarget
 
-    with ExitStack() as stack:
-        if isinstance(target, (OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget)):
-            original_body = target._extra_body_parameters
-            stack.callback(setattr, target, "_extra_body_parameters", original_body)
-            tool_settings = {"tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"}
-            target._extra_body_parameters = {
-                key: value for key, value in (original_body or {}).items() if key not in tool_settings
-            }
-            extra_body = target._extra_body_parameters.get("extra_body")
-            if isinstance(extra_body, Mapping):
-                target._extra_body_parameters["extra_body"] = {
-                    key: value for key, value in extra_body.items() if key not in tool_settings
-                }
-        if isinstance(target, (OpenAIResponseTarget, LiteLLMChatTarget)):
-            stack.callback(setattr, target, "_execute_tools", target._execute_tools)
-            stack.callback(setattr, target, "_suppress_tools", target._suppress_tools)
-            target._execute_tools = False
-            target._suppress_tools = True
-        yield
+    settings: dict[str, Any] = {}
+    if isinstance(target, (OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget)):
+        tool_settings = {"tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"}
+        body = {key: value for key, value in (target._extra_body_parameters or {}).items() if key not in tool_settings}
+        extra_body = body.get("extra_body")
+        if isinstance(extra_body, Mapping):
+            body["extra_body"] = {key: value for key, value in extra_body.items() if key not in tool_settings}
+        settings["_extra_body_parameters"] = body
+    if isinstance(target, (OpenAIResponseTarget, LiteLLMChatTarget)):
+        settings["_execute_tools"] = False
+        settings["_suppress_tools"] = True
+    return settings
 
 
 def _new_conversation_id() -> str:

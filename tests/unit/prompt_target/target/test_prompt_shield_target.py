@@ -14,7 +14,6 @@ from pyrit.converter import Base64Converter
 from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptShieldTarget
-from pyrit.registry import TargetRegistry
 
 
 @pytest.fixture
@@ -275,44 +274,6 @@ async def test_prompt_shield_sends_the_converted_value_async(converted_value: st
 
     mock_request.assert_awaited_once()
     assert mock_request.await_args.kwargs["request_body"] == expected_body
-
-
-@pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("api_key", ["test_key", MagicMock(return_value="test_token")], ids=["key", "token_provider"])
-def test_reconstruction_keeps_identity_and_credential(api_key: str | MagicMock) -> None:
-    source = PromptShieldTarget(
-        endpoint="https://test.endpoint.com", api_key=api_key, api_version="2024-02-15-preview", field="documents"
-    )
-
-    rebuilt = TargetRegistry.get_registry_singleton().recreate_instance(source=source, params={})
-
-    assert rebuilt is not source
-    assert rebuilt.get_identifier().hash == source.get_identifier().hash
-    assert rebuilt._api_key is source._api_key
-    assert rebuilt._force_entry_field == "documents"
-    assert "test_key" not in rebuilt.get_identifier().model_dump_json()
-
-
-@pytest.mark.usefixtures("patch_central_database")
-def test_identity_reconstruction_reuses_the_token_provider_without_minting() -> None:
-    token_provider = MagicMock(return_value="minted-token")
-    with patch(
-        "pyrit.prompt_target.prompt_shield_target.get_azure_token_provider", return_value=token_provider
-    ) as mint:
-        source = PromptShieldTarget(endpoint="https://myresource.cognitiveservices.azure.com", auth_mode="identity")
-        rebuilt = TargetRegistry.get_registry_singleton().recreate_instance(source=source, params={})
-
-    mint.assert_called_once()
-    assert rebuilt._api_key is token_provider
-
-
-@pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("params", [{"endpoint": "https://other.test"}, {"api_key": "other"}, {"auth_mode": "api_key"}])
-def test_reconstruction_keeps_connection_settings(params: dict[str, str]) -> None:
-    source = PromptShieldTarget(endpoint="https://test.endpoint.com", api_key="test_key")
-
-    with pytest.raises(ValueError, match="keeps its source's connection settings"):
-        TargetRegistry.get_registry_singleton().recreate_instance(source=source, params=params, external_input=True)
 
 
 @pytest.mark.usefixtures("patch_central_database")

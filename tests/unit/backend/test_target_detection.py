@@ -95,7 +95,7 @@ def composite_detection(
     return service, parent
 
 
-async def test_composite_detection_probes_each_child_privately_and_updates_only_parent(
+async def test_composite_detection_probes_each_live_child_and_updates_only_parent(
     composite_detection: tuple[TargetService, RoundRobinTarget],
 ) -> None:
     service, parent = composite_detection
@@ -116,7 +116,6 @@ async def test_composite_detection_probes_each_child_privately_and_updates_only_
     probes: list[_DetectableTarget] = []
 
     async def discover_async(*, target: _DetectableTarget, **kwargs: object) -> TargetCapabilities:
-        assert all(target is not child for child in children)
         probes.append(target)
         return results[len(probes) - 1]
 
@@ -125,9 +124,7 @@ async def test_composite_detection_probes_each_child_privately_and_updates_only_
             target_registry_name="round-robin", expected_hash=expected_hash
         )
 
-    assert len(probes) == 2
-    assert probes[0] is not probes[1]
-    assert all(probe.closed for probe in probes)
+    assert probes == children
     assert response.capabilities == parent.aggregate_capabilities(child_capabilities=results)
     assert parent.capabilities == response.capabilities
     assert parent.capabilities.supports_json_output
@@ -162,8 +159,7 @@ async def test_composite_detection_failure_preserves_parent_and_children(
                 target_registry_name="round-robin", expected_hash=parent.get_identifier().hash
             )
 
-    assert len(probes) == 2
-    assert all(probe.closed for probe in probes)
+    assert probes == children
     assert parent.configuration is original
     assert all(child.configuration is original for child, original in zip(children, originals, strict=True))
     assert not service._detecting
@@ -292,7 +288,7 @@ async def test_composite_detection_has_one_deadline_for_all_children(
     assert not service._detecting_sources
 
 
-async def test_composite_detection_reconstructs_each_openai_endpoint_with_its_own_client(
+async def test_composite_detection_probes_each_openai_child_with_its_open_client(
     detection_service: tuple[TargetService, _DetectableTarget],
 ) -> None:
     service, _ = detection_service
@@ -317,14 +313,8 @@ async def test_composite_detection_reconstructs_each_openai_endpoint_with_its_ow
                 target_registry_name="openai-round-robin", expected_hash=parent.get_identifier().hash
             )
         assert result.capabilities.supports_json_output
-        assert len(probes) == len(children)
-        for probe, child in zip(probes, children, strict=True):
-            assert probe.get_identifier().hash == child.get_identifier().hash
-            assert probe._async_client is not child._async_client
-            assert probe._async_client is not None
-            assert probe._async_client.is_closed()
-            assert child._async_client is not None
-            assert not child._async_client.is_closed()
+        assert probes == children
+        assert all(child._async_client is not None and not child._async_client.is_closed() for child in children)
     finally:
         for child in children:
             await child.cleanup_target_async()
@@ -371,12 +361,12 @@ async def test_composite_detection_blocks_overlapping_child_and_alias_requests(
             with pytest.raises(asyncio.CancelledError):
                 await task
     assert parent.configuration is original
-    assert all(probe.closed for probe in probes)
+    assert not any(probe.closed for probe in probes)
     assert not service._detecting
     assert not service._detecting_sources
 
 
-async def test_detection_applies_private_result_and_releases_probe(
+async def test_detection_probes_and_updates_the_live_target(
     detection_service: tuple[TargetService, _DetectableTarget],
 ) -> None:
     service, target = detection_service
@@ -387,8 +377,8 @@ async def test_detection_applies_private_result_and_releases_probe(
 
     async def discover_async(*, target: _DetectableTarget, **kwargs: object) -> TargetCapabilities:
         probes.append(target)
-        assert target is not detection_service[1]
-        assert detection_service[1].configuration is original
+        assert target is detection_service[1]
+        assert target.configuration is original
         assert kwargs["raise_on_error"] is True
         assert frozenset({"text", "image_path"}) in kwargs["test_modalities"]
         return detected
@@ -402,11 +392,8 @@ async def test_detection_applies_private_result_and_releases_probe(
     assert target.capabilities == detected
     assert target.configuration.policy == original.policy
     assert result.identifier.hash == expected_hash
-    assert probes[0].closed
+    assert probes == [target]
     assert not target.closed
-    rebuilt = service._registry.recreate_instance(source=target, params={})
-    assert rebuilt.capabilities == detected
-    await rebuilt.cleanup_target_async()
 
 
 async def test_detection_returns_the_origin_of_the_registered_target(
@@ -441,7 +428,7 @@ async def test_detection_preserves_declarations_without_verified_adapter_probes(
     assert result.capabilities.output_modalities == frozenset({frozenset({"text"})})
 
 
-async def test_detection_reconstructs_openai_without_closing_the_live_client(
+async def test_detection_probes_openai_with_its_open_client(
     detection_service: tuple[TargetService, _DetectableTarget],
 ) -> None:
     service, _ = detection_service
@@ -462,16 +449,14 @@ async def test_detection_reconstructs_openai_without_closing_the_live_client(
                 target_registry_name="openai", expected_hash=target.get_identifier().hash
             )
         assert result.capabilities.supports_json_output
-        assert probes[0]._async_client is not target._async_client
-        assert probes[0]._async_client is not None
+        assert probes == [target]
         assert target._async_client is not None
-        assert probes[0]._async_client.is_closed()
         assert not target._async_client.is_closed()
     finally:
         await target.cleanup_target_async()
 
 
-async def test_detection_rebuilds_decision_target_and_sends_a_valid_control_request_async(
+async def test_detection_sends_a_valid_control_request_to_the_decision_target_async(
     detection_service: tuple[TargetService, _DetectableTarget],
 ) -> None:
     litellm = pytest.importorskip("litellm")
@@ -504,7 +489,7 @@ async def test_detection_rebuilds_decision_target_and_sends_a_valid_control_requ
 
 
 @pytest.mark.parametrize("api_key", ["key", MagicMock(return_value="token")], ids=["key", "token_provider"])
-async def test_detection_rebuilds_prompt_shield_and_keeps_its_declarations_async(
+async def test_detection_probes_prompt_shield_and_keeps_its_declarations_async(
     detection_service: tuple[TargetService, _DetectableTarget], api_key: str | MagicMock
 ) -> None:
     service, _ = detection_service
@@ -533,7 +518,7 @@ async def test_detection_rebuilds_prompt_shield_and_keeps_its_declarations_async
 
 
 @pytest.mark.parametrize("error", [CapabilityDiscoveryError("Connection failed"), TimeoutError()])
-async def test_detection_failure_keeps_source_and_releases_probe(
+async def test_detection_failure_keeps_the_source_unchanged(
     detection_service: tuple[TargetService, _DetectableTarget], error: Exception
 ) -> None:
     service, target = detection_service
@@ -550,7 +535,7 @@ async def test_detection_failure_keeps_source_and_releases_probe(
                 target_registry_name="test-target", expected_hash=target.get_identifier().hash
             )
     assert target.configuration is original
-    assert probes[0].closed
+    assert probes == [target]
     assert not service._detecting
 
 
@@ -587,16 +572,12 @@ async def test_detection_rejects_missing_stale_and_duplicate_requests(
         )
 
 
-async def test_detection_rejects_unsafe_targets(
+async def test_detection_rejects_unsupported_composites(
     detection_service: tuple[TargetService, _DetectableTarget],
 ) -> None:
     service, _ = detection_service
     target = MockPromptTarget()
     service._registry.instances.register(target, name="unsafe")
-    with pytest.raises(ValueError, match="not supported for MockPromptTarget because it can't be rebuilt"):
-        await service.detect_capabilities_async(
-            target_registry_name="unsafe", expected_hash=target.get_identifier().hash
-        )
     target.inner_targets = [MockPromptTarget()]
     with pytest.raises(ValueError, match="composite"):
         await service.detect_capabilities_async(
@@ -627,7 +608,7 @@ async def test_detection_operation_deadline_preserves_source(
     assert not service._detecting
 
 
-async def test_detection_cancellation_releases_probe_and_admission(
+async def test_detection_cancellation_releases_admission(
     detection_service: tuple[TargetService, _DetectableTarget],
 ) -> None:
     service, target = detection_service
@@ -653,7 +634,8 @@ async def test_detection_cancellation_releases_probe_and_admission(
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-    assert probes[0].closed
+    assert probes == [target]
+    assert not target.closed
     assert target.configuration is original
     assert not service._detecting
     assert not service._detecting_sources

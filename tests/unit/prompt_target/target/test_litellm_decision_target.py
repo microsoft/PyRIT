@@ -13,7 +13,6 @@ import pytest
 from pyrit.exceptions import PyritException, RateLimitException, get_retry_max_num_attempts
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import LiteLLMChatTarget, LiteLLMDecisionTarget
-from pyrit.registry import TargetRegistry
 
 MODEL = "openrouter/microsoft/microsoft-decision-1"
 ENDPOINT = "https://openrouter.ai/api"
@@ -106,35 +105,6 @@ class TestLiteLLMDecisionTarget:
         assert not target.capabilities.supports_system_prompt
         assert not target.capabilities.supports_multi_message_pieces
         assert target.capabilities.supported_input_modalities == ["text"]
-
-    @pytest.mark.parametrize("api_key", ["test-api-key", AsyncMock(return_value="test-token")], ids=["key", "provider"])
-    async def test_reconstruction_keeps_identity_and_credentials_async(
-        self, *, api_key: str | AsyncMock, decision_sdk: MagicMock
-    ) -> None:
-        source = LiteLLMDecisionTarget(
-            model_name=MODEL, endpoint=ENDPOINT, api_key=api_key, headers={"X-Route": "a", "Authorization": "secret"}
-        )
-
-        rebuilt = TargetRegistry.get_registry_singleton().recreate_instance(source=source, params={})
-
-        assert rebuilt is not source
-        assert rebuilt.get_identifier().hash == source.get_identifier().hash
-        assert rebuilt._api_key is source._api_key
-        assert rebuilt._headers == source._headers
-        assert rebuilt._headers is not source._headers
-        assert "secret" not in rebuilt.get_identifier().model_dump_json()
-        await rebuilt.send_prompt_async(message=_request(json.dumps(REQUEST)))
-        body = decision_sdk.adecisions.call_args.kwargs
-        assert body["api_key"] == ("test-api-key" if isinstance(api_key, str) else "test-token")
-        assert body["api_base"] == ENDPOINT
-        assert body["extra_headers"] == {"X-Route": "a", "Authorization": "secret"}
-
-    @pytest.mark.parametrize("params", [{"model_name": "anthropic/x"}, {"endpoint": "https://other.test"}])
-    def test_reconstruction_keeps_connection_settings(
-        self, *, target: LiteLLMDecisionTarget, params: dict[str, str]
-    ) -> None:
-        with pytest.raises(ValueError, match="keeps its source's connection settings"):
-            TargetRegistry.get_registry_singleton().recreate_instance(source=target, params=params, external_input=True)
 
     def test_empty_model_raises(self) -> None:
         with pytest.raises(ValueError, match="model name"):

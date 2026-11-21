@@ -78,6 +78,35 @@ def _is_credential_rejection(error: BaseException) -> bool:
 # compatibility); it is canonically defined in ``pyrit.common.auth_mode`` so
 # ``pyrit.auth`` resolvers can consume it without depending on the target layer.
 
+_ATTRIBUTE_SCOPES: ContextVar[tuple[tuple["PromptTarget", Mapping[str, Any]], ...]] = ContextVar(
+    "target_attribute_scopes", default=()
+)
+
+
+class _TaskLocalAttribute:
+    """
+    An instance attribute that ``PromptTarget._probe_scope`` can override for one task.
+
+    Every other task, including a concurrent send on the same target, reads the stored value.
+    """
+
+    def __set_name__(self, owner: type, name: str) -> None:  # pyrit-keyword-only-exempt descriptor protocol
+        self._name = name
+
+    def __get__(self, instance: object, owner: type | None = None) -> Any:  # pyrit-keyword-only-exempt descriptor
+        if instance is None:
+            return self
+        for target, overrides in reversed(_ATTRIBUTE_SCOPES.get()):
+            if target is instance and self._name in overrides:
+                return overrides[self._name]
+        try:
+            return instance.__dict__[self._name]
+        except KeyError:
+            raise AttributeError(self._name) from None
+
+    def __set__(self, instance: object, value: Any) -> None:  # pyrit-keyword-only-exempt descriptor protocol
+        instance.__dict__[self._name] = value
+
 
 class PromptTarget(Identifiable):
     """
@@ -124,6 +153,10 @@ class PromptTarget(Identifiable):
     _CONFIGURATION_SCOPES: ClassVar[ContextVar[tuple[tuple["PromptTarget", TargetConfiguration], ...]]] = ContextVar(
         "target_configuration_scopes", default=()
     )
+    # Tool settings that capability probes turn off for their own task only (see ``_probe_scope``).
+    _extra_body_parameters = _TaskLocalAttribute()
+    _execute_tools = _TaskLocalAttribute()
+    _suppress_tools = _TaskLocalAttribute()
 
     # Declarative auth facts consumed by the create-target service and catalog.
     # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
@@ -683,7 +716,7 @@ class PromptTarget(Identifiable):
 
     def attach_reconstruction_source(self, source: object) -> None:
         """
-        Share request pacing and credential status, not clients or behavioral configuration.
+        Report credential rejections into the target this copy was built from.
 
         Args:
             source (object): The registered target this copy was built from.
@@ -691,7 +724,6 @@ class PromptTarget(Identifiable):
         if isinstance(source, PromptTarget):
             self._credential_status_source = source._credential_status_owner()
             self._credential_generation = source._credential_generation
-            self._rate_limit_source = getattr(source, "_rate_limit_source", source)
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """
@@ -1080,6 +1112,36 @@ class PromptTarget(Identifiable):
             yield
         finally:
             self._CONFIGURATION_SCOPES.reset(token)
+
+    @contextmanager
+    def _probe_scope(
+        self, *, configuration: TargetConfiguration, attributes: Mapping[str, Any]
+    ) -> Generator[None, None, None]:
+        """
+        Use a configuration and tool settings for this task only, so probes can run on a live target.
+
+        Unlike ``capabilities_scope``, the configuration is used as given, without masking.
+
+        Args:
+            configuration: The configuration this task sees.
+            attributes: Values for this target's task-local attributes, such as ``_execute_tools``.
+
+        Yields:
+            None: The task-local scope, restored even on cancellation.
+
+        Raises:
+            ValueError: If an attribute is not task-local, so setting it would change every task.
+        """
+        for name in attributes:
+            if not isinstance(getattr(type(self), name, None), _TaskLocalAttribute):
+                raise ValueError(f"{type(self).__name__}.{name} cannot be overridden for one task.")
+        configuration_token = self._CONFIGURATION_SCOPES.set((*self._CONFIGURATION_SCOPES.get(), (self, configuration)))
+        attribute_token = _ATTRIBUTE_SCOPES.set((*_ATTRIBUTE_SCOPES.get(), (self, dict(attributes))))
+        try:
+            yield
+        finally:
+            _ATTRIBUTE_SCOPES.reset(attribute_token)
+            self._CONFIGURATION_SCOPES.reset(configuration_token)
 
     @property
     def capabilities(self) -> TargetCapabilities:

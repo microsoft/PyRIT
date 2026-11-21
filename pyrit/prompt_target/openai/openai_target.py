@@ -504,6 +504,16 @@ class OpenAITarget(PromptTarget):
         if self._async_client is not None:
             await self._async_client.close()
 
+    def attach_reconstruction_source(self, source: object) -> None:
+        """
+        Share request pacing and credential status, not clients or behavioral configuration.
+
+        Args:
+            source (object): The registered target this copy was built from.
+        """
+        super().attach_reconstruction_source(source)
+        self._rate_limit_source = getattr(source, "_rate_limit_source", source)
+
     @property
     def supports_credential_updates(self) -> bool:
         """Whether this target can replace its API key or request headers in place; not with its own HTTP client."""

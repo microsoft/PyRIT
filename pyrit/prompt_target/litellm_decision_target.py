@@ -44,8 +44,7 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
     _SUPPORTS_TOOL_CALL_HISTORY = False
     _DEFAULT_CONFIGURATION = TargetConfiguration(capabilities=TargetCapabilities())
 
-    # The model name's provider prefix chooses where LiteLLM sends the key when no endpoint is set.
-    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset({"model_name", "endpoint", "api_key", "headers"})
+    # Capability detection's text probe must be a valid decision request, like DecisionScorer's.
     capability_probe_text: ClassVar[str] = json.dumps(
         {
             "state": "test",
@@ -107,23 +106,6 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
             ComponentIdentifier: The target identity.
         """
         return self._create_identifier(params={"endpoint": self._endpoint, "headers": self._identifier_headers()})
-
-    def get_reconstruction_parameters(self) -> dict[str, object]:
-        """
-        Return server-only inputs, including the resolved key or token provider.
-
-        Returns:
-            dict[str, object]: Constructor inputs that rebuild this target.
-        """
-        return {
-            "model_name": self._model_name,
-            "endpoint": self._endpoint,
-            "api_key": self._api_key,
-            "headers": self._headers,
-            "max_requests_per_minute": self._max_requests_per_minute,
-            "custom_configuration": self.configuration,
-            "trace_config": self._trace_config,
-        }
 
     @pyrit_target_retry
     @limit_requests_per_minute

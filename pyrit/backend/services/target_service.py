@@ -40,7 +40,7 @@ from pyrit.backend.models.targets import (
     TargetTypeResponse,
     UnregisteredTarget,
 )
-from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
+from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
 from pyrit.models import Parameter, PromptDataType, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import (
@@ -82,7 +82,6 @@ from pyrit.registry.instance_registry import (
     RegistryNameTakenError,
     registry_entry_origin,
 )
-from pyrit.registry.registry import Reconstructable
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +141,7 @@ class TargetService:
 
     async def detect_capabilities_async(self, *, target_registry_name: str, expected_hash: str) -> TargetInstance:
         """
-        Probe private targets and apply a completed result to the selected source.
+        Probe a live target and apply a completed result to it.
 
         Round-robin detection probes each child independently and combines their
         results. Only the selected parent is updated; live children are not changed.
@@ -164,12 +163,6 @@ class TargetService:
         if getattr(target, "inner_targets", None) and not isinstance(target, RoundRobinTarget):
             raise ValueError("Capability detection is not supported for this composite target type.")
         sources = target.inner_targets if isinstance(target, RoundRobinTarget) else [target]
-        # Detection probes a private copy, so a target that can't be rebuilt can't be checked.
-        for source in sources:
-            if not isinstance(source, Reconstructable):
-                raise ValueError(
-                    f"Capability detection is not supported for {type(source).__name__} because it can't be rebuilt."
-                )
         snapshots = [(source, source.configuration) for source in [target, *sources]]
         source_ids = {id(source) for source, _ in snapshots}
         if target_registry_name in self._detecting or source_ids & self._detecting_sources:
@@ -214,23 +207,19 @@ class TargetService:
 
     async def _probe_capabilities_async(self, target: PromptTarget) -> TargetCapabilities:
         """
-        Check one private target and release its resources.
+        Check one live target without changing it.
+
+        Probes see their permissive settings only in their own task, so concurrent
+        requests to the target are unaffected and any target type can be checked.
 
         Returns:
             TargetCapabilities: Completed capability results.
         """
-        probe = await construct_component_async(self._registry.recreate_instance, source=target, params={})
-        try:
-            probe.apply_capabilities(capabilities=target.capabilities)
-            modalities: set[frozenset[PromptDataType]] = {frozenset({"text"})}
-            for modality in DEFAULT_TEST_ASSETS:
-                modalities.update({frozenset({modality}), frozenset({"text", modality})})
-            modalities.update(TOOL_CALL_INPUT_MODALITIES)
-            return await discover_target_capabilities_async(
-                target=probe, test_modalities=modalities, raise_on_error=True
-            )
-        finally:
-            await release_component_async(probe)
+        modalities: set[frozenset[PromptDataType]] = {frozenset({"text"})}
+        for modality in DEFAULT_TEST_ASSETS:
+            modalities.update({frozenset({modality}), frozenset({"text", modality})})
+        modalities.update(TOOL_CALL_INPUT_MODALITIES)
+        return await discover_target_capabilities_async(target=target, test_modalities=modalities, raise_on_error=True)
 
     def _build_instance_from_entry(
         self, entry: RegistryEntry[PromptTarget], *, origin: RegistryEntryOrigin | None = None
