@@ -114,3 +114,21 @@ def test_plan_without_kinds_keeps_historical_counts():
     assert overview.baseline is None
     assert overview.objective_executions == 2
     assert overview.success_rate == 50
+
+
+def test_shared_name_missing_hash_remains_unattributed():
+    _, result = _result(shared_name=True)
+    rows = result.attack_results["attack"]
+    ambiguous = rows[0].model_copy(deep=True)
+    ambiguous.attribution_data.pop("parent_eval_hash")
+    ambiguous.outcome = AttackOutcome.FAILURE
+    ambiguous.timestamp = ambiguous.timestamp.replace(year=ambiguous.timestamp.year + 1)
+    result.attack_results["attack"].append(ambiguous)
+    before = result.model_dump(mode="json")
+    overview = scenario_overview(result)
+    assert overview.objective_executions == 1
+    assert overview.success_rate == 100
+    assert overview.baseline.completed == 1
+    assert overview.baseline.failures == 1
+    assert suite_entry_statistics(result).success_percentage == 100
+    assert result.model_dump(mode="json") == before

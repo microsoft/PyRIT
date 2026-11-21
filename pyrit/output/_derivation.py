@@ -168,11 +168,13 @@ def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
                 producer_counts=counts.producer_counts,
             )
         )
-    attack_statistics = compute_scenario_statistics(reporting_population(result))
+    attack_statistics = compute_scenario_statistics(
+        reporting_population(result), resolution_plan=load_scenario_run_plan(result)
+    )
     baseline_result = reporting_population(result, baseline=True)
     baseline_plan = load_scenario_run_plan(baseline_result)
     baseline = (
-        suite_entry_statistics(baseline_result, include_baseline=True)
+        suite_entry_statistics(result, baseline=True)
         if baseline_plan is not None and baseline_plan.atomic_groups
         else None
     )
@@ -200,18 +202,20 @@ class SuiteEntryStatistics(NamedTuple):
     success_percentage: int | None
 
 
-def suite_entry_statistics(result: ScenarioResult, *, include_baseline: bool = False) -> SuiteEntryStatistics:
+def suite_entry_statistics(result: ScenarioResult, *, baseline: bool = False) -> SuiteEntryStatistics:
     """
     Summarize one suite entry's result with the scenario report's counting policy.
 
     Args:
         result (ScenarioResult): The entry's scenario result.
-        include_baseline (bool): Keep baseline groups in an already selected population. Defaults to False.
+        baseline (bool): Summarize recorded baseline groups instead of attack groups. Defaults to False.
 
     Returns:
         SuiteEntryStatistics: Latest-unit counts and the all-outcome success rate.
     """
-    counts = compute_scenario_statistics(result if include_baseline else reporting_population(result)).overall
+    counts = compute_scenario_statistics(
+        reporting_population(result, baseline=baseline), resolution_plan=load_scenario_run_plan(result)
+    ).overall
     outcomes = counts.outcomes
     return SuiteEntryStatistics(
         completed=counts.completed,
