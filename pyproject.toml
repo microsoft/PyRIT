@@ -280,7 +280,7 @@ redundant-condition-strict = "ignore"
 [[tool.ty.overrides]]
 include = ["tests/unit/**"]
 [tool.ty.overrides.rules]
-call-non-callable = "ignore"
+not-callable = "ignore"
 invalid-assignment = "ignore"
 invalid-await = "ignore"
 invalid-parameter-default = "ignore"
@@ -294,9 +294,9 @@ unsupported-operator = "ignore"
 # relaxed here: tests read private/mock attributes and subclass library types
 # with loosened signatures / runtime-validation-failure arguments.
 invalid-argument-type = "ignore"
-invalid-method-override = "ignore"
+incompatible-method-override = "ignore"
 no-matching-overload = "ignore"
-unresolved-attribute = "ignore"
+missing-attribute = "ignore"
 # Enabled for pyrit/ (clean) but still relaxed here: tests/unit has 318 bare
 # generics (mostly `dict` and the attack context/strategy classes) across ~70 files.
 missing-type-argument = "ignore"
