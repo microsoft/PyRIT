@@ -4,6 +4,8 @@ import {
   catalogPathFromNavigationState,
   DATASET_DETAIL_PATH,
   datasetDetailPath,
+  DATASET_QUERY_PARAM,
+  datasetNamesFromSearchParams,
   routerPathParamValue,
   scenarioRunAttackRoutePath,
   scenarioRunProvenance,
@@ -155,5 +157,21 @@ describe('isDatasetsPath and isChatPath', () => {
     expect(isChatPath('/datasets')).toBe(false)
     expect(isChatPath('/attack/history')).toBe(false)
     expect(isChatPath('')).toBe(false)
+  })
+})
+
+describe('scenario dataset links', () => {
+  it('reads distinct dataset names exactly as written, keeping blanks for the server to reject', () => {
+    const params = new URLSearchParams('dataset=a&dataset=%20b%20&dataset=&dataset=a&preset=p')
+    expect(datasetNamesFromSearchParams(params)).toEqual(['a', ' b ', ''])
+    expect(datasetNamesFromSearchParams(new URLSearchParams())).toEqual([])
+  })
+
+  it('round-trips names through a launch link without merging whitespace variants', () => {
+    const names = ['returns_policy', 'x+y', 'a&b', ' returns ', 'returns ', 'returns']
+    const params = new URLSearchParams()
+    for (const name of [...names, ' returns ']) params.append(DATASET_QUERY_PARAM, name)
+    const search = new URL(`/scanner/launch/scenario?${params.toString()}`, 'http://localhost').searchParams
+    expect(datasetNamesFromSearchParams(search)).toEqual(names)
   })
 })

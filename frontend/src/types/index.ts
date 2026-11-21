@@ -1678,6 +1678,8 @@ export interface ScenarioDatasetRequest {
 export interface ScenarioDatasetOptions {
   mode: 'any' | 'subset' | 'fixed'
   allowed_names: string[]
+  /** The fewest named datasets a run needs, when the scenario has no usable defaults. */
+  min_selected?: number | null
   max_selected?: number | null
   per_dataset_limit: boolean
   total_limit: boolean
