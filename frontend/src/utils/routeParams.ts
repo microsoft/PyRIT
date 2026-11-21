@@ -72,6 +72,17 @@ export function scenarioRerunRoutePath(scenarioName: string, scenarioResultId: s
   return `/scanner/launch/${encodeURIComponent(scenarioName)}?rerun=${encodeURIComponent(scenarioResultId)}`
 }
 
+/** Names a stored dataset that the Scanner launch form preselects. Repeatable. */
+export const DATASET_QUERY_PARAM = 'dataset'
+
+/**
+ * Reads the distinct dataset names requested for preselection, exactly as written. Names are
+ * opaque, so whitespace is kept; blank values are kept too so the server can reject them.
+ */
+export function datasetNamesFromSearchParams(params: URLSearchParams): string[] {
+  return [...new Set(params.getAll(DATASET_QUERY_PARAM))]
+}
+
 function appendScenarioRunProvenance(path: string, scenarioResultId?: string | null): string {
   if (!scenarioResultId || !UUID_PATTERN.test(scenarioResultId)) {
     return path

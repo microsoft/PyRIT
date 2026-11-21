@@ -83,6 +83,7 @@ class Leakage(Scenario):
     SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = True
 
     VERSION: int = 2
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = True
 
     @classmethod
     def _get_additional_scoring_questions(cls) -> list[Path]:

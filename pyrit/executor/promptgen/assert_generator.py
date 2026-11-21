@@ -257,9 +257,7 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
         checkpoint = AssertGenerationCheckpoint.model_validate(checkpoint)
         context = AssertGeneratorContext(config=checkpoint.config)
         context._used = True
-        self._validate_web_search(checkpoint=checkpoint, stop_after=stop_after)
-        for stage in _model_stages(checkpoint=checkpoint, stop_after=stop_after):
-            self._require_producer(checkpoint=checkpoint, role=self._STAGE_ROLES[stage])
+        self.validate_checkpoint(checkpoint=checkpoint, stop_after=stop_after)
         async with self._execution_context_async(context):
             return await self._advance_async(
                 context=context, checkpoint=checkpoint, stop_after=stop_after, on_checkpoint=on_checkpoint
@@ -356,6 +354,29 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
                 or the generation target can't disable it.
         """
         self._validate_web_search(checkpoint=AssertGenerationCheckpoint(config=config))
+
+    def validate_checkpoint(
+        self, *, checkpoint: AssertGenerationCheckpoint, stop_after: AssertGenerationStage | None = None
+    ) -> None:
+        """
+        Check, without model calls, that this generator's targets can run a checkpoint's remaining stages.
+
+        ``advance_async`` runs the same check. Only roles with a stage left are checked: their target must
+        support the request's web search policy and, if the role already produced work, must be the target
+        that produced it.
+
+        Args:
+            checkpoint (AssertGenerationCheckpoint): The progress to continue from.
+            stop_after (AssertGenerationStage | None): The last stage to run. Defaults to every stage.
+
+        Raises:
+            ValueError: If a target can't enforce the web search policy or isn't the target that produced
+                its role's earlier work.
+        """
+        checkpoint = AssertGenerationCheckpoint.model_validate(checkpoint)
+        self._validate_web_search(checkpoint=checkpoint, stop_after=stop_after)
+        for stage in _model_stages(checkpoint=checkpoint, stop_after=stop_after):
+            self._require_producer(checkpoint=checkpoint, role=self._STAGE_ROLES[stage])
 
     def _validate_web_search(
         self, *, checkpoint: AssertGenerationCheckpoint, stop_after: AssertGenerationStage | None = None
