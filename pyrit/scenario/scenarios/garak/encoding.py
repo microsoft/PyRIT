@@ -22,6 +22,7 @@ from pyrit.converter import (
     LeetspeakConverter,
     MorseConverter,
     NatoConverter,
+    PigpenConverter,
     ROT13Converter,
     SearchReplaceConverter,
     ZalgoConverter,
@@ -51,42 +52,6 @@ from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import DecodingScorer, TrueFalseScorer
-
-# Pigpen (Freemason's / Masonic) cipher: a geometric monoalphabetic substitution of the Latin
-# alphabet; see https://en.wikipedia.org/wiki/Pigpen_cipher . Framing classical ciphers as an
-# LLM jailbreak vector: CipherChat (Yuan et al., 2023, arXiv:2308.06463).
-# Each glyph is the shape the key draws around that letter's grid cell: the tic-tac-toe grid for
-# A-I, the same with a dot for J-R, the saltire (X) for S-V, and the same with a dot for W-Z.
-# Kept as a Leetspeak substitution table rather than a dedicated converter (reuse and compose
-# before adding).
-_PIGPEN_SUBSTITUTIONS: dict[str, list[str]] = {
-    "a": ["┘"],
-    "b": ["⊔"],
-    "c": ["└"],
-    "d": ["⊐"],
-    "e": ["□"],
-    "f": ["⊏"],
-    "g": ["┐"],
-    "h": ["⊓"],
-    "i": ["┌"],
-    "j": ["┘̇"],
-    "k": ["⊔̇"],
-    "l": ["└̇"],
-    "m": ["⊐̇"],
-    "n": ["□̇"],
-    "o": ["⊏̇"],
-    "p": ["┐̇"],
-    "q": ["⊓̇"],
-    "r": ["┌̇"],
-    "s": ["▽"],
-    "t": ["▷"],
-    "u": ["◁"],
-    "v": ["△"],
-    "w": ["▽̇"],
-    "x": ["▷̇"],
-    "y": ["◁̇"],
-    "z": ["△̇"],
-}
 
 
 class EncodingDatasetConfiguration(DatasetAttackConfiguration):
@@ -356,7 +321,7 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
-            ([LeetspeakConverter(custom_substitutions=_PIGPEN_SUBSTITUTIONS)], "pigpen", "pigpen"),
+            ([PigpenConverter()], "pigpen", "pigpen"),
             # "ubbi_dubbi": a language game that prefixes each vowel run with "ub", popularized by
             # the PBS children's show Zoom (1972). https://en.wikipedia.org/wiki/Ubbi_dubbi
             ([SearchReplaceConverter(pattern=r"([aeiouAEIOU]+)", replace=r"ub\1")], "ubbi_dubbi", "ubbi_dubbi"),
