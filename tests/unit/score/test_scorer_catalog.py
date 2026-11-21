@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from build_scripts.generate_scorer_capability_table import PAGE, main, render_page
+from pyrit.models import ScorerCapabilityName
 from pyrit.score import (
     FloatScaleThresholdScorer,
     MessageToolCallScorer,
@@ -79,7 +80,8 @@ def test_the_table_agrees_with_configured_scorers(build):
     row = _row(type(scorer).__name__)
 
     assert row.result == "true/false"
-    assert capabilities.preserves_float_scale_value is (row.float_feedback != "No")
+    keeps_float_feedback = capabilities.includes(capability=ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE)
+    assert keeps_float_feedback is (row.float_feedback != "No")
     if type(scorer).SUPPORTED_SCORABLE_TYPES:
         assert row.evidence == ", ".join(sorted(t.__name__ for t in capabilities.scorable_types))
     if type(scorer).CONDITION_TYPE is not None:

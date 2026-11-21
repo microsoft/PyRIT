@@ -15,9 +15,8 @@ import inspect
 from dataclasses import dataclass
 
 import pyrit.score as score_package
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.models import ScorerCapabilityName
 from pyrit.score.scorer import Scorer
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 #: True/false scorers that override the float feedback hook, and when they keep the value.
 #: A test requires this to name exactly the classes that override the hook.
@@ -36,7 +35,7 @@ class ScorerClassSummary:
 
     Attributes:
         name (str): The class name.
-        result (str): ``true/false`` or ``float scale``.
+        result (str): ``true/false`` or ``float scale``, from the result family in ``CAPABILITIES``.
         evidence (str): The evidence it accepts.
         conditions (str): The condition type it evaluates.
         float_feedback (str): Whether a true/false result keeps a float value for ranking.
@@ -79,8 +78,16 @@ def _describe_conditions(cls: type[Scorer]) -> str:
     return "None"
 
 
+def _describe_result(cls: type[Scorer]) -> str:
+    if ScorerCapabilityName.TRUE_FALSE in cls.CAPABILITIES:
+        return "true/false"
+    if ScorerCapabilityName.FLOAT_SCALE in cls.CAPABILITIES:
+        return "float scale"
+    return "other"
+
+
 def _describe_float_feedback(cls: type[Scorer]) -> str:
-    if not issubclass(cls, TrueFalseScorer):
+    if ScorerCapabilityName.TRUE_FALSE not in cls.CAPABILITIES:
         return "Not applicable"
     return FLOAT_FEEDBACK_GUARANTEES.get(cls.__name__, "No")
 
@@ -110,11 +117,7 @@ def describe_scorer_classes() -> list[ScorerClassSummary]:
     return [
         ScorerClassSummary(
             name=cls.__name__,
-            result="true/false"
-            if issubclass(cls, TrueFalseScorer)
-            else "float scale"
-            if issubclass(cls, FloatScaleScorer)
-            else "other",
+            result=_describe_result(cls),
             evidence=_describe_evidence(cls),
             conditions=_describe_conditions(cls),
             float_feedback=_describe_float_feedback(cls),
