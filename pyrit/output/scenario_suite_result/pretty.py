@@ -159,6 +159,17 @@ class PrettyScenarioSuiteResultPrinter(_PrettyPrinterMixin, ScenarioSuiteResultP
                         self._get_rate_color(counts.success_percentage),
                     )
                 )
+        if row.baseline_statistics is not None:
+            baseline = row.baseline_statistics
+            lines.append(
+                self._format_colored(f"{bullet}Baseline Objective Executions: {baseline.completed}", Fore.CYAN)
+            )
+            if baseline.success_percentage is not None:
+                lines.append(
+                    self._format_colored(
+                        f"{bullet}Baseline Success Rate: {baseline.success_percentage}% (excluded above)", Fore.CYAN
+                    )
+                )
         if row.error:
             lines.append(self._format_colored(f"{bullet}Error: {row.error}", Fore.RED))
         return "".join(lines)

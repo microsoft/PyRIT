@@ -422,3 +422,17 @@ await conversation_printer.write_async(conversation)  # type: ignore
 # 2. Create format files (`pretty.py`, etc.) with `render_async` implementation
 # 3. Add Memory leaf classes with forwarding `render_async` + data methods
 # 4. Add a convenience function in `helpers.py`
+
+# %% [markdown]
+# ## Baseline and Attack Statistics
+#
+# Scenario and scenario-suite pretty/JSON summaries exclude groups explicitly recorded
+# as baseline in the saved run plan from attack totals and success-rate denominators.
+# Baseline counts and rates are reported separately; per-group breakdowns still include
+# every group. With one successful attack and one failed baseline, attack success is
+# 100%, while baseline success is 0%, rather than a mixed 50%.
+#
+# A baseline-only suite entry has zero attack executions and no attack success rate.
+# Older results without recorded group kinds retain their historical counts: a group
+# name containing "baseline" is not enough to establish its role. These report projections
+# do not change stored results, SDK analytics, baseline scheduling, or execution.
