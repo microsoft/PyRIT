@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from pyrit.converter.grid_composite_converter import GridCompositeConverter
     from pyrit.converter.image_color_saturation_converter import ImageColorSaturationConverter
     from pyrit.converter.image_compression_converter import ImageCompressionConverter
+    from pyrit.converter.image_crop_converter import ImageCropConverter
     from pyrit.converter.image_overlay_converter import ImageOverlayConverter
     from pyrit.converter.image_prompt_style_converter import ImagePromptStyleConverter
     from pyrit.converter.image_resizing_converter import ImageResizingConverter
@@ -199,6 +200,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "GridCompositeConverter": "pyrit.converter.grid_composite_converter",
     "ImageColorSaturationConverter": "pyrit.converter.image_color_saturation_converter",
     "ImageCompressionConverter": "pyrit.converter.image_compression_converter",
+    "ImageCropConverter": "pyrit.converter.image_crop_converter",
     "ImageOverlayConverter": "pyrit.converter.image_overlay_converter",
     "ImagePromptStyleConverter": "pyrit.converter.image_prompt_style_converter",
     "ImageResizingConverter": "pyrit.converter.image_resizing_converter",
