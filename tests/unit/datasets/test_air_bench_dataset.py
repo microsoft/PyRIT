@@ -47,7 +47,7 @@ def test_invalid_region_raises() -> None:
 
 
 @pytest.mark.parametrize("region", list(AIRBenchRegion))
-async def test_fetch_uses_the_region_config(region: AIRBenchRegion) -> None:
+async def test_fetch_uses_the_region_config_async(region: AIRBenchRegion) -> None:
     loader = _AIRBenchDataset(region=region)
 
     with patch.object(
@@ -65,7 +65,7 @@ async def test_fetch_uses_the_region_config(region: AIRBenchRegion) -> None:
     assert all(seed.metadata["region"] == region.value for seed in dataset.seeds)
 
 
-async def test_fetch_defaults_to_the_full_benchmark() -> None:
+async def test_fetch_defaults_to_the_full_benchmark_async() -> None:
     loader = _AIRBenchDataset()
 
     with patch.object(
@@ -76,7 +76,7 @@ async def test_fetch_defaults_to_the_full_benchmark() -> None:
     assert mock_fetch.call_args.kwargs["config"] == "default"
 
 
-async def test_rows_become_prompts_without_deduplication() -> None:
+async def test_rows_become_prompts_without_deduplication_async() -> None:
     loader = _AIRBenchDataset()
 
     with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=_ROWS):
@@ -99,7 +99,7 @@ async def test_rows_become_prompts_without_deduplication() -> None:
 
 
 @pytest.mark.parametrize("column", ["cate-idx", "l2-name", "l3-name", "l4-name", "prompt"])
-async def test_row_missing_a_field_raises(column: str) -> None:
+async def test_row_missing_a_field_raises_async(column: str) -> None:
     loader = _AIRBenchDataset()
     row = {**_ROWS[0], column: ""}
 
@@ -110,7 +110,7 @@ async def test_row_missing_a_field_raises(column: str) -> None:
         await loader.fetch_dataset_async(cache=False)
 
 
-async def test_empty_dataset_raises() -> None:
+async def test_empty_dataset_raises_async() -> None:
     loader = _AIRBenchDataset()
 
     with (
