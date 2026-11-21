@@ -8,7 +8,7 @@ The short version:
 2. **Mix human-led and automated red teaming.** Automation helps you scale. It does not tell you that your system is safe.
 3. **Learn by doing, and write down what you learn.** Set up an endpoint, attack it, make it harder, attack it again.
 
-If you would rather start with videos, papers, or hands-on labs, go straight to [Learning Resources](./1_resources.md).
+If you would rather start with guides, talks, or hands-on practice, go straight to [Learning Resources](./1_resources.md).
 
 ## What AI Red Teaming Is
 
@@ -94,7 +94,7 @@ A table is enough for your notes:
 |---|---|---|---|---|---|
 | | | | | | |
 
-If you want this exercise ready-made, the [AI Red Teaming Playground Labs](https://github.com/microsoft/AI-Red-Teaming-Playground-Labs) are twelve challenges that follow the same pattern, with defenses that get stronger as you go. The [AI Red Teaming 101](https://learn.microsoft.com/en-us/security/ai-red-team/training) video series walks through the underlying techniques.
+If you want ready-made challenges instead of your own setup, [Learning Resources](./1_resources.md) lists places to practice.
 
 ## Building Your Skills
 
@@ -106,11 +106,11 @@ People come to AI red teaming from security, machine learning, the social scienc
 - **Read new research and reproduce it.** Reproducing a published attack against your own endpoint teaches more than reading about ten of them.
 - **Do it in public.** Lab write-ups and open source contributions show what you can do. PyRIT welcomes [contributions](../contributing/README.md), and you do not need to be an experienced red teamer to make one.
 
-Nearly everything in [Learning Resources](./1_resources.md) is free and online. The hands-on parts need access to a model, which can be an open model on your own machine.
+The reading in [Learning Resources](./1_resources.md) is free and online. The hands-on parts need access to a model, which can be an open model on your own machine.
 
 ## Where to Go Next
 
-- 📚 [Learning Resources](./1_resources.md): videos, guides, papers, and practice labs
+- 📚 [Learning Resources](./1_resources.md): guides, blog posts, talks, and places to practice
 - 📦 [Installation](../getting_started/README.md): install and configure PyRIT
 - 🖥️ [GUI](../gui/0_gui.md): human-led red teaming in the browser
 - 🔍 [Scanner](../scanner/0_scanner.md): automated runs from the command line

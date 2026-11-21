@@ -1,105 +1,45 @@
 # Learning Resources
 
-A short, opinionated reading and watching list for people getting into AI red teaming. It goes with [Learn AI Red Teaming](./0_red_teaming.md), which explains how we think about the work. If you only have time for a few things, take the first section in order.
+A short list for people getting into AI red teaming. It goes with [Learn AI Red Teaming](./0_red_teaming.md), which explains how we think about the work.
 
-This list was last reviewed in November 2026. The field moves quickly, so newer material exists for most topics. Spotted something that belongs here? [Open an issue or a pull request](../contributing/README.md). Inclusion is not an endorsement of any product.
+This list was last reviewed in November 2026. Spotted something that belongs here? [Open an issue or a pull request](../contributing/README.md).
 
 ## Start Here
 
-1. **[Planning red teaming for large language models (LLMs) and their applications](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/red-teaming)** (Microsoft Learn).
-   The questions to ask before you test anything: who tests, what to test, at which layer, and how to record results. Generic, short, and still current.
-2. **[AI Red Teaming 101](https://learn.microsoft.com/en-us/security/ai-red-team/training)** (Microsoft AI Red Team, video series).
-   Ten short episodes: what AI red teaming is, how generative models work, direct and indirect prompt injection, single-turn and multi-turn attacks, defenses, and three episodes on automating attacks with PyRIT. The episodes are modular, so you can skip around. Also available as a [YouTube playlist](https://www.youtube.com/playlist?list=PLlrxD0HtieHhXnVUQM42aKRPrirbUIDdh).
-3. **[AI Red Teaming Playground Labs](https://github.com/microsoft/AI-Red-Teaming-Playground-Labs)** (Microsoft, hands-on).
-   Twelve challenges from easy to hard that you run locally with Docker: credential exfiltration, system prompt extraction, multi-turn Crescendo attacks, and indirect prompt injection. They accompany the video series and include notebooks that solve some of the challenges with PyRIT. You need an OpenAI or Azure OpenAI key.
-4. **[Lessons From Red Teaming 100 Generative AI Products](https://arxiv.org/abs/2501.07238)** [@bullwinkel2025airtlessons].
-   Eight lessons and five case studies from the Microsoft AI Red Team. If you want the summary first, read [3 takeaways from red teaming 100 generative AI products](https://www.microsoft.com/en-us/security/blog/2025/01/13/3-takeaways-from-red-teaming-100-generative-ai-products/).
-
-## From the Microsoft AI Red Team
-
-Papers, blog posts, and talks by the team that builds PyRIT, and by colleagues at Microsoft whose techniques PyRIT implements. The items under Start Here are not repeated.
-
-### Papers
-
-- **[Taxonomy of Failure Modes in Agentic AI Systems, v2.0](https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/microsoft/bade/documents/products-and-services/en-us/security/Taxonomy-of-Failure-Modes-in-Agentic-AI-Systems-v2-0.pdf)** (2026). The update to the 2025 taxonomy [@bryan2025agentictaxonomy] after a further year of red teaming agents.
-- **[A Systematization of Security Vulnerabilities in Computer Use Agents](https://arxiv.org/abs/2507.05445)** [@jones2025computeruse]. The attack surfaces and trust boundaries of agents that operate a browser or a desktop.
-- **[Phi-3 Safety Post-Training: Aligning Language Models with a "Break-Fix" Cycle](https://arxiv.org/abs/2407.13833)** [@haider2024phi3safety]. How red teaming fed back into the safety training of a model family, round after round.
-- **[A Representation Engineering Perspective on the Effectiveness of Multi-Turn Jailbreaks](https://arxiv.org/abs/2507.02956)** [@bullwinkel2025repeng]. Looks inside a model to study why the Crescendo multi-turn attack works.
-- **[The Trigger in the Haystack: Extracting and Reconstructing LLM Backdoor Triggers](https://arxiv.org/abs/2602.03085)** [@bullwinkel2026trigger]. A practical scanner for sleeper-agent-style backdoors in language models.
-- **[Learning to Attack and Defend: Adaptive Red Teaming of Language Models via GRPO](https://arxiv.org/abs/2606.09701)** (2026). Training attacker and defender models together with reinforcement learning.
-
-Related Microsoft research on attacks and defenses that PyRIT implements:
-
-- **[Crescendo](https://arxiv.org/abs/2404.01833)** [@russinovich2024crescendo]. The multi-turn jailbreak that starts benign and escalates step by step.
-- **[Jailbreaking is (Mostly) Simpler Than You Think](https://arxiv.org/abs/2503.05264)** [@russinovich2025cca]. The Context Compliance Attack, which manipulates conversation history instead of crafting clever prompts.
-- **[Defending Against Indirect Prompt Injection Attacks With Spotlighting](https://arxiv.org/abs/2403.14720)** [@hines2024spotlighting]. A defense that helps a model tell instructions apart from untrusted data.
-- **The Price of Intelligence** [@russinovich2025price]. An overview of three inherent risks of LLMs, published in Communications of the ACM.
-
-### Blog Posts
-
-- **[Microsoft AI Red Team posts on the Microsoft Security Blog](https://www.microsoft.com/en-us/security/blog/author/microsoft-ai-red-team/)**. The team's author page, with the most recent posts first.
-- **[Trained to betray: How post-training supply chain attacks hijack coding agents](https://www.microsoft.com/en-us/security/blog/2026/11/12/trained-to-betray-how-post-training-supply-chain-attacks-hijack-coding-agents/)** (2026).
-- **[Updating the taxonomy of failure modes in agentic AI systems: What a year of red teaming taught us](https://www.microsoft.com/en-us/security/blog/2026/06/04/updating-taxonomy-failure-modes-agentic-ai-systems-year-red-teaming-taught-us/)** (2026). The summary of the v2.0 taxonomy above.
-- **[New whitepaper outlines the taxonomy of failure modes in AI agents](https://www.microsoft.com/en-us/security/blog/2025/04/24/new-whitepaper-outlines-the-taxonomy-of-failure-modes-in-ai-agents/)** (2025).
-- **[Mitigating Skeleton Key, a new type of generative AI jailbreak technique](https://www.microsoft.com/en-us/security/blog/2024/06/26/mitigating-skeleton-key-a-new-type-of-generative-ai-jailbreak-technique/)** [@microsoft2024skeletonkey].
-- **[How Microsoft discovers and mitigates evolving attacks against AI guardrails](https://www.microsoft.com/en-us/security/blog/2024/04/11/how-microsoft-discovers-and-mitigates-evolving-attacks-against-ai-guardrails/)** (2024). Introduces Crescendo and Spotlighting.
-- **[Announcing Microsoft's open automation framework to red team generative AI systems](https://www.microsoft.com/en-us/security/blog/2024/02/22/announcing-microsofts-open-automation-framework-to-red-team-generative-ai-systems/)** (2024). The post that announced PyRIT.
-- **[Red teams think like hackers to help keep AI safe](https://news.microsoft.com/source/features/ai/red-teams-think-like-hackers-to-help-keep-ai-safe/)** (Microsoft Source). A feature article about the team and how it works.
-
-### Talks and Podcasts
-
-- **[Lessons From Red Teaming 100 Generative AI Products](https://www.youtube.com/watch?v=qi2DneFkRf4)** (BlueHat 2024). The talk version of the paper under Start Here.
-- **[A Few Useful Lessons About AI Red Teaming](https://www.youtube.com/watch?v=WLBuv3JnVnk)** (BlueHat 2023).
-- **[Learning to Attack and Defend: Adaptive Red Teaming of Language Models via GRPO](https://www.youtube.com/watch?v=SooE0hd8-_Q)** (CAMLIS). The talk version of the paper above.
-- **[Red Teaming LLMs and GenAI with PyRIT](https://talkpython.fm/episodes/show/521/red-teaming-llms-and-genai-with-pyrit)** (Talk Python To Me, episode 521). A podcast conversation about AI red teaming and PyRIT.
+- **[Planning red teaming for large language models (LLMs) and their applications](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/red-teaming)** (Microsoft Learn). The questions to ask before you test anything: who tests, what to test, at which layer, and how to record results.
+- **[Lessons From Red Teaming 100 Generative AI Products](https://arxiv.org/abs/2501.07238)** [@bullwinkel2025airtlessons]. Eight lessons and five case studies from the Microsoft AI Red Team. For the short version, read [3 takeaways from red teaming 100 generative AI products](https://www.microsoft.com/en-us/security/blog/2025/01/13/3-takeaways-from-red-teaming-100-generative-ai-products/).
 
 ## Guides and Frameworks
-
-Structured references for planning an engagement and for naming what you find.
 
 - **[OWASP GenAI Red Teaming Guide](https://genai.owasp.org/resource/genai-red-teaming-guide/)** (2025) and **[GenAI Red Teaming Manual v1.0](https://genai.owasp.org/resource/genai-red-teaming-manual-version-1-0/)** (2026). The guide is an orientation. The manual is an eight-phase methodology from planning to remediation that covers models, applications, multimodal interfaces, and agents.
 - **[OWASP Top 10 for LLM Applications](https://genai.owasp.org/llm-top-10/)** and **[OWASP Top 10 for Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)**. Common vocabulary for the most frequent risks. Useful as a checklist of things to consider, not as a test plan.
 - **[MITRE ATLAS](https://atlas.mitre.org/)**. A knowledge base of adversary tactics and techniques against AI systems, modeled on MITRE ATT&CK, with real-world case studies.
 - **[NIST AI 600-1: Generative AI Profile](https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf)** (2024). The generative AI companion to the NIST AI Risk Management Framework. Good for understanding how red teaming fits into risk management as a whole.
 - **[Microsoft AI Red Team on Microsoft Learn](https://learn.microsoft.com/en-us/security/ai-red-team/)**. Hub page for threat modeling guidance, the failure mode taxonomy, and the AI bug bar.
-- **[Taxonomy of Failure Mode in Agentic AI Systems](https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/microsoft/final/en-us/microsoft-brand/documents/Taxonomy-of-Failure-Mode-in-Agentic-AI-Systems-Whitepaper.pdf)** [@bryan2025agentictaxonomy]. What changes when the system can take actions.
+- **[Taxonomy of Failure Mode in Agentic AI Systems](https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/microsoft/final/en-us/microsoft-brand/documents/Taxonomy-of-Failure-Mode-in-Agentic-AI-Systems-Whitepaper.pdf)** [@bryan2025agentictaxonomy] and its **[v2.0 update](https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/microsoft/bade/documents/products-and-services/en-us/security/Taxonomy-of-Failure-Modes-in-Agentic-AI-Systems-v2-0.pdf)** (2026). What changes when the system can take actions.
 
-## How Different Teams Do It
+## Blog Posts and Talks from the Microsoft AI Red Team
 
-There is no single agreed way to red team AI systems. Reading how several teams describe their own practice shows where they agree and where they differ.
-
-- **[Microsoft AI Red Team building future of safer AI](https://www.microsoft.com/en-us/security/blog/2023/08/07/microsoft-ai-red-team-building-future-of-safer-ai/)** (Microsoft, 2023). How AI red teaming differs from traditional red teaming.
-- **[Challenges in red teaming AI systems](https://www.anthropic.com/news/challenges-in-red-teaming-ai-systems)** (Anthropic, 2024). A survey of the methods one lab uses, from expert and crowdsourced testing to automated red teaming, and why the lack of standard practices makes results hard to compare.
-- **[OpenAI's Approach to External Red Teaming for AI Models and Systems](https://arxiv.org/abs/2503.16431)** [@ahmad2025externalredteaming]. Who to bring in, what access to give them, and what guidance they need.
-- **[Google's AI Red Team: the ethical hackers making AI safer](https://blog.google/innovation-and-ai/technology/safety-security/googles-ai-red-team-the-ethical-hackers-making-ai-safer/)** (Google, 2023).
-
-## Keeping Yourself Honest
-
-Red teaming is easy to do badly and easy to oversell. These are worth reading before you report a number to anyone.
-
-- **[Red-Teaming for Generative AI: Silver Bullet or Security Theater?](https://arxiv.org/abs/2401.15897)** [@feffer2024redteaming]. Surveys how much red teaming exercises differ in purpose, scope, and what they report, and argues that treating red teaming as a cure for every risk verges on security theater. Ends with a bank of questions to ask about any red teaming exercise.
-- **[Red Teaming AI Red Teaming](https://arxiv.org/abs/2507.05538)** [@majumdar2025redteaming]. Argues that current practice focuses on flaws in individual models and overlooks the larger system of models, users, and environments.
-- **[Comparison requires valid measurement: Rethinking attack success rate comparisons in AI red teaming](https://arxiv.org/abs/2601.18076)** [@chouldechova2026comparison]. Argues that many conclusions drawn from comparing attack success rates are apples-to-oranges comparisons, and sets out when such numbers can be compared at all.
-- **[Effective Automation to Support the Human Infrastructure in AI Red Teaming](https://arxiv.org/abs/2503.22116)** [@zhang2025effectiveautomation]. Argues for combining human expertise with automated tools, and looks at what automation means for the people doing the work.
-- **[Scoring Scorers](../blog/2026_04_14_scoring_scorers.md)** (PyRIT blog). How we measure the automated judges that PyRIT relies on, and why we had to.
+- **[Microsoft AI Red Team posts on the Microsoft Security Blog](https://www.microsoft.com/en-us/security/blog/author/microsoft-ai-red-team/)**. The team's author page, with the most recent posts first.
+- **[Updating the taxonomy of failure modes in agentic AI systems: What a year of red teaming taught us](https://www.microsoft.com/en-us/security/blog/2026/06/04/updating-taxonomy-failure-modes-agentic-ai-systems-year-red-teaming-taught-us/)** (blog, 2026).
+- **[Mitigating Skeleton Key, a new type of generative AI jailbreak technique](https://www.microsoft.com/en-us/security/blog/2024/06/26/mitigating-skeleton-key-a-new-type-of-generative-ai-jailbreak-technique/)** (blog, 2024) [@microsoft2024skeletonkey].
+- **[How Microsoft discovers and mitigates evolving attacks against AI guardrails](https://www.microsoft.com/en-us/security/blog/2024/04/11/how-microsoft-discovers-and-mitigates-evolving-attacks-against-ai-guardrails/)** (blog, 2024). Introduces Crescendo and Spotlighting.
+- **[Announcing Microsoft's open automation framework to red team generative AI systems](https://www.microsoft.com/en-us/security/blog/2024/02/22/announcing-microsofts-open-automation-framework-to-red-team-generative-ai-systems/)** (blog, 2024). The post that announced PyRIT.
+- **[Microsoft AI Red Team building future of safer AI](https://www.microsoft.com/en-us/security/blog/2023/08/07/microsoft-ai-red-team-building-future-of-safer-ai/)** (blog, 2023). How AI red teaming differs from traditional red teaming.
+- **[Lessons From Red Teaming 100 Generative AI Products](https://www.youtube.com/watch?v=qi2DneFkRf4)** (talk, BlueHat 2024).
+- **[A Few Useful Lessons About AI Red Teaming](https://www.youtube.com/watch?v=WLBuv3JnVnk)** (talk, BlueHat 2023).
+- **[Red Teaming LLMs and GenAI with PyRIT](https://talkpython.fm/episodes/show/521/red-teaming-llms-and-genai-with-pyrit)** (podcast, Talk Python To Me, episode 521).
 
 ## Practice
 
-- **[AI Red Teaming Playground Labs](https://github.com/microsoft/AI-Red-Teaming-Playground-Labs)**. Described under Start Here above.
-- **[Gandalf](https://gandalf.lakera.ai/)** (Lakera). Prompt injection challenges that run in the browser with no setup.
+Places to try attacks against systems that were built to be attacked.
+
+:::{important}
+We do not endorse or recommend these sites, their operators, or any product or service they offer. They are listed as examples only. Any interaction is between you and the operator: read their terms, and decide for yourself what you share with them.
+:::
+
 - **[HackAPrompt](https://www.hackaprompt.com/)**. A prompt injection competition. PyRIT has a [HackAPrompt target](../code/targets/hack_a_prompt_target.ipynb) if you want to attack the challenges with code.
+- **[Agent Breaker](https://play.lakera.ai/agent-breaker)** (Lakera). Browser-based challenges against mock AI applications.
 - **[Web LLM attacks](https://portswigger.net/web-security/llm-attacks)** (PortSwigger Web Security Academy). Labs on attacking LLMs that are integrated into web applications, for people coming from web security.
-- **[AI Village](https://aivillage.org/)**. The community behind the AI red teaming events at DEF CON.
+- **[AI Village](https://aivillage.org/)**. A community for hands-on AI security education and red team practice, known for its events at DEF CON.
 - **Your own endpoint.** The exercise in [Learn by Doing](#learn-by-doing) needs nothing but a model you are allowed to test.
-
-## Keeping Up
-
-- **[Embrace The Red](https://embracethered.com/blog/)** (Johann Rehberger). Detailed write-ups of real prompt injection and data exfiltration findings in shipped products.
-- **[Simon Willison on prompt injection](https://simonwillison.net/series/prompt-injection/)**. A long-running series that tracks the problem and the attempts to solve it.
-- **[PyRIT blog](../blog/README.md)** and **[Discord](https://discord.gg/9fMpq3tc8u)**.
-- **[Bibliography](../bibliography.md)**. The papers behind the attacks, converters, and datasets implemented in PyRIT. Picking one and reproducing it is good practice.
-
-## About PyRIT
-
-- **[PyRIT: A Framework for Security Risk Identification and Red Teaming in Generative AI Systems](https://arxiv.org/abs/2410.02828)** [@lopez2024pyrit]. The original paper.
-- **[PyRIT: Democratizing AI Red Teaming Through Open-Source Tooling](https://commandline.microsoft.com/wp-content/uploads/2026/08/PyRIT_Whitepaper_2026.pdf)** [@lutz2026pyrit]. The 2026 whitepaper.

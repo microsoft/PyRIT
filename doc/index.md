@@ -75,7 +75,7 @@ Getting Started
 
 ## Setup and Installation
 
-New to AI red teaming? Read [Learn AI Red Teaming](red_teaming/0_red_teaming) first for how to approach the work and where to find videos, guides, and practice labs.
+New to AI red teaming? Read [Learn AI Red Teaming](red_teaming/0_red_teaming) first for how to approach the work and where to find guides, talks, and places to practice.
 
 1. Install PyRIT and verify installation.\
 For more details and alternative installation methods, see the [Install PyRIT](getting_started/install) page
