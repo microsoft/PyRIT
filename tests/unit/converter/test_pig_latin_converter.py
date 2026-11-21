@@ -138,6 +138,31 @@ def test_sentence_preserves_structure():
 
 
 @pytest.mark.parametrize(
+    "input_text,expected_output",
+    [
+        # Tabs and newlines are word boundaries too (not only spaces); every word is converted.
+        ("hello\tworld", "ellohay orldway"),
+        ("hello\nworld", "ellohay orldway"),
+        ("one two\tthree\nfour", "oneway otway eethray ourfay"),
+    ],
+)
+def test_splits_on_all_whitespace(input_text, expected_output):
+    converter = PigLatinConverter()
+    result = asyncio.run(converter.convert_async(prompt=input_text))
+    assert result.output_text == expected_output
+
+
+def test_punctuation_heavy_token_is_linear_and_correct():
+    # A long interior punctuation run must not trigger catastrophic regex backtracking; the linear
+    # affix scan returns promptly. The core runs first-letter..last-letter (interior '!' kept), and
+    # 'a' is vowel-initial, so "way" is appended.
+    token = "a" + "!" * 10000 + "b"
+    converter = PigLatinConverter()
+    result = asyncio.run(converter.convert_async(prompt=token))
+    assert result.output_text == token + "way"
+
+
+@pytest.mark.parametrize(
     "input_text",
     [
         # Tokens with no letters are returned unchanged.

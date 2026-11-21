@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import re
+import string
 
 from pyrit.converter.text_selection_strategy import (
     AllWordsSelectionStrategy,
@@ -10,12 +10,7 @@ from pyrit.converter.text_selection_strategy import (
 from pyrit.converter.word_level_converter import WordLevelConverter
 from pyrit.models import ComponentIdentifier
 
-# Split a whitespace-delimited token into leading non-letters, an alphabetic core
-# (from the first letter to the last letter, interior punctuation included), and
-# trailing non-letters. Leading/trailing punctuation is preserved verbatim so that
-# marks like ``"`` ``(`` ``)`` ``.`` ``,`` stay where they were.
-_TOKEN_PATTERN = re.compile(r"^([^A-Za-z]*)(.*?)([^A-Za-z]*)$")
-
+_ASCII_LETTERS = frozenset(string.ascii_letters)
 _VOWELS = frozenset("aeiou")
 _VALID_VOWEL_SUFFIXES = ("way", "yay", "ay")
 
@@ -67,7 +62,10 @@ class PigLatinConverter(WordLevelConverter):
         Raises:
             ValueError: If ``vowel_initial_suffix`` is not one of the supported values.
         """
-        super().__init__(word_selection_strategy=word_selection_strategy)
+        # ``word_split_separator=None`` splits on any whitespace (tabs and newlines, not just spaces),
+        # matching the documented "whitespace-delimited token" behavior. Runs of whitespace are then
+        # normalized to single spaces on rejoin, which is acceptable for this intentionally lossy game.
+        super().__init__(word_selection_strategy=word_selection_strategy, word_split_separator=None)
 
         if vowel_initial_suffix not in _VALID_VOWEL_SUFFIXES:
             raise ValueError(
@@ -139,6 +137,33 @@ class PigLatinConverter(WordLevelConverter):
             return transformed[:1].upper() + transformed[1:]
         return transformed
 
+    @staticmethod
+    def _split_affixes(word: str) -> tuple[str, str, str]:
+        """
+        Split a token into leading non-letters, an ASCII-letter core, and trailing non-letters.
+
+        The core runs from the first ASCII letter to the last (interior punctuation included);
+        leading/trailing marks like ``"`` ``(`` ``)`` ``.`` ``,`` are preserved verbatim. This is a
+        single linear scan, avoiding the catastrophic backtracking a lazy/greedy regex exhibits on
+        punctuation-heavy tokens.
+
+        Args:
+            word (str): The token to split.
+
+        Returns:
+            tuple[str, str, str]: ``(prefix, core, suffix)``; ``core`` is empty when the token has
+            no ASCII letters.
+        """
+        first = last = None
+        for index, char in enumerate(word):
+            if char in _ASCII_LETTERS:
+                if first is None:
+                    first = index
+                last = index
+        if first is None or last is None:
+            return word, "", ""
+        return word[:first], word[first : last + 1], word[last + 1 :]
+
     async def convert_word_async(self, word: str) -> str:
         """
         Convert a single whitespace-delimited token into Pig Latin.
@@ -149,13 +174,7 @@ class PigLatinConverter(WordLevelConverter):
         Returns:
             str: The Pig Latin token with punctuation and capitalization preserved.
         """
-        match = _TOKEN_PATTERN.match(word)
-        # The pattern matches any string, so ``match`` is never None; the guard satisfies type checkers.
-        if match is None:  # pragma: no cover
-            return word
-        # ``re.Match.group`` is typed ``str | Any``; wrap in ``str`` so the concatenated return
-        # below is definitively ``str`` (the groups always participate, so this never changes a value).
-        prefix, core, suffix = str(match.group(1)), str(match.group(2)), str(match.group(3))
+        prefix, core, suffix = self._split_affixes(word)
         if not core:
             # Token has no letters (e.g. pure punctuation or digits); leave it unchanged.
             return word
