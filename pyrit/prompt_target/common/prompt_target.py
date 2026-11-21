@@ -26,6 +26,7 @@ from pyrit.models import (
     RequestGenerationInfo,
     RequestTraceContext,
     TargetIdentifier,
+    ToolCaptureCoverage,
     WebSearchConfig,
     WebSearchMode,
 )
@@ -437,6 +438,8 @@ class PromptTarget(Identifiable):
         """
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            # Coverage is a target's statement about its own response, never an input.
+            piece.prompt_metadata.pop(ToolCaptureCoverage.METADATA_KEY, None)
             RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
             piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()

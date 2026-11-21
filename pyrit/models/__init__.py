@@ -392,7 +392,13 @@ if TYPE_CHECKING:
     )
     from pyrit.models.target.reasoning_content_metadata import ReasoningContentMetadata
     from pyrit.models.target.request_trace_context import RequestTraceContext
-    from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
+    from pyrit.models.target.tool_execution_metadata import (
+        ToolCaptureCoverage,
+        ToolCaptureGap,
+        ToolExecutionMetadata,
+        ToolLoopStop,
+        ToolLoopStopReason,
+    )
 
 _LAZY_EXPORTS: dict[str, str] = {
     "GCGSeedMetadata": "pyrit.models.seeds",
@@ -474,6 +480,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "scenario_dataset_size_from_limit": "pyrit.models.scenario_dataset_size_estimate",
     "ReasoningContentMetadata": "pyrit.models.target.reasoning_content_metadata",
     "RequestTraceContext": "pyrit.models.target.request_trace_context",
+    "ToolCaptureCoverage": "pyrit.models.target.tool_execution_metadata",
+    "ToolCaptureGap": "pyrit.models.target.tool_execution_metadata",
     "ToolExecutionMetadata": "pyrit.models.target.tool_execution_metadata",
     "ToolLoopStop": "pyrit.models.target.tool_execution_metadata",
     "ToolLoopStopReason": "pyrit.models.target.tool_execution_metadata",
