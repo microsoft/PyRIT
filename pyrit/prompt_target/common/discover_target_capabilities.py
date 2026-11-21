@@ -682,10 +682,13 @@ def _supports_chat_probes(target: PromptTarget) -> bool:
         bool: Whether chat features can be sent by this adapter.
     """
     from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
+    from pyrit.prompt_target.litellm_decision_target import LiteLLMDecisionTarget
     from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
     from pyrit.prompt_target.openai.openai_response_target import OpenAIResponseTarget
 
-    return isinstance(target, (OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget))
+    return isinstance(target, (OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget)) and not isinstance(
+        target, LiteLLMDecisionTarget
+    )
 
 
 async def _discover_capability_flags_async(
@@ -849,7 +852,12 @@ async def _discover_input_modalities_async(
                     queried.add(combination)
                 continue
             try:
-                message = await asyncio.to_thread(_create_test_message, modalities=combination, test_assets=assets)
+                message = await asyncio.to_thread(
+                    _create_test_message,
+                    modalities=combination,
+                    test_assets=assets,
+                    text=target.capability_probe_text,
+                )
             except FileNotFoundError as exc:
                 # Skip combinations we cannot construct a valid probe payload for.
                 logger.info("Skipping modality %s: %s", combination, exc)
@@ -897,7 +905,12 @@ async def _check_control_request_async(
     with _permissive_configuration(target=target):
         for combination in combinations:
             try:
-                message = await asyncio.to_thread(_create_test_message, modalities=combination, test_assets=assets)
+                message = await asyncio.to_thread(
+                    _create_test_message,
+                    modalities=combination,
+                    test_assets=assets,
+                    text=target.capability_probe_text,
+                )
             except (FileNotFoundError, ValueError) as exc:
                 logger.info("Cannot prepare control input %s: %s", sorted(combination), exc)
                 continue
@@ -1077,6 +1090,7 @@ def _create_test_message(
     *,
     modalities: frozenset[PromptDataType],
     test_assets: dict[PromptDataType, str],
+    text: str = "test",
 ) -> Message:
     """
     Build a minimal ``Message`` that exercises ``modalities``.
@@ -1085,6 +1099,7 @@ def _create_test_message(
         modalities (frozenset[PromptDataType]): The modalities to include.
         test_assets (dict[PromptDataType, str]): Mapping from non-text
             modality to a file path used for the probe.
+        text (str): The text piece's value. Defaults to ``"test"``.
 
     Returns:
         Message: A message containing one piece per modality.
@@ -1101,7 +1116,7 @@ def _create_test_message(
             pieces.append(
                 MessagePiece(
                     role="user",
-                    original_value="test",
+                    original_value=text,
                     original_value_data_type="text",
                     conversation_id=conversation_id,
                     prompt_metadata=_probe_metadata(),

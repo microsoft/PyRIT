@@ -70,6 +70,7 @@ class PromptShieldTarget(PromptTarget):
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
     destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
     environment_backed_parameters: ClassVar[frozenset[str]] = frozenset({"endpoint"})
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset({"endpoint", "api_key", "auth_mode"})
 
     _endpoint: str
     _api_key: str | Callable[[], str] | None
@@ -197,6 +198,24 @@ class PromptShieldTarget(PromptTarget):
             dict[str, object]: Constructor parameters that enforce the mode.
         """
         return {"auth_mode": auth_mode}
+
+    def get_reconstruction_parameters(self) -> dict[str, object]:
+        """
+        Return server-only inputs, including the resolved key or token provider.
+
+        Returns:
+            dict[str, object]: Constructor inputs that rebuild this target.
+        """
+        return {
+            "endpoint": self._endpoint,
+            # Reuse the resolved key or token provider, not the original credential-selection mode.
+            "api_key": self._api_key,
+            "auth_mode": "api_key",
+            "api_version": self._api_version,
+            "field": self._force_entry_field,
+            "max_requests_per_minute": self._max_requests_per_minute,
+            "custom_configuration": self.configuration,
+        }
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

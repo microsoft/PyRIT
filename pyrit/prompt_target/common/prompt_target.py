@@ -196,6 +196,10 @@ class PromptTarget(Identifiable):
     # with the endpoint it was configured for.
     COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset()
 
+    # Text capability discovery sends to check a text input. A target that accepts only structured text
+    # overrides it with a valid request.
+    capability_probe_text: ClassVar[str] = "test"
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
         Validate that subclasses follow the keyword-only ``__init__`` contract.
@@ -679,7 +683,7 @@ class PromptTarget(Identifiable):
 
     def attach_reconstruction_source(self, source: object) -> None:
         """
-        Report credential rejections into the target this copy was built from.
+        Share request pacing and credential status, not clients or behavioral configuration.
 
         Args:
             source (object): The registered target this copy was built from.
@@ -687,6 +691,7 @@ class PromptTarget(Identifiable):
         if isinstance(source, PromptTarget):
             self._credential_status_source = source._credential_status_owner()
             self._credential_generation = source._credential_generation
+            self._rate_limit_source = getattr(source, "_rate_limit_source", source)
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """
