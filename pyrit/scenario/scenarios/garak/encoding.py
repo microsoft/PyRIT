@@ -131,6 +131,7 @@ class EncodingTechnique(ScenarioTechnique):
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
     Disemvowel = ("disemvowel", set[str]())
+    UbbiDubbi = ("ubbi_dubbi", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -322,6 +323,9 @@ class Encoding(Scenario):
             # "disemvowel": remove all vowels ("disemvoweling"), a comment-moderation technique
             # popularized on the Making Light blog (https://nielsenhayden.com/makinglight/).
             ([SearchReplaceConverter(pattern="[AEIOUaeiou]", replace="")], "disemvowel", "disemvowel"),
+            # "ubbi_dubbi": a language game that prefixes each vowel run with "ub", popularized by
+            # the PBS children's show Zoom (1972). https://en.wikipedia.org/wiki/Ubbi_dubbi
+            ([SearchReplaceConverter(pattern=r"([aeiouAEIOU]+)", replace=r"ub\1")], "ubbi_dubbi", "ubbi_dubbi"),
         ]
 
     # These are the same as Garak encoding attacks
