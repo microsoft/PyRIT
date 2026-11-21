@@ -493,8 +493,7 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 # ERA001: jupytext markdown cells look like commented-out code
 # LOG: notebooks use root logger for convenience
 # PLE1142: top-level await is valid in Jupyter notebooks
-# F704: top-level await is valid in Jupyter notebooks (pyflakes reports it as a yield outside a function)
-"doc/**" = ["ANN", "CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142", "F704"]
+"doc/**" = ["ANN", "CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142"]
 # Backend API routes raise HTTPException handled by FastAPI, not true exceptions
 "pyrit/backend/**/*.py" = ["DOC501", "B008"]
 "pyrit/__init__.py" = ["D104"]
