@@ -12,7 +12,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -45,7 +45,14 @@ from pyrit.models import (
 )
 from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
-from pyrit.prompt_target import OpenAIChatTarget, OpenAITTSTarget, RoundRobinTarget, TargetConfiguration
+from pyrit.prompt_target import (
+    LiteLLMDecisionTarget,
+    OpenAIChatTarget,
+    OpenAITTSTarget,
+    PromptShieldTarget,
+    RoundRobinTarget,
+    TargetConfiguration,
+)
 from pyrit.prompt_target.common.discover_target_capabilities import DEFAULT_TEST_ASSETS, CapabilityDiscoveryError
 from pyrit.registry import TargetRegistry
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
@@ -464,6 +471,67 @@ async def test_detection_reconstructs_openai_without_closing_the_live_client(
         await target.cleanup_target_async()
 
 
+async def test_detection_rebuilds_decision_target_and_sends_a_valid_control_request_async(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    litellm = pytest.importorskip("litellm")
+    from litellm.types.decisions import DecisionsResponse
+
+    service, _ = detection_service
+    source = LiteLLMDecisionTarget(model_name="openrouter/decision", endpoint="https://example.test", api_key="key")
+    service._registry.instances.register(source, name="microsoft_decision")
+    original = source.capabilities
+    sdk = MagicMock(spec=litellm)
+    sdk.asystemone = None
+    sdk.adecisions = AsyncMock(
+        return_value=DecisionsResponse.model_validate(
+            {"model": "decision", "id": "probe", "answers": {"probe": {"type": "noul", "noul": 1.0}}, "usage": {}}
+        )
+    )
+
+    with patch.object(LiteLLMDecisionTarget, "_import_litellm", return_value=sdk):
+        result = await service.detect_capabilities_async(
+            target_registry_name="microsoft_decision", expected_hash=source.get_identifier().hash
+        )
+
+    assert result.capabilities == original
+    assert source.capabilities == original
+    sdk.adecisions.assert_awaited_once()
+    body = sdk.adecisions.call_args.kwargs
+    assert body["api_key"] == "key"
+    assert body["api_base"] == "https://example.test"
+    assert set(body["questions"]) == {"probe"}
+
+
+@pytest.mark.parametrize("api_key", ["key", MagicMock(return_value="token")], ids=["key", "token_provider"])
+async def test_detection_rebuilds_prompt_shield_and_keeps_its_declarations_async(
+    detection_service: tuple[TargetService, _DetectableTarget], api_key: str | MagicMock
+) -> None:
+    service, _ = detection_service
+    source = PromptShieldTarget(endpoint="https://example.test", api_key=api_key)
+    service._registry.instances.register(source, name="azure_content_safety")
+    original = source.capabilities
+    response = SimpleNamespace(content=b'{"userPromptAnalysis": {"attackDetected": false}, "documentsAnalysis": []}')
+
+    with patch(
+        "pyrit.prompt_target.prompt_shield_target.net_utility.make_request_and_raise_if_error_async",
+        new=AsyncMock(return_value=response),
+    ) as shield:
+        result = await service.detect_capabilities_async(
+            target_registry_name="azure_content_safety", expected_hash=source.get_identifier().hash
+        )
+
+    assert result.capabilities == original
+    assert source.capabilities == original
+    shield.assert_awaited_once()
+    assert shield.call_args.kwargs["request_body"] == {"userPrompt": "test", "documents": []}
+    headers = shield.call_args.kwargs["headers"]
+    if isinstance(api_key, str):
+        assert headers["Ocp-Apim-Subscription-Key"] == "key"
+    else:
+        assert headers["Authorization"] == "Bearer token"
+
+
 @pytest.mark.parametrize("error", [CapabilityDiscoveryError("Connection failed"), TimeoutError()])
 async def test_detection_failure_keeps_source_and_releases_probe(
     detection_service: tuple[TargetService, _DetectableTarget], error: Exception
@@ -525,7 +593,7 @@ async def test_detection_rejects_unsafe_targets(
     service, _ = detection_service
     target = MockPromptTarget()
     service._registry.instances.register(target, name="unsafe")
-    with pytest.raises(ValueError, match="reconstruction"):
+    with pytest.raises(ValueError, match="not supported for MockPromptTarget because it can't be rebuilt"):
         await service.detect_capabilities_async(
             target_registry_name="unsafe", expected_hash=target.get_identifier().hash
         )

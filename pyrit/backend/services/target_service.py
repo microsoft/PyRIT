@@ -82,6 +82,7 @@ from pyrit.registry.instance_registry import (
     RegistryNameTakenError,
     registry_entry_origin,
 )
+from pyrit.registry.registry import Reconstructable
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,12 @@ class TargetService:
         if getattr(target, "inner_targets", None) and not isinstance(target, RoundRobinTarget):
             raise ValueError("Capability detection is not supported for this composite target type.")
         sources = target.inner_targets if isinstance(target, RoundRobinTarget) else [target]
+        # Detection probes a private copy, so a target that can't be rebuilt can't be checked.
+        for source in sources:
+            if not isinstance(source, Reconstructable):
+                raise ValueError(
+                    f"Capability detection is not supported for {type(source).__name__} because it can't be rebuilt."
+                )
         snapshots = [(source, source.configuration) for source in [target, *sources]]
         source_ids = {id(source) for source, _ in snapshots}
         if target_registry_name in self._detecting or source_ids & self._detecting_sources:
