@@ -31,6 +31,7 @@ jest.mock('@/services/api', () => ({
 
 const mockApi = jest.mocked(promptGenerationsApi)
 const NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'No generation gen-1.' } } }
+const CONFLICT = { isAxiosError: true, response: { status: 409, data: { detail: "The generation isn't awaiting review." } } }
 
 function LocationReadout() {
   const location = useLocation()
@@ -127,18 +128,18 @@ describe('PromptGenerationPage', () => {
     expect(screen.queryByTestId('generation-cancel-btn')).not.toBeInTheDocument()
   })
 
-  it('shows only a browse link and the objective summary when no scenario follows', async () => {
+  it('shows only a browse link when no scenario follows', async () => {
     mockApi.get.mockResolvedValue(makeGenerationDetail({
       generator: 'target_objective',
       status: 'completed',
-      summary: { objective_count: 20 },
+      summary: null,
     }))
     renderPage()
 
     const panel = await screen.findByTestId('generation-complete')
     expect(within(panel).queryByRole('link', { name: /Run / })).not.toBeInTheDocument()
     expect(within(panel).getByRole('link', { name: 'Browse dataset' })).toBeInTheDocument()
-    expect(within(panel).getByTestId('target-objective-summary')).toHaveTextContent('Objectives20')
+    expect(screen.queryByTestId('unsupported-generator')).not.toBeInTheDocument()
   })
 
   it('shows the error and resumes a failed generation from its checkpoint', async () => {
@@ -222,6 +223,55 @@ describe('PromptGenerationPage', () => {
     expect(await screen.findByTestId('unsupported-generator'))
       .toHaveTextContent('This GUI doesn\'t support the "custom" generator.')
     expect(screen.getByTestId('generation-browse-dataset-link')).toBeInTheDocument()
+  })
+
+  it('reloads the generation when Continue finds it is no longer awaiting review', async () => {
+    const user = userEvent.setup()
+    mockApi.get.mockResolvedValueOnce(makeGenerationDetail({ status: 'awaiting_review', pause_for_review: true }))
+      .mockResolvedValue(makeGenerationDetail({ status: 'running' }))
+    mockApi.getReview.mockResolvedValue(makeAssertReview())
+    mockApi.continueAfterReview.mockRejectedValue(CONFLICT)
+    renderPage()
+
+    await user.click(await screen.findByTestId('assert-review-continue'))
+
+    await waitFor(() => expect(screen.getByTestId('generation-status-badge')).toHaveTextContent('Running'))
+    expect(mockApi.get).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId('assert-review-editor')).not.toBeInTheDocument()
+  })
+
+  it('shows a generator-list error with Retry instead of hiding the follow-up link', async () => {
+    const user = userEvent.setup()
+    jest.mocked(promptGeneratorsApi.list).mockRejectedValueOnce(new Error('Generators offline'))
+      .mockResolvedValue({ items: [ASSERT_DESCRIPTOR, OBJECTIVE_DESCRIPTOR] })
+    mockApi.get.mockResolvedValue(makeGenerationDetail({ status: 'completed' }))
+    renderPage()
+
+    expect(await screen.findByText(/Generators could not be loaded: Generators offline/)).toBeInTheDocument()
+    expect(screen.queryByTestId('generation-run-scenario-link')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+
+    expect(await screen.findByTestId('generation-run-scenario-link')).toBeInTheDocument()
+  })
+
+  it('offers Check again when live progress could not be refreshed, and stops polling a deleted record', async () => {
+    jest.useFakeTimers()
+    mockApi.get.mockResolvedValueOnce(makeGenerationDetail({ status: 'running' }))
+      .mockRejectedValueOnce(NOT_FOUND)
+      .mockResolvedValue(makeGenerationDetail({ status: 'running' }))
+    renderPage()
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'returns_policy' })).toBeInTheDocument()
+    await act(async () => { await jest.advanceTimersByTimeAsync(2_000) })
+    const stale = await screen.findByTestId('generation-stale')
+    expect(stale).toHaveTextContent('Live progress could not be refreshed: No generation gen-1.')
+    await act(async () => { await jest.advanceTimersByTimeAsync(6_000) })
+    expect(mockApi.get).toHaveBeenCalledTimes(2)
+
+    await act(async () => { within(stale).getByRole('button', { name: 'Check again' }).click() })
+    await act(async () => { await jest.advanceTimersByTimeAsync(0) })
+    expect(mockApi.get).toHaveBeenCalledTimes(3)
+    expect(screen.queryByTestId('generation-stale')).not.toBeInTheDocument()
   })
 
   it('shows a missing generation and retries the load', async () => {

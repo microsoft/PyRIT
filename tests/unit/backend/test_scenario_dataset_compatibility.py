@@ -13,7 +13,7 @@ from httpx import ASGITransport, AsyncClient
 from pyrit.backend.main import app
 from pyrit.backend.models import DatasetListResponse
 from pyrit.backend.services import ScenarioRunService, ScenarioService, get_dataset_service
-from pyrit.datasets import SeedDatasetProvider
+from pyrit.datasets import SeedDatasetDescriptor, SeedDatasetProvider
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -60,10 +60,10 @@ def compatibility_service() -> Iterator[ScenarioService]:
     target_registry = TargetRegistry.get_registry_singleton()
     with (
         patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
-        patch.object(SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock) as discovery,
+        patch.object(SeedDatasetProvider, "get_all_dataset_descriptors_async", new_callable=AsyncMock) as discovery,
         patch.object(target_registry.instances, "_registry_items", {}),
     ):
-        discovery.return_value = ["provider_only"]
+        discovery.return_value = {"provider_only": SeedDatasetDescriptor(name="provider_only")}
         target_registry.instances.register(MockPromptTarget(), name="offline")
         yield ScenarioService()
     AttackTechniqueRegistry.reset_registry_singleton()

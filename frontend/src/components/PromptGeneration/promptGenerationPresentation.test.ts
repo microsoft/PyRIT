@@ -24,12 +24,12 @@ import {
 
 describe('promptGenerationPresentation', () => {
   it('classifies statuses for polling and actions', () => {
-    expect(['queued', 'running', 'saving'].every((status) => isActiveGenerationStatus(status as 'queued'))).toBe(true)
+    expect(['queued', 'running'].every((status) => isActiveGenerationStatus(status as 'queued'))).toBe(true)
     expect(isActiveGenerationStatus('awaiting_review')).toBe(false)
     expect(isRetryableGenerationStatus('interrupted')).toBe(true)
     expect(isRetryableGenerationStatus('completed')).toBe(false)
     expect(isCancellableGenerationStatus('awaiting_review')).toBe(true)
-    expect(isCancellableGenerationStatus('saving')).toBe(false)
+    expect(isCancellableGenerationStatus('completed')).toBe(false)
     expect(generationStatusLabel('awaiting_review')).toBe('Review needed')
   })
 
@@ -51,6 +51,12 @@ describe('promptGenerationPresentation', () => {
       expect(nextDatasetName(name)).not.toBe(name)
       expect(datasetNameError(nextDatasetName(name))).toBeNull()
     }
+  })
+
+  it('treats a version too large to count as part of the name', () => {
+    const huge = 'x_v99999999999999999999999'
+    expect(nextDatasetName(huge)).toBe(`${huge}_v2`)
+    expect(datasetNameError(nextDatasetName(huge))).toBeNull()
   })
 
   it('formats generator, stage, count, and progress text', () => {

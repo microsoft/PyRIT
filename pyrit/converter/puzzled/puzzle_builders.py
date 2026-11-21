@@ -104,7 +104,7 @@ def _normalize(words: list[str]) -> list[list[str]]:
     return cleaned
 
 
-def build_anagram(words: list[str], rng: random.Random) -> str:
+def build_anagram(words: list[str], *, rng: random.Random) -> str:
     """
     Concatenate the masked words and shuffle their letter units into one sequence.
 
@@ -211,6 +211,7 @@ def _grid_size(words: list[list[str]]) -> int:
 
 def _try_place(
     grid: list[list[str]],
+    *,
     word: list[str],
     rng: random.Random,
 ) -> bool:
@@ -253,7 +254,7 @@ def _try_place(
     return False
 
 
-def build_word_search(words: list[str], rng: random.Random) -> str:
+def build_word_search(words: list[str], *, rng: random.Random) -> str:
     """
     Hide the masked words in a square grid, then fill the gaps with random letters.
 
@@ -281,7 +282,7 @@ def build_word_search(words: list[str], rng: random.Random) -> str:
 
     for _ in range(_MAX_GRID_GROWTHS + 1):
         grid = [["" for _ in range(size)] for _ in range(size)]
-        if all(_try_place(grid, word, rng) for word in by_length):
+        if all(_try_place(grid, word=word, rng=rng) for word in by_length):
             break
         size += 1
     else:

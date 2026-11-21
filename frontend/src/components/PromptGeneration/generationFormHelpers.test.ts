@@ -11,18 +11,10 @@ import {
   readNumberText,
   readString,
   readStringList,
-  targetSelectionErrors,
 } from './generationFormHelpers'
 
 describe('generationFormHelpers', () => {
   const gpt = makeTarget({ target_registry_name: 'gpt' })
-
-  it('reports targets that are not registered or fail a role filter', () => {
-    const filters = { research: { allows: () => false, reason: 'Needs web search.' } }
-    expect(targetSelectionErrors(ASSERT_DESCRIPTOR.target_roles, [gpt], { generation: 'gpt' })).toEqual([])
-    expect(targetSelectionErrors(ASSERT_DESCRIPTOR.target_roles, [gpt], { generation: 'gone', research: 'gpt' }, filters))
-      .toEqual(['Generation target: "gone" is not a registered target.', 'Research target: Needs web search.'])
-  })
 
   it('selects the default target for every role, or nothing without a default', () => {
     expect(defaultTargetSelection(ASSERT_DESCRIPTOR, gpt)).toEqual({ generation: 'gpt', research: 'gpt' })
@@ -53,5 +45,18 @@ describe('generationFormHelpers', () => {
     })
     expect(preflightProblems([makePreflight(), makePreflight({ errors: ['Bad.'], valid: false })], ['a', 'b']))
       .toEqual({ messages: ['b: Bad.'], blocksGenerate: true })
+  })
+
+  it('lists an error every dataset reports once, without a dataset prefix', () => {
+    const shared = 'Choose a target for: Generation target.'
+    const results = [
+      makePreflight({ errors: [shared], valid: false }),
+      makePreflight({ errors: [shared], valid: false, dataset_name_available: false }),
+      makePreflight({ errors: [shared], valid: false }),
+    ]
+    expect(preflightProblems(results, ['a', 'b', 'c'])).toEqual({
+      messages: [shared, 'b: A dataset named "b" already exists. Choose another name.'],
+      blocksGenerate: true,
+    })
   })
 })

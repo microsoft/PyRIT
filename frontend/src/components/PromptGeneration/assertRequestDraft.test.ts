@@ -158,9 +158,40 @@ describe('assertRequestDraft', () => {
       .toEqual(expect.objectContaining({ instructionMode: 'target', samplingMethod: 'pairwise', groupCount: '25' }))
   })
 
+  it.each<[string, Partial<AssertSettingsDraft>]>([
+    ['stratified by a dimension', { samplingMethod: 'stratified', stratifyBy: ['behavior', 'channel'] }],
+    ['random without replacement', { samplingMethod: 'random', withReplacement: false, randomSeed: '7' }],
+  ])('reads a stored %s request back unchanged', (_label, changes) => {
+    const request = buildAssertRequest({ ...withDimensions(defaultAssertSettings(), false), ...changes }, BEHAVIOR)
+    const { behavior, settings } = assertDraftFromRequest({ ...request })
+    expect(buildAssertRequest(settings, behavior)).toEqual(request)
+  })
+
+  it('sends back a reviewed taxonomy from a stored request', () => {
+    const taxonomy = {
+      behavior: { name: 'returns', definition: 'Returns.' },
+      definition_of_terms: [{ term: 'order', definition: 'A purchase.', examples: ['order 123'] }],
+      behavior_categories: [{ name: 'policy_question', definition: 'Asks.', examples: ['Window?'], permissible: true }],
+    }
+    const request = { ...buildAssertRequest(defaultAssertSettings(), BEHAVIOR), taxonomy }
+    const draft = assertDraftFromRequest(request)
+    expect(draft.taxonomy).toEqual(taxonomy)
+    expect(buildAssertRequest(draft.settings, draft.behavior, draft.taxonomy)).toEqual(request)
+    expect(buildAssertRequest(draft.settings, draft.behavior)).not.toHaveProperty('taxonomy')
+    expect(assertDraftFromRequest({ taxonomy: null }).taxonomy).toBeNull()
+  })
+
   it('names suite datasets after the suite and behavior', () => {
     expect(suiteDatasetName('travel planner', 'sycophancy')).toBe('travel_planner_sycophancy')
     expect(suiteDatasetName('', 'sycophancy')).toBe('sycophancy')
+  })
+
+  it('shortens a long suite label, not the behavior, in default dataset names', () => {
+    const label = 'l'.repeat(115)
+    const names = ['private_order_disclosure', 'private_order_status'].map((behavior) => suiteDatasetName(label, behavior))
+    expect(names[0]).toMatch(/^l+_private_order_disclosure$/)
+    expect(names[1]).toMatch(/^l+_private_order_status$/)
+    for (const name of names) expect(name).toHaveLength(128)
   })
 
   it('recommends tester inputs for new datasets without changing saved SDK requests', () => {

@@ -120,10 +120,11 @@ def _scenario(
             update={"supports_json_output": True, "supports_json_schema": True}
         )
     )
-    scenario = AssertPolicy(judge_target=MockPromptTarget(), adversarial_chat=adversarial)
+    scenario = AssertPolicy(adversarial_chat=adversarial)
     scenario.set_params_from_args(
         args={
             "objective_target": MockPromptTarget(),
+            "scoring_target": MockPromptTarget(),
             "scenario_techniques": [scenario._technique_class(name) for name in techniques],
             "dataset_config": DatasetAttackConfiguration(seed_groups=groups, max_per_dataset="all", max_total=cap),
             "include_baseline": baseline,
@@ -138,10 +139,11 @@ def _package_scenario(*, groups: list[AttackSeedGroup]) -> AssertPolicy:
     chat.apply_capabilities(
         capabilities=chat.capabilities.model_copy(update={"supports_json_output": True, "supports_json_schema": True})
     )
-    scenario = AssertPolicy(judge_target=MockPromptTarget(), adversarial_chat=chat)
+    scenario = AssertPolicy(adversarial_chat=chat)
     scenario.set_params_from_args(
         args={
             "objective_target": MockPromptTarget(),
+            "scoring_target": MockPromptTarget(),
             "dataset_config": DatasetAttackConfiguration(seed_groups=groups, max_per_dataset="all", max_total="all"),
         }
     )

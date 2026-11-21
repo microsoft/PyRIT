@@ -73,7 +73,7 @@ function PromptGenerationPageContent({ generationId }: PromptGenerationPageConte
   const styles = usePromptGenerationStyles()
   const navigate = useNavigate()
   const { state, retry, applyRecord } = usePromptGeneration(generationId)
-  const { generators } = usePromptGenerators()
+  const { generators, error: generatorsError, retry: retryGenerators } = usePromptGenerators()
   const [pending, setPending] = useState<GenerationAction | null>(null)
   const [confirming, setConfirming] = useState<'cancel' | 'delete' | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -201,9 +201,20 @@ function PromptGenerationPageContent({ generationId }: PromptGenerationPageConte
           </div>
         </header>
 
+        {generatorsError && (
+          <MessageBar intent="error">
+            <MessageBarBody>
+              Generators could not be loaded: {generatorsError}
+              <Button className={styles.touchTarget} icon={<ArrowSyncRegular />} onClick={retryGenerators}>Retry</Button>
+            </MessageBarBody>
+          </MessageBar>
+        )}
         {state.stale && state.error && (
-          <MessageBar intent="warning">
-            <MessageBarBody>Live progress could not be refreshed: {state.error}</MessageBarBody>
+          <MessageBar intent="warning" data-testid="generation-stale">
+            <MessageBarBody>
+              Live progress could not be refreshed: {state.error}
+              <Button className={styles.touchTarget} icon={<ArrowSyncRegular />} onClick={retry}>Check again</Button>
+            </MessageBarBody>
           </MessageBar>
         )}
         {actionError && confirming === null && (
@@ -231,7 +242,12 @@ function PromptGenerationPageContent({ generationId }: PromptGenerationPageConte
         </section>
 
         {generation.status === 'awaiting_review' && (
-          <GeneratorReviewView generation={generation} descriptor={descriptor} onGenerationChange={applyRecord} />
+          <GeneratorReviewView
+            generation={generation}
+            descriptor={descriptor}
+            onGenerationChange={applyRecord}
+            onReload={retry}
+          />
         )}
 
         {generation.status === 'completed' && (

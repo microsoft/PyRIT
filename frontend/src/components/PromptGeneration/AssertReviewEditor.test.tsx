@@ -24,11 +24,18 @@ jest.mock('@/services/api', () => ({
 
 const mockApi = jest.mocked(promptGenerationsApi)
 const GENERATION = makeGenerationDetail({ status: 'awaiting_review' })
+const SERVER_ERROR = { isAxiosError: true, response: { status: 500, data: { detail: 'memory unavailable' } } }
+const CONFLICT = { isAxiosError: true, response: { status: 409, data: { detail: "The generation isn't awaiting review." } } }
 
-function renderEditor(onGenerationChange: jest.Mock = jest.fn()) {
+function renderEditor(onGenerationChange: jest.Mock = jest.fn(), onReload: jest.Mock = jest.fn()) {
   render(
     <FluentProvider theme={webLightTheme}>
-      <AssertReviewEditor generation={GENERATION} descriptor={ASSERT_DESCRIPTOR} onGenerationChange={onGenerationChange} />
+      <AssertReviewEditor
+        generation={GENERATION}
+        descriptor={ASSERT_DESCRIPTOR}
+        onGenerationChange={onGenerationChange}
+        onReload={onReload}
+      />
     </FluentProvider>,
   )
   return onGenerationChange
@@ -162,14 +169,61 @@ describe('AssertReviewEditor', () => {
     expect(screen.getByTestId('assert-review-save')).toBeEnabled()
   })
 
-  it('offers a retry when the review cannot be loaded', async () => {
+  it('offers a retry when the review cannot be loaded, without reloading the generation', async () => {
     const user = userEvent.setup()
-    mockApi.getReview.mockRejectedValueOnce(new Error('Review unavailable')).mockResolvedValue(makeAssertReview())
-    renderEditor()
+    const onReload = jest.fn()
+    mockApi.getReview.mockRejectedValueOnce(SERVER_ERROR).mockResolvedValue(makeAssertReview())
+    renderEditor(jest.fn(), onReload)
 
-    expect(await screen.findByText(/The review could not be loaded: Review unavailable/)).toBeInTheDocument()
+    expect(await screen.findByText(/The review could not be loaded: memory unavailable/)).toBeInTheDocument()
+    // Only a 409 means the generation moved on; other failures retry the review itself.
+    expect(onReload).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await screen.findByRole('textbox', { name: 'Category 1 name' })).toBeInTheDocument()
+    expect(onReload).not.toHaveBeenCalled()
+  })
+
+  it('shows why the estimate could not be loaded and checks again', async () => {
+    const user = userEvent.setup()
+    mockApi.getEstimate.mockReset()
+    mockApi.getEstimate.mockRejectedValueOnce(SERVER_ERROR)
+      .mockResolvedValue(makeGenerationEstimate({ exact_calls: true, min_calls: 25, max_calls: 25 }))
+    renderEditor()
+
+    const failed = await screen.findByTestId('assert-review-estimate-error')
+    expect(failed).toHaveTextContent('The estimate could not be loaded: memory unavailable')
+    expect(screen.getByRole('region', { name: 'Remaining work' })).not.toHaveTextContent('No estimate is available.')
+    await user.click(within(failed).getByRole('button', { name: 'Check again' }))
+
+    const estimate = screen.getByRole('region', { name: 'Remaining work' })
+    await waitFor(() => expect(within(estimate).getByTestId('estimate-calls')).toHaveTextContent('25'))
+    expect(screen.queryByTestId('assert-review-estimate-error')).not.toBeInTheDocument()
+  })
+
+  it('reloads the generation when loading the review finds it is no longer awaiting review', async () => {
+    const onReload = jest.fn()
+    mockApi.getReview.mockRejectedValue(CONFLICT)
+    renderEditor(jest.fn(), onReload)
+
+    expect(await screen.findByText(/The review could not be loaded: The generation isn't awaiting review\./))
+      .toBeInTheDocument()
+    expect(onReload).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['reloads the generation when Save finds it moved on', CONFLICT, "The generation isn't awaiting review.", 1],
+    ['keeps the generation when Save fails for another reason', SERVER_ERROR, 'memory unavailable', 0],
+  ])('%s', async (_label, failure, message, reloads) => {
+    const user = userEvent.setup()
+    const onReload = jest.fn()
+    mockApi.saveReview.mockRejectedValue(failure)
+    renderEditor(jest.fn(), onReload)
+
+    await replaceText(user, await screen.findByRole('textbox', { name: 'Category 1 name' }), 'renamed')
+    await user.click(screen.getByTestId('assert-review-save'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(message)
+    expect(onReload).toHaveBeenCalledTimes(reloads)
   })
 
   it('explains when the review has no taxonomy', async () => {

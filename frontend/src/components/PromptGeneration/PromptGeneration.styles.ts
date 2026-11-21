@@ -187,6 +187,15 @@ export const usePromptGenerationStyles = makeStyles({
   table: {
     minWidth: '48rem',
   },
+  suiteTable: {
+    // Narrow screens scroll the table instead of squeezing the name inputs under the remove buttons.
+    [NARROW_VIEWPORT_QUERY]: {
+      minWidth: '30rem',
+    },
+  },
+  suiteRemoveColumn: {
+    width: `calc(${MINIMUM_TOUCH_TARGET_SIZE} + ${tokens.spacingHorizontalM})`,
+  },
   groupRow: {
     backgroundColor: tokens.colorNeutralBackground2,
   },

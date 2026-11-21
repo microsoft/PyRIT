@@ -68,10 +68,6 @@ export function scenarioRunAttackRoutePath(scenarioResultId: string, attackResul
   return `${scenarioRunRoutePath(scenarioResultId)}/${encodeURIComponent(attackResultId)}`
 }
 
-export function scenarioConversationRoutePath(scenarioResultId: string, conversationId: string): string {
-  return `${scenarioRunRoutePath(scenarioResultId)}/conversations/${encodeURIComponent(conversationId)}`
-}
-
 export function scenarioRerunRoutePath(scenarioName: string, scenarioResultId: string): string {
   return `/scanner/launch/${encodeURIComponent(scenarioName)}?rerun=${encodeURIComponent(scenarioResultId)}`
 }
@@ -90,15 +86,10 @@ export function scenarioLaunchRoutePath(scenarioName: string, datasetNames: read
 
 /**
  * Reads the distinct dataset names requested for preselection, exactly as written. Names are
- * opaque, so whitespace is kept; blank values are kept too so the form can reject them.
+ * opaque, so whitespace is kept; blank values are kept too so the server can reject them.
  */
 export function datasetNamesFromSearchParams(params: URLSearchParams): string[] {
   return [...new Set(params.getAll(DATASET_QUERY_PARAM))]
-}
-
-/** Whether a linked dataset name is blank, which no dataset can be named. */
-export function isBlankDatasetName(name: string): boolean {
-  return name.trim() === ''
 }
 
 function appendScenarioRunProvenance(path: string, scenarioResultId?: string | null): string {
@@ -235,4 +226,26 @@ export function parseChatRoute(path: string): { attackId: string | null; convers
     }
   }
   return { attackId: null, conversationId: null }
+}
+
+/** Chat destination captured only when browsing starts from Chat. */
+export interface DatasetChatOrigin {
+  path: string
+  state?: unknown
+  attackId: string | null
+  conversationId: string | null
+}
+
+export function chatOriginFromNavigationState(state: unknown): DatasetChatOrigin | null {
+  if (state == null || typeof state !== 'object' || !('chatOrigin' in state)) return null
+  const candidate = (state as { chatOrigin?: unknown }).chatOrigin
+  if (candidate == null || typeof candidate !== 'object') return null
+  const origin = candidate as { path?: unknown; state?: unknown; attackId?: unknown; conversationId?: unknown }
+  if (typeof origin.path !== 'string' || !isChatPath(origin.path)) return null
+  return {
+    path: origin.path,
+    state: origin.state,
+    attackId: typeof origin.attackId === 'string' ? origin.attackId : null,
+    conversationId: typeof origin.conversationId === 'string' ? origin.conversationId : null,
+  }
 }

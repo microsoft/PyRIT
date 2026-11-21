@@ -22,7 +22,7 @@
 # 1. A `LocalTraceCapture` records the application's spans in this process.
 # 2. The target gets `trace_config=capture.trace_config()`, so each request runs in its own trace
 #    and PyRIT stores the link on the request.
-# 3. The judge gets `AssertTraceEvidence(source=capture.source())`.
+# 3. The judge gets `trace_source=capture.source()`.
 #
 # The traces are saved as an observation with the score, so the evidence remains available after
 # capture ends.
@@ -97,14 +97,14 @@ agent = TravelAgentTarget(capture=capture)
 # %% [markdown]
 # ## Judge with the trace
 #
-# `build_assert_policy_scorer` takes the trace evidence as one argument. The scorer reads the
-# traces linked to the conversation's requests, saves them, and renders them for the judge.
+# Give the judge the capture's source. It reads the traces linked to the conversation's requests,
+# saves them, and renders them for the judge.
 
 # %%
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import AssertTaxonomy
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.score import AssertTraceEvidence, build_assert_policy_scorer
+from pyrit.score import build_assert_policy_scorer
 
 taxonomy = AssertTaxonomy.model_validate(
     {
@@ -130,7 +130,7 @@ traced_scorer = build_assert_policy_scorer(
     target=judge,
     taxonomy=taxonomy,
     application_context="A travel agent that searches for and books flights with tools.",
-    trace_evidence=AssertTraceEvidence(source=capture.source()),
+    trace_source=capture.source(),
 )
 attack = PromptSendingAttack(
     objective_target=agent, attack_scoring_config=AttackScoringConfig(objective_scorer=traced_scorer)
@@ -143,8 +143,8 @@ print(f"Trace coverage: {score.score_metadata['trace_coverage']}")
 print(f"Cited steps: {score.score_metadata.get('trace_cited_steps', '[]')}")
 
 # %% [markdown]
-# The judge is asked to cite each step it relies on, but whether it does depends on the model;
-# in this run it did not. `trace_cited_steps` records the step IDs the rationale cites, and
+# The judge is asked to cite each step it relies on, but whether it does depends on the model.
+# `trace_cited_steps` records the step IDs the rationale cites, and
 # `trace_citation_warnings` flags cited IDs that do not exist.
 #
 # For comparison, the same judge without the trace sees only the agent's claim:
@@ -169,10 +169,8 @@ print(f"Policy violation from the transcript alone: {transcript_score.get_value(
 # ## The saved evidence
 #
 # The execution snapshot is stored with the score. Each step keeps its kind, name, status, model,
-# token counts, and its input and output. Content is kept up to 4,000 characters per field,
-# with the full value's length and SHA-256 digest. Pass a `redactor` to `capture.source()` to
-# rewrite values before they are measured, hashed, or kept, or `retain_content=False` to keep
-# only digests.
+# token counts, and its complete input, output, and error. The judge sees up to 4,000 characters
+# of each value.
 
 # %%
 from pyrit.memory import CentralMemory
@@ -183,7 +181,7 @@ observations = await memory.get_observations_async(observation_ids=score.observa
 execution = next(o.payload for o in observations if isinstance(o.payload, ExecutionTraceObservationPayload))
 print(f"Tools called: {tuple(step.tool_name for step in execution.steps if step.tool_name)}")
 for step in execution.steps:
-    output = step.output_content.text if step.output_content else ""
+    output = step.output_content or ""
     print(f"T{step.index} {step.kind.value} {step.name}: {output}")
 
 # %% [markdown]
@@ -194,11 +192,10 @@ for step in execution.steps:
 # The header the judge sees states the same coverage, and the judge is told that a missing step is
 # not proof that an action did not happen.
 #
-# By default the judge always runs, with whatever traces exist, as ASSERT does. `requirement`
-# makes it stricter:
+# By default the judge always runs, with whatever traces exist, as ASSERT does.
+# `trace_requirement` makes it stricter:
 #
 # - `TraceEvidenceRequirement.NONE` (the default): always judge.
-# - `TraceEvidenceRequirement.AVAILABLE`: judge only when some execution steps were captured.
 # - `TraceEvidenceRequirement.COMPLETE`: judge only when every request has a complete trace.
 #
 # When the requirement is not met, the result is undetermined, the model is not called, and the
@@ -212,7 +209,8 @@ from pyrit.score import TraceEvidenceRequirement
 strict_scorer = build_assert_policy_scorer(
     target=judge,
     taxonomy=taxonomy,
-    trace_evidence=AssertTraceEvidence(source=capture.source(), requirement=TraceEvidenceRequirement.COMPLETE),
+    trace_source=capture.source(),
+    trace_requirement=TraceEvidenceRequirement.COMPLETE,
 )
 untraced_attack = PromptSendingAttack(
     objective_target=TravelAgentTarget(capture=capture, traced=False),
@@ -241,24 +239,24 @@ print(untraced.automated_score.score_rationale)
 #
 # For an agent behind HTTP, enable tracing on the target (`HTTPTarget(...,
 # trace_config=TargetTraceConfig(enabled=True))`) so each request sends a W3C `traceparent`. To
-# read the spans the agent exports, implement the `TraceClient` protocol for your trace store and
-# pass it to `OtelExecutionTraceSource(trace_client=...)`. Report coverage as complete only when
-# the store can guarantee every span of a trace has arrived.
+# read the spans the agent exports, pass an `OtlpJsonTraceClient`, or your own `TraceClient`, to
+# `OtelExecutionTraceSource(trace_client=...)`; see [Tool call scorers](5_tool_call_scorer.ipynb).
 #
 # ## In `foundry.assert_policy`
 #
-# Pass the source to the scenario, or register it and name it with the `trace_source` parameter:
+# The scenario's judges are its scorers, so give them the source:
 #
 # ```python
-# scenario = AssertPolicy(trace_source=capture.source())
-# # or
-# capture.register(name="travel_agent")
-# scenario.set_params_from_args(args={"objective_target": agent, "trace_source": "travel_agent"})
+# scenario = AssertPolicy(
+#     objective_scorer=AssertJudgeScorer(chat_target=judge, trace_source=capture.source()),
+#     auxiliary_scorers=[
+#         AssertJudgeScorer(chat_target=judge, dimension="overrefusal", trace_source=capture.source())
+#     ],
+# )
 # ```
 #
-# `trace_requirement` (`none`, `available`, or `complete`) sets the evidence a judge needs. If the
-# objective target does not record traces, the scenario logs a warning, as ASSERT does, and does not
-# change the target.
+# To pick the judge in the GUI, register the source with `capture.register(name=...)` and register a
+# scorer that uses it.
 
 # %%
 capture.close()

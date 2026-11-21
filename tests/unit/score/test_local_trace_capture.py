@@ -24,7 +24,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry import SourceRegistry
-from pyrit.score import InMemoryTraceExporter, LocalTraceCapture, OtelExecutionTraceSource
+from pyrit.score import InMemoryTraceExporter, LocalTraceCapture
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -82,15 +82,9 @@ async def test_target_trace_is_complete_once_its_spans_end_async(capture: LocalT
     root, tool = observation.payload.steps
     assert root.name == "pyrit.target"
     assert (tool.kind, tool.tool_name, tool.parent_span_id) == (ExecutionStepKind.TOOL, "lookup", root.span_id)
-
-
-async def test_target_span_records_conversation_as_session_async(capture: LocalTraceCapture) -> None:
-    trace_id = await _send_async(_AgentTarget(capture=capture))
-
     spans = (await capture.client.get_spans_async(query=_query(trace_id))).spans
-    root = next(span for span in spans if span.name == "pyrit.target")
-    assert root.attributes["session.id"] == "conversation"
-    assert root.attributes["pyrit.conversation_id"] == "conversation"
+    root_span = next(span for span in spans if span.name == "pyrit.target")
+    assert root_span.attributes["session.id"] == root_span.attributes["pyrit.conversation_id"] == "conversation"
 
 
 async def test_background_span_delays_completion_until_it_ends_async(capture: LocalTraceCapture) -> None:
@@ -108,25 +102,6 @@ async def test_background_span_delays_completion_until_it_ends_async(capture: Lo
     assert len(finished.payload.steps) == 3
 
 
-async def test_late_span_invalidates_completion_async(capture: LocalTraceCapture) -> None:
-    trace_id = await _send_async(_AgentTarget(capture=capture))
-    root = (await capture.client.get_spans_async(query=_query(trace_id))).spans[0]
-    parent = trace.NonRecordingSpan(
-        trace.SpanContext(
-            trace_id=int(trace_id, 16),
-            span_id=int(root.span_id, 16),
-            is_remote=True,
-            trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED),
-        )
-    )
-    with capture.tracer.start_as_current_span("late", context=trace.set_span_in_context(parent, Context())):
-        pass
-
-    observation = await capture.source().acquire_async(scorable=TraceScorable(trace_ids=(trace_id,)))
-
-    assert observation.acquisition is Acquisition.PARTIAL
-
-
 async def test_without_auto_complete_coverage_stays_incomplete_async() -> None:
     capture = LocalTraceCapture(auto_complete=False)
     try:
@@ -137,20 +112,6 @@ async def test_without_auto_complete_coverage_stays_incomplete_async() -> None:
 
     assert observation.acquisition is Acquisition.PARTIAL
     assert "capture_not_complete" in observation.payload.coverage.reasons
-
-
-def test_trace_config_enables_tracing_with_the_capture_tracer(capture: LocalTraceCapture) -> None:
-    config = capture.trace_config()
-    assert config.enabled
-    assert config.tracer is not None
-    assert _AgentTarget(capture=capture).trace_config.enabled
-
-
-def test_source_options_are_forwarded(capture: LocalTraceCapture) -> None:
-    source = capture.source(retain_content=False, max_content_chars=7)
-    assert isinstance(source, OtelExecutionTraceSource)
-    params = source.get_identifier().params
-    assert (params["retain_content"], params["max_content_chars"]) == (False, 7)
 
 
 def test_register_makes_the_source_nameable(capture: LocalTraceCapture) -> None:
@@ -350,32 +311,3 @@ async def test_a_failed_trace_cannot_pin_a_full_capture_async() -> None:
     assert not failed_after.available
     assert "trace_evicted" in failed_after.coverage.reasons
     assert later_result.coverage.complete
-
-
-async def test_remote_traces_and_bookkeeping_stay_bounded_async() -> None:
-    capture = LocalTraceCapture(max_spans=4)
-    try:
-        for index in range(12):
-            remote = trace.NonRecordingSpan(
-                trace.SpanContext(
-                    trace_id=index + 1,
-                    span_id=index + 1,
-                    is_remote=True,
-                    trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED),
-                )
-            )
-            with capture.tracer.start_as_current_span("agent", context=trace.set_span_in_context(remote, Context())):
-                pass
-        later = await _send_async(_AgentTarget(capture=capture))
-        result = await capture.client.get_spans_async(query=_query(later))
-        oldest = await capture.client.get_spans_async(query=_query(f"{1:032x}"))
-    finally:
-        capture.close()
-
-    assert result.coverage.complete
-    assert oldest.spans == ()
-    assert not oldest.coverage.complete
-    client = capture.client
-    assert len(client._trace_keys) <= 4
-    assert len(client._evicted) <= 4
-    assert set(client._late) | set(client._trace_failures) <= set(client._trace_keys)

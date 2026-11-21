@@ -28,7 +28,7 @@ function stagesFor(
 }
 
 function currentStageNote(status: PromptGenerationStatus): string {
-  if (status === 'running' || status === 'saving') return 'in progress'
+  if (status === 'running') return 'in progress'
   if (status === 'awaiting_review') return 'next, after review'
   if (status === 'queued') return 'queued'
   return 'next'

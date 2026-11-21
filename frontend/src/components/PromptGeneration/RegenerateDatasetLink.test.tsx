@@ -31,7 +31,7 @@ describe('RegenerateDatasetLink', () => {
     mockLookup.mockResolvedValue({ generator: 'target_objective', request: {}, source_dataset_name: 'refunds' })
     renderLink('dataset:named:refunds')
 
-    expect(await screen.findByRole('link', { name: /Edit policy & regenerate/ })).toHaveAttribute(
+    expect(await screen.findByRole('link', { name: /Edit & regenerate/ })).toHaveAttribute(
       'href', '/datasets/generate/new?generator=target_objective&selection_key=dataset%3Anamed%3Arefunds',
     )
   })
@@ -63,7 +63,7 @@ describe('RegenerateDatasetLink', () => {
     expect(unavailable).toHaveTextContent('Backend restarting')
     await user.click(screen.getByRole('button', { name: 'Check again' }))
 
-    expect(await screen.findByRole('link', { name: /Edit policy & regenerate/ })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: /Edit & regenerate/ })).toBeInTheDocument()
     expect(mockLookup).toHaveBeenCalledTimes(2)
   })
 })
