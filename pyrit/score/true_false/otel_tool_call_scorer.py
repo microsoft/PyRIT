@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier, Scorable, ScoringExpectation, ToolExecution
     from pyrit.score.observation.execution import _ObservationEvidence
     from pyrit.score.observation.observation_source import ObservationSource
+    from pyrit.score.observation.provider_trace_resolver import ProviderTraceResolver
 
 logger = logging.getLogger(__name__)
 
@@ -229,10 +230,36 @@ class _OtelToolEvidenceScorer(TrueFalseScorer):
 
     SUPPORTED_SCORABLE_TYPES = (MessageScorable, TraceScorable)
 
-    def __init__(self, *, source: ObservationSource[TraceScorable]) -> None:
-        """Initialize with a condition-independent, caller-configured trace source."""
+    def __init__(
+        self,
+        *,
+        source: ObservationSource[TraceScorable],
+        provider_trace_resolver: ProviderTraceResolver | None = None,
+    ) -> None:
+        """
+        Initialize with a condition-independent, caller-configured trace source.
+
+        Args:
+            source (ObservationSource[TraceScorable]): Acquires the trace evidence.
+            provider_trace_resolver (ProviderTraceResolver | None): Links requests that carry the
+                provider's own identifiers instead of a W3C trace link. Defaults to None, in which
+                case such a request links only when its provider reported the trace id.
+        """
         super().__init__()
         self._source = source
+        self._provider_trace_resolver = provider_trace_resolver
+
+    def _evidence_children(self) -> dict[str, ComponentIdentifier]:
+        """
+        Identify the evidence path: the source, and the provider resolver when one is set.
+
+        Returns:
+            dict[str, ComponentIdentifier]: The child identities.
+        """
+        children = {"source": self._source.get_identifier()}
+        if self._provider_trace_resolver is not None:
+            children["provider_trace_resolver"] = self._provider_trace_resolver.get_identifier()
+        return children
 
     @abstractmethod
     def _build_identifier(self) -> ComponentIdentifier: ...
@@ -268,7 +295,9 @@ class _OtelToolEvidenceScorer(TrueFalseScorer):
         if not isinstance(scorable, (MessageScorable, TraceScorable)):
             raise TypeError(f"{type(self).__name__} requires a MessageScorable or an explicit TraceScorable.")
         scope, correlation_complete = (
-            await resolve_message_trace_scope_async(scorable=scorable, memory=self._memory)
+            await resolve_message_trace_scope_async(
+                scorable=scorable, memory=self._memory, provider_resolver=self._provider_trace_resolver
+            )
             if isinstance(scorable, MessageScorable)
             else (scorable, True)
         )
@@ -307,7 +336,7 @@ class OtelToolCallScorer(_OtelToolEvidenceScorer):
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
             params={"matching_version": 1, "message_scope_version": _MESSAGE_SCOPE_VERSION},
-            children={"source": self._source.get_identifier()},
+            children=self._evidence_children(),
         )
 
     def _verdict_rests_on_absence(
@@ -376,7 +405,11 @@ class OtelToolCallOrderScorer(_OtelToolEvidenceScorer):
     CONDITION_TYPE = ToolsCalledInOrder
 
     def __init__(
-        self, *, source: ObservationSource[TraceScorable], clock_skew_tolerance: timedelta = timedelta(0)
+        self,
+        *,
+        source: ObservationSource[TraceScorable],
+        clock_skew_tolerance: timedelta = timedelta(0),
+        provider_trace_resolver: ProviderTraceResolver | None = None,
     ) -> None:
         """
         Initialize with a caller-configured trace source and a clock tolerance.
@@ -386,7 +419,7 @@ class OtelToolCallOrderScorer(_OtelToolEvidenceScorer):
         """
         _check_clock_skew_tolerance(clock_skew_tolerance)
         self._clock_skew_tolerance = clock_skew_tolerance
-        super().__init__(source=source)
+        super().__init__(source=source, provider_trace_resolver=provider_trace_resolver)
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
@@ -395,7 +428,7 @@ class OtelToolCallOrderScorer(_OtelToolEvidenceScorer):
                 "message_scope_version": _MESSAGE_SCOPE_VERSION,
                 "clock_skew_tolerance_seconds": self._clock_skew_tolerance.total_seconds(),
             },
-            children={"source": self._source.get_identifier()},
+            children=self._evidence_children(),
         )
 
     def _verdict_rests_on_absence(

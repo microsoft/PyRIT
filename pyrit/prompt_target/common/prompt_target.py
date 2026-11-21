@@ -22,6 +22,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    ProviderTraceReference,
     RequestGenerationConfig,
     RequestGenerationInfo,
     RequestTraceContext,
@@ -437,6 +438,8 @@ class PromptTarget(Identifiable):
         """
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            # A resent request must not keep the identifiers of its earlier send if this one is rejected.
+            piece.prompt_metadata.pop(ProviderTraceReference.METADATA_KEY, None)
             RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
             piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()
@@ -490,6 +493,12 @@ class PromptTarget(Identifiable):
                         normalized_conversation=normalized_conversation
                     )
                 finally:
+                    provider_reference = ProviderTraceReference.from_metadata(
+                        normalized_request.get_piece().prompt_metadata
+                    )
+                    if provider_reference is not None:
+                        for piece in message.message_pieces:
+                            piece.prompt_metadata.update(provider_reference.to_metadata())
                     generation_info = RequestGenerationInfo.from_metadata(
                         metadata=normalized_request.get_piece().prompt_metadata
                     )
@@ -505,7 +514,12 @@ class PromptTarget(Identifiable):
                     piece.prompt_metadata = {
                         key: value
                         for key, value in piece.prompt_metadata.items()
-                        if key not in (RequestTraceContext.METADATA_KEY, RequestTraceContext.REQUEST_METADATA_KEY)
+                        if key
+                        not in (
+                            RequestTraceContext.METADATA_KEY,
+                            RequestTraceContext.REQUEST_METADATA_KEY,
+                            ProviderTraceReference.METADATA_KEY,
+                        )
                     }
                     RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
                     RequestGenerationInfo.clear_metadata(piece.prompt_metadata)

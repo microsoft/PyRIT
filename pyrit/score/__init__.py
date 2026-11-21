@@ -66,6 +66,11 @@ if TYPE_CHECKING:
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
     from pyrit.score.observation.otlp_json_trace_client import OtlpJsonTraceClient
     from pyrit.score.observation.program_execution_source import ProgramExecutionSource
+    from pyrit.score.observation.provider_trace_resolver import (
+        MappingProviderTraceResolver,
+        ProviderTraceResolver,
+        SpanAttributeTraceResolver,
+    )
     from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
     from pyrit.score.response_handler import (
         CallableResponseHandler,
@@ -258,6 +263,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "HumanLabeledEntry": "pyrit.score.scorer_evaluation.human_labeled_dataset",
     "InsecureCodeScorer": "pyrit.score.float_scale.insecure_code_scorer",
     "InMemoryTraceClient": "pyrit.score.observation.trace_client",
+    "MappingProviderTraceResolver": "pyrit.score.observation.provider_trace_resolver",
+    "ProviderTraceResolver": "pyrit.score.observation.provider_trace_resolver",
+    "SpanAttributeTraceResolver": "pyrit.score.observation.provider_trace_resolver",
     "InMemoryTraceExporter": "pyrit.score.observation.otel_span_exporter",
     "FileWriteScorer": "pyrit.score.true_false.file_write_scorer",
     "LocalFileSurfaceSource": "pyrit.score.observation.local_file_surface_source",
