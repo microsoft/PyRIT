@@ -273,6 +273,36 @@ async def test_get_seed_examples_search_ignores_simulated_conversation_json(sqli
     assert set(await _ids(sqlite_instance, seed_types=["simulated_conversation"])) == {standalone.id, group}
 
 
+async def test_get_seed_example_reports_the_simulated_conversation_sequence(
+    sqlite_instance: MemoryInterface,
+):
+    """The declared sequence of a simulated conversation survives the round trip.
+
+    The sequence column orders the members of a seed example, and the record
+    projection exposes it, so the declared slot must persist instead of
+    silently becoming NULL and only sorting by accident.
+    """
+    group = uuid4()
+    conversation = SeedSimulatedConversation(
+        num_turns=2,
+        adversarial_chat_system_prompt=SeedPrompt(value="system push"),
+        dataset_name=DATASET,
+        prompt_group_id=group,
+        sequence=2,
+    )
+    preamble = SeedPrompt(value="preamble", dataset_name=DATASET, role="system", sequence=0, prompt_group_id=group)
+    closing = SeedPrompt(value="closing ask", dataset_name=DATASET, role="user", sequence=6, prompt_group_id=group)
+    await _add(sqlite_instance, conversation, preamble, closing)
+
+    records = await sqlite_instance.get_seed_example_async(dataset_name=DATASET, example_id=group)
+
+    assert [(record.seed_type, record.sequence) for record in records] == [
+        ("prompt", 0),
+        ("simulated_conversation", 2),
+        ("prompt", 6),
+    ]
+
+
 def _legacy_conversation_entry(*, prompt_file: Path, prompt_group_id: UUID) -> SeedEntry:
     entry = SeedEntry(
         entry=SeedSimulatedConversation(
