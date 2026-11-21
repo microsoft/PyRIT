@@ -150,9 +150,12 @@ class OpenAITTSTarget(OpenAITarget):
             "response_format": self._response_format,
         }
 
-        # Add optional parameters
+        # Leave unset optional parameters out: the SDK sends an explicit None as JSON null,
+        # which some models (e.g. gpt-4o-mini-tts) reject.
+        optional_parameters: dict[str, Any] = {}
         if self._speed is not None:
             body_parameters["speed"] = self._speed
+            optional_parameters["speed"] = self._speed
 
         # Use unified error handler for consistent error handling
         response = await self._handle_openai_request_async(
@@ -161,7 +164,7 @@ class OpenAITTSTarget(OpenAITarget):
                 voice=str(body_parameters["voice"]),
                 input=str(body_parameters["input"]),
                 response_format=body_parameters.get("response_format"),  # type: ignore[ty:invalid-argument-type]
-                speed=body_parameters.get("speed"),  # type: ignore[ty:invalid-argument-type]
+                **optional_parameters,
             ),
             request=message,
         )
