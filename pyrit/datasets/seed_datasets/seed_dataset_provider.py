@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from pydantic import TypeAdapter, ValidationError
 from tqdm import tqdm
 
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.datasets.seed_datasets.seed_metadata import (
     SeedDatasetDescriptor,
     SeedDatasetFilter,
@@ -467,8 +468,11 @@ class SeedDatasetProvider(ABC):
             for provider_name, provider_class in cls._registry.items()
         ]
 
-        results = await asyncio.gather(*tasks)
-        pbar.close()
+        # A failed fetch cancels the others instead of leaving them running after this method raises.
+        try:
+            results = await gather_with_cleanup_async(tasks)
+        finally:
+            pbar.close()
 
         # Merge datasets with the same name
         datasets: dict[str, SeedDataset] = {}
