@@ -67,12 +67,21 @@ def test_prompt_shield_scorer_parsing_without_documents_analysis(promptshield_sc
     assert result == [False, False]
 
 
-def test_prompt_shield_scorer_parsing_rejects_unexpected_user_prompt_analysis(
-    promptshield_scorer: PromptShieldScorer,
-):
-    response_json_str = '{"userPromptAnalysis":"attack","documentsAnalysis":[{"attackDetected":false}]}'
-    with pytest.raises(ValueError, match="userPromptAnalysis"):
-        promptshield_scorer._parse_response_to_boolean_list(response_json_str)
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("analysis_json", ['"attack"', "null", "[]"])
+async def test_prompt_shield_scorer_rejects_unexpected_user_prompt_analysis_async(
+    *, sqlite_instance: MemoryInterface, analysis_json: str
+) -> None:
+    response_text = f'{{"userPromptAnalysis":{analysis_json},"documentsAnalysis":[{{"attackDetected":false}}]}}'
+    target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = get_mock_target_identifier("MockShieldTarget")
+    target.send_prompt_async = AsyncMock(return_value=[generate_shield_response(response_text)])
+    scorer = PromptShieldScorer(prompt_shield_target=target)
+
+    with pytest.raises(RuntimeError, match="userPromptAnalysis") as error:
+        await scorer.score_text_async("Check for prompt injection")
+    assert isinstance(error.value.__cause__, ValueError)
+    target.send_prompt_async.assert_awaited_once()
 
 
 async def test_prompt_shield_scorer_metadata_is_the_response_text(sqlite_instance, sample_response_json_str: str):
