@@ -420,7 +420,7 @@ describe('ScenarioRunPage', () => {
     await waitFor(() => expect(objective).toHaveFocus())
   })
 
-  it('restores focus to the attack row when attack details are dismissed with Escape', async () => {
+  it('restores focus to the attack row after Escape and on reopening', async () => {
     const user = userEvent.setup()
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     await expand(user)
@@ -428,6 +428,12 @@ describe('ScenarioRunPage', () => {
     await user.click(details)
     await screen.findByRole('dialog')
     await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(details).toHaveFocus())
+    await user.click(details)
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await waitFor(() => expect(details).toHaveFocus())
   })
 
