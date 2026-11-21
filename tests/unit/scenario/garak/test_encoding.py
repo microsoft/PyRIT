@@ -268,6 +268,7 @@ class TestEncodingTechniqueDefault:
             "ubbi_dubbi",
             "bifid",
             "columnar_transposition",
+            "base91",
         }
 
     def test_get_aggregate_tags_includes_default(self):

@@ -12,6 +12,7 @@ from pyrit.converter import (
     AskToDecodeConverter,
     AtbashConverter,
     Base64Converter,
+    Base91Converter,
     Base2048Converter,
     BifidConverter,
     BinAsciiConverter,
@@ -129,6 +130,7 @@ class EncodingTechnique(ScenarioTechnique):
     LeetSpeak = ("leet_speak", {"default"})
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
+    Base91 = ("base91", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
     UbbiDubbi = ("ubbi_dubbi", set[str]())
 
@@ -318,6 +320,7 @@ class Encoding(Scenario):
             ([LeetspeakConverter()], "leet_speak", "leet_speak"),
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
+            ([Base91Converter()], "base91", "base91"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
             # "ubbi_dubbi": a language game that prefixes each vowel run with "ub", popularized by
             # the PBS children's show Zoom (1972). https://en.wikipedia.org/wiki/Ubbi_dubbi
