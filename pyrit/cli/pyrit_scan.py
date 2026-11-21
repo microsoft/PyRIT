@@ -870,7 +870,7 @@ async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
     return 0
 
 
-async def _handle_list_commands_async(*, client: Any, parsed_args: Namespace) -> int:
+async def _handle_list_commands_async(*, client: PyRITApiClient, parsed_args: Namespace) -> int:
     """
     Dispatch a ``list-*`` verb.
 
@@ -897,7 +897,7 @@ async def _handle_list_commands_async(*, client: Any, parsed_args: Namespace) ->
     return 0
 
 
-async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) -> int:
+async def _handle_add_initializer_async(*, client: PyRITApiClient, parsed_args: Namespace) -> int:
     """
     Handle ``add-initializer``: upload one or more scripts to the server.
 
@@ -925,7 +925,7 @@ async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) 
     return 0
 
 
-async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
+async def _handle_results_async(*, client: PyRITApiClient, parsed_args: Namespace) -> int:
     """
     Handle the ``scenario-results`` verb: fetch a run and render the requested view.
 
@@ -1017,7 +1017,7 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
     return 0
 
 
-async def _handle_scenario_history_async(*, client: Any, parsed_args: Namespace) -> int:
+async def _handle_scenario_history_async(*, client: PyRITApiClient, parsed_args: Namespace) -> int:
     """
     Handle the ``scenario-history`` verb: list recent scenario runs.
 
@@ -1144,7 +1144,7 @@ async def _poll_until_terminal_async(
 
 async def _run_scenario_async(
     *,
-    client: Any,
+    client: PyRITApiClient,
     parsed_args: Namespace,
 ) -> int:
     """
@@ -1223,7 +1223,7 @@ async def _run_scenario_async(
     return 1
 
 
-async def _handle_run_async(*, client: Any, parsed_args: Namespace) -> int:
+async def _handle_run_async(*, client: PyRITApiClient, parsed_args: Namespace) -> int:
     """
     Handle the ``run`` verb: resolve the scenario, reparse its declared flags, then run it.
 
@@ -1274,7 +1274,7 @@ def _credential_source_from_args(*, parsed_args: Namespace) -> CredentialSource:
 
 
 async def _send_target_credential_async(
-    *, client: Any, target_name: str, source: CredentialSource, header: str | None, expected_private: bool
+    *, client: PyRITApiClient, target_name: str, source: CredentialSource, header: str | None, expected_private: bool
 ) -> None:
     """
     Read a credential from its source and set it as a target's API key, or as one of its request headers.
@@ -1292,7 +1292,7 @@ async def _send_target_credential_async(
 
 async def _keep_target_credential_fresh_async(
     *,
-    client: Any,
+    client: PyRITApiClient,
     target_name: str,
     target_hash: str,
     private: bool,
@@ -1379,7 +1379,7 @@ def _response_detail(response: Any) -> str:
     return str(detail) if detail else f"The server refused the request ({response.status_code})."
 
 
-async def _handle_set_target_credential_async(*, client: Any, parsed_args: Namespace) -> int:
+async def _handle_set_target_credential_async(*, client: PyRITApiClient, parsed_args: Namespace) -> int:
     """
     Handle ``set-target-credential``: replace the API key or a request header of a target that allows it.
 
@@ -1451,7 +1451,7 @@ _CLIENT_HANDLERS: dict[str, Callable[..., Any]] = {
 }
 
 
-async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) -> int:
+async def _dispatch_with_client_async(*, client: PyRITApiClient, parsed_args: Namespace) -> int:
     """
     Dispatch a verb that needs an open API client.
 
