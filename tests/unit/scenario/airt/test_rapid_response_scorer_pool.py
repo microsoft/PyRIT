@@ -239,6 +239,64 @@ class TestRapidResponseScorerPool:
         )
         assert attack.logical_group_id == scenario._get_atomic_group_id(atomic_attack=attack)
 
+    async def test_the_scorer_selection_report_has_one_entry_per_planned_group(self, objective_target, judges):
+        scenario = await _initialize(
+            RapidResponse(objective_scorer=_pool(*judges)),
+            target=objective_target,
+            dataset_config=_dataset_config(),
+        )
+
+        report = scenario.get_scorer_selection_report()
+
+        assert [entry.atomic_attack_name for entry in report.entries] == [
+            atomic.atomic_attack_name for atomic in scenario._atomic_attacks
+        ]
+        for entry, atomic in zip(report.entries, scenario._atomic_attacks, strict=True):
+            assert entry.group_kind == atomic.group_kind
+            assert entry.selected.candidate_index == atomic.objective_scorer_binding.candidate_index
+        violence = [entry for entry in report.entries if entry.atomic_attack_name.endswith("airt_violence")]
+        assert {entry.group_kind for entry in violence} == {
+            ScenarioRunPlanGroupKind.ATTACK,
+            ScenarioRunPlanGroupKind.BASELINE,
+        }
+        assert all([verdict.reason_kind for verdict in entry.rejected] == ["evaluation"] for entry in violence)
+
+    async def test_the_scorer_selection_report_follows_a_resumed_plan(self, objective_target, judges):
+        scenario, stored = await self._saved_plan(objective_target, judges)
+        kept = stored.model_copy(update={"atomic_groups": stored.atomic_groups[:1]})
+
+        scenario._apply_persisted_run_plan(stored_plan=kept)
+
+        assert [entry.atomic_attack_name for entry in scenario.get_scorer_selection_report().entries] == [
+            kept.atomic_groups[0].atomic_attack_name
+        ]
+
+    async def test_a_single_scorer_run_reports_no_pool_selection(self, objective_target, judges):
+        scenario = await _initialize(
+            RapidResponse(objective_scorer=judges[0]),
+            target=objective_target,
+            dataset_config=DatasetAttackConfiguration(sources=[DatasetSource(name="airt_hate")]),
+            groups={"airt_hate": GROUPS["airt_hate"]},
+        )
+
+        assert scenario.get_scorer_selection_report().entries == []
+
+    async def test_the_scorer_selection_report_needs_initialization(self, judges):
+        with pytest.raises(ValueError, match="initialize_async"):
+            RapidResponse(objective_scorer=_pool(*judges)).get_scorer_selection_report()
+
+    async def test_a_group_bound_without_its_selection_is_not_left_out_silently(self, objective_target, judges):
+        scenario = await _initialize(
+            RapidResponse(objective_scorer=_pool(*judges)),
+            target=objective_target,
+            dataset_config=_dataset_config(),
+        )
+        atomic = scenario._atomic_attacks[0]
+        atomic._objective_scorer_selection = None
+
+        with pytest.raises(ValueError, match=atomic.atomic_attack_name):
+            scenario.get_scorer_selection_report()
+
     async def test_workers_track_pool_groups_under_their_plan_ids(self, objective_target, judges):
         scenario = await _initialize(
             RapidResponse(objective_scorer=_pool(*judges)),
@@ -413,20 +471,6 @@ class TestRapidResponseScorerPool:
                 dataset_config=DatasetAttackConfiguration(sources=[DatasetSource(name="airt_hate")]),
                 groups={"airt_hate": GROUPS["airt_hate"]},
             )
-
-    async def test_the_selection_report_is_ready_before_the_run(self, objective_target, judges):
-        scenario = RapidResponse(objective_scorer=_pool(*judges))
-        with pytest.raises(ValueError, match="Initialize the scenario first"):
-            scenario.get_scorer_selection_report()
-
-        await _initialize(scenario, target=objective_target, dataset_config=_dataset_config())
-
-        report = scenario.get_scorer_selection_report()
-        assert report.to_text().splitlines() == [
-            f"flip / airt_hate: SubStringScorer [{HATE}] (requires evaluation {HATE!r})",
-            f"flip / airt_violence: SubStringScorer [{VIOLENCE}] (requires evaluation {VIOLENCE!r})",
-            f"  #0 SubStringScorer [{HATE}]: evaluation, is bound to {HATE!r}; the population requires {VIOLENCE!r}.",
-        ]
 
 
 def test_dataset_overrides_keep_a_sources_scorer_requirements():

@@ -30,8 +30,6 @@ from pyrit.models import (
     ScenarioRunPlanGroupKind,
     ScenarioRunPlanScorerBinding,
     ScorerCapabilityName,
-    ScorerSelectionEntry,
-    ScorerSelectionReport,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core._technique_resolution import (
@@ -148,6 +146,7 @@ def build_baseline_atomic_attack(
     atomic_attack_name: str = "baseline",
     display_group: str | None = None,
     objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None,
+    objective_scorer_selection: ScorerSelection | None = None,
 ) -> AtomicAttack:
     """
     Build a baseline ``AtomicAttack`` that sends each objective unmodified.
@@ -169,6 +168,8 @@ def build_baseline_atomic_attack(
             with that population.
         objective_scorer_binding (ScenarioRunPlanScorerBinding | None): The pool selection of the
             attack population this baseline compares against, for pool runs.
+        objective_scorer_selection (ScorerSelection | None): That pool selection itself, so the
+            scenario can report it. Pass this or ``objective_scorer_binding``, not both.
 
     Returns:
         AtomicAttack: The baseline atomic attack.
@@ -186,6 +187,7 @@ def build_baseline_atomic_attack(
         display_group=display_group,
         group_kind=ScenarioRunPlanGroupKind.BASELINE,
         objective_scorer_binding=objective_scorer_binding,
+        objective_scorer_selection=objective_scorer_selection,
     )
 
 
@@ -197,6 +199,7 @@ def build_baseline_atomic_attacks(
     memory_labels: dict[str, str] | None = None,
     name: str = "baseline",
     objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None,
+    objective_scorer_selection: ScorerSelection | None = None,
 ) -> list[AtomicAttack]:
     """
     Build baseline units without collapsing repeated objectives.
@@ -209,6 +212,8 @@ def build_baseline_atomic_attacks(
         name (str): Base name for the units. Defaults to ``"baseline"``.
         objective_scorer_binding (ScenarioRunPlanScorerBinding | None): The pool selection
             this baseline shares with its attack population, for pool runs.
+        objective_scorer_selection (ScorerSelection | None): That pool selection itself, so the
+            scenario can report it. Pass this or ``objective_scorer_binding``, not both.
 
     Returns:
         list[AtomicAttack]: One batch or independently named groups with a shared display group.
@@ -229,6 +234,7 @@ def build_baseline_atomic_attacks(
             ),
             display_group=name if repeated else None,
             objective_scorer_binding=objective_scorer_binding,
+            objective_scorer_selection=objective_scorer_selection,
         )
         for population in populations
     ]
@@ -268,7 +274,6 @@ def build_matrix_atomic_attacks(
     technique_converters: dict[str, list[Converter]] | None = None,
     extra_factories: dict[str, AttackTechniqueFactory] | None = None,
     scorer_requirements: ScorerRequirements | None = None,
-    selection_report: list[ScorerSelectionEntry] | None = None,
 ) -> list[AtomicAttack]:
     """
     Build a matrix-shaped scenario's atomic attacks from its resolved context in one call.
@@ -302,8 +307,6 @@ def build_matrix_atomic_attacks(
             can offer techniques without registering them globally.
         scorer_requirements (ScorerRequirements | None): What the scenario and its resolved run
             configuration require from the objective scorer. Dataset sources add their own.
-        selection_report (list[ScorerSelectionEntry] | None): A list that receives one entry per
-            technique and dataset describing the scorer selection, for the scenario's report.
 
     Returns:
         list[AtomicAttack]: The generated atomic attacks, baseline first when
@@ -316,7 +319,7 @@ def build_matrix_atomic_attacks(
         incompatible_technique_policy=context.incompatible_technique_policy,
         scorer_requirements=scorer_requirements,
     )
-    atomic_attacks = builder.build(
+    return builder.build(
         technique_factories=resolve_technique_factories(context=context, extra_factories=extra_factories),
         dataset_groups=context.seed_groups_by_dataset,
         display_group_fn=display_group_fn,
@@ -324,9 +327,6 @@ def build_matrix_atomic_attacks(
         include_baseline=context.include_baseline,
         dataset_scorer_requirements=context.dataset_config.get_scorer_requirements_by_dataset(),
     )
-    if selection_report is not None:
-        selection_report.extend(builder.selection_report.entries)
-    return atomic_attacks
 
 
 class MatrixAtomicAttackBuilder:
@@ -401,7 +401,6 @@ class MatrixAtomicAttackBuilder:
             if objective_scorer.capabilities.includes(capability=ScorerCapabilityName.TRUE_FALSE)
             else None
         )
-        self._selection_entries: list[ScorerSelectionEntry] = []
 
     def build(
         self,
@@ -480,8 +479,6 @@ class MatrixAtomicAttackBuilder:
             dataset_groups=dataset_groups, dataset_scorer_requirements=dataset_scorer_requirements
         )
         atomic_attacks: list[AtomicAttack] = []
-        # Each build reports its own grid, so entries from an earlier build do not carry over.
-        self._selection_entries = []
         # Pool runs compare each dataset's attacks with one baseline per selected judge.
         pool_baselines: dict[tuple[str, int], tuple[set[str], ScorerSelection]] = {}
         technique_converters = technique_converters or {}
@@ -521,7 +518,7 @@ class MatrixAtomicAttackBuilder:
             # Select each dataset's scorer once; the adversarial-target axis does not change it.
             cells: dict[
                 str,
-                tuple[list[AttackSeedGroup], TrueFalseScorer, ScenarioRunPlanScorerBinding | None, AttackScoringConfig],
+                tuple[list[AttackSeedGroup], TrueFalseScorer, ScorerSelection | None, AttackScoringConfig],
             ] = {}
             for dataset_name, compatible_groups in compatible_datasets.items():
                 if not compatible_groups:
@@ -536,7 +533,7 @@ class MatrixAtomicAttackBuilder:
                 if selection is _SKIPPED:
                     continue
                 if isinstance(selection, ScorerSelection):
-                    binding = selection.to_run_plan_binding() if self._is_pool else None
+                    pool_selection = selection if self._is_pool else None
                     if self._is_pool:
                         group_ids, _ = pool_baselines.setdefault(
                             (dataset_name, selection.candidate_index), (set(), selection)
@@ -545,7 +542,7 @@ class MatrixAtomicAttackBuilder:
                     cells[dataset_name] = (
                         compatible_groups,
                         selection.scorer,
-                        binding,
+                        pool_selection,
                         AttackScoringConfig(objective_scorer=selection.scorer),
                     )
                 else:
@@ -557,7 +554,7 @@ class MatrixAtomicAttackBuilder:
                         AttackScoringConfig(objective_scorer=legacy_scorer),
                     )
             for target_name, target_instance in target_axis:
-                for dataset_name, (compatible_groups, objective_scorer, binding, scoring_config) in cells.items():
+                for dataset_name, (compatible_groups, objective_scorer, selected, scoring_config) in cells.items():
                     combo = MatrixCombo(
                         technique_name=technique_name,
                         dataset_name=dataset_name,
@@ -594,7 +591,7 @@ class MatrixAtomicAttackBuilder:
                                 memory_labels=self._memory_labels,
                                 display_group=display_group_fn(combo),
                                 technique_name=technique_name,
-                                objective_scorer_binding=binding,
+                                objective_scorer_selection=selected,
                             )
                         )
 
@@ -683,32 +680,15 @@ class MatrixAtomicAttackBuilder:
             for group in seed_groups
         ]
         try:
-            selection = self._pool.select(
+            return self._pool.select(
                 requirements=requirements, scorable_type=MessageScorable, expectations=expectations
             )
         except NoCompatibleScorerError as exc:
-            self._selection_entries.append(
-                self._pool.report_entry(technique=technique_name, dataset=dataset_name, outcome=exc)
-            )
             message = f"Technique '{technique_name}', dataset '{dataset_name}': {exc}"
             if self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
                 raise IncompatibleTechniqueError(message) from exc
             logger.warning("Skipping %s", message)
             return _SKIPPED
-        self._selection_entries.append(
-            self._pool.report_entry(technique=technique_name, dataset=dataset_name, outcome=selection)
-        )
-        return selection
-
-    @property
-    def selection_report(self) -> ScorerSelectionReport:
-        """
-        Which objective scorer each technique and dataset was given, and why others were passed over.
-
-        Filled by ``build``, before any attack runs. Empty on the legacy path for scorers that
-        are not true/false scorers, where nothing is selected.
-        """
-        return ScorerSelectionReport(entries=list(self._selection_entries))
 
     def _build_pool_baselines(
         self,
@@ -742,7 +722,7 @@ class MatrixAtomicAttackBuilder:
                         seed_groups=[group for group in groups if group.logical_id in group_ids],
                         memory_labels=self._memory_labels,
                         name=baseline_name,
-                        objective_scorer_binding=selection.to_run_plan_binding(),
+                        objective_scorer_selection=selection,
                     )
                 )
         return baselines

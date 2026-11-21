@@ -70,7 +70,6 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     ScenarioRunState,
     ScorerEvaluationIdentifier,
-    ScorerSelectionEntry,
     ScorerSelectionReport,
     config_hash,
 )
@@ -337,9 +336,6 @@ class Scenario(ABC):
         self._name = name if name else type(self).__name__
         self._memory = CentralMemory.get_memory_instance()
         self._atomic_attacks: list[AtomicAttack] = []
-        # Scenarios that select from a scorer pool add one entry per technique and dataset while building.
-        self._scorer_selection_entries: list[ScorerSelectionEntry] = []
-        self._scorer_selection_report: ScorerSelectionReport | None = None
         self._scenario_result_id: str | None = str(scenario_result_id) if scenario_result_id else None
         self._scenario_registry_name: str | None = None
         self._initial_metadata: dict[str, Any] = {}
@@ -1467,22 +1463,44 @@ class Scenario(ABC):
 
     def get_scorer_selection_report(self) -> ScorerSelectionReport:
         """
-        Report which objective scorer each technique and dataset will use, and why others were passed over.
+        Report which objective scorer each planned atomic group will use, and why earlier candidates were passed over.
 
-        Scenarios that select from a ``CompatibleScorers`` pool build this while they initialize,
-        before any prompt is sent and without calling a judge model. Call it after
-        ``initialize_async`` and before ``run_async`` to check a pool against the datasets.
-        Scenarios that do not select from a pool return an empty report.
+        The report is built from the planned atomic groups, so it covers every scenario that selects
+        from a ``CompatibleScorers`` pool, and after a resume only the groups still planned. Call it
+        after ``initialize_async`` and before ``run_async``: building it sends no prompt and calls no
+        judge model. Groups whose scorer was not selected from a pool have no entry.
 
         Returns:
-            ScorerSelectionReport: One entry per technique and dataset, in build order.
+            ScorerSelectionReport: One entry per pool-selected group, in plan order.
 
         Raises:
-            ValueError: If the scenario has not been initialized.
+            ValueError: If the scenario has not been initialized, or a group records a pool binding
+                without the selection behind it.
         """
-        if self._scorer_selection_report is None:
-            raise ValueError("The scorer selection report is built by initialize_async. Initialize the scenario first.")
-        return self._scorer_selection_report
+        if not self._atomic_attacks:
+            raise ValueError("The scorer selection report reads the planned groups. Call initialize_async first.")
+        unreported = [
+            atomic.atomic_attack_name
+            for atomic in self._atomic_attacks
+            if atomic.objective_scorer_binding is not None and atomic.objective_scorer_selection is None
+        ]
+        if unreported:
+            raise ValueError(
+                "These atomic groups record a scorer pool binding but not the selection behind it, so "
+                f"they cannot be reported: {unreported}. Build them with objective_scorer_selection."
+            )
+        return ScorerSelectionReport(
+            entries=[
+                atomic.objective_scorer_selection.to_report_entry(
+                    atomic_attack_name=atomic.atomic_attack_name,
+                    display_group=atomic.display_group,
+                    technique=atomic.technique_name,
+                    group_kind=atomic.group_kind,
+                )
+                for atomic in self._atomic_attacks
+                if atomic.objective_scorer_selection is not None
+            ]
+        )
 
     def get_readiness(self) -> ScenarioReadiness:
         """
@@ -1785,11 +1803,8 @@ class Scenario(ABC):
             scenario_result_id=self._scenario_result_id or str(new_result_id),
             stored_run_plan=stored_plan,
         )
-        self._scorer_selection_entries = []
-        self._scorer_selection_report = None
         with override_default_adversarial_target(self._resolved_adversarial_target):
             self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
-        self._scorer_selection_report = ScorerSelectionReport(entries=list(self._scorer_selection_entries))
         if context.scenario_techniques and not any(
             atomic.group_kind is not ScenarioRunPlanGroupKind.BASELINE for atomic in self._atomic_attacks
         ):

@@ -37,7 +37,7 @@ from pyrit.scenario.core.technique_requirements import PreparedSeedGroup, prepar
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique import AttackTechnique
-    from pyrit.score import TrueFalseScorer
+    from pyrit.score import ScorerSelection, TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +105,7 @@ class AtomicAttack:
         memory_labels: dict[str, str] | None = None,
         group_kind: ScenarioRunPlanGroupKind = ScenarioRunPlanGroupKind.ATTACK,
         objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None,
+        objective_scorer_selection: ScorerSelection | None = None,
         **attack_execute_params: Any,
     ) -> None:
         """
@@ -133,13 +134,17 @@ class AtomicAttack:
                 scenarios pass ``ADAPTIVE``. It describes the group and does not
                 change its identity or what it executes.
             objective_scorer_binding: The candidate a scorer pool selected for this group.
-                ``None`` for single-scorer runs.
+                ``None`` for single-scorer runs. Pass ``objective_scorer_selection`` instead
+                when the selection is at hand, so the scenario can also report it.
+            objective_scorer_selection: The pool selection for this group. The binding is
+                derived from it, and the scenario's scorer selection report reads it.
             **attack_execute_params: Additional parameters to pass to the attack
                 execution method.
 
         Raises:
             IncompatibleTechniqueError: If named group prompts were not bound to the technique.
-            ValueError: If seed_groups list is empty.
+            ValueError: If seed_groups list is empty, or both ``objective_scorer_binding`` and
+                ``objective_scorer_selection`` are given.
             TypeError: If any entry of ``seed_groups`` is not a ``AttackSeedGroup``.
         """
         self.atomic_attack_name = atomic_attack_name
@@ -189,7 +194,14 @@ class AtomicAttack:
             else None
         )
         self._objective_scorer = objective_scorer
-        self._objective_scorer_binding = objective_scorer_binding
+        if objective_scorer_selection is not None and objective_scorer_binding is not None:
+            raise ValueError("Pass objective_scorer_selection or objective_scorer_binding, not both.")
+        self._objective_scorer_selection = objective_scorer_selection
+        self._objective_scorer_binding = (
+            objective_scorer_selection.to_run_plan_binding()
+            if objective_scorer_selection is not None
+            else objective_scorer_binding
+        )
         self._memory_labels = memory_labels or {}
         self._attack_execute_params = attack_execute_params
         # Set via set_scenario_result_id() by Scenario._execute_scenario_async
@@ -269,6 +281,11 @@ class AtomicAttack:
     def objective_scorer_binding(self) -> ScenarioRunPlanScorerBinding | None:
         """The pool selection behind this group's objective scorer, or None for single-scorer runs."""
         return self._objective_scorer_binding
+
+    @property
+    def objective_scorer_selection(self) -> ScorerSelection | None:
+        """The pool selection behind this group's objective scorer, when it was passed in."""
+        return self._objective_scorer_selection
 
     @property
     def technique_eval_hash(self) -> str:

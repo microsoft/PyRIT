@@ -22,12 +22,14 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from pyrit.models import (
+    ScenarioRunPlanGroupKind,
     ScenarioRunPlanScorerBinding,
     Scorable,
     ScorerCandidateVerdict,
     ScorerCapabilityName,
     ScorerIdentifier,
     ScorerSelectionEntry,
+    ScorerVerdictStatus,
     ScoringExpectation,
     scoring_expectation_fingerprint,
 )
@@ -36,7 +38,6 @@ from pyrit.score.expectation_errors import AmbiguousConditionError, ExpectationM
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.models import ScorerVerdictStatus
     from pyrit.score.scorer import Scorer
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -281,13 +282,14 @@ class ScorerSelection:
         candidate (ScorerCandidate): The selected candidate.
         candidate_index (int): Its position in the pool.
         requirements (ScorerRequirements): The requirements the candidate met.
-        skipped (tuple[ScorerMismatch, ...]): Candidates passed over and why, for the selection report.
+        rejected (tuple[ScorerMismatch, ...]): The candidates checked before this one, and why
+            each cannot judge the population.
     """
 
     candidate: ScorerCandidate
     candidate_index: int
     requirements: ScorerRequirements = field(default_factory=lambda: ScorerRequirements())
-    skipped: tuple[ScorerMismatch, ...] = ()
+    rejected: tuple[ScorerMismatch, ...] = ()
 
     @property
     def scorer(self) -> TrueFalseScorer:
@@ -310,6 +312,54 @@ class ScorerSelection:
             candidate_index=self.candidate_index,
             evaluation=self.evaluation,
             scorer_hash=self.scorer.get_identifier().hash,
+        )
+
+    def to_report_entry(
+        self,
+        *,
+        atomic_attack_name: str,
+        display_group: str,
+        technique: str | None,
+        group_kind: ScenarioRunPlanGroupKind,
+    ) -> ScorerSelectionEntry:
+        """
+        Describe this selection for a scenario's scorer selection report.
+
+        Args:
+            atomic_attack_name (str): The planned atomic group this selection judges.
+            display_group (str): The group's report grouping.
+            technique (str | None): The technique that built the group, when known.
+            group_kind (ScenarioRunPlanGroupKind): What the group runs.
+
+        Returns:
+            ScorerSelectionEntry: The rejected candidates and the selected one, in pool order,
+                with every requirement the selection met.
+        """
+        verdicts = [
+            ScorerCandidateVerdict(
+                candidate_index=mismatch.candidate_index,
+                candidate_label=mismatch.candidate_label,
+                status=ScorerVerdictStatus.REJECTED,
+                reason_kind=mismatch.kind.value,
+                reason=mismatch.detail,
+            )
+            for mismatch in self.rejected
+        ]
+        verdicts.append(
+            ScorerCandidateVerdict(
+                candidate_index=self.candidate_index,
+                candidate_label=self.candidate.label,
+                status=ScorerVerdictStatus.SELECTED,
+            )
+        )
+        return ScorerSelectionEntry(
+            atomic_attack_name=atomic_attack_name,
+            display_group=display_group,
+            technique=technique,
+            group_kind=group_kind,
+            required_capabilities=sorted(capability.value for capability in self.requirements.required),
+            required_evaluation=self.requirements.evaluation,
+            candidates=sorted(verdicts, key=lambda verdict: verdict.candidate_index),
         )
 
 
@@ -507,7 +557,7 @@ class CompatibleScorers:
                 mismatches.append(mismatch)
                 continue
             return ScorerSelection(
-                candidate=candidate, candidate_index=index, requirements=requirements, skipped=tuple(mismatches)
+                candidate=candidate, candidate_index=index, requirements=requirements, rejected=tuple(mismatches)
             )
         raise NoCompatibleScorerError(
             requirements=requirements, mismatches=mismatches, available_evaluations=self.evaluations
@@ -555,61 +605,6 @@ class CompatibleScorers:
             except ExpectationMismatchError as exc:
                 return mismatch(kind=ScorerMismatchKind.CONDITION, detail=f"{exc} (rejected by {exc.scorer_name}).")
         return None
-
-    def report_entry(
-        self,
-        *,
-        technique: str,
-        dataset: str,
-        outcome: ScorerSelection | NoCompatibleScorerError,
-    ) -> ScorerSelectionEntry:
-        """
-        Describe one selection, or one failed selection, as a report entry.
-
-        Built from what ``select`` already found, so it checks nothing again: candidates before
-        the selected one carry their reasons, and candidates after it were not checked.
-
-        Args:
-            technique (str): The technique name.
-            dataset (str): The dataset name.
-            outcome (ScorerSelection | NoCompatibleScorerError): What ``select`` returned or raised.
-
-        Returns:
-            ScorerSelectionEntry: Every candidate's verdict, in pool order.
-        """
-        if isinstance(outcome, ScorerSelection):
-            reasons = {mismatch.candidate_index: mismatch for mismatch in outcome.skipped}
-            selected = outcome.candidate_index
-        else:
-            reasons = {mismatch.candidate_index: mismatch for mismatch in outcome.mismatches}
-            selected = None
-        verdicts = []
-        for index, candidate in enumerate(self._candidates):
-            mismatch = reasons.get(index)
-            if index == selected:
-                status: ScorerVerdictStatus = "selected"
-            elif mismatch is not None:
-                status = "rejected"
-            else:
-                status = "not_checked"
-            verdicts.append(
-                ScorerCandidateVerdict(
-                    candidate_index=index,
-                    candidate_label=candidate.label,
-                    evaluation=candidate.evaluation,
-                    status=status,
-                    reason_kind=mismatch.kind.value if mismatch is not None else None,
-                    reason=mismatch.detail if mismatch is not None else None,
-                )
-            )
-        return ScorerSelectionEntry(
-            technique=technique,
-            dataset=dataset,
-            required_evaluation=outcome.requirements.evaluation,
-            requires_float_scale_value=ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE
-            in outcome.requirements.required,
-            candidates=verdicts,
-        )
 
     def get_identifier(self) -> ScorerIdentifier:
         """

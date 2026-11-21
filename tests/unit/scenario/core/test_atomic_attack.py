@@ -253,6 +253,41 @@ class TestAtomicAttackInitialization:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+class TestAtomicAttackScorerSelection:
+    def _selection(self):
+        from pyrit.score import ScorerCandidate, ScorerSelection, SubStringScorer
+
+        return ScorerSelection(
+            candidate=ScorerCandidate(scorer=SubStringScorer(substring="x"), evaluation="harm.x"), candidate_index=1
+        )
+
+    def test_the_binding_is_derived_from_the_selection(self, mock_attack, sample_seed_groups):
+        selection = self._selection()
+
+        atomic_attack = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="pool group",
+            objective_scorer_selection=selection,
+        )
+
+        assert atomic_attack.objective_scorer_selection is selection
+        assert atomic_attack.objective_scorer_binding == selection.to_run_plan_binding()
+
+    def test_a_selection_and_a_binding_cannot_both_be_given(self, mock_attack, sample_seed_groups):
+        selection = self._selection()
+
+        with pytest.raises(ValueError, match="not both"):
+            AtomicAttack(
+                attack_technique=AttackTechnique(attack=mock_attack),
+                seed_groups=sample_seed_groups,
+                atomic_attack_name="pool group",
+                objective_scorer_selection=selection,
+                objective_scorer_binding=selection.to_run_plan_binding(),
+            )
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestAtomicAttackExecution:
     """Tests for AtomicAttack execution methods."""
 

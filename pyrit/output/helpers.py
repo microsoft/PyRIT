@@ -20,6 +20,7 @@ from pyrit.models import (
     ScenarioResult,
     ScenarioSuiteExecutionSummary,
     Score,
+    ScorerSelectionReport,
 )
 from pyrit.output._derivation import attack_objective_scorer_identifier, select_attacks
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
@@ -42,6 +43,7 @@ from pyrit.output.scenario_suite_result.json import JsonScenarioSuiteResultMemor
 from pyrit.output.scenario_suite_result.pretty import PrettyScenarioSuiteResultMemoryPrinter
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
+from pyrit.output.scorer_selection.pretty import PrettyScorerSelectionReportPrinter
 from pyrit.output.sink import OutputFormat, Sink, StdoutSink, get_default_sink
 
 
@@ -462,6 +464,22 @@ async def output_conversation_async(
         include_scores=include_scores,
         include_reasoning_summaries=include_reasoning_summaries,
     )
+
+
+async def output_scorer_selection_report_async(
+    report: ScorerSelectionReport,
+    *,
+    sink: Sink | None = None,
+) -> None:
+    """
+    Print which objective scorer each planned atomic group will use, and why earlier candidates were passed over.
+
+    Args:
+        report (ScorerSelectionReport): The report, from ``Scenario.get_scorer_selection_report()``.
+        sink (Sink | None): Output sink. Defaults to StdoutSink.
+    """
+    printer = PrettyScorerSelectionReportPrinter(sink=sink or get_default_sink(StdoutSink))
+    await printer.write_async(report)
 
 
 async def output_score_async(

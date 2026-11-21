@@ -45,6 +45,7 @@ from pyrit.score import (
     MessageToolCallScorer,
     PlagiarismScorer,
     ScorerCandidate,
+    ScorerMismatchKind,
     ScorerRequirements,
     SubStringScorer,
 )
@@ -485,57 +486,53 @@ class TestTechniqueConfigurationIdentity:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestSelectionReport:
-    def test_the_builder_reports_every_cell_including_skipped_ones(self) -> None:
+class TestSelectionsOnAtomicGroups:
+    def test_pool_groups_keep_their_selection_and_derive_the_binding(self) -> None:
         pool, _, _ = _pool()
-        ranking = _factory(
-            name="ranked",
-            requirements=TechniqueRequirements(objective_scorer=KEEPS_FLOAT),
-        )
-        builder = _builder(pool)
-        builder.build(
-            technique_factories={"prompt_sending": _factory(name="prompt_sending"), "ranked": ranking},
+        attacks = _builder(pool).build(
+            technique_factories={"prompt_sending": _factory(name="prompt_sending")},
             dataset_groups=DATASETS,
             dataset_scorer_requirements=REQUIREMENTS,
+            include_baseline=True,
         )
 
-        report = builder.selection_report
-        assert [
-            (entry.technique, entry.dataset, entry.selected.evaluation if entry.selected else None)
-            for entry in report.entries
-        ] == [
-            ("prompt_sending", "airt_hate", HATE),
-            ("prompt_sending", "airt_violence", VIOLENCE),
-            ("ranked", "airt_hate", None),
-            ("ranked", "airt_violence", None),
-        ]
-        assert [entry.dataset for entry in report.skipped] == ["airt_hate", "airt_violence"]
-        assert all(entry.requires_float_scale_value for entry in report.skipped)
-        assert {verdict.reason_kind for entry in report.skipped for verdict in entry.candidates} == {
-            "evaluation",
-            "capability",
+        assert {atomic.group_kind for atomic in attacks} == {
+            ScenarioRunPlanGroupKind.ATTACK,
+            ScenarioRunPlanGroupKind.BASELINE,
         }
+        for atomic in attacks:
+            selection = atomic.objective_scorer_selection
+            assert selection is not None
+            assert atomic.objective_scorer_binding == selection.to_run_plan_binding()
+        violence = [atomic for atomic in attacks if "violence" in atomic.atomic_attack_name]
+        assert violence
+        for atomic in violence:
+            (rejected,) = atomic.objective_scorer_selection.rejected
+            assert (rejected.candidate_index, rejected.kind) == (0, ScorerMismatchKind.EVALUATION)
+            assert atomic.objective_scorer_selection.requirements.evaluation == VIOLENCE
 
-    def test_each_build_reports_only_its_own_grid(self) -> None:
+    def test_single_scorer_groups_keep_no_selection(self) -> None:
+        attacks = _builder(SubStringScorer(substring="x")).build(
+            technique_factories={"prompt_sending": _factory(name="prompt_sending")},
+            dataset_groups=DATASETS,
+            include_baseline=True,
+        )
+
+        assert attacks
+        assert all(atomic.objective_scorer_selection is None for atomic in attacks)
+        assert all(atomic.objective_scorer_binding is None for atomic in attacks)
+
+    def test_groups_from_each_build_keep_their_own_selection(self) -> None:
         pool, _, _ = _pool()
         builder = _builder(pool)
-        for dataset in ("airt_hate", "airt_violence"):
-            builder.build(
+        attacks = [
+            atomic
+            for dataset in ("airt_hate", "airt_violence")
+            for atomic in builder.build(
                 technique_factories={"prompt_sending": _factory(name="prompt_sending")},
                 dataset_groups={dataset: DATASETS[dataset]},
                 dataset_scorer_requirements=REQUIREMENTS,
             )
-        assert [entry.dataset for entry in builder.selection_report.entries] == ["airt_violence"]
+        ]
 
-    def test_a_cell_whose_attack_needs_a_capability_the_pool_lacks_is_reported_as_skipped(self) -> None:
-        factory = _factory(name="tap", attack_class=TreeOfAttacksWithPruningAttack)
-        builder = _builder(CompatibleScorers(candidates=[SubStringScorer(substring="other")]))
-        builder.build(
-            technique_factories={"tap": factory, "prompt_sending": _factory(name="prompt_sending")},
-            dataset_groups={"d": [_group("o1")]},
-        )
-
-        (entry,) = builder.selection_report.skipped
-        assert entry.technique == "tap"
-        assert entry.selected is None
-        assert [(verdict.status, verdict.reason_kind) for verdict in entry.candidates] == [("rejected", "capability")]
+        assert [atomic.objective_scorer_selection.evaluation for atomic in attacks] == [HATE, VIOLENCE]
