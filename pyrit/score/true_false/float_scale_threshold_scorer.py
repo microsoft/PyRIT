@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from pyrit.models import (
     ComponentIdentifier,
+    FloatFeedback,
     Scorable,
     ScorableUnion,
     Score,
@@ -129,6 +130,15 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         scoped = copy.copy(self)
         scoped._scorer = scoped_inner
         return scoped
+
+    def _preserves_float_scale_value(self) -> bool:
+        """
+        Promise the aggregated scale value on every complete verdict.
+
+        Returns:
+            bool: Always True; each complete result keeps the value the threshold was applied to.
+        """
+        return True
 
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return the scorer whose value is compared to the threshold."""
@@ -278,9 +288,6 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         score.scorer_class_identifier = self.get_identifier()
         score.observation_ids = _merge_observation_ids(scores=scores)
         # Store the original float value in metadata for granular comparison
-        score.score_metadata = {
-            **aggregate_score.metadata,
-            ORIGINAL_FLOAT_VALUE_KEY: aggregate_value,
-        }
+        score.score_metadata = FloatFeedback(value=aggregate_value).write_to(aggregate_score.metadata)
 
         return [score]

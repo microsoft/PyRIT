@@ -71,6 +71,7 @@ if TYPE_CHECKING:
     from pyrit.models.technique_edit import SimulationChanges
     from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score import Scorer
 
 logger = logging.getLogger(__name__)
 
@@ -1039,6 +1040,28 @@ class AttackTechniqueFactory(Identifiable):
         """The required ``attack_scoring_config`` subtype, or ``None`` if any config is accepted."""
         return self._compatibility_helper.scoring_config_type
 
+    def check_objective_scorer(self, *, scorer: Scorer | None = None) -> list[str]:
+        """
+        Check that a scenario's objective scoring would judge this technique's attack.
+
+        Scenarios pass a plain ``AttackScoringConfig``. An attack that does not accept one, or
+        requires a narrower config, would drop it and judge with its own scorer instead.
+
+        Args:
+            scorer (Scorer | None): The objective scorer to check against the attack's and the
+                technique's needs. ``None`` checks only that the scoring configuration is accepted.
+
+        Returns:
+            list[str]: Every unmet requirement; empty when the scoring would judge the attack.
+        """
+        errors: list[str] = []
+        reason = self._compatibility_helper.scoring_config_incompatibility(config_type=AttackScoringConfig)
+        if reason is not None:
+            errors.append(reason)
+        if scorer is not None:
+            errors.extend(self._requirements.objective_scorer_for(attack_class=self._attack_class).check(scorer=scorer))
+        return errors
+
     @_capture_creation
     def with_adversarial_system_prompt_prefix(self, prefix: str) -> AttackTechniqueFactory:
         """
@@ -1148,9 +1171,9 @@ class AttackTechniqueFactory(Identifiable):
 
         Args:
             objective_target: The target to attack (always required at create time).
-            attack_scoring_config: The scoring config to use for the attack. This is important
-                for attacks like TAP that may need a more specific scorer than the
-                scorer the scenario provides.
+            attack_scoring_config: The scoring config to use for the attack. It is forwarded
+                when the attack's ``attack_scoring_config`` annotation accepts its type;
+                otherwise the factory's scorer override policy decides.
             seed_group: Optional group whose named adversarial prompts configure this
                 attack instance. Target messages remain execution inputs.
             adversarial_chat: Optional adversarial chat target to use for this
@@ -1285,7 +1308,7 @@ class AttackTechniqueFactory(Identifiable):
         """
         Apply this technique's ``use_score_as_feedback`` override to a scoring config.
 
-        A shallow copy keeps the config's scorers and subtype (e.g. TAP's) without
+        A shallow copy keeps the config's scorers and subtype without
         re-running its constructor, and leaves the original config unchanged.
 
         Args:

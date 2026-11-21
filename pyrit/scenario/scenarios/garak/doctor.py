@@ -105,6 +105,7 @@ class Doctor(Scenario):
     """
 
     VERSION: int = 2
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = True
 
     # Template-dominated like the Jailbreak scenario: baseline is supported but off
     # by default since the unmodified objective is a weak comparison point here.
