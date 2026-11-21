@@ -92,8 +92,43 @@ _CapabilityProbe = Callable[[PromptTarget, float, int], Awaitable[bool]]
 _RAISE_ON_PROBE_ERROR: ContextVar[bool] = ContextVar("raise_on_probe_error", default=False)
 
 
+# HTTP statuses that mean the provider refused this particular request. Strict
+# discovery only sends feature probes after a control request to the same
+# endpoint, model, and credentials succeeded, so these point at the probed
+# feature rather than at the deployment. Providers disagree on which code they
+# use: OpenAI and Azure send 400, OpenRouter sends 404 ("No endpoints found that
+# support image input"), validation layers send 422, media checks send 415, and
+# some servers send 501 for features they do not implement. Auth (401/403/407),
+# timeouts (408), conflicts (409), throttling (429), and other 5xx stay
+# inconclusive because they describe the service, not the feature.
+_FEATURE_REJECTION_STATUS_CODES: frozenset[int] = frozenset({400, 404, 415, 422, 501})
+
+
 class CapabilityDiscoveryError(RuntimeError):
     """Discovery could not determine support because a probe failed."""
+
+
+def _is_feature_rejection(error: BaseException) -> bool:
+    """
+    Report whether ``error`` shows the target refused the probed request.
+
+    The first HTTP status found on the error or its causes decides, so PyRIT
+    wrappers such as ``PyritException`` and raw SDK or ``httpx`` errors are
+    classified alike. A ``ValueError`` without a status is PyRIT's own request
+    validation.
+
+    Returns:
+        bool: Whether the failure is a deterministic rejection of the request.
+    """
+    current: BaseException | None = error
+    while current is not None:
+        status_code = getattr(current, "status_code", None)
+        if not isinstance(status_code, int):
+            status_code = getattr(getattr(current, "response", None), "status_code", None)
+        if isinstance(status_code, int):
+            return status_code in _FEATURE_REJECTION_STATUS_CODES
+        current = current.__cause__
+    return isinstance(error, ValueError)
 
 
 def _raise_if_inconclusive(*, error: Exception, label: str) -> None:
@@ -103,10 +138,7 @@ def _raise_if_inconclusive(*, error: Exception, label: str) -> None:
     Raises:
         CapabilityDiscoveryError: A strict probe failed without evidence of rejection.
     """
-    status_code = getattr(error, "status_code", None)
-    if status_code is None:
-        status_code = getattr(getattr(error, "response", None), "status_code", None)
-    if _RAISE_ON_PROBE_ERROR.get() and not (isinstance(error, ValueError) or status_code in (400, 422)):
+    if _RAISE_ON_PROBE_ERROR.get() and not _is_feature_rejection(error):
         raise CapabilityDiscoveryError(f"{label} failed; capabilities were not changed.") from error
 
 
@@ -277,7 +309,8 @@ async def _send_and_check_async(
     exponential backoff. Deterministic errors that will not become valid on
     a retry (``ValueError``, ``TypeError``, ``AttributeError`` — typically
     from message validation or programmer error in a probe payload) fail
-    the probe immediately. An explicit error response from the target is
+    the probe immediately. An explicit error response from the target, or an
+    HTTP status that rejects the request (see ``_is_feature_rejection``), is
     treated as deterministic and never retried.
 
     Args:
@@ -318,6 +351,10 @@ async def _send_and_check_async(
         except Exception as exc:
             last_exc = exc
             logger.debug("%s failed (attempt %d/%d): %s", label, attempt + 1, attempts, exc)
+            if _is_feature_rejection(exc):
+                # The target refused the request; resending it will not change the answer.
+                logger.info("%s was rejected: %s", label, exc)
+                return False
             if attempt + 1 < attempts:
                 await _sleep_before_retry_async(attempt=attempt)
             continue
@@ -926,7 +963,9 @@ async def discover_target_capabilities_async(
     probe retain declared support. By default, errors are best-effort negative
     results. Set ``raise_on_error`` when automatically applying results so an
     operational failure cannot replace working declarations. Strict discovery
-    first requires a successful control request using a declared input.
+    first requires a successful control request using a declared input; after
+    it passes, a probe the provider rejects (HTTP 400, 404, 415, 422, or 501)
+    marks that feature unsupported, while other failures abort discovery.
 
     Args:
         target (PromptTarget): Target to probe.
