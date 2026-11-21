@@ -150,5 +150,6 @@ class Leakage(Scenario):
             context=context,
             objective_scorer=self._objective_scorer_input,
             scorer_requirements=self._get_objective_scorer_requirements(),
+            selection_report=self._scorer_selection_entries,
             extra_factories={factory.name: factory for factory in _leakage_factories()},
         )

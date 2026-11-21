@@ -24,8 +24,10 @@ from typing import TYPE_CHECKING
 from pyrit.models import (
     ScenarioRunPlanScorerBinding,
     Scorable,
+    ScorerCandidateVerdict,
     ScorerCapabilityName,
     ScorerIdentifier,
+    ScorerSelectionEntry,
     ScoringExpectation,
     scoring_expectation_fingerprint,
 )
@@ -34,6 +36,7 @@ from pyrit.score.expectation_errors import AmbiguousConditionError, ExpectationM
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pyrit.models import ScorerVerdictStatus
     from pyrit.score.scorer import Scorer
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -277,10 +280,14 @@ class ScorerSelection:
     Attributes:
         candidate (ScorerCandidate): The selected candidate.
         candidate_index (int): Its position in the pool.
+        requirements (ScorerRequirements): The requirements the candidate met.
+        skipped (tuple[ScorerMismatch, ...]): Candidates passed over and why, for the selection report.
     """
 
     candidate: ScorerCandidate
     candidate_index: int
+    requirements: ScorerRequirements = field(default_factory=lambda: ScorerRequirements())
+    skipped: tuple[ScorerMismatch, ...] = ()
 
     @property
     def scorer(self) -> TrueFalseScorer:
@@ -499,7 +506,9 @@ class CompatibleScorers:
             if mismatch is not None:
                 mismatches.append(mismatch)
                 continue
-            return ScorerSelection(candidate=candidate, candidate_index=index)
+            return ScorerSelection(
+                candidate=candidate, candidate_index=index, requirements=requirements, skipped=tuple(mismatches)
+            )
         raise NoCompatibleScorerError(
             requirements=requirements, mismatches=mismatches, available_evaluations=self.evaluations
         )
@@ -546,6 +555,61 @@ class CompatibleScorers:
             except ExpectationMismatchError as exc:
                 return mismatch(kind=ScorerMismatchKind.CONDITION, detail=f"{exc} (rejected by {exc.scorer_name}).")
         return None
+
+    def report_entry(
+        self,
+        *,
+        technique: str,
+        dataset: str,
+        outcome: ScorerSelection | NoCompatibleScorerError,
+    ) -> ScorerSelectionEntry:
+        """
+        Describe one selection, or one failed selection, as a report entry.
+
+        Built from what ``select`` already found, so it checks nothing again: candidates before
+        the selected one carry their reasons, and candidates after it were not checked.
+
+        Args:
+            technique (str): The technique name.
+            dataset (str): The dataset name.
+            outcome (ScorerSelection | NoCompatibleScorerError): What ``select`` returned or raised.
+
+        Returns:
+            ScorerSelectionEntry: Every candidate's verdict, in pool order.
+        """
+        if isinstance(outcome, ScorerSelection):
+            reasons = {mismatch.candidate_index: mismatch for mismatch in outcome.skipped}
+            selected = outcome.candidate_index
+        else:
+            reasons = {mismatch.candidate_index: mismatch for mismatch in outcome.mismatches}
+            selected = None
+        verdicts = []
+        for index, candidate in enumerate(self._candidates):
+            mismatch = reasons.get(index)
+            if index == selected:
+                status: ScorerVerdictStatus = "selected"
+            elif mismatch is not None:
+                status = "rejected"
+            else:
+                status = "not_checked"
+            verdicts.append(
+                ScorerCandidateVerdict(
+                    candidate_index=index,
+                    candidate_label=candidate.label,
+                    evaluation=candidate.evaluation,
+                    status=status,
+                    reason_kind=mismatch.kind.value if mismatch is not None else None,
+                    reason=mismatch.detail if mismatch is not None else None,
+                )
+            )
+        return ScorerSelectionEntry(
+            technique=technique,
+            dataset=dataset,
+            required_evaluation=outcome.requirements.evaluation,
+            requires_float_scale_value=ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE
+            in outcome.requirements.required,
+            candidates=verdicts,
+        )
 
     def get_identifier(self) -> ScorerIdentifier:
         """

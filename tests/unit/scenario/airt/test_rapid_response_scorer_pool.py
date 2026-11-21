@@ -414,6 +414,20 @@ class TestRapidResponseScorerPool:
                 groups={"airt_hate": GROUPS["airt_hate"]},
             )
 
+    async def test_the_selection_report_is_ready_before_the_run(self, objective_target, judges):
+        scenario = RapidResponse(objective_scorer=_pool(*judges))
+        with pytest.raises(ValueError, match="Initialize the scenario first"):
+            scenario.get_scorer_selection_report()
+
+        await _initialize(scenario, target=objective_target, dataset_config=_dataset_config())
+
+        report = scenario.get_scorer_selection_report()
+        assert report.to_text().splitlines() == [
+            f"flip / airt_hate: SubStringScorer [{HATE}] (requires evaluation {HATE!r})",
+            f"flip / airt_violence: SubStringScorer [{VIOLENCE}] (requires evaluation {VIOLENCE!r})",
+            f"  #0 SubStringScorer [{HATE}]: evaluation, is bound to {HATE!r}; the population requires {VIOLENCE!r}.",
+        ]
+
 
 def test_dataset_overrides_keep_a_sources_scorer_requirements():
     from pyrit.models import DatasetSourceInput, ScenarioDatasetOptions, ScenarioDatasetRequest

@@ -30,6 +30,8 @@ from pyrit.models import (
     ScenarioRunPlanGroupKind,
     ScenarioRunPlanScorerBinding,
     ScorerCapabilityName,
+    ScorerSelectionEntry,
+    ScorerSelectionReport,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core._technique_resolution import (
@@ -266,6 +268,7 @@ def build_matrix_atomic_attacks(
     technique_converters: dict[str, list[Converter]] | None = None,
     extra_factories: dict[str, AttackTechniqueFactory] | None = None,
     scorer_requirements: ScorerRequirements | None = None,
+    selection_report: list[ScorerSelectionEntry] | None = None,
 ) -> list[AtomicAttack]:
     """
     Build a matrix-shaped scenario's atomic attacks from its resolved context in one call.
@@ -299,6 +302,8 @@ def build_matrix_atomic_attacks(
             can offer techniques without registering them globally.
         scorer_requirements (ScorerRequirements | None): What the scenario and its resolved run
             configuration require from the objective scorer. Dataset sources add their own.
+        selection_report (list[ScorerSelectionEntry] | None): A list that receives one entry per
+            technique and dataset describing the scorer selection, for the scenario's report.
 
     Returns:
         list[AtomicAttack]: The generated atomic attacks, baseline first when
@@ -311,7 +316,7 @@ def build_matrix_atomic_attacks(
         incompatible_technique_policy=context.incompatible_technique_policy,
         scorer_requirements=scorer_requirements,
     )
-    return builder.build(
+    atomic_attacks = builder.build(
         technique_factories=resolve_technique_factories(context=context, extra_factories=extra_factories),
         dataset_groups=context.seed_groups_by_dataset,
         display_group_fn=display_group_fn,
@@ -319,6 +324,9 @@ def build_matrix_atomic_attacks(
         include_baseline=context.include_baseline,
         dataset_scorer_requirements=context.dataset_config.get_scorer_requirements_by_dataset(),
     )
+    if selection_report is not None:
+        selection_report.extend(builder.selection_report.entries)
+    return atomic_attacks
 
 
 class MatrixAtomicAttackBuilder:
@@ -393,6 +401,7 @@ class MatrixAtomicAttackBuilder:
             if objective_scorer.capabilities.includes(capability=ScorerCapabilityName.TRUE_FALSE)
             else None
         )
+        self._selection_entries: list[ScorerSelectionEntry] = []
 
     def build(
         self,
@@ -471,6 +480,8 @@ class MatrixAtomicAttackBuilder:
             dataset_groups=dataset_groups, dataset_scorer_requirements=dataset_scorer_requirements
         )
         atomic_attacks: list[AtomicAttack] = []
+        # Each build reports its own grid, so entries from an earlier build do not carry over.
+        self._selection_entries = []
         # Pool runs compare each dataset's attacks with one baseline per selected judge.
         pool_baselines: dict[tuple[str, int], tuple[set[str], ScorerSelection]] = {}
         technique_converters = technique_converters or {}
@@ -672,15 +683,32 @@ class MatrixAtomicAttackBuilder:
             for group in seed_groups
         ]
         try:
-            return self._pool.select(
+            selection = self._pool.select(
                 requirements=requirements, scorable_type=MessageScorable, expectations=expectations
             )
         except NoCompatibleScorerError as exc:
+            self._selection_entries.append(
+                self._pool.report_entry(technique=technique_name, dataset=dataset_name, outcome=exc)
+            )
             message = f"Technique '{technique_name}', dataset '{dataset_name}': {exc}"
             if self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
                 raise IncompatibleTechniqueError(message) from exc
             logger.warning("Skipping %s", message)
             return _SKIPPED
+        self._selection_entries.append(
+            self._pool.report_entry(technique=technique_name, dataset=dataset_name, outcome=selection)
+        )
+        return selection
+
+    @property
+    def selection_report(self) -> ScorerSelectionReport:
+        """
+        Which objective scorer each technique and dataset was given, and why others were passed over.
+
+        Filled by ``build``, before any attack runs. Empty on the legacy path for scorers that
+        are not true/false scorers, where nothing is selected.
+        """
+        return ScorerSelectionReport(entries=list(self._selection_entries))
 
     def _build_pool_baselines(
         self,

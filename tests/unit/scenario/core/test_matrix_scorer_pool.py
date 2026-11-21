@@ -482,3 +482,60 @@ class TestTechniqueConfigurationIdentity:
             "evaluation": None,
         }
         assert plain.get_configuration_identity() != ranked.get_configuration_identity()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestSelectionReport:
+    def test_the_builder_reports_every_cell_including_skipped_ones(self) -> None:
+        pool, _, _ = _pool()
+        ranking = _factory(
+            name="ranked",
+            requirements=TechniqueRequirements(objective_scorer=KEEPS_FLOAT),
+        )
+        builder = _builder(pool)
+        builder.build(
+            technique_factories={"prompt_sending": _factory(name="prompt_sending"), "ranked": ranking},
+            dataset_groups=DATASETS,
+            dataset_scorer_requirements=REQUIREMENTS,
+        )
+
+        report = builder.selection_report
+        assert [
+            (entry.technique, entry.dataset, entry.selected.evaluation if entry.selected else None)
+            for entry in report.entries
+        ] == [
+            ("prompt_sending", "airt_hate", HATE),
+            ("prompt_sending", "airt_violence", VIOLENCE),
+            ("ranked", "airt_hate", None),
+            ("ranked", "airt_violence", None),
+        ]
+        assert [entry.dataset for entry in report.skipped] == ["airt_hate", "airt_violence"]
+        assert all(entry.requires_float_scale_value for entry in report.skipped)
+        assert {verdict.reason_kind for entry in report.skipped for verdict in entry.candidates} == {
+            "evaluation",
+            "capability",
+        }
+
+    def test_each_build_reports_only_its_own_grid(self) -> None:
+        pool, _, _ = _pool()
+        builder = _builder(pool)
+        for dataset in ("airt_hate", "airt_violence"):
+            builder.build(
+                technique_factories={"prompt_sending": _factory(name="prompt_sending")},
+                dataset_groups={dataset: DATASETS[dataset]},
+                dataset_scorer_requirements=REQUIREMENTS,
+            )
+        assert [entry.dataset for entry in builder.selection_report.entries] == ["airt_violence"]
+
+    def test_a_cell_whose_attack_needs_a_capability_the_pool_lacks_is_reported_as_skipped(self) -> None:
+        factory = _factory(name="tap", attack_class=TreeOfAttacksWithPruningAttack)
+        builder = _builder(CompatibleScorers(candidates=[SubStringScorer(substring="other")]))
+        builder.build(
+            technique_factories={"tap": factory, "prompt_sending": _factory(name="prompt_sending")},
+            dataset_groups={"d": [_group("o1")]},
+        )
+
+        (entry,) = builder.selection_report.skipped
+        assert entry.technique == "tap"
+        assert entry.selected is None
+        assert [(verdict.status, verdict.reason_kind) for verdict in entry.candidates] == [("rejected", "capability")]

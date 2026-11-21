@@ -70,6 +70,8 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     ScenarioRunState,
     ScorerEvaluationIdentifier,
+    ScorerSelectionEntry,
+    ScorerSelectionReport,
     config_hash,
 )
 from pyrit.models.scenario_readiness import (
@@ -335,6 +337,9 @@ class Scenario(ABC):
         self._name = name if name else type(self).__name__
         self._memory = CentralMemory.get_memory_instance()
         self._atomic_attacks: list[AtomicAttack] = []
+        # Scenarios that select from a scorer pool add one entry per technique and dataset while building.
+        self._scorer_selection_entries: list[ScorerSelectionEntry] = []
+        self._scorer_selection_report: ScorerSelectionReport | None = None
         self._scenario_result_id: str | None = str(scenario_result_id) if scenario_result_id else None
         self._scenario_registry_name: str | None = None
         self._initial_metadata: dict[str, Any] = {}
@@ -1460,6 +1465,25 @@ class Scenario(ABC):
                     )
                 )
 
+    def get_scorer_selection_report(self) -> ScorerSelectionReport:
+        """
+        Report which objective scorer each technique and dataset will use, and why others were passed over.
+
+        Scenarios that select from a ``CompatibleScorers`` pool build this while they initialize,
+        before any prompt is sent and without calling a judge model. Call it after
+        ``initialize_async`` and before ``run_async`` to check a pool against the datasets.
+        Scenarios that do not select from a pool return an empty report.
+
+        Returns:
+            ScorerSelectionReport: One entry per technique and dataset, in build order.
+
+        Raises:
+            ValueError: If the scenario has not been initialized.
+        """
+        if self._scorer_selection_report is None:
+            raise ValueError("The scorer selection report is built by initialize_async. Initialize the scenario first.")
+        return self._scorer_selection_report
+
     def get_readiness(self) -> ScenarioReadiness:
         """
         Resolve execution roles without datasets, prompt generation, or model traffic.
@@ -1761,8 +1785,11 @@ class Scenario(ABC):
             scenario_result_id=self._scenario_result_id or str(new_result_id),
             stored_run_plan=stored_plan,
         )
+        self._scorer_selection_entries = []
+        self._scorer_selection_report = None
         with override_default_adversarial_target(self._resolved_adversarial_target):
             self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
+        self._scorer_selection_report = ScorerSelectionReport(entries=list(self._scorer_selection_entries))
         if context.scenario_techniques and not any(
             atomic.group_kind is not ScenarioRunPlanGroupKind.BASELINE for atomic in self._atomic_attacks
         ):
