@@ -62,6 +62,7 @@
 # VLSU [@palaskar2025vlsu],
 # VLGuard [@zong2024vlguard],
 # WildGuard [@han2024wildguard],
+# WildJailbreak [@jiang2024wildteaming],
 # XL-SafetyBench [@choi2026xlsafetybench],
 # XSTest [@rottger2023xstest],
 # AILuminate [@ghosh2025ailuminate],
