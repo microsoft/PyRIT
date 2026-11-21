@@ -95,7 +95,7 @@ describe('ConverterPanel registry save', () => {
     expect(convertersApi.previewConversion).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('Temporary')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(convertersApi.createConverter).toHaveBeenCalledWith({ name: 'saved', type: 'CaesarConverter', source })
+    expect(convertersApi.createConverter).toHaveBeenCalledWith({ name: 'saved', type: 'CaesarConverter', source, persist: true })
   })
 
   it.each(['reorder', 'remove', 'reset'])(

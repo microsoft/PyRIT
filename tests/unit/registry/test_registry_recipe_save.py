@@ -7,37 +7,66 @@ import os
 import threading
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from azure.core.exceptions import AzureError
 
+from pyrit.converter import Base64Converter, ToneConverter
+from pyrit.models import ComponentType, Parameter, RegistryReference
 from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind
 from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget, TextTarget
 from pyrit.registry import (
+    ConverterRegistry,
     NotSaveableError,
     SavedEntryConflictError,
     SavedEntryStorageError,
+    ScorerRegistry,
     TargetRegistry,
     get_class_saveability,
+    prepare_saved_copy_params_async,
     prepare_saved_params_async,
     save_then_register_async,
 )
 from pyrit.registry.instance_registry import RegistryNameTakenError, registration_origin, registry_entry_origin
+from pyrit.registry.registry_recipe_save import refuse_temporary_references
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
+from pyrit.score import SubStringScorer
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
 _AZURE_ENDPOINT = "https://contoso.openai.azure.com/openai/v1"
 _TEXT_RECIPE = ComponentRecipe(class_module="pyrit.prompt_target.text_target", class_name="TextTarget")
+_REGISTRIES = (TargetRegistry, ConverterRegistry, ScorerRegistry)
 
 
 @pytest.fixture(autouse=True)
-def isolated_targets() -> Iterator[None]:
-    TargetRegistry.reset_registry_singleton()
+def isolated_registries() -> Iterator[None]:
+    for registry in _REGISTRIES:
+        registry.reset_registry_singleton()
     yield
-    TargetRegistry.reset_registry_singleton()
+    for registry in _REGISTRIES:
+        registry.reset_registry_singleton()
+
+
+@pytest.fixture
+def startup_and_temporary_entries() -> None:
+    targets = TargetRegistry.get_registry_singleton().instances
+    converters = ConverterRegistry.get_registry_singleton().instances
+    scorers = ScorerRegistry.get_registry_singleton().instances
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        targets.register(MockPromptTarget(), name="startup_chat")
+        converters.register(Base64Converter(), name="startup_base64")
+        scorers.register(SubStringScorer(substring="x", categories=["leak"]), name="startup_leak")
+    targets.register(MockPromptTarget(), name="launch_chat")
+    converters.register(Base64Converter(), name="launch_base64")
+    scorers.register(SubStringScorer(substring="y", categories=["leak"]), name="launch_leak")
+
+
+def _reference(name: str, component_type: ComponentType) -> Parameter:
+    return Parameter(name=name, description=name, reference=RegistryReference(component_type=component_type))
 
 
 async def _prepare_openai_async(*, params: dict[str, Any], auth_mode: str = "identity") -> dict[str, Any]:
@@ -304,3 +333,88 @@ async def test_save_then_register_async_finishes_a_cancelled_save_before_passing
     register.assert_called_once()
     assert (tmp_path / "targets" / "contoso_gpt4o.json").exists() is not registering_fails
     assert isinstance(cancelled.value.__cause__, RuntimeError) is registering_fails
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_and_temporary_entries")
+@pytest.mark.parametrize(
+    ("component_type", "value", "named"),
+    [
+        (ComponentType.TARGET, "launch_chat", "target 'launch_chat'"),
+        (ComponentType.CONVERTER, "launch_base64", "converter 'launch_base64'"),
+        (ComponentType.SCORER, ["startup_leak", "launch_leak"], "scorer 'launch_leak'"),
+    ],
+)
+def test_refuse_temporary_references_refuses_an_entry_that_is_gone_after_a_restart(
+    component_type: ComponentType, value: object, named: str
+) -> None:
+    with pytest.raises(NotSaveableError) as refusal:
+        refuse_temporary_references(parameters=[_reference("uses", component_type)], params={"uses": value})
+
+    assert str(refusal.value) == (
+        f"Uses temporary {named}, which won't exist after a restart. It can still be created without saving it."
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_and_temporary_entries")
+@pytest.mark.parametrize(
+    ("component_type", "value"),
+    [
+        (ComponentType.TARGET, "startup_chat"),
+        (ComponentType.CONVERTER, ["startup_base64"]),
+        (ComponentType.SCORER, "startup_leak"),
+        (ComponentType.TARGET, "not_registered"),
+        (ComponentType.TARGET, None),
+        (ComponentType.TARGET, ""),
+    ],
+)
+def test_refuse_temporary_references_accepts_entries_that_come_back_or_a_reference_left_unset(
+    component_type: ComponentType, value: object
+) -> None:
+    refuse_temporary_references(parameters=[_reference("uses", component_type)], params={"uses": value})
+
+
+def test_refuse_temporary_references_refuses_a_kind_that_saved_entries_cant_use() -> None:
+    with pytest.raises(NotSaveableError) as refusal:
+        refuse_temporary_references(parameters=[_reference("uses", ComponentType.SCENARIO)], params={"uses": "nightly"})
+
+    assert str(refusal.value) == (
+        "Uses scenario 'nightly', which saved entries can't use yet. It can still be created without saving it."
+    )
+
+
+async def test_prepare_saved_copy_params_async_refuses_a_change_restore_cant_pass() -> None:
+    with pytest.raises(ValueError, match="Unknown parameter 'not_a_parameter'") as refusal:
+        await prepare_saved_copy_params_async(
+            registry=ConverterRegistry.get_registry_singleton(),
+            type_name="ToneConverter",
+            cls=ToneConverter,
+            params={"not_a_parameter": "x"},
+        )
+
+    assert not isinstance(refusal.value, NotSaveableError)
+    assert str(refusal.value).startswith("Saved entries are rebuilt from what the API accepts.")
+
+
+async def test_prepare_saved_copy_params_async_refuses_a_credential_even_one_its_class_lets_copies_change() -> None:
+    registry = MagicMock()
+    registry.get_registered_class_metadata.return_value = SimpleNamespace(
+        parameters=[
+            Parameter(name="token", description="token", param_type=str, sensitive=True),
+            Parameter(name="tone", description="tone", param_type=str),
+        ]
+    )
+
+    with pytest.raises(NotSaveableError) as refusal:
+        await prepare_saved_copy_params_async(
+            registry=registry,
+            type_name="ToneConverter",
+            cls=ToneConverter,
+            params={"token": "typed-key", "tone": "formal"},
+        )
+
+    assert str(refusal.value) == (
+        "Saved entries can't hold credentials ('token'). It can still be created without saving it."
+    )
+    assert await prepare_saved_copy_params_async(
+        registry=registry, type_name="ToneConverter", cls=ToneConverter, params={"tone": "formal"}
+    ) == {"tone": "formal"}

@@ -182,7 +182,7 @@ describe('TechniqueEditor', () => {
     await user.click(screen.getByRole('option', { name: /^New converter/ }))
     await user.click(await screen.findByRole('combobox', { name: /Converter Type/i }))
     await user.click(screen.getByRole('option', { name: /Base64Converter/ }))
-    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    await user.click(screen.getByRole('button', { name: 'Save Converter' }))
     await waitFor(() => expect(convertersApi.createConverter).toHaveBeenCalledTimes(1))
     await user.click(within(screen.getByRole('dialog', { name: 'Add Converter' })).getByRole('button', { name: 'Cancel' }))
     await user.click(await screen.findByRole('button', { name: 'Remove converter base64, Request converters stage 1' }))
@@ -237,7 +237,9 @@ describe('TechniqueEditor', () => {
       await user.type(screen.getByRole('textbox', { name: /Registry name/ }), 'saved_base64{Enter}')
       await screen.findByRole('button', { name: `Settings for converter saved_base64, ${label} stage 2` })
       expect(screen.queryByText('Temporary')).not.toBeInTheDocument()
-      expect(convertersApi.createConverter).toHaveBeenCalledWith({ name: 'saved_base64', type: 'Base64Converter', source })
+      expect(convertersApi.createConverter).toHaveBeenCalledWith({
+        name: 'saved_base64', type: 'Base64Converter', source, persist: true,
+      })
       await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
       expect(onApplied.mock.calls[0][0].override.changes[chain]).toEqual(['base64', 'saved_base64'])
     },
@@ -261,7 +263,7 @@ describe('TechniqueEditor', () => {
     await user.click(screen.getByRole('option', { name: /CaesarConverter/ }))
     await user.type(screen.getByRole('textbox', { name: /Registry Name/i }), 'new_caesar')
     await user.type(screen.getByLabelText(/caesar_offset/i), '3')
-    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    await user.click(screen.getByRole('button', { name: 'Save Converter' }))
     await screen.findByText('new_caesar')
     await user.click(await screen.findByRole('button', { name: 'Apply to run' }))
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
