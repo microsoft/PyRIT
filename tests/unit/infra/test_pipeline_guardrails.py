@@ -40,6 +40,13 @@ class TestPipelineGuardrails(unittest.TestCase):
             if "template" in stage
         }
 
+    def test_test_deploys_daily_from_main_instead_of_on_every_merge(self) -> None:
+        assert (self.pipeline["trigger"], self.pipeline["pr"]) == ("none", "none")
+        [schedule] = self.pipeline["schedules"]
+        assert schedule["cron"] == "0 15 * * *"
+        assert schedule["branches"] == {"include": ["main"]}
+        assert schedule["always"] is True
+
     def test_published_images_require_verified_clean_source_provenance(self) -> None:
         assert "source_commit=$(git rev-parse HEAD)" in self.pipeline_text
         assert '"$source_commit" != "$PYRIT_SOURCE_VERSION"' in self.pipeline_text
@@ -56,20 +63,15 @@ class TestPipelineGuardrails(unittest.TestCase):
         steps = stage["jobs"][0]["steps"]
         build_index = next(index for index, step in enumerate(steps) if step.get("name") == "BuildImage")
         before, after = steps[build_index - 1], steps[build_index + 1]
-        assert before["displayName"] == "Reclaim Docker disk space before build"
+        assert before["displayName"] == "Reclaim disk space before build"
         assert after["displayName"] == "Reclaim Docker disk space after build"
         assert after["condition"] == "always()"
         assert steps[-1] == after
-        for cleanup in (before, after):
+        reclaim_docker = ["docker system prune --all --force", "df -h /"]
+        for cleanup, removals in ((before, ["sudo rm -rf /usr/local/lib/android"]), (after, [])):
             assert not cleanup.get("continueOnError", False)
             commands = cleanup["bash"].splitlines()
-            assert commands == [
-                "set -euo pipefail",
-                "df -h /",
-                "docker system df",
-                "docker system prune --all --force",
-                "df -h /",
-            ]
+            assert commands == ["set -euo pipefail", "df -h /", "docker system df", *removals, *reclaim_docker]
 
     def test_all_deployment_stages_share_one_template_and_remain_visible(self) -> None:
         stages = self.pipeline["stages"]
@@ -143,12 +145,16 @@ class TestPipelineGuardrails(unittest.TestCase):
             "PYRIT_ALLOWED_GROUP_OBJECT_IDS",
             "PYRIT_ADMIN_GROUP_OBJECT_ID",
             "PYRIT_CONFIG_FILE_URI",
+            "PYRIT_CONFIG_SEED_URI",
+            "PYRIT_SOURCE_BRANCH",
             "PYRIT_SQL_SERVER_FQDN",
             "PYRIT_SQL_DATABASE_NAME",
             "PYRIT_KEY_VAULT_RESOURCE_ID",
             "PYRIT_ENV_SECRET_NAME",
         }
         assert app["PYRIT_CONTAINER_IMAGE"] == "$(immutableImage)"
+        assert app["PYRIT_CONFIG_SEED_URI"] == "$(pyritConfigSeedUri)"
+        assert app["PYRIT_SOURCE_BRANCH"] == "$(Build.SourceBranch)"
         image = stage["variables"][2]["${{ if eq(parameters.phase, 'app') }}"][0]
         assert image == {
             "name": "immutableImage",
