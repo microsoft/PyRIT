@@ -397,15 +397,28 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         for index, (key, value) in enumerate(prompt_metadata.items()):
             key_param, value_param = f"md_key_{index}", f"md_value_{index}"
             alias = f"metadata_{index}"
+            # OPENJSON's [type] marks the JSON kind and [value] is always its
+            # text form, so the comparison is gated on the filter value's own
+            # type to answer exactly what the SQLite json_each comparison
+            # answers: a bool filter only matches JSON true or false (whose
+            # text is lower case, which str(bool) never produces), an int
+            # filter only matches JSON numbers of the same value, and a str
+            # filter only matches JSON strings.
+            if isinstance(value, bool):
+                type_gate = f"[{alias}].[type] = 4"
+                value_test = f"[{alias}].[value] = {'true' if value else 'false'}"
+            else:
+                type_gate = f"[{alias}].[type] = {2 if isinstance(value, int) else 1}"
+                value_test = f"[{alias}].[value] = :{value_param}"
+                bindparams[value_param] = str(value)
             json_conditions.append(
                 f"EXISTS (SELECT 1 FROM OPENJSON(prompt_metadata) AS [{alias}] "
                 f"WHERE [{alias}].[key] = :{key_param} "
                 f"AND DATALENGTH([{alias}].[key]) = DATALENGTH(CAST(:{key_param} AS NVARCHAR(MAX))) "
-                f"AND [{alias}].[type] IN (1, 2, 3) "
-                f"AND [{alias}].[value] = :{value_param})"
+                f"AND {type_gate} "
+                f"AND {value_test})"
             )
             bindparams[key_param] = key
-            bindparams[value_param] = str(value)
 
         # Combine both conditions
         conditions = f"{json_validation} AND " + " AND ".join(json_conditions)

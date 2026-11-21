@@ -1554,6 +1554,33 @@ async def test_get_message_pieces_filters_on_integer_prompt_metadata_async(sqlit
     assert retrieved[0].original_value == "sent"
 
 
+async def test_prompt_metadata_bool_filter_matches_the_written_flag(sqlite_instance: SQLiteMemory):
+    """The boolean flag PyRIT itself writes is the filter's documented contract.
+
+    MessagePiece.mark_as_truncated stores prompt_metadata["truncated"] = True;
+    the typed comparison answers it on SQLite, and the SQL Server path gates
+    the same comparison on the JSON boolean kind, so the flag is filterable on
+    both backends instead of silently returning nothing on SQL Server.
+    """
+    truncated = MessagePiece(
+        conversation_id=str(uuid.uuid4()),
+        role="assistant",
+        original_value="cut off",
+    )
+    truncated.mark_as_truncated()
+    plain = MessagePiece(
+        conversation_id=str(uuid.uuid4()),
+        role="assistant",
+        original_value="complete",
+    )
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[truncated, plain])
+
+    retrieved = await sqlite_instance.get_message_pieces_async(prompt_metadata={"truncated": True})
+
+    assert [piece.original_value for piece in retrieved] == ["cut off"]
+    assert await sqlite_instance.get_message_pieces_async(prompt_metadata={"truncated": False}) == []
+
+
 @pytest.mark.parametrize(
     "kwargs, expected",
     [
