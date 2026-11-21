@@ -79,8 +79,7 @@ class RegistryRecipeRestorer:
     this server or send requests where this server's settings say. Entries that can't come back are
     reported with the reason instead of being skipped.
 
-    Stored files are otherwise trusted the way configuration is. Converters and scorers don't
-    declare the credentials they read from server settings yet, so those rules cover targets only.
+    Stored files are otherwise trusted the way configuration is.
     """
 
     _KIND_BY_COMPONENT_TYPE: ClassVar[dict[ComponentType, RegistryRecipeKind]] = {
