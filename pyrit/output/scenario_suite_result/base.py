@@ -16,7 +16,13 @@ from pyrit.models import (
     ScenarioSuiteExecutionMetadata,
     ScenarioSuiteExecutionSummary,
 )
-from pyrit.output._derivation import SuiteEntryStatistics, TargetInfo, resolve_target_info, suite_entry_statistics
+from pyrit.output._derivation import (
+    SuiteEntryStatistics,
+    TargetInfo,
+    resolve_target_info,
+    scenario_overview,
+    suite_entry_statistics,
+)
 from pyrit.output.base import PrinterBase
 
 
@@ -26,6 +32,7 @@ class SuiteReportEntry(NamedTuple):
     entry: ScenarioSuiteExecutionEntrySummary
     statistics: SuiteEntryStatistics | None
     objective_target_identifier: ComponentIdentifier | None = None
+    baseline_statistics: SuiteEntryStatistics | None = None
 
     @property
     def error(self) -> str | None:
@@ -114,6 +121,7 @@ class ScenarioSuiteResultPrinterBase(PrinterBase):
                     entry=entry,
                     statistics=suite_entry_statistics(result) if result is not None else None,
                     objective_target_identifier=result.objective_target_identifier if result is not None else None,
+                    baseline_statistics=scenario_overview(result).baseline if result is not None else None,
                 )
             )
         return report

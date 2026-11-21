@@ -544,6 +544,7 @@ def compute_scenario_statistics(
     *,
     plan: ScenarioRunPlan | None = None,
     use_saved_plan: bool = True,
+    resolution_plan: ScenarioRunPlan | None = None,
 ) -> ScenarioExecutionStatistics:
     """
     Calculate effective execution-unit statistics for a scenario result.
@@ -559,13 +560,15 @@ def compute_scenario_statistics(
         plan (ScenarioRunPlan | None): An explicit run plan. Defaults to None.
         use_saved_plan (bool): When ``plan`` is None, whether to use the plan saved in the result's
             metadata. Pass False to count the result as a legacy run. Defaults to True.
+        resolution_plan (ScenarioRunPlan | None): Full plan for attempt identity resolution when
+            reporting a subset of planned groups. Defaults to None (use the counting plan).
 
     Returns:
         ScenarioExecutionStatistics: Overall, per atomic attack, and per display group counts.
     """
     if plan is None and use_saved_plan:
         plan = load_scenario_run_plan(scenario_result)
-    plan_lookup = ScenarioPlanLookup.from_plan(plan=plan)
+    plan_lookup = ScenarioPlanLookup.from_plan(plan=resolution_plan if resolution_plan is not None else plan)
 
     attempts = [
         resolve_attack_result_attempt(

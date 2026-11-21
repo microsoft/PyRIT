@@ -10,6 +10,7 @@ from pyrit.models import AttackOutcome, AttackResult, OutcomeStatistics, Scenari
 from pyrit.output._derivation import (
     attack_score_display,
     attack_technique_label,
+    reporting_population,
     resolve_target_info,
     scenario_overview,
     select_attacks,
@@ -171,14 +172,15 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
             },
             "scorer": scorer,
             "stats": {
-                "total_techniques": len(result.get_techniques_used()),
+                "total_techniques": len(reporting_population(result).get_techniques_used()),
                 "total_objective_executions": overview.objective_executions,
                 "total_attempts": overview.attempts,
                 "overall_success_rate": overview.success_rate,
                 "outcomes": self._OUTCOME_ADAPTER.dump_python(overview.outcomes, mode="json"),
                 "producer_counts": self._PRODUCER_ADAPTER.dump_python(overview.producer_counts, mode="json"),
-                "unique_objectives": len(result.get_objectives()),
+                "unique_objectives": len(reporting_population(result).get_objectives()),
             },
+            "baseline_statistics": overview.baseline._asdict() if overview.baseline is not None else None,
             "groups": groups,
         }
 

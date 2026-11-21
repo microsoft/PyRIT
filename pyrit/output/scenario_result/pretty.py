@@ -9,6 +9,7 @@ from pyrit.models import AttackOutcome, ScenarioResult
 from pyrit.output._derivation import (
     attack_score_display,
     attack_technique_label,
+    reporting_population,
     resolve_target_info,
     scenario_overview,
     select_attacks,
@@ -152,7 +153,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
 
         lines = []
         lines.append(self._render_section_header("Overall Statistics"))
-        total_techniques = len(result.get_techniques_used())
+        total_techniques = len(reporting_population(result).get_techniques_used())
         overview = scenario_overview(result)
         overall_rate = overview.success_rate
 
@@ -170,8 +171,18 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
             )
         )
 
-        objectives = result.get_objectives()
+        objectives = reporting_population(result).get_objectives()
         lines.append(self._format_colored(f"{self._indent * 2}• Unique Objectives: {len(objectives)}", Fore.GREEN))
+
+        if overview.baseline is not None:
+            baseline = overview.baseline
+            lines.append(self._render_section_header("Baseline Statistics"))
+            lines.append(self._format_colored(f"{self._indent}Excluded from attack statistics above.", Fore.CYAN))
+            lines.append(self._format_colored(f"{self._indent}Objective Executions: {baseline.completed}", Fore.CYAN))
+            if baseline.success_percentage is not None:
+                lines.append(
+                    self._format_colored(f"{self._indent}Success Rate: {baseline.success_percentage}%", Fore.CYAN)
+                )
 
         lines.append(self._render_section_header("Per-Group Breakdown"))
         group_summaries = list(overview.groups)
