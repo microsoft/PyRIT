@@ -17,8 +17,9 @@ from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from types import ModuleType
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Self, cast
 
-from jinja2 import StrictUndefined, TemplateSyntaxError, Undefined, meta
+from jinja2 import StrictUndefined, TemplateRuntimeError, TemplateSyntaxError, Undefined, UndefinedError, meta
 from jinja2.sandbox import SandboxedEnvironment
+from jinja2.utils import missing
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 from typing_extensions import TypeVar
 
@@ -101,12 +102,37 @@ class PartialUndefined(Undefined):
         return True  # Ensures it doesn't evaluate to False
 
 
-class _DeferRenderError(Exception):
-    """Raised when an unresolved variable would decide a branch or a loop."""
+class _DeferRenderError(TemplateRuntimeError):
+    """Raised when an unresolved variable would decide a branch or a loop, or is operated on."""
 
 
 class _LoopDeferringUndefined(PartialUndefined):
-    """Preserve unresolved loops while keeping the existing partial-render branch behavior."""
+    """
+    Preserve unresolved loops while keeping the existing partial-render branch behavior.
+
+    An operation on a missing parameter that Jinja's Undefined fails on, such as a method call or an index,
+    also defers rendering instead of failing.
+    """
+
+    def __init__(
+        self,
+        hint: str | None = None,
+        *,
+        obj: Any = missing,
+        name: str | None = None,
+        exc: type[TemplateRuntimeError] = UndefinedError,
+    ) -> None:
+        """
+        Create the placeholder, deferring where Jinja would fail an operation on a missing parameter.
+
+        Args:
+            hint: The error message Jinja sets for an undefined value that is not a missing parameter.
+            obj: The object whose attribute or item is undefined, or Jinja's ``missing`` for a top-level name.
+            name: The name of the undefined variable, attribute, or item.
+            exc: The exception Jinja raises for an operation on the undefined value.
+        """
+        is_missing_parameter = hint is None and obj is missing
+        super().__init__(hint, obj, name, _DeferRenderError if is_missing_parameter else exc)
 
     def __iter__(self) -> Iterator[object]:
         """
@@ -204,6 +230,24 @@ def _serialize_template_binding(value: Any) -> str:
     if isinstance(value, PurePath):
         return f"{str(value)!r} | pyrit_path(windows={isinstance(value, PureWindowsPath)!r})"
     return repr(value)
+
+
+def _survives_template_binding(value: Any) -> bool:
+    """
+    Check whether a supplied value can be written into a template and read back unchanged.
+
+    Args:
+        value: The supplied template value.
+
+    Returns:
+        Whether the serialized value evaluates back to an equal value.
+    """
+    try:
+        serialized = _template_environment(StrictUndefined).compile_expression(_serialize_template_binding(value))
+        return bool(serialized() == value)
+    except Exception:
+        # The repr of an arbitrary value can be invalid Jinja, name something undefined, or raise on its own.
+        return False
 
 
 def _filesystem_free_view(value: Any) -> Any:
@@ -328,6 +372,25 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
     # Pydantic resolves the generic field and validates its default at construction.
     data_type: Annotated[_SeedDataTypeT, Field(validate_default=True)] = cast("_SeedDataTypeT", "text")
 
+    def _bind_supplied_values(self, values: dict[str, Any], *, literals_only: bool = False) -> str:
+        """
+        Return the template with a `{% set %}` in front for each supplied value it uses.
+
+        Args:
+            values: Values retained as template data, not template source.
+            literals_only: Whether to leave out a value that cannot be written as a Jinja literal.
+
+        Returns:
+            The template value with the supplied values bound, so later renders and stored copies keep them.
+        """
+        used = meta.find_undeclared_variables(_template_environment(StrictUndefined).parse(self.value))
+        bindings = "".join(
+            f"{{% set {name} = {_serialize_template_binding(values[name])} %}}"
+            for name in sorted(used & values.keys())
+            if not literals_only or _survives_template_binding(values[name])
+        )
+        return bindings + self.value
+
     def bind_template_parameters(self, **parameters: Any) -> Self:
         """
         Bind literal parameter values for a later template render.
@@ -338,13 +401,7 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
         Returns:
             Self: A copy with the supplied values bound and remaining parameters unchanged.
         """
-        environment = _template_environment(StrictUndefined)
-        used = meta.find_undeclared_variables(environment.parse(self.value))
-        bindings = "".join(
-            f"{{% set {name} = {_serialize_template_binding(parameters[name])} %}}"
-            for name in sorted(used & parameters.keys())
-        )
-        updates: dict[str, Any] = {"value": bindings + self.value, "is_jinja_template": False}
+        updates: dict[str, Any] = {"value": self._bind_supplied_values(parameters), "is_jinja_template": False}
         declared = getattr(self, "parameters", None)
         if declared is not None:
             updates["parameters"] = [name for name in declared if name not in parameters]
@@ -396,11 +453,16 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
         Render self.value as a template with provided parameters. For parameters in the template
         that are not provided as kwargs here, this function will leave them as is instead of raising an error.
 
+        A loop over a parameter that is not provided, or an operation on it such as a method call or an index,
+        cannot be rendered yet. Then the template is kept as-is, with a `{% set %}` in front for each provided
+        parameter it uses, so a later render keeps them. A provided value that cannot be written as a Jinja
+        literal is left for the later render to supply.
+
         Args:
             kwargs: Key-value pairs to replace in the SeedPrompt value.
 
         Returns:
-            A new prompt with the parameters applied.
+            The rendered value, or the template with the provided values bound when rendering is deferred.
 
         Raises:
             ValueError: If parameters are missing or invalid in the template.
@@ -413,7 +475,8 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
             # Render the template with the provided kwargs
             return is_jinja_template.render(**kwargs)
         except _DeferRenderError:
-            return self.value
+            # A value that is not a Jinja literal stays unbound, so a later render can still supply it.
+            return self._bind_supplied_values(kwargs, literals_only=True)
         except Exception as e:
             logger.error("Error rendering template: %s", e)
             return self.value
@@ -433,7 +496,7 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
             kwargs: Key-value pairs to replace in the SeedPrompt value.
 
         Returns:
-            The rendered value, or the unchanged value when rendering is deferred.
+            The rendered value, or the template with its supplied values bound when rendering is deferred.
 
         """
         kwargs = {name: _filesystem_free_view(value) for name, value in kwargs.items()}
@@ -444,12 +507,7 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
         try:
             return env.from_string(self.value).render(**kwargs)
         except _DeferRenderError:
-            used = meta.find_undeclared_variables(env.parse(self.value))
-            bindings = "".join(
-                f"{{% set {name} = {_serialize_template_binding(kwargs[name])} %}}"
-                for name in sorted(used & kwargs.keys())
-            )
-            return bindings + self.value
+            return self._bind_supplied_values(kwargs)
         except Exception as e:
             logger.error("Error rendering template: %s", e)
             return self.value
