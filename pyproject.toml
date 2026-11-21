@@ -76,9 +76,8 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.22",
     "reportlab>=4.4.4",
-    # 2026.11.x breaks \X on Indic conjuncts (GB9c never applies, mrab-regex#636), which graphemes() relies on.
-    # Remove the upper bound once that is fixed upstream (#4308).
-    "regex>=2024.11.6,<2026.11",
+    # These releases break \X on Indic conjuncts (mrabarnett/mrab-regex#636).
+    "regex>=2024.11.6,!=2026.11.7,!=2026.11.8,!=2026.11.9",
     "segno>=1.6.6",
     "scipy>=1.15.3",
     "SQLAlchemy[asyncio]>=2.0.41",
