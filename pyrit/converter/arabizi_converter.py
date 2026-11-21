@@ -58,6 +58,9 @@ _ARABIC_TO_ARABIZI: dict[str, str] = {
     chr(0x0650): "",  # KASRA
     chr(0x0651): "",  # SHADDA
     chr(0x0652): "",  # SUKUN
+    chr(0x060C): ",",  # ARABIC COMMA (Arabic punctuation becomes its Latin counterpart)
+    chr(0x061B): ";",  # ARABIC SEMICOLON
+    chr(0x061F): "?",  # ARABIC QUESTION MARK
 }
 
 
@@ -72,9 +75,10 @@ class ArabiziConverter(Converter):
     input always produces the same output. The attack surface targeted is tokenizer and safety
     classifier handling of transliterated Arabic, not the language itself.
 
-    Short-vowel diacritics and the tatweel connector are dropped, and characters outside the Arabic
-    block (Latin text, digits, punctuation) are left unchanged. The mapping is intentionally lossy,
-    mirroring how Arabizi is actually written.
+    Short-vowel diacritics and the tatweel connector are dropped, the Arabic comma, semicolon and
+    question mark become their Latin counterparts, and characters outside the Arabic block (Latin
+    text, digits, punctuation) are left unchanged. The mapping is intentionally lossy, mirroring
+    how Arabizi is actually written.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)

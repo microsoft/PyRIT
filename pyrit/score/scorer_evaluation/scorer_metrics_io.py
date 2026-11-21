@@ -341,7 +341,7 @@ def _load_jsonl(file_path: Path) -> list[dict[str, Any]]:
     return entries
 
 
-def _append_jsonl_entry(file_path: Path, lock: threading.Lock, entry: dict[str, Any]) -> None:
+def _append_jsonl_entry(file_path: Path, *, lock: threading.Lock, entry: dict[str, Any]) -> None:
     """
     Append an entry to a JSONL file with thread safety.
 
@@ -407,7 +407,7 @@ def _read_registry_lines(file_path: Path) -> list[tuple[str, dict[str, Any] | No
     return lines
 
 
-def _create_staging_file(file_path: Path, mode: int = 0o666) -> tuple[Path, int]:
+def _create_staging_file(file_path: Path, *, mode: int = 0o666) -> tuple[Path, int]:
     """
     Create an exclusive staging file whose requested mode is filtered by the process umask.
 
@@ -443,7 +443,7 @@ def _cleanup_staging_file(temp_path: Path) -> None:
         logger.warning("Failed to clean up staging file %s: %s", temp_path, cleanup_error)
 
 
-def _rewrite_jsonl_atomically(file_path: Path, lines: list[str]) -> None:
+def _rewrite_jsonl_atomically(file_path: Path, *, lines: list[str]) -> None:
     """
     Replace a registry file's contents in one step that readers either see whole.
 
@@ -542,7 +542,7 @@ def replace_evaluation_results(
         output_lines.append(json.dumps(new_entry, allow_nan=False) + line_ending)
 
         # Rewrite the file with the surviving lines plus the new entry
-        _rewrite_jsonl_atomically(file_path, output_lines)
+        _rewrite_jsonl_atomically(file_path, lines=output_lines)
 
         replaced = len(preserved) != len(existing_lines)
         action = "Replaced" if replaced else "Added"

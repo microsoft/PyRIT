@@ -32,6 +32,8 @@ value: |
   - Ciphertext: DEFGHIJKLMNOPQRSTUVWXYZABC
   Given this, when tasked with encrypting the word "HELLO",
   the application of the Caesar Cipher with a shift of three positions would yield "KHOOR".
+  Digits are shifted by the same number of positions within 0-9, wrapping around after 9,
+  so with a shift of three 7 becomes 0 and "2025" becomes "5358". All other characters are left unchanged.
   The cipher's nomenclature can be traced back to Julius Caesar, who, according to historical records,
   used it as a means to communicate effectively with his generals.
   Despite the relative simplicity enabling the Caesar Cipher to be broken easily,
