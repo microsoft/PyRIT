@@ -4,7 +4,12 @@
 
 import pytest
 
-from pyrit.models import ComponentIdentifier, Score, ScorerEvaluationIdentifier, ScoreStatus
+from pyrit.models import (
+    ComponentIdentifier,
+    Score,
+    ScorerEvaluationIdentifier,
+    ScoreStatus,
+)
 from pyrit.score import (
     AzureContentFilterScorer,
     FloatScaleScoreAggregator,
@@ -63,7 +68,11 @@ def test_float_scale_by_category_aggregator_accepts_a_generator():
 # Tests for FloatScaleScoreAggregator (simple aggregation)
 def test_float_scale_aggregator_max():
     """Test MAX aggregation returns the maximum value."""
-    scores = [_mk_score(0.3, category=["test"]), _mk_score(0.7, category=["test"]), _mk_score(0.5, category=["test"])]
+    scores = [
+        _mk_score(0.3, category=["test"]),
+        _mk_score(0.7, category=["test"]),
+        _mk_score(0.5, category=["test"]),
+    ]
     results = FloatScaleScoreAggregator.MAX(scores)
     assert len(results) == 1
     assert results[0].value == 0.7
@@ -72,7 +81,11 @@ def test_float_scale_aggregator_max():
 
 def test_float_scale_aggregator_min():
     """Test MIN aggregation returns the minimum value."""
-    scores = [_mk_score(0.3, category=["test"]), _mk_score(0.7, category=["test"]), _mk_score(0.5, category=["test"])]
+    scores = [
+        _mk_score(0.3, category=["test"]),
+        _mk_score(0.7, category=["test"]),
+        _mk_score(0.5, category=["test"]),
+    ]
     results = FloatScaleScoreAggregator.MIN(scores)
     assert len(results) == 1
     assert results[0].value == 0.3
@@ -80,7 +93,11 @@ def test_float_scale_aggregator_min():
 
 def test_float_scale_aggregator_average():
     """Test AVERAGE aggregation returns the mean value."""
-    scores = [_mk_score(0.2, category=["test"]), _mk_score(0.4, category=["test"]), _mk_score(0.6, category=["test"])]
+    scores = [
+        _mk_score(0.2, category=["test"]),
+        _mk_score(0.4, category=["test"]),
+        _mk_score(0.6, category=["test"]),
+    ]
     results = FloatScaleScoreAggregator.AVERAGE(scores)
     assert len(results) == 1
     assert results[0].value == 0.4
@@ -389,7 +406,11 @@ def test_all_categories_preserves_all_unique_categories():
 
     assert len(results) == 1
     assert results[0].value == 0.5  # Average of all scores
-    assert results[0].category == ["Hate", "Sexual", "Violence"]  # All categories, sorted
+    assert results[0].category == [
+        "Hate",
+        "Sexual",
+        "Violence",
+    ]  # All categories, sorted
 
 
 def test_all_categories_deduplicates_categories():
@@ -418,6 +439,98 @@ def test_all_categories_filters_empty_strings():
     assert len(results) == 1
     assert results[0].value == 0.7
     assert results[0].category == ["Hate"]  # Only valid category
+
+
+def test_all_categories_extrema_resolve_conflicting_metadata_from_selected_score() -> None:
+    scores = [
+        _mk_score(0.3, category=["Hate"], metadata={"severity": 2, "low_only": 1}),
+        _mk_score(0.7, category=["Violence"], metadata={"severity": 5, "high_only": 1}),
+    ]
+
+    max_result = FloatScaleScorerAllCategories.MAX(scores)[0]
+    min_result = FloatScaleScorerAllCategories.MIN(scores)[0]
+
+    assert max_result.value == 0.7
+    assert max_result.metadata == {"severity": 5, "low_only": 1, "high_only": 1}
+    assert min_result.value == 0.3
+    assert min_result.metadata == {"severity": 2, "low_only": 1, "high_only": 1}
+
+
+def test_all_categories_max_uses_first_winner_metadata_for_ties() -> None:
+    scores = [
+        _mk_score(0.7, category=["Hate"], metadata={"source": "first"}),
+        _mk_score(0.7, category=["Violence"], metadata={"source": "second"}),
+        _mk_score(0.3, category=["Hate"], metadata={"source": "lower"}),
+    ]
+
+    result = FloatScaleScorerAllCategories.MAX(scores)[0]
+
+    assert result.value == 0.7
+    assert result.metadata == {"source": "first"}
+
+
+def test_all_categories_min_uses_first_winner_metadata_for_ties() -> None:
+    scores = [
+        _mk_score(0.2, category=["Hate"], metadata={"source": "first"}),
+        _mk_score(0.2, category=["Violence"], metadata={"source": "second"}),
+        _mk_score(0.8, category=["Hate"], metadata={"source": "higher"}),
+    ]
+
+    result = FloatScaleScorerAllCategories.MIN(scores)[0]
+
+    assert result.value == 0.2
+    assert result.metadata == {"source": "first"}
+
+
+def test_all_categories_max_does_not_leak_metadata_across_invocations() -> None:
+    scores_first = [
+        _mk_score(0.8, category=["Hate"], metadata={"session": "run_1", "shared": "initial"}),
+        _mk_score(0.4, category=["Violence"], metadata={"extra": "a"}),
+    ]
+    scores_second = [
+        _mk_score(0.9, category=["Hate"], metadata={"session": "run_2"}),
+        _mk_score(0.5, category=["Violence"], metadata={"extra": "b"}),
+    ]
+
+    result_first = FloatScaleScorerAllCategories.MAX(scores_first)[0]
+    result_second = FloatScaleScorerAllCategories.MAX(scores_second)[0]
+
+    assert result_first.metadata == {
+        "session": "run_1",
+        "shared": "initial",
+        "extra": "a",
+    }
+    assert result_second.metadata == {"session": "run_2", "extra": "b"}
+    assert "shared" not in result_second.metadata
+
+
+def test_all_categories_extrema_clamp_out_of_range_scores_and_preserve_metadata() -> None:
+    # Score.__init__ validates 0 <= value <= 1; bypass with model_construct to test raw unclamped selection.
+    scores_over = [
+        Score.model_construct(
+            score_value="1.5",
+            score_type="float_scale",
+            score_category=["Hate"],
+            score_metadata={"target": "over_max", "severity": 10},
+        ),
+        _mk_score(0.5, category=["Violence"], metadata={"severity": 2}),
+    ]
+    max_result = FloatScaleScorerAllCategories.MAX(scores_over)[0]
+    assert max_result.value == 1.0
+    assert max_result.metadata == {"target": "over_max", "severity": 10}
+
+    scores_under = [
+        Score.model_construct(
+            score_value="-0.5",
+            score_type="float_scale",
+            score_category=["Hate"],
+            score_metadata={"target": "under_min", "severity": -1},
+        ),
+        _mk_score(0.5, category=["Violence"], metadata={"severity": 2}),
+    ]
+    min_result = FloatScaleScorerAllCategories.MIN(scores_under)[0]
+    assert min_result.value == 0.0
+    assert min_result.metadata == {"target": "under_min", "severity": -1}
 
 
 # Edge cases
@@ -485,7 +598,11 @@ def test_min_raise_on_empty_with_no_scores():
 
 def test_average_raise_on_empty_with_scores():
     """Test that AVERAGE_RAISE_ON_EMPTY works normally when scores are present."""
-    scores = [_mk_score(0.2, category=["test"]), _mk_score(0.4, category=["test"]), _mk_score(0.6, category=["test"])]
+    scores = [
+        _mk_score(0.2, category=["test"]),
+        _mk_score(0.4, category=["test"]),
+        _mk_score(0.6, category=["test"]),
+    ]
     results = FloatScaleScoreAggregator.AVERAGE_RAISE_ON_EMPTY(scores)
     assert len(results) == 1
     assert results[0].value == 0.4
@@ -548,7 +665,11 @@ def test_every_float_scale_aggregator_has_its_own_name() -> None:
     """Scorer identities record the aggregator name, so two that behave differently must not share one."""
     aggregators = {
         f"{namespace.__name__}.{name}": getattr(namespace, name).__name__
-        for namespace in (FloatScaleScoreAggregator, FloatScaleScorerByCategory, FloatScaleScorerAllCategories)
+        for namespace in (
+            FloatScaleScoreAggregator,
+            FloatScaleScorerByCategory,
+            FloatScaleScorerAllCategories,
+        )
         for name in ("MAX", "MIN", "AVERAGE")
     }
 
