@@ -155,6 +155,7 @@ await output_attack_async(result)
 # type to test such an agent. A custom target can call the agent function directly.
 #
 # The example agent below is a deterministic travel planner, so this section runs without a model.
+# It needs only the first code cell's imports and setup, not the OpenAI example in between.
 # It remembers the destination from earlier turns and calls a `search_flights` tool. The tool records
 # an OpenTelemetry execution span, as an instrumented agent framework would.
 #
@@ -177,10 +178,11 @@ def search_flights(*, destination: str) -> str:
 
 
 async def travel_agent_async(*, message: str, history: list[dict[str, str]]) -> str:
-    """Plan a trip. ``history`` holds the earlier user and assistant turns, with the current message last."""
+    """Plan a trip. ``history`` holds the earlier turns, including any system prompt, but not ``message``."""
+    turns = [*history, {"role": "user", "content": message}]
     destinations = [
         turn["content"].removeprefix("I want to visit ").rstrip(".")
-        for turn in history
+        for turn in turns
         if turn["role"] == "user" and turn["content"].startswith("I want to visit ")
     ]
     if not destinations:
@@ -192,10 +194,20 @@ async def travel_agent_async(*, message: str, history: list[dict[str, str]]) -> 
 
 # %% [markdown]
 # The target turns the normalized conversation into the agent's arguments and wraps the reply in a
-# response message. The agent is stateless: it receives the full history on every call. The target
-# therefore declares `supports_multi_turn` and `supports_editable_history`. Multi-turn attacks, such as
-# the default `assert_package` technique of `foundry.assert_policy`, can then hold a conversation with it.
-# If your agent keeps its own conversation state instead, declare only `supports_multi_turn`.
+# response message. As in the common `chat(message, history)` convention, `message` is the current
+# request and `history` holds only the earlier turns. The agent is stateless: it receives the full
+# history on every call. The target therefore declares `supports_multi_turn` and
+# `supports_editable_history`. Multi-turn attacks, such as the default `assert_package` technique of
+# `foundry.assert_policy`, can then hold a conversation with it. The target also declares
+# `supports_system_prompt` and passes system turns in `history`, so a system prompt that an attack or
+# scenario sets reaches the agent. If your agent can't take a system prompt, leave that capability
+# out, and PyRIT rejects system prompts instead of dropping them.
+#
+# If your agent keeps its own conversation state instead, declare `supports_multi_turn` without
+# `supports_editable_history`. Send only the latest message, `normalized_conversation[-1]`, to an
+# agent session that you keep for each `conversation_id`, so the agent doesn't see earlier turns
+# twice. Override `reset_conversation_async` to discard that session when PyRIT is done with the
+# conversation.
 #
 # If the agent function is synchronous, call it with `await asyncio.to_thread(...)` so that it does
 # not block other requests.
@@ -210,7 +222,9 @@ class InProcessAgentTarget(PromptTarget):
     """Send each request, with the earlier turns, to an agent function in this process."""
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
-        capabilities=TargetCapabilities(supports_multi_turn=True, supports_editable_history=True)
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True, supports_editable_history=True, supports_system_prompt=True
+        )
     )
 
     def __init__(
@@ -231,8 +245,8 @@ class InProcessAgentTarget(PromptTarget):
         request = normalized_conversation[-1].get_piece()
         history = [
             {"role": message.api_role, "content": message.get_piece().converted_value}
-            for message in normalized_conversation
-            if message.api_role in ("user", "assistant")
+            for message in normalized_conversation[:-1]
+            if message.api_role in ("system", "user", "assistant")
         ]
         reply = await self._agent(message=request.converted_value, history=history)
         return [construct_response_from_request(request=request, response_text_pieces=[reply])]
@@ -254,8 +268,9 @@ class InProcessAgentTarget(PromptTarget):
 # [Judging with execution traces](../scoring/8_trace_evidence_scoring.ipynb) for details on trace evidence.
 
 # %%
-from pyrit.executor.attack import MultiPromptSendingAttack
+from pyrit.executor.attack import AttackScoringConfig, MultiPromptSendingAttack
 from pyrit.models import ScoringExpectation, ToolCallRequirement, ToolsCalled
+from pyrit.output import output_attack_async
 from pyrit.score import OtelToolCallScorer
 from pyrit.score.observation import OtelTraceSource
 
@@ -275,7 +290,6 @@ result = await travel_attack.execute_async(  # type: ignore
     expectation=ScoringExpectation(conditions=(ToolsCalled(tools=(ToolCallRequirement(name="search_flights"),)),)),
 )
 await output_attack_async(result)
-capture.close()
 
 # %% [markdown]
 # ### Using a real agent framework
@@ -293,40 +307,66 @@ capture.close()
 #
 # To refer to the target by name, register it from a
 # [custom initializer](../setup/pyrit_initializer.ipynb). Add the script's path to
-# [`initialization_scripts`](../../getting_started/pyrit_conf.md) in `.pyrit_conf`. Register the
-# capture's trace source too, so scenarios can read the agent's traces:
+# [`initialization_scripts`](../../getting_started/pyrit_conf.md) in `.pyrit_conf`. Give the target the
+# capture that the agent's tools record into. `search_flights` records with the package's `capture`,
+# so a new `LocalTraceCapture` in the initializer would not see the tool's spans. For a framework agent
+# that records through `capture.instrument()`, the initializer can create the capture and call
+# `instrument()` itself.
+#
+# By default, the judges of `foundry.assert_policy` read only the transcript, and `pyrit_scan` has no
+# option to choose a scorer. So the initializer below also makes judges that read the capture's
+# source the scenario's default scorers, as the "In `foundry.assert_policy`" section of
+# [Judging with execution traces](../scoring/8_trace_evidence_scoring.ipynb) describes. It registers
+# them too, so you can pick them in the GUI. The judges use the
+# `objective_scorer_chat` target, so also run the `target` initializer, which registers it before
+# custom scripts run.
 #
 # ```python
-# from my_agent_package import InProcessAgentTarget, travel_agent_async
+# from my_agent_package import InProcessAgentTarget, capture, travel_agent_async
 #
-# from pyrit.registry import TargetRegistry
-# from pyrit.score import LocalTraceCapture
+# from pyrit.common import set_default_value
+# from pyrit.registry import ScorerRegistry, TargetRegistry
+# from pyrit.scenario.foundry import AssertPolicy
+# from pyrit.score import AssertJudgeScorer
 # from pyrit.setup.pyrit_initializer import PyRITInitializer
 #
 #
 # class TravelAgentInitializer(PyRITInitializer):
-#     """Register the in-process travel agent as a target, with its trace source."""
+#     """Register the in-process travel agent and ASSERT judges that read its traces."""
 #
 #     async def initialize_async(self) -> None:
-#         capture = LocalTraceCapture()
-#         capture.instrument()
-#         capture.register(name="travel_agent_traces")
-#         TargetRegistry.get_registry_singleton().instances.register(
+#         targets = TargetRegistry.get_registry_singleton().instances
+#         targets.register(
 #             InProcessAgentTarget(agent=travel_agent_async, trace_config=capture.trace_config()),
 #             name="travel_agent",
 #         )
+#
+#         source = capture.register(name="travel_agent_traces")
+#         judge = targets.get("objective_scorer_chat")
+#         policy_judge = AssertJudgeScorer(chat_target=judge, trace_source=source)
+#         overrefusal_judge = AssertJudgeScorer(chat_target=judge, dimension="overrefusal", trace_source=source)
+#         scorers = ScorerRegistry.get_registry_singleton().instances
+#         scorers.register(policy_judge, name="travel_agent_policy")
+#         scorers.register(overrefusal_judge, name="travel_agent_overrefusal")
+#         set_default_value(class_type=AssertPolicy, parameter_name="objective_scorer", value=policy_judge)
+#         set_default_value(class_type=AssertPolicy, parameter_name="auxiliary_scorers", value=[overrefusal_judge])
 # ```
 #
-# Scenarios can then use both by name. For example, ASSERT policy judges read the agent's traces as
-# well as the transcript with:
+# Then run the scenario against the target by name, on a stored ASSERT dataset such as `assert_support`
+# from [Foundry scenarios](../../scanner/foundry.ipynb):
 #
 # ```bash
-# pyrit_scan foundry.assert_policy --target travel_agent --trace-source travel_agent_traces
+# pyrit_scan run foundry.assert_policy --target travel_agent --datasets assert_support
 # ```
 #
-# The scenario also needs its adversarial and scoring targets: the registered `adversarial_chat` and
-# `objective_scorer_chat`, for example from the `target` initializer, or the targets you name with
-# `--adversarial-target` and `--scoring-target`.
+# The scenario also needs its adversarial target: the registered `adversarial_chat`, for example from
+# the `target` initializer, or the target you name with `--adversarial-target`.
 #
 # The target also appears in the GUI's list of targets. The initializer runs the agent's code in the
 # PyRIT process, so only use agent code that you trust.
+#
+# Close the capture when you're done with it. A closed capture can't record or return traces, so run
+# this last.
+
+# %%
+capture.close()
