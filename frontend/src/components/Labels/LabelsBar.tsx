@@ -68,16 +68,27 @@ export default function LabelsBar({
   const editSession = useRef(0)
   // A save waits out the blur so focus can land first. If the edit it belongs
   // to finishes another way in the meantime — a suggestion picked, the label
-  // removed — that save has to be called off, or it lands afterwards with the
-  // value it was typed with. Starting a different edit is not the same thing:
-  // that save is still the user's and still has to land.
-  const pendingSaves = useRef(new Map<number, ReturnType<typeof setTimeout>>())
+  // removed, the editor focused right back — that save has to be called off,
+  // or it lands afterwards with the value it was typed with. Starting a
+  // different edit is not the same thing: that save is still the user's and
+  // still has to land. The save carries the value as it was at the blur, and
+  // the label it belongs to, so it can be called off by name as well: a save
+  // left behind by an earlier session must never speak for a later edit.
+  const pendingSaves = useRef(new Map<number, { key: string; timer: ReturnType<typeof setTimeout> }>())
 
   const cancelPendingSave = (session: number) => {
-    const timer = pendingSaves.current.get(session)
-    if (timer === undefined) return
-    clearTimeout(timer)
+    const pending = pendingSaves.current.get(session)
+    if (pending === undefined) return
+    clearTimeout(pending.timer)
     pendingSaves.current.delete(session)
+  }
+
+  const cancelPendingSavesForLabel = (key: string) => {
+    for (const [session, pending] of pendingSaves.current) {
+      if (pending.key !== key) continue
+      clearTimeout(pending.timer)
+      pendingSaves.current.delete(session)
+    }
   }
   // That late save also has to write onto the labels as they are by then, not
   // the ones it was looking at when the blur happened.
@@ -143,11 +154,12 @@ export default function LabelsBar({
 
   const handleRemoveLabel = (key: string) => {
     if (key === 'operator') return
-    // The label may be open for editing in the popover while its chip is still
-    // on the bar, and that edit has a save on the way. Taking the label away
-    // has to take the save with it, or it comes back a moment later.
+    // The label may be open for editing while its chip is still on the bar,
+    // and that edit may have a save on the way under a session that has
+    // already been left. Taking the label away has to take every one of its
+    // own saves with it, or it comes back a moment later.
+    cancelPendingSavesForLabel(key)
     if (editingLabel === key) {
-      cancelPendingSave(editSession.current)
       endEdit(editSession.current)
     }
     const next = { ...labelsRef.current }
@@ -157,6 +169,12 @@ export default function LabelsBar({
 
   const handleStartEdit = (key: string) => {
     if (key === 'operator' && operatorReadOnly) return
+    // Focusing the editor that is already open is not a new edit: the save
+    // waiting on the blur is called off and the value on screen stays.
+    if (editingLabel === key) {
+      cancelPendingSavesForLabel(key)
+      return
+    }
     editSession.current += 1
     setEditingLabel(key)
     setEditValue(labels[key] ?? '')
@@ -181,21 +199,25 @@ export default function LabelsBar({
     setError('')
   }
 
-  const saveEdit = (key: string, session: number) => {
-    const valueError = validateValue(editValue)
+  const saveEdit = (key: string, session: number, value: string) => {
+    const valueError = validateValue(value)
     // Only the edit still on screen may speak for itself; a value left behind
     // is simply not saved rather than complaining next to somebody else.
     if (valueError) {
       if (editSession.current === session) setError(valueError)
       return
     }
-    commitLabels({ ...labelsRef.current, [key]: editValue })
+    cancelPendingSave(session)
+    commitLabels({ ...labelsRef.current, [key]: value })
     endEdit(session)
   }
 
   const handleEditKeyDown = (e: React.KeyboardEvent, key: string, session: number) => {
-    if (e.key === 'Enter') saveEdit(key, session)
-    if (e.key === 'Escape') endEdit(session)
+    if (e.key === 'Enter') saveEdit(key, session, editValue)
+    if (e.key === 'Escape') {
+      cancelPendingSavesForLabel(key)
+      endEdit(session)
+    }
   }
 
   const handleAddKeyDown = (e: React.KeyboardEvent) => {
@@ -292,12 +314,14 @@ export default function LabelsBar({
           value={editValue}
           onChange={(_, d) => { setEditValue(d.value.toLowerCase()); setError('') }}
           onKeyDown={e => handleEditKeyDown(e, key, session)}
+          onFocus={() => { if (editingLabel === key) cancelPendingSavesForLabel(key) }}
           onBlur={() => {
+            const value = editValue
             cancelPendingSave(session)
-            pendingSaves.current.set(session, setTimeout(() => {
+            pendingSaves.current.set(session, { key, timer: setTimeout(() => {
               pendingSaves.current.delete(session)
-              saveEdit(key, session)
-            }, 150))
+              saveEdit(key, session, value)
+            }, 150) })
           }}
           style={{ width: '120px' }}
           aria-label={`Value for ${key} label`}
@@ -314,7 +338,7 @@ export default function LabelsBar({
                 className={styles.suggestionChip}
                 onMouseDown={e => e.preventDefault()}
                 onClick={() => {
-                  cancelPendingSave(session)
+                  cancelPendingSavesForLabel(key)
                   commitLabels({ ...labelsRef.current, [key]: v })
                   setEditingLabel(null)
                   setEditValue('')
@@ -610,11 +634,12 @@ export default function LabelsBar({
                   onBlur={() => {
                     if (operatorReadOnly || editingLabel !== 'operator') return
                     const session = editSession.current
+                    const value = editValue
                     cancelPendingSave(session)
-                    pendingSaves.current.set(session, setTimeout(() => {
+                    pendingSaves.current.set(session, { key: 'operator', timer: setTimeout(() => {
                       pendingSaves.current.delete(session)
-                      saveEdit('operator', session)
-                    }, 150))
+                      saveEdit('operator', session, value)
+                    }, 150) })
                   }}
                 />
               </Tooltip>
@@ -627,7 +652,7 @@ export default function LabelsBar({
                       <Badge key={value} className={styles.suggestionChip} appearance="outline" size="small"
                         onMouseDown={event => event.preventDefault()}
                         onClick={() => {
-                          cancelPendingSave(editSession.current)
+                          cancelPendingSavesForLabel('operator')
                           commitLabels({ ...labelsRef.current, operator: value })
                           endEdit(editSession.current)
                         }}>{value}</Badge>
