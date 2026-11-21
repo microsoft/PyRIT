@@ -32,7 +32,10 @@ from pyrit.backend.models import (
     TargetListResponse,
     UpdateTargetCredentialsRequest,
 )
+from pyrit.backend.models.common import SaveabilityResponse
 from pyrit.backend.models.targets import (
+    TargetParametersRequest,
+    TargetSaveabilityRequest,
     TargetTypeEntry,
     TargetTypeResponse,
     UnregisteredTarget,
@@ -60,12 +63,14 @@ from pyrit.prompt_target.common.discover_target_capabilities import (
 )
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 from pyrit.registry import (
+    NotSaveableError,
     RegistryEntry,
     SavedEntryConflictError,
     TargetRegistry,
     allows_credential_updates,
     creator_metadata,
     credential_update_metadata,
+    get_class_saveability,
     is_private_entry,
     prepare_saved_params_async,
     record_private_references,
@@ -398,8 +403,9 @@ class TargetService:
 
         Returns every target that external callers can build, with the
         constructor parameters they may supply, each described in the form callers
-        send it, and the auth modes it supports, all projected from the registry's
-        ``TargetMetadata``; targets that need a Python object or a path callers may not
+        send it, the auth modes it supports, and the ones a saved target of it can use
+        (or why none can), all projected from the registry's ``TargetMetadata`` and the
+        target class; targets that need a Python object or a path callers may not
         set for a required parameter are left out, and so are targets that upload local
         files when the server has no upload folder. Deciding which entries to surface to a
         user is a presentation concern owned by the caller (e.g. the frontend),
@@ -413,24 +419,41 @@ class TargetService:
             TargetTypeResponse containing all available target classes.
         """
         metadata_items = await asyncio.to_thread(self._registry.get_all_registered_class_metadata)
-        items: list[TargetTypeEntry] = [
-            TargetTypeEntry(
-                target_type=metadata.class_name,
-                parameters=[
-                    parameter.for_external_catalog()
-                    for parameter in self._project_target_parameters(
-                        target_type=metadata.class_name,
-                        parameters=metadata.parameters,
-                    )
-                ],
-                supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
-                description=metadata.class_description or None,
+        items: list[TargetTypeEntry] = []
+        for metadata in metadata_items:
+            if not (
+                self._has_required_params(target_type=metadata.class_name, parameters=metadata.parameters)
+                and self._has_upload_directory(target_type=metadata.class_name, upload_directory=upload_directory)
+            ):
+                continue
+            saveable_auth_modes, not_saveable_reason = self._get_saveability(target_type=metadata.class_name)
+            items.append(
+                TargetTypeEntry(
+                    target_type=metadata.class_name,
+                    parameters=[
+                        parameter.for_external_catalog()
+                        for parameter in self._project_target_parameters(
+                            target_type=metadata.class_name,
+                            parameters=metadata.parameters,
+                        )
+                    ],
+                    supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
+                    saveable_auth_modes=saveable_auth_modes,
+                    not_saveable_reason=not_saveable_reason,
+                    description=metadata.class_description or None,
+                )
             )
-            for metadata in metadata_items
-            if self._has_required_params(target_type=metadata.class_name, parameters=metadata.parameters)
-            and self._has_upload_directory(target_type=metadata.class_name, upload_directory=upload_directory)
-        ]
         return TargetTypeResponse(items=items)
+
+    def _get_saveability(self, *, target_type: str) -> tuple[list[AuthMode], str | None]:
+        """
+        Return the auth modes a saved target of a type can use, and why it can't be saved when none can.
+
+        Returns:
+            tuple[list[AuthMode], str | None]: The saveable auth modes, and the reason when there are none.
+        """
+        auth_modes, reason = get_class_saveability(registry=self._registry, type_name=target_type)
+        return self._get_supported_auth_modes(auth_modes), reason
 
     async def build_from_source_async(self, spec: SourceInstanceSpec) -> PromptTarget:
         """
@@ -604,87 +627,8 @@ class TargetService:
             raise ValueError("A private target must be registered; set register=true.")
         if request.private and get_caller_principal() is None:
             raise PermissionError("A private target needs a signed-in caller to own it.")
-        if request.type not in self._registry:
-            raise ValueError(
-                f"Target type '{request.type}' not found. Available types: {self._registry.get_class_names()}"
-            )
-
-        target_cls = self._registry.get_class(request.type)
-        params: dict[str, Any] = dict(request.params)
-
-        # auth_mode is also a constructor parameter, so the registry would otherwise accept it
-        # inside params as a second, competing channel that bypasses the checks below.
-        params_auth_mode = params.get(_AUTH_MODE_PARAM)
-        if params_auth_mode is not None and params_auth_mode != request.auth_mode:
-            raise ValueError(
-                f"Conflicting authentication modes: request auth_mode is '{request.auth_mode}' but "
-                f"params['{_AUTH_MODE_PARAM}'] is '{params_auth_mode}'. Set the request-level auth_mode only."
-            )
-
-        if request.auth_mode == "identity":
-            if "identity" not in target_cls.supported_auth_modes:
-                raise ValueError(f"Target type '{request.type}' does not support identity-based authentication.")
-            # Omitting the key alone is ambiguous — every auth resolver reads the api-key env var
-            # when no key is passed — so also state the choice explicitly where the target accepts it.
-            params.pop("api_key", None)
-            # Omit any other parameter the registry metadata marks as conflicting with
-            # identity-based auth (e.g. AzureBlobStorageTarget's sas_token), so a caller
-            # can't silently override the selected auth mode by also supplying it.
-            metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
-            if metadata is not None:
-                for parameter in metadata.parameters:
-                    if parameter.identity_conflicting:
-                        params.pop(parameter.name, None)
-
-        if request.auth_mode == "none":
-            if "none" not in target_cls.supported_auth_modes:
-                raise ValueError(f"Target type '{request.type}' does not support no-key authentication.")
-            params.pop("api_key", None)
-
-        params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
-        self._clean_credentials(target_type=request.type, params=params)
-        self._apply_upload_directory(
-            target_type=request.type, target_cls=target_cls, params=params, upload_directory=upload_directory
-        )
-
-        if issubclass(target_cls, GitHubCopilotTarget):
-            github_token = params.get("github_token")
-            if github_token is None:
-                github_token = default_values.get_non_required_value(
-                    env_var_name=target_cls.GITHUB_TOKEN_ENVIRONMENT_VARIABLE
-                )
-            if not isinstance(github_token, str) or not github_token.strip():
-                raise ValueError(
-                    "GitHub Copilot requires a GitHub token in CoPyRIT. Enter GitHub Token or configure "
-                    "GITHUB_TOKEN for this CoPyRIT instance through its environment or loaded .env/.env.local files."
-                )
-
-        permission_params = params
-        if request.source is not None:
-            source = self._registry.resolve_source(
-                name=request.source.source_name, identifier_hash=request.source.source_hash
-            )
-            permission_params = {
-                **self._registry.get_reconstruction_parameters(source),
-                **request.source.params,
-            }
-        metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
-        if metadata is not None:
-            missing: list[str] = []
-            for parameter in self._project_target_parameters(target_type=request.type, parameters=metadata.parameters):
-                value = permission_params.get(parameter.name)
-                if parameter.required and (value is None or isinstance(value, str) and not value.strip()):
-                    missing.append(parameter.name)
-            if missing:
-                raise ValueError(
-                    f"Target type '{request.type}' requires explicit connection fields: {', '.join(missing)}. "
-                    "Supply these fields explicitly, or select an environment-initialized registered target."
-                )
-        await self._enforce_code_execution_permission_async(
-            target_type=request.type, params=permission_params, is_admin=is_admin
-        )
-        self._enforce_server_credential_permission(
-            target_type=request.type, params=permission_params, is_admin=is_admin
+        target_cls, params = await self._requested_params_async(
+            request=request, source=request.source, upload_directory=upload_directory, is_admin=is_admin
         )
         if request.persist:
             params = await prepare_saved_params_async(
@@ -695,8 +639,8 @@ class TargetService:
                 auth_mode=request.auth_mode,
             )
 
-        # LEGACY COMPATIBILITY: The current configuration UI omits the name.
-        # Remove this generated fallback after that UI sends an explicit name.
+        # LEGACY COMPATIBILITY: Only API callers that leave out the name reach this fallback; the GUI sends one.
+        # Remove it when the name becomes required for registered targets.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
         if request.register_instance:
             try:
@@ -766,6 +710,151 @@ class TargetService:
         except Exception:
             await release_component_async(target_obj)
             raise
+
+    async def check_saveability_async(
+        self,
+        *,
+        request: TargetSaveabilityRequest,
+        upload_directory: str | None = None,
+        is_admin: bool = False,
+    ) -> SaveabilityResponse:
+        """
+        Say whether a target could be saved as asked, without building or saving it.
+
+        Only the type, parameters, and auth mode are checked, first as creating the target checks them before it's
+        built, then by the library's save checks. The name and registration options aren't checked, and the target
+        isn't built, so its constructor's own checks don't run: no reason means the save checks pass, not that
+        creating the target succeeds.
+
+        Args:
+            request: The target to check.
+            upload_directory: Folder the server lets API-created targets upload files from,
+                or None when the server configures none.
+            is_admin: Whether the caller may create a target that runs model repository code or
+                authenticates with this server's stored credentials.
+
+        Returns:
+            SaveabilityResponse: Why the target can't be saved, or no reason when the save checks pass.
+
+        Raises:
+            ValueError: If creating the target would refuse its type, parameters, or auth mode as invalid.
+            PermissionError: If creating the target needs administrator access the caller doesn't have.
+        """
+        target_cls, params = await self._requested_params_async(
+            request=request, source=None, upload_directory=upload_directory, is_admin=is_admin
+        )
+        try:
+            await prepare_saved_params_async(
+                registry=self._registry,
+                type_name=request.type,
+                cls=target_cls,
+                params=params,
+                auth_mode=request.auth_mode,
+            )
+        except NotSaveableError as error:
+            return SaveabilityResponse(not_saveable_reason=error.cause)
+        return SaveabilityResponse()
+
+    async def _requested_params_async(
+        self,
+        *,
+        request: TargetParametersRequest,
+        source: SourceInstanceSpec | None,
+        upload_directory: str | None,
+        is_admin: bool,
+    ) -> tuple[type[PromptTarget], dict[str, Any]]:
+        """
+        Check a create request as creating it does before the target is built, and return what to build it with.
+
+        Returns:
+            tuple[type[PromptTarget], dict[str, Any]]: The target class and its constructor parameters.
+
+        Raises:
+            ValueError: If the type isn't registered, the auth mode conflicts or isn't supported, the upload folder
+                is given or missing, a GitHub token or an explicit connection field is missing.
+            PermissionError: If the target needs administrator access the caller doesn't have.
+        """
+        if request.type not in self._registry:
+            raise ValueError(
+                f"Target type '{request.type}' not found. Available types: {self._registry.get_class_names()}"
+            )
+
+        target_cls = self._registry.get_class(request.type)
+        params: dict[str, Any] = dict(request.params)
+
+        # auth_mode is also a constructor parameter, so the registry would otherwise accept it
+        # inside params as a second, competing channel that bypasses the checks below.
+        params_auth_mode = params.get(_AUTH_MODE_PARAM)
+        if params_auth_mode is not None and params_auth_mode != request.auth_mode:
+            raise ValueError(
+                f"Conflicting authentication modes: request auth_mode is '{request.auth_mode}' but "
+                f"params['{_AUTH_MODE_PARAM}'] is '{params_auth_mode}'. Set the request-level auth_mode only."
+            )
+
+        if request.auth_mode == "identity":
+            if "identity" not in target_cls.supported_auth_modes:
+                raise ValueError(f"Target type '{request.type}' does not support identity-based authentication.")
+            # Omitting the key alone is ambiguous — every auth resolver reads the api-key env var
+            # when no key is passed — so also state the choice explicitly where the target accepts it.
+            params.pop("api_key", None)
+            # Omit any other parameter the registry metadata marks as conflicting with
+            # identity-based auth (e.g. AzureBlobStorageTarget's sas_token), so a caller
+            # can't silently override the selected auth mode by also supplying it.
+            metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
+            if metadata is not None:
+                for parameter in metadata.parameters:
+                    if parameter.identity_conflicting:
+                        params.pop(parameter.name, None)
+
+        if request.auth_mode == "none":
+            if "none" not in target_cls.supported_auth_modes:
+                raise ValueError(f"Target type '{request.type}' does not support no-key authentication.")
+            params.pop("api_key", None)
+
+        params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
+        self._clean_credentials(target_type=request.type, params=params)
+        self._apply_upload_directory(
+            target_type=request.type, target_cls=target_cls, params=params, upload_directory=upload_directory
+        )
+
+        if issubclass(target_cls, GitHubCopilotTarget):
+            github_token = params.get("github_token")
+            if github_token is None:
+                github_token = default_values.get_non_required_value(
+                    env_var_name=target_cls.GITHUB_TOKEN_ENVIRONMENT_VARIABLE
+                )
+            if not isinstance(github_token, str) or not github_token.strip():
+                raise ValueError(
+                    "GitHub Copilot requires a GitHub token in CoPyRIT. Enter GitHub Token or configure "
+                    "GITHUB_TOKEN for this CoPyRIT instance through its environment or loaded .env/.env.local files."
+                )
+
+        permission_params = params
+        if source is not None:
+            source_target = self._registry.resolve_source(name=source.source_name, identifier_hash=source.source_hash)
+            permission_params = {
+                **self._registry.get_reconstruction_parameters(source_target),
+                **source.params,
+            }
+        metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
+        if metadata is not None:
+            missing: list[str] = []
+            for parameter in self._project_target_parameters(target_type=request.type, parameters=metadata.parameters):
+                value = permission_params.get(parameter.name)
+                if parameter.required and (value is None or isinstance(value, str) and not value.strip()):
+                    missing.append(parameter.name)
+            if missing:
+                raise ValueError(
+                    f"Target type '{request.type}' requires explicit connection fields: {', '.join(missing)}. "
+                    "Supply these fields explicitly, or select an environment-initialized registered target."
+                )
+        await self._enforce_code_execution_permission_async(
+            target_type=request.type, params=permission_params, is_admin=is_admin
+        )
+        self._enforce_server_credential_permission(
+            target_type=request.type, params=permission_params, is_admin=is_admin
+        )
+        return target_cls, params
 
     async def update_credentials_async(
         self, *, target_registry_name: str, request: UpdateTargetCredentialsRequest
