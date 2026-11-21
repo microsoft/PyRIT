@@ -635,10 +635,6 @@ class TestAttackRoutes:
     @pytest.mark.parametrize(
         "converter_fields",
         [
-            {
-                "converter_ids": ["legacy-converter"],
-                "request_converter_configurations": [{"converter_ids": ["request-converter"]}],
-            },
             {"request_converter_configurations": []},
             {"request_converter_configurations": [{"converter_ids": []}]},
             {"response_converter_configurations": []},
@@ -678,10 +674,29 @@ class TestAttackRoutes:
                     "pieces": [{"original_value": "Hello"}],
                     "target_conversation_id": "attack-1",
                     "send": False,
-                    "converter_ids": ["legacy-converter"],
+                    "request_converter_configurations": [{"converter_ids": ["request-converter"]}],
                 },
             )
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+            mock_get_service.return_value.add_message_async.assert_not_called()
+
+    @pytest.mark.parametrize("converter_ids", [["legacy-converter"], [], None])
+    def test_add_message_rejects_removed_top_level_converter_ids(
+        self, client: TestClient, converter_ids: list[str] | None
+    ) -> None:
+        """Test that a client still sending converter_ids is rejected instead of sent without converters."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            response = client.post(
+                "/api/attacks/attack-1/messages",
+                json={
+                    "pieces": [{"original_value": "Hello"}],
+                    "target_conversation_id": "attack-1",
+                    "target_registry_name": "test-target",
+                    "converter_ids": converter_ids,
+                },
+            )
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+            assert "request_converter_configurations" in response.text
             mock_get_service.return_value.add_message_async.assert_not_called()
             mock_get_service.return_value.add_message_async.assert_not_called()
 
