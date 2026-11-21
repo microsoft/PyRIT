@@ -496,7 +496,7 @@ async def test_html_report_renders_per_judge_breakdown_from_real_builders(patch_
             ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers"),
             "Objective Scorer: JudgeA ({hash}) (recorded)",
         ),
-        (None, "Objective Scorer: Unknown scorer (not recorded) (unknown)"),
+        (None, "Objective Scorer: Unknown scorer (unknown)"),
     ],
 )
 async def test_html_report_names_a_single_judge_under_the_headline(patch_central_database, recorded, expected):

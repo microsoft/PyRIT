@@ -300,7 +300,7 @@ class ScenarioObjectiveScorerAttribution(str, Enum):
     RUN = "run"
     #: The recorded scorer disagrees with the planned binding.
     CONFLICT = "conflict"
-    #: No saved source identifies the scorer.
+    #: Saved evidence cannot identify one scorer, including mixed child scorers.
     UNKNOWN = "unknown"
 
 

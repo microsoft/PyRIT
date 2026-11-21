@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from unit.mocks import (
+    judged_attack_identifier,
     make_scenario_result,
     make_sequential_attack_results,
     make_suite_execution,
@@ -423,7 +424,7 @@ def test_attack_objective_scorer_identifier_falls_back_to_the_run_scorer():
         (ComponentIdentifier(class_name="JudgeA", class_module="tests"), "a" * 64, "recorded", f"JudgeA ({'a' * 12})"),
         (None, "b" * 64, "planned", f"Scorer {'b' * 12}"),
         (None, None, "conflict", "Conflicting scorer records"),
-        (None, None, "unknown", "Unknown scorer (not recorded)"),
+        (None, None, "unknown", "Unknown scorer"),
     ],
 )
 def test_judge_label_describes_how_much_is_known_about_the_scorer(identifier, scorer_hash, attribution, label):
@@ -435,3 +436,20 @@ def test_judge_label_describes_how_much_is_known_about_the_scorer(identifier, sc
     )
 
     assert objective_scorer_label(objective_scorer) == label
+
+
+def test_mixed_compound_label_does_not_claim_its_scorers_were_unrecorded() -> None:
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="attack",
+        envelope_outcome=AttackOutcome.SUCCESS,
+        child_outcomes=[AttackOutcome.SUCCESS, AttackOutcome.FAILURE],
+    )
+    envelope.metadata["completion_policy"] = "exhaustive"
+    for child, scorer in zip(children, [_REFUSAL, _OBJECTIVE], strict=True):
+        child.atomic_attack_identifier = judged_attack_identifier(scorer)
+    result = make_scenario_result(attack_results={"attack": [*children, envelope]})
+
+    [population] = scenario_overview(result).objective_scorers
+
+    assert population.attribution == ScenarioObjectiveScorerAttribution.UNKNOWN
+    assert objective_scorer_label(population) == "Unknown scorer"

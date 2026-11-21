@@ -159,7 +159,7 @@ def objective_scorer_label(objective_scorer: ScenarioObjectiveScorerStatistics) 
         return f"Scorer {objective_scorer.scorer_hash[:12]}"
     if objective_scorer.attribution == ScenarioObjectiveScorerAttribution.CONFLICT:
         return "Conflicting scorer records"
-    return "Unknown scorer (not recorded)"
+    return "Unknown scorer"
 
 
 def format_rate(rate: float | None) -> str:
