@@ -769,7 +769,7 @@ describe("App", () => {
       .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
       .mockImplementationOnce(() => new Promise((resolve) => { finishSecond = resolve; }));
     renderApp("/registry/targets");
-    await user.click(screen.getByRole("button", { name: "Set detection targets" }));
+    await user.click(await screen.findByRole("button", { name: "Set detection targets" }));
     expect(screen.getByLabelText("Adversarial target")).toHaveTextContent("test_target");
     await user.click(screen.getByRole("button", { name: "Detect capabilities" }));
     expect(detect).toHaveBeenCalledTimes(1);
@@ -782,13 +782,13 @@ describe("App", () => {
     expect(detect).toHaveBeenCalledTimes(2);
     await act(async () => finishSecond(detect.mock.calls[1][0]));
     await user.click(screen.getByTestId("nav-config"));
-    expect(screen.getByLabelText("Adversarial target")).toHaveTextContent("none");
+    expect(await screen.findByLabelText("Adversarial target")).toHaveTextContent("none");
     const results = JSON.parse(screen.getByLabelText("Detection results").textContent!);
     expect(results.test_target.state).toBe("Saved");
     expect(results.second_target.state).toBe("Saved");
     expect(detect).toHaveBeenCalledTimes(2);
     await user.click(screen.getByTestId("nav-chat"));
-    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(await screen.findByTestId("active-target-name")).toHaveTextContent("test_target");
     expect(screen.getByLabelText("Active target multi-turn")).toHaveTextContent("false");
   });
 
@@ -804,7 +804,7 @@ describe("App", () => {
     });
     renderApp(originalPath);
     expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "analytics");
-    expect(screen.getByLabelText("Analytics URL")).toHaveTextContent(originalPath);
+    expect(await screen.findByLabelText("Analytics URL")).toHaveTextContent(originalPath);
     await user.click(screen.getByRole("button", { name: "Open analytics result" }));
     await screen.findByTestId("chat-window");
     await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("analytics-result"));
@@ -902,14 +902,14 @@ describe("App", () => {
     expect(message.closest(`.${fluentProviderClassNames.root}`)).not.toBeNull();
   });
 
-  it("renders the view named by the initial URL", () => {
+  it("renders the view named by the initial URL", async () => {
     renderApp("/registry/targets");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "registry"
     );
-    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
   });
 
   it("redirects /registry to the target registry", async () => {
@@ -944,14 +944,14 @@ describe("App", () => {
     expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/attack\/chat$/);
   });
 
-  it("renders presets and suites together as a registry section", () => {
+  it("renders presets and suites together as a registry section", async () => {
     renderApp("/registry/scenario-presets");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "registry"
     );
-    expect(screen.getByTestId("scenario-preset-registry")).toBeInTheDocument();
+    expect(await screen.findByTestId("scenario-preset-registry")).toBeInTheDocument();
   });
 
   it("redirects a bookmarked suite library URL to the combined registry section", async () => {
@@ -968,22 +968,22 @@ describe("App", () => {
     );
   });
 
-  it("renders the suite editor as a nested registry route", () => {
+  it("renders the suite editor as a nested registry route", async () => {
     renderApp("/registry/scenario-suites/nightly_suite/edit");
 
-    const editor = screen.getByTestId("scenario-suite-editor");
+    const editor = await screen.findByTestId("scenario-suite-editor");
     expect(editor).toHaveAttribute("data-mode", "edit");
     expect(editor).toHaveTextContent("nightly_suite");
   });
 
-  it("renders transient suite execution progress under the scanner", () => {
+  it("renders transient suite execution progress under the scanner", async () => {
     renderApp("/scanner/history/suites/executions/execution-1");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "scenarios"
     );
-    expect(screen.getByTestId("scenario-suite-execution-page")).toHaveTextContent("execution-1");
+    expect(await screen.findByTestId("scenario-suite-execution-page")).toHaveTextContent("execution-1");
   });
 
   it("passes the globally resolved Operation to the scanner, which launches suites", async () => {
@@ -1000,7 +1000,7 @@ describe("App", () => {
 
     renderApp("/scanner/launch");
 
-    const catalog = screen.getByTestId("scenario-catalog");
+    const catalog = await screen.findByTestId("scenario-catalog");
     await waitFor(() => {
       expect(catalog).toHaveAttribute("data-operation-id", operationId);
       expect(catalog).toHaveAttribute("data-defaults-ready", "true");
@@ -1048,17 +1048,17 @@ describe("App", () => {
     expect(screen.getByRole("tab", { name: "Converters" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("renders configuration at /config", () => {
+  it("renders configuration at /config", async () => {
     renderApp("/config");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "configuration"
     );
-    expect(screen.getByTestId("configuration")).toBeInTheDocument();
+    expect(await screen.findByTestId("configuration")).toBeInTheDocument();
   });
 
-  it("renders the attack history tab when deep-linked to /attack/history", () => {
+  it("renders the attack history tab when deep-linked to /attack/history", async () => {
     renderApp("/attack/history");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
@@ -1067,33 +1067,33 @@ describe("App", () => {
     );
     expect(screen.getByRole("heading", { level: 1, name: "Attacks" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("attack-history")).toBeInTheDocument();
+    expect(await screen.findByTestId("attack-history")).toBeInTheDocument();
   });
 
-  it("renders the dataset catalog when deep-linked to /datasets", () => {
+  it("renders the dataset catalog when deep-linked to /datasets", async () => {
     renderApp("/datasets");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "datasets"
     );
-    expect(screen.getByTestId("dataset-catalog")).toBeInTheDocument();
+    expect(await screen.findByTestId("dataset-catalog")).toBeInTheDocument();
   });
 
-  it("keeps the dataset selection query on the datasets view", () => {
+  it("keeps the dataset selection query on the datasets view", async () => {
     renderApp("/datasets/detail?selection_key=dataset%3Aunnamed");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "datasets"
     );
-    expect(screen.getByTestId("dataset-selection")).toHaveAttribute(
+    expect(await screen.findByTestId("dataset-selection")).toHaveAttribute(
       "data-location",
       "/datasets/detail?selection_key=dataset%3Aunnamed"
     );
   });
 
-  it("switches to the datasets view via the sidebar", () => {
+  it("switches to the datasets view via the sidebar", async () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-datasets"));
@@ -1102,53 +1102,53 @@ describe("App", () => {
       "data-current-view",
       "datasets"
     );
-    expect(screen.getByTestId("dataset-catalog")).toBeInTheDocument();
+    expect(await screen.findByTestId("dataset-catalog")).toBeInTheDocument();
   });
 
-  it("renders the scenario catalog when deep-linked to /scanner", () => {
+  it("renders the scenario catalog when deep-linked to /scanner", async () => {
     renderApp("/scanner/launch");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "scenarios"
     );
-    expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
+    expect(await screen.findByTestId("scenario-catalog")).toBeInTheDocument();
   });
 
-  it("renders the scenario detail view and marks the sidebar current when deep-linked to /scanner/:name", () => {
+  it("renders the scenario detail view and marks the sidebar current when deep-linked to /scanner/:name", async () => {
     renderApp("/scanner/launch/foundry.red_team_agent");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "scenarios"
     );
-    expect(screen.getByTestId("scenario-detail")).toBeInTheDocument();
+    expect(await screen.findByTestId("scenario-detail")).toBeInTheDocument();
   });
 
-  it("renders the scanner run dashboard and keeps History current when deep-linked to /scanner/history/:id", () => {
+  it("renders the scanner run dashboard and keeps History current when deep-linked to /scanner/history/:id", async () => {
     renderApp("/scanner/history/sr-123");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "scenarios"
     );
-    expect(screen.getByTestId("scenario-run-page")).toBeInTheDocument();
+    expect(await screen.findByTestId("scenario-run-page")).toBeInTheDocument();
   });
 
-  it("renders the scanner run dashboard for a direct attack detail link", () => {
+  it("renders the scanner run dashboard for a direct attack detail link", async () => {
     renderApp("/scanner/history/sr-123/attack-456");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "scenarios"
     );
-    expect(screen.getByTestId("scenario-run-page")).toHaveAttribute(
+    expect(await screen.findByTestId("scenario-run-page")).toHaveAttribute(
       "data-location",
       "/scanner/history/sr-123/attack-456"
     );
   });
 
-  it("renders scanner history in its URL-backed history tab", () => {
+  it("renders scanner history in its URL-backed history tab", async () => {
     renderApp("/scanner/history?operator=alice");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
@@ -1156,10 +1156,10 @@ describe("App", () => {
       "scenarios"
     );
     expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("scenario-history")).toBeInTheDocument();
+    expect(await screen.findByTestId("scenario-history")).toBeInTheDocument();
   });
 
-  it("switches to the scenarios view via the sidebar", () => {
+  it("switches to the scenarios view via the sidebar", async () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-scenarios"));
@@ -1168,34 +1168,34 @@ describe("App", () => {
       "data-current-view",
       "scenarios"
     );
-    expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
+    expect(await screen.findByTestId("scenario-catalog")).toBeInTheDocument();
   });
 
   it("keeps scanner launch and history in the same feature and restores its filters", async () => {
     renderApp("/scanner/history?operator=alice");
-    fireEvent.click(screen.getByRole("tab", { name: "Launch" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Launch" }));
     expect(await screen.findByTestId("scenario-catalog")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "History" }));
     expect(await screen.findByTestId("scenario-history")).toHaveAttribute("data-location", "/scanner/history?operator=alice");
   });
 
-  it("passes the active target and labels to the scenario detail view", () => {
+  it("passes the active target and labels to the scenario detail view", async () => {
     renderApp("/scanner/launch/foundry.red_team_agent");
 
-    expect(screen.getByTestId("scenario-detail-has-target")).toHaveTextContent("no");
+    expect(await screen.findByTestId("scenario-detail-has-target")).toHaveTextContent("no");
     expect(screen.getByTestId("scenario-detail-labels-json")).toHaveTextContent("operator");
   });
 
-  it("navigates from scenario detail to the registry when it requests it", () => {
+  it("navigates from scenario detail to the registry when it requests it", async () => {
     renderApp("/scanner/launch/foundry.red_team_agent");
 
-    fireEvent.click(screen.getByTestId("scenario-detail-go-config"));
+    fireEvent.click(await screen.findByTestId("scenario-detail-go-config"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "registry"
     );
-    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
   });
 
   it.each([
@@ -1246,7 +1246,7 @@ describe("App", () => {
     expect(screen.getByTestId("dataset-state")).toHaveTextContent(JSON.stringify(state));
   });
 
-  it("switches to chat view", () => {
+  it("switches to chat view", async () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-chat"));
@@ -1255,10 +1255,10 @@ describe("App", () => {
       "data-current-view",
       "chat"
     );
-    expect(screen.getByTestId("chat-window")).toBeInTheDocument();
+    expect(await screen.findByTestId("chat-window")).toBeInTheDocument();
   });
 
-  it("switches to the target registry view", () => {
+  it("switches to the target registry view", async () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
@@ -1267,36 +1267,36 @@ describe("App", () => {
       "data-current-view",
       "registry"
     );
-    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
   });
 
-  it("switches back to chat from the registry", () => {
+  it("switches back to chat from the registry", async () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
-    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("nav-chat"));
-    expect(screen.getByTestId("chat-window")).toBeInTheDocument();
+    expect(await screen.findByTestId("chat-window")).toBeInTheDocument();
   });
 
-  it("sets conversationId from chat window", () => {
+  it("sets conversationId from chat window", async () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-chat"));
-    expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
+    expect(await screen.findByTestId("conversation-id")).toHaveTextContent("none");
 
     fireEvent.click(screen.getByTestId("set-conversation"));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");
   });
 
-  it("retains and trusts the active target when creating an attack", () => {
+  it("retains and trusts the active target when creating an attack", async () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
-    fireEvent.click(screen.getByTestId("set-target"));
+    fireEvent.click(await screen.findByTestId("set-target"));
     fireEvent.click(screen.getByTestId("nav-chat"));
-    fireEvent.click(screen.getByTestId("set-conversation"));
+    fireEvent.click(await screen.findByTestId("set-conversation"));
 
     expect(screen.getByTestId("attack-target-hash")).toHaveTextContent("test-target-hash");
     expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
@@ -1335,34 +1335,34 @@ describe("App", () => {
     expect(mockListTargets).toHaveBeenCalledTimes(1);
   });
 
-  it("clears conversationId on new attack", () => {
+  it("clears conversationId on new attack", async () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-chat"));
-    fireEvent.click(screen.getByTestId("set-conversation"));
+    fireEvent.click(await screen.findByTestId("set-conversation"));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");
 
     fireEvent.click(screen.getByRole("button", { name: "New attack", exact: true }));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
   });
 
-  it("uses a remembered target when starting the next chat", () => {
+  it("uses a remembered target when starting the next chat", async () => {
     renderApp();
 
     // Switch to chat and confirm no target initially
     fireEvent.click(screen.getByTestId("nav-chat"));
-    expect(screen.getByTestId("has-target")).toHaveTextContent("no");
+    expect(await screen.findByTestId("has-target")).toHaveTextContent("no");
 
     // Switch to the registry and set a target
     fireEvent.click(screen.getByTestId("nav-config"));
-    fireEvent.click(screen.getByTestId("set-target"));
+    fireEvent.click(await screen.findByTestId("set-target"));
 
     // Switch back to chat — target should be present
     fireEvent.click(screen.getByTestId("nav-chat"));
-    expect(screen.getByTestId("has-target")).toHaveTextContent("yes");
+    expect(await screen.findByTestId("has-target")).toHaveTextContent("yes");
   });
 
-  it("switches to history view", () => {
+  it("switches to history view", async () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-history"));
@@ -1371,31 +1371,31 @@ describe("App", () => {
       "data-current-view",
       "chat"
     );
-    expect(screen.getByTestId("attack-history")).toBeInTheDocument();
+    expect(await screen.findByTestId("attack-history")).toBeInTheDocument();
   });
 
-  it("navigates from empty history to the registry when no target is active", () => {
+  it("navigates from empty history to the registry when no target is active", async () => {
     renderApp("/attack/history");
 
-    expect(screen.getByTestId("history-has-target")).toHaveTextContent("no");
+    expect(await screen.findByTestId("history-has-target")).toHaveTextContent("no");
     fireEvent.click(screen.getByTestId("history-configure-target"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "registry");
-    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
   });
 
-  it("navigates from empty history to chat when a target is active", () => {
+  it("navigates from empty history to chat when a target is active", async () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
-    fireEvent.click(screen.getByTestId("set-target"));
+    fireEvent.click(await screen.findByTestId("set-target"));
     fireEvent.click(screen.getByTestId("nav-history"));
 
-    expect(screen.getByTestId("history-has-target")).toHaveTextContent("yes");
+    expect(await screen.findByTestId("history-has-target")).toHaveTextContent("yes");
     fireEvent.click(screen.getByTestId("history-start-attack"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "chat");
-    expect(screen.getByTestId("chat-window")).toBeInTheDocument();
+    expect(await screen.findByTestId("chat-window")).toBeInTheDocument();
   });
 
   it("opens attack from history and switches to chat", async () => {
@@ -1403,7 +1403,7 @@ describe("App", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-history"));
-    fireEvent.click(screen.getByTestId("open-attack"));
+    fireEvent.click(await screen.findByTestId("open-attack"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
@@ -1431,7 +1431,7 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByTestId("conversation-id")).toHaveTextContent("home-conv-1"));
   });
 
-  it("navigates to the registry from the home view", () => {
+  it("navigates to the registry from the home view", async () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("home-go-config"));
@@ -1440,7 +1440,7 @@ describe("App", () => {
       "data-current-view",
       "registry"
     );
-    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
   });
 
   it("returns to the unsent draft through navigation but resets it through Home New attack", async () => {
@@ -1462,7 +1462,7 @@ describe("App", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-history"));
-    fireEvent.click(screen.getByTestId("open-attack"));
+    fireEvent.click(await screen.findByTestId("open-attack"));
 
     // Should switch to chat view even on error
     expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "chat");
@@ -1553,7 +1553,7 @@ describe("App", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-history"));
-    fireEvent.click(screen.getByTestId("open-attack"));
+    fireEvent.click(await screen.findByTestId("open-attack"));
 
     await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-attack-1"));
     await waitFor(() => expect(screen.getByTestId("attack-load-error")).toBeInTheDocument());
@@ -1579,27 +1579,27 @@ describe("App", () => {
 
     // Simulate: user is already on attack A with a branched conv selected.
     fireEvent.click(screen.getByTestId("nav-chat"));
-    fireEvent.click(screen.getByTestId("set-conversation"));      // attack A, main conv-123
+    fireEvent.click(await screen.findByTestId("set-conversation"));      // attack A, main conv-123
     // Resolve the (unrelated) getAttack triggered earlier to keep state quiet
     // — actually nothing called it yet because set-conversation routes through
     // onConversationCreated, not handleOpenAttack. Proceed.
-    fireEvent.click(screen.getByTestId("select-conversation"));   // branched conv-456 in attack A
-    expect(screen.getByTestId("attack-result-id")).toHaveTextContent("ar-123");
-    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-456");
+    fireEvent.click(await screen.findByTestId("select-conversation"));   // branched conv-456 in attack A
+    expect(await screen.findByTestId("attack-result-id")).toHaveTextContent("ar-123");
+    expect(await screen.findByTestId("active-conversation-id")).toHaveTextContent("conv-456");
 
     // User clicks Open Attack on attack B in history.
     fireEvent.click(screen.getByTestId("nav-history"));
-    fireEvent.click(screen.getByTestId("open-attack-2"));        // ar-attack-2
+    fireEvent.click(await screen.findByTestId("open-attack-2"));        // ar-attack-2
 
     // The loading shell must not use attack A's active conversation.
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "chat"
     );
-    expect(screen.getByTestId("attack-result-id")).toHaveTextContent("none");
-    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("none");
-    expect(screen.getByTestId("draft-attack-id")).toHaveTextContent("ar-attack-2");
-    expect(screen.getByTestId("draft-conversation-id")).toHaveTextContent("none");
+    expect(await screen.findByTestId("attack-result-id")).toHaveTextContent("none");
+    expect(await screen.findByTestId("active-conversation-id")).toHaveTextContent("none");
+    expect(await screen.findByTestId("draft-attack-id")).toHaveTextContent("ar-attack-2");
+    expect(await screen.findByTestId("draft-conversation-id")).toHaveTextContent("none");
 
     // After getAttack resolves: the conv id belonging to attack B is committed.
     resolveGetAttack({
@@ -1610,8 +1610,8 @@ describe("App", () => {
     await waitFor(() =>
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("attack-conv-2")
     );
-    expect(screen.getByTestId("conversation-id")).toHaveTextContent("attack-conv-2");
-    expect(screen.getByTestId("draft-conversation-id")).toHaveTextContent("attack-conv-2");
+    expect(await screen.findByTestId("conversation-id")).toHaveTextContent("attack-conv-2");
+    expect(await screen.findByTestId("draft-conversation-id")).toHaveTextContent("attack-conv-2");
   });
 
   it("reloads the previous attack when returning before another metadata request finishes", async () => {
@@ -1879,7 +1879,7 @@ describe("App", () => {
 
     let finishRender: () => void = () => {};
     mockCreatedAttackRender = new Promise<void>((resolve) => { finishRender = resolve; });
-    await user.click(screen.getByRole("button", { name: "Set Conv" }));
+    await user.click(await screen.findByRole("button", { name: "Set Conv" }));
 
     expect(screen.getByTestId("route-location")).toHaveTextContent("/attack/chat");
     expect(screen.getByRole("button", { name: "Set Conv" })).toBeDisabled();
@@ -1894,26 +1894,26 @@ describe("App", () => {
     expect(mockGetAttack).not.toHaveBeenCalled();
   });
 
-  it("stores attack target when conversation is created with active target", () => {
+  it("stores attack target when conversation is created with active target", async () => {
     renderApp();
 
     // Set a target first
     fireEvent.click(screen.getByTestId("nav-config"));
-    fireEvent.click(screen.getByTestId("set-target"));
+    fireEvent.click(await screen.findByTestId("set-target"));
     fireEvent.click(screen.getByTestId("nav-chat"));
 
     // Create a conversation (which should store target info)
-    fireEvent.click(screen.getByTestId("set-conversation"));
-    expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");
+    fireEvent.click(await screen.findByTestId("set-conversation"));
+    expect(await screen.findByTestId("conversation-id")).toHaveTextContent("conv-123");
   });
 
-  it("sets active conversation when onSelectConversation is called", () => {
+  it("sets active conversation when onSelectConversation is called", async () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-chat"));
 
     // First create a conversation to have an attack
-    fireEvent.click(screen.getByTestId("set-conversation"));
+    fireEvent.click(await screen.findByTestId("set-conversation"));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");
 
     // Now select a different conversation
@@ -2110,11 +2110,11 @@ describe("App", () => {
       .toHaveAttribute("data-navigation-state", JSON.stringify(returnContext));
   });
 
-  it("hydrates history filters from the URL query string", () => {
+  it("hydrates history filters from the URL query string", async () => {
     renderApp("/attack/history?outcome=success&operator=alice&attackType=PromptSendingAttack&converter=Base64Converter");
 
     const filters = JSON.parse(
-      screen.getByTestId("history-filters").textContent ?? "{}"
+      (await screen.findByTestId("history-filters")).textContent ?? "{}"
     );
     expect(filters.outcome).toBe("success");
     expect(filters.operator).toEqual(["alice"]);
@@ -2122,11 +2122,11 @@ describe("App", () => {
     expect(filters).not.toHaveProperty("converter");
   });
 
-  it("writes filter changes into the URL", () => {
+  it("writes filter changes into the URL", async () => {
     renderApp("/attack/history");
 
     expect(
-      JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
+      JSON.parse((await screen.findByTestId("history-filters")).textContent ?? "{}").outcome
     ).toBe("");
 
     fireEvent.click(screen.getByTestId("set-outcome-filter"));
@@ -2137,20 +2137,20 @@ describe("App", () => {
     ).toBe("success");
   });
 
-  it("restores history filters when returning via the feature tab", () => {
+  it("restores history filters when returning via the feature tab", async () => {
     renderApp("/attack/history?outcome=success");
 
     expect(
-      JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
+      JSON.parse((await screen.findByTestId("history-filters")).textContent ?? "{}").outcome
     ).toBe("success");
 
     fireEvent.click(screen.getByTestId("nav-config"));
-    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("nav-chat"));
-    fireEvent.click(screen.getByRole("tab", { name: "History" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "History" }));
     expect(
-      JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
+      JSON.parse((await screen.findByTestId("history-filters")).textContent ?? "{}").outcome
     ).toBe("success");
   });
 
@@ -2504,7 +2504,7 @@ describe("App", () => {
       expect(screen.getByTestId("active-target-name")).toHaveTextContent("revisited-target")
     );
     await user.click(screen.getByTestId("nav-history"));
-    await user.click(screen.getByTestId("open-attack"));
+    await user.click(await screen.findByTestId("open-attack"));
 
     await waitFor(() =>
       expect(screen.getByTestId("attack-result-id")).toHaveTextContent("none")
@@ -2616,9 +2616,9 @@ describe("App", () => {
     renderApp();
 
     await user.click(screen.getByTestId("nav-config"));
-    await user.click(screen.getByTestId("set-target"));
+    await user.click(await screen.findByTestId("set-target"));
     await user.click(screen.getByTestId("nav-history"));
-    await user.click(screen.getByTestId("open-attack"));
+    await user.click(await screen.findByTestId("open-attack"));
 
     await waitFor(() =>
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
@@ -2654,14 +2654,14 @@ describe("App", () => {
     renderApp();
 
     await user.click(screen.getByTestId("nav-config"));
-    await user.click(screen.getByTestId("set-target"));
+    await user.click(await screen.findByTestId("set-target"));
     await user.click(screen.getByTestId("nav-history"));
-    await user.click(screen.getByTestId("open-attack"));
+    await user.click(await screen.findByTestId("open-attack"));
 
     await waitFor(() =>
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
     );
-    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(await screen.findByTestId("active-target-name")).toHaveTextContent("test_target");
     expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
   });
 
@@ -2687,9 +2687,9 @@ describe("App", () => {
     renderApp();
 
     await user.click(screen.getByTestId("nav-config"));
-    await user.click(screen.getByTestId("set-target"));
+    await user.click(await screen.findByTestId("set-target"));
     await user.click(screen.getByTestId("nav-history"));
-    await user.click(screen.getByTestId("open-attack"));
+    await user.click(await screen.findByTestId("open-attack"));
 
     await waitFor(() =>
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
@@ -2769,7 +2769,7 @@ describe("App", () => {
     const user = userEvent.setup();
     renderApp("/attack/history");
 
-    await user.click(screen.getByTestId("open-attack"));
+    await user.click(await screen.findByTestId("open-attack"));
     await waitFor(() =>
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("loading")
     );

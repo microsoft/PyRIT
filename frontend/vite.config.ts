@@ -167,28 +167,6 @@ export default defineConfig({
               return 'joyride-vendor'
             }
           }
-          if (
-            id.includes('/src/components/Scenarios/') ||
-            id.includes('/src/components/ScenarioPresets/') ||
-            id.includes('/src/components/ScenarioSuites/')
-          ) {
-            return 'scenarios-chunk'
-          }
-          if (id.includes('/src/components/Analytics/')) {
-            return 'analytics-chunk'
-          }
-          if (id.includes('/src/components/Datasets/')) {
-            return 'datasets-chunk'
-          }
-          if (id.includes('/src/components/History/')) {
-            return 'history-chunk'
-          }
-          if (id.includes('/src/components/Operations/')) {
-            return 'operations-chunk'
-          }
-          if (id.includes('/src/components/Config/') || id.includes('/src/components/Registry/')) {
-            return 'registry-chunk'
-          }
         },
       },
     },

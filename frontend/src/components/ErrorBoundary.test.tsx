@@ -66,6 +66,20 @@ describe('ErrorBoundary', () => {
     expect(screen.queryByTestId('error-boundary-fallback')).toBeNull()
   })
 
+  it('offers a reload instead of a retry when a screen chunk failed to load', () => {
+    function FailedChunk(): never {
+      throw new TypeError('Failed to fetch dynamically imported module: http://x/assets/A.js')
+    }
+    render(
+      <ErrorBoundary>
+        <FailedChunk />
+      </ErrorBoundary>
+    )
+
+    expect(screen.getByRole('button', { name: 'Reload page' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
   it('logs error to console via onError', () => {
     render(
       <ErrorBoundary>
