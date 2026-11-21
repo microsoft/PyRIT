@@ -168,8 +168,9 @@ class DatasetSource:
     name: concurrent runs can otherwise generate and store different batches.
 
     ``scorer_requirements`` states what this dataset needs judged, such as the evaluation
-    its objectives promise. Scenarios that set ``SUPPORTS_OBJECTIVE_SCORER_POOL`` select or
-    check an objective scorer that meets it; other scenarios reject a source that declares it.
+    its objectives promise. Scenarios that set ``SUPPORTS_OBJECTIVE_SCORER_POOL``, and
+    Psychosocial, select or check an objective scorer that meets it; other scenarios reject a
+    source that declares it.
     Overrides of the same source keep it.
     """
 
@@ -264,6 +265,21 @@ class DatasetConstraintError(ValueError):
     while letting the CLI/backend present a friendly "dataset X doesn't satisfy
     scenario Y's requirements" message.
     """
+
+
+class MissingDatasetError(DatasetConstraintError):
+    """Raised when a dataset read finds no seeds in memory, naming that dataset."""
+
+    def __init__(self, message: str, *, dataset_name: str) -> None:
+        """
+        Initialize the error.
+
+        Args:
+            message (str): The error message.
+            dataset_name (str): The dataset that has no seeds in memory.
+        """
+        super().__init__(message)
+        self.dataset_name = dataset_name
 
 
 def require_nonempty() -> Callable[[ResolvedDataset], None]:
@@ -875,7 +891,8 @@ class DatasetConfiguration:
             list[Seed]: The seeds for ``dataset_name``.
 
         Raises:
-            DatasetConstraintError: If the dataset is absent or its filters match no seeds.
+            MissingDatasetError: If the dataset has no seeds in memory.
+            DatasetConstraintError: If the configured filters match none of its seeds.
         """
         candidates = _candidate_populations.get()
         if candidates is not None and dataset_name in candidates:
@@ -896,9 +913,10 @@ class DatasetConfiguration:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' has seeds, but none match the configured filters {self._filters}."
                 )
-            raise DatasetConstraintError(
+            raise MissingDatasetError(
                 f"Dataset '{dataset_name}' could not be loaded: no seeds found in memory. "
-                "Call prepare_async() before reading a new selection, or import the dataset."
+                "Call prepare_async() before reading a new selection, or import the dataset.",
+                dataset_name=dataset_name,
             )
         return found
 
