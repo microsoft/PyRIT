@@ -149,6 +149,17 @@ class TestInitializerServiceListInitializers:
             assert result.items[1].initializer_name == "init_3"
             assert result.pagination.has_more is True
 
+    async def test_list_initializers_rejects_a_stale_cursor(self) -> None:
+        metadata_list = [_make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(5)]
+
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
+
+            with pytest.raises(ValueError, match="not valid for the initializer registry"):
+                await service.list_initializers_async(limit=2, cursor="unregistered")
+
     async def test_list_initializers_last_page_has_more_false(self) -> None:
         metadata_list = [_make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(3)]
 

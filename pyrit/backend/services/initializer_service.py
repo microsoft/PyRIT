@@ -165,13 +165,18 @@ class InitializerService:
         Returns:
             tuple[list[RegisteredInitializer], bool]: Paginated items and has-more flag.
         """
-        start_idx = 0
+        start_idx = None
         if cursor:
             for index, item in enumerate(items):
                 if item.initializer_name == cursor:
                     start_idx = index + 1
                     break
+            if start_idx is None:
+                # A cursor naming an entry that no longer exists must not silently
+                # restart at the first page, which would serve duplicate rows.
+                raise ValueError("The cursor is not valid for the initializer registry")
 
+        start_idx = start_idx or 0
         page = items[start_idx : start_idx + limit]
         has_more = len(items) > start_idx + limit
         return page, has_more

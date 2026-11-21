@@ -194,10 +194,15 @@ async def test_list_empty_and_terminal_pages_async(registry: AttackTechniqueRegi
     assert empty.pagination.next_cursor is None
 
 
-async def test_list_unknown_cursor_starts_at_first_page_like_targets_async(registry: AttackTechniqueRegistry) -> None:
-    page = await TechniqueService().list_async(limit=3, cursor="missing")
-    assert [item.name for item in page.items] == registry.instances.get_names()[:3]
-    assert page.pagination.prev_cursor == "missing"
+async def test_list_unknown_cursor_is_rejected_async(registry: AttackTechniqueRegistry) -> None:
+    """A cursor naming an unregistered technique must not restart the listing.
+
+    The restart behavior this test used to pin predates the scorer registry
+    change, which made the stale cursor contract explicit: silently serving
+    the first page again hands a paging client duplicate rows.
+    """
+    with pytest.raises(ValueError, match="not valid for the technique registry"):
+        await TechniqueService().list_async(limit=3, cursor="missing")
 
 
 def test_rest_list_follows_all_pages_with_default_limit(
