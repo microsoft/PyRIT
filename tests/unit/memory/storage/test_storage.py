@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -12,6 +13,7 @@ from pyrit.memory import (
     DiskStorageIO,
     SupportedContentType,
 )
+from unit.async_utils import wait_for_event_async
 
 
 @pytest.fixture
@@ -533,3 +535,107 @@ async def test_is_file_lazy_initializes_client(azure_blob_storage_io):
 
     mock_create.assert_called_once()
     assert result is True
+
+
+async def test_blob_storage_keeps_shared_client_open_for_concurrent_operations_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container", sas_token="token")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    stream = AsyncMock()
+    stream.readall = AsyncMock(return_value=b"data")
+
+    async def held_download_async() -> AsyncMock:
+        started.set()
+        await release.wait()
+        return stream
+
+    slow_blob = MagicMock()
+    slow_blob.download_blob = AsyncMock(side_effect=held_download_async)
+    fast_blob = MagicMock()
+    fast_blob.get_blob_properties = AsyncMock()
+    client = MagicMock()
+    client.close = AsyncMock()
+    client.get_blob_client = Mock(side_effect=lambda blob: slow_blob if blob == "slow.txt" else fast_blob)
+    storage._client_async = client
+
+    read = asyncio.create_task(storage.read_file_async("slow.txt"))
+    await wait_for_event_async(event=started, tasks=[read])
+    assert await storage.path_exists_async("fast.txt")
+    client.close.assert_not_awaited()
+    release.set()
+    assert await read == b"data"
+    client.close.assert_awaited_once()
+    assert storage._client_async is None
+
+
+async def test_blob_storage_overlapping_writes_share_one_client_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container", sas_token="token")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    client = MagicMock()
+    client.close = AsyncMock()
+
+    async def upload_async(*, name: str, **kwargs: object) -> None:
+        if name == "slow.png":
+            started.set()
+            await release.wait()
+        if client.close.await_count:
+            raise RuntimeError("Session is closed")
+
+    client.upload_blob = AsyncMock(side_effect=upload_async)
+    with patch("azure.storage.blob.aio.ContainerClient.from_container_url", return_value=client) as create:
+        slow = asyncio.create_task(storage.write_file_async("slow.png", b"slow"))
+        await wait_for_event_async(event=started, tasks=[slow])
+        await storage.write_file_async("fast.png", b"fast")
+        client.close.assert_not_awaited()
+        release.set()
+        await slow
+
+    create.assert_called_once()
+    client.close.assert_awaited_once()
+    assert storage._client_async is None
+
+
+async def test_blob_storage_creates_one_client_for_concurrent_first_operations_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container", sas_token="token")
+    client = MagicMock()
+    client.close = AsyncMock()
+    with patch("azure.storage.blob.aio.ContainerClient.from_container_url", return_value=client) as create:
+        acquired = await asyncio.gather(storage._acquire_client_async(), storage._acquire_client_async())
+
+    assert acquired == [client, client]
+    create.assert_called_once()
+    await storage._release_client_async()
+    client.close.assert_not_awaited()
+    await storage._release_client_async()
+    client.close.assert_awaited_once()
+
+
+async def test_blob_upload_stream_shares_the_client_with_concurrent_operations_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container", sas_token="token")
+    uploading = asyncio.Event()
+    release = asyncio.Event()
+
+    async def held_upload_async(**kwargs: object) -> None:
+        uploading.set()
+        await release.wait()
+
+    blob = MagicMock()
+    blob.get_blob_properties = AsyncMock()
+    client = MagicMock()
+    client.close = AsyncMock()
+    client.upload_blob = AsyncMock(side_effect=held_upload_async)
+    client.get_blob_client = Mock(return_value=blob)
+    storage._client_async = client
+
+    async def chunks_async() -> AsyncIterator[bytes]:
+        yield b"data"
+
+    upload = asyncio.create_task(storage.write_stream_async(path="uploads/a.bin", chunks=chunks_async()))
+    await wait_for_event_async(event=uploading, tasks=[upload])
+    assert await storage.path_exists_async("uploads/b.bin")
+    client.close.assert_not_awaited()
+    release.set()
+    await upload
+    client.close.assert_awaited_once()
+    assert storage._client_async is None
