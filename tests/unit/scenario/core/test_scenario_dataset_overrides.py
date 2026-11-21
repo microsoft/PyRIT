@@ -23,6 +23,7 @@ from pyrit.models import (
     DatasetFetchPolicy,
     DatasetSelectionMode,
     DatasetSourceInput,
+    ScenarioDatasetOptions,
     ScenarioDatasetRequest,
     SeedObjective,
     SeedPrompt,
@@ -89,6 +90,22 @@ class _Scenario(Scenario):
                 memory_labels=context.memory_labels,
             )
         ]
+
+
+class _InlineScenario(_Scenario):
+    """Builds attacks from inline seeds instead of named datasets."""
+
+    def __init__(self, *, scenario_result_id: str | None = None) -> None:
+        Scenario.__init__(
+            self,
+            version=1,
+            technique_class=_Technique,
+            default_dataset_config=DatasetAttackConfiguration(
+                seeds=[SeedObjective(value=f"inline-{index}") for index in range(5)], max_total=5
+            ),
+            objective_scorer=SubStringScorer(substring="yes"),
+            scenario_result_id=scenario_result_id,
+        )
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -217,6 +234,81 @@ async def test_catalog_dataset_controls_do_not_depend_on_estimates() -> None:
     assert [source.name for source in item.dataset_defaults.sources] == ApiKey.required_datasets()
     assert item.default_datasets == ApiKey.required_datasets()
     assert item.dataset_defaults.max_total == 20
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_inline_default_seeds_fix_sources_but_keep_other_overrides() -> None:
+    with patch.object(ScenarioRegistry, "_discover"):
+        registry = ScenarioRegistry()
+        registry.register_class(_InlineScenario, name="inline")
+        with patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry):
+            [item] = (await ScenarioService().list_scenarios_async(include_estimates=False)).items
+    assert item.dataset_options.mode is DatasetSelectionMode.FIXED
+    assert item.dataset_options.supports_overrides
+    assert item.dataset_options.total_limit
+    assert item.dataset_options.filters
+    assert item.dataset_defaults.sources == []
+
+    limited = _InlineScenario()
+    limited.set_params_from_args(args={"dataset_overrides": {"max_total": 2}})
+    assert (await limited.get_run_size_estimate_async()).effective_datasets.max_total == 2
+
+    replaced = _InlineScenario()
+    replaced.set_params_from_args(args={"dataset_overrides": {"sources": [{"name": "harmbench"}]}})
+    with pytest.raises(ValueError, match="Cannot replace inline seeds"):
+        await replaced.get_run_size_estimate_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_inline_seeds_drop_a_declared_minimum_selection() -> None:
+    class _RequiredInlineScenario(_InlineScenario):
+        DATASET_OPTIONS = ScenarioDatasetOptions(min_selected=1)
+
+    options = _RequiredInlineScenario().get_dataset_options()
+    assert options.mode is DatasetSelectionMode.FIXED
+    assert options.min_selected is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_default_estimate_ignores_an_earlier_inline_configuration() -> None:
+    class _RequiredScenario(_Scenario):
+        DATASET_OPTIONS = ScenarioDatasetOptions(min_selected=1)
+
+        def __init__(self) -> None:
+            Scenario.__init__(
+                self,
+                version=1,
+                technique_class=_Technique,
+                default_dataset_config=DatasetAttackConfiguration(max_per_dataset="all", max_total="all"),
+                objective_scorer=SubStringScorer(substring="yes"),
+            )
+
+    scenario = _RequiredScenario()
+    inline = DatasetAttackConfiguration(seeds=[SeedObjective(value="x")], max_total=1)
+    scenario.set_params_from_args(args={"dataset_config": inline})
+    await scenario.get_run_size_estimate_async()
+
+    estimate = await scenario.get_default_run_size_estimate_async()
+    assert estimate.status.value == "unavailable"
+    assert estimate.note == "Select a dataset."
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("args", [{}, {"dataset_overrides": {"sources": [{"name": "a"}]}}])
+async def test_declared_minimum_selection_applies_with_or_without_overrides(args: dict[str, object]) -> None:
+    class _RequiredScenario(_Scenario):
+        DATASET_OPTIONS = ScenarioDatasetOptions(min_selected=3)
+
+    scenario = _RequiredScenario()
+    scenario.set_params_from_args(args=args)
+    with pytest.raises(ValueError, match=r"^Select at least 3 datasets\.$"):
+        await scenario.get_run_size_estimate_async()
+
+
+def test_dataset_options_reject_a_minimum_above_the_maximum() -> None:
+    assert ScenarioDatasetOptions(min_selected=2, max_selected=2).min_selected == 2
+    with pytest.raises(ValueError, match="min_selected can't exceed max_selected"):
+        ScenarioDatasetOptions(min_selected=2, max_selected=1)
 
 
 @pytest.mark.usefixtures("patch_central_database")

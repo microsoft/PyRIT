@@ -199,6 +199,11 @@ Options:
   before overrides, validation, and preparation. Do not rewrite user selections in validators.
 - Declare `DATASET_OPTIONS` (or parameter-aware `get_dataset_options()`): `ANY` only for
   generic named populations, `SUBSET` for approved alternatives, `FIXED` for ingredients.
+  The base `get_dataset_options()` reports `FIXED` for inline `seeds` / `seed_groups`, since
+  named sources can't replace them; keep that in an override. Their limits and filters keep
+  the declared capabilities. Set `min_selected`
+  when a scenario has no default sources and can't run without one, so clients mark the
+  selection required instead of checking the scenario name.
   Disable limits that would truncate ingredients. Compound source edits are ambiguous;
   preserve child shaping/caps and allow only supported global edits.
 - Estimates expose `dataset_defaults`, `effective_datasets`, and `dataset_options`.
