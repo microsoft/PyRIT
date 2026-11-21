@@ -127,6 +127,20 @@ async def test_convert_async_preserves_punctuation_on_masked_word():
     assert result.output_text == "[MASK]. Then assemble"
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("make नमस्ते now", "make [MASK] now"),
+        ("make café now", "make [MASK] now"),
+        ("make café! now", "make [MASK]! now"),
+    ],
+)
+async def test_convert_async_masks_trailing_combining_marks_with_word(prompt, expected):
+    converter = SATAMaskingConverter(num_masks=1, skip_first=1)
+    result = await converter.convert_async(prompt=prompt)
+    assert result.output_text == expected
+
+
 async def test_convert_async_preserves_newlines_between_words():
     converter = SATAMaskingConverter(num_masks=1, skip_first=0)
     result = await converter.convert_async(prompt="process.\nThen assemble")

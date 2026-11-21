@@ -61,6 +61,16 @@ class TargetTypeEntry(BaseModel):
         default_factory=_default_auth_modes,
         description="Authentication modes this target type supports",
     )
+    saveable_auth_modes: list[AuthMode] = Field(
+        default_factory=list,
+        description=(
+            "The supported authentication modes a saved target of this type can use. Empty when the type can't "
+            "be saved; not_saveable_reason says why. The values a target is given are checked when it's saved"
+        ),
+    )
+    not_saveable_reason: str | None = Field(
+        None, description="Why a target of this type can't be saved, or None when it can be with a saveable mode"
+    )
     description: str | None = Field(None, description="Short description of the target from its docstring")
 
 
@@ -77,26 +87,9 @@ class TargetListResponse(BaseModel):
     pagination: PaginationInfo = Field(..., description="Pagination metadata")
 
 
-class CreateTargetRequest(RegistrationRequest):
-    """Request to create a new target instance."""
+class TargetParametersRequest(BaseModel):
+    """The target type, constructor parameters, and auth mode that a target is built from."""
 
-    # LEGACY COMPATIBILITY: The current target configuration UI does not send a
-    # name. Make this field required after that UI sends explicit registry names.
-    name: str | None = Field(
-        None,
-        min_length=1,
-        pattern=REGISTRY_INSTANCE_NAME_PATTERN,
-        description="Unique registry name; omitted only for legacy UI compatibility",
-    )
-    persist: bool = Field(
-        False,
-        description=(
-            "Save the target so it comes back after the backend restarts or is reinitialized (true), or keep it "
-            "only until then (false). A saved target needs a name of lowercase letters, digits, and underscores, "
-            "and can't hold or use a key: it authenticates with Microsoft Entra ID ('identity') or needs no key."
-        ),
-    )
-    source: SourceInstanceSpec | None = None
     type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
     params: dict[IdentifierStr, JSONValue] = Field(
         default_factory=dict, max_length=MAX_ITEMS, description="Target constructor parameters"
@@ -112,6 +105,28 @@ class CreateTargetRequest(RegistrationRequest):
             "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets."
         ),
     )
+
+
+class CreateTargetRequest(TargetParametersRequest, RegistrationRequest):
+    """Request to create a new target instance."""
+
+    # LEGACY COMPATIBILITY: The GUI now sends a name whenever it registers a target. Requiring the name for
+    # registered targets would break API callers that leave it out, so that is left to a separate breaking change.
+    name: str | None = Field(
+        None,
+        min_length=1,
+        pattern=REGISTRY_INSTANCE_NAME_PATTERN,
+        description="Unique registry name, required with persist; when omitted, the backend generates one",
+    )
+    persist: bool = Field(
+        False,
+        description=(
+            "Save the target so it comes back after the backend restarts or is reinitialized (true), or keep it "
+            "only until then (false). A saved target needs a name of lowercase letters, digits, and underscores, "
+            "and can't hold or use a key: it authenticates with Microsoft Entra ID ('identity') or needs no key."
+        ),
+    )
+    source: SourceInstanceSpec | None = None
     private: bool | None = Field(
         None,
         description=(
@@ -160,6 +175,10 @@ class CreateTargetRequest(RegistrationRequest):
             )
         validate_registry_name(self.name)
         return self
+
+
+class TargetSaveabilityRequest(TargetParametersRequest):
+    """A target to check, as a create request would give it, without building or saving it."""
 
 
 class UnregisteredTarget(BaseModel):
