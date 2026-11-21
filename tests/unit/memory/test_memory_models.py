@@ -52,6 +52,7 @@ from pyrit.models import (
     ConversationReference,
     ConversationType,
     ConverterIdentifier,
+    Equals,
     MessagePiece,
     ScenarioIdentifier,
     ScenarioResult,
@@ -63,6 +64,7 @@ from pyrit.models import (
     SeedRecord,
     SeedSimulatedConversation,
     TargetIdentifier,
+    ToolsCalled,
 )
 from unit.mocks import make_scenario_result
 
@@ -496,6 +498,34 @@ class TestScoreEntry:
         assert entry.score_value == "0.9"
         assert entry.score_type == "float_scale"
         assert entry.scored_expectation == {"schema_version": 1, "objective": "test objective", "conditions": []}
+
+    def test_score_stored_with_an_argument_name_that_is_not_a_path_still_loads(self):
+        """A requirement saved before argument names became paths can hold any nonempty name."""
+        stored = {
+            "schema_version": 1,
+            "objective": "test objective",
+            "conditions": [
+                {
+                    "condition_type": "tools_called",
+                    "tools": [
+                        {
+                            "name": "send_email",
+                            "arguments": [{"name": "a..b", "matcher": Equals(value="x").model_dump(mode="json")}],
+                        }
+                    ],
+                }
+            ],
+        }
+        entry = ScoreEntry(entry=_make_score())
+        entry.scored_expectation = stored
+
+        recovered = entry.get_score()
+
+        assert recovered.scored_expectation is not None
+        condition = recovered.scored_expectation.conditions[0]
+        assert isinstance(condition, ToolsCalled)
+        assert condition.tools[0].arguments[0].name == "a..b"
+        assert ScoreEntry(entry=recovered).scored_expectation == stored
 
     def test_roundtrip_get_score(self):
         score = _make_score()

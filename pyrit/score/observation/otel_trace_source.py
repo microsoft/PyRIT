@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 from typing import TYPE_CHECKING
@@ -19,38 +20,111 @@ from pyrit.models import (
     TraceCoverage,
     TraceQuery,
 )
+from pyrit.models.score._argument_paths import keep_argument_paths, validate_kept_argument_paths
 from pyrit.score.observation.trace_client import TraceAcquisitionError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from pydantic import JsonValue
 
     from pyrit.models import TraceQueryResult, TraceScorable, TraceSpan
     from pyrit.score.observation.trace_client import TraceClient
 
 logger = logging.getLogger(__name__)
 
+#: The GenAI semantic-convention attribute that carries a tool call's arguments.
+_ARGUMENTS_ATTRIBUTE = "gen_ai.tool.call.arguments"
+_KEPT_ARGUMENTS_ERROR = "kept_arguments must be a sequence of distinct, nonempty argument paths, none inside another."
+
+
+def _has_non_finite_number(value: JsonValue) -> bool:
+    """
+    Find a NaN or infinite number anywhere in a JSON value.
+
+    Returns:
+        bool: Whether the value holds a number that is not finite.
+    """
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, dict):
+        return any(_has_non_finite_number(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_non_finite_number(item) for item in value)
+    return False
+
+
+def _keep_arguments(value: JsonValue | None, *, kept: tuple[str, ...]) -> dict[str, JsonValue] | None:
+    """
+    Keep only the named arguments of one call, nested as they were, redacting the rest.
+
+    A number that is not finite is not JSON, whether it arrives as a ``NaN`` or ``Infinity``
+    constant, as a literal too large to represent, or inside an already-parsed object.
+
+    Returns:
+        dict[str, JsonValue] | None: The kept arguments the call has, or None if its arguments
+            are missing, are not a JSON object, or hold a number that is not finite.
+    """
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
+    if not isinstance(value, dict) or _has_non_finite_number(value):
+        return None
+    return keep_argument_paths(value, kept=kept)
+
 
 class OtelTraceSource:
-    """Normalize explicit GenAI/OpenInference execution spans into safe evidence."""
+    """
+    Normalize explicit GenAI/OpenInference execution spans into safe evidence.
 
-    def __init__(self, *, trace_client: TraceClient, max_spans: int = 10000, timeout_seconds: float = 30) -> None:
+    Tool arguments are redacted at write time. By default none are kept. ``kept_arguments`` opts in
+    to keeping the named arguments from the span's ``gen_ai.tool.call.arguments`` attribute: a
+    top-level key, or a dotted path such as ``recipient.email`` that keeps only that nested field.
+    Every other argument, and the raw attribute, is discarded before the evidence is stored. Spans
+    that do not carry that attribute keep no arguments.
+    """
+
+    def __init__(
+        self,
+        *,
+        trace_client: TraceClient,
+        max_spans: int = 10000,
+        timeout_seconds: float = 30,
+        kept_arguments: Sequence[str] = (),
+    ) -> None:
         """
         Initialize bounded acquisition through a caller-owned client.
 
         Raises:
-            ValueError: If the retrieval limit or timeout is not positive and finite.
+            ValueError: If the retrieval limit or timeout is not positive and finite, or the kept
+                argument paths are not distinct, nonempty, and apart from one another.
         """
         if max_spans < 1 or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("max_spans and timeout_seconds must be positive.")
+        if isinstance(kept_arguments, str):
+            raise ValueError(_KEPT_ARGUMENTS_ERROR)
+        try:
+            validate_kept_argument_paths(kept_arguments)
+        except ValueError:
+            raise ValueError(_KEPT_ARGUMENTS_ERROR) from None
         self._client = trace_client
         self._max_spans = max_spans
         self._timeout_seconds = timeout_seconds
+        self._kept_arguments = tuple(kept_arguments)
 
     def get_identifier(self) -> ComponentIdentifier:
         """Return parser version and source identity without serializing the client."""
         return ComponentIdentifier.of(
             self,
-            params={"normalization_version": 1, "max_spans": self._max_spans, "timeout_seconds": self._timeout_seconds},
+            params={
+                "normalization_version": 1,
+                "max_spans": self._max_spans,
+                "timeout_seconds": self._timeout_seconds,
+                # Omitted while empty, so a source that keeps no arguments keeps its identity.
+                "kept_arguments": list(self._kept_arguments) or None,
+            },
             children={"trace_client": self._client.get_identifier()},
         )
 
@@ -75,7 +149,7 @@ class OtelTraceSource:
             )
 
         spans, reasons = _scoped_spans(result=result, scope=scorable, max_spans=self._max_spans)
-        events, normalization_reasons = self._normalize(spans=spans)
+        events, normalization_reasons = self._normalize(spans=spans, kept=self._kept_arguments)
         reasons.extend(normalization_reasons)
         acquisition = Acquisition.PARTIAL if reasons else Acquisition.COMPLETE
         return self._observation(
@@ -101,11 +175,12 @@ class OtelTraceSource:
                 scope=scorable,
                 events=events,
                 coverage=TraceCoverage(complete=acquisition is Acquisition.COMPLETE, reasons=reasons),
+                kept_arguments=self._kept_arguments,
             ),
         )
 
     @staticmethod
-    def _normalize(*, spans: Sequence[TraceSpan]) -> tuple[tuple[ToolExecution, ...], list[str]]:
+    def _normalize(*, spans: Sequence[TraceSpan], kept: tuple[str, ...]) -> tuple[tuple[ToolExecution, ...], list[str]]:
         events: list[ToolExecution] = []
         reasons: list[str] = []
         for span in spans:
@@ -130,6 +205,7 @@ class OtelTraceSource:
                     start_time=span.start_time,
                     end_time=span.end_time,
                     status=span.status,
+                    arguments=_keep_arguments(span.attributes.get(_ARGUMENTS_ATTRIBUTE), kept=kept) if kept else None,
                 )
             )
         events.sort(key=lambda event: (event.start_time, event.trace_id, event.span_id))

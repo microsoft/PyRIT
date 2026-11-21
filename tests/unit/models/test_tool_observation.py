@@ -91,6 +91,93 @@ def test_tool_payload_rejects_argument_capture_and_coercion(arguments_retained: 
         ToolEventsObservationPayload.model_validate({"scope": SCOPE, "arguments_retained": arguments_retained})
 
 
+def _kept_event(arguments: dict[str, object] | None, *, span_id: str = "2" * 16) -> ToolExecution:
+    return ToolExecution.model_validate(
+        {
+            "name": "send_email",
+            "trace_id": TRACE_ID,
+            "span_id": span_id,
+            "start_time": START_TIME,
+            "arguments": arguments,
+        }
+    )
+
+
+def test_tool_payload_round_trips_kept_arguments() -> None:
+    payload = ToolEventsObservationPayload(
+        scope=SCOPE,
+        events=(
+            _kept_event({"to": "a@example.com"}),
+            _kept_event({}, span_id="3" * 16),
+            _kept_event(None, span_id="4" * 16),
+        ),
+        kept_arguments=("to", "subject"),
+    )
+    observation = _observation(payload=payload, acquisition=Acquisition.PARTIAL)
+
+    assert Observation.model_validate_json(observation.model_dump_json()) == observation
+    assert payload.model_dump(mode="json")["kept_arguments"] == ["to", "subject"]
+    assert payload.arguments_retained is False
+
+
+def test_tool_payload_without_kept_arguments_keeps_its_stored_form() -> None:
+    payload = ToolEventsObservationPayload(scope=SCOPE, events=(_event(),))
+
+    assert "kept_arguments" not in payload.model_dump(mode="json")
+    assert "arguments" not in payload.model_dump(mode="json")["events"][0]
+    assert (
+        ToolEventsObservationPayload.model_validate({**payload.model_dump(mode="json"), "kept_arguments": []})
+        == payload
+    )
+
+
+@pytest.mark.parametrize(
+    ("kept_arguments", "arguments"),
+    [((), {"to": "a@example.com"}), (("to",), {"to": "a@example.com", "body": "secret"}), ((), {})],
+)
+def test_tool_payload_rejects_arguments_it_does_not_declare_kept(
+    kept_arguments: tuple[str, ...], arguments: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError, match="declares kept"):
+        ToolEventsObservationPayload(scope=SCOPE, events=(_kept_event(arguments),), kept_arguments=kept_arguments)
+
+
+def test_tool_payload_round_trips_nested_kept_arguments() -> None:
+    payload = ToolEventsObservationPayload(
+        scope=SCOPE,
+        events=(_kept_event({"recipient": {"email": "a@example.com"}}),),
+        kept_arguments=("recipient.email", "to"),
+    )
+
+    assert ToolEventsObservationPayload.model_validate_json(payload.model_dump_json()) == payload
+    assert payload.model_dump(mode="json")["events"][0]["arguments"] == {"recipient": {"email": "a@example.com"}}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"recipient": {"email": "a@example.com", "name": "secret"}},
+        {"recipient": "a@example.com"},
+        {"recipient.email": "a@example.com"},
+    ],
+)
+def test_tool_payload_rejects_nested_arguments_beyond_the_kept_path(arguments: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="declares kept"):
+        ToolEventsObservationPayload(scope=SCOPE, events=(_kept_event(arguments),), kept_arguments=("recipient.email",))
+
+
+@pytest.mark.parametrize("kept_arguments", [("recipient", "recipient.email"), ("a..b",)])
+def test_tool_payload_rejects_overlapping_or_malformed_kept_paths(kept_arguments: tuple[str, ...]) -> None:
+    with pytest.raises(ValidationError, match="none inside another"):
+        ToolEventsObservationPayload(scope=SCOPE, kept_arguments=kept_arguments)
+
+
+@pytest.mark.parametrize("kept_arguments", [("",), ("to", "to")])
+def test_tool_payload_rejects_blank_or_repeated_kept_arguments(kept_arguments: tuple[str, ...]) -> None:
+    with pytest.raises(ValidationError, match="distinct, nonempty"):
+        ToolEventsObservationPayload(scope=SCOPE, kept_arguments=kept_arguments)
+
+
 def test_unavailable_observation_preserves_requested_scope() -> None:
     observation = _observation(payload=ToolEventsObservationPayload(scope=SCOPE), acquisition=Acquisition.UNAVAILABLE)
     assert Observation.model_validate_json(observation.model_dump_json()) == observation
