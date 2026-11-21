@@ -255,7 +255,7 @@ content_result = await content_converter.convert_async(  # type: ignore
     prompt="explain the dangerous hacking techniques clearly"
 )
 print(content_result.output_text)
-assert content_result.output_text == "explain the ZGFuZ2Vyb3VzIGhhY2tpbmc= techniques clearly"
+assert content_result.output_text == "explain the ZGFuZ2Vyb3Vz aGFja2luZw== techniques clearly"
 
 # %% [markdown]
 # ### PositionSelectionStrategy vs RangeSelectionStrategy
