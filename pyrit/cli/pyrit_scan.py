@@ -1485,7 +1485,11 @@ def main(args: list[str] | None = None) -> int:
             parser.print_help()
             return 0
         parser.print_usage(sys.stderr)
-        print(f"{parser.prog}: error: a command is required; see '{parser.prog} --help'", file=sys.stderr)
+        print(
+            f"{parser.prog}: error: a command is required "
+            f"(got: {' '.join(parsed_args._translated_args)}); see '{parser.prog} --help'",
+            file=sys.stderr,
+        )
         return 2
 
     # Unknown flags are only expected for `run` (scenario-declared flags, resolved

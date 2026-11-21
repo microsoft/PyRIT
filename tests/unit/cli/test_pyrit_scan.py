@@ -378,6 +378,12 @@ class TestVerbPlacement:
         mock_run.assert_not_called()
         assert "error:" in capsys.readouterr().err
 
+    def test_commandless_arguments_error_names_them(self, capsys):
+        assert pyrit_scan.main(["--server-url", "http://x", "--list-targets"]) == 2
+        err = capsys.readouterr().err
+        assert "a command is required" in err
+        assert "--server-url http://x --list-targets" in err
+
     def test_no_arguments_shows_help(self, capsys):
         assert pyrit_scan.main([]) == 0
         assert "<command>" in capsys.readouterr().out
