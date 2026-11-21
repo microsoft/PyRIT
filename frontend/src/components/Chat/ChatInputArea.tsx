@@ -136,7 +136,6 @@ interface ChatInputAreaProps {
   attackOperator?: string
   onConfigureTarget?: () => void
   onBrowseSeedPrompts?: () => void
-  showSeedInspiration?: boolean
   onToggleConverterPanel: () => void
   isConverterPanelOpen: boolean
   onInputChange: (value: string) => void
@@ -164,7 +163,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   onSend, conversionRevisionKey = '', disabled = false, fileDropEnabled = true, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
   operatorLocked = false, crossTargetLocked = false,
   targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, onConfigureTarget,
-  onBrowseSeedPrompts, showSeedInspiration = false,
+  onBrowseSeedPrompts,
   onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange,
   convertedValue, onClearConversion, onClearAllConversions, onConvertedValueChange,
   converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip,
@@ -299,15 +298,6 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
 
   return <div className={styles.root}>
     <div className={styles.inputContainer}>
-      {showSeedInspiration && onBrowseSeedPrompts && (
-        <div className={styles.seedInspiration} data-testid="seed-inspiration-callout">
-          <Text size={200}>Need inspiration? Browse seed prompts already loaded in memory.</Text>
-          <Button appearance="subtle" className={styles.touchTarget} onClick={onBrowseSeedPrompts}
-            data-testid="browse-seed-prompts-btn">
-            Browse seed prompts
-          </Button>
-        </div>
-      )}
       {isTargetResolutionBlocking(targetResolutionStatus) ? (
         <TargetResolutionBanner status={targetResolutionStatus} activeTarget={activeTarget} onRetry={onRetryTargetResolution}
           onConfigureTarget={onConfigureTarget} onUseAsTemplate={onUseAsTemplate} styles={styles} />
@@ -403,10 +393,23 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
         </div>
         </>
       )}
-      {onBrowseSeedPrompts && <Button appearance="subtle" className={styles.touchTarget}
-        aria-label="Browse seed prompts from composer" onClick={onBrowseSeedPrompts}>
-        Seed prompts
-      </Button>}
+      {onBrowseSeedPrompts && (
+        <div className={styles.seedPromptActions}>
+          <Button appearance="subtle" size="small" className={styles.seedInspiration}
+            onClick={onBrowseSeedPrompts} data-testid="browse-seed-prompts-btn"
+            icon={<svg className={styles.seedMascot} width="24" height="32" viewBox="0 0 28 36"
+              aria-hidden="true" focusable="false">
+              <path d="M20 15V9a7 7 0 0 0-14 0v17a5 5 0 0 0 10 0V13a3 3 0 0 0-6 0v12"
+                fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              <ellipse cx="10" cy="11" rx="3" ry="3.5" className={styles.seedMascotEye} />
+              <ellipse cx="17" cy="11" rx="3" ry="3.5" className={styles.seedMascotEye} />
+              <circle cx="10.5" cy="11.5" r="1" fill="currentColor" />
+              <circle cx="17.5" cy="11.5" r="1" fill="currentColor" />
+            </svg>}>
+            Need inspiration? Browse seed prompts
+          </Button>
+        </div>
+      )}
     </div>
   </div>
 })

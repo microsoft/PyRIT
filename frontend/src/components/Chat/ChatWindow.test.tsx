@@ -352,6 +352,24 @@ describe("ChatWindow Integration", () => {
     labels: { operator: 'testuser', operation: 'test_op' },
   };
 
+  it("should keep the seed inspiration helper after sending the first draft", async () => {
+    const user = userEvent.setup();
+    mockSendResult.mockResolvedValue(makeTextResponse("First reply"));
+    render(<TestWrapper><ChatWindow {...defaultProps} /></TestWrapper>);
+    const helperName = "Need inspiration? Browse seed prompts";
+    expect(screen.getByRole("button", { name: helperName })).toBeVisible();
+    await user.upload(screen.getByTestId("file-input"), new File(["image"], "draft.png", { type: "image/png" }));
+    expect(screen.getByRole("button", { name: helperName })).toBeVisible();
+    await user.type(screen.getByTestId("chat-input"), "First prompt");
+    expect(screen.getByRole("button", { name: helperName })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Remove draft.png" }));
+
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("First reply");
+    expect(screen.getByRole("button", { name: helperName })).toBeVisible();
+    expect(screen.queryByText("Seed prompts", { exact: true })).not.toBeInTheDocument();
+  });
+
   it("should keep the first send's transcript when the created attack route commits mid-send", async () => {
     const user = userEvent.setup();
     mockSendResult.mockImplementation(() => new Promise(() => {}));

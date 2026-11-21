@@ -394,7 +394,12 @@ test.describe("dataset example table", () => {
         && params.get("selection_key") === DATASET.selection_key;
     })).toBe(true);
 
-    await page.getByRole("link", { name: "Back to datasets" }).click();
+    await expect(page.getByRole("link", { name: "Back to datasets" })).toHaveCount(0);
+    let historySteps = 0;
+    while (new URL(page.url()).pathname === "/datasets/detail" && historySteps < 4) {
+      await page.goBack();
+      historySteps += 1;
+    }
     await expect(page).toHaveURL(/\/datasets\?/);
     await expect(page).toHaveURL(/q=harm(?:&|$)/);
     await expect(page).toHaveURL(/modality=text/);
@@ -402,7 +407,7 @@ test.describe("dataset example table", () => {
     await expect(page).toHaveURL(/sort=name/);
     await expect(page.getByRole("table", { name: "Examples" })).toHaveCount(0);
 
-    await page.goBack();
+    for (let entry = 0; entry < historySteps; entry++) await page.goForward();
     await expect(page.getByRole("region", { name: "Example detail" })).toBeVisible();
     await page.reload();
     await expect(page.getByRole("region", { name: "Example detail" })).toBeVisible();
