@@ -827,8 +827,9 @@ async def test_planning_media_takes_the_lifecycle_lock_before_inserting_the_run(
     assert (locks[0] < run_insert) if planned_media else not locks
 
 
+@pytest.mark.parametrize("references_stale_media", [False, True])
 async def test_stale_planned_media_does_not_block_unrelated_bulk_plan_inserts(
-    memories: tuple[SQLiteMemory, SQLiteMemory],
+    memories: tuple[SQLiteMemory, SQLiteMemory], references_stale_media: bool
 ) -> None:
     memory = memories[0]
     path = await _create_media_dataset_async(memory)
@@ -838,18 +839,25 @@ async def test_stale_planned_media_does_not_block_unrelated_bulk_plan_inserts(
     await memory.update_scenario_run_state_async(scenario_result_id=run_id, scenario_run_state=ScenarioRunState.FAILED)
     result = make_scenario_result(objective_target_identifier=get_mock_target_identifier(), attack_results={})
     await memory.add_planned_scenario_result_async(scenario_result=result, seed_groups_by_dataset={})
+    seeds = [SeedObjective(value="objective")]
+    if references_stale_media:
+        seeds.append(SeedPrompt(value=str(path), data_type="binary_path"))
     entry = ScenarioPlanSeedGroupEntry(
         scenario_result_id=result.id,
         dataset_name="text",
         position=0,
-        seed_group=AttackSeedGroup(seeds=[SeedObjective(value="objective")]),
+        seed_group=AttackSeedGroup(seeds=seeds),
     )
     table = ScenarioPlanSeedGroupEntry.__table__
+    statement = insert(table).values(**{column.name: getattr(entry, column.name) for column in table.columns})
 
     async with await memory.get_session_async() as session:
-        await session.execute(
-            insert(table).values(**{column.name: getattr(entry, column.name) for column in table.columns})
-        )
+        if references_stale_media:
+            # The reopened run already names this media, so only a count check catches the new reference.
+            with pytest.raises(ValueError, match="reserved for dataset cleanup"):
+                await session.execute(statement)
+            return
+        await session.execute(statement)
         await session.commit()
 
     assert await memory.get_planned_seed_groups_async(scenario_result_id=str(result.id)) == {
