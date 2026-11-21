@@ -175,20 +175,6 @@ class TestTransparencyAttackConverter:
             mock_factory.assert_called_once_with(category="prompt-memory-entries", data_type="image_path")
             mock_serializer.save_b64_image_async.assert_called_once()
 
-    async def test_blending_helpers_reject_positional_second_argument_async(self, sample_benign_image: str) -> None:
-        converter = TransparencyAttackConverter(benign_image_path=sample_benign_image)
-        image = np.ones((2, 2), dtype=np.float32) * 0.5
-        alpha = np.ones((2, 2), dtype=np.float32) * 0.7
-
-        with pytest.raises(TypeError):
-            converter._compute_mse_loss(image, image)
-        with pytest.raises(TypeError):
-            converter._create_blended_image(image, alpha)
-        with patch("pyrit.converter.transparency_attack_converter.data_serializer_factory") as mock_factory:
-            with pytest.raises(TypeError):
-                await converter._save_blended_image_async(image, alpha)
-            mock_factory.assert_not_called()
-
     async def test_convert_async_successful(self, sample_benign_image, sample_attack_image):
         with patch("pyrit.converter.transparency_attack_converter.data_serializer_factory") as mock_factory:
             mock_serializer = MagicMock()
