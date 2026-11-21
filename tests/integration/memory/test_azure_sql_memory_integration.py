@@ -18,6 +18,7 @@ from pyrit.memory import (
 )
 from pyrit.memory.memory_models import (
     ScenarioResultEntry,
+    ScoreEntry,
 )
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -25,8 +26,10 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     MessagePiece,
+    MessageScorable,
     ScenarioIdentifier,
     ScenarioResult,
+    Score,
     SeedPrompt,
 )
 
@@ -869,3 +872,36 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
             labels={"environment": "staging", "test_id": test_id},
         )
         assert len(results) == 0
+
+
+async def test_get_prompt_scores_matches_any_secondary_message_anchor(azuresql_instance: AzureSQLMemory):
+    """A multi-piece score is found by any of its pieces when many piece ids are requested at once."""
+    conversation_id = f"score-anchor-{generate_test_id()}"
+    pieces = [
+        MessagePiece(role="assistant", original_value=f"piece {index}", conversation_id=conversation_id, sequence=0)
+        for index in range(5)
+    ]
+    async with cleanup_conversation_data_async(azuresql_instance, [conversation_id]):
+        await azuresql_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+        score = Score(
+            score_value="True",
+            score_type="true_false",
+            scorer_class_identifier=get_test_scorer_identifier(),
+            message_piece_id=pieces[0].id,
+            scorable=MessageScorable(message_piece_ids=(pieces[0].id, pieces[3].id)),
+        )
+        await azuresql_instance.add_scores_to_memory_async(scores=[score])
+        try:
+            found = await azuresql_instance.get_prompt_scores_async(prompt_ids=[str(piece.id) for piece in pieces[1:]])
+            assert [stored.id for stored in found] == [score.id]
+            assert await azuresql_instance.get_prompt_scores_async(prompt_ids=[str(pieces[2].id)]) == []
+        finally:
+            async with await azuresql_instance.get_session_async() as session:
+                await session.run_sync(
+                    lambda sync_session: (
+                        sync_session.query(ScoreEntry)
+                        .filter(ScoreEntry.id == score.id)
+                        .delete(synchronize_session=False)
+                    )
+                )
+                await session.commit()
