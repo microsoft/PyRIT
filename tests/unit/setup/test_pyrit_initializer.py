@@ -726,15 +726,19 @@ class TestInitializerInfoContracts:
         """Without memory, both sandbox keys hold the same explanatory string."""
         from pyrit.memory import CentralMemory
 
-        CentralMemory.set_memory_instance(None)  # type: ignore[arg-type]
-
         class NoMemoryInfoInit(PyRITInitializer):
             """No memory"""
 
             async def initialize_async(self) -> None:
                 pass
 
-        info = await NoMemoryInfoInit.get_info_async()
+        with patch.object(
+            CentralMemory,
+            "get_memory_instance",
+            autospec=True,
+            side_effect=ValueError("Central memory instance has not been set."),
+        ):
+            info = await NoMemoryInfoInit.get_info_async()
 
         message = "Call await initialize_pyrit_async() first to see what this initializer configures"
         assert info == {
