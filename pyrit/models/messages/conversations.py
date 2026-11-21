@@ -231,8 +231,9 @@ def construct_response_from_request(
         Message: Constructed response message.
 
     """
-    if request.prompt_metadata:
-        prompt_metadata = {**request.prompt_metadata, **(prompt_metadata or {})}
+    response_metadata = dict[str, object](request.prompt_metadata)
+    if prompt_metadata:
+        response_metadata.update(prompt_metadata)
 
     return Message(
         message_pieces=[
@@ -242,7 +243,7 @@ def construct_response_from_request(
                 conversation_id=request.conversation_id,
                 original_value_data_type=response_type,
                 converted_value_data_type=response_type,
-                prompt_metadata=prompt_metadata or {},
+                prompt_metadata=response_metadata,
                 response_error=error,
             )
             for resp_text in response_text_pieces
