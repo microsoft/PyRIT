@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from pyrit.cli._target_credentials import CredentialSource
+    from pyrit.cli.api_client import PyRITApiClient
     from pyrit.models import Parameter
     from pyrit.models.catalog import (
         RunScenarioRequest,
@@ -1041,7 +1042,8 @@ def _reparse_with_scenario_params(*, parsed_args: Namespace, supported_params: l
     Returns:
         Namespace | None: The re-parsed Namespace, or ``None`` on argparse ``SystemExit``.
     """
-    translated: list[str] = getattr(parsed_args, "_translated_args", [])
+    # _parse_args_with_scenario_params stores the translated argv as a list[str].
+    translated = cast("list[str]", getattr(parsed_args, "_translated_args", []))
 
     if not supported_params:
         unknown = getattr(parsed_args, "_unknown_args", None)
@@ -1116,7 +1118,7 @@ def _build_run_request(*, parsed_args: Namespace, scenario_name: str) -> RunScen
 
 async def _poll_until_terminal_async(
     *,
-    client: Any,
+    client: PyRITApiClient,
     scenario_result_id: str,
 ) -> ScenarioRunSummary:
     """
