@@ -42,6 +42,7 @@ class ToolLoopStopReason(str, Enum):
 
     MAX_TOOL_ROUNDS_EXHAUSTED = "max_tool_rounds_exhausted"
     TOOL_INFRASTRUCTURE_ERROR = "tool_infrastructure_error"
+    INVALID_TOOL_CALLS = "invalid_tool_calls"
 
 
 class ToolLoopStop(BaseModel):

@@ -515,8 +515,13 @@ export interface TargetIdentifier {
   [key: string]: unknown
 }
 
+/** Where a registered target comes from, and so whether it is still there after a restart. */
+export type TargetOrigin = 'saved' | 'configuration' | 'temporary'
+
 export interface TargetInstance {
   target_registry_name: string
+  /** Saved, from the server's configuration, or Temporary. Absent for inner targets. */
+  origin?: TargetOrigin | null
   binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
@@ -543,13 +548,30 @@ export interface TargetListResponse {
 }
 
 export interface CreateTargetRequest {
+  /** Registry name; required with `persist`. */
+  name?: string
   type: string
   params: Record<string, unknown>
   auth_mode?: TargetAuthMode
+  /** Save the target so it comes back after a restart. */
+  persist?: boolean
   /** Makes the target visible to and usable by only its creator. */
   private?: boolean
   /** Lets the target's API key or request headers be updated later; defaults to true only when private. */
   allow_credential_updates?: boolean
+}
+
+/** A target to check before saving it, as a create request would give it. */
+export interface TargetSaveabilityRequest {
+  type: string
+  params: Record<string, unknown>
+  auth_mode?: TargetAuthMode
+}
+
+/** Whether an entry could be saved as asked, decided by the checks saving it runs. */
+export interface SaveabilityResponse {
+  /** Why it can't be saved, though it can be created without saving it; null if it can. */
+  not_saveable_reason: string | null
 }
 
 // --- Initializers ---
@@ -835,6 +857,10 @@ export interface TargetTypeEntry {
   target_type: string
   parameters: Parameter[]
   supported_auth_modes: TargetAuthMode[]
+  /** Auth modes a saved target of this type can use; empty when it can't be saved. */
+  saveable_auth_modes?: TargetAuthMode[]
+  /** Why a target of this type can't be saved. */
+  not_saveable_reason?: string | null
   description?: string | null
 }
 
@@ -1652,6 +1678,8 @@ export interface ScenarioDatasetRequest {
 export interface ScenarioDatasetOptions {
   mode: 'any' | 'subset' | 'fixed'
   allowed_names: string[]
+  /** The fewest named datasets a run needs, when the scenario has no usable defaults. */
+  min_selected?: number | null
   max_selected?: number | null
   per_dataset_limit: boolean
   total_limit: boolean
