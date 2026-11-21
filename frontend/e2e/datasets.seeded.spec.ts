@@ -108,7 +108,8 @@ test.describe("dataset examples against the real backend @seeded", () => {
           .screenshot({ path: testInfo.outputPath("provider-metadata.png") });
         await page.screenshot({ path: testInfo.outputPath("provider-description.png"), fullPage: true });
 
-        await page.getByRole("link", { name: "Back to datasets", exact: true }).click();
+        await expect(page.getByRole("link", { name: "Back to datasets", exact: true })).toHaveCount(0);
+        await page.goBack();
         await expect(page.getByRole("link", { name: provider.name, exact: true })).toBeVisible();
         await expect(page).toHaveURL((url: URL) => url.searchParams.get("view") === "available"
           && url.searchParams.get("q") === provider.name);
@@ -128,7 +129,7 @@ test.describe("dataset examples against the real backend @seeded", () => {
       if (outgoing.method() === "POST") postRequests.push(new URL(outgoing.url()).pathname);
     });
     await page.goto("/attack/chat");
-    await page.getByRole("button", { name: "Browse seed prompts", exact: true }).click();
+    await page.getByRole("button", { name: "Need inspiration? Browse seed prompts", exact: true }).click();
     await expect(page).toHaveURL(/\/datasets$/);
     await page.getByRole("link", { name: "jailbreak_templates", exact: true }).click();
     await page.getByRole("link", { name: "Return to Chat" }).click();
@@ -165,6 +166,7 @@ test.describe("dataset examples against the real backend @seeded", () => {
       const target = page.getByRole('combobox', { name: 'Objective target', exact: true });
       await target.selectOption('browser_offline');
       await page.getByPlaceholder('Type prompt here').fill('Keep my nonempty browser draft.');
+      await expect(page.getByRole('button', { name: 'Need inspiration? Browse seed prompts', exact: true })).toBeVisible();
       const browse = page.getByRole('button', { name: 'Browse seed prompts from composer' });
       await browse.focus();
       await page.keyboard.press('Enter');
@@ -220,6 +222,7 @@ test.describe("dataset examples against the real backend @seeded", () => {
         expect(before.ok()).toBe(true);
         sourceMessages = await before.json();
         await page.goto(`/attack/chat/${source.attack_result_id}/conversations/${source.conversation_id}`);
+        await expect(page.getByText('Preserve existing saved history.', { exact: true })).toBeVisible();
         await page.getByRole('button', { name: 'Browse seed prompts from composer' }).click();
       } else {
         await page.goto('/datasets');

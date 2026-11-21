@@ -1378,7 +1378,7 @@ describe('App draft handoff with the real chat and composer', () => {
     await returnToChat(user)
     await user.click(screen.getByRole('button', { name: 'Datasets', exact: true }))
     await screen.findByRole('heading', { name: 'Example dataset' })
-    expect(screen.getByRole('link', { name: 'Back to datasets' })).toHaveAttribute('href', '/datasets?q=example&sort=name')
+    expect(screen.queryByRole('link', { name: 'Back to datasets' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Previous page' })).toBeEnabled()
   })
 

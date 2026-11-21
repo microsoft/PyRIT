@@ -4,7 +4,7 @@ import { MessageBar, MessageBarBody, Spinner, Text } from '@fluentui/react-compo
 import { Link, useLocation, useSearchParams } from 'react-router'
 
 import { useLoadedDatasets } from '@/hooks/useLoadedDatasets'
-import { catalogPathFromNavigationState, chatOriginFromNavigationState, selectionKeyFromSearchParams } from '@/utils/routeParams'
+import { chatOriginFromNavigationState, selectionKeyFromSearchParams } from '@/utils/routeParams'
 
 import DatasetCard from './DatasetCard'
 import { SeedExampleBrowserView } from './SeedExampleBrowser'
@@ -28,7 +28,6 @@ export default function DatasetSelection() {
   const location = useLocation()
   const [searchParams] = useSearchParams()
   const selectionKey = selectionKeyFromSearchParams(searchParams)
-  const catalogPath = catalogPathFromNavigationState(location.state)
   const chatOrigin = chatOriginFromNavigationState(location.state)
   // Stay mounted while a catalog reload unmounts the table, so a runtime change
   // is still compared with the generation that owned the current page.
@@ -51,7 +50,6 @@ export default function DatasetSelection() {
 
   return (
     <section className={styles.root} aria-labelledby="dataset-selection-title">
-      <Link className={styles.backLink} to={catalogPath} state={chatOrigin ? { chatOrigin } : null}>Back to datasets</Link>
       {chatOrigin && <Link className={styles.backLink} to={chatOrigin.path} state={chatOrigin.state}>Return to Chat</Link>}
       <h1 id="dataset-selection-title" ref={headingRef} tabIndex={-1} className={styles.title}>
         {title}
