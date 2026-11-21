@@ -313,6 +313,30 @@ print(mixed.output_text)
 assert mixed.output_text == "prefix [⟪jbeq⟫] suffix"
 
 # %% [markdown]
+# ## 8. Convert One Field of a JSON Request
+#
+# Some targets take a JSON request, such as a decision model request with `state` and `questions`.
+# `JsonFieldConverter` applies a text converter to the string at one RFC 6901 JSON Pointer
+# (`/state`, `/messages/0/content`; `~1` and `~0` escape `/` and `~` in a key) and leaves the rest
+# of the request as it was, byte for byte. Markers are resolved inside that field, so they cannot
+# split the JSON, and markers in other fields stay in place for a later converter.
+
+# %%
+from pyrit.converter import JsonFieldConverter
+
+request = (
+    '{"state": "Refund my ⟪order⟫", "questions": {"refund": {"type": "noul", "instructions": "Is this a refund?"}}}'
+)
+json_field = JsonFieldConverter(sub_converter=Base64Converter(), json_pointer="/state")
+
+whole_field = await json_field.convert_async(prompt=request)  # type: ignore
+marked_only = await json_field.convert_tokens_async(prompt=request)  # type: ignore
+print(whole_field.output_text)
+print(marked_only.output_text)
+assert whole_field.output_text == request.replace('"Refund my ⟪order⟫"', '"UmVmdW5kIG15IOKfqm9yZGVy4p+r"')
+assert marked_only.output_text == request.replace('"Refund my ⟪order⟫"', '"Refund my b3JkZXI="')
+
+# %% [markdown]
 # ## Limits and Custom Converters
 #
 # Selective conversion requires text input and output. Use ordinary converters for whole-value media conversion.
