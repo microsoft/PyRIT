@@ -5,8 +5,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.6
 # ---
+
 # %% [markdown]
 # # Selectively Converting
 #
@@ -30,7 +31,9 @@ from io import StringIO
 
 from pyrit.converter import (
     Base64Converter,
+    ContentWordSelectionStrategy,
     IndexSelectionStrategy,
+    KeywordSelectionStrategy,
     ROT13Converter,
     SelectiveTextConverter,
     TokenSelectionStrategy,
@@ -187,6 +190,13 @@ for converter, expected in zip([Base64Converter(), ROT13Converter()], expected_s
 # | `WordProportionSelectionStrategy` | A random proportion of words; set a seed for repeatable selection. |
 # | `IndexSelectionStrategy` | A continuous character range; the end is exclusive. |
 # | `TokenSelectionStrategy` | Innermost regions marked by an earlier stage or by the input. |
+# | `RegexSelectionStrategy` | Character range of the first regex match (not word-level). |
+# | `KeywordSelectionStrategy` | Character range around the first keyword occurrence, with optional `context_before` / `context_after`. |
+# | `PositionSelectionStrategy` | Character range from proportional start to end positions (both required). |
+# | `RangeSelectionStrategy` | Same proportional character range logic as `PositionSelectionStrategy`, but `start_proportion` defaults to 0.0 and `end_proportion` defaults to 1.0. |
+# | `ProportionSelectionStrategy` | A proportion of characters anchored to start, end, middle, or random; set a seed for repeatable selection. |
+# | `AllWordsSelectionStrategy` | Selects every word (the default word-level strategy). |
+# | `ContentWordSelectionStrategy` | Selects content words (nouns/verbs), skipping stopwords; configure `max_words`, `skip_first`, and `min_word_length`. |
 #
 # Word selection uses a space as its default separator. Set `word_separator` when your input uses another separator.
 # Character selection can operate on phrases or multiline text.
@@ -205,6 +215,55 @@ characters = SelectiveTextConverter(
 character_result = await characters.convert_async(prompt="keep hello unchanged")  # type: ignore
 print(character_result.output_text)
 assert character_result.output_text == "keep uryyb unchanged"
+
+# %% [markdown]
+# ### KeywordSelectionStrategy with context
+#
+# `KeywordSelectionStrategy` finds the first occurrence of a keyword and can widen the selection
+# by `context_before` and `context_after` characters. This is useful when the keyword alone is
+# too narrow and you want surrounding context included in the conversion.
+
+# %%
+keyword_converter = SelectiveTextConverter(
+    sub_converter=ROT13Converter(),
+    selection_strategy=KeywordSelectionStrategy(keyword="secret", context_before=4, context_after=5),
+)
+# In "find the secret value here":
+#   "secret" starts at index 9; context_before=4 widens to index 5 ("the "),
+#   context_after=5 widens past "secret" (ends at 15) to index 20 (" valu").
+#   Selected region: "the secret valu" -> ROT13 -> "gur frperg inyh"
+keyword_result = await keyword_converter.convert_async(prompt="find the secret value here")  # type: ignore
+print(keyword_result.output_text)
+assert keyword_result.output_text == "find gur frperg inyhe here"
+
+# %% [markdown]
+# ### ContentWordSelectionStrategy with max_words and skip_first
+#
+# `ContentWordSelectionStrategy` picks content words (nouns, verbs, adjectives) while skipping
+# stopwords and function words. `skip_first` leaves leading content words unmasked,
+# and `max_words` caps how many are selected. This approximates SATA-style masking.
+
+# %%
+content_converter = SelectiveTextConverter(
+    sub_converter=Base64Converter(),
+    selection_strategy=ContentWordSelectionStrategy(max_words=2, skip_first=1),
+)
+# Words: ["explain", "the", "dangerous", "hacking", "techniques", "clearly"]
+# Content words (len>=3, not stopwords): explain, dangerous, hacking, techniques, clearly
+# skip_first=1 skips "explain"; max_words=2 selects "dangerous" and "hacking"
+content_result = await content_converter.convert_async(  # type: ignore
+    prompt="explain the dangerous hacking techniques clearly"
+)
+print(content_result.output_text)
+assert content_result.output_text == "explain the ZGFuZ2Vyb3VzIGhhY2tpbmc= techniques clearly"
+
+# %% [markdown]
+# ### PositionSelectionStrategy vs RangeSelectionStrategy
+#
+# `PositionSelectionStrategy` and `RangeSelectionStrategy` have identical `select_range` logic:
+# both compute `start = int(len(text) * start_proportion)` and `end = int(len(text) * end_proportion)`.
+# The only difference is that `PositionSelectionStrategy` requires both proportions at construction,
+# while `RangeSelectionStrategy` defaults `start_proportion` to 0.0 and `end_proportion` to 1.0.
 
 # %% [markdown]
 # ## 5. Put the Chain in an Attack
