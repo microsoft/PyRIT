@@ -17,16 +17,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
+from starlette.routing import Route
 from starlette.types import Scope
 
 import pyrit
 from pyrit import _compatibility
 from pyrit.backend.authentication_policy import resolve_authentication_policy
+from pyrit.backend.mcp_server import MCPEndpoint
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
 from pyrit.backend.middleware.auth import EntraAuthMiddleware
 from pyrit.backend.middleware.compatibility import CompatibilityAPI, CompatibilityMiddleware
 from pyrit.backend.middleware.request_size import RequestSizeLimitMiddleware
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
+from pyrit.backend.rest_tools import RestToolset
 from pyrit.backend.routes import (
     analytics,
     attacks,
@@ -88,7 +91,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     upload_cleanup = asyncio.create_task(staged_media_store.run_cleanup_async())
     try:
-        yield
+        async with mcp_endpoint.run_async():
+            yield
     finally:
         upload_cleanup.cancel()
         with suppress(asyncio.CancelledError):
@@ -129,7 +133,13 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID", _compatibility.COMPATIBILITY_HEADER],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Request-ID",
+        _compatibility.COMPATIBILITY_HEADER,
+        MCPEndpoint.PROTOCOL_VERSION_HEADER,
+    ],
 )
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
@@ -157,6 +167,11 @@ app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(media.router, prefix="/api", tags=["media"])
 app.include_router(scores.router, prefix="/api", tags=["scores"])
 app.include_router(version.router, tags=["version"])
+
+# External MCP clients call REST operations as tools here. A route rather than a mount, so the
+# path needs no trailing slash and is matched before the bundled frontend's catch-all mount.
+mcp_endpoint = MCPEndpoint(toolset=RestToolset(app=app), allowed_origins=_cors_origins)
+app.router.routes.append(Route(MCPEndpoint.PATH, endpoint=mcp_endpoint, name="mcp"))
 
 
 class SPAStaticFiles(StaticFiles):
