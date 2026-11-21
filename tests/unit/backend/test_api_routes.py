@@ -2142,6 +2142,61 @@ class TestVersionRoutes:
         assert data["modified"] is None
         assert data["display"] == data["version"]
 
+    def test_load_build_info_reads_known_keys(self, tmp_path: Path) -> None:
+        """Known keys are returned as written and extra keys from the Docker build are dropped."""
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(
+            json.dumps(
+                {"source": "git", "version": "1.0.0", "commit": None, "modified": True, "display": "abc + local"}
+            )
+        )
+
+        assert version_routes._load_build_info(build_info_path) == {
+            "source": "git",
+            "commit": None,
+            "modified": True,
+            "display": "abc + local",
+        }
+
+    def test_load_build_info_rejects_non_object(self, tmp_path: Path) -> None:
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(json.dumps(["git"]))
+
+        with pytest.raises(ValueError, match="must contain a JSON object, got list"):
+            version_routes._load_build_info(build_info_path)
+
+    @pytest.mark.parametrize(
+        ("key", "value", "expected"),
+        [
+            ("source", 1, "str"),
+            ("commit", 123, "str"),
+            ("modified", "true", "bool"),
+            ("display", None, "str"),
+        ],
+    )
+    def test_load_build_info_rejects_wrong_value_type(
+        self, *, tmp_path: Path, key: str, value: object, expected: str
+    ) -> None:
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(json.dumps({key: value}))
+
+        with pytest.raises(ValueError, match=f"Build info '{key}' must be {expected}, got {type(value).__name__}"):
+            version_routes._load_build_info(build_info_path)
+
+    def test_get_version_ignores_malformed_build_info(self, *, client: TestClient, tmp_path: Path) -> None:
+        """A wrongly typed build-info value falls back to defaults instead of failing the response."""
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(json.dumps({"source": "git", "commit": 123, "display": "abc"}))
+
+        with patch("pyrit.backend.routes.version.Path", return_value=build_info_path):
+            response = client.get("/api/version")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["source"] is None
+        assert data["commit"] is None
+        assert data["display"] == data["version"]
+
 
 class TestScoreRoutes:
     """Tests for score API routes."""
