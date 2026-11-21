@@ -22,6 +22,7 @@ from pyrit.converter import (
     LeetspeakConverter,
     MorseConverter,
     NatoConverter,
+    PigpenConverter,
     ROT13Converter,
     SearchReplaceConverter,
     ZalgoConverter,
@@ -130,6 +131,7 @@ class EncodingTechnique(ScenarioTechnique):
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
+    Pigpen = ("pigpen", set[str]())
     UbbiDubbi = ("ubbi_dubbi", set[str]())
 
     @classmethod
@@ -319,6 +321,7 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
+            ([PigpenConverter()], "pigpen", "pigpen"),
             # "ubbi_dubbi": a language game that prefixes each vowel run with "ub", popularized by
             # the PBS children's show Zoom (1972). https://en.wikipedia.org/wiki/Ubbi_dubbi
             ([SearchReplaceConverter(pattern=r"([aeiouAEIOU]+)", replace=r"ub\1")], "ubbi_dubbi", "ubbi_dubbi"),
