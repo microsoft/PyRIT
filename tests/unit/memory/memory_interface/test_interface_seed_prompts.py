@@ -194,6 +194,28 @@ def assert_original_value_in_list(original_value: str, message_pieces: Sequence[
     raise AssertionError(f"Original value {original_value} not found in list")
 
 
+async def test_seed_empty_list_facets_round_trip_without_becoming_none(sqlite_instance: MemoryInterface):
+    """Empty list facets keep their shape through a store and read cycle.
+
+    The dataset editing flows compare a seed before and after a round trip,
+    so a written empty list that reads back as None reads as a change.
+    """
+    seed = SeedPrompt(
+        value="empty facets",
+        dataset_name="facet_round_trip",
+        harm_categories=[],
+        authors=[],
+        parameters=[],
+    )
+    await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[SeedGroup(seeds=[seed])], added_by="test")
+
+    read_back = (await sqlite_instance.get_seed_groups_async(dataset_name="facet_round_trip"))[0].seeds[0]
+
+    assert read_back.harm_categories == []
+    assert read_back.authors == []
+    assert read_back.parameters == []
+
+
 async def test_get_seeds_with_audio(sqlite_instance: MemoryInterface):
     """Test adding and retrieving seed prompts with an audio file."""
     temp_files = []
