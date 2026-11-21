@@ -83,7 +83,7 @@ class TestWildJailbreakDataset:
         assert loader.split == WildJailbreakSplit.EVAL
         assert loader.data_types == [WildJailbreakDataType.ADVERSARIAL_HARMFUL]
 
-    async def test_fetch_default_eval_adversarial_harmful(self):
+    async def test_fetch_default_eval_adversarial_harmful_async(self):
         loader = _WildJailbreakDataset()
         mock = AsyncMock(return_value=_eval_rows())
         with patch.object(loader, "_fetch_from_huggingface_async", new=mock):
@@ -111,7 +111,7 @@ class TestWildJailbreakDataset:
         assert kwargs["delimiter"] == "\t"
         assert kwargs["keep_default_na"] is False
 
-    async def test_train_split_fetches_train_config(self):
+    async def test_train_split_fetches_train_config_async(self):
         loader = _WildJailbreakDataset(split=WildJailbreakSplit.TRAIN)
         mock = AsyncMock(return_value=_train_rows())
         with patch.object(loader, "_fetch_from_huggingface_async", new=mock):
@@ -144,7 +144,7 @@ class TestWildJailbreakDataset:
             ),
         ],
     )
-    async def test_each_data_type_filter(self, data_type, expected_value):
+    async def test_each_data_type_filter_async(self, data_type, expected_value):
         loader = _WildJailbreakDataset(split=WildJailbreakSplit.TRAIN, data_types=[data_type])
         with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=_train_rows())):
             dataset = await loader.fetch_dataset_async()
@@ -152,7 +152,7 @@ class TestWildJailbreakDataset:
         assert [seed.value for seed in dataset.seeds] == [expected_value]
         assert all(seed.metadata["data_type"] == data_type.value for seed in dataset.seeds)
 
-    async def test_vanilla_rows_do_not_duplicate_vanilla_in_metadata(self):
+    async def test_vanilla_rows_do_not_duplicate_vanilla_in_metadata_async(self):
         loader = _WildJailbreakDataset(
             split=WildJailbreakSplit.TRAIN, data_types=[WildJailbreakDataType.VANILLA_HARMFUL]
         )
@@ -161,7 +161,7 @@ class TestWildJailbreakDataset:
 
         assert dataset.seeds[0].metadata == {"split": "train", "data_type": "vanilla_harmful"}
 
-    async def test_multiple_data_types(self):
+    async def test_multiple_data_types_async(self):
         loader = _WildJailbreakDataset(
             data_types=[WildJailbreakDataType.ADVERSARIAL_HARMFUL, WildJailbreakDataType.ADVERSARIAL_BENIGN]
         )
@@ -170,7 +170,7 @@ class TestWildJailbreakDataset:
 
         assert len(dataset.seeds) == 3
 
-    async def test_completion_is_never_loaded(self):
+    async def test_completion_is_never_loaded_async(self):
         loader = _WildJailbreakDataset(split=WildJailbreakSplit.TRAIN, data_types=list(WildJailbreakDataType))
         with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=_train_rows())):
             dataset = await loader.fetch_dataset_async()
@@ -180,7 +180,7 @@ class TestWildJailbreakDataset:
             assert "completion" not in seed.metadata
             assert seed.value not in {"I can't help with that.", "Here's a recipe...", "Use kill <pid>."}
 
-    async def test_empty_after_filter_raises(self):
+    async def test_empty_after_filter_raises_async(self):
         # The eval config has no vanilla rows.
         loader = _WildJailbreakDataset(data_types=[WildJailbreakDataType.VANILLA_HARMFUL])
         with (
@@ -201,7 +201,7 @@ class TestWildJailbreakDataset:
         with pytest.raises(ValueError, match="must not be empty"):
             _WildJailbreakDataset(data_types=[])
 
-    async def test_token_forwarded_from_kwarg(self, monkeypatch):
+    async def test_token_forwarded_from_kwarg_async(self, monkeypatch):
         monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
         loader = _WildJailbreakDataset(token="explicit-token")
         mock = AsyncMock(return_value=_eval_rows())
@@ -210,7 +210,7 @@ class TestWildJailbreakDataset:
 
         assert mock.call_args.kwargs["token"] == "explicit-token"
 
-    async def test_token_falls_back_to_env(self, monkeypatch):
+    async def test_token_falls_back_to_env_async(self, monkeypatch):
         monkeypatch.setenv("HUGGINGFACE_TOKEN", "env-token")
         loader = _WildJailbreakDataset()
         mock = AsyncMock(return_value=_eval_rows())
@@ -219,7 +219,7 @@ class TestWildJailbreakDataset:
 
         assert mock.call_args.kwargs["token"] == "env-token"
 
-    async def test_explicit_token_overrides_env(self, monkeypatch):
+    async def test_explicit_token_overrides_env_async(self, monkeypatch):
         monkeypatch.setenv("HUGGINGFACE_TOKEN", "env-token")
         loader = _WildJailbreakDataset(token="explicit-token")
         mock = AsyncMock(return_value=_eval_rows())
@@ -228,7 +228,7 @@ class TestWildJailbreakDataset:
 
         assert mock.call_args.kwargs["token"] == "explicit-token"
 
-    async def test_no_token_when_unset(self, monkeypatch):
+    async def test_no_token_when_unset_async(self, monkeypatch):
         monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
         loader = _WildJailbreakDataset()
         mock = AsyncMock(return_value=_eval_rows())
