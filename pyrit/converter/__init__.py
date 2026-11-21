@@ -83,6 +83,7 @@ if TYPE_CHECKING:
     from pyrit.converter.malicious_question_generator_converter import MaliciousQuestionGeneratorConverter
     from pyrit.converter.math_obfuscation_converter import MathObfuscationConverter
     from pyrit.converter.math_prompt_converter import MathPromptConverter
+    from pyrit.converter.mathematical_alphanumeric_converter import MathematicalAlphanumericConverter
     from pyrit.converter.morse_converter import MorseConverter
     from pyrit.converter.nato_converter import NatoConverter
     from pyrit.converter.negation_trap_converter import NegationTrapConverter
@@ -214,6 +215,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "LSBImageStegoConverter": "pyrit.converter.lsb_image_stego_converter",
     "LSBImageStegoDecodeConverter": "pyrit.converter.lsb_image_stego_converter",
     "MaliciousQuestionGeneratorConverter": "pyrit.converter.malicious_question_generator_converter",
+    "MathematicalAlphanumericConverter": "pyrit.converter.mathematical_alphanumeric_converter",
     "MathObfuscationConverter": "pyrit.converter.math_obfuscation_converter",
     "MathPromptConverter": "pyrit.converter.math_prompt_converter",
     "MorseConverter": "pyrit.converter.morse_converter",
