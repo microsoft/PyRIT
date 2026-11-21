@@ -4,39 +4,32 @@
 from enum import Enum
 from uuid import UUID
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from pyrit.backend.models.attacks import ScoreView
-from pyrit.backend.models.common import TextStr
+from pyrit.backend.models.common import MAX_ITEMS, IdentifierStr, TextStr
 from pyrit.models import (
     AttackOutcome,
     DecompositionPath,
     Finding,
     FindingCreate,
     FindingEvidence,
-    FindingSeverity,
     Operation,
     OperationCreate,
     OperationUsage,
 )
+from pyrit.models.finding_fields import FindingValueRow
 from pyrit.models.harm_category import HarmCategory
 from pyrit.models.operation import OperationName
-from pyrit.models.request_limits import MAX_ITEMS
 
 # Ten pages of the export dialog; the dashboard keeps its selection within this.
 MAX_EXPORT_FINDINGS = 1_000
 
 
-class FindingOptionsResponse(BaseModel):
-    """Harm categories a finding can use."""
-
-    harm_types: list[HarmCategory]
-
-
 class OperationListItem(Operation):
-    """An operation with its finding counts by severity. Severities with no findings are omitted."""
+    """An operation with its finding counts by stored severity value. Severities with no findings are omitted."""
 
-    finding_counts: dict[FindingSeverity, int]
+    finding_counts: dict[str, int]
 
 
 class OperationListResponse(BaseModel):
@@ -72,13 +65,56 @@ class FindingPathItem(DecompositionPath):
     complete: bool = Field(description="Whether every step is a demonstrated sub-finding. Derived, never stored.")
 
 
-class FindingListItem(Finding):
-    """A finding with its evidence and sub-finding counts, and whether each of its paths is complete."""
+# TODO(PyRIT 1.5): Remove with GET /operations/finding-options.
+class FindingOptionsResponse(BaseModel):
+    """The harm categories a finding could use in PyRIT 1.2."""
+
+    harm_types: list[HarmCategory]
+
+
+class FindingResponse(Finding):
+    """A saved finding, with the PyRIT 1.2 fields that its values stand for."""
+
+    # TODO(PyRIT 1.5): Remove the PyRIT 1.2 fields.
+    @computed_field(json_schema_extra={"deprecated": True})
+    @property
+    def description(self) -> str:
+        """Deprecated: read field_values["description"] instead, which is absent when not set."""
+        return self._deprecated_values().description
+
+    @computed_field(json_schema_extra={"deprecated": True})
+    @property
+    def severity_other(self) -> str | None:
+        """Deprecated: read severity, which holds Other text itself."""
+        return self._deprecated_values().severity_other
+
+    @computed_field(json_schema_extra={"deprecated": True})
+    @property
+    def harm_type(self) -> HarmCategory | None:
+        """Deprecated: read field_values["harm_type"] instead, which is absent when not set."""
+        return self._deprecated_values().harm_type
+
+    @computed_field(json_schema_extra={"deprecated": True})
+    @property
+    def harm_type_other(self) -> str | None:
+        """Deprecated: read field_values["harm_type"] instead, which is absent when not set."""
+        return self._deprecated_values().harm_type_other
+
+
+class FindingListItem(FindingResponse):
+    """
+    A finding with its evidence and sub-finding counts, whether each of its paths is complete, and its values as the
+    active finding fields label them.
+    """
 
     evidence_count: int = Field(ge=0)
     child_count: int = Field(ge=0, description="The number of direct sub-findings")
     # A response narrows each path to include its derived completeness; list items are never reassigned.
     paths: tuple[FindingPathItem, ...] = ()  # type: ignore[ty:invalid-mutable-override]
+    rows: list[FindingValueRow] = Field(description="The filled values in configured order, labelled for display")
+    retired: list[tuple[str, str]] = Field(
+        description="The (key, value) of each stored value that no active field or level uses, in stored order"
+    )
 
 
 class AttackFindingItem(Finding):
@@ -105,29 +141,48 @@ class FindingListResponse(BaseModel):
     next_offset: int | None
 
 
-class FindingUpdateRequest(FindingCreate):
+class _FindingRequestFields(FindingCreate):
+    """A finding's values as a request carries them, within the request limits."""
+
+    title: TextStr
+    severity: TextStr = Field(
+        description="The key of a severity option, or Other text; surrounding whitespace is removed"
+    )
+    field_values: dict[IdentifierStr, TextStr] = Field(
+        default_factory=dict,
+        max_length=MAX_ITEMS,
+        description="Values by field or level key, each an option's key or text; blank values are dropped",
+    )
+
+
+class FindingCreateRequest(_FindingRequestFields):
     """
-    A finding's editable fields, replacing the saved ones.
+    A finding to record, optionally under a parent finding and with one saved attack result as evidence.
+
+    Sending the same ``id`` and content again returns the saved finding, as long as it still fits the active finding
+    fields, so a client can retry safely.
+    """
+
+    id: UUID | None = None
+    attack_result_id: UUID | None = Field(None, description="A saved attack result to link as evidence")
+
+
+class FindingUpdateRequest(_FindingRequestFields):
+    """
+    A finding's new editable values, replacing the saved ones, and the retired values to keep or remove.
 
     An omitted ``parent_finding_id`` makes the finding top-level. A finding moves with its sub-findings, and paths
     are replaced separately.
     """
 
-    title: TextStr
-    description: TextStr = ""
-    severity_other: TextStr | None = None
-    harm_type_other: TextStr | None = None
-
-
-class FindingCreateRequest(FindingUpdateRequest):
-    """
-    A finding to record, optionally under a parent finding and with one saved attack result as evidence.
-
-    Sending the same ``id`` and content again returns the saved finding, so a client can retry safely.
-    """
-
-    id: UUID | None = None
-    attack_result_id: UUID | None = Field(None, description="A saved attack result to link as evidence")
+    keep_retired_keys: list[IdentifierStr] = Field(
+        default_factory=list,
+        max_length=MAX_ITEMS,
+        description="Keys of stored values to keep unchanged, even if the active fields use them again",
+    )
+    remove_retired_keys: list[IdentifierStr] = Field(
+        default_factory=list, max_length=MAX_ITEMS, description="Keys of the retired values to delete from the finding"
+    )
 
 
 class FindingPathRequest(DecompositionPath):

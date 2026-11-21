@@ -215,6 +215,10 @@ filterwarnings = [
     "error:MessageScorableResolver\\.resolve:DeprecationWarning",
     # True/false verdicts are set through Score.set_value; compatibility tests capture the warning.
     "error:Assigning Score\\.score_value:DeprecationWarning",
+    # Findings use configurable fields; tests of the PyRIT 1.2 finding compatibility capture the warnings.
+    "error:pyrit\\.models\\.(finding\\.)?FindingSeverity:DeprecationWarning",
+    "error:Finding\\w*[.(](description|severity|harm_type):DeprecationWarning",
+    "error:GET /operations/finding-options:DeprecationWarning",
     # TAP and PAIR take a plain AttackScoringConfig; compatibility tests capture the warning.
     "error:TAPAttackScoringConfig:DeprecationWarning",
 ]
