@@ -147,6 +147,11 @@ const AUTH_MODE_LABELS: Record<TargetAuthMode, string> = {
   none: 'No key',
 }
 
+// A server credential is sent as an API key, but the key stays on the server, so a saved target can use it.
+type AuthChoice = TargetAuthMode | 'server_credential'
+
+const SERVER_CREDENTIAL_LABEL = 'Server credential'
+
 // A new target starts with the first of these that a saved target of its type can use.
 const SAVEABLE_AUTH_MODE_PREFERENCE: readonly TargetAuthMode[] = ['identity', 'none']
 
@@ -172,6 +177,7 @@ return 'Supported authentication: GitHub token'
   }
 
   const labels = authModes.map((mode) => AUTH_MODE_LABELS[mode])
+  if (entry.server_credentials?.length) labels.push(SERVER_CREDENTIAL_LABEL)
   return `Supported authentication: ${labels.join(' or ')}`
 }
 
@@ -316,7 +322,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const [hasDifferentUnderlying, setHasDifferentUnderlying] = useState(false)
   const [underlyingModel, setUnderlyingModel] = useState('')
   // The auth mode the user picked; until then the dialog uses the default for the selected type.
-  const [chosenAuthMode, setChosenAuthMode] = useState<TargetAuthMode | null>(null)
+  const [chosenAuthMode, setChosenAuthMode] = useState<AuthChoice | null>(null)
+  const [serverCredentialName, setServerCredentialName] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [onlyMeChoice, setOnlyMeChoice] = useState(false)
   // Null follows the default: updates are allowed for a private target and not for a shared one.
@@ -459,7 +466,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const supportsNoKey = targetTypeEntry
     ? targetTypeEntry.supported_auth_modes.includes('none')
     : defaultSupportsNoKey(targetType)
-  const showAuthField = targetType !== '' && (supportsIdentity || supportsNoKey)
+  const serverCredentials = targetTypeEntry?.server_credentials ?? []
+  const supportsServerCredential = serverCredentials.length > 0
+  const showAuthField = targetType !== '' && (supportsIdentity || supportsNoKey || supportsServerCredential)
   // Default to a mode a saved target of this type can use. It is derived, so it also applies when the type's
   // details arrive after the type was chosen.
   const defaultAuthMode = SAVEABLE_AUTH_MODE_PREFERENCE.find(
@@ -468,9 +477,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const chosenAuthModeSupported = chosenAuthMode === 'api_key'
     || (chosenAuthMode === 'identity' && supportsIdentity)
     || (chosenAuthMode === 'none' && supportsNoKey)
-  const authMode = chosenAuthMode !== null && chosenAuthModeSupported ? chosenAuthMode : defaultAuthMode
+    || (chosenAuthMode === 'server_credential' && supportsServerCredential)
+  const authMode: AuthChoice = chosenAuthMode !== null && chosenAuthModeSupported ? chosenAuthMode : defaultAuthMode
   const isIdentity = showAuthField && authMode === 'identity'
   const isNoKey = showAuthField && authMode === 'none'
+  // The server only sends a credential's key to that credential's endpoint, so the endpoint follows the choice.
+  const serverCredential = showAuthField && authMode === 'server_credential'
+    ? serverCredentials.find((credential) => credential.name === serverCredentialName) ?? serverCredentials[0]
+    : undefined
+  const isServerCredential = serverCredential !== undefined
+  const requestEndpoint = serverCredential?.endpoint ?? endpoint
   const endpointRequired = Boolean(endpointParameter?.required) || (metadataUnavailableForSelection && hasEndpointField)
   // Without the type's details, still require the model every OpenAI type needs. The suggested name then includes
   // it, which keeps it off names such as `openai_chat` that startup initializers use.
@@ -478,7 +494,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     ? Boolean(modelNameParameter.required)
     : metadataUnavailableForSelection && isOpenAi
   const underlyingModelRequired = Boolean(underlyingModelParameter?.required)
-  const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity && !isNoKey
+  const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity && !isNoKey && !isServerCredential
   // Anything built on a private target is private too, so such a round robin can't be shared.
   const privateMemberName = isRoundRobin
     ? selectedInnerTargets.find((selected: SelectedInnerTarget) => availableTargets.some(
@@ -569,7 +585,12 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (!targetType) return null
     if (targetTypeEntry?.not_saveable_reason) return targetTypeEntry.not_saveable_reason
     const saveableAuthModes = targetTypeEntry?.saveable_auth_modes
-    if (showAuthField && saveableAuthModes && !saveableAuthModes.includes(authMode)) {
+    if (
+      showAuthField
+      && saveableAuthModes
+      && authMode !== 'server_credential'
+      && !saveableAuthModes.includes(authMode)
+    ) {
       const current = authMode === 'api_key' ? 'an API key' : AUTH_MODE_LABELS[authMode]
       return `Saved targets can't use ${current} yet.`
     }
@@ -583,7 +604,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (allowCredentialUpdates) return "A saved target's credentials can't be updated."
     return null
   })()
-  const requestAuthMode: TargetAuthMode | undefined = isIdentity ? 'identity' : isNoKey ? 'none' : undefined
+  const requestAuthMode: TargetAuthMode | undefined = isIdentity
+    ? 'identity'
+    : isNoKey ? 'none' : serverCredential ? 'api_key' : undefined
   // The parameters a create request sends for the standard fields, or why the form can't give them.
   const buildFormParams = (): { ok: true, params: Record<string, unknown> } | { ok: false, error: string } => {
     const metadataParams = buildParametersFromForm(metadataDrivenParameters, parameterValues)
@@ -597,10 +620,12 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         if (parameter.identity_conflicting) delete params[parameter.name]
       }
     }
-    if (hasEndpointField && endpoint) params.endpoint = endpoint
+    if (hasEndpointField && requestEndpoint) params.endpoint = requestEndpoint
     if (hasModelNameField && modelName) params.model_name = modelName
     // A pasted key often ends with a newline, which can't be sent in a request header.
-    if (hasApiKeyField && !isIdentity && !isNoKey && apiKey.trim()) params.api_key = apiKey.trim()
+    if (hasApiKeyField && !isIdentity && !isNoKey && !isServerCredential && apiKey.trim()) {
+      params.api_key = apiKey.trim()
+    }
     if ((underlyingModelRequired || hasDifferentUnderlying) && underlyingModel && hasUnderlyingModelField) {
       params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
     }
@@ -614,7 +639,12 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     }
     const formParams = buildFormParams()
     if (!formParams.ok) return null
-    return { type: targetType, params: formParams.params, ...(requestAuthMode ? { auth_mode: requestAuthMode } : {}) }
+    return {
+      type: targetType,
+      params: formParams.params,
+      ...(requestAuthMode ? { auth_mode: requestAuthMode } : {}),
+      ...(serverCredential ? { server_credential: serverCredential.name } : {}),
+    }
   })()
   const checkedReason = useSaveability(saveabilityRequest, targetsApi.checkSaveability)
   // A refused save only applies to the values it was refused for, so any edit lets the user try saving again.
@@ -625,6 +655,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     hasDifferentUnderlying,
     underlyingModel,
     authMode,
+    serverCredential?.name,
     apiKey,
     parameterValues,
     selectedInnerTargets,
@@ -725,6 +756,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setHasDifferentUnderlying(false)
     setUnderlyingModel('')
     setChosenAuthMode(null)
+    setServerCredentialName('')
     setApiKey('')
     setOnlyMeChoice(false)
     setCredentialUpdatesChoice(null)
@@ -827,7 +859,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       apiKey?: string
     } = {}
     if (!targetType) errors.targetType = 'Please select a target type'
-    if (endpointRequired && !endpoint) errors.endpoint = 'Please provide an endpoint URL'
+    if (endpointRequired && !requestEndpoint) errors.endpoint = 'Please provide an endpoint URL'
     if (modelNameRequired && !modelName) errors.modelName = 'Please provide a model name'
     if (underlyingModelRequired && !underlyingModel) {
       errors.underlyingModel = 'Please provide the underlying model'
@@ -856,6 +888,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         type: targetType,
         params: formParams.params,
         ...(requestAuthMode ? { auth_mode: requestAuthMode } : {}),
+        ...(serverCredential ? { server_credential: serverCredential.name } : {}),
         persist,
         private: onlyMe,
         // The server applies the same default, so the choice is sent only when the user changed it.
@@ -1154,7 +1187,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasEndpointField && (
                     <Field
                       label="Endpoint URL"
-                      hint={endpointParameter?.description || undefined}
+                      hint={serverCredential
+                        ? `Set by server credential '${serverCredential.name}', whose key is only sent to this address.`
+                        : endpointParameter?.description || undefined}
                       required={endpointRequired}
                       validationMessage={endpointMessage ?? undefined}
                       validationState={endpointMessage ? 'error' : 'none'}
@@ -1165,7 +1200,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                           : isOpenAi
                             ? 'https://your-resource.openai.azure.com/'
                             : 'https://example.com/'}
-                        value={endpoint}
+                        value={requestEndpoint}
+                        readOnly={isServerCredential}
                         onChange={(_, data) => setEndpoint(data.value)}
                         onFocus={() => setEndpointFocused(true)}
                         onBlur={() => setEndpointFocused(false)}
@@ -1268,10 +1304,21 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       <RadioGroup
                         value={authMode}
                         onChange={(_, data) => {
-                          const next = data.value as TargetAuthMode
+                          const next = data.value as AuthChoice
                           setChosenAuthMode(next)
                           if (next === 'none') {
                             setApiKey('')
+                          }
+                          if (next === 'server_credential') {
+                            setApiKey('')
+                            const picked = serverCredentials.find((credential) => (
+                              credential.name === serverCredentialName
+                            )) ?? serverCredentials[0]
+                            if (picked) {
+                              setServerCredentialName(picked.name)
+                              // Kept when the user switches back to typing a key for the same address.
+                              setEndpoint(picked.endpoint)
+                            }
                           }
                           if (next === 'identity') {
                             setApiKey('')
@@ -1292,11 +1339,38 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         {supportsNoKey && (
                           <Radio value="none" label="No key (for servers that need none)" />
                         )}
+                        {supportsServerCredential && (
+                          <Radio value="server_credential" label="Server credential (a key kept on this server)" />
+                        )}
                       </RadioGroup>
                     </Field>
                   )}
 
-                  {hasApiKeyField && !isIdentity && !isNoKey && (
+                  {serverCredential && (
+                    <Field
+                      label="Server credential"
+                      hint="The key stays on the server. A saved target reads it again each time the backend starts."
+                    >
+                      <Select
+                        value={serverCredential.name}
+                        disabled={submitting}
+                        onChange={(_, data) => {
+                          const picked = serverCredentials.find((credential) => credential.name === data.value)
+                          if (!picked) return
+                          setServerCredentialName(picked.name)
+                          setEndpoint(picked.endpoint)
+                        }}
+                      >
+                        {serverCredentials.map((credential) => (
+                          <option key={credential.name} value={credential.name}>
+                            {credential.name} ({credential.endpoint})
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  )}
+
+                  {hasApiKeyField && !isIdentity && !isNoKey && !isServerCredential && (
                     <Field
                       label="API Key"
                       hint={apiKeyParameter?.description || undefined}

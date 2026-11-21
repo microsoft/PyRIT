@@ -24,6 +24,7 @@ from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.text_helper import is_non_empty_string
 from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.models import class_name_to_snake_case
+from pyrit.models.catalog import ServerCredential
 from pyrit.setup.environment_loading import validate_env_akv_strict
 from pyrit.setup.initialization import AZURE_SQL, IN_MEMORY, SQLITE, initialize_pyrit_async, reinitialize_pyrit_async
 
@@ -117,6 +118,8 @@ class ConfigurationLoader(YamlLoadable):
             followed by a blob prefix, used to persist scenario suites.
         registry_recipes_source: Local directory or Azure Blob container URI, optionally
             followed by a blob prefix, used to persist saved targets, converters, scorers, and techniques.
+        server_credentials: Keys in this server's environment that users can pick for targets, each with a
+            name users see, the environment variable that holds it, and the only endpoint it's sent to.
         silent: Whether to suppress initialization messages.
         seed: Optional root seed for deterministic converter operations.
         operator: Name for the current operator, e.g. a team or username.
@@ -173,6 +176,7 @@ class ConfigurationLoader(YamlLoadable):
     scenario_presets_source: str | None = None
     scenario_suites_source: str | None = None
     registry_recipes_source: str | None = None
+    server_credentials: list[ServerCredential] = field(default_factory=list)
     target_upload_directory: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
@@ -203,6 +207,7 @@ class ConfigurationLoader(YamlLoadable):
         self._validate_scenario_presets_source()
         self._validate_scenario_suites_source()
         self._validate_registry_recipes_source()
+        self._normalize_server_credentials()
         self._validate_target_upload_directory()
         self._normalize_server()
 
@@ -251,6 +256,23 @@ class ConfigurationLoader(YamlLoadable):
             ValueError: If the source is not a non-empty string.
         """
         self._validate_document_source(name="registry_recipes_source", value=self.registry_recipes_source)
+
+    def _normalize_server_credentials(self) -> None:
+        """
+        Validate the server credentials users can pick, and turn each entry into a ``ServerCredential``.
+
+        Raises:
+            ValueError: If the list or an entry is malformed, or two entries share a name.
+        """
+        # The YAML gives plain mappings, which become ``ServerCredential`` entries here.
+        entries: Any = self.server_credentials
+        if not isinstance(entries, list):
+            raise ValueError("server_credentials must be a list of entries with name, env_var, and endpoint.")
+        credentials = [ServerCredential.model_validate(entry) for entry in entries]
+        names = [credential.name for credential in credentials]
+        if len(set(names)) != len(names):
+            raise ValueError("Each server credential needs its own name.")
+        self.server_credentials = credentials
 
     @staticmethod
     def _validate_document_source(*, name: str, value: Any) -> None:
