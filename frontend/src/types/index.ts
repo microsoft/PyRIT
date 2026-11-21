@@ -1397,7 +1397,6 @@ export interface AddMessageRequest extends MessageRequest {
   send: boolean
   target_registry_name?: string
   target_binding?: TargetBinding
-  converter_ids?: string[]
   request_converter_configurations?: ConverterConfigurationRequest[]
   response_converter_configurations?: ConverterConfigurationRequest[]
   start_token?: string
