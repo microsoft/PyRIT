@@ -141,11 +141,22 @@ jobs:
         # Run tests
         test_batches="${{ join(' ', parameters.testBatches) }}"
         if [ -n "$test_batches" ]; then
+          # Run every batch even if one fails, so a failure doesn't hide the later batches' results.
           batch_number=0
+          failed_batches=()
           for test_batch in $test_batches; do
             batch_number=$((batch_number + 1))
-            make ${{ parameters.makeTarget }} INTEGRATION_TESTS="$test_batch" JUNIT_XML="junit/test-results-${batch_number}.xml"
+            batch_status=0
+            make ${{ parameters.makeTarget }} INTEGRATION_TESTS="$test_batch" JUNIT_XML="junit/test-results-${batch_number}.xml" || batch_status=$?
+            if [ "$batch_status" -ne 0 ]; then
+              echo "Batch ${batch_number} (${test_batch}) failed with exit code ${batch_status}."
+              failed_batches+=("${batch_number}:${test_batch}")
+            fi
           done
+          if [ "${#failed_batches[@]}" -gt 0 ]; then
+            echo "##vso[task.logissue type=error]${#failed_batches[@]} of ${batch_number} test batches failed: ${failed_batches[*]}"
+            exit 1
+          fi
         else
           make ${{ parameters.makeTarget }}
         fi
