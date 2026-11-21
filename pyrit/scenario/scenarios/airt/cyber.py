@@ -71,6 +71,7 @@ class Cyber(Scenario):
     #: question; earlier versions never did. ``use_cached`` only matches prior runs at
     #: the current ``VERSION``.
     VERSION: int = 4
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = True
 
     @classmethod
     def _get_additional_scoring_questions(cls) -> list[Path]:

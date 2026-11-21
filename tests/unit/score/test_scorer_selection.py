@@ -8,6 +8,7 @@ import pytest
 from pyrit.models import (
     MessageScorable,
     ProgramExecutionScorable,
+    ScorerCapabilityName,
     ScorerSelectionReport,
     ScoringExpectation,
     ToolCallRequirement,
@@ -48,14 +49,33 @@ def _substring(text: str = "x") -> SubStringScorer:
 # --- requirements ---
 
 
-def test_combine_merges_evaluation_and_feedback():
+KEEPS_FLOAT = ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE
+TRUE_FALSE = ScorerCapabilityName.TRUE_FALSE
+
+
+def test_combine_merges_evaluation_and_required_capabilities():
     combined = ScorerRequirements.combine(
-        ScorerRequirements(evaluation=CRISIS),
+        ScorerRequirements(evaluation=CRISIS, required=frozenset({TRUE_FALSE})),
         None,
-        ScorerRequirements(preserves_float_scale_value=True),
+        ScorerRequirements(required=frozenset({KEEPS_FLOAT})),
         ScorerRequirements(evaluation=CRISIS),
     )
-    assert combined == ScorerRequirements(evaluation=CRISIS, preserves_float_scale_value=True)
+    assert combined == ScorerRequirements(evaluation=CRISIS, required=frozenset({TRUE_FALSE, KEEPS_FLOAT}))
+
+
+@pytest.mark.parametrize("required", ["true_false", ["true_false"]])
+def test_required_capabilities_must_be_capability_names(required):
+    with pytest.raises(TypeError, match="ScorerCapabilityName"):
+        ScorerRequirements(required=required)
+
+
+def test_check_names_each_missing_capability():
+    problems = ScorerRequirements(required=frozenset({TRUE_FALSE, KEEPS_FLOAT})).check(scorer=_substring())
+    assert len(problems) == 1
+    assert problems[0].startswith("SubStringScorer ")
+    assert "preserves_float_scale_value" in problems[0]
+    with pytest.raises(ValueError, match="preserves_float_scale_value"):
+        ScorerRequirements(required=frozenset({KEEPS_FLOAT})).validate(scorer=_substring())
 
 
 def test_combine_with_no_owners_adds_no_constraint():
@@ -76,8 +96,10 @@ def test_evaluation_keys_must_be_trimmed_and_non_empty(key):
 
 
 def test_candidate_requires_true_false_scorer():
-    with pytest.raises(TypeError, match="TrueFalseScorer"):
-        ScorerCandidate(scorer=MagicMock(spec=FloatScaleScorer))
+    float_scorer = MagicMock(spec=FloatScaleScorer)
+    float_scorer.capabilities.includes.return_value = False
+    with pytest.raises(TypeError, match="true/false scorer"):
+        ScorerCandidate(scorer=float_scorer)
 
 
 # --- pool construction ---
@@ -213,11 +235,11 @@ def test_candidate_must_accept_every_input_in_the_population():
 def test_float_feedback_requirement_is_checked():
     with pytest.raises(NoCompatibleScorerError) as excinfo:
         CompatibleScorers(candidates=[_substring()]).select(
-            requirements=ScorerRequirements(preserves_float_scale_value=True),
+            requirements=ScorerRequirements(required=frozenset({KEEPS_FLOAT})),
             scorable_type=MessageScorable,
             expectations=[None],
         )
-    assert excinfo.value.mismatches[0].kind is ScorerMismatchKind.FLOAT_FEEDBACK
+    assert excinfo.value.mismatches[0].kind is ScorerMismatchKind.CAPABILITY
 
 
 def test_malformed_input_raises_before_any_candidate_is_checked():
@@ -357,7 +379,7 @@ def test_report_entry_for_a_selection_marks_who_was_passed_over_and_who_was_not_
 
 def test_report_entry_for_no_compatible_scorer_gives_every_reason():
     pool = CompatibleScorers(candidates=[ScorerCandidate(scorer=_substring("a"), evaluation=CRISIS), _substring("b")])
-    requirements = ScorerRequirements(evaluation="psychosocial.typo", preserves_float_scale_value=True)
+    requirements = ScorerRequirements(evaluation="psychosocial.typo", required=frozenset({KEEPS_FLOAT}))
     with pytest.raises(NoCompatibleScorerError) as excinfo:
         pool.select(requirements=requirements, scorable_type=MessageScorable, expectations=[None])
 

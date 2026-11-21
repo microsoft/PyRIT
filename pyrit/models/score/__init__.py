@@ -35,6 +35,10 @@ if TYPE_CHECKING:
         ScoringExpectation,
         scoring_expectation_fingerprint,
     )
+    from pyrit.models.score.float_feedback import (
+        FloatFeedback,
+        InvalidFloatFeedbackError,
+    )
     from pyrit.models.score.observation import (
         Acquisition,
         ConversationObservationPayload,
@@ -66,7 +70,7 @@ if TYPE_CHECKING:
         UndeterminedScoreError,
         UnvalidatedScore,
     )
-    from pyrit.models.score.scorer_capabilities import ScorerCapabilities
+    from pyrit.models.score.scorer_capabilities import ScorerCapabilities, ScorerCapabilityName
     from pyrit.models.score.surface import SurfaceBaseline, SurfaceCoverage, SurfaceEntry, SurfaceMatch
     from pyrit.models.score.text_matcher import Contains, Equals, Regex, StartsWith, TextMatcher
     from pyrit.models.score.trace import (
@@ -104,6 +108,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ContentWritten": "pyrit.models.score.condition",
     "DivergesFromRepetition": "pyrit.models.score.condition",
     "ExecutionStep": "pyrit.models.score.trace",
+    "FloatFeedback": "pyrit.models.score.float_feedback",
+    "InvalidFloatFeedbackError": "pyrit.models.score.float_feedback",
     "ExecutionStepKind": "pyrit.models.score.trace",
     "ExecutionTraceObservationPayload": "pyrit.models.score.observation",
     "ScorerTargetResponsePayload": "pyrit.models.score.observation",
@@ -117,6 +123,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScoreStatus": "pyrit.models.score.score",
     "ScoreType": "pyrit.models.score.score",
     "ScorerCapabilities": "pyrit.models.score.scorer_capabilities",
+    "ScorerCapabilityName": "pyrit.models.score.scorer_capabilities",
     "ScoringExpectation": "pyrit.models.score.expectation",
     "SurfaceBaseline": "pyrit.models.score.surface",
     "SurfaceCoverage": "pyrit.models.score.surface",

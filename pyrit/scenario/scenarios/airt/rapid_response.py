@@ -67,6 +67,7 @@ class RapidResponse(Scenario):
     #: technique pool (and the ``all`` aggregate) reflects whatever the initializer
     #: registered. ``use_cached`` only matches prior runs at the current ``VERSION``.
     VERSION: int = 3
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = True
 
     @apply_defaults
     def __init__(

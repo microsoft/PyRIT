@@ -64,6 +64,18 @@ class TechniqueRequirements:
                 "Put the evaluation on the scenario or the dataset source."
             )
 
+    def objective_scorer_for(self, *, attack_class: type[AttackStrategy[Any, Any]]) -> ScorerRequirements:
+        """
+        Combine the attack class's scorer needs with the technique's own.
+
+        Args:
+            attack_class (type[AttackStrategy]): The technique's attack class.
+
+        Returns:
+            ScorerRequirements: What any objective scorer for this technique must provide.
+        """
+        return ScorerRequirements.combine(attack_class.OBJECTIVE_SCORER_REQUIREMENTS, self.objective_scorer)
+
     @property
     def adaptation(self) -> str | None:
         """The permitted execution-input transformation, if any."""
