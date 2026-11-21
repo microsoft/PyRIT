@@ -12,7 +12,6 @@ prepended verbatim (never flipped).
 """
 
 import pytest
-from unit.mocks import MockPromptTarget
 
 from pyrit.converter import (
     CodeAttackConverter,

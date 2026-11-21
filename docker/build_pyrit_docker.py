@@ -124,7 +124,7 @@ def build_image(source, version=None, rebuild_base=False):
         if modified:
             image_tag += "-modified"
 
-        print(f"📦 Building from local source")
+        print("📦 Building from local source")
         print(f"   Commit: {commit}")
         print(f"   Modified: {modified}")
         print()
@@ -135,7 +135,7 @@ def build_image(source, version=None, rebuild_base=False):
     # Build the Docker image
     print("🔨 Building Docker image...")
     print(f"   Tag: pyrit:{image_tag}")
-    print(f"   Also tagging as: pyrit:latest")
+    print("   Also tagging as: pyrit:latest")
     print()
 
     cmd = [
@@ -171,11 +171,11 @@ def build_image(source, version=None, rebuild_base=False):
     print("=" * 60)
     print()
     print(f"   pyrit:{image_tag}")
-    print(f"   pyrit:latest")
+    print("   pyrit:latest")
     print()
     print("Next steps:")
-    print(f"   python docker/run_pyrit_docker.py jupyter")
-    print(f"   python docker/run_pyrit_docker.py gui")
+    print("   python docker/run_pyrit_docker.py jupyter")
+    print("   python docker/run_pyrit_docker.py gui")
     print()
 
 

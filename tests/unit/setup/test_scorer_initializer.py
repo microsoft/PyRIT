@@ -808,7 +808,7 @@ class TestScorerInitializerRoundRobin:
 
     async def test_refusal_gpt4o_uses_round_robin_when_available(self) -> None:
         """Test that gpt4o-based refusal scorers use round-robin target wrapping gpt4o."""
-        gpt4o_individual = self._register_mock_target(name=GPT4O_TARGET)
+        self._register_mock_target(name=GPT4O_TARGET)
         rr_mock = self._register_mock_rr_target(name="OpenAIChatTarget_gpt-4o_rr")
 
         init = ScorerInitializer()
@@ -833,7 +833,7 @@ class TestScorerInitializerRoundRobin:
 
     async def test_likert_scorers_use_round_robin_when_available(self) -> None:
         """Test that likert scorers use round-robin target wrapping gpt4o."""
-        gpt4o_individual = self._register_mock_target(name=GPT4O_TARGET)
+        self._register_mock_target(name=GPT4O_TARGET)
         rr_mock = self._register_mock_rr_target(name="OpenAIChatTarget_gpt-4o_rr")
 
         init = ScorerInitializer()

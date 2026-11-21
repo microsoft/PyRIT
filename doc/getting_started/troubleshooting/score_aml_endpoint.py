@@ -55,7 +55,7 @@ api_key = os.getenv("AZURE_ML_KEY")
 # %%
 print(f"Deployment name {deployment_name}")
 print(f"Azure ML endpoint uri: {url}")
-print(f"API key loaded" if api_key else "API key not set.")
+print("API key loaded" if api_key else "API key not set.")
 
 # %% [markdown]
 # **Azure ML endpoint JSON body**
@@ -122,7 +122,7 @@ try:
     # If the request is successful, print the result
     response.raise_for_status()
     print(response.text)
-except requests.exceptions.HTTPError as error:
+except requests.exceptions.HTTPError:
     # If the request fails, print the error
     print(f"The request failed with status code: {response.status_code}")
     print(response.text)

@@ -41,6 +41,21 @@ async def test_print_schema_raises_when_engine_none_async() -> None:
         await obj.print_schema_async()
 
 
+def test_print_schema_lists_id_for_prompt_memory_entry(
+    sqlite_instance: MemoryInterface, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Exercise the base implementation, not SQLiteMemory's override.
+    MemoryInterface._print_schema(sqlite_instance)
+
+    output = capsys.readouterr().out
+    heading = f"Schema for {PromptMemoryEntry.__tablename__}:\n"
+    _, found, following = output.partition(heading)
+    assert found, f"Missing schema heading: {heading.strip()}"
+
+    table_output = following.partition("\nSchema for ")[0]
+    assert "  Column id (" in table_output
+
+
 async def test_get_all_embeddings_delegates_to_query(sqlite_instance: MemoryInterface):
     embedding = MagicMock(spec=EmbeddingDataEntry)
 

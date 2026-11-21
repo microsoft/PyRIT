@@ -7368,9 +7368,9 @@ class MemoryInterface(abc.ABC):
         Raises:
             AttackStateConflictError: An expected field no longer matches.
         """
-        for field, expected in expected_fields.items():
-            if getattr(entry, field) != expected:
-                raise AttackStateConflictError(f"The attack's {field} changed. Reload before saving.")
+        for field_name, expected in expected_fields.items():
+            if getattr(entry, field_name) != expected:
+                raise AttackStateConflictError(f"The attack's {field_name} changed. Reload before saving.")
 
     def _apply_attack_fields_in_session(
         self, *, session: Session, entry: AttackResultEntry, update_fields: Mapping[str, Any]
@@ -7381,14 +7381,14 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If an update changes the Operation ID or the name of ID-attributed activity.
         """
-        for field, value in update_fields.items():
-            if field == "operation_id" and value != entry.operation_id:
+        for field_name, value in update_fields.items():
+            if field_name == "operation_id" and value != entry.operation_id:
                 raise ValueError("Operation attribution is immutable")
-            if field == "operation":
+            if field_name == "operation":
                 _check_operation_name_change(existing=entry, incoming=value)
-            if field == "labels" and "operation" in (value or {}):
+            if field_name == "labels" and "operation" in (value or {}):
                 _check_operation_name_change(existing=entry, incoming=value["operation"])
-            if field == "atomic_attack_identifier" and value is not None:
+            if field_name == "atomic_attack_identifier" and value is not None:
                 identifier = AtomicAttackIdentifier.model_validate(value)
                 identifier = AtomicAttackIdentifier.from_component_identifier(
                     identifier.with_eval_hash(AtomicAttackEvaluationIdentifier(identifier).eval_hash)
@@ -7396,9 +7396,9 @@ class MemoryInterface(abc.ABC):
                 self._persist_identifier(session=session, identifier=identifier)
                 entry.atomic_attack_identifier_hash = identifier.hash
                 value = identifier.model_dump()
-            if field == "attack_metadata":
+            if field_name == "attack_metadata":
                 value = {**(entry.attack_metadata or {}), **cast("dict[str, Any]", value)}
-            setattr(entry, field, value)
+            setattr(entry, field_name, value)
 
     def _execute_promote_attack_conversation(self, *, attack_result_id: str, conversation_id: str) -> bool:
         """
@@ -10046,8 +10046,8 @@ class MemoryInterface(abc.ABC):
         for table_name in metadata.tables:
             table = metadata.tables[table_name]
             print(f"Schema for {table_name}:")
-            for column in table.columns:
-                print(f"  Column {column.name} ({column.type})")
+            for table_column in table.columns:
+                print(f"  Column {table_column.name} ({table_column.type})")
 
     def get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
         """

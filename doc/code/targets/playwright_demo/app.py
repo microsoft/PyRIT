@@ -37,7 +37,7 @@ def get_answer(messages) -> str:
         # Extract and return the content of the bot's reply
         return response.message.content
 
-    except Exception as e:
+    except Exception:
         logging.error("Error in get_answer", exc_info=True)
         return "I'm sorry, something went wrong while processing your request."
 
@@ -71,7 +71,7 @@ def send_message():
 
         return jsonify({"user_message": user_messages, "bot_message": bot_response})
 
-    except Exception as e:
+    except Exception:
         logging.error("Exception in send_message", exc_info=True)
         return jsonify({"error": "An error occurred while processing your request."}), 500
 

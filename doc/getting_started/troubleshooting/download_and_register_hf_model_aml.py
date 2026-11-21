@@ -162,7 +162,7 @@ try:
     credential: DefaultAzureCredential | InteractiveBrowserCredential = DefaultAzureCredential()
     # Verify if the default credential can fetch a token successfully
     credential.get_token("https://management.azure.com/.default")
-except Exception as ex:
+except Exception:
     print("DefaultAzureCredential failed, falling back to InteractiveBrowserCredential:")
     credential = InteractiveBrowserCredential()
 
@@ -315,7 +315,7 @@ try:
     if not huggingface_model_exists_in_aml_registry:
         print(f"Model {registered_model_id} not found in any registry. Proceeding with model import.")
 
-except Exception as e:
+except Exception:
     print(f"Model {registered_model_id} not found in registry. Please continue importing the model.")
 
 

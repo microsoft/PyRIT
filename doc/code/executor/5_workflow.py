@@ -277,7 +277,7 @@ upload_target = HTTPXAPITarget(
 )
 
 http_api_processing_target = HTTPXAPITarget(
-    http_url=f"http://localhost:8000/search_candidates/", method="POST", timeout=180
+    http_url="http://localhost:8000/search_candidates/", method="POST", timeout=180
 )
 
 # "processing_prompt" is unused by the server because it only expects 'file' in /upload

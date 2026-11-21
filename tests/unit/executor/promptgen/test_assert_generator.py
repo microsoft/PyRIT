@@ -167,8 +167,8 @@ class TestAssertGenerator:
         )
         with patch.object(target, "_send_prompt_to_target_async", side_effect=assert_generation_response_async) as send:
             await AssertGenerator(target=target).execute_async(config=config)
-        for call in send.call_args_list:
-            request = call.kwargs["normalized_conversation"][-1].get_piece()
+        for send_call in send.call_args_list:
+            request = send_call.kwargs["normalized_conversation"][-1].get_piece()
             payload = json.loads(request.converted_value)
             assert payload["behavior_description"] == config.behavior_description
             assert payload["context"] == config.context

@@ -188,7 +188,7 @@ async def test_fallback_preserves_reserved_name_in_both_metadata_namespaces_asyn
     assert persisted._snapshot_participation == result._snapshot_participation
 
 
-async def test_fallback_preserves_reserved_name_in_both_metadata_namespaces_async(
+async def test_fallback_preserves_reserved_name_claiming_primary_index_async(
     pair, family: ScoreType, sqlite_instance: MemoryInterface
 ) -> None:
     wrapper, primary, fallback = pair

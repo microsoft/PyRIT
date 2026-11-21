@@ -884,9 +884,7 @@ class TestSetupPhase:
                     break
             return mock_state
 
-        with patch.object(
-            attack._conversation_manager, "initialize_context_async", side_effect=mock_initialize
-        ) as mock_init:
+        with patch.object(attack._conversation_manager, "initialize_context_async", side_effect=mock_initialize):
             await attack._setup_async(context=basic_context)
 
         assert basic_context.last_score == success_score

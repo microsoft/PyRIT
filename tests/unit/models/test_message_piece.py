@@ -20,7 +20,6 @@ from pyrit.models import (
     Message,
     MessagePiece,
     RequestTraceContext,
-    Score,
     construct_response_from_request,
     flatten_to_message_pieces,
     group_conversation_message_pieces_by_sequence,
@@ -1009,31 +1008,9 @@ def test_set_piece_not_in_memory_sets_flag():
 def test_to_dict_from_dict_roundtrip():
     from datetime import datetime
 
-    scorer_id = ComponentIdentifier(
-        class_name="SelfAskTrueFalseScorer",
-        class_module="pyrit.score",
-    )
-    target_id = ComponentIdentifier(
-        class_name="OpenAIChatTarget",
-        class_module="pyrit.prompt_target",
-        params={"endpoint": "https://api.example.com"},
-    )
-    attack_id = ComponentIdentifier(
-        class_name="PromptSendingAttack",
-        class_module="pyrit.executor.attack",
-    )
     converter_id = ComponentIdentifier(
         class_name="Base64Converter",
         class_module="pyrit.converter",
-    )
-    score = Score(
-        score_value="true",
-        score_value_description="met objective",
-        score_type="true_false",
-        score_rationale="clearly met",
-        scorer_class_identifier=scorer_id,
-        message_piece_id="mp-score-ref",
-        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
     )
     original = MessagePiece(
         id="12345678-aaaa-bbbb-cccc-000000000001",
