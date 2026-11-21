@@ -322,10 +322,11 @@ change a dataset, choose **Edit & regenerate** and save it under a new name. An 
 dataset whose taxonomy was reviewed reuses that taxonomy until you change the policy. When an ASSERT
 dataset is ready, **Run foundry.assert_policy** opens the scanner with it selected.
 To list the datasets you generated, set the catalog's **Origins** filter to
-**Generated**. A scanner's Datasets section also has **Browse datasets** and
-**Generate datasets**; Generate opens the ASSERT form for `foundry.assert_policy`,
-which needs at least one dataset, and the generator list for other scanners whose
-datasets can be chosen.
+**Generated**. On the launch page and in the preset editor, a scanner that accepts
+any named dataset also has **Generate datasets** next to **Browse datasets**;
+Generate opens the ASSERT form for `foundry.assert_policy`, which needs at least
+one dataset, and the generator list for other scanners. Scanners with fixed or
+allow-listed datasets show only **Browse datasets**.
 
 ## History
 

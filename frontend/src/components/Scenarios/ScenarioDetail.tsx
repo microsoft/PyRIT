@@ -91,6 +91,7 @@ import {
   buildEstimateRequest,
   buildRunRequest,
   CONVERSATION_PARAMETER_NAMES,
+  acceptsAnyNamedDataset,
   MAX_MAX_CONCURRENCY,
   MAX_MAX_RETRIES,
   MIN_MAX_CONCURRENCY,
@@ -1039,8 +1040,7 @@ function ScenarioLaunchForm({
                 </Text>
                 <DatasetActions
                   scenarioName={scenario.scenario_name}
-                  // Only a scenario that accepts any dataset name can select a newly generated one.
-                  canGenerate={supportsDatasets && datasetOptions.supports_overrides && datasetOptions.mode === 'any'}
+                  canGenerate={acceptsAnyNamedDataset(scenario, datasetOptions)}
                 />
               </div>
               <ScenarioDatasetTable
