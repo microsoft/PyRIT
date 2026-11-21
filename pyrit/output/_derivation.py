@@ -20,8 +20,10 @@ from pyrit.analytics import (
 )
 from pyrit.analytics.scenario_statistics import (
     combine_execution_counts,
+    recorded_objective_scorer_identifier,
     select_execution_attack_result_ids,
 )
+from pyrit.models import ScenarioJudgeAttribution
 
 if TYPE_CHECKING:
     from pyrit.models import (
@@ -30,6 +32,8 @@ if TYPE_CHECKING:
         ComponentIdentifier,
         MessagePiece,
         OutcomeStatistics,
+        ScenarioJudgeScope,
+        ScenarioJudgeStatistics,
         ScenarioProducerCounts,
         ScenarioResult,
         Score,
@@ -89,6 +93,9 @@ class ScenarioOverview(NamedTuple):
     groups: list[GroupStatistics]
     outcomes: OutcomeStatistics | None = None
     producer_counts: ScenarioProducerCounts | None = None
+    #: Statistics per objective scorer; rates are only comparable within one judge.
+    judges: tuple[ScenarioJudgeStatistics, ...] = ()
+    judge_scope: ScenarioJudgeScope | None = None
 
 
 def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
@@ -131,7 +138,41 @@ def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
         groups=groups,
         outcomes=statistics.overall.outcomes,
         producer_counts=statistics.overall.producer_counts,
+        judges=tuple(statistics.judges),
+        judge_scope=statistics.judge_scope,
     )
+
+
+def judge_label(judge: ScenarioJudgeStatistics) -> str:
+    """
+    Derive a short display label for the objective scorer behind a judge's statistics.
+
+    Args:
+        judge (ScenarioJudgeStatistics): The judge to label.
+
+    Returns:
+        str: The scorer class and short hash, the short hash alone, or why the scorer is unknown.
+    """
+    if judge.scorer_identifier is not None and judge.scorer_hash is not None:
+        return f"{judge.scorer_identifier.class_name} ({judge.scorer_hash[:12]})"
+    if judge.scorer_hash is not None:
+        return f"Scorer {judge.scorer_hash[:12]}"
+    if judge.attribution == ScenarioJudgeAttribution.CONFLICT:
+        return "Conflicting scorer records"
+    return "Unknown scorer (not recorded)"
+
+
+def format_rate(rate: float | None) -> str:
+    """
+    Format a 0-1 rate as a percentage with one decimal, or ``N/A`` when it has no denominator.
+
+    Args:
+        rate (float | None): The rate to format.
+
+    Returns:
+        str: The formatted percentage.
+    """
+    return "N/A" if rate is None else f"{rate:.1%}"
 
 
 class SuiteEntryStatistics(NamedTuple):
@@ -220,8 +261,7 @@ def attack_objective_scorer_identifier(
     Returns:
         ComponentIdentifier | None: The attack's recorded scorer, otherwise the run's.
     """
-    strategy = attack.get_attack_strategy_identifier()
-    recorded = strategy.get_child("objective_scorer") if strategy is not None else None
+    recorded = recorded_objective_scorer_identifier(attack)
     return recorded if recorded is not None else run_scorer_identifier
 
 

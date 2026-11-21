@@ -21,13 +21,21 @@ from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
+    ScenarioJudgeAttribution,
+    ScenarioJudgeScope,
     ScenarioProgressCounts,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
     config_hash,
 )
-from unit.mocks import make_scenario_result, make_sequential_attack_results
+from unit.mocks import (
+    judged_attack_identifier,
+    make_judged_scenario_result,
+    make_scenario_result,
+    make_sequential_attack_results,
+)
 
 _T0 = datetime(2026, 9, 1, tzinfo=UTC)
 
@@ -345,3 +353,134 @@ def test_execution_attack_result_ids_keep_an_envelope_without_its_children() -> 
     result = make_scenario_result(attack_results={"attack": [envelope]})
 
     assert select_execution_attack_result_ids(result) == {envelope.attack_result_id}
+
+
+_JUDGE_A = ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers")
+_JUDGE_B = ComponentIdentifier(class_name="JudgeB", class_module="tests.scorers")
+
+
+def test_pool_results_recorded_by_two_judges_are_split_and_mixed() -> None:
+    result = make_judged_scenario_result(
+        groups=[
+            ("attack_a", _JUDGE_A, _JUDGE_A, [AttackOutcome.SUCCESS, AttackOutcome.UNDETERMINED]),
+            ("attack_b", _JUDGE_B, _JUDGE_B, [AttackOutcome.FAILURE, AttackOutcome.FAILURE]),
+        ]
+    )
+
+    statistics = compute_scenario_statistics(result)
+
+    assert statistics.judge_scope == ScenarioJudgeScope.MIXED_JUDGES
+    assert [
+        (judge.attribution, judge.scorer_hash, judge.candidate_index, list(judge.atomic_attacks))
+        for judge in statistics.judges
+    ] == [
+        (ScenarioJudgeAttribution.RECORDED, _JUDGE_A.hash, 0, ["attack_a"]),
+        (ScenarioJudgeAttribution.RECORDED, _JUDGE_B.hash, 1, ["attack_b"]),
+    ]
+    judge_a = statistics.judges[0].overall
+    assert (judge_a.completed, judge_a.planned, judge_a.succeeded) == (2, 2, 1)
+    assert judge_a.outcomes.success_rate_decided == 1.0
+    assert judge_a.outcomes.success_rate_all == 0.5
+    assert statistics.judges[0].scorer_identifier == _JUDGE_A
+
+
+def test_pool_binding_attributes_unrecorded_results_and_ignores_unstarted_judges() -> None:
+    result = make_judged_scenario_result(
+        groups=[
+            ("attack_a", _JUDGE_A, None, [AttackOutcome.SUCCESS]),
+            ("attack_b", _JUDGE_B, None, []),
+        ],
+        planned_seed_groups=1,
+    )
+
+    statistics = compute_scenario_statistics(result)
+
+    assert statistics.judge_scope == ScenarioJudgeScope.SINGLE_JUDGE
+    assert [(judge.attribution, judge.scorer_hash, judge.overall.completed) for judge in statistics.judges] == [
+        (ScenarioJudgeAttribution.PLANNED, _JUDGE_A.hash, 1),
+        (ScenarioJudgeAttribution.PLANNED, _JUDGE_B.hash, 0),
+    ]
+    assert statistics.judges[0].scorer_identifier is None
+
+
+def test_recorded_scorer_that_contradicts_the_pool_binding_is_a_conflict() -> None:
+    result = make_judged_scenario_result(groups=[("attack_a", _JUDGE_A, _JUDGE_B, [AttackOutcome.SUCCESS])])
+
+    statistics = compute_scenario_statistics(result)
+
+    assert statistics.judge_scope == ScenarioJudgeScope.UNKNOWN_JUDGE
+    [judge] = statistics.judges
+    assert (judge.attribution, judge.scorer_hash, judge.scorer_identifier) == (
+        ScenarioJudgeAttribution.CONFLICT,
+        None,
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("run_scorer", "attribution", "scope"),
+    [
+        (_JUDGE_A, ScenarioJudgeAttribution.RUN, ScenarioJudgeScope.SINGLE_JUDGE),
+        (None, ScenarioJudgeAttribution.UNKNOWN, ScenarioJudgeScope.UNKNOWN_JUDGE),
+    ],
+)
+def test_legacy_results_without_a_recorded_scorer_use_the_run_scorer(run_scorer, attribution, scope) -> None:
+    result = make_scenario_result(
+        objective_scorer_identifier=run_scorer,
+        attack_results={"attack": [_result(objective="A", outcome=AttackOutcome.SUCCESS)]},
+    )
+
+    statistics = compute_scenario_statistics(result)
+
+    assert statistics.judge_scope == scope
+    [judge] = statistics.judges
+    assert judge.attribution == attribution
+    assert judge.scorer_hash == (run_scorer.hash if run_scorer is not None else None)
+
+
+def test_latest_completion_decides_the_judge_of_a_resumed_unit() -> None:
+    first, second = (
+        make_judged_scenario_result(groups=[("attack", None, judge, [outcome])]).attack_results["attack"][0]
+        for judge, outcome in ((_JUDGE_A, AttackOutcome.FAILURE), (_JUDGE_B, AttackOutcome.SUCCESS))
+    )
+    second.timestamp = first.timestamp + timedelta(seconds=1)
+    result = make_judged_scenario_result(groups=[("attack", None, None, [AttackOutcome.SUCCESS])])
+    result.attack_results["attack"] = [first, second]
+
+    statistics = compute_scenario_statistics(result)
+
+    assert [(judge.scorer_hash, judge.overall.completed) for judge in statistics.judges] == [(_JUDGE_B.hash, 1)]
+    assert statistics.judge_scope == ScenarioJudgeScope.SINGLE_JUDGE
+
+
+@pytest.mark.parametrize(
+    ("bound", "attribution", "scorer_hash"),
+    [
+        (_JUDGE_B, ScenarioJudgeAttribution.PLANNED, _JUDGE_B.hash),
+        (None, ScenarioJudgeAttribution.UNKNOWN, None),
+    ],
+)
+def test_unrecorded_latest_completion_ignores_an_earlier_execution_judge(bound, attribution, scorer_hash) -> None:
+    [earlier] = make_judged_scenario_result(
+        groups=[("attack", None, _JUDGE_A, [AttackOutcome.FAILURE])]
+    ).attack_results["attack"]
+    result = make_judged_scenario_result(groups=[("attack", bound, None, [AttackOutcome.SUCCESS])])
+    [latest] = result.attack_results["attack"]
+    latest.timestamp = earlier.timestamp + timedelta(seconds=1)
+    result.attack_results["attack"] = [earlier, latest]
+
+    [judge] = compute_scenario_statistics(result).judges
+
+    assert (judge.attribution, judge.scorer_hash) == (attribution, scorer_hash)
+
+
+def test_envelope_takes_the_judge_its_linked_child_recorded() -> None:
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="attack", envelope_outcome=AttackOutcome.SUCCESS, child_outcomes=[AttackOutcome.SUCCESS]
+    )
+    children[0].atomic_attack_identifier = judged_attack_identifier(_JUDGE_A)
+    result = make_scenario_result(attack_results={"attack": [envelope, *children]})
+
+    [judge] = compute_scenario_statistics(result).judges
+
+    assert (judge.attribution, judge.scorer_hash) == (ScenarioJudgeAttribution.RECORDED, _JUDGE_A.hash)

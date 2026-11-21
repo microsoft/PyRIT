@@ -10,6 +10,7 @@ from pyrit.models import AttackOutcome, AttackResult, OutcomeStatistics, Scenari
 from pyrit.output._derivation import (
     attack_score_display,
     attack_technique_label,
+    judge_label,
     resolve_target_info,
     scenario_overview,
     select_attacks,
@@ -155,6 +156,32 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         else:
             scorer = None
 
+        judges = [
+            {
+                "label": judge_label(judge),
+                "attribution": judge.attribution.value,
+                "scorer_hash": judge.scorer_hash,
+                "candidate_index": judge.candidate_index,
+                "evaluation": judge.evaluation,
+                "scorer": (
+                    self._scorer_printer.build(scorer_identifier=judge.scorer_identifier)
+                    if judge.scorer_identifier is not None and self._scorer_printer is not None
+                    else None
+                ),
+                "planned": judge.overall.planned,
+                "num_objective_executions": judge.overall.completed,
+                "outcomes": self._OUTCOME_ADAPTER.dump_python(judge.overall.outcomes, mode="json"),
+                "success_rate_decided": (
+                    judge.overall.outcomes.success_rate_decided if judge.overall.outcomes is not None else None
+                ),
+                "success_rate_all": (
+                    judge.overall.outcomes.success_rate_all if judge.overall.outcomes is not None else None
+                ),
+                "atomic_attacks": list(judge.atomic_attacks),
+            }
+            for judge in overview.judges
+        ]
+
         return {
             "view": "overview",
             "scenario": {
@@ -178,7 +205,9 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
                 "outcomes": self._OUTCOME_ADAPTER.dump_python(overview.outcomes, mode="json"),
                 "producer_counts": self._PRODUCER_ADAPTER.dump_python(overview.producer_counts, mode="json"),
                 "unique_objectives": len(result.get_objectives()),
+                "judge_scope": overview.judge_scope.value if overview.judge_scope is not None else None,
             },
+            "judges": judges,
             "groups": groups,
         }
 

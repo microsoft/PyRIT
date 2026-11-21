@@ -17,6 +17,7 @@ from pyrit.models.catalog.scenario import (
     ScenarioTargetSummary,
 )
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.results.attack_result import AttackOutcome, AttackResultRole
 from pyrit.models.results.scenario_result import ScenarioRunState
 from pyrit.models.retry_event import RetryEvent
@@ -288,6 +289,57 @@ class ScenarioExecutionUnit(BaseModel):
     seed_group_id: str
 
 
+class ScenarioJudgeAttribution(str, Enum):
+    """How a report knows which objective scorer judged a set of execution units."""
+
+    #: The unit's effective result recorded the objective scorer it ran with.
+    RECORDED = "recorded"
+    #: Only the run plan's scorer-pool binding names the scorer.
+    PLANNED = "planned"
+    #: Only the identifier of a single-scorer run names the scorer.
+    RUN = "run"
+    #: The recorded scorer disagrees with the planned binding.
+    CONFLICT = "conflict"
+    #: No saved source identifies the scorer.
+    UNKNOWN = "unknown"
+
+
+class ScenarioJudgeScope(str, Enum):
+    """Whether a scenario's completed results come from one identified objective scorer."""
+
+    #: One identified scorer judged every completed unit.
+    SINGLE_JUDGE = "single_judge"
+    #: Completed units were judged by more than one scorer, or by an identified and an unidentified one.
+    MIXED_JUDGES = "mixed_judges"
+    #: Completed units exist, but the scorer that judged them is unknown or conflicting.
+    UNKNOWN_JUDGE = "unknown_judge"
+    #: No unit has completed.
+    NO_RESULTS = "no_results"
+
+
+class ScenarioJudgeStatistics(BaseModel):
+    """
+    Effective execution-unit statistics for the units one objective scorer judged.
+
+    Success rates are only comparable within one judge: different scorers apply different rubrics.
+    ``attribution`` is the weakest evidence used for any attempted unit in the set.
+    """
+
+    attribution: ScenarioJudgeAttribution
+    #: Content hash of the scorer's identifier; None for unknown or conflicting attribution.
+    scorer_hash: str | None = None
+    #: The scorer's identifier when a result or the run records it.
+    scorer_identifier: ComponentIdentifier | None = None
+    #: Position of the scorer in the run's scorer pool, for pool runs.
+    candidate_index: int | None = None
+    #: The pool candidate's evaluation key, if it has one.
+    evaluation: str | None = None
+    #: Counts across the units this scorer judged.
+    overall: ScenarioProgressCounts
+    #: Counts keyed by atomic attack name.
+    atomic_attacks: dict[str, ScenarioProgressCounts] = Field(default_factory=dict)
+
+
 class ScenarioExecutionStatistics(BaseModel):
     """
     Effective execution-unit statistics for one scenario run, calculated by ``pyrit.analytics``.
@@ -309,6 +361,10 @@ class ScenarioExecutionStatistics(BaseModel):
     atomic_attack_attempts: dict[str, int] = Field(default_factory=dict)
     #: Attempts excluded from logical-unit counts, but retained in producer counts.
     unattributed_attempts: int = Field(default=0, ge=0)
+    #: Counts per objective scorer, in plan (or first-attempt) order.
+    judges: list[ScenarioJudgeStatistics] = Field(default_factory=list)
+    #: Whether one identified scorer judged every completed unit.
+    judge_scope: ScenarioJudgeScope = ScenarioJudgeScope.NO_RESULTS
 
 
 class ScenarioTechniqueProgress(ScenarioProgressCounts):

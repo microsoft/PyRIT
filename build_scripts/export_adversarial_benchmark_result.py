@@ -7,14 +7,17 @@ import argparse
 import asyncio
 import csv
 import json
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pyrit.analytics import compute_scenario_statistics
+from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackResult, ScenarioResult
 from pyrit.output import FileSink
+from pyrit.output._derivation import attack_objective_scorer_identifier, judge_label
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 from pyrit.setup import SQLITE, initialize_pyrit_async
 
@@ -102,6 +105,9 @@ def _attack_rows(*, result: ScenarioResult) -> list[dict[str, Any]]:
             score_value = None
             if score is not None:
                 score_value = score.score_value if score.score_value is not None else score.status.value
+            judge = attack_objective_scorer_identifier(
+                attack=attack, run_scorer_identifier=result.objective_scorer_identifier
+            )
             rows.append(
                 {
                     "attack_result_id": attack.attack_result_id,
@@ -110,6 +116,7 @@ def _attack_rows(*, result: ScenarioResult) -> list[dict[str, Any]]:
                     "outcome": attack.outcome.value,
                     "executed_turns": attack.executed_turns,
                     "score_value": score_value,
+                    "judge": f"{judge.class_name} ({judge.hash[:12]})" if judge is not None else None,
                 }
             )
     return rows
@@ -127,35 +134,52 @@ async def _write_attacks_async(*, result: ScenarioResult, output_dir: Path) -> N
 
 
 def _build_technique_metrics(*, result: ScenarioResult) -> list[dict[str, Any]]:
-    """Aggregate persisted outcomes by technique and adversarial model."""
-    grouped: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
-    retry_records: Counter[tuple[str, str]] = Counter()
-    for technique_name, display_group, attack_results in _benchmark_groups(result=result):
-        group_key = (technique_name, display_group)
-        latest_by_objective = {}
-        for attack_result in attack_results:
-            current = latest_by_objective.get(attack_result.objective)
-            if current is None or attack_result.timestamp > current.timestamp:
-                latest_by_objective[attack_result.objective] = attack_result
-        retry_records[group_key] += len(attack_results) - len(latest_by_objective)
-        for attack_result in latest_by_objective.values():
-            grouped[(technique_name, display_group)][attack_result.outcome.value.lower()] += 1
+    """
+    Aggregate effective execution-unit outcomes by technique and adversarial model.
+
+    Counts use the scenario report's statistics: each execution unit (objective seed group under one
+    technique configuration) counts once, by its latest completed result. Older results for the unit
+    are reported as ``retry_records``.
+    """
+    statistics = compute_scenario_statistics(result)
+    names_by_combination: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for atomic_attack_name in dict.fromkeys([*result.display_group_map, *result.attack_results]):
+        technique_name = atomic_attack_name.split("__", 1)[0]
+        display_group = result.display_group_map.get(atomic_attack_name, "<ungrouped>")
+        names_by_combination[(technique_name, display_group)].append(atomic_attack_name)
 
     metrics: list[dict[str, Any]] = []
-    for (technique_name, display_group), counts in sorted(grouped.items()):
-        total = sum(counts.values())
-        success_count = counts["success"]
+    for (technique_name, display_group), names in sorted(names_by_combination.items()):
+        counts = combine_execution_counts(
+            statistics.atomic_attacks[name] for name in names if name in statistics.atomic_attacks
+        )
+        outcomes = counts.outcomes
+        attempts = sum(statistics.atomic_attack_attempts.get(name, 0) for name in names)
+        if not attempts and not counts.completed:
+            continue
+        judges = [
+            judge
+            for judge in statistics.judges
+            if any(judge.atomic_attacks[name].completed for name in names if name in judge.atomic_attacks)
+        ]
         metrics.append(
             {
                 "technique": technique_name,
                 "adversarial_model": display_group,
-                "total": total,
-                "success": success_count,
-                "failure": counts["failure"],
-                "error": counts["error"],
-                "undetermined": counts["undetermined"],
-                "retry_records": retry_records[(technique_name, display_group)],
-                "success_rate": round(success_count / total, 4) if total else 0.0,
+                "total": counts.completed,
+                "success": outcomes.successes if outcomes is not None else counts.succeeded,
+                "failure": outcomes.failures if outcomes is not None else 0,
+                "error": outcomes.errors if outcomes is not None else 0,
+                "undetermined": outcomes.undetermined if outcomes is not None else 0,
+                "retry_records": max(attempts - counts.completed, 0),
+                "success_rate": round(counts.succeeded / counts.completed, 4) if counts.completed else 0.0,
+                "success_rate_decided": (
+                    round(outcomes.success_rate_decided, 4)
+                    if outcomes is not None and outcomes.success_rate_decided is not None
+                    else None
+                ),
+                "judge": judge_label(judges[0]) if len(judges) == 1 else ("mixed" if judges else ""),
+                "judge_attribution": judges[0].attribution.value if len(judges) == 1 else "",
             }
         )
     return metrics
@@ -176,6 +200,9 @@ def _write_technique_metrics(*, result: ScenarioResult, output_dir: Path) -> Non
         "undetermined",
         "retry_records",
         "success_rate",
+        "success_rate_decided",
+        "judge",
+        "judge_attribution",
     ]
     with open(output_dir / "technique-metrics.csv", "w", encoding="utf-8", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=fieldnames)
@@ -183,7 +210,7 @@ def _write_technique_metrics(*, result: ScenarioResult, output_dir: Path) -> Non
         writer.writerows(metrics)
 
     lines = [
-        "{:<32} {:<30} {:>4} {:>8} {:>8} {:>6} {:>8} {:>8}".format(
+        "{:<32} {:<30} {:>4} {:>8} {:>8} {:>6} {:>8} {:>8} {:>8}  {}".format(
             "Technique",
             "Adversarial model",
             "N",
@@ -192,15 +219,25 @@ def _write_technique_metrics(*, result: ScenarioResult, output_dir: Path) -> Non
             "Error",
             "Retries",
             "ASR",
+            "Decided",
+            "Judge",
         )
     ]
     lines.extend(
         (
             "{technique:<32} {adversarial_model:<30} {total:>4} {success:>8} "
-            "{failure:>8} {error:>6} {retry_records:>8} {success_rate:>7.1%}"
-        ).format(**metric)
+            "{failure:>8} {error:>6} {retry_records:>8} {success_rate:>7.1%} {decided:>8}  {judge}"
+        ).format(
+            **metric,
+            decided=(f"{metric['success_rate_decided']:.1%}" if metric["success_rate_decided"] is not None else "N/A"),
+        )
         for metric in metrics
     )
+    if len({metric["judge"] for metric in metrics if metric["judge"]}) > 1 or any(
+        metric["judge"] == "mixed" for metric in metrics
+    ):
+        lines.append("")
+        lines.append("Different judges scored these rows; compare ASR only between rows with the same judge.")
     (output_dir / "technique-metrics.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
