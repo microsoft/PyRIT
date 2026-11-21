@@ -81,7 +81,7 @@ def test_empty_categories_raise() -> None:
         _CoSafeDataset(categories=[])
 
 
-async def test_fetch_reads_json_lines_files_into_multi_turn_groups(tmp_path: Path) -> None:
+async def test_fetch_reads_json_lines_files_into_multi_turn_groups_async(tmp_path: Path) -> None:
     loader = _CoSafeDataset(categories=[CoSafeCategory.SELF_HARM])
 
     with patch(_DB_DATA_PATH, tmp_path), patch(_REQUESTS_GET, side_effect=_response_for) as mock_get:
@@ -104,7 +104,7 @@ async def test_fetch_reads_json_lines_files_into_multi_turn_groups(tmp_path: Pat
     assert all(seed.source == "https://github.com/ErxinYu/CoSafe-Dataset" for seed in dataset.seeds)
 
 
-async def test_fetch_requests_file_names_containing_commas(tmp_path: Path) -> None:
+async def test_fetch_requests_file_names_containing_commas_async(tmp_path: Path) -> None:
     loader = _CoSafeDataset(categories=[CoSafeCategory.DRUG_ABUSE_WEAPONS_BANNED_SUBSTANCE])
 
     with patch(_DB_DATA_PATH, tmp_path), patch(_REQUESTS_GET, side_effect=_response_for) as mock_get:
@@ -113,7 +113,7 @@ async def test_fetch_requests_file_names_containing_commas(tmp_path: Path) -> No
     assert mock_get.call_args.args[0] == _RAW_BASE + "drug_abuse,weapons,banned_substance.json"
 
 
-async def test_trailing_assistant_message_is_dropped(tmp_path: Path) -> None:
+async def test_trailing_assistant_message_is_dropped_async(tmp_path: Path) -> None:
     loader = _CoSafeDataset(categories=[CoSafeCategory.DRUG_ABUSE_WEAPONS_BANNED_SUBSTANCE])
 
     with patch(_DB_DATA_PATH, tmp_path), patch(_REQUESTS_GET, side_effect=_response_for):
@@ -124,7 +124,7 @@ async def test_trailing_assistant_message_is_dropped(tmp_path: Path) -> None:
     assert group[-1].value == "And the rest?"
 
 
-async def test_cached_files_load_without_network(tmp_path: Path) -> None:
+async def test_cached_files_load_without_network_async(tmp_path: Path) -> None:
     loader = _CoSafeDataset(categories=[CoSafeCategory.SELF_HARM])
 
     with patch(_DB_DATA_PATH, tmp_path), patch(_REQUESTS_GET, side_effect=_response_for):
@@ -145,7 +145,7 @@ async def test_cached_files_load_without_network(tmp_path: Path) -> None:
     ],
     ids=["unexpected-role", "empty-content", "no-user-message", "not-a-list"],
 )
-async def test_malformed_conversation_raises(conversation: object) -> None:
+async def test_malformed_conversation_raises_async(conversation: object) -> None:
     loader = _CoSafeDataset(categories=[CoSafeCategory.SELF_HARM])
 
     with (
@@ -155,7 +155,7 @@ async def test_malformed_conversation_raises(conversation: object) -> None:
         await loader.fetch_dataset_async(cache=False)
 
 
-async def test_empty_files_raise() -> None:
+async def test_empty_files_raise_async() -> None:
     loader = _CoSafeDataset(categories=[CoSafeCategory.SELF_HARM])
 
     with (
