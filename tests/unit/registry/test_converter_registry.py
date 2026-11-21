@@ -15,6 +15,7 @@ import pytest
 from pyrit.common import REQUIRED_VALUE, reset_default_values, set_default_value
 from pyrit.common.brick_contract import get_constructor_owners
 from pyrit.converter import (
+    AdversarialPoetryConverter,
     ArabiziConverter,
     Base64Converter,
     CaesarConverter,
@@ -583,6 +584,7 @@ class TestClassMetadata:
 
     def test_is_llm_based_flag(self, registry: ConverterRegistry):
         llm_based = (
+            AdversarialPoetryConverter,
             LLMGenericTextConverter,
             NoiseConverter,
             PersuasionConverter,

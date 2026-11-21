@@ -17,6 +17,7 @@ from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, get_mock_target_identifier
 
 from pyrit.converter import (
+    AdversarialPoetryConverter,
     DenylistConverter,
     LLMGenericTextConverter,
     MaliciousQuestionGeneratorConverter,
@@ -333,6 +334,7 @@ def _custom_template(value: str, *parameters: str) -> SeedPrompt:
             _custom_template("Add {{ number_errors }} typos: {{ noise }}", "noise", "number_errors"),
         ),
         (ScientificTranslationConverter, {"mode": "academic"}, _custom_template("Rewrite as a lab report.")),
+        (AdversarialPoetryConverter, {}, _custom_template("Rewrite the request as a sonnet.")),
         (
             VariationConverter,
             {},
