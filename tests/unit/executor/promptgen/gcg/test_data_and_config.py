@@ -85,6 +85,8 @@ class TestGetGoalsAndTargetsLegacy:
             params1.n_test_data = 0
             params1.test_data = ""
             params1.random_seed = 42
+            params1.test_goals = []
+            params1.test_targets = []
 
             params2 = MagicMock()
             params2.train_data = csv_path
@@ -92,6 +94,8 @@ class TestGetGoalsAndTargetsLegacy:
             params2.n_test_data = 0
             params2.test_data = ""
             params2.random_seed = 42
+            params2.test_goals = []
+            params2.test_targets = []
 
             goals1, targets1, _, _ = get_goals_and_targets(params1)
             goals2, targets2, _, _ = get_goals_and_targets(params2)
