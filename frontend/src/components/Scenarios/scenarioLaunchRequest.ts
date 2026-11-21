@@ -9,8 +9,6 @@ import type {
   TechniqueOverride,
 } from '@/types'
 
-import { scenarioDatasetDefaults } from './datasetPresentation'
-
 /**
  * Common/opaque parameters the base scenario declares via
  * `Scenario._common_scenario_parameters` — the launch form exposes a
@@ -51,12 +49,12 @@ export function requiresDatasetSelection(scenario: RegisteredScenario): boolean 
   return (scenario.dataset_options?.min_selected ?? 0) > 0
 }
 
-/** Why the selected datasets are too few for the scenario's declared minimum, or null. */
-export function datasetSelectionError(scenario: RegisteredScenario, datasetEdits: ScenarioDatasetRequest): string | null {
-  const minimum = scenario.dataset_options?.min_selected ?? 0
-  if (minimum === 0) return null
-  const selected = (datasetEdits.sources ?? scenarioDatasetDefaults(scenario).sources).length
-  if (selected >= minimum) return null
+/**
+ * The library's message for fewer datasets than a declared minimum, worded as ``validate_minimum_selection``
+ * in pyrit/scenario/core/dataset_overrides.py words it. The server enforces the minimum; the form shows this
+ * on the dataset picker, since the server checks other fields first and its rejection can be about one of them.
+ */
+export function minimumSelectionMessage(minimum: number): string {
   return minimum === 1 ? 'Select a dataset.' : `Select at least ${minimum} datasets.`
 }
 
@@ -65,14 +63,13 @@ function linkedDatasetLabel(name: string): string {
 }
 
 /**
- * Why a link's dataset names can't launch, or null. A scenario without dataset input would drop
- * them silently; other names, including blank ones, are left for the server to validate.
+ * Why a link's dataset names can't launch, or null. A scenario without dataset input, or with fixed
+ * sources, can't take them; other names, including blank ones, are left for the server to validate.
  */
-export function linkedDatasetProblem(names: readonly string[], supportsDatasets: boolean): string | null {
+export function linkedDatasetProblem(names: readonly string[], takesLinkedDatasets: boolean): string | null {
   if (names.length === 0) return null
-  if (!supportsDatasets) {
-    return "This scenario does not take datasets, so it can't launch with the linked datasets: "
-      + `${names.map(linkedDatasetLabel).join(', ')}.`
+  if (!takesLinkedDatasets) {
+    return `This scenario can't take the linked datasets: ${names.map(linkedDatasetLabel).join(', ')}.`
   }
   return null
 }
@@ -218,8 +215,6 @@ export function buildRunRequest(input: ScenarioLaunchInput): BuildRunRequestResu
   if (supportsParameter(input.scenario, 'objective_target') && !input.targetName) {
     return { ok: false, error: 'Select a target.' }
   }
-  const datasetProblem = datasetSelectionError(input.scenario, input.datasetEdits)
-  if (datasetProblem) return { ok: false, error: datasetProblem }
   const estimateResult = buildEstimateRequest(input)
   if (!estimateResult.ok) {
     return estimateResult

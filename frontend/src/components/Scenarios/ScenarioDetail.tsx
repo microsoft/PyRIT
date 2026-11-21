@@ -98,8 +98,8 @@ import {
   OBJECTIVE_PARAMETER_NAMES,
   type ScenarioLaunchInput,
   scenarioDynamicParameters,
-  datasetSelectionError,
   linkedDatasetProblem,
+  minimumSelectionMessage,
   requiresDatasetSelection,
   supportsParameter,
 } from './scenarioLaunchRequest'
@@ -421,6 +421,10 @@ function ScenarioLaunchForm({
   const supportsBaseline = supportsParameter(scenario, 'include_baseline')
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
   const datasetRequired = requiresDatasetSelection(scenario)
+  const declaredDatasetOptions = scenarioDatasetOptions(scenario)
+  // Linked names replace the sources, so only a scenario whose sources can be chosen takes them.
+  const takesLinkedDatasets = supportsDatasets && declaredDatasetOptions.supports_overrides
+    && declaredDatasetOptions.mode !== 'fixed'
   const supportsConcurrency = supportsParameter(scenario, 'max_concurrency')
   const supportsRetries = supportsParameter(scenario, 'max_retries')
   const isBaselineForbidden = scenario.baseline_policy === 'forbidden'
@@ -430,8 +434,8 @@ function ScenarioLaunchForm({
   )
   const [linkedNames] = useState(() => [...linkedDatasetNames])
   const linkedDatasetError = useMemo(
-    () => linkedDatasetProblem(linkedNames, supportsDatasets),
-    [linkedNames, supportsDatasets],
+    () => linkedDatasetProblem(linkedNames, takesLinkedDatasets),
+    [linkedNames, takesLinkedDatasets],
   )
   const location = useLocation()
   const searchWithoutDatasetLinks = new URLSearchParams()
@@ -463,7 +467,7 @@ function ScenarioLaunchForm({
       preset,
       seededTechniques: techniqueSeed.techniques,
       initialRun,
-      datasetNames: supportsDatasets && linkedDatasetNames.length > 0 ? linkedDatasetNames : undefined,
+      datasetNames: takesLinkedDatasets && linkedDatasetNames.length > 0 ? linkedDatasetNames : undefined,
     }),
   )
   const {
@@ -584,8 +588,6 @@ function ScenarioLaunchForm({
   ])
   const estimateResult = useMemo(() => buildEstimateRequest(launchInput), [launchInput])
   const requestResult = useMemo(() => buildRunRequest(launchInput), [launchInput])
-  const datasetSelectionProblem = datasetSelectionError(scenario, datasetEdits)
-  const datasetPickerRef = useRef<HTMLInputElement>(null)
   const estimateRequest = useMemo(
     () => estimateResult.ok ? estimateResult.request : null,
     [estimateResult],
@@ -615,6 +617,13 @@ function ScenarioLaunchForm({
   const datasetOptions: ScenarioDatasetOptions = datasetProjection?.dataset_options
     ?? scenarioDatasetOptions(scenario)
   const selectedDatasetNames = (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name)
+  // The server enforces the scenario's declared minimum. Launch scan presents it on the required picker in the
+  // library's wording; the estimate's own rejection can be about another field, so it stays in the run estimate.
+  const minimumDatasets = scenario.dataset_options?.min_selected ?? 0
+  const datasetPickerShown = supportsDatasets && datasetOptions.supports_overrides && datasetOptions.mode !== 'fixed'
+  const datasetSelectionMessage = datasetPickerShown && selectedDatasetNames.length < minimumDatasets
+    ? minimumSelectionMessage(minimumDatasets)
+    : null
   const datasetSelectionKey = JSON.stringify(selectedDatasetNames)
   const reloadDatasetMetadata = datasetMetadata.reload
   const previousDatasetSelection = useRef(datasetSelectionKey)
@@ -662,15 +671,19 @@ function ScenarioLaunchForm({
     submitting,
     apiError,
     validationError,
+    datasetSelectionError,
     clearValidationError,
     isSubmitting,
     launchButtonRef,
+    apiErrorRef,
+    datasetPickerRef,
     submitForm,
     dismissPreview,
     changePreviewOpen,
     confirmLaunch,
   } = useScenarioLaunch({
     requestResult,
+    datasetSelectionMessage,
     submitBlocked: conversationBusy || Boolean(techniqueEditError),
     launchBlocked: conversationBusy || Boolean(techniqueEditError) || !runtime.ready || !defaultsReady
       || staleSelection || unavailableSelection || checkingRefreshPolicies,
@@ -844,14 +857,7 @@ function ScenarioLaunchForm({
             id={formId}
             className={styles.formColumn}
             aria-label="Scenario run configuration"
-            onSubmit={(event) => {
-              submitForm(event)
-              // A missing dataset is reported on the picker, far below the button; focusing it scrolls the
-              // form there. scrollIntoView would also scroll the app shell, which can't scroll back.
-              if (!requestResult.ok && requestResult.error === datasetSelectionProblem) {
-                datasetPickerRef.current?.focus()
-              }
-            }}
+            onSubmit={submitForm}
             noValidate
           >
             {preset && (
@@ -878,7 +884,7 @@ function ScenarioLaunchForm({
                 </MessageBarBody>
               </MessageBar>
             )}
-            {validationError && !requestResult.ok && requestResult.error !== datasetSelectionProblem && (
+            {validationError && !requestResult.ok && (
               <MessageBar intent="warning">
                 <MessageBarBody role="alert">{requestResult.error}</MessageBarBody>
               </MessageBar>
@@ -906,7 +912,7 @@ function ScenarioLaunchForm({
               </MessageBar>
             )}
             {apiError && (
-              <MessageBar intent="error">
+              <MessageBar intent="error" ref={apiErrorRef} tabIndex={-1}>
                 <MessageBarBody role="alert">{apiError}</MessageBarBody>
               </MessageBar>
             )}
@@ -1027,7 +1033,7 @@ function ScenarioLaunchForm({
             <section className={styles.section} aria-labelledby="datasets-section-title">
               <div className={styles.sectionHeader}>
                 <Text id="datasets-section-title" as="h2" aria-label="Datasets" size={400} weight="semibold">
-                  <ContextualHelpLabel term="Datasets" labelProps={{ weight: 'semibold', required: datasetRequired }}>
+                  <ContextualHelpLabel term="Datasets" labelProps={{ weight: 'semibold' }}>
                     Seed examples used by this scan. Limits and filters control which examples are selected.
                   </ContextualHelpLabel>
                 </Text>
@@ -1048,8 +1054,7 @@ function ScenarioLaunchForm({
                   && !confirmedDatasetSettings.sources.some((source) => source.fetch === 'always'
                     && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
                 onLoad={() => { if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest) }}
-                required={datasetRequired} showCatalogLink={false}
-                selectionError={validationError !== null ? datasetSelectionProblem : null} pickerRef={datasetPickerRef}
+                required={datasetRequired} selectionError={datasetSelectionError} pickerRef={datasetPickerRef}
                 onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
               />
             </section>
@@ -1168,13 +1173,14 @@ function ScenarioLaunchForm({
             open={previewOpen}
             submitting={submitting}
             confirmDisabled={submitting || conversationBusy || !runtime.ready || !defaultsReady || !requestResult.ok
-              || checkingRefreshPolicies}
+              || checkingRefreshPolicies || runEstimate.rejection !== null}
             onOpenChange={changePreviewOpen}
             onCancel={dismissPreview}
             onConfirm={() => void confirmLaunch()}
             refresh={{
               checking: checkingRefreshPolicies,
-              unconfirmed: unconfirmedRefreshPolicies,
+              // A rejected request cannot launch, so its refresh effects do not apply.
+              unconfirmed: unconfirmedRefreshPolicies && runEstimate.rejection === null,
               refreshed: refreshDatasets,
               edited: editedRefreshDatasets,
               unchecked: uncheckedRefreshDatasets,

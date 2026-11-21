@@ -67,7 +67,7 @@ _TRUE_FALSE_VALUES = ("true", "false")
 ComponentIdentifierField = Annotated[
     ComponentIdentifier,
     BeforeValidator(lambda v: ComponentIdentifier.model_validate(v) if isinstance(v, dict) else v),
-    PlainSerializer(lambda v: v.model_dump() if v is not None else None, return_type=dict | None),
+    PlainSerializer(lambda v: v.model_dump() if v is not None else None, return_type=dict[str, Any] | None),
 ]
 
 

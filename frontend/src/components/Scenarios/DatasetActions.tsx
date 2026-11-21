@@ -11,13 +11,30 @@ import { useDatasetActionsStyles } from './DatasetActions.styles'
 const CATALOG_PATH = '/datasets'
 
 interface DatasetActionsProps {
-  readonly scenarioName: string
+  /** The scenario whose generator Generate opens. Without one, only Browse shows. */
+  readonly scenarioName?: string
   /** False when the scenario's datasets are fixed or limited to named choices, so a generated one can't be selected. */
   readonly canGenerate?: boolean
 }
 
-/** Catalog actions beside a scenario's dataset selection; Generate opens the scenario's own generator when it has one. */
+/**
+ * Catalog actions beside a scenario's dataset selection. Browse opens in a new tab, so unsaved form edits stay;
+ * Generate opens the scenario's own generator when it has one.
+ */
 export default function DatasetActions({ scenarioName, canGenerate = true }: DatasetActionsProps) {
+  const styles = useDatasetActionsStyles()
+  return (
+    <div className={styles.root} role="group" aria-label="Dataset actions">
+      <Button as="a" href={CATALOG_PATH} target="_blank" rel="noopener noreferrer" role="link" appearance="secondary"
+        icon={<FolderOpenRegular />}>
+        Browse datasets
+      </Button>
+      {scenarioName !== undefined && canGenerate && <GenerateDatasetsAction scenarioName={scenarioName} />}
+    </div>
+  )
+}
+
+function GenerateDatasetsAction({ scenarioName }: { readonly scenarioName: string }) {
   const styles = useDatasetActionsStyles()
   const { ready } = useRuntime()
   const { generators, loading, refreshing } = usePromptGenerators()
@@ -27,25 +44,17 @@ export default function DatasetActions({ scenarioName, canGenerate = true }: Dat
   const generator = matching.length === 1 ? matching[0] : undefined
   // Without a current list, including after a load error, the chooser shows what is available.
   const destination = newPromptGenerationRoutePath(generator ? { generator: generator.name } : {})
-  const browse = useLinkClickHandler<HTMLAnchorElement>(CATALOG_PATH)
   const generate = useLinkClickHandler<HTMLAnchorElement>(destination)
-  return (
-    <div className={styles.root} role="group" aria-label="Dataset actions">
-      <Button as="a" href={CATALOG_PATH} onClick={browse} role="link" appearance="secondary" icon={<FolderOpenRegular />}>
-        Browse datasets
+  return resolved ? (
+    <Button as="a" href={destination} onClick={generate} role="link" appearance="secondary" icon={<AddRegular />}>
+      Generate datasets
+    </Button>
+  ) : (
+    <Tooltip content={ready ? 'Checking which generator this scenario uses.' : 'Available when PyRIT is ready.'}
+      relationship="description">
+      <Button className={styles.pending} appearance="secondary" icon={<AddRegular />} disabledFocusable>
+        Generate datasets
       </Button>
-      {!canGenerate ? null : resolved ? (
-        <Button as="a" href={destination} onClick={generate} role="link" appearance="secondary" icon={<AddRegular />}>
-          Generate datasets
-        </Button>
-      ) : (
-        <Tooltip content={ready ? 'Checking which generator this scenario uses.' : 'Available when PyRIT is ready.'}
-          relationship="description">
-          <Button className={styles.pending} appearance="secondary" icon={<AddRegular />} disabledFocusable>
-            Generate datasets
-          </Button>
-        </Tooltip>
-      )}
-    </div>
+    </Tooltip>
   )
 }

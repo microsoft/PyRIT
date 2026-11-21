@@ -15,6 +15,7 @@ import { SearchRegular, SparkleRegular } from '@fluentui/react-icons'
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
 
 import { newPromptGenerationRoutePath } from '@/components/PromptGeneration/promptGenerationRoutes'
+import { datasetOriginLabel } from '@/components/Scenarios/datasetPresentation'
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
 import { useLoadedDatasets } from '@/hooks/useLoadedDatasets'
 import type { DatasetInfo, FilterOption } from '@/types'
@@ -62,19 +63,11 @@ function harmOptions(datasets: readonly DatasetInfo[], view: DatasetCatalogQuery
   return uniqueLabels(values)
 }
 
-const ORIGIN_LABELS: Readonly<Record<string, string>> = {
-  generated: 'Generated',
-  local: 'Local files',
-  remote: 'Remote provider',
-  user: 'User',
-  unknown: 'Unknown',
-}
-
 function originOptions(datasets: readonly DatasetInfo[]): FilterOption[] {
   const values = new Set<string>()
   for (const dataset of datasets) for (const origin of dataset.origins ?? []) values.add(origin)
   return [...values]
-    .map((value) => ({ value, label: ORIGIN_LABELS[value] ?? value }))
+    .map((value) => ({ value, label: datasetOriginLabel(value) }))
     .sort((left, right) => left.label.localeCompare(right.label, 'en', { sensitivity: 'base' }))
 }
 
@@ -143,7 +136,7 @@ export default function DatasetCatalog() {
       <Text size={200}>
         {view === 'memory'
           ? 'Filters describe stored seeds. Not labeled means stored seeds without harm categories.'
-          : 'Filters use provider declarations for built-ins and stored values for other datasets. Not labeled applies only to stored values.'}
+          : 'Filters use provider declarations for built-ins and stored values for other datasets. Origins and Not labeled apply only to stored values.'}
       </Text>
 
       <div className={styles.filters}>

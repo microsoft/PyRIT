@@ -162,7 +162,7 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   await runScenario.click()
   await expect(page.getByRole('heading', { level: 2, name: FOLLOW_UP_SCENARIO })).toBeVisible({ timeout: JOB_TIMEOUT_MS })
   const selected = page.getByRole('table', { name: 'Selected datasets' })
-  await expect(selected.getByRole('row').filter({ hasText: `${name} (generated)` })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })
+  await expect(selected.getByRole('row').filter({ hasText: `${name} (Generated)` })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })
   const actions = page.getByRole('group', { name: 'Dataset actions' })
   await expect(actions.getByRole('link', { name: 'Browse datasets', exact: true })).toHaveAttribute('href', '/datasets')
   await expect(actions.getByRole('link', { name: 'Generate datasets', exact: true }))
@@ -170,14 +170,16 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
 
   // Without a link, the scenario starts with no dataset and the generated one can be chosen.
   await page.goto(`/scanner/launch/${FOLLOW_UP_SCENARIO}`)
-  await expect(page.getByText('No dataset selected.', { exact: true })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })
+  // With nothing selected, a selectable scenario shows only its picker.
+  await expect(page.getByRole('combobox', { name: 'Add dataset', exact: true })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })
+  await expect(selected).toHaveCount(0)
   await expect(page.getByText('This scenario has no named datasets.')).toHaveCount(0)
   const estimating = page.waitForResponse((response: Response) =>
     apiPath(response) === `/api/scenarios/catalog/${FOLLOW_UP_SCENARIO}/estimate`
     && JSON.stringify(response.request().postDataJSON()?.datasets?.sources ?? []) === JSON.stringify([{ name }]))
   await page.getByRole('combobox', { name: 'Add dataset', exact: true }).click()
-  await page.getByRole('option', { name: `${name} (generated)`, exact: true }).click()
-  await expect(selected.getByRole('row').filter({ hasText: `${name} (generated)` })).toBeVisible()
+  await page.getByRole('option', { name: `${name} (Generated)`, exact: true }).click()
+  await expect(selected.getByRole('row').filter({ hasText: `${name} (Generated)` })).toBeVisible()
   const estimate = await estimating
   expect(estimate.status(), await estimate.text()).toBe(200)
 

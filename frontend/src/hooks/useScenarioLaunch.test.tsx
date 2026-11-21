@@ -1,6 +1,6 @@
 import type { FormEvent } from 'react'
 
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 
 import type { BuildRunRequestResult } from '@/components/Scenarios/scenarioLaunchRequest'
 import { scenariosApi } from '@/services/api'
@@ -35,6 +35,7 @@ const BLANK_DATASET_NAME = {
 
 interface Props {
   requestResult?: BuildRunRequestResult
+  datasetSelectionMessage?: string | null
   submitBlocked?: boolean
   launchBlocked?: boolean
 }
@@ -42,9 +43,8 @@ interface Props {
 function renderLaunch(initial: Props = {}) {
   const onLaunched = jest.fn()
   const view = renderHook(
-    ({ requestResult = VALID, submitBlocked = false, launchBlocked = false }: Props) => useScenarioLaunch({
-      requestResult, submitBlocked, launchBlocked, onLaunched,
-    }),
+    ({ requestResult = VALID, datasetSelectionMessage = null, submitBlocked = false, launchBlocked = false }: Props) =>
+      useScenarioLaunch({ requestResult, datasetSelectionMessage, submitBlocked, launchBlocked, onLaunched }),
     { initialProps: initial },
   )
   return { view, onLaunched }
@@ -67,6 +67,27 @@ describe('useScenarioLaunch', () => {
     act(() => view.result.current.submitForm(submitEvent()))
     expect(view.result.current.previewOpen).toBe(true)
     expect(view.result.current.validationError).toBeNull()
+  })
+
+  it('shows too few datasets on the focused picker instead of opening the confirmation', async () => {
+    const { view } = renderLaunch({ datasetSelectionMessage: 'Select a dataset.' })
+    const picker = document.createElement('input')
+    document.body.append(picker)
+    view.result.current.datasetPickerRef.current = picker
+    expect(view.result.current.datasetSelectionError).toBeNull()
+
+    act(() => view.result.current.submitForm(submitEvent()))
+
+    expect(view.result.current.previewOpen).toBe(false)
+    expect(view.result.current.datasetSelectionError).toBe('Select a dataset.')
+    await waitFor(() => expect(picker).toHaveFocus())
+
+    // Enough datasets clear the message; a later shortfall waits for the next Launch scan.
+    view.rerender({ datasetSelectionMessage: null })
+    expect(view.result.current.datasetSelectionError).toBeNull()
+    view.rerender({ datasetSelectionMessage: 'Select a dataset.' })
+    expect(view.result.current.datasetSelectionError).toBeNull()
+    picker.remove()
   })
 
   it('does not open the confirmation while submitting is blocked', () => {
@@ -114,6 +135,24 @@ describe('useScenarioLaunch', () => {
     expect(view.result.current.submitting).toBe(false)
   })
 
+  it('focuses the error banner, not Launch scan, when the launch is rejected', async () => {
+    startRun.mockRejectedValue({ isAxiosError: true, response: { status: 400, data: { detail: 'Select a dataset.' } } })
+    const { view } = renderLaunch()
+    const banner = document.createElement('div')
+    banner.tabIndex = -1
+    const button = document.createElement('button')
+    document.body.append(banner, button)
+    view.result.current.apiErrorRef.current = banner
+    view.result.current.launchButtonRef.current = button
+    act(() => view.result.current.submitForm(submitEvent()))
+
+    await act(async () => { await view.result.current.confirmLaunch() })
+
+    await waitFor(() => expect(banner).toHaveFocus())
+    banner.remove()
+    button.remove()
+  })
+
   it('shows the field messages of a rejected request', async () => {
     startRun.mockRejectedValue(BLANK_DATASET_NAME)
     const { view } = renderLaunch()
@@ -121,7 +160,8 @@ describe('useScenarioLaunch', () => {
 
     await act(async () => { await view.result.current.confirmLaunch() })
 
-    expect(view.result.current.apiError).toBe('Request validation failed: Dataset names must be non-empty.')
+    expect(view.result.current.apiError)
+      .toBe('Request validation failed: datasets.sources.0.name: Dataset names must be non-empty.')
   })
 
   it('does not start a run while launching is blocked', async () => {

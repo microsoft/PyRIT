@@ -27,11 +27,9 @@ from pyrit.models import (
     AssertSkipReason,
     AssertTaxonomy,
     AttackOutcome,
-    BoundedDatasetSize,
     Message,
     PromptResponseError,
     ScenarioEvaluationIdentifier,
-    ScenarioRunSizeEstimateStatus,
     SeedObjective,
     ViolatesAssertPolicy,
     construct_response_from_request,
@@ -250,19 +248,11 @@ def test_registry_name_and_argument_free_construction() -> None:
     }
 
 
-async def test_default_estimate_is_bounded_without_datasets_async() -> None:
-    estimate = await AssertPolicy().get_default_run_size_estimate_async()
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
-    assert estimate.dataset_size == BoundedDatasetSize(value=1)
-    assert estimate.total_attack_count == 2
-    assert estimate.datasets == []
-    assert "--datasets" in (estimate.note or "")
-
-
-async def test_dataset_overrides_must_select_a_dataset_async() -> None:
+@pytest.mark.parametrize("args", [{}, {"dataset_overrides": {"max_total": 3}}])
+async def test_estimate_without_datasets_asks_for_one_async(args: dict[str, Any]) -> None:
     scenario = AssertPolicy()
     assert scenario.get_dataset_options().min_selected == 1
-    scenario.set_params_from_args(args={"dataset_overrides": {"max_total": 3}})
+    scenario.set_params_from_args(args=args)
     with pytest.raises(ValueError, match=r"^Select a dataset\.$"):
         await scenario.get_run_size_estimate_async()
 
@@ -281,8 +271,8 @@ async def test_invalid_parameters_are_rejected_before_reading_data_async(args: d
         await scenario.get_run_size_estimate_async()
 
 
-async def test_run_without_datasets_names_the_dataset_flag_async(harness: _Harness) -> None:
-    with pytest.raises(ValueError, match=r"^Select a dataset\..*--datasets"):
+async def test_run_without_datasets_asks_for_one_async(harness: _Harness) -> None:
+    with pytest.raises(ValueError, match=r"^Select a dataset\.$"):
         await harness.initialize_async(harness.scenario())
 
 
@@ -634,7 +624,10 @@ async def test_groups_with_identical_content_keep_their_own_units_and_stances_as
     assert sorted(attack.atomic_attack_name for attack in remaining) == sorted(set(by_name) - {names[0]})
 
 
-async def test_sampled_identical_content_resumes_the_same_stored_group_async(harness: _Harness) -> None:
+@pytest.mark.parametrize("replace_dataset", [False, True])
+async def test_sampled_identical_content_resumes_the_same_stored_group_async(
+    harness: _Harness, replace_dataset: bool
+) -> None:
     await _store_async(name="assert_a", result=_duplicate_result())
     args = {
         "scenario_techniques": [_technique("red_teaming")],
@@ -649,7 +642,17 @@ async def test_sampled_identical_content_resumes_the_same_stored_group_async(har
     assert _group_id(planned) == "group_2"
     assert planned.display_group == "red_teaming"
 
-    resumed = await harness.initialize_async(harness.scenario(scenario_result_id=original._scenario_result_id), **args)
+    memory = CentralMemory.get_memory_instance()
+    if replace_dataset:
+        await memory.delete_dataset_async(dataset_name="assert_a")
+        await _store_async(
+            name="assert_a", result=_result(group_count=1, include_adversarial_prompt=False, system_prompt=_SYSTEM_B)
+        )
+    with patch.object(memory, "get_seeds_async", wraps=memory.get_seeds_async) as reads:
+        resumed = await harness.initialize_async(
+            harness.scenario(scenario_result_id=original._scenario_result_id), **args
+        )
+    reads.assert_not_awaited()
     (restored,) = resumed._atomic_attacks
     assert restored.atomic_attack_name == planned.atomic_attack_name
     assert _group_id(restored) == "group_2"
@@ -966,6 +969,7 @@ def test_readiness_uses_the_execution_history_requirements(harness: _Harness, te
         "objective_target": harness.objective,
         "scenario_techniques": [_technique(technique)],
         "incompatible_technique_policy": policy,
+        **_datasets("assert_a"),
     }
     scenario = harness.scenario()
     scenario.set_params_from_args(args=args)
@@ -1003,6 +1007,7 @@ async def test_incompatible_scoring_config_uses_scenario_policy_async(harness: _
             "objective_target": harness.objective,
             "scoring_target": harness.judge,
             "scenario_techniques": [_technique("tap")],
+            **_datasets("assert_a"),
         }
     )
     assert any(issue.role == "objective_scorer" for issue in scenario.get_readiness().issues)
@@ -1012,6 +1017,7 @@ async def test_incompatible_scoring_config_uses_scenario_policy_async(harness: _
             "scoring_target": harness.judge,
             "scenario_techniques": [_technique("prompt_sending"), _technique("tap")],
             "incompatible_technique_policy": policy,
+            **_datasets("assert_a"),
         }
     )
     assert any(issue.role == "objective_scorer" for issue in scenario.get_readiness().issues) == (policy == "raise")
@@ -1115,7 +1121,7 @@ async def test_selected_scoring_target_is_the_default_judge_async(harness: _Harn
 
 def test_readiness_reports_a_missing_default_judge_target(harness: _Harness) -> None:
     scenario = AssertPolicy(adversarial_chat=harness.adversarial)
-    scenario.set_params_from_args(args={"objective_target": harness.objective})
+    scenario.set_params_from_args(args={"objective_target": harness.objective, **_datasets("assert_a")})
     with patch(
         "pyrit.scenario.core.scenario.get_default_scorer_target",
         side_effect=TargetRoleConfigurationError(role="objective_scorer_chat"),
@@ -1132,7 +1138,7 @@ async def test_supplied_scorer_needs_no_default_judge_target_async(harness: _Har
         "pyrit.scenario.core.scenario.get_default_scorer_target",
         side_effect=TargetRoleConfigurationError(role="objective_scorer_chat"),
     ):
-        scenario.set_params_from_args(args={"objective_target": harness.objective})
+        scenario.set_params_from_args(args={"objective_target": harness.objective, **_datasets("assert_a")})
         readiness = scenario.get_readiness()
         await harness.initialize_async(scenario, **_prompt_case(), **_datasets("assert_a"))
 
