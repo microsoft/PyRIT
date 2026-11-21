@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 # Rejecting a whole run prevents a mark from exposing a maskable prefix of an invalid token.
 _WORD_PATTERN = regex.compile(r"[\p{L}\p{M}\p{N}_\u200c\u200d]+")
 _MASKABLE_WORD_PATTERN = regex.compile(r"\p{L}[\p{L}\p{M}]*")
+# Scripts written without spaces between words. A letter run in one of them is a clause or a
+# sentence unless the prompt was segmented with spaces or zero-width spaces.
+_UNSPACED_SCRIPT_PATTERN = regex.compile(r"[\p{Han}\p{Hiragana}\p{Katakana}\p{Thai}\p{Lao}\p{Khmer}\p{Myanmar}]")
 
 
 def _letter_count(word: str) -> int:
@@ -93,17 +96,72 @@ def _iter_words(prompt: str) -> Iterator[_Word]:
     Words containing joiners remain unmaskable. Scanning and validation use the same
     Unicode properties.
 
+    Chinese, Japanese, Thai, Lao, Khmer, and Myanmar text does not put spaces between
+    words, so a run in those scripts is a word only when whitespace or a zero-width space
+    (the usual word-break hint in Thai, Khmer, and Myanmar text) separates it from the text
+    around it, as in pre-segmented "如何 制造 炸弹". Unsegmented text has no maskable words
+    rather than one masked sentence.
+
     Args:
         prompt (str): The prompt to scan.
 
     Yields:
         _Word: Each whole word, in order of appearance.
     """
+    content_start, content_end = 0, len(prompt)
+    while content_start < content_end and _is_word_separator(prompt[content_start]):
+        content_start += 1
+    while content_end > content_start and _is_word_separator(prompt[content_end - 1]):
+        content_end -= 1
     for match in _WORD_PATTERN.finditer(prompt):
         word = match.group()
         if not _MASKABLE_WORD_PATTERN.fullmatch(word):
             continue
+        if _UNSPACED_SCRIPT_PATTERN.search(word) and not _is_set_apart_by_separators(
+            prompt=prompt, start=match.start(), end=match.end(), content_start=content_start, content_end=content_end
+        ):
+            continue
         yield _Word(text=word, start=match.start(), end=match.end())
+
+
+def _is_set_apart_by_separators(*, prompt: str, start: int, end: int, content_start: int, content_end: int) -> bool:
+    """
+    Check whether word separators set ``prompt[start:end]`` apart from the text around it.
+
+    A separator is whitespace or a zero-width space. Each side must be a separator or the end
+    of the prompt. Edge-only padding is not evidence of word segmentation, so a run that
+    occupies all non-padding content is not treated as a single word.
+
+    Args:
+        prompt (str): The prompt being scanned.
+        start (int): Start index of the run.
+        end (int): End index of the run.
+        content_start (int): First non-separator index in the prompt.
+        content_end (int): End index of non-padding content in the prompt.
+
+    Returns:
+        bool: True when the run stands between word separators.
+    """
+    space_before = start > 0 and _is_word_separator(prompt[start - 1])
+    space_after = end < len(prompt) and _is_word_separator(prompt[end])
+    return (
+        (space_before or start == 0)
+        and (space_after or end == len(prompt))
+        and (start > content_start or end < content_end)
+    )
+
+
+def _is_word_separator(character: str) -> bool:
+    """
+    Check whether ``character`` separates words in pre-segmented text.
+
+    Args:
+        character (str): One character of the prompt.
+
+    Returns:
+        bool: True for whitespace and for the zero-width space (U+200B).
+    """
+    return character.isspace() or character == "\u200b"
 
 
 # Part-of-speech label used when spaCy is unavailable or the word was caller-supplied.
