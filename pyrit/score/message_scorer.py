@@ -592,6 +592,7 @@ class MessageScorer(Scorer):
             )
         if scores:
             self.validate_return_scores(scores=scores)
+            self._validate_float_feedback(scores=scores)
             _collect_scores(scores)
         return scores
 

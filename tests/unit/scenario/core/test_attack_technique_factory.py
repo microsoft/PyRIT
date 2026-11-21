@@ -19,13 +19,12 @@ from pyrit.executor.attack import (
 from pyrit.executor.attack.core.attack_config import (
     DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
 )
-from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
 from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.scenario import AttackTechnique, AttackTechniqueFactory
 from pyrit.scenario.core import ScorerOverridePolicy
-from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer
+from pyrit.score import Scorer, SubStringScorer, TrueFalseScorer
 
 if TYPE_CHECKING:
     # The regression tests bind these names only after constructing each factory.
@@ -40,6 +39,14 @@ def _make_seed_technique() -> AttackTechniqueSeedGroup:
             SeedPrompt(value="technique1", data_type="text", is_general_technique=True),
         ]
     )
+
+
+class _NarrowScoringConfig(AttackScoringConfig):
+    """A scoring config subtype with its own constructor, as a technique-specific config would have."""
+
+    def __init__(self, *, objective_scorer: TrueFalseScorer, label: str = "narrow") -> None:
+        super().__init__(objective_scorer=objective_scorer)
+        self.label = label
 
 
 class _StubAttack:
@@ -1444,27 +1451,26 @@ class TestScoreFeedbackOverride:
         assert technique.attack.attack_scoring_config is scoring
 
     def test_override_keeps_scoring_config_subtype(self):
-        """TAP's config has its own constructor; copying must keep its type and threshold."""
+        """A config subtype has its own constructor; copying must keep its type and fields."""
 
-        class _TapStubAttack(_StubAttack):
-            def __init__(self, *, objective_target, attack_scoring_config: TAPAttackScoringConfig | None = None):
+        class _NarrowStubAttack(_StubAttack):
+            def __init__(self, *, objective_target, attack_scoring_config: _NarrowScoringConfig | None = None):
                 self.attack_scoring_config = attack_scoring_config
 
             def get_identifier(self):
-                return ComponentIdentifier(class_name="_TapStubAttack", class_module="test")
+                return ComponentIdentifier(class_name="_NarrowStubAttack", class_module="test")
 
-        objective_scorer = MagicMock(spec=FloatScaleThresholdScorer)
-        objective_scorer.threshold = 0.7
-        factory = AttackTechniqueFactory(name="test", attack_class=_TapStubAttack, use_score_as_feedback=False)
-        scoring = TAPAttackScoringConfig(objective_scorer=objective_scorer)
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        factory = AttackTechniqueFactory(name="test", attack_class=_NarrowStubAttack, use_score_as_feedback=False)
+        scoring = _NarrowScoringConfig(objective_scorer=objective_scorer, label="kept")
 
         technique = factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=scoring)
 
         applied = technique.attack.attack_scoring_config
-        assert type(applied) is TAPAttackScoringConfig
+        assert type(applied) is _NarrowScoringConfig
         assert applied.use_score_as_feedback is False
         assert applied.objective_scorer is objective_scorer
-        assert applied.threshold == 0.7
+        assert applied.label == "kept"
         assert scoring.use_score_as_feedback is True
 
     @pytest.mark.parametrize("policy", [ScorerOverridePolicy.WARN, ScorerOverridePolicy.SKIP])
@@ -1472,33 +1478,33 @@ class TestScoreFeedbackOverride:
         """A skipped scenario config leaves the attack to build its own default, which would
         silently run with feedback on, so create() must reject the technique instead."""
 
-        class _TapStubAttack(_StubAttack):
-            def __init__(self, *, objective_target, attack_scoring_config: TAPAttackScoringConfig | None = None):
+        class _NarrowStubAttack(_StubAttack):
+            def __init__(self, *, objective_target, attack_scoring_config: _NarrowScoringConfig | None = None):
                 self.attack_scoring_config = attack_scoring_config
 
             def get_identifier(self):
-                return ComponentIdentifier(class_name="_TapStubAttack", class_module="test")
+                return ComponentIdentifier(class_name="_NarrowStubAttack", class_module="test")
 
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_TapStubAttack, use_score_as_feedback=False, scorer_override_policy=policy
+            name="test", attack_class=_NarrowStubAttack, use_score_as_feedback=False, scorer_override_policy=policy
         )
 
         with pytest.raises(ValueError, match="use_score_as_feedback=False cannot be applied"):
             factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=AttackScoringConfig())
 
     def test_skipped_scenario_config_applies_override_to_baked_config(self):
-        class _TapStubAttack(_StubAttack):
-            def __init__(self, *, objective_target, attack_scoring_config: TAPAttackScoringConfig | None = None):
+        class _NarrowStubAttack(_StubAttack):
+            def __init__(self, *, objective_target, attack_scoring_config: _NarrowScoringConfig | None = None):
                 self.attack_scoring_config = attack_scoring_config
 
             def get_identifier(self):
-                return ComponentIdentifier(class_name="_TapStubAttack", class_module="test")
+                return ComponentIdentifier(class_name="_NarrowStubAttack", class_module="test")
 
-        objective_scorer = MagicMock(spec=FloatScaleThresholdScorer)
-        baked = TAPAttackScoringConfig(objective_scorer=objective_scorer)
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        baked = _NarrowScoringConfig(objective_scorer=objective_scorer)
         factory = AttackTechniqueFactory(
             name="test",
-            attack_class=_TapStubAttack,
+            attack_class=_NarrowStubAttack,
             attack_kwargs={"attack_scoring_config": baked},
             use_score_as_feedback=False,
             scorer_override_policy=ScorerOverridePolicy.SKIP,
@@ -1509,24 +1515,28 @@ class TestScoreFeedbackOverride:
         )
 
         applied = technique.attack.attack_scoring_config
-        assert type(applied) is TAPAttackScoringConfig
+        assert type(applied) is _NarrowScoringConfig
         assert applied.use_score_as_feedback is False
         assert applied.objective_scorer is objective_scorer
         assert baked.use_score_as_feedback is True
 
-    def test_tap_with_plain_scenario_config_rejects_instead_of_enabling_feedback(self):
-        """Regression test: TAP requires TAPAttackScoringConfig, so a plain scenario config is
-        skipped and TAP would otherwise build its default config with feedback on."""
+    @pytest.mark.usefixtures("patch_central_database")
+    def test_tap_applies_the_override_to_a_plain_scenario_config(self):
+        """TAP takes a plain AttackScoringConfig, so the override reaches it instead of being dropped."""
         factory = AttackTechniqueFactory(
             name="tap_no_feedback", attack_class=TreeOfAttacksWithPruningAttack, use_score_as_feedback=False
         )
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
 
-        with pytest.raises(ValueError, match="not forwarded to TreeOfAttacksWithPruningAttack"):
-            factory.create(
-                objective_target=MagicMock(spec=PromptTarget),
-                attack_scoring_config=AttackScoringConfig(objective_scorer=MagicMock(spec=TrueFalseScorer)),
-                adversarial_chat=MagicMock(spec=PromptTarget),
-            )
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=objective_scorer),
+            adversarial_chat=MagicMock(spec=PromptTarget),
+        )
+
+        applied = technique.attack.get_attack_scoring_config()
+        assert applied.use_score_as_feedback is False
+        assert applied.objective_scorer is objective_scorer
 
     def test_override_requires_attack_scoring_config_param(self):
         class _NoScoringAttack(_StubAttack):
@@ -1562,3 +1572,45 @@ class TestScoreFeedbackOverride:
 
         assert technique.attack.attack_scoring_config.use_score_as_feedback is False
         assert prefixed.get_identifier().params["use_score_as_feedback"] is False
+
+
+class _NarrowConfigAttack(_StubAttack):
+    def __init__(self, *, objective_target: PromptTarget, attack_scoring_config: _NarrowScoringConfig | None = None):
+        self.attack_scoring_config = attack_scoring_config
+
+
+class _UnscoredAttack(_StubAttack):
+    def __init__(self, *, objective_target: PromptTarget):
+        pass
+
+
+class TestCheckObjectiveScorer:
+    """Scenarios check before construction that their plain scoring config would reach the attack."""
+
+    def test_an_attack_taking_a_plain_config_passes(self):
+        assert AttackTechniqueFactory(name="test", attack_class=_StubAttack).check_objective_scorer() == []
+
+    def test_an_attack_requiring_a_narrower_config_is_reported(self):
+        errors = AttackTechniqueFactory(name="test", attack_class=_NarrowConfigAttack).check_objective_scorer()
+        assert errors == [
+            (
+                "Scorer config of type AttackScoringConfig is incompatible with _NarrowConfigAttack "
+                "(requires _NarrowScoringConfig)."
+            )
+        ]
+
+    def test_an_attack_without_a_scoring_config_is_reported(self):
+        errors = AttackTechniqueFactory(name="test", attack_class=_UnscoredAttack).check_objective_scorer()
+        assert errors == ["_UnscoredAttack does not accept 'attack_scoring_config'."]
+
+    @pytest.mark.usefixtures("patch_central_database")
+    def test_the_scorer_is_checked_against_the_attack_requirements(self):
+        scorer = SubStringScorer(substring="x")
+        assert (
+            AttackTechniqueFactory(name="send", attack_class=PromptSendingAttack).check_objective_scorer(scorer=scorer)
+            == []
+        )
+        errors = AttackTechniqueFactory(name="tap", attack_class=TreeOfAttacksWithPruningAttack).check_objective_scorer(
+            scorer=scorer
+        )
+        assert any("requires 'preserves_float_scale_value'" in error for error in errors)

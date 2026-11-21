@@ -1,0 +1,158 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+"""The float value a true/false score keeps for ranking, and its metadata key."""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from pyrit.models.score.score import Score
+
+
+class InvalidFloatFeedbackError(ValueError):
+    """A score that promised a float value has none, or has one that is not a finite number in ``[0, 1]``."""
+
+
+@dataclass(frozen=True)
+class FloatFeedback:
+    """
+    The float value behind a true/false verdict, such as the scale score a threshold was applied to.
+
+    This type owns the ``original_float_value`` metadata key and its readers and writers. An
+    ordinary read treats missing or unusable data as unset. A strict read is for callers that
+    rely on a scorer's promise to keep the value, and rejects missing or invalid data.
+
+    Attributes:
+        value (float): A finite number in ``[0, 1]``.
+    """
+
+    METADATA_KEY: ClassVar[str] = "original_float_value"
+
+    value: float
+
+    def __post_init__(self) -> None:
+        """
+        Validate the value.
+
+        Raises:
+            InvalidFloatFeedbackError: If the value is not a finite number in ``[0, 1]``.
+        """
+        error = _describe_invalid(self.value)
+        if error is not None:
+            raise InvalidFloatFeedbackError(f"Float feedback {error}.")
+
+    @classmethod
+    def read(cls, score: Score | None) -> FloatFeedback | None:
+        """
+        Read the float value a score kept, treating missing or unusable data as unset.
+
+        Args:
+            score (Score | None): The score to read.
+
+        Returns:
+            FloatFeedback | None: The value, or None when the score has no usable one.
+        """
+        return cls.from_metadata(metadata=score.score_metadata if score is not None else None)
+
+    @classmethod
+    def from_metadata(cls, *, metadata: Mapping[str, str | int | float] | None) -> FloatFeedback | None:
+        """
+        Read usable feedback from metadata, treating legacy or invalid values as unset.
+
+        Returns:
+            FloatFeedback | None: The recorded value, or None when absent or unusable.
+        """
+        raw = metadata.get(cls.METADATA_KEY) if metadata else None
+        if raw is None or _describe_invalid(raw) is not None:
+            return None
+        return cls(value=float(raw))
+
+    def to_metadata(self) -> dict[str, float]:
+        """
+        Return the metadata fragment carrying this value.
+
+        Returns:
+            dict[str, float]: The feedback metadata.
+        """
+        return {self.METADATA_KEY: self.value}
+
+    @classmethod
+    def require(cls, score: Score) -> FloatFeedback:
+        """
+        Read the float value a score promised to keep.
+
+        Args:
+            score (Score): A complete true/false score from a scorer that guarantees the value.
+
+        Returns:
+            FloatFeedback: The value.
+
+        Raises:
+            InvalidFloatFeedbackError: If the value is missing or is not a finite number in ``[0, 1]``.
+        """
+        raw = cls._raw(score)
+        scorer = score.scorer_class_identifier.class_name if score.scorer_class_identifier else "the scorer"
+        if raw is None:
+            raise InvalidFloatFeedbackError(
+                f"{scorer} promised a float value on each true/false result, but this result has none."
+            )
+        error = _describe_invalid(raw)
+        if error is not None:
+            raise InvalidFloatFeedbackError(f"{scorer} promised a float value, but the stored one {error}.")
+        return cls(value=float(raw))
+
+    def write_to(self, metadata: Mapping[str, str | int | float] | None) -> dict[str, str | int | float]:
+        """
+        Return a copy of score metadata that carries this value.
+
+        Args:
+            metadata (Mapping[str, str | int | float] | None): The metadata to copy.
+
+        Returns:
+            dict[str, str | int | float]: The copy, with the value under the feedback key.
+        """
+        return {**(metadata or {}), **self.to_metadata()}
+
+    @classmethod
+    def remove_from(cls, metadata: Mapping[str, str | int | float] | None) -> dict[str, str | int | float]:
+        """
+        Return a copy of score metadata without a float value.
+
+        Use this when a result no longer judges the same criterion as the value it carried,
+        for example after inverting a verdict.
+
+        Args:
+            metadata (Mapping[str, str | int | float] | None): The metadata to copy.
+
+        Returns:
+            dict[str, str | int | float]: The copy, without the feedback key.
+        """
+        return {key: value for key, value in (metadata or {}).items() if key != cls.METADATA_KEY}
+
+    @classmethod
+    def _raw(cls, score: Score | None) -> str | int | float | None:
+        if score is None or not score.score_metadata:
+            return None
+        return score.score_metadata.get(cls.METADATA_KEY)
+
+
+def _describe_invalid(raw: object) -> str | None:
+    """
+    Explain why a raw value is not usable feedback.
+
+    Returns:
+        str | None: The reason, or None when the value is usable.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return f"is {type(raw).__name__}, not a number"
+    if isinstance(raw, float) and not math.isfinite(raw):
+        return f"is {raw}, not a finite number"
+    if not 0.0 <= raw <= 1.0:
+        return f"is {raw}, outside [0, 1]"
+    return None

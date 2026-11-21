@@ -200,6 +200,7 @@ class Jailbreak(Scenario):
     """
 
     VERSION: int = 4
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = True
 
     #: Baseline (an un-jailbroken prompt-send over the objectives) is included by default: a model
     #: that complies with the bare objective is itself interesting signal. Callers opt out per run
