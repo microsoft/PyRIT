@@ -150,6 +150,15 @@ if TYPE_CHECKING:
         StructuredParameterValue,
         display_choices,
     )
+    from pyrit.models.prompt_generation import (
+        ACTIVE_GENERATION_STATUSES,
+        DATASET_NAME_RELEASING_STATUSES,
+        RETRYABLE_GENERATION_STATUSES,
+        PromptGenerationProgress,
+        PromptGenerationRecord,
+        PromptGenerationStatus,
+        TargetObjectiveGenerationRequest,
+    )
     from pyrit.models.prompt_generation_estimate import PromptGenerationEstimate, PromptGenerationStageEstimate
     from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
     from pyrit.models.results.assert_policy_metrics import AssertBinaryRate, AssertPolicyMetrics
@@ -249,6 +258,8 @@ if TYPE_CHECKING:
         ExecutionStep,
         ExecutionStepKind,
         ExecutionTraceObservationPayload,
+        FloatFeedback,
+        InvalidFloatFeedbackError,
         MatchesObjective,
         MessageScorable,
         Observation,
@@ -264,6 +275,7 @@ if TYPE_CHECKING:
         ScorableUnion,
         Score,
         ScorerCapabilities,
+        ScorerCapabilityName,
         ScorerTargetResponsePayload,
         ScoreStatus,
         ScoreType,
@@ -421,6 +433,13 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AssertSystematization": "pyrit.models.seeds.assert_generation",
     "AssertTaxonomy": "pyrit.models.seeds.assert_generation",
     "AssertTerm": "pyrit.models.seeds.assert_generation",
+    "ACTIVE_GENERATION_STATUSES": "pyrit.models.prompt_generation",
+    "DATASET_NAME_RELEASING_STATUSES": "pyrit.models.prompt_generation",
+    "RETRYABLE_GENERATION_STATUSES": "pyrit.models.prompt_generation",
+    "PromptGenerationProgress": "pyrit.models.prompt_generation",
+    "PromptGenerationRecord": "pyrit.models.prompt_generation",
+    "PromptGenerationStatus": "pyrit.models.prompt_generation",
+    "TargetObjectiveGenerationRequest": "pyrit.models.prompt_generation",
     "PromptGenerationEstimate": "pyrit.models.prompt_generation_estimate",
     "PromptGenerationStageEstimate": "pyrit.models.prompt_generation_estimate",
     "WebSearchConfig": "pyrit.models.target.web_search_config",
@@ -594,6 +613,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScoreStatus": "pyrit.models.score",
     "ScoreType": "pyrit.models.score",
     "ScorerCapabilities": "pyrit.models.score",
+    "ScorerCapabilityName": "pyrit.models.score",
+    "FloatFeedback": "pyrit.models.score",
+    "InvalidFloatFeedbackError": "pyrit.models.score",
     "ScoringExpectation": "pyrit.models.score",
     "SurfaceBaseline": "pyrit.models.score",
     "SurfaceCoverage": "pyrit.models.score",

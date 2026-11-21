@@ -110,6 +110,8 @@ class ScenarioRunPlan(BaseModel):
     scenario_registry_name: str | None = None
     atomic_groups: list[ScenarioRunPlanAtomicGroup]
     seed_groups: list[ScenarioRunPlanSeedGroup]
+    #: Absent on plans created before run-owned seed snapshots.
+    stores_seed_groups: Literal[True] | None = None
 
     @model_validator(mode="after")
     def _validate_normalized_plan(self) -> "ScenarioRunPlan":

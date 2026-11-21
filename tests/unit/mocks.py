@@ -448,6 +448,32 @@ def get_mock_target(name: str = "MockTarget") -> MagicMock:
     return target
 
 
+def accept_scenario_scoring(factory: MagicMock) -> MagicMock:
+    """
+    Make a mocked ``AttackTechniqueFactory`` accept the scenario's scoring config.
+
+    Its ``check_objective_scorer`` still applies the mock's ``requirements`` and ``attack_class``
+    to any scorer passed in.
+
+    Args:
+        factory: A ``MagicMock(spec=AttackTechniqueFactory)`` with ``requirements`` and ``attack_class`` set.
+
+    Returns:
+        The same mock, for chaining.
+    """
+
+    def check_objective_scorer(*, scorer: Any = None) -> list[str]:
+        if scorer is None:
+            return []
+        problems: list[str] = factory.requirements.objective_scorer_for(attack_class=factory.attack_class).check(
+            scorer=scorer
+        )
+        return problems
+
+    factory.check_objective_scorer.side_effect = check_objective_scorer
+    return factory
+
+
 class MockHttpPostAsync(AbstractAsyncContextManager):
     def __init__(self, url, headers=None, json=None, params=None, ssl=None):
         self.status = 200
