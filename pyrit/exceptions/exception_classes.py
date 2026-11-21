@@ -428,7 +428,9 @@ def pyrit_target_retry(func: Callable[..., Any]) -> Callable[..., Any]:
     )(func)
 
 
-def pyrit_json_retry(func: Callable[..., Any]) -> Callable[..., Any]:
+def pyrit_json_retry(
+    func: Callable[_RetryParams, _RetryResult],
+) -> Callable[_RetryParams, _RetryResult]:
     """
     Apply retry logic to a function.
 

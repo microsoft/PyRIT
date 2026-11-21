@@ -363,12 +363,6 @@ include = [
     "pyrit/registry/registry_recipe_save.py",
     "pyrit/scenario/core/attack_technique_factory.py",
     "pyrit/scenario/scenarios/foundry/assert_policy.py",
-    "pyrit/score/float_scale/local_violence_classifier_scorer.py",
-    "pyrit/score/llm_scoring.py",
-    "pyrit/score/observation/otel_execution_trace_source.py",
-    "pyrit/score/scorer.py",
-    "pyrit/score/scorer_prompt_validator.py",
-    "pyrit/score/true_false/prompt_shield_scorer.py",
 ]
 [tool.ty.overrides.rules]
 unsound-assignment = "ignore"
