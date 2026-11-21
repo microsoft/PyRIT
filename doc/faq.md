@@ -26,10 +26,6 @@ Most people use more than one. See [Mix Human-Led and Automated Red Teaming](./r
 
 Python 3.11, 3.12, 3.13, and 3.14. See [User Local Installation](./getting_started/install_local.md).
 
-### Do I need an Azure subscription?
-
-No. PyRIT works with any OpenAI-compatible API, including models that run on your own machine. Some optional features use Azure services, such as Azure SQL as a memory backend or Azure AI Content Safety for scoring.
-
 ### Do I need to set up a database?
 
 No. `await initialize_pyrit_async(memory_db_type=IN_MEMORY)` gives you an in-memory database that needs no setup and is discarded when the process ends. The `sqlite` backend keeps results in a local file. Azure SQL is optional and is mainly useful when several people share results. See [Memory](./code/memory/0_memory.md).
@@ -40,13 +36,13 @@ In `~/.pyrit/.env`. PyRIT finds it there automatically. Values in `~/.pyrit/.env
 
 ## Models and Providers
 
-### Can I use PyRIT with an OpenAI API key?
+### Does PyRIT only work with OpenAI and Azure OpenAI? Do I need Azure?
 
-Yes. Set `OPENAI_CHAT_ENDPOINT` to `https://api.openai.com/v1`, `OPENAI_CHAT_KEY` to your key, and `OPENAI_CHAT_MODEL` to the model name. See [Populating Secrets](./getting_started/populating_secrets.md).
+No to both. The `OpenAI*` targets, such as `OpenAIChatTarget`, are named after the OpenAI API, not the company. Many providers serve that API, the chat completions part in particular: Anthropic, Amazon Bedrock, Google Gemini, Groq, OpenRouter, and local runners such as Ollama all do. `OpenAIChatTarget` works with any of them.
 
-### Can I use Anthropic, Google Gemini, Amazon Bedrock, Groq, or OpenRouter?
+Set `OPENAI_CHAT_ENDPOINT`, `OPENAI_CHAT_KEY`, and `OPENAI_CHAT_MODEL` for the provider you use. For OpenAI itself, the endpoint is `https://api.openai.com/v1`. [Populating Secrets](./getting_started/populating_secrets.md) has a tab with the exact values for each provider.
 
-Yes. Each of these offers an OpenAI-compatible endpoint, and `OpenAIChatTarget` works with any of them. You set the same three environment variables and point the endpoint at the provider. [Populating Secrets](./getting_started/populating_secrets.md) has a tab with the exact values for each provider.
+You do not need an Azure subscription. Some optional features use Azure services, such as Azure SQL as a memory backend or Azure AI Content Safety for scoring.
 
 ### Can I run everything against a local model?
 
@@ -62,6 +58,8 @@ If your application returns its answer through a second request, for example by 
 
 Yes. `A2ATarget` talks to agents that expose the A2A protocol. See [Prompt Targets](./code/targets/0_prompt_targets.md). For Microsoft Copilots there are the [Playwright Copilot target](./code/targets/10_2_playwright_target_copilot.ipynb) and the [WebSocket Copilot target](./code/targets/10_3_websocket_copilot_target.ipynb). For any other agent, use `HTTPTarget`, the Playwright target, or a custom target, as described in the previous answer.
 
+Before you test a hosted agent or copilot, read its terms of service and find out what they allow. Do not attack a product without understanding them. See [Am I allowed to test any AI system with PyRIT?](#faq-permission)
+
 ### Can I test image, audio, or video?
 
 Yes. Targets, converters, and scorers can all be multimodal. [Prompt Targets](./code/targets/0_prompt_targets.md) lists the multimodal targets, and the [Realtime target](./code/targets/realtime_target.ipynb) holds audio conversations. Converters can turn a text prompt into another modality. See the [audio](./code/converters/2_audio_converters.ipynb), [image](./code/converters/3_image_converters.ipynb), and [video](./code/converters/4_video_converters.ipynb) converter guides.
@@ -70,15 +68,31 @@ Yes. Targets, converters, and scorers can all be multimodal. [Prompt Targets](./
 
 No. There are up to three roles: the objective target is the system you are testing, the adversarial target generates attack prompts, and the scoring target judges responses. Each can be a different model. With `pyrit_scan` you pick them with `--target`, `--adversarial-target`, and `--scoring-target`. See [Scanner](./scanner/0_scanner.md).
 
-The adversarial target works best without content moderation, so that it does not refuse to write attack prompts. See [Multi-Turn Attacks](./code/executor/2_multi_turn.ipynb), and [Choosing Adversarial Models](./blog/2026_09_03_adversarial_model_selection.md) for how to compare candidates.
+The adversarial target works best without content moderation, so that it does not refuse to write attack prompts. See [Multi-Turn Attacks](./code/executor/2_multi_turn.ipynb).
+
+### Where do I get an adversarial model?
+
+Adaptive attacks need a model that writes attack prompts, and most hosted models with safety training refuse to do that. A model with fewer restrictions works better. There are two places to look:
+
+- **Open-weight models.** Hugging Face hosts abliterated models, which are open-weight models modified so that they refuse less. They can be a decent starting point. You can run one on your own machine or deploy it yourself.
+- **Hosted providers.** Several providers serve such models behind an OpenAI-compatible API, so `OpenAIChatTarget` works with them. [Issue #791](https://github.com/microsoft/PyRIT/issues/791) collects pointers.
+
+We neither endorse nor recommend any particular model or provider. Read the terms of whatever you use.
+
+A model that refuses less is not automatically a good attacker. It may be less consistent at reaching the objective, and the best choice depends on the objective, the technique, and the target. The `AdversarialBenchmark` scenario compares candidates for you. See [Benchmark](./scanner/benchmark.ipynb) and [Choosing Adversarial Models](./blog/2026_09_03_adversarial_model_selection.md).
 
 ### How do I deal with rate limits?
 
-Set `max_requests_per_minute` on the target to stay under the limit. See [Rate Limiting](./code/targets/9_rate_limiting.ipynb). When a provider still returns a rate limit error, the target retries automatically. You can tune the number of attempts and the wait time with the `RETRY_MAX_NUM_ATTEMPTS`, `RETRY_WAIT_MIN_SECONDS`, and `RETRY_WAIT_MAX_SECONDS` environment variables. See [Resiliency and Retry](./code/setup/2_resiliency.ipynb).
+Both sides are configurable:
 
-### Can I control how much a reasoning model thinks?
+- **Request rate.** Set `max_requests_per_minute` on the target to stay under your provider's limit. See [Rate Limiting](./code/targets/9_rate_limiting.ipynb).
+- **Retries.** When a provider still returns a rate limit error, the target retries automatically with exponential backoff. Set the number of attempts and the wait time with the `RETRY_MAX_NUM_ATTEMPTS`, `RETRY_WAIT_MIN_SECONDS`, and `RETRY_WAIT_MAX_SECONDS` environment variables. See [Resiliency and Retry](./code/setup/2_resiliency.ipynb).
 
-Yes, with `OpenAIResponseTarget`. Set `reasoning_effort`, and set `reasoning_summary` if you want a summary of the model's reasoning in the response. See [OpenAI Responses Target](./code/targets/2_openai_responses_target.ipynb).
+### Can I control model parameters such as temperature or reasoning effort?
+
+Generally yes. Which parameters exist depends on the target. `OpenAIChatTarget` takes `temperature`, `top_p`, `max_completion_tokens`, and more when you create it, and `extra_body_parameters` for anything else the provider accepts. `OpenAIResponseTarget` adds `reasoning_effort` and `reasoning_summary` for reasoning models. On targets that support it, you can also override temperature for a single request.
+
+See [OpenAI Chat Target](./code/targets/1_openai_chat_target.ipynb), [OpenAI Responses Target](./code/targets/2_openai_responses_target.ipynb), and [Prompt Targets](./code/targets/0_prompt_targets.md).
 
 ### Can I authenticate to Azure without an API key?
 
@@ -135,19 +149,23 @@ Work from the bottom up:
 
 If it still fails, [open an issue](https://github.com/microsoft/PyRIT/issues) with your version, a minimal example, and the full error. For installation problems, see [Troubleshooting](./getting_started/troubleshooting/README.md).
 
-### I get "Central memory instance has not been set". What is wrong?
+## Error Messages
 
-PyRIT was not initialized. Call `await initialize_pyrit_async(...)` once, before you create targets, scorers, or attacks. Older examples call `initialize_pyrit`, which no longer exists. See [Memory](./code/memory/0_memory.md) and [Configure PyRIT](./getting_started/configuration.md).
+Specific errors and what they mean.
+
+### `Central memory instance has not been set`
+
+PyRIT was not initialized. Call `await initialize_pyrit_async(...)` once, before you create targets, scorers, or attacks. The message mentions `set_memory_instance`, but `initialize_pyrit_async` does that for you. Older examples call `initialize_pyrit`, which no longer exists. See [Memory](./code/memory/0_memory.md) and [Configure PyRIT](./getting_started/configuration.md).
+
+### `ImportError: cannot import name ...` after upgrading
+
+Class and module names have changed between releases. For example, orchestrators became attacks under `pyrit.executor.attack`. Older tutorials, blog posts, and issue threads may still use the old names. The [release notes](https://github.com/microsoft/PyRIT/releases) list breaking changes for each release. Make sure the docs you are reading match your installed version.
 
 ## Versions and Upgrading
 
 ### The docs do not match what I have installed. Why?
 
 The documentation site hosts several versions. Use the version picker to choose the release that matches your installation, or `latest` if you installed from the `main` branch. You can check your version with `python -c "import pyrit; print(pyrit.__version__)"`.
-
-### I get an import error after upgrading. What changed?
-
-Class and module names have changed between releases. For example, orchestrators became attacks under `pyrit.executor.attack`. Older tutorials, blog posts, and issue threads may still use the old names. The [release notes](https://github.com/microsoft/PyRIT/releases) list breaking changes for each release. Make sure the docs you are reading match your installed version.
 
 ### How do I install the latest code from `main`?
 
@@ -167,6 +185,7 @@ Ask questions on [Discord](https://discord.gg/9fMpq3tc8u). Report bugs and reque
 
 Yes. You do not need to be a Microsoft employee or an experienced red teamer. See [Contributing](./contributing/README.md), which links to issues marked "help wanted" and "good first issue".
 
+(faq-permission)=
 ### Am I allowed to test any AI system with PyRIT?
 
-Only test systems that you own or have explicit permission to test, and read the usage policies of any hosted model you use. See [Questions to Ask Before You Start](./red_teaming/0_red_teaming.md).
+Only test systems that you own or have explicit permission to test. For hosted models, agents, and copilots, read the terms of service and usage policies first, and stay within what they allow. See [Questions to Ask Before You Start](./red_teaming/0_red_teaming.md).
