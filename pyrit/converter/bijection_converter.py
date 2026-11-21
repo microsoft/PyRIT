@@ -468,14 +468,41 @@ class TokenBijectionConverter(BijectionConverter):
         """
         self._tokenizer = tokenizer
         super().__init__(mapping=mapping, seed=seed)
-        token_alternation = "|".join(re.escape(token) for token in self._inverse_mapping)
+        # Longest first: a token may be a prefix of another ("cat" and "caté"), and the regex
+        # engine takes the first alternative that lets the rest of the pattern match.
+        token_alternation = "|".join(re.escape(token) for token in sorted(self._inverse_mapping, key=len, reverse=True))
         delimiter = re.escape(self._TOKEN_DELIMITER)
+        letter = r"[^\W\d_]"
+        non_ascii_letter = r"[^\W\d_A-Za-z]"
+        # encode() writes a run directly next to any unmapped character, including digits,
+        # "_" and non-ASCII letters ("mp3" -> "<m>-<p>3", "naïve" -> "<n>-<a>ï<v>-<e>"), so
+        # a \b boundary misses runs that touch them. Every ASCII letter is mapped, so in
+        # encode() output a stretch of letters is code words separated by delimiters or by
+        # unmapped non-ASCII letters, with no ASCII letter left over. A run is therefore
+        # matched as a whole stretch of letters with no letter on either side, in which every
+        # ASCII letter belongs to a code word. A code word that is only part of a longer word
+        # ("xcat", "catégorie") is left as is. encode() doubles a literal delimiter, so a run
+        # never ends in a non-ASCII letter followed by a single delimiter; that would mean the
+        # run was cut short before "-<code word>".
+        gap = rf"(?:{delimiter}|{non_ascii_letter}+?)"
+        run_tail = (
+            rf"(?:{gap}(?:{token_alternation}))*"
+            rf"(?:{non_ascii_letter}+(?!{delimiter}(?!{delimiter})))?"
+        )
         # A doubled delimiter is matched first so it is consumed as one literal hyphen
         # rather than being split between two adjacent code-word runs.
         self._decode_pattern = re.compile(
-            rf"{delimiter}{delimiter}|\b(?:{token_alternation})(?:{delimiter}(?:{token_alternation}))*\b",
+            rf"{delimiter}{delimiter}"
+            rf"|(?<!{letter}){non_ascii_letter}*(?:{token_alternation}){run_tail}(?!{letter})",
             re.IGNORECASE,
         )
+        # decode() walks a matched run one code word at a time. Each code word is taken only if
+        # the rest of the run still parses, so the walk splits the run the same way the pattern
+        # above matched it: "catédog" is "cat", "é", "dog", never "caté" followed by "dog".
+        self._first_code_word_pattern = re.compile(
+            rf"({non_ascii_letter}*?)({token_alternation})(?={run_tail}\Z)", re.IGNORECASE
+        )
+        self._next_code_word_pattern = re.compile(rf"({gap})({token_alternation})(?={run_tail}\Z)", re.IGNORECASE)
 
     def _generate_mapping(self, rng: random.Random) -> dict[str, str]:
         vocab_keys = list(self._tokenizer.get_vocab().keys())
@@ -594,14 +621,25 @@ class TokenBijectionConverter(BijectionConverter):
             str: The decoded plain text.
         """
 
+        def decode_run(run: str) -> str:
+            decoded: list[str] = []
+            position = 0
+            pattern = self._first_code_word_pattern
+            while match := pattern.match(run, position):
+                gap, code_word = match.groups()
+                if gap != self._TOKEN_DELIMITER:
+                    decoded.append(gap)
+                letter = self._inverse_mapping[code_word.lower()]
+                decoded.append(letter.upper() if code_word[0].isupper() else letter)
+                position = match.end()
+                pattern = self._next_code_word_pattern
+            decoded.append(run[position:])
+            return "".join(decoded)
+
         def replace(match: "re.Match[str]") -> str:
             if match.group(0) == self._TOKEN_DELIMITER * 2:
                 return self._TOKEN_DELIMITER
-            letters = []
-            for piece in match.group(0).split(self._TOKEN_DELIMITER):
-                letter = self._inverse_mapping[piece.lower()]
-                letters.append(letter.upper() if piece[0].isupper() else letter)
-            return "".join(letters)
+            return decode_run(match.group(0))
 
         return self._decode_pattern.sub(replace, encoded_text)
 

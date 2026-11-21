@@ -642,6 +642,50 @@ async def test_token_converter_round_trips_literal_hyphens(original: str):
     assert converter.decode(encoded.output_text) == original
 
 
+@pytest.mark.parametrize("seed", [1, 3, 7])
+@pytest.mark.parametrize("original", ["mp3 player", "covid19", "x2", "a_b", "MP3_file", "café", "naïve", "日本a"])
+async def test_token_converter_round_trips_letters_next_to_word_characters(original: str, seed: int):
+    # Regression test: encode() writes a code-word run directly next to a digit, "_" or
+    # non-ASCII letter. Those are word characters, so a \b-bounded decode pattern dropped
+    # the code word that touched them ("mp3" decoded as "m-<p>3").
+    mock_tokenizer = _mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)})
+    converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=seed)
+
+    encoded = await converter.convert_async(prompt=original)
+    assert converter.decode(encoded.output_text) == original
+
+
+def test_token_converter_decode_ignores_code_word_inside_longer_word():
+    mock_tokenizer = _mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)})
+    converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=1)
+    code_word = converter.mapping["a"]
+
+    assert converter.decode(f"x{code_word}") == f"x{code_word}"
+    assert converter.decode(f"{code_word}y") == f"{code_word}y"
+    # A non-ASCII letter next to the code word does not make it a separate word when the
+    # rest of the word is not code words.
+    assert converter.decode(f"{code_word}éxyz") == f"{code_word}éxyz"
+    assert converter.decode(f"xyzé{code_word}") == f"xyzé{code_word}"
+
+
+# "cat" is a prefix of "caté", and "écat" ends with "cat". "cat" comes first in the mapping, so
+# without longest-first matching "caté" decoded as "a" followed by a literal "é".
+_PREFIX_SHARING_MAPPING = dict(
+    zip(string.ascii_lowercase, ["cat", "caté", "écat", *_PLAIN_VOCAB_WORDS[1:24]], strict=True)
+)
+
+
+@pytest.mark.parametrize("original", ["b", "bd", "Bd", "aéd", "c", "dc", "café", "naïve"])
+async def test_token_converter_round_trips_tokens_that_share_a_unicode_prefix(original: str):
+    converter = TokenBijectionConverter(
+        tokenizer=_mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)}),
+        mapping=_PREFIX_SHARING_MAPPING,
+    )
+
+    encoded = await converter.convert_async(prompt=original)
+    assert converter.decode(encoded.output_text) == original
+
+
 async def test_token_converter_literal_hyphen_is_distinct_from_delimiter():
     mock_tokenizer = _mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)})
     converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=3)
