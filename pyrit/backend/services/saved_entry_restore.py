@@ -42,7 +42,7 @@ async def build_saved_entry_async(stored: StoredRecipe, *, upload_directory: str
     request = _create_request(stored)
     with caller_principal_scope(None):
         if isinstance(request, CreateTechniqueRequest):
-            await get_technique_service().create_async(request)
+            await get_technique_service().create_async(request=request)
         elif isinstance(request, CreateTargetRequest):
             await get_target_service().create_target_async(
                 request=request, upload_directory=upload_directory, is_admin=True
@@ -70,7 +70,7 @@ def _create_request(
     try:
         if isinstance(recipe, TechniqueRecipe):
             return CreateTechniqueRequest.model_validate(
-                fields | recipe.model_dump(exclude_unset=True, exclude={"schema_version"})
+                fields | recipe.model_dump(exclude_unset=True, exclude={"schema_version", "owner"})
             )
         fields |= {"type": recipe.class_name, "params": recipe.params}
         if stored.ref.kind is RegistryRecipeKind.TARGETS:

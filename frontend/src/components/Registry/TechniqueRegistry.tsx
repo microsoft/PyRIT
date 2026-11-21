@@ -16,6 +16,8 @@ import type { TechniqueInstance } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import CreateTechniqueDialog from './CreateTechniqueDialog'
+import OriginBadge from './OriginBadge'
+import DeleteSavedEntryButton from './DeleteSavedEntryButton'
 import RegistryIdentityRow from './RegistryIdentityRow'
 import { useTechniqueRegistryStyles } from './TechniqueRegistry.styles'
 
@@ -153,7 +155,16 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
             </TableRow></TableHeader>
             <TableBody>{visible.map((item) => (
               <RegistryIdentityRow key={item.name} name={item.name} identity={item.identifier} columns={4}
-                expanded={expanded.has(item.name)} onToggle={() => toggleDetails(item.name)}>
+                expanded={expanded.has(item.name)} onToggle={() => toggleDetails(item.name)}
+                nameContent={<>
+                  {item.origin && <OriginBadge origin={item.origin} />}
+                  {item.origin === 'saved' && (
+                    <DeleteSavedEntryButton kind="techniques" name={item.name} onDeleted={() => {
+                      setFocusRestore((current) => current + 1)
+                      void load()
+                    }} />
+                  )}
+                </>}>
                 <TableCell>{item.description ?? 'No description'}</TableCell>
                 <TableCell className={styles.nameCell}>{item.attack_type}</TableCell>
                 <TableCell><div className={styles.tags}>{item.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}</div></TableCell>

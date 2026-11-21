@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from pyrit.models import Parameter
     from pyrit.models.technique_edit import TechniqueChanges
     from pyrit.prompt_normalizer import ConverterConfiguration
+    from pyrit.registry.instance_registry import RegistryEntry
     from pyrit.scenario import (
         AttackTechniqueFactory,
         ScenarioTechnique,
@@ -64,6 +65,13 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _record_saved_techniques_with_tag(*, entries: list[RegistryEntry[AttackTechniqueFactory]], folded_tag: str) -> None:
+    """Record each saved technique with a tag as a refused use, as a clash over the tag can leave it standing in."""
+    for entry in entries:
+        if folded_tag in {tag.casefold() for tag in entry.instance.technique_tags}:
+            _record_saved_entry_refusal(entry)
 
 
 def _attack_technique_factory_type() -> type[AttackTechniqueFactory]:
@@ -138,7 +146,11 @@ class AttackTechniqueMetadata(RegistryMetadata):
 
 
 class TechniqueSelectorConflictError(RegistryNameTakenError):
-    """A technique's name or tag conflicts with the name or a tag of a registered technique."""
+    """
+    A technique's name or tag conflicts with the name or a tag of a registered technique.
+
+    Names and tags both select techniques, so either one counts as taken.
+    """
 
 
 class TechniqueAdmissionError(ValueError):
@@ -147,6 +159,24 @@ class TechniqueAdmissionError(ValueError):
 
 class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"]):
     """Factory storage with an atomic runtime-admission path."""
+
+    def check_runtime_available(self, factory: AttackTechniqueFactory) -> None:
+        """
+        Check that a technique could be registered now, without registering it.
+
+        Args:
+            factory (AttackTechniqueFactory): The technique to check.
+
+        Raises:
+            TechniqueSelectorConflictError: If the name or a tag conflicts with another technique's name or tag.
+            TechniqueAdmissionError: If a tag repeats the technique's own name, a selector can't become a scenario
+                member, or the factory doesn't fit the scenarios it would join.
+        """
+        from pyrit.registry.components.scenario_registry import ScenarioRegistry
+
+        ScenarioRegistry.get_registry_singleton().get_class_names()
+        with self._lock:
+            self._check_available(factory)
 
     def register_runtime(self, factory: AttackTechniqueFactory, *, metadata: dict[str, Any] | None = None) -> None:
         """
@@ -166,52 +196,68 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         # Discover builders before taking the instance lock; discovery has its own catalog lock.
         ScenarioRegistry.get_registry_singleton().get_class_names()
         with self._lock:
-            entries = self.get_all_instances()
-            # Names are global, so a technique can't take a name, or a tag spelled like one, that another caller's
-            # private technique uses. A tag groups techniques, so the exact same tag can be used by every caller.
-            every_entry = self.get_all_instances_of_every_owner()
-            names = {entry.name.casefold(): entry.name for entry in every_entry}
-            tags = {tag.casefold(): tag for entry in every_entry for tag in entry.instance.technique_tags}
-            visible_names = {entry.name.casefold() for entry in entries}
-            visible_tags = {tag.casefold() for entry in entries for tag in entry.instance.technique_tags}
-            hidden_names = names.keys() - visible_names
-            hidden_tags = {folded: tag for folded, tag in tags.items() if folded not in visible_tags}
-            # A clash with a technique the caller can't see says only that the selector is taken.
-            folded_name = factory.name.casefold()
-            if folded_name in hidden_names or folded_name in hidden_tags:
-                raise TechniqueSelectorConflictError(f"The technique name or tag '{factory.name}' is taken.")
-            for tag in factory.technique_tags:
-                folded = tag.casefold()
-                if folded in hidden_names or hidden_tags.get(folded, tag) != tag:
-                    raise TechniqueSelectorConflictError(f"The technique name or tag '{tag}' is taken.")
-            if folded_name in names:
-                # Code that catches this error would leave a saved technique standing in, so the clash is recorded.
-                _record_saved_entry_refusal(self._registry_items.get(names[folded_name]))
-                raise TechniqueSelectorConflictError(
-                    f"Technique '{factory.name}' already exists (names are case-insensitive)"
-                )
-            if folded_name in tags:
-                raise TechniqueSelectorConflictError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
-            for tag in factory.technique_tags:
-                folded = tag.casefold()
-                if folded == folded_name:
-                    raise TechniqueAdmissionError(f"Tag '{tag}' repeats the technique's name")
-                if folded in names:
-                    raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name")
-                if folded in tags and tags[folded] != tag:
-                    raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
-            try:
-                _validate_generated_member_collisions(
-                    class_name="ScenarioTechnique",
-                    factories=[factory],
-                    aggregate_tags=set(factory.technique_tags) - {"all", "default"},
-                )
-                AttackTechniqueRegistry.get_registry_singleton().validate_scenario_pools(
-                    {**{entry.name: entry.instance for entry in entries}, factory.name: factory}
-                )
-            except ValueError as error:
-                raise TechniqueAdmissionError(str(error)) from error
+            self._check_available(factory)
             self.register(factory, name=factory.name, tags=factory.technique_tags, metadata=metadata)
+
+    def _check_available(self, factory: AttackTechniqueFactory) -> None:
+        """
+        Check a technique against the registered ones; the caller holds the instance lock.
+
+        Raises:
+            TechniqueSelectorConflictError: If the name or a tag conflicts with another technique's name or tag.
+            TechniqueAdmissionError: If a tag repeats the technique's own name, a selector can't become a scenario
+                member, or the factory doesn't fit the scenarios it would join.
+        """
+        entries = self.get_all_instances()
+        # Names are global, so a technique can't take a name, or a tag spelled like one, that another caller's
+        # private technique uses. A tag groups techniques, so the exact same tag can be used by every caller.
+        every_entry = self.get_all_instances_of_every_owner()
+        names = {entry.name.casefold(): entry.name for entry in every_entry}
+        tags = {tag.casefold(): tag for entry in every_entry for tag in entry.instance.technique_tags}
+        visible_names = {entry.name.casefold() for entry in entries}
+        visible_tags = {tag.casefold() for entry in entries for tag in entry.instance.technique_tags}
+        hidden_names = names.keys() - visible_names
+        hidden_tags = {folded: tag for folded, tag in tags.items() if folded not in visible_tags}
+        # A clash with a technique the caller can't see says only that the selector is taken.
+        folded_name = factory.name.casefold()
+        if folded_name in hidden_names or folded_name in hidden_tags:
+            raise TechniqueSelectorConflictError(f"The technique name or tag '{factory.name}' is taken.")
+        for tag in factory.technique_tags:
+            folded = tag.casefold()
+            if folded in hidden_names or hidden_tags.get(folded, tag) != tag:
+                raise TechniqueSelectorConflictError(f"The technique name or tag '{tag}' is taken.")
+        if folded_name in names:
+            # Code that catches this error would leave a saved technique standing in, so the clash is recorded.
+            _record_saved_entry_refusal(self._registry_items.get(names[folded_name]))
+            raise TechniqueSelectorConflictError(
+                f"Technique '{factory.name}' already exists (names are case-insensitive)"
+            )
+        if folded_name in tags:
+            # Code that catches this error would leave the saved techniques with that tag standing in, so they're
+            # recorded too.
+            _record_saved_techniques_with_tag(entries=entries, folded_tag=folded_name)
+            raise TechniqueSelectorConflictError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
+        for tag in factory.technique_tags:
+            folded = tag.casefold()
+            if folded == folded_name:
+                raise TechniqueAdmissionError(f"Tag '{tag}' repeats the technique's name")
+            if folded in names:
+                _record_saved_entry_refusal(self._registry_items.get(names[folded]))
+                raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name")
+            if folded in tags and tags[folded] != tag:
+                _record_saved_techniques_with_tag(entries=entries, folded_tag=folded)
+                raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
+        try:
+            _validate_generated_member_collisions(
+                class_name="ScenarioTechnique",
+                factories=[factory],
+                aggregate_tags=set(factory.technique_tags) - {"all", "default"},
+            )
+            AttackTechniqueRegistry.get_registry_singleton().validate_scenario_pools(
+                {**{entry.name: entry.instance for entry in entries}, factory.name: factory}
+            )
+        except ValueError as error:
+            raise TechniqueAdmissionError(str(error)) from error
 
 
 class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechniqueMetadata]):

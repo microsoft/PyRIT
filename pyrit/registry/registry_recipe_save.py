@@ -6,21 +6,31 @@ Save registry entries, so ``RegistryRecipeRestorer`` rebuilds them at every star
 
 Saving takes three steps: ``prepare_saved_params_async`` turns off the values the entry would take from this
 server and refuses what a saved entry can't hold, the caller builds the entry from the parameters it returns, and
-``save_then_register_async`` writes the entry's recipe and registers the entry as saved.
+``save_then_register_async`` writes the entry's recipe and registers the entry as saved. Targets, converters, and
+scorers are saved the same way.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import traceback
 from typing import TYPE_CHECKING, Any
 
+from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.common.azure_storage import redact_urls
 from pyrit.models import ComponentType
-from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, RestoreFailureReason
+from pyrit.models.catalog import (
+    ComponentRecipe,
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    RestoreFailureReason,
+    TechniqueRecipe,
+)
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, RegistryNameTakenError, registry_entry_origin
+from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class, check_saved_entry_params
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.registry.resolution import reject_non_external_params
@@ -29,6 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from pyrit.models import Parameter
+    from pyrit.registry.instance_registry import RegistryEntry
     from pyrit.registry.registry import InstanceHoldingRegistry, Registry
 
 logger = logging.getLogger(__name__)
@@ -107,32 +118,31 @@ async def prepare_saved_params_async(
     """
     Turn off the server values an entry to save would read, then refuse what it still can't hold.
 
-    The checks are the ones restore makes, so an entry this accepts is rebuilt at every start.
-
     Args:
         registry (InstanceHoldingRegistry[Any, Any]): The registry the entry's class is registered in.
-        type_name (str): The name the class is registered under, which the recipe names.
+        type_name (str): The name the class is registered under.
         cls (type): The class the entry is built from.
         params (Mapping[str, Any]): The entry's constructor parameters.
-        auth_mode (str | None): A target's auth mode, or None for an entry without one.
+        auth_mode (str | None): A target's auth mode from its create request, or None for converters and scorers.
 
     Returns:
         dict[str, Any]: The parameters to build and save the entry with.
 
     Raises:
         NotSaveableError: If the entry's class can't be saved or was added by a scan's launch script, or the entry
-            would hold or use a credential, leaves a setting to this server's environment, or uses a Temporary target.
+            would hold or use a credential, leaves a setting to this server's environment, or names a Temporary entry.
         ValueError: If an address the entry would use isn't a full http(s) or ws(s) address, or a parameter is one
             the API can't set, which restore can't pass either.
     """
+    # Finding the class can run the registry's first, slow class discovery, so it stays off the event loop.
+    _, class_reason = await asyncio.to_thread(get_class_saveability, registry=registry, type_name=type_name)
+    if class_reason is not None:
+        raise NotSaveableError(class_reason)
     saved_params = dict(params)
     fallbacks: Mapping[str, str | None] = getattr(cls, "server_fallback_parameters", {})
     for name, turned_off in fallbacks.items():
         if turned_off is not None and saved_params.get(name) in (None, ""):
             saved_params[name] = turned_off
-    _, class_reason = get_class_saveability(registry=registry, type_name=type_name)
-    if class_reason is not None:
-        raise NotSaveableError(class_reason)
     metadata = await asyncio.to_thread(registry.get_registered_class_metadata, type_name)
     if metadata is None:
         # Restore falls back to the class itself the same way, so saving never checks less than restoring.
@@ -145,9 +155,10 @@ async def prepare_saved_params_async(
         if error.reason is RestoreFailureReason.INVALID_RECIPE:
             raise ValueError(str(error)) from error
         raise NotSaveableError(str(error)) from error
+    _name_default_references(cls=cls, parameters=parameters, params=saved_params)
     _refuse_values_restore_cant_pass(cls=cls, parameters=parameters, params=saved_params)
     _refuse_environment_values(cls=cls, params=saved_params)
-    _refuse_temporary_references(parameters=parameters, params=saved_params)
+    refuse_temporary_references(parameters=parameters, params=saved_params)
     return saved_params
 
 
@@ -186,31 +197,157 @@ def _refuse_environment_values(*, cls: type, params: Mapping[str, Any]) -> None:
             )
 
 
-def _refuse_temporary_references(*, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
+def _name_default_references(*, cls: type, parameters: Sequence[Parameter], params: dict[str, Any]) -> None:
     """
-    Refuse an entry to save that uses a Temporary target, which won't exist after a restart.
+    Name the registered entry that a reference left unset takes from the configured defaults.
+
+    A constructor that applies defaults fills an unset reference from them, and those can be set by code that
+    doesn't run again at startup, so the recipe names the entry instead of relying on the default. As when the
+    entry is built, a reference sent as null is null, while one left out or cleared starts from the constructor's
+    own default.
 
     Raises:
-        NotSaveableError: If a target parameter names a Temporary target.
+        NotSaveableError: If a reference left unset takes a default that isn't a registered entry.
     """
+    unset = [
+        parameter
+        for parameter in parameters
+        if parameter.reference is not None and params.get(parameter.name) in (None, "")
+    ]
+    if not unset:
+        return
+    unset_names = {parameter.name for parameter in unset}
+    signature = inspect.signature(cls.__init__)
+    sent_as_null = {name: None for name in unset_names if name in params and params[name] is None}
+    try:
+        effective = resolve_constructor_defaults(
+            class_type=cls,
+            arguments=sent_as_null,
+            excluded_parameters=set(signature.parameters) - unset_names,
+        )
+    except ValueError:
+        # A required reference without a default; building the entry reports it.
+        return
+    for parameter in unset:
+        value = effective.get(parameter.name)
+        if value is None or parameter.reference is None:
+            continue
+        constructor_parameter = signature.parameters.get(parameter.name)
+        if (
+            parameter.name not in sent_as_null
+            and constructor_parameter is not None
+            and value is constructor_parameter.default
+        ):
+            # The constructor's own default comes back the same way at every start.
+            continue
+        component_type = parameter.reference.component_type
+        names = [
+            _registered_name(parameter_name=parameter.name, component_type=component_type, instance=item)
+            for item in (value if isinstance(value, (list, tuple)) else [value])
+        ]
+        params[parameter.name] = names if isinstance(value, (list, tuple)) else names[0]
+
+
+def _registered_name(*, parameter_name: str, component_type: ComponentType, instance: Any) -> str:
+    """
+    Name the registered entry that holds a default reference, preferring a name that comes back at every start.
+
+    Returns:
+        str: The entry's registry name.
+
+    Raises:
+        NotSaveableError: If no registered entry holds the instance.
+    """
+    registry = _referenced_registry(component_type)
+    entries: list[RegistryEntry[Any]] = (
+        [item for item in registry.instances.get_all_instances() if item.instance is instance]
+        if registry is not None
+        else []
+    )
+    if not entries:
+        raise NotSaveableError(
+            f"'{parameter_name}' is left to a default {component_type.value} that isn't registered, so it won't "
+            "exist after a restart."
+        )
+    entry = next(
+        (item for item in entries if registry_entry_origin(item.metadata) is not RegistryEntryOrigin.TEMPORARY),
+        entries[0],
+    )
+    return entry.name
+
+
+def _referenced_registry(component_type: ComponentType) -> InstanceHoldingRegistry[Any, Any] | None:
+    """
+    Return the registry whose entries a saved entry may name, or None for a kind saved entries can't use.
+
+    Saved entries may use only the kinds that restore rebuilds.
+
+    Returns:
+        InstanceHoldingRegistry[Any, Any] | None: The registry, or None.
+    """
+    from pyrit.registry.components.converter_registry import ConverterRegistry
+    from pyrit.registry.components.scorer_registry import ScorerRegistry
     from pyrit.registry.components.target_registry import TargetRegistry
 
-    targets = TargetRegistry.get_registry_singleton().instances
+    registries: dict[ComponentType, Any] = {
+        ComponentType.TARGET: TargetRegistry,
+        ComponentType.CONVERTER: ConverterRegistry,
+        ComponentType.SCORER: ScorerRegistry,
+    }
+    registry = registries.get(component_type)
+    return registry.get_registry_singleton() if registry is not None else None
+
+
+def refuse_temporary_references(*, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
+    """
+    Refuse an entry to save that uses a Temporary entry, which won't exist after a restart.
+
+    Args:
+        parameters (Sequence[Parameter]): The class's constructor parameters.
+        params (Mapping[str, Any]): The entry's constructor parameters.
+
+    Raises:
+        NotSaveableError: If a parameter names a Temporary entry, or an entry of a kind saved entries can't use.
+    """
     for parameter in parameters:
-        if parameter.reference is None or parameter.reference.component_type is not ComponentType.TARGET:
+        if parameter.reference is None:
             continue
         value = params.get(parameter.name)
-        for name in value if isinstance(value, list) else [value]:
-            entry = targets.get_entry(name) if isinstance(name, str) else None
-            if entry is not None and registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
-                raise NotSaveableError(f"Uses temporary target '{name}', which won't exist after a restart.")
+        refuse_temporary_entries(
+            component_type=parameter.reference.component_type,
+            names=value if isinstance(value, list) else [value],
+        )
+
+
+def refuse_temporary_entries(*, component_type: ComponentType, names: Sequence[Any]) -> None:
+    """
+    Refuse an entry to save that names a Temporary entry, which won't exist after a restart.
+
+    Args:
+        component_type (ComponentType): The kind of entry the names refer to.
+        names (Sequence[Any]): The names the entry uses; values that aren't names are skipped.
+
+    Raises:
+        NotSaveableError: If a name is a Temporary entry, or an entry of a kind saved entries can't use.
+    """
+    for name in names:
+        if not isinstance(name, str) or not name:
+            continue
+        registry = _referenced_registry(component_type)
+        if registry is None:
+            raise NotSaveableError(f"Uses {component_type.value} '{name}', which saved entries can't use yet.")
+        entry = registry.instances.get_entry(name)
+        if entry is not None and registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
+            raise NotSaveableError(
+                f"Uses temporary {component_type.value} '{name}', which won't exist after a restart."
+            )
 
 
 async def save_then_register_async(
     *,
     kind: RegistryRecipeKind,
     name: str,
-    recipe: ComponentRecipe,
+    recipe: ComponentRecipe | TechniqueRecipe,
     register: Callable[[dict[str, Any]], object],
     source: str | None = None,
 ) -> None:
@@ -218,26 +355,71 @@ async def save_then_register_async(
     Save an entry's recipe, then register the entry as saved.
 
     The recipe is written only if no saved entry of the kind has the name, so of two saves under one name only one
-    succeeds. If registering then fails, the recipe this save wrote is deleted again. A save that's cancelled
-    finishes, or is undone, before the cancellation is passed on, so the saved recipes and the registry agree.
+    succeeds. If registering then fails, the recipe this save wrote is deleted again, unless another writer has
+    replaced it since. Saving first checks that every entry the recipe names still comes back after a restart, since
+    one may have been deleted after the entry was checked; code that also deletes saved entries holds one lock around
+    both. A save that's cancelled finishes, or is undone, before the cancellation is passed on, so the saved recipes
+    and the registry agree.
 
     Args:
         kind (RegistryRecipeKind): The kind of entry.
         name (str): The entry's name.
-        recipe (ComponentRecipe): How restore rebuilds the entry.
+        recipe (ComponentRecipe | TechniqueRecipe): How restore rebuilds the entry.
         register (Callable[[dict[str, Any]], object]): Registers the built entry with the metadata it's given.
         source (str | None): Local directory or Azure Blob URI holding the saved entries. Defaults to
             ``registry_recipes`` under the PyRIT configuration directory.
 
     Raises:
-        SavedEntryConflictError: If a saved or registered entry of the kind already has the name.
+        SavedEntryConflictError: If a saved or registered entry of the kind already has the name, or an entry the
+            recipe names was deleted.
         SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
     """
+    # Looking up the recipe's classes can wait on discovery, so it stays off the event loop.
+    await asyncio.to_thread(_refuse_missing_references, kind=kind, recipe=recipe, source=source)
     await _settle_async(
         asyncio.create_task(
             _save_then_register_async(kind=kind, name=name, recipe=recipe, register=register, source=source)
         )
     )
+
+
+def _refuse_missing_references(
+    *, kind: RegistryRecipeKind, recipe: ComponentRecipe | TechniqueRecipe, source: str | None
+) -> None:
+    """
+    Refuse a recipe that names an entry which no longer comes back after a restart.
+
+    Raises:
+        SavedEntryConflictError: If a named entry isn't registered, or is Temporary.
+    """
+    for ref in RegistryRecipeRestorer(source=source).recipe_references(kind=kind, recipe=recipe):
+        entry = _registry_for_kind(ref.kind).instances.get_entry(ref.name)
+        if entry is None or registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
+            raise SavedEntryConflictError(
+                f"{ref.kind.value.removesuffix('s').capitalize()} '{ref.name}' was deleted while this was being "
+                "saved, so it can't be saved now."
+            )
+
+
+def _registry_for_kind(kind: RegistryRecipeKind) -> InstanceHoldingRegistry[Any, Any]:
+    """
+    Return the registry that holds saved entries of a kind.
+
+    Returns:
+        InstanceHoldingRegistry[Any, Any]: The registry.
+    """
+    from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+    from pyrit.registry.components.converter_registry import ConverterRegistry
+    from pyrit.registry.components.scorer_registry import ScorerRegistry
+    from pyrit.registry.components.target_registry import TargetRegistry
+
+    registries: dict[RegistryRecipeKind, Any] = {
+        RegistryRecipeKind.TARGETS: TargetRegistry,
+        RegistryRecipeKind.CONVERTERS: ConverterRegistry,
+        RegistryRecipeKind.SCORERS: ScorerRegistry,
+        RegistryRecipeKind.TECHNIQUES: AttackTechniqueRegistry,
+    }
+    return registries[kind].get_registry_singleton()
 
 
 async def _settle_async(transaction: asyncio.Task[None]) -> None:
@@ -268,7 +450,7 @@ async def _save_then_register_async(
     *,
     kind: RegistryRecipeKind,
     name: str,
-    recipe: ComponentRecipe,
+    recipe: ComponentRecipe | TechniqueRecipe,
     register: Callable[[dict[str, Any]], object],
     source: str | None,
 ) -> None:

@@ -5,6 +5,7 @@
 
 import inspect
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -387,6 +388,38 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
 
         assert refusals == [("techniques", "formal")]
         assert self.registry.instances.get("formal") is saved
+
+    @pytest.mark.parametrize(
+        ("clash", "message"),
+        [
+            ({"name": "custom"}, "conflicts with an aggregate tag"),
+            ({"name": "other", "technique_tags": ["formal"]}, "conflicts with a technique name"),
+            ({"name": "other", "technique_tags": ["Custom"]}, "conflicts with tag 'custom'"),
+        ],
+    )
+    def test_register_runtime_records_a_caught_tag_clash_with_a_saved_technique(
+        self, clash: dict[str, Any], message: str
+    ) -> None:
+        saved = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+
+        with record_saved_entry_refusals() as refusals:
+            with pytest.raises(ValueError, match=message):
+                self.registry.instances.register_runtime(AttackTechniqueFactory(attack_class=_StubAttack, **clash))
+
+        assert refusals == [("techniques", "formal")]
+
+    def test_register_runtime_records_no_tag_clash_with_a_startup_technique(self) -> None:
+        startup = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(startup)
+
+        with record_saved_entry_refusals() as refusals:
+            with pytest.raises(ValueError, match="conflicts with an aggregate tag"):
+                self.registry.instances.register_runtime(
+                    AttackTechniqueFactory(name="custom", attack_class=_StubAttack)
+                )
+
+        assert refusals == []
 
     def test_register_from_factories_still_skips_an_existing_startup_technique(self):
         startup = AttackTechniqueFactory(name="startup", attack_class=_StubAttack)
