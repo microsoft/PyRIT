@@ -686,3 +686,90 @@ def test_profiles_are_explicit_trusted_configuration() -> None:
         DockerSandboxClient(profiles={})
     with pytest.raises(ValueError):
         DockerSandboxClient(profiles={"bad name": DockerRuntimeProfile(image=_IMAGE, command=("python3",))})
+
+
+_RUNTIMES = '{"io.containerd.runc.v2":{"path":"runc"},"runc":{"path":"runc"},"runsc":{"path":"/usr/bin/runsc"}}'
+
+
+def _runtime_client(tmp_path: Path, *, runtime: str | None = "runsc") -> DockerSandboxClient:
+    instance = DockerSandboxClient(
+        profiles={"python": DockerRuntimeProfile(image=_IMAGE, command=("python3", "-I"), runtime=runtime)},
+        docker_executable=str(tmp_path / "no-docker"),
+    )
+    instance._temp_root = tmp_path
+    return instance
+
+
+def _control_with_runtimes(*, status: int = 0, runtimes: str = _RUNTIMES) -> AsyncMock:
+    healthy = _control()
+
+    async def control_async(*arguments: str) -> tuple[int, str]:
+        if arguments == ("info", "--format", "{{json .Runtimes}}"):
+            return status, runtimes
+        response: tuple[int, str] = await healthy(*arguments)
+        return response
+
+    return AsyncMock(side_effect=control_async)
+
+
+async def test_profile_runtime_runs_the_container_under_that_runtime_async(tmp_path: Path) -> None:
+    client = _runtime_client(tmp_path)
+    control = _control_with_runtimes()
+    with (
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=_process()) as launch,
+        patch.object(client, "_control_async", control),
+    ):
+        assert (await _run_async(client)).events[0].exit_code == 0
+    argv = list(launch.await_args.args)
+    assert argv[argv.index("--runtime") + 1] == "runsc"
+    assert argv.index("--runtime") < argv.index(_IMAGE)
+    assert control.call_args_list[0].args[0] == "info"
+    assert ("info", "--format", "{{json .Runtimes}}") in [call.args for call in control.call_args_list]
+
+
+@pytest.mark.parametrize(
+    ("status", "runtimes", "message"),
+    [
+        (0, '{"runc":{"path":"runc"}}', "does not offer the 'runsc' runtime"),
+        (0, "{}", "does not offer the 'runsc' runtime"),
+        (0, "not json", "unreadable runtimes"),
+        (0, '["runsc"]', "unreadable runtimes"),
+        (1, "permission denied", "could not inspect Docker runtimes"),
+    ],
+)
+async def test_a_runtime_the_daemon_does_not_offer_prevents_execution_async(
+    tmp_path: Path, status: int, runtimes: str, message: str
+) -> None:
+    client = _runtime_client(tmp_path)
+    with (
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=_process()) as launch,
+        patch.object(client, "_control_async", _control_with_runtimes(status=status, runtimes=runtimes)),
+        pytest.raises(SandboxExecutionError, match=message),
+    ):
+        await _run_async(client)
+    launch.assert_not_awaited()
+    assert await asyncio.to_thread(lambda: list(tmp_path.iterdir())) == []
+
+
+async def test_default_runtime_keeps_the_command_line_and_identifier_async(client: DockerSandboxClient) -> None:
+    control = _control()
+    with (
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=_process()) as launch,
+        patch.object(client, "_control_async", control),
+    ):
+        await _run_async(client)
+    assert "--runtime" not in launch.await_args.args
+    assert ("info", "--format", "{{json .Runtimes}}") not in [call.args for call in control.call_args_list]
+    assert set(client.get_identifier().params["profiles"]["python"]) == {"image", "command", "program_filename"}
+
+
+def test_identifier_records_the_profile_runtime(client: DockerSandboxClient, tmp_path: Path) -> None:
+    hardened = _runtime_client(tmp_path).get_identifier()
+    assert hardened.params["profiles"]["python"]["runtime"] == "runsc"
+    assert hardened != client.get_identifier()
+
+
+@pytest.mark.parametrize("runtime", ["", "--privileged", "run sc", "../runsc"])
+def test_runtime_must_be_a_plain_name(runtime: str) -> None:
+    with pytest.raises(ValueError, match="plain runtime name"):
+        DockerRuntimeProfile(image=_IMAGE, command=("python3",), runtime=runtime)
