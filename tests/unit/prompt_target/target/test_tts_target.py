@@ -251,7 +251,7 @@ async def test_tts_send_prompt_with_speed_parameter(
         os.remove(file_path)
 
 
-async def test_tts_send_prompt_omits_unset_speed(
+async def test_tts_send_prompt_omits_unset_speed_async(
     tts_target: OpenAITTSTarget,
     sample_conversations: MutableSequence[MessagePiece],
 ) -> None:
