@@ -22,8 +22,8 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
-    ScenarioJudgeAttribution,
-    ScenarioJudgeScope,
+    ScenarioObjectiveScorerAttribution,
+    ScenarioObjectiveScorerScope,
     ScenarioProgressCounts,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
@@ -369,19 +369,24 @@ def test_pool_results_recorded_by_two_judges_are_split_and_mixed() -> None:
 
     statistics = compute_scenario_statistics(result)
 
-    assert statistics.judge_scope == ScenarioJudgeScope.MIXED_JUDGES
+    assert statistics.objective_scorer_scope == ScenarioObjectiveScorerScope.MIXED_SCORERS
     assert [
-        (judge.attribution, judge.scorer_hash, judge.candidate_index, list(judge.atomic_attacks))
-        for judge in statistics.judges
+        (
+            objective_scorer.attribution,
+            objective_scorer.scorer_hash,
+            objective_scorer.candidate_index,
+            list(objective_scorer.atomic_attacks),
+        )
+        for objective_scorer in statistics.objective_scorers
     ] == [
-        (ScenarioJudgeAttribution.RECORDED, _JUDGE_A.hash, 0, ["attack_a"]),
-        (ScenarioJudgeAttribution.RECORDED, _JUDGE_B.hash, 1, ["attack_b"]),
+        (ScenarioObjectiveScorerAttribution.RECORDED, _JUDGE_A.hash, 0, ["attack_a"]),
+        (ScenarioObjectiveScorerAttribution.RECORDED, _JUDGE_B.hash, 1, ["attack_b"]),
     ]
-    judge_a = statistics.judges[0].overall
+    judge_a = statistics.objective_scorers[0].overall
     assert (judge_a.completed, judge_a.planned, judge_a.succeeded) == (2, 2, 1)
     assert judge_a.outcomes.success_rate_decided == 1.0
     assert judge_a.outcomes.success_rate_all == 0.5
-    assert statistics.judges[0].scorer_identifier == _JUDGE_A
+    assert statistics.objective_scorers[0].scorer_identifier == _JUDGE_A
 
 
 def test_pool_binding_attributes_unrecorded_results_and_ignores_unstarted_judges() -> None:
@@ -395,12 +400,15 @@ def test_pool_binding_attributes_unrecorded_results_and_ignores_unstarted_judges
 
     statistics = compute_scenario_statistics(result)
 
-    assert statistics.judge_scope == ScenarioJudgeScope.SINGLE_JUDGE
-    assert [(judge.attribution, judge.scorer_hash, judge.overall.completed) for judge in statistics.judges] == [
-        (ScenarioJudgeAttribution.PLANNED, _JUDGE_A.hash, 1),
-        (ScenarioJudgeAttribution.PLANNED, _JUDGE_B.hash, 0),
+    assert statistics.objective_scorer_scope == ScenarioObjectiveScorerScope.SINGLE_SCORER
+    assert [
+        (objective_scorer.attribution, objective_scorer.scorer_hash, objective_scorer.overall.completed)
+        for objective_scorer in statistics.objective_scorers
+    ] == [
+        (ScenarioObjectiveScorerAttribution.PLANNED, _JUDGE_A.hash, 1),
+        (ScenarioObjectiveScorerAttribution.PLANNED, _JUDGE_B.hash, 0),
     ]
-    assert statistics.judges[0].scorer_identifier is None
+    assert statistics.objective_scorers[0].scorer_identifier is None
 
 
 def test_recorded_scorer_that_contradicts_the_pool_binding_is_a_conflict() -> None:
@@ -408,10 +416,10 @@ def test_recorded_scorer_that_contradicts_the_pool_binding_is_a_conflict() -> No
 
     statistics = compute_scenario_statistics(result)
 
-    assert statistics.judge_scope == ScenarioJudgeScope.UNKNOWN_JUDGE
-    [judge] = statistics.judges
-    assert (judge.attribution, judge.scorer_hash, judge.scorer_identifier) == (
-        ScenarioJudgeAttribution.CONFLICT,
+    assert statistics.objective_scorer_scope == ScenarioObjectiveScorerScope.UNKNOWN_SCORER
+    [objective_scorer] = statistics.objective_scorers
+    assert (objective_scorer.attribution, objective_scorer.scorer_hash, objective_scorer.scorer_identifier) == (
+        ScenarioObjectiveScorerAttribution.CONFLICT,
         None,
         None,
     )
@@ -420,8 +428,8 @@ def test_recorded_scorer_that_contradicts_the_pool_binding_is_a_conflict() -> No
 @pytest.mark.parametrize(
     ("run_scorer", "attribution", "scope"),
     [
-        (_JUDGE_A, ScenarioJudgeAttribution.RUN, ScenarioJudgeScope.SINGLE_JUDGE),
-        (None, ScenarioJudgeAttribution.UNKNOWN, ScenarioJudgeScope.UNKNOWN_JUDGE),
+        (_JUDGE_A, ScenarioObjectiveScorerAttribution.RUN, ScenarioObjectiveScorerScope.SINGLE_SCORER),
+        (None, ScenarioObjectiveScorerAttribution.UNKNOWN, ScenarioObjectiveScorerScope.UNKNOWN_SCORER),
     ],
 )
 def test_legacy_results_without_a_recorded_scorer_use_the_run_scorer(run_scorer, attribution, scope) -> None:
@@ -432,16 +440,16 @@ def test_legacy_results_without_a_recorded_scorer_use_the_run_scorer(run_scorer,
 
     statistics = compute_scenario_statistics(result)
 
-    assert statistics.judge_scope == scope
-    [judge] = statistics.judges
-    assert judge.attribution == attribution
-    assert judge.scorer_hash == (run_scorer.hash if run_scorer is not None else None)
+    assert statistics.objective_scorer_scope == scope
+    [objective_scorer] = statistics.objective_scorers
+    assert objective_scorer.attribution == attribution
+    assert objective_scorer.scorer_hash == (run_scorer.hash if run_scorer is not None else None)
 
 
 def test_latest_completion_decides_the_judge_of_a_resumed_unit() -> None:
     first, second = (
-        make_judged_scenario_result(groups=[("attack", None, judge, [outcome])]).attack_results["attack"][0]
-        for judge, outcome in ((_JUDGE_A, AttackOutcome.FAILURE), (_JUDGE_B, AttackOutcome.SUCCESS))
+        make_judged_scenario_result(groups=[("attack", None, objective_scorer, [outcome])]).attack_results["attack"][0]
+        for objective_scorer, outcome in ((_JUDGE_A, AttackOutcome.FAILURE), (_JUDGE_B, AttackOutcome.SUCCESS))
     )
     second.timestamp = first.timestamp + timedelta(seconds=1)
     result = make_judged_scenario_result(groups=[("attack", None, None, [AttackOutcome.SUCCESS])])
@@ -449,15 +457,18 @@ def test_latest_completion_decides_the_judge_of_a_resumed_unit() -> None:
 
     statistics = compute_scenario_statistics(result)
 
-    assert [(judge.scorer_hash, judge.overall.completed) for judge in statistics.judges] == [(_JUDGE_B.hash, 1)]
-    assert statistics.judge_scope == ScenarioJudgeScope.SINGLE_JUDGE
+    assert [
+        (objective_scorer.scorer_hash, objective_scorer.overall.completed)
+        for objective_scorer in statistics.objective_scorers
+    ] == [(_JUDGE_B.hash, 1)]
+    assert statistics.objective_scorer_scope == ScenarioObjectiveScorerScope.SINGLE_SCORER
 
 
 @pytest.mark.parametrize(
     ("bound", "attribution", "scorer_hash"),
     [
-        (_JUDGE_B, ScenarioJudgeAttribution.PLANNED, _JUDGE_B.hash),
-        (None, ScenarioJudgeAttribution.UNKNOWN, None),
+        (_JUDGE_B, ScenarioObjectiveScorerAttribution.PLANNED, _JUDGE_B.hash),
+        (None, ScenarioObjectiveScorerAttribution.UNKNOWN, None),
     ],
 )
 def test_unrecorded_latest_completion_ignores_an_earlier_execution_judge(bound, attribution, scorer_hash) -> None:
@@ -469,9 +480,9 @@ def test_unrecorded_latest_completion_ignores_an_earlier_execution_judge(bound, 
     latest.timestamp = earlier.timestamp + timedelta(seconds=1)
     result.attack_results["attack"] = [earlier, latest]
 
-    [judge] = compute_scenario_statistics(result).judges
+    [objective_scorer] = compute_scenario_statistics(result).objective_scorers
 
-    assert (judge.attribution, judge.scorer_hash) == (attribution, scorer_hash)
+    assert (objective_scorer.attribution, objective_scorer.scorer_hash) == (attribution, scorer_hash)
 
 
 def test_envelope_takes_the_judge_its_linked_child_recorded() -> None:
@@ -481,6 +492,45 @@ def test_envelope_takes_the_judge_its_linked_child_recorded() -> None:
     children[0].atomic_attack_identifier = judged_attack_identifier(_JUDGE_A)
     result = make_scenario_result(attack_results={"attack": [envelope, *children]})
 
-    [judge] = compute_scenario_statistics(result).judges
+    [objective_scorer] = compute_scenario_statistics(result).objective_scorers
 
-    assert (judge.attribution, judge.scorer_hash) == (ScenarioJudgeAttribution.RECORDED, _JUDGE_A.hash)
+    assert (objective_scorer.attribution, objective_scorer.scorer_hash) == (
+        ScenarioObjectiveScorerAttribution.RECORDED,
+        _JUDGE_A.hash,
+    )
+
+
+@pytest.mark.parametrize(
+    ("bound", "attribution"),
+    [
+        (None, ScenarioObjectiveScorerAttribution.UNKNOWN),
+        (_JUDGE_A, ScenarioObjectiveScorerAttribution.CONFLICT),
+        (_JUDGE_B, ScenarioObjectiveScorerAttribution.CONFLICT),
+    ],
+)
+def test_mixed_scorer_compound_does_not_credit_the_last_child(
+    bound: ComponentIdentifier | None, attribution: ScenarioObjectiveScorerAttribution
+) -> None:
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="attack",
+        objective="objective-0",
+        envelope_outcome=AttackOutcome.SUCCESS,
+        child_outcomes=[AttackOutcome.SUCCESS, AttackOutcome.FAILURE],
+    )
+    envelope.metadata["completion_policy"] = "exhaustive"
+    for child, scorer in zip(children, [_JUDGE_A, _JUDGE_B], strict=True):
+        child.atomic_attack_identifier = judged_attack_identifier(scorer)
+    for attack in [*children, envelope]:
+        attack.attribution_data.update(parent_eval_hash="eval-attack", seed_group_id="seed-0")
+    result = make_judged_scenario_result(groups=[("attack", bound, None, [AttackOutcome.SUCCESS])])
+    result.attack_results["attack"] = [*children, envelope]
+
+    statistics = compute_scenario_statistics(result)
+    [scorer_statistics] = statistics.objective_scorers
+
+    assert scorer_statistics.attribution == attribution
+    assert scorer_statistics.scorer_hash is None
+    assert scorer_statistics.scorer_identifier is None
+    assert statistics.objective_scorer_scope == ScenarioObjectiveScorerScope.UNKNOWN_SCORER
+    assert (statistics.overall.completed, statistics.overall.succeeded) == (1, 1)
+    assert (scorer_statistics.overall.completed, scorer_statistics.overall.succeeded) == (1, 1)

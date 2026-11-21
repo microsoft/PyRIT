@@ -17,7 +17,7 @@ from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackResult, ScenarioResult
 from pyrit.output import FileSink
-from pyrit.output._derivation import attack_objective_scorer_identifier, judge_label
+from pyrit.output._derivation import attack_objective_scorer_identifier, objective_scorer_label
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 from pyrit.setup import SQLITE, initialize_pyrit_async
 
@@ -105,7 +105,7 @@ def _attack_rows(*, result: ScenarioResult) -> list[dict[str, Any]]:
             score_value = None
             if score is not None:
                 score_value = score.score_value if score.score_value is not None else score.status.value
-            judge = attack_objective_scorer_identifier(
+            objective_scorer = attack_objective_scorer_identifier(
                 attack=attack, run_scorer_identifier=result.objective_scorer_identifier
             )
             rows.append(
@@ -116,7 +116,9 @@ def _attack_rows(*, result: ScenarioResult) -> list[dict[str, Any]]:
                     "outcome": attack.outcome.value,
                     "executed_turns": attack.executed_turns,
                     "score_value": score_value,
-                    "judge": f"{judge.class_name} ({judge.hash[:12]})" if judge is not None else None,
+                    "objective_scorer": f"{objective_scorer.class_name} ({objective_scorer.hash[:12]})"
+                    if objective_scorer is not None
+                    else None,
                 }
             )
     return rows
@@ -157,10 +159,14 @@ def _build_technique_metrics(*, result: ScenarioResult) -> list[dict[str, Any]]:
         attempts = sum(statistics.atomic_attack_attempts.get(name, 0) for name in names)
         if not attempts and not counts.completed:
             continue
-        judges = [
-            judge
-            for judge in statistics.judges
-            if any(judge.atomic_attacks[name].completed for name in names if name in judge.atomic_attacks)
+        objective_scorers = [
+            objective_scorer
+            for objective_scorer in statistics.objective_scorers
+            if any(
+                objective_scorer.atomic_attacks[name].completed
+                for name in names
+                if name in objective_scorer.atomic_attacks
+            )
         ]
         metrics.append(
             {
@@ -178,8 +184,12 @@ def _build_technique_metrics(*, result: ScenarioResult) -> list[dict[str, Any]]:
                     if outcomes is not None and outcomes.success_rate_decided is not None
                     else None
                 ),
-                "judge": judge_label(judges[0]) if len(judges) == 1 else ("mixed" if judges else ""),
-                "judge_attribution": judges[0].attribution.value if len(judges) == 1 else "",
+                "objective_scorer": objective_scorer_label(objective_scorers[0])
+                if len(objective_scorers) == 1
+                else ("mixed" if objective_scorers else ""),
+                "objective_scorer_attribution": objective_scorers[0].attribution.value
+                if len(objective_scorers) == 1
+                else "",
             }
         )
     return metrics
@@ -201,8 +211,8 @@ def _write_technique_metrics(*, result: ScenarioResult, output_dir: Path) -> Non
         "retry_records",
         "success_rate",
         "success_rate_decided",
-        "judge",
-        "judge_attribution",
+        "objective_scorer",
+        "objective_scorer_attribution",
     ]
     with open(output_dir / "technique-metrics.csv", "w", encoding="utf-8", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=fieldnames)
@@ -220,24 +230,26 @@ def _write_technique_metrics(*, result: ScenarioResult, output_dir: Path) -> Non
             "Retries",
             "ASR",
             "Decided",
-            "Judge",
+            "Objective scorer",
         )
     ]
     lines.extend(
         (
             "{technique:<32} {adversarial_model:<30} {total:>4} {success:>8} "
-            "{failure:>8} {error:>6} {retry_records:>8} {success_rate:>7.1%} {decided:>8}  {judge}"
+            "{failure:>8} {error:>6} {retry_records:>8} {success_rate:>7.1%} {decided:>8}  {objective_scorer}"
         ).format(
             **metric,
             decided=(f"{metric['success_rate_decided']:.1%}" if metric["success_rate_decided"] is not None else "N/A"),
         )
         for metric in metrics
     )
-    if len({metric["judge"] for metric in metrics if metric["judge"]}) > 1 or any(
-        metric["judge"] == "mixed" for metric in metrics
+    if len({metric["objective_scorer"] for metric in metrics if metric["objective_scorer"]}) > 1 or any(
+        metric["objective_scorer"] == "mixed" for metric in metrics
     ):
         lines.append("")
-        lines.append("Different judges scored these rows; compare ASR only between rows with the same judge.")
+        lines.append(
+            "Different objective scorers scored these rows; compare ASR only between rows with the same scorer."
+        )
     (output_dir / "technique-metrics.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

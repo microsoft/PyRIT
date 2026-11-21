@@ -480,8 +480,10 @@ async def test_html_report_renders_per_judge_breakdown_from_real_builders(patch_
         build_scenario_full_payload(result=result, overview=overview, entries=[])
     )
 
-    assert re.search(r"Aggregate success rate\s+\(2 judges, descriptive\)", html)
-    assert "Per-judge breakdown" in html
+    assert re.search(r"Aggregate success rate\s+\(2\s+objective scorers, descriptive\)", html)
+    assert "Results by Objective Scorer" in html
+    assert "Each row contains only executions attributed to that scorer" in html
+    assert "not every execution rescored by every scorer" in html
     assert f"JudgeA ({judge_a.hash[:12]})" in html
     assert "<td>100.0%</td>" in html
     assert "<td>N/A</td>" in html
@@ -492,9 +494,9 @@ async def test_html_report_renders_per_judge_breakdown_from_real_builders(patch_
     [
         (
             ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers"),
-            "Judge: JudgeA ({hash}) (recorded)",
+            "Objective Scorer: JudgeA ({hash}) (recorded)",
         ),
-        (None, "Judge: Unknown scorer (not recorded) (unknown)"),
+        (None, "Objective Scorer: Unknown scorer (not recorded) (unknown)"),
     ],
 )
 async def test_html_report_names_a_single_judge_under_the_headline(patch_central_database, recorded, expected):
@@ -506,4 +508,4 @@ async def test_html_report_names_a_single_judge_under_the_headline(patch_central
     )
 
     assert expected.format(hash=recorded.hash[:12] if recorded is not None else "") in html
-    assert "Per-judge breakdown" not in html
+    assert "Results by Objective Scorer" not in html

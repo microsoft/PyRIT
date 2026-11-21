@@ -5,13 +5,13 @@ import textwrap
 
 from colorama import Fore, Style
 
-from pyrit.models import AttackOutcome, ScenarioJudgeScope, ScenarioJudgeStatistics, ScenarioResult
+from pyrit.models import AttackOutcome, ScenarioObjectiveScorerScope, ScenarioObjectiveScorerStatistics, ScenarioResult
 from pyrit.output._derivation import (
     ScenarioOverview,
     attack_score_display,
     attack_technique_label,
     format_rate,
-    judge_label,
+    objective_scorer_label,
     resolve_target_info,
     scenario_overview,
     select_attacks,
@@ -29,21 +29,26 @@ _ATTACK_OUTCOME_COLORS = {
 }
 
 
-def _single_judge_line(overview: ScenarioOverview, *, run_scorer_hash: str | None) -> str | None:
+def _single_objective_scorer_line(overview: ScenarioOverview, *, run_scorer_hash: str | None) -> str | None:
     """
-    Describe the judge behind an unmixed headline, unless the run's scorer section already shows it.
+    Describe the objective scorer behind an unmixed headline, unless its scorer section already shows it.
 
     Returns:
-        str | None: The judge description, or None when no extra line is needed.
+        str | None: The objective scorer description, or None when no extra line is needed.
     """
-    if overview.judge_scope not in (ScenarioJudgeScope.SINGLE_JUDGE, ScenarioJudgeScope.UNKNOWN_JUDGE):
+    if overview.objective_scorer_scope not in (
+        ScenarioObjectiveScorerScope.SINGLE_SCORER,
+        ScenarioObjectiveScorerScope.UNKNOWN_SCORER,
+    ):
         return None
-    judge = next(judge for judge in overview.judges if judge.overall.completed)
-    if judge.scorer_hash is not None and judge.scorer_hash == run_scorer_hash:
+    objective_scorer = next(
+        objective_scorer for objective_scorer in overview.objective_scorers if objective_scorer.overall.completed
+    )
+    if objective_scorer.scorer_hash is not None and objective_scorer.scorer_hash == run_scorer_hash:
         return None
-    if judge.scorer_hash is None:
-        return judge_label(judge)
-    return f"{judge_label(judge)}, {judge.attribution.value}"
+    if objective_scorer.scorer_hash is None:
+        return objective_scorer_label(objective_scorer)
+    return f"{objective_scorer_label(objective_scorer)}, {objective_scorer.attribution.value}"
 
 
 class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase):
@@ -175,9 +180,10 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         if self._scorer_printer is not None:
             parts.extend(
                 [
-                    await self._scorer_printer.render_async(scorer_identifier=judge.scorer_identifier)
-                    for judge in overview.judges
-                    if judge.scorer_identifier is not None and judge.scorer_hash != run_scorer_hash
+                    await self._scorer_printer.render_async(scorer_identifier=objective_scorer.scorer_identifier)
+                    for objective_scorer in overview.objective_scorers
+                    if objective_scorer.scorer_identifier is not None
+                    and objective_scorer.scorer_hash != run_scorer_hash
                 ]
             )
 
@@ -185,7 +191,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         lines.append(self._render_section_header("Overall Statistics"))
         total_techniques = len(result.get_techniques_used())
         overall_rate = overview.success_rate
-        mixed = overview.judge_scope == ScenarioJudgeScope.MIXED_JUDGES
+        mixed = overview.objective_scorer_scope == ScenarioObjectiveScorerScope.MIXED_SCORERS
 
         lines.append(self._format_colored(f"{self._indent}📈 Summary", Style.BRIGHT))
         lines.append(self._format_colored(f"{self._indent * 2}• Total Techniques: {total_techniques}", Fore.GREEN))
@@ -196,17 +202,21 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         )
         lines.append(self._format_colored(f"{self._indent * 2}• Total Attempts: {overview.attempts}", Fore.GREEN))
         if mixed:
-            active_judges = sum(1 for judge in overview.judges if judge.overall.completed)
+            active_scorers = sum(
+                1 for objective_scorer in overview.objective_scorers if objective_scorer.overall.completed
+            )
             lines.append(
                 self._format_colored(
-                    f"{self._indent * 2}• Aggregate Success Rate (descriptive, across {active_judges} judges): "
+                    f"{self._indent * 2}• Aggregate Success Rate "
+                    f"(descriptive, across {active_scorers} objective scorers): "
                     f"{overall_rate}%",
                     self._get_rate_color(overall_rate),
                 )
             )
             lines.append(
                 self._format_colored(
-                    f"{self._indent * 3}Judges apply different rubrics; compare rates only within one judge.",
+                    f"{self._indent * 3}Scorers apply different rubrics; "
+                    "compare rates only within one objective scorer.",
                     Fore.YELLOW,
                 )
             )
@@ -216,17 +226,24 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
                     f"{self._indent * 2}• Overall Success Rate: {overall_rate}%", self._get_rate_color(overall_rate)
                 )
             )
-            judge_line = _single_judge_line(overview, run_scorer_hash=run_scorer_hash)
-            if judge_line:
-                lines.append(self._format_colored(f"{self._indent * 2}• Judge: {judge_line}", Fore.GREEN))
+            scorer_line = _single_objective_scorer_line(overview, run_scorer_hash=run_scorer_hash)
+            if scorer_line:
+                lines.append(self._format_colored(f"{self._indent * 2}• Objective Scorer: {scorer_line}", Fore.GREEN))
 
         objectives = result.get_objectives()
         lines.append(self._format_colored(f"{self._indent * 2}• Unique Objectives: {len(objectives)}", Fore.GREEN))
 
-        if len(overview.judges) > 1:
-            lines.append(self._render_section_header("Per-Judge Breakdown"))
-            for judge in overview.judges:
-                lines.extend(self._render_judge(judge))
+        if len(overview.objective_scorers) > 1:
+            lines.append(self._render_section_header("Results by Objective Scorer"))
+            lines.append(
+                self._format_colored(
+                    f"{self._indent}Each row contains only executions attributed to that scorer, "
+                    "not every execution rescored by every scorer.",
+                    Fore.YELLOW,
+                )
+            )
+            for objective_scorer in overview.objective_scorers:
+                lines.extend(self._render_objective_scorer(objective_scorer))
 
         lines.append(self._render_section_header("Per-Group Breakdown"))
         group_summaries = list(overview.groups)
@@ -234,7 +251,8 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         if self._sort_groups_by_success_rate and mixed:
             lines.append(
                 self._format_colored(
-                    f"{self._indent}Groups are not ranked by success rate because different judges scored them.",
+                    f"{self._indent}Groups are not ranked by success rate "
+                    "because different objective scorers scored them.",
                     Fore.YELLOW,
                 )
             )
@@ -262,24 +280,26 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
 
         return "".join(parts)
 
-    def _render_judge(self, judge: ScenarioJudgeStatistics) -> list[str]:
+    def _render_objective_scorer(self, objective_scorer: ScenarioObjectiveScorerStatistics) -> list[str]:
         """
-        Render one judge's entry in the Per-Judge Breakdown.
+        Render the results attributed to one objective scorer.
 
         Returns:
             list[str]: The rendered lines.
         """
-        counts = judge.overall
+        counts = objective_scorer.overall
         executions = f"{counts.completed}/{counts.planned}" if counts.planned is not None else str(counts.completed)
         lines = [
             "\n",
-            self._format_colored(f"{self._indent}🔹 Judge: {judge_label(judge)}", Style.BRIGHT),
-            self._format_colored(f"{self._indent * 2}• Attribution: {judge.attribution.value}", Fore.YELLOW),
+            self._format_colored(
+                f"{self._indent}🔹 Objective Scorer: {objective_scorer_label(objective_scorer)}", Style.BRIGHT
+            ),
+            self._format_colored(f"{self._indent * 2}• Attribution: {objective_scorer.attribution.value}", Fore.YELLOW),
         ]
-        if judge.candidate_index is not None:
-            candidate = f"#{judge.candidate_index}"
-            if judge.evaluation:
-                candidate += f" ({judge.evaluation})"
+        if objective_scorer.candidate_index is not None:
+            candidate = f"#{objective_scorer.candidate_index}"
+            if objective_scorer.evaluation:
+                candidate += f" ({objective_scorer.evaluation})"
             lines.append(self._format_colored(f"{self._indent * 2}• Pool Candidate: {candidate}", Fore.YELLOW))
         lines.append(self._format_colored(f"{self._indent * 2}• Objective Executions: {executions}", Fore.YELLOW))
         outcomes = counts.outcomes
@@ -300,7 +320,8 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
             )
         lines.append(
             self._format_colored(
-                f"{self._indent * 2}• Atomic Attacks: {', '.join(judge.atomic_attacks) or 'none'}", Fore.YELLOW
+                f"{self._indent * 2}• Atomic Attacks: {', '.join(objective_scorer.atomic_attacks) or 'none'}",
+                Fore.YELLOW,
             )
         )
         return lines

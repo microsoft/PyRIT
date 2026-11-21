@@ -43,9 +43,9 @@ from pyrit.models import (
     ComponentIdentifier,
     ScenarioExecutionStatistics,
     ScenarioExecutionUnit,
-    ScenarioJudgeAttribution,
-    ScenarioJudgeScope,
-    ScenarioJudgeStatistics,
+    ScenarioObjectiveScorerAttribution,
+    ScenarioObjectiveScorerScope,
+    ScenarioObjectiveScorerStatistics,
     ScenarioProducerCategoryCounts,
     ScenarioProducerCounts,
     ScenarioProgressCounts,
@@ -669,7 +669,7 @@ def compute_scenario_statistics(
         atomic_attack_attempts[name] = sum(len(select_execution_attempts(group)) for group in grouped.values())
 
     run_scorer_identifier = scenario_result.objective_scorer_identifier
-    judges = _compute_judge_statistics(
+    objective_scorers = _compute_objective_scorer_statistics(
         units=counted_units,
         unit_names=unit_names,
         attempts_by_unit=attempts_by_unit,
@@ -699,32 +699,32 @@ def compute_scenario_statistics(
         attempts=sum(len(select_execution_attempts(unit_attempts)) for unit_attempts in attempts_by_unit.values()),
         atomic_attack_attempts=atomic_attack_attempts,
         unattributed_attempts=unattributed_attempts,
-        judges=judges,
-        judge_scope=judge_scope(judges),
+        objective_scorers=objective_scorers,
+        objective_scorer_scope=objective_scorer_scope(objective_scorers),
     )
 
 
-# Weakest evidence first: a judge's attribution reports the least direct source any of its units used.
+# Weakest evidence first: attribution reports the least direct source any of the scorer's units used.
 _ATTRIBUTION_STRENGTH = {
-    ScenarioJudgeAttribution.RUN: 0,
-    ScenarioJudgeAttribution.PLANNED: 1,
-    ScenarioJudgeAttribution.RECORDED: 2,
+    ScenarioObjectiveScorerAttribution.RUN: 0,
+    ScenarioObjectiveScorerAttribution.PLANNED: 1,
+    ScenarioObjectiveScorerAttribution.RECORDED: 2,
 }
 
 
 @dataclass(slots=True)
-class _JudgeBucket:
-    """Execution units attributed to one judge while their statistics are collected."""
+class _ObjectiveScorerBucket:
+    """Execution units attributed to one objective scorer while their statistics are collected."""
 
     scorer_hash: str | None
     units: list[ScenarioExecutionUnit] = field(default_factory=list)
-    attributions: set[ScenarioJudgeAttribution] = field(default_factory=set)
-    attempted_attributions: set[ScenarioJudgeAttribution] = field(default_factory=set)
+    attributions: set[ScenarioObjectiveScorerAttribution] = field(default_factory=set)
+    attempted_attributions: set[ScenarioObjectiveScorerAttribution] = field(default_factory=set)
     scorer_identifier: ComponentIdentifier | None = None
     binding: ScenarioRunPlanScorerBinding | None = None
 
     @property
-    def attribution(self) -> ScenarioJudgeAttribution:
+    def attribution(self) -> ScenarioObjectiveScorerAttribution:
         """The weakest evidence among attempted units, or among all units before any attempt."""
         candidates = self.attempted_attributions or self.attributions
         return min(candidates, key=lambda value: _ATTRIBUTION_STRENGTH.get(value, -1))
@@ -736,17 +736,18 @@ def _attribute_unit(
     binding: ScenarioRunPlanScorerBinding | None,
     run_scorer_identifier: ComponentIdentifier | None,
     plan_binds_scorers: bool,
-) -> tuple[ScenarioJudgeAttribution, str | None, ComponentIdentifier | None]:
+) -> tuple[ScenarioObjectiveScorerAttribution, str | None, ComponentIdentifier | None]:
     """
     Attribute one execution unit to the objective scorer that judged it.
 
     The scorer recorded on the unit's effective result (its latest completion) is preferred, then
-    one recorded by that completion's linked child results. A planned pool binding applies when
-    neither records a scorer, and a single-scorer run's identifier applies only when the plan binds
-    no scorers. Earlier executions of a resumed unit never decide its judge.
+    one shared by that completion's linked child results. Mixed child scorers remain unknown or
+    conflicting rather than attributing a compound outcome to one child. A planned pool binding
+    applies when neither records a scorer, and a single-scorer run's identifier applies only when
+    the plan binds no scorers. Earlier executions of a resumed unit never decide its objective scorer.
 
     Returns:
-        tuple[ScenarioJudgeAttribution, str | None, ComponentIdentifier | None]: The attribution,
+        tuple[ScenarioObjectiveScorerAttribution, str | None, ComponentIdentifier | None]: The attribution,
             scorer hash, and scorer identifier when known.
     """
     completions = [attempt for attempt in attempts if attempt.attempt_index is None]
@@ -754,27 +755,32 @@ def _attribute_unit(
     recorded = effective.objective_scorer if effective is not None else None
     if recorded is None and effective is not None and effective.child_attack_result_ids:
         child_ids = set(effective.child_attack_result_ids)
-        recorded = next(
-            (
-                attempt.objective_scorer
-                for attempt in reversed(attempts)
-                if attempt.attempt_id in child_ids and attempt.objective_scorer is not None
-            ),
-            None,
-        )
+        child_scorers = {
+            attempt.objective_scorer.hash: attempt.objective_scorer
+            for attempt in attempts
+            if attempt.attempt_id in child_ids and attempt.objective_scorer is not None
+        }
+        if len(child_scorers) > 1:
+            attribution = (
+                ScenarioObjectiveScorerAttribution.CONFLICT
+                if binding is not None
+                else ScenarioObjectiveScorerAttribution.UNKNOWN
+            )
+            return attribution, None, None
+        recorded = next(iter(child_scorers.values()), None)
 
     if recorded is not None:
         if binding is not None and recorded.hash != binding.scorer_hash:
-            return ScenarioJudgeAttribution.CONFLICT, None, None
-        return ScenarioJudgeAttribution.RECORDED, recorded.hash, recorded
+            return ScenarioObjectiveScorerAttribution.CONFLICT, None, None
+        return ScenarioObjectiveScorerAttribution.RECORDED, recorded.hash, recorded
     if binding is not None:
-        return ScenarioJudgeAttribution.PLANNED, binding.scorer_hash, None
+        return ScenarioObjectiveScorerAttribution.PLANNED, binding.scorer_hash, None
     if run_scorer_identifier is not None and not plan_binds_scorers:
-        return ScenarioJudgeAttribution.RUN, run_scorer_identifier.hash, run_scorer_identifier
-    return ScenarioJudgeAttribution.UNKNOWN, None, None
+        return ScenarioObjectiveScorerAttribution.RUN, run_scorer_identifier.hash, run_scorer_identifier
+    return ScenarioObjectiveScorerAttribution.UNKNOWN, None, None
 
 
-def _compute_judge_statistics(
+def _compute_objective_scorer_statistics(
     *,
     units: Sequence[ScenarioExecutionUnit],
     unit_names: Mapping[ScenarioExecutionUnit, str],
@@ -782,7 +788,7 @@ def _compute_judge_statistics(
     planned_groups_by_id: Mapping[str, ScenarioRunPlanAtomicGroup],
     run_scorer_identifier: ComponentIdentifier | None,
     is_planned: bool,
-) -> list[ScenarioJudgeStatistics]:
+) -> list[ScenarioObjectiveScorerStatistics]:
     """
     Split the counted execution units by the objective scorer that judged them.
 
@@ -790,10 +796,10 @@ def _compute_judge_statistics(
     Each group is counted with the same latest-attempt policy as the overall statistics.
 
     Returns:
-        list[ScenarioJudgeStatistics]: One entry per judge, in unit order.
+        list[ScenarioObjectiveScorerStatistics]: One entry per objective scorer, in unit order.
     """
     plan_binds_scorers = any(group.objective_scorer_binding is not None for group in planned_groups_by_id.values())
-    buckets: dict[tuple[ScenarioJudgeAttribution | None, str | None], _JudgeBucket] = {}
+    buckets: dict[tuple[ScenarioObjectiveScorerAttribution | None, str | None], _ObjectiveScorerBucket] = {}
     for unit in units:
         attempts = attempts_by_unit.get(unit, ())
         planned_group = planned_groups_by_id.get(unit.atomic_group_id)
@@ -806,7 +812,7 @@ def _compute_judge_statistics(
         )
         # Known scorers share one bucket whatever the evidence; conflicts and unknowns get their own.
         key = (None, scorer_hash) if scorer_hash is not None else (attribution, None)
-        bucket = buckets.setdefault(key, _JudgeBucket(scorer_hash=scorer_hash))
+        bucket = buckets.setdefault(key, _ObjectiveScorerBucket(scorer_hash=scorer_hash))
         bucket.units.append(unit)
         bucket.attributions.add(attribution)
         if attempts:
@@ -816,13 +822,13 @@ def _compute_judge_statistics(
         if bucket.binding is None and binding is not None and binding.scorer_hash == scorer_hash:
             bucket.binding = binding
 
-    judges: list[ScenarioJudgeStatistics] = []
+    objective_scorers: list[ScenarioObjectiveScorerStatistics] = []
     for bucket in buckets.values():
         units_by_name: dict[str, list[ScenarioExecutionUnit]] = {}
         for unit in bucket.units:
             units_by_name.setdefault(unit_names.get(unit, ""), []).append(unit)
-        judges.append(
-            ScenarioJudgeStatistics(
+        objective_scorers.append(
+            ScenarioObjectiveScorerStatistics(
                 attribution=bucket.attribution,
                 scorer_hash=bucket.scorer_hash,
                 scorer_identifier=bucket.scorer_identifier,
@@ -843,27 +849,29 @@ def _compute_judge_statistics(
                 },
             )
         )
-    return judges
+    return objective_scorers
 
 
-def judge_scope(judges: Sequence[ScenarioJudgeStatistics]) -> ScenarioJudgeScope:
+def objective_scorer_scope(
+    objective_scorers: Sequence[ScenarioObjectiveScorerStatistics],
+) -> ScenarioObjectiveScorerScope:
     """
     Classify whether one identified objective scorer judged every completed unit.
 
-    Only judges with completed units count: a planned scorer that has not judged anything yet does
-    not make the completed results mixed.
+    Only scorers with completed units count: a planned scorer that has not judged anything yet
+    does not make the completed results mixed.
 
     Returns:
-        ScenarioJudgeScope: The scope of the completed results.
+        ScenarioObjectiveScorerScope: The scope of the completed results.
     """
-    active = [judge for judge in judges if judge.overall.completed]
+    active = [objective_scorer for objective_scorer in objective_scorers if objective_scorer.overall.completed]
     if not active:
-        return ScenarioJudgeScope.NO_RESULTS
+        return ScenarioObjectiveScorerScope.NO_RESULTS
     if len(active) > 1:
-        return ScenarioJudgeScope.MIXED_JUDGES
+        return ScenarioObjectiveScorerScope.MIXED_SCORERS
     if active[0].scorer_hash is None:
-        return ScenarioJudgeScope.UNKNOWN_JUDGE
-    return ScenarioJudgeScope.SINGLE_JUDGE
+        return ScenarioObjectiveScorerScope.UNKNOWN_SCORER
+    return ScenarioObjectiveScorerScope.SINGLE_SCORER
 
 
 def _timestamp_order_key(timestamp: object) -> datetime:

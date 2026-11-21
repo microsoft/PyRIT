@@ -289,7 +289,7 @@ class ScenarioExecutionUnit(BaseModel):
     seed_group_id: str
 
 
-class ScenarioJudgeAttribution(str, Enum):
+class ScenarioObjectiveScorerAttribution(str, Enum):
     """How a report knows which objective scorer judged a set of execution units."""
 
     #: The unit's effective result recorded the objective scorer it ran with.
@@ -304,28 +304,28 @@ class ScenarioJudgeAttribution(str, Enum):
     UNKNOWN = "unknown"
 
 
-class ScenarioJudgeScope(str, Enum):
+class ScenarioObjectiveScorerScope(str, Enum):
     """Whether a scenario's completed results come from one identified objective scorer."""
 
     #: One identified scorer judged every completed unit.
-    SINGLE_JUDGE = "single_judge"
+    SINGLE_SCORER = "single_scorer"
     #: Completed units were judged by more than one scorer, or by an identified and an unidentified one.
-    MIXED_JUDGES = "mixed_judges"
+    MIXED_SCORERS = "mixed_scorers"
     #: Completed units exist, but the scorer that judged them is unknown or conflicting.
-    UNKNOWN_JUDGE = "unknown_judge"
+    UNKNOWN_SCORER = "unknown_scorer"
     #: No unit has completed.
     NO_RESULTS = "no_results"
 
 
-class ScenarioJudgeStatistics(BaseModel):
+class ScenarioObjectiveScorerStatistics(BaseModel):
     """
     Effective execution-unit statistics for the units one objective scorer judged.
 
-    Success rates are only comparable within one judge: different scorers apply different rubrics.
+    Success rates are only comparable within one objective scorer: different scorers apply different rubrics.
     ``attribution`` is the weakest evidence used for any attempted unit in the set.
     """
 
-    attribution: ScenarioJudgeAttribution
+    attribution: ScenarioObjectiveScorerAttribution
     #: Content hash of the scorer's identifier; None for unknown or conflicting attribution.
     scorer_hash: str | None = None
     #: The scorer's identifier when a result or the run records it.
@@ -362,9 +362,9 @@ class ScenarioExecutionStatistics(BaseModel):
     #: Attempts excluded from logical-unit counts, but retained in producer counts.
     unattributed_attempts: int = Field(default=0, ge=0)
     #: Counts per objective scorer, in plan (or first-attempt) order.
-    judges: list[ScenarioJudgeStatistics] = Field(default_factory=list)
+    objective_scorers: list[ScenarioObjectiveScorerStatistics] = Field(default_factory=list)
     #: Whether one identified scorer judged every completed unit.
-    judge_scope: ScenarioJudgeScope = ScenarioJudgeScope.NO_RESULTS
+    objective_scorer_scope: ScenarioObjectiveScorerScope = ScenarioObjectiveScorerScope.NO_RESULTS
 
 
 class ScenarioTechniqueProgress(ScenarioProgressCounts):

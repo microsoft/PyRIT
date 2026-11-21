@@ -311,7 +311,7 @@ async def test_render_attacks_leaves_out_orchestration_envelope_and_labels_child
     assert "Total attacks: 2" in text
 
 
-# --- judges ---
+# --- objective_scorers ---
 
 _JUDGE_A = ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers")
 _JUDGE_B = ComponentIdentifier(class_name="JudgeB", class_module="tests.scorers")
@@ -335,9 +335,11 @@ async def test_mixed_judges_label_the_headline_as_descriptive_and_break_down_eac
     out = capsys.readouterr().out
 
     assert "Overall Success Rate" not in out
-    assert "Aggregate Success Rate (descriptive, across 2 judges): 50%" in out
-    assert "Per-Judge Breakdown" in out
-    assert f"Judge: JudgeA ({_JUDGE_A.hash[:12]})" in out
+    assert "Aggregate Success Rate (descriptive, across 2 objective scorers): 50%" in out
+    assert "Results by Objective Scorer" in out
+    assert "Each row contains only executions attributed to that scorer" in out
+    assert "not every execution rescored by every scorer" in out
+    assert f"Objective Scorer: JudgeA ({_JUDGE_A.hash[:12]})" in out
     assert "Pool Candidate: #1" in out
     assert "Success Rate: 100.0% of decided, 100.0% of all completed" in out
     assert "Success Rate: N/A of decided, 0.0% of all completed" in out
@@ -354,8 +356,8 @@ async def test_single_judge_matching_the_run_scorer_adds_no_judge_line(printer, 
     out = capsys.readouterr().out
 
     assert "Overall Success Rate: 100%" in out
-    assert "• Judge:" not in out
-    assert "Per-Judge Breakdown" not in out
+    assert "• Objective Scorer:" not in out
+    assert "Results by Objective Scorer" not in out
 
 
 async def test_single_judge_differing_from_the_run_scorer_is_named_under_the_headline(printer, capsys):
@@ -367,4 +369,4 @@ async def test_single_judge_differing_from_the_run_scorer_is_named_under_the_hea
     out = capsys.readouterr().out
 
     assert "Overall Success Rate: 100%" in out
-    assert f"• Judge: JudgeB ({_JUDGE_B.hash[:12]}), recorded" in out
+    assert f"• Objective Scorer: JudgeB ({_JUDGE_B.hash[:12]}), recorded" in out

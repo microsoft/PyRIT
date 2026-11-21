@@ -270,7 +270,7 @@ async def test_overview_separates_units_from_attempts(printer):
     assert payload["stats"]["outcomes"]["errors"] == 0
 
 
-# --- judges ---
+# --- objective_scorers ---
 
 
 async def test_overview_reports_each_judge_and_the_judge_scope():
@@ -287,14 +287,22 @@ async def test_overview_reports_each_judge_and_the_judge_scope():
 
     document = json.loads(await printer.render_async(result))
 
-    assert document["stats"]["judge_scope"] == "mixed_judges"
+    assert document["stats"]["objective_scorer_scope"] == "mixed_scorers"
     assert document["scorer"] == {"class_name": "JudgeA", "metrics": {"accuracy": 0.9}}
     assert [
-        (judge["label"], judge["attribution"], judge["candidate_index"], judge["atomic_attacks"])
-        for judge in document["judges"]
+        (
+            objective_scorer["label"],
+            objective_scorer["attribution"],
+            objective_scorer["candidate_index"],
+            objective_scorer["atomic_attacks"],
+        )
+        for objective_scorer in document["objective_scorers"]
     ] == [
         (f"JudgeA ({judge_a.hash[:12]})", "recorded", 0, ["attack_a"]),
         (f"JudgeB ({judge_b.hash[:12]})", "recorded", 1, ["attack_b"]),
     ]
-    assert document["judges"][1]["scorer"] == {"class_name": "JudgeB", "metrics": {"accuracy": 0.9}}
-    assert (document["judges"][1]["success_rate_decided"], document["judges"][1]["success_rate_all"]) == (None, 0.0)
+    assert document["objective_scorers"][1]["scorer"] == {"class_name": "JudgeB", "metrics": {"accuracy": 0.9}}
+    assert (
+        document["objective_scorers"][1]["success_rate_decided"],
+        document["objective_scorers"][1]["success_rate_all"],
+    ) == (None, 0.0)

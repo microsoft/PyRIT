@@ -142,7 +142,8 @@ await output_scenario_async(baseline_result)  # type: ignore [top-level-await]
 # re-render the same result with the highest success rates at the top (groups with equal rates keep
 # their original relative order). Success rates are only comparable within one objective scorer, so when
 # different scorers judged the groups, the summary labels the aggregate rate as descriptive, adds a
-# **Per-Judge Breakdown**, and leaves the groups unsorted:
+# **Results by Objective Scorer**, and leaves the groups unsorted. Each scorer's row contains only
+# the executions attributed to it, not every execution rescored by every scorer:
 
 # %%
 await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)

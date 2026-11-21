@@ -21,8 +21,8 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     MessagePiece,
-    ScenarioJudgeAttribution,
-    ScenarioJudgeStatistics,
+    ScenarioObjectiveScorerAttribution,
+    ScenarioObjectiveScorerStatistics,
     ScenarioProducerCategoryCounts,
     ScenarioProducerCounts,
     ScenarioProgressCounts,
@@ -38,7 +38,7 @@ from pyrit.output._derivation import (
     attack_objective_scorer_identifier,
     attack_score_display,
     attack_technique_label,
-    judge_label,
+    objective_scorer_label,
     resolve_scorer_name,
     resolve_target_info,
     scenario_overview,
@@ -427,11 +427,11 @@ def test_attack_objective_scorer_identifier_falls_back_to_the_run_scorer():
     ],
 )
 def test_judge_label_describes_how_much_is_known_about_the_scorer(identifier, scorer_hash, attribution, label):
-    judge = ScenarioJudgeStatistics(
-        attribution=ScenarioJudgeAttribution(attribution),
+    objective_scorer = ScenarioObjectiveScorerStatistics(
+        attribution=ScenarioObjectiveScorerAttribution(attribution),
         scorer_hash=scorer_hash,
         scorer_identifier=identifier,
         overall=ScenarioProgressCounts(completed=0, succeeded=0, errors=0, retries=0),
     )
 
-    assert judge_label(judge) == label
+    assert objective_scorer_label(objective_scorer) == label

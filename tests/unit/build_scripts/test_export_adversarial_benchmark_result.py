@@ -109,13 +109,16 @@ def test_technique_metrics_count_each_seed_group_even_when_objectives_repeat() -
 
 
 def test_technique_metrics_name_the_judge_and_leave_undecided_rates_empty() -> None:
-    judge = ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers")
+    objective_scorer = ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers")
     result = make_judged_scenario_result(
-        groups=[("tap__model_a", None, judge, [AttackOutcome.UNDETERMINED])],
+        groups=[("tap__model_a", None, objective_scorer, [AttackOutcome.UNDETERMINED])],
         display_group_map={"tap__model_a": "model_a"},
     )
 
     [metrics] = _build_technique_metrics(result=result)
 
     assert (metrics["success_rate"], metrics["success_rate_decided"]) == (0.0, None)
-    assert (metrics["judge"], metrics["judge_attribution"]) == (f"JudgeA ({judge.hash[:12]})", "recorded")
+    assert (metrics["objective_scorer"], metrics["objective_scorer_attribution"]) == (
+        f"JudgeA ({objective_scorer.hash[:12]})",
+        "recorded",
+    )

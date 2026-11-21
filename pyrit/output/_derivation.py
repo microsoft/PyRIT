@@ -23,7 +23,7 @@ from pyrit.analytics.scenario_statistics import (
     recorded_objective_scorer_identifier,
     select_execution_attack_result_ids,
 )
-from pyrit.models import ScenarioJudgeAttribution
+from pyrit.models import ScenarioObjectiveScorerAttribution
 
 if TYPE_CHECKING:
     from pyrit.models import (
@@ -32,8 +32,8 @@ if TYPE_CHECKING:
         ComponentIdentifier,
         MessagePiece,
         OutcomeStatistics,
-        ScenarioJudgeScope,
-        ScenarioJudgeStatistics,
+        ScenarioObjectiveScorerScope,
+        ScenarioObjectiveScorerStatistics,
         ScenarioProducerCounts,
         ScenarioResult,
         Score,
@@ -93,9 +93,9 @@ class ScenarioOverview(NamedTuple):
     groups: list[GroupStatistics]
     outcomes: OutcomeStatistics | None = None
     producer_counts: ScenarioProducerCounts | None = None
-    #: Statistics per objective scorer; rates are only comparable within one judge.
-    judges: tuple[ScenarioJudgeStatistics, ...] = ()
-    judge_scope: ScenarioJudgeScope | None = None
+    #: Statistics per objective scorer; rates are only comparable within one scorer.
+    objective_scorers: tuple[ScenarioObjectiveScorerStatistics, ...] = ()
+    objective_scorer_scope: ScenarioObjectiveScorerScope | None = None
 
 
 def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
@@ -138,26 +138,26 @@ def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
         groups=groups,
         outcomes=statistics.overall.outcomes,
         producer_counts=statistics.overall.producer_counts,
-        judges=tuple(statistics.judges),
-        judge_scope=statistics.judge_scope,
+        objective_scorers=tuple(statistics.objective_scorers),
+        objective_scorer_scope=statistics.objective_scorer_scope,
     )
 
 
-def judge_label(judge: ScenarioJudgeStatistics) -> str:
+def objective_scorer_label(objective_scorer: ScenarioObjectiveScorerStatistics) -> str:
     """
-    Derive a short display label for the objective scorer behind a judge's statistics.
+    Derive a short display label for an objective scorer's statistics.
 
     Args:
-        judge (ScenarioJudgeStatistics): The judge to label.
+        objective_scorer (ScenarioObjectiveScorerStatistics): The scorer statistics to label.
 
     Returns:
         str: The scorer class and short hash, the short hash alone, or why the scorer is unknown.
     """
-    if judge.scorer_identifier is not None and judge.scorer_hash is not None:
-        return f"{judge.scorer_identifier.class_name} ({judge.scorer_hash[:12]})"
-    if judge.scorer_hash is not None:
-        return f"Scorer {judge.scorer_hash[:12]}"
-    if judge.attribution == ScenarioJudgeAttribution.CONFLICT:
+    if objective_scorer.scorer_identifier is not None and objective_scorer.scorer_hash is not None:
+        return f"{objective_scorer.scorer_identifier.class_name} ({objective_scorer.scorer_hash[:12]})"
+    if objective_scorer.scorer_hash is not None:
+        return f"Scorer {objective_scorer.scorer_hash[:12]}"
+    if objective_scorer.attribution == ScenarioObjectiveScorerAttribution.CONFLICT:
         return "Conflicting scorer records"
     return "Unknown scorer (not recorded)"
 
@@ -255,7 +255,7 @@ def attack_objective_scorer_identifier(
     that record use the run's scorer.
 
     Args:
-        attack (AttackResult): The attack whose judge to find.
+        attack (AttackResult): The attack whose objective scorer to find.
         run_scorer_identifier (ComponentIdentifier | None): The run's objective scorer, if it has one.
 
     Returns:
