@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pyrit.converter import AskToDecodeConverter, Base64Converter, ColumnarTranspositionConverter
+from pyrit.converter import (
+    AskToDecodeConverter,
+    Base64Converter,
+    ColumnarTranspositionConverter,
+    SearchReplaceConverter,
+)
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolicy, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
@@ -344,6 +349,55 @@ class TestEncodingAtomicNameUniqueness:
             )
             # The trimmed variants must not appear.
             assert not any("standard" in n or "b2a" in n for n in names)
+
+    async def test_ubbi_dubbi_technique_builds_registered_row(
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
+    ):
+        """Selecting UbbiDubbi must register a row whose converter performs the ubbi-dubbi transform.
+
+        This exercises the registered ``ubbi_dubbi`` row end to end (not a hand-built converter), so a
+        deleted or misnamed row in ``_converter_variants()`` is caught: such a regression leaves the
+        enum intact while the technique builds no attacks.
+        """
+        from unittest.mock import patch
+
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_attack_seed_groups},
+        ):
+            scenario = Encoding(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                    "scenario_techniques": [EncodingTechnique.UbbiDubbi],
+                }
+            )
+            await scenario.initialize_async()
+
+            attacks = scenario._get_converter_attacks(
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+            )
+
+            assert attacks, "ubbi_dubbi technique built no attacks"
+            assert all(aa.display_group == "ubbi_dubbi" for aa in attacks)
+            names = {aa.atomic_attack_name for aa in attacks}
+            assert "ubbi_dubbi_raw" in names, "missing raw variant"
+            assert any(n != "ubbi_dubbi_raw" for n in names), "missing decode variant"
+
+            # The registered row's converter actually performs the ubbi-dubbi transform.
+            raw = next(aa for aa in attacks if aa.atomic_attack_name == "ubbi_dubbi_raw")
+            row_converters = [
+                conv
+                for config in raw.attack_technique.attack.get_request_converters()
+                for conv in config.converters
+                if isinstance(conv, SearchReplaceConverter)
+            ]
+            assert row_converters, "ubbi_dubbi row applies no SearchReplaceConverter"
+            result = await row_converters[0].convert_async(prompt="speak")
+            assert result.output_text == "spubeak"
 
     async def test_memory_labels_propagate_to_atomic_attacks(
         self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups
