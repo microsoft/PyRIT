@@ -124,6 +124,15 @@ Each scenario defines a test workflow with its techniques, data, and scoring.
 Open one to select a target and adjust the settings it supports, such as
 techniques, dataset selection, and concurrency.
 
+**Browse datasets** in the Datasets section header opens the dataset catalog in a
+new tab. **Reset datasets** returns the datasets and the per-dataset limit to the
+scenario's defaults, and appears once you change them. To open a scanner with
+datasets already selected, add one `dataset` parameter per name, for example
+`/scanner/launch/foundry.red_team_agent?dataset=harmbench&dataset=my_dataset`. The
+names replace the default or preset datasets; other dataset settings, such as
+limits and filters, stay. A scenario that can't take the linked datasets won't
+launch with them and offers a link to open it without them.
+
 Use the chevron on the right of a technique to inspect its identity JSON.
 This does not change the checkbox selection on the left.
 
@@ -216,8 +225,31 @@ Editing a preset preserves unchanged parameter values exactly, including commas
 and whitespace inside list entries, empty lists, duplicates, and their order.
 Editing a list field uses the comma-separated format shown in the editor.
 
-Targets, converters, and techniques added only to the live registry must be
-recreated after a backend restart or reinitialization. Use
+**New Target** saves the target, so it comes back after the backend restarts or
+is reinitialized. Give it a registry name of lowercase letters, digits, and
+underscores that starts with a letter; the dialog suggests one from the target
+type and model. Saved targets are kept in `registry_recipes_source`
+(`~/.pyrit/registry_recipes` unless set in your `.pyrit_conf`). To remove a saved
+target, delete its file (`targets/<name>.json`) there, and the file of any saved
+round robin that uses it, then restart the backend. If a startup initializer later
+registers a target under a saved target's name, the saved one isn't restored and
+the backend isn't ready until that file is renamed or removed and the backend
+restarted. Before that restart, update or remove the file of each saved round
+robin that uses the old name: restore finds its members by name, so it would
+otherwise send to the initializer's target in place of the saved one.
+
+Saved targets can't hold credentials yet, so choose Identity-based or No key
+authentication when the target supports it. A target that needs an API key or
+another credential value, a type that can't be saved, a round robin that uses a
+Temporary target, or a target that only you can use or that allows credential
+updates is created as **Temporary** instead, and the dialog says why.
+A Temporary target is gone after the backend restarts or is reinitialized.
+
+The Targets table labels each target **Saved**, **From configuration**
+(registered by an initializer at startup), or **Temporary**.
+
+Converters and techniques added only to the live registry must be recreated
+after a backend restart or reinitialization. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
 
 Use **Auto-detect capabilities** to select targets and run live checks. Results
@@ -235,7 +267,8 @@ for shared behavior.
 
 Browse datasets already loaded into backend memory. Open a dataset to inspect
 its examples, search text, or filter by seed type. Supported media can be
-previewed on request.
+previewed on request. The **Origins** filter lists datasets whose seeds came from
+a given origin, such as local files or a remote provider.
 
 Use **Import into Chat** to stage an example directly into Chat without copying
 text or reattaching files:
