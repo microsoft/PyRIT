@@ -866,7 +866,7 @@ describe('ScenarioPresetEditor edit mode', () => {
     renderEdit()
 
     await user.click(await screen.findByRole('combobox', { name: 'Add dataset' }))
-    await user.click(screen.getByRole('option', { name: 'xstest (unknown)', exact: true }))
+    await user.click(screen.getByRole('option', { name: 'xstest (Unknown)', exact: true }))
     await editLimit(user, 'Maximum objectives', '25')
     await user.click(screen.getByTestId('save-preset-btn'))
 
@@ -874,6 +874,14 @@ describe('ScenarioPresetEditor edit mode', () => {
     const saved = mockUpdate.mock.calls.at(-1)?.[1] as ScenarioPreset
     expect(saved.datasets?.sources?.map((source) => source.name)).toEqual(['harmbench', 'xstest'])
     expect(saved.datasets?.max_total).toBe(25)
+  })
+
+  it('opens the dataset catalog in a new tab so unsaved preset edits stay', async () => {
+    renderEdit()
+
+    const actions = await screen.findByRole('group', { name: 'Dataset actions' })
+    expect(within(actions).getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('target', '_blank')
+    expect(screen.getAllByRole('link', { name: 'Browse datasets' })).toHaveLength(1)
   })
 
   it('refuses to save while the dataset control reports an invalid limit', async () => {

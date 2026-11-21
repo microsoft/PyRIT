@@ -12,7 +12,7 @@ validate_app_inputs() {
   require_values PYRIT_CONTAINER_IMAGE PYRIT_ENTRA_TENANT_ID PYRIT_ENTRA_CLIENT_ID \
     PYRIT_ALLOWED_GROUP_OBJECT_IDS PYRIT_ADMIN_GROUP_OBJECT_ID PYRIT_SQL_SERVER_FQDN \
     PYRIT_SQL_DATABASE_NAME PYRIT_KEY_VAULT_RESOURCE_ID PYRIT_ENV_SECRET_NAME
-  validate_optional_values PYRIT_ALLOWED_CLIENT_CIDR PYRIT_CONFIG_FILE_URI
+  validate_optional_values PYRIT_ALLOWED_CLIENT_CIDR PYRIT_CONFIG_FILE_URI PYRIT_CONFIG_SEED_URI
   if [[ -n "${PYRIT_ALLOWED_CLIENT_CIDR:-}" ]]; then
     deployment_error "Front Door cannot use an ACA client CIDR restriction because ACA sees Front Door backend IPs, not client IPs; leave PYRIT_ALLOWED_CLIENT_CIDR empty"
   fi
@@ -26,47 +26,47 @@ validate_app_inputs() {
     ! "$PYRIT_ENV_SECRET_NAME" =~ ^[a-zA-Z0-9-]{1,127}$ ]]; then
     deployment_error "Invalid SQL FQDN or Key Vault secret name"
   fi
-  if ! python3 - "$PYRIT_ENTRA_TENANT_ID" "$PYRIT_ENTRA_CLIENT_ID" \
-    "$PYRIT_ALLOWED_GROUP_OBJECT_IDS" "$PYRIT_ADMIN_GROUP_OBJECT_ID" "${PYRIT_CONFIG_FILE_URI:-}" << 'PY'; then
-import sys
-import uuid
-from urllib.parse import urlparse
-
-try:
-    uuid.UUID(sys.argv[1])
-    uuid.UUID(sys.argv[2])
-    groups = [value.strip() for value in sys.argv[3].split(",") if value.strip()]
-    if not groups:
-        raise ValueError
-    for group in groups:
-        uuid.UUID(group)
-    uuid.UUID(sys.argv[4])
-    if sys.argv[5]:
-        parsed = urlparse(sys.argv[5])
-        hostname = parsed.hostname or ""
-        suffixes = (
-            ".blob.core.windows.net",
-            ".blob.core.chinacloudapi.cn",
-            ".blob.core.usgovcloudapi.net",
-            ".blob.core.cloudapi.de",
-        )
-        if (
-            parsed.scheme != "https"
-            or not any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in suffixes)
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.port is not None
-            or parsed.query
-            or parsed.fragment
-            or len(parsed.path.strip("/").split("/")) < 2
-        ):
-            raise ValueError
-except (ValueError, IndexError):
-    raise SystemExit(1)
-PY
-    deployment_error "Invalid Entra ID, group ID, or config URI"
+  # The seed location is empty unless pyritConfigSeedUri is set; see app_inputs.py.
+  local seed_location
+  if ! seed_location=$(python3 "$PYRIT_SOURCE_DIRECTORY/infra/pipelines/app_inputs.py" \
+    --tenant-id="$PYRIT_ENTRA_TENANT_ID" --client-id="$PYRIT_ENTRA_CLIENT_ID" \
+    --allowed-group-ids="$PYRIT_ALLOWED_GROUP_OBJECT_IDS" --admin-group-id="$PYRIT_ADMIN_GROUP_OBJECT_ID" \
+    --config-uri="${PYRIT_CONFIG_FILE_URI:-}" --seed-uri="${PYRIT_CONFIG_SEED_URI:-}" \
+    --source-branch="${PYRIT_SOURCE_BRANCH:-}"); then
+    deployment_error "$seed_location"
   fi
+  config_seed=()
+  [[ -z "$seed_location" ]] || IFS=$'\t' read -r -a config_seed <<< "$seed_location"
   validate_immutable_image "$PYRIT_CONTAINER_IMAGE"
+}
+
+# Copy the deployed branch's seed over the folder that holds pyritConfigFileUri, so configuration edits
+# saved in the GUI last only until the next deployment.
+reset_configuration_from_seed() {
+  [[ -n "${PYRIT_CONFIG_SEED_URI:-}" ]] || return 0
+  local seed_account=${config_seed[0]} seed_container=${config_seed[1]} seed_folder=${config_seed[2]}
+  local config_account=${config_seed[3]} config_container=${config_seed[4]} config_folder=${config_seed[5]}
+  local config_name=${config_seed[6]} seed_directory
+  seed_directory=$(mktemp -d "$PYRIT_AGENT_TEMP_DIRECTORY/pyrit-config-seed.XXXXXX")
+  az storage blob download-batch --auth-mode login --account-name "$seed_account" --source "$seed_container" \
+    --pattern "$seed_folder/*" --destination "$seed_directory" --only-show-errors -o none
+  if [[ ! -f "$seed_directory/$seed_folder/$config_name" ]]; then
+    rm -rf -- "$seed_directory"
+    deployment_error "The config seed has no $config_name for this branch at $seed_container/$seed_folder"
+  fi
+  # Overwrite first and then delete only what the seed lacks, so a failed upload never leaves the folder empty.
+  az storage blob upload-batch --auth-mode login --account-name "$config_account" --destination "$config_container" \
+    --destination-path "$config_folder" --source "$seed_directory/$seed_folder" --overwrite --only-show-errors -o none
+  local config_blobs blob_name
+  config_blobs=$(az storage blob list --auth-mode login --account-name "$config_account" \
+    --container-name "$config_container" --prefix "$config_folder/" --num-results '*' --query '[].name' -o tsv)
+  while IFS= read -r blob_name; do
+    [[ -z "$blob_name" || -e "$seed_directory/$seed_folder/${blob_name#"$config_folder"/}" ]] && continue
+    az storage blob delete --auth-mode login --account-name "$config_account" --container-name "$config_container" \
+      --name "$blob_name" --only-show-errors -o none
+  done <<< "$config_blobs"
+  rm -rf -- "$seed_directory"
+  echo "Reset $config_container/$config_folder from the $seed_container/$seed_folder seed"
 }
 
 read_app_access_mode() {
@@ -120,7 +120,7 @@ stop_app() {
   fi
   while IFS= read -r revision; do
     if jq -e --arg name "$revision" '.[] | select(.name == $name and .properties.active == true)' <<< "$revisions" > /dev/null; then
-      echo "Stopping revision $revision for the database migration"
+      echo "Stopping revision $revision"
       az containerapp revision deactivate \
         --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" --revision "$revision" -o none
     fi
@@ -145,7 +145,7 @@ stop_app() {
     echo "Waiting for app shutdown: $active_count active revisions, $replica_count replicas"
     sleep "${PYRIT_STOP_POLL_SECONDS:-5}"
   done
-  deployment_error "App shutdown was not confirmed; the database migration was not started"
+  deployment_error "App shutdown was not confirmed; the deployment was not continued"
 }
 
 start_unchanged_revision() {
@@ -154,6 +154,12 @@ start_unchanged_revision() {
     --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" \
     --query properties.latestRevisionName -o tsv)
   if [[ "$latest_revision" == "$current_revision" ]]; then
+    # A revision that kept running loaded its configuration before the seed reset. Stop it fully, so readiness
+    # can only come from a replica started afterwards.
+    if [[ -n "${PYRIT_CONFIG_SEED_URI:-}" && "${app_stopped:-false}" != true ]]; then
+      echo "Stopping revision $current_revision so it starts with the seeded configuration"
+      stop_app
+    fi
     echo "App template is unchanged; starting revision $current_revision"
     az containerapp revision activate \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" --revision "$current_revision" -o none
@@ -289,12 +295,16 @@ main() {
   read_app_access_mode
   build_app_parameters
   preview_deployment app "$template_file" "${parameters[@]}"
+  # Before the migration, so it loads the new configuration and a missing seed stops nothing.
+  reset_configuration_from_seed
   prepare_database_migration
+  app_stopped=false
   if schema_is_current; then
     echo "Schema is current; deploying without stopping the app"
   else
     ensure_schema_upgradable
     echo "This image can upgrade the database; migrating with the app stopped"
+    app_stopped=true
     stop_app
     run_database_migration
   fi

@@ -1208,7 +1208,7 @@ class TestExecute:
             retries_on_objective_failure=retries,
             objective="Changed objective",
         )
-        with pytest.raises(ValueError, match="cannot resume: missing 1 planned seed group"):
+        with pytest.raises(ValueError, match="does not match the current .Execute. configuration"):
             await changed.initialize_async()
 
     @pytest.mark.parametrize("change", ["append", "metadata"])
@@ -1232,8 +1232,7 @@ class TestExecute:
             await memory.update_prompt_metadata_by_conversation_id_async(
                 conversation_id=history_id, prompt_metadata={"custom": "new metadata"}
             )
-        expected_error = "cannot resume: missing 1 planned seed group" if change == "append" else "does not match"
-        with pytest.raises(ValueError, match=expected_error):
+        with pytest.raises(ValueError, match="does not match"):
             await resumed.initialize_async()
 
     def test_alias_and_dynamic_cache_reset(self) -> None:
