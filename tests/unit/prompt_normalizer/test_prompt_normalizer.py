@@ -1824,3 +1824,36 @@ async def test_repeated_cancellation_finishes_request_persistence(mock_memory_in
             if not task.done():
                 task.cancel()
             await drain_tasks_async(task)
+
+
+async def test_failed_piece_hash_cancels_the_other_hashes_async(mock_memory_instance) -> None:
+    conversation_id = str(uuid4())
+    pieces = [
+        MessagePiece(role="user", original_value=f"piece {index}", conversation_id=conversation_id)
+        for index in range(2)
+    ]
+    message = Message(message_pieces=pieces)
+    sibling_started = asyncio.Event()
+    sibling_cancelled = asyncio.Event()
+    failure = RuntimeError("blob read failed")
+
+    async def hash_piece_async(piece: MessagePiece) -> None:
+        if piece is pieces[0]:
+            sibling_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                sibling_cancelled.set()
+                raise
+        await asyncio.wait_for(sibling_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+        raise failure
+
+    with (
+        patch.object(prompt_normalizer_module, "set_message_piece_sha256_async", side_effect=hash_piece_async),
+        pytest.raises(RuntimeError, match="blob read failed") as exc_info,
+    ):
+        await PromptNormalizer().hash_and_persist_message_async(message=message)
+
+    assert exc_info.value is failure
+    assert sibling_cancelled.is_set()
+    mock_memory_instance.add_message_to_memory_async.assert_not_called()

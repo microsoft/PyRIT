@@ -18,6 +18,7 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 from pyrit.common.attack_result_scope import get_current_attack_result_id
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.converter import Converter
 from pyrit.exceptions import (
     ComponentRole,
@@ -481,8 +482,8 @@ class PromptNormalizer:
 
     async def _calc_hash_async(self, request: Message) -> None:
         """Add a request to the memory."""
-        tasks = [asyncio.create_task(set_message_piece_sha256_async(piece)) for piece in request.message_pieces]
-        await asyncio.gather(*tasks)
+        # A failed hash cancels the others, so they stop updating the message once this raises.
+        await gather_with_cleanup_async(set_message_piece_sha256_async(piece) for piece in request.message_pieces)
 
     async def hash_and_persist_message_async(self, *, message: Message) -> None:
         """
