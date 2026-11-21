@@ -3,7 +3,7 @@
 
 import pytest
 
-from pyrit.converter import Base32Converter, ConverterResult
+from pyrit.converter import Base32Converter, Base64Converter, ConverterResult
 
 
 # Standard Base32 test vectors from RFC 4648 section 10.
@@ -27,27 +27,7 @@ async def test_base32_converter_rfc4648_vectors(plaintext, expected):
     assert result.output_type == "text"
 
 
-# Extended Hex Base32 test vectors from RFC 4648 section 10.
-@pytest.mark.parametrize(
-    "plaintext, expected",
-    [
-        ("", ""),
-        ("f", "CO======"),
-        ("fo", "CPNG===="),
-        ("foo", "CPNMU==="),
-        ("foob", "CPNMUOG="),
-        ("fooba", "CPNMUOJ1"),
-        ("foobar", "CPNMUOJ1E8======"),
-    ],
-)
-async def test_base32_converter_b32hex_vectors(plaintext, expected):
-    converter = Base32Converter(variant="b32hex")
-    result = await converter.convert_async(prompt=plaintext, input_type="text")
-    assert result.output_text == expected
-    assert result.output_type == "text"
-
-
-async def test_base32_converter_default_variant_is_b32():
+async def test_base32_converter_encodes_standard_alphabet():
     converter = Base32Converter()
     result = await converter.convert_async(prompt="hello", input_type="text")
     assert result.output_text == "NBSWY3DP"
@@ -78,10 +58,17 @@ def test_base32_converter_output_supported():
     assert converter.output_supported("image_path") is False
 
 
-def test_base32_converter_identifier_distinguishes_variant():
-    # Different variants are behaviorally distinct and must hash differently.
-    b32 = Base32Converter(variant="b32").get_identifier()
-    b32hex = Base32Converter(variant="b32hex").get_identifier()
-    assert b32.hash != b32hex.hash
-    # Same variant is stable.
-    assert b32.hash == Base32Converter(variant="b32").get_identifier().hash
+async def test_base32_converter_matches_base64_b32encode_output():
+    # Base32Converter shares the byte-encoding base with Base64Converter and must produce
+    # identical bytes to Base64Converter(encoding_func="b32encode").
+    base32 = await Base32Converter().convert_async(prompt="foobar", input_type="text")
+    base64_b32 = await Base64Converter(encoding_func="b32encode").convert_async(prompt="foobar", input_type="text")
+    assert base32.output_text == base64_b32.output_text
+
+
+def test_base32_converter_identifier_is_stable_and_distinct_from_base64():
+    # The named Base32Converter keeps its own identity even though its output matches
+    # Base64Converter(encoding_func="b32encode").
+    identifier = Base32Converter().get_identifier()
+    assert identifier.hash == Base32Converter().get_identifier().hash
+    assert identifier.hash != Base64Converter(encoding_func="b32encode").get_identifier().hash
