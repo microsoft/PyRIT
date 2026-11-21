@@ -53,6 +53,8 @@ class TestPipelineGuardrails(unittest.TestCase):
         assert '-n "$(git status --porcelain)"' in self.pipeline_text
         assert '--build-arg GIT_COMMIT="$source_commit"' in self.pipeline_text
         assert "--build-arg GIT_MODIFIED=false" in self.pipeline_text
+        application_build = self.pipeline_text.split("-f docker/Dockerfile", 1)[1].split("\n\n", 1)[0]
+        assert "--build-arg PYRIT_USE_LOCKFILE=true" in application_build
         assert self.pipeline_text.index("source_commit=$(git rev-parse HEAD)") < self.pipeline_text.index(
             "docker build"
         )

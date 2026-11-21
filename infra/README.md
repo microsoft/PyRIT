@@ -436,6 +436,8 @@ The pipeline reads `gui-deploy.yml` and the deployment scripts from the queued c
 
 The Build job logs disk usage and prunes unused local Docker images and build cache before and after building, even on failure, to leave space for Component Governance scanning. Pushed ACR images are unaffected. This cleanup is only for disposable hosted agents, not shared self-hosted agents.
 
+The job passes `PYRIT_USE_LOCKFILE=true` when building the local-source application image. The build exports Python version constraints from the checkout's `uv.lock` offline and fails if the lock is stale. Those constraints apply to the editable PyRIT install, the Jupyter packages, and their isolated builds without installing the development group. Package downloads can still require network access, and the base image is not pinned by this lock. Other Docker builds keep their existing defaults; the checkout's lock cannot be used with a PyPI release.
+
 #### Deployment structure
 
 All four deployment stages reuse `infra/pipelines/deploy-stage.yml`, which keeps the variable groups, deployment job, checkout, and `AzureCLI@2` Bash task in one place. Each stage supplies its existing name, dependencies, runtime condition, slot, and phase:

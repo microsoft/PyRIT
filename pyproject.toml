@@ -96,6 +96,9 @@ dependencies = [
 ]
 
 [dependency-groups]
+container-build = [
+    "wheel>=0.46.2",
+]
 dev = [
     # Older AnyIO pytest plugins import CallSpec2, deprecated in pytest 9.2.
     "anyio>=4.15.0",
