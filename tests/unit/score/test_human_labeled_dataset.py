@@ -44,6 +44,50 @@ def test_from_csv_preserves_numeric_and_boolean_text(
         assert entry.human_scores == [0.5]
 
 
+@pytest.mark.parametrize("value", ["None", "null", "NULL", "NA", "N/A", "n/a", "nan", "NaN", "<NA>"])
+@pytest.mark.parametrize("encoding", ["utf-8", "latin-1"])
+@pytest.mark.parametrize("metrics_type", [MetricsType.OBJECTIVE, MetricsType.HARM])
+def test_from_csv_preserves_text_that_names_a_missing_value(
+    tmp_path: Path, value: str, encoding: str, metrics_type: MetricsType
+) -> None:
+    column = "objective" if metrics_type == MetricsType.OBJECTIVE else "harm_category"
+    label = "1" if metrics_type == MetricsType.OBJECTIVE else "0.5"
+    csv_path = tmp_path / "text.csv"
+    csv_path.write_text(
+        f"assistant_response,{column},human_score,notes\n{value},{value},{label},café\n",
+        encoding=encoding,
+    )
+
+    dataset = HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=metrics_type, version="1.0")
+    entry = dataset.entries[0]
+    piece = entry.conversation[0].message_pieces[0]
+
+    assert piece.original_value == value
+    assert piece.converted_value == value
+    if isinstance(entry, ObjectiveHumanLabeledEntry):
+        assert entry.objective == value
+        assert entry.human_scores == [True]
+    else:
+        assert isinstance(entry, HarmHumanLabeledEntry)
+        assert entry.harm_category == value
+        assert entry.human_scores == [0.5]
+
+
+@pytest.mark.parametrize("metrics_type", [MetricsType.OBJECTIVE, MetricsType.HARM])
+def test_from_csv_rejects_empty_required_cells(tmp_path: Path, metrics_type: MetricsType) -> None:
+    column = "objective" if metrics_type == MetricsType.OBJECTIVE else "harm_category"
+    label = "1" if metrics_type == MetricsType.OBJECTIVE else "0.5"
+    csv_path = tmp_path / "missing.csv"
+
+    csv_path.write_text(f"assistant_response,{column},human_score\n,topic,{label}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Column 'assistant_response' contains NaN values"):
+        HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=metrics_type, version="1.0")
+
+    csv_path.write_text(f"assistant_response,{column},human_score\nresponse,topic,\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="All human score cells must be filled"):
+        HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=metrics_type, version="1.0")
+
+
 @pytest.fixture
 def sample_messages():
     return [

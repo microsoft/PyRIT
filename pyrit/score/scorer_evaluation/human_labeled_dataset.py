@@ -245,6 +245,7 @@ class HumanLabeledDataset:
 
         Objective labels are validated without numeric rounding and must represent
         exactly 0 or 1, or a boolean. Harm labels are floats between 0.0 and 1.0.
+        Only an empty cell counts as missing; text such as "None", "null" or "N/A" is kept as written.
 
         You can optionally include # comment lines at the top of the CSV file to specify
         the dataset version and harm definition path; the metadata may appear on any of
@@ -325,11 +326,28 @@ class HumanLabeledDataset:
         )
         # Keep objective labels as text until validation, before rounding or underflow can occur.
         csv_dtypes = str if metrics_type == MetricsType.OBJECTIVE else text_dtypes
+        # Only an empty cell is missing. By default pandas also reads cells such as "None", "null",
+        # "N/A" and "nan" as missing, although they are valid responses, objectives and harm categories.
+        missing_values = [""]
         # Try UTF-8 first, fall back to latin-1 for files with special characters
         try:
-            eval_df = pd.read_csv(csv_path, skiprows=skiprows or None, encoding="utf-8", dtype=csv_dtypes)
+            eval_df = pd.read_csv(
+                csv_path,
+                skiprows=skiprows or None,
+                encoding="utf-8",
+                dtype=csv_dtypes,
+                keep_default_na=False,
+                na_values=missing_values,
+            )
         except UnicodeDecodeError:
-            eval_df = pd.read_csv(csv_path, skiprows=skiprows or None, encoding="latin-1", dtype=csv_dtypes)
+            eval_df = pd.read_csv(
+                csv_path,
+                skiprows=skiprows or None,
+                encoding="latin-1",
+                dtype=csv_dtypes,
+                keep_default_na=False,
+                na_values=missing_values,
+            )
 
         # Drop rows where every column is NaN (e.g. trailing blank lines in the CSV)
         eval_df = eval_df.dropna(how="all")
