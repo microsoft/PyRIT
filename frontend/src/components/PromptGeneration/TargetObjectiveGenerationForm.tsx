@@ -16,7 +16,6 @@ import {
   readNumberText,
   readString,
   readStringList,
-  targetSelectionErrors,
 } from './generationFormHelpers'
 import type { PromptGenerationFormProps } from './generatorUi'
 import { datasetNameError } from './promptGenerationPresentation'
@@ -66,7 +65,6 @@ export default function TargetObjectiveGenerationForm({
     clientErrors.push(`Each harm category must be at most ${MAX_HARM_CATEGORY_LENGTH} characters.`)
   }
   if (nameError) clientErrors.push(nameError)
-  clientErrors.push(...targetSelectionErrors(descriptor.target_roles, targets, selectedTargets))
 
   const request: TargetObjectiveGenerationRequest | null = clientErrors.length === 0 && objectiveCount !== null
     ? { instructions, count: objectiveCount, harm_categories: harmCategories }

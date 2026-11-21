@@ -44,6 +44,7 @@ from pyrit.models import (
     PromptDataType,
     Score,
 )
+from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.prompt_target import (
     CapabilityName,
     PromptTarget,
@@ -1226,6 +1227,18 @@ class TestResolveMediaUrl:
         url = "https://acct.blob.core.windows.net/container/image.png"
         assert _resolve_media_url(value=url, data_type="image_path") == url
 
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "HTTPS://acct.blob.core.windows.net/container/image.png",
+            "Http://example.test/image.png",
+            "DATA:image/png;base64,AAAA",
+        ],
+    )
+    def test_mixed_case_schemes_pass_through(self, value: str) -> None:
+        """Schemes are case-insensitive; mixed-case URLs and data URIs are returned as-is."""
+        assert _resolve_media_url(value=value, data_type="image_path") == value
+
     def test_local_file_returns_media_url(self) -> None:
         """Local file paths are converted to /api/media URLs."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -1576,6 +1589,15 @@ def test_target_instance_reports_effective_history_replay(mode: str) -> None:
     assert result.capabilities == target.capabilities
     if mode not in ("native", "unsupported"):
         assert not result.capabilities.supports_editable_history
+
+
+class TestTargetInstanceOrigin:
+    @pytest.mark.usefixtures("patch_central_database")
+    def test_carries_the_origin_onto_the_instance(self) -> None:
+        result = target_object_to_instance("t-1", MockPromptTarget(), origin=RegistryEntryOrigin.SAVED)
+
+        assert result.origin is RegistryEntryOrigin.SAVED
+        assert target_object_to_instance("t-1", MockPromptTarget()).origin is None
 
 
 class TestTargetObjectToInstance:

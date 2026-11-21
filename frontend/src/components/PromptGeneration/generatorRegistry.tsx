@@ -7,7 +7,6 @@ import AssertGenerationSummary from './AssertGenerationSummary'
 import AssertReviewEditor from './AssertReviewEditor'
 import type { PromptGenerationFormProps, PromptGenerationReviewProps, PromptGenerationSummaryProps } from './generatorUi'
 import TargetObjectiveGenerationForm from './TargetObjectiveGenerationForm'
-import TargetObjectiveSummary from './TargetObjectiveSummary'
 
 /** The generators this GUI has views for. */
 type SupportedGenerator = 'assert' | 'target_objective'
@@ -54,12 +53,13 @@ interface GeneratorSummaryViewProps extends PromptGenerationSummaryProps {
   readonly generator: string
 }
 
-export function GeneratorSummaryView({ generator, summary }: GeneratorSummaryViewProps): ReactElement {
+/** A completed generation's summary; objective generations have none, since progress already counts them. */
+export function GeneratorSummaryView({ generator, summary }: GeneratorSummaryViewProps): ReactElement | null {
   switch (supportedGenerator(generator)) {
     case 'assert':
       return <AssertGenerationSummary summary={summary} />
     case 'target_objective':
-      return <TargetObjectiveSummary summary={summary} />
+      return null
     case null:
       return <UnsupportedGenerator generator={generator} />
   }

@@ -95,9 +95,10 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   const name = datasetName('returns_privacy', testInfo)
   await page.goto('/datasets')
   await expect(page.getByRole('heading', { level: 1, name: 'Datasets' })).toBeVisible()
-  await page.getByRole('button', { name: 'Generate dataset', exact: true }).click()
-  await expect(page.getByRole('heading', { level: 1, name: 'Generate datasets' })).toBeVisible()
-  await chooseGenerator(page, 'ASSERT policy dataset')
+  await page.getByRole('button', { name: 'Generate datasets', exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'New generation' })).toBeVisible()
+  await page.getByRole('link', { name: 'Start ASSERT policy dataset', exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'New ASSERT policy dataset' })).toBeVisible()
 
   await page.getByRole('textbox', { name: /^Behavior name/ }).fill('returns_privacy')
   await page.getByRole('textbox', { name: /^Policy text/ }).fill(POLICY)
@@ -161,7 +162,7 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   await runScenario.click()
   await expect(page.getByRole('heading', { level: 2, name: FOLLOW_UP_SCENARIO })).toBeVisible({ timeout: JOB_TIMEOUT_MS })
   const selected = page.getByRole('table', { name: 'Selected datasets' })
-  await expect(selected.getByRole('row').filter({ hasText: `${name} (generated)` })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })
+  await expect(selected.getByRole('row').filter({ hasText: `${name} (Generated)` })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })
   const actions = page.getByRole('group', { name: 'Dataset actions' })
   await expect(actions.getByRole('link', { name: 'Browse datasets', exact: true })).toHaveAttribute('href', '/datasets')
   await expect(actions.getByRole('link', { name: 'Generate datasets', exact: true }))
@@ -169,14 +170,16 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
 
   // Without a link, the scenario starts with no dataset and the generated one can be chosen.
   await page.goto(`/scanner/launch/${FOLLOW_UP_SCENARIO}`)
-  await expect(page.getByText('No dataset selected.', { exact: true })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })
+  // With nothing selected, a selectable scenario shows only its picker.
+  await expect(page.getByRole('combobox', { name: 'Add dataset', exact: true })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })
+  await expect(selected).toHaveCount(0)
   await expect(page.getByText('This scenario has no named datasets.')).toHaveCount(0)
   const estimating = page.waitForResponse((response: Response) =>
     apiPath(response) === `/api/scenarios/catalog/${FOLLOW_UP_SCENARIO}/estimate`
     && JSON.stringify(response.request().postDataJSON()?.datasets?.sources ?? []) === JSON.stringify([{ name }]))
   await page.getByRole('combobox', { name: 'Add dataset', exact: true }).click()
-  await page.getByRole('option', { name: `${name} (generated)`, exact: true }).click()
-  await expect(selected.getByRole('row').filter({ hasText: `${name} (generated)` })).toBeVisible()
+  await page.getByRole('option', { name: `${name} (Generated)`, exact: true }).click()
+  await expect(selected.getByRole('row').filter({ hasText: `${name} (Generated)` })).toBeVisible()
   const estimate = await estimating
   expect(estimate.status(), await estimate.text()).toBe(200)
 
@@ -220,8 +223,8 @@ test('generates an objective dataset that appears in the catalog', async ({ page
     request: { count: 3, harm_categories: ['privacy'] },
   })
   await expect(statusBadge(page)).toHaveText('Completed', { timeout: JOB_TIMEOUT_MS })
+  await expect(page.getByTestId('generation-progress')).toContainText('3 of 3 items generated')
   const complete = page.getByTestId('generation-complete')
-  await expect(complete.getByTestId('target-objective-summary')).toHaveText('Objectives3')
   await expect(complete.getByRole('link', { name: /^Run / })).toHaveCount(0)
   await complete.getByRole('link', { name: 'Browse dataset', exact: true }).click()
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })

@@ -100,7 +100,7 @@ await output_scenario_async(scenario_result)
 # judges each conversation against the group's own policy. Its registry name is
 # `foundry.assert_policy`. There's no default dataset: generate groups with `AssertGenerator`
 # (see [Prompt Generators](../code/executor/7_promptgen.ipynb)), store them with `AssertProvider`,
-# and pass the stored dataset name. In the GUI, **Datasets > Generate dataset** turns a written
+# and pass the stored dataset name. In the GUI, **Datasets > Generate datasets** turns a written
 # policy or a bundled ASSERT behavior into a stored dataset, with an optional taxonomy review, and
 # then opens this scenario with the dataset selected.
 #
@@ -108,7 +108,7 @@ await output_scenario_async(scenario_result)
 #
 # ```bash
 # pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_support
-# pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_support --techniques assert_package red_teaming tap
+# pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_support --techniques assert_package red_teaming
 # ```
 #
 # By default each group runs twice:
@@ -121,6 +121,9 @@ await output_scenario_async(scenario_result)
 #   any, opens the conversation, and the tester gets no judge feedback. It's offered only by this
 #   scenario, and it skips groups without stored tester instructions.
 #
+# Tester tasks are stored explicitly in `AssertGroupMetadata.tester_instructions`, not a prompt's
+# display description. Regenerate older datasets to populate this field, or set it when authoring groups.
+#
 # Any registered attack technique can be selected with `--techniques`. For example, `red_teaming`
 # runs the same attack with the group's stored PyRIT tester prompt, a shorter prompt that states the
 # objective alongside the tester instructions. Groups with stored tester instructions run only with
@@ -131,27 +134,24 @@ await output_scenario_async(scenario_result)
 # red-teaming prompt, which pursues the objective rather than playing a stored user, so it isn't an
 # ASSERT scenario case. Techniques that take a turn count need a target that natively keeps
 # multi-turn history, because the judges read the whole conversation; with other targets they're
-# skipped or rejected the same way. Results are grouped by technique. The scenario parameters are:
+# skipped or rejected the same way. Results are grouped by technique.
+#
+# Techniques with incompatible scoring configurations, such as TAP, are also skipped or rejected;
+# ASSERT never replaces its policy judge with a technique's default scorer.
+#
+# The scenario parameters are:
 #
 # - `max_turns`: target turns for techniques that take a turn count. Defaults to 6, as in ASSERT.
 #   A registered technique that sets its own turn count, such as `goat`, keeps it.
-# - `judgment_mode`: `category_validated` (the default) also records a judgment for each relevant
-#   taxonomy category. `direct` returns only the verdict.
 # - `target_system_prompt`: instructions that a target-owned application already uses. Only the
 #   judge receives them. Use it with groups generated with `target_owns_instructions=True`; it's
 #   rejected when a selected group stores its own system prompt.
-# - `judge_presets`: built-in judge presets whose dimensions are added to the built-in
-#   `policy_violation` and `overrefusal`. See "Judge dimensions and presets" below.
-# - `judge_preset_files`: your own `judge_preset` YAML files, applied after `judge_presets`. Python
-#   only: `pyrit_scan` and the GUI go through the server, which doesn't read files named by callers.
-# - `disabled_judge_dimensions`: dimensions to remove after presets are applied, including built-ins.
-# - `judge_samples`: independent judge calls per dimension, aggregated as in ASSERT. Defaults to 1.
-# - `objective_dimension`: the dimension used as the objective score. Defaults to
-#   `policy_violation`.
 #
-# The GUI launch form always uses the default judges and doesn't show these judge settings. Set them
-# from Python or `pyrit_scan`. In Python you can instead pass your own true/false scorer as
-# `AssertPolicy(objective_scorer=...)`; it's used unchanged, so leave the judge settings at their defaults.
+# The judges are the scenario's scorers. Each group's stored policy reaches them as a
+# `ViolatesAssertPolicy` condition. By default, two `AssertJudgeScorer`s on the scoring target judge
+# `policy_violation` as the objective and `overrefusal` as an auxiliary score. To change them, pass
+# your own as `AssertPolicy(objective_scorer=..., auxiliary_scorers=[...])`, or register an objective
+# scorer and pick it in the GUI; see "Judge dimensions and presets" below.
 #
 # There are no request converters by default. Add them per technique as in other scenarios, for
 # example `--techniques assert_package:converter.<registered name>`, or `technique_converters` in Python.
@@ -245,16 +245,17 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 #   the share where the assistant failed to provide that help. This is the trade-off number.
 #
 # Each conversation counts once for each stance it was judged relevant to, whatever category it was
-# generated for. Conversations without per-category judgments or a stored seed group are left out
+# generated for. The policy is read from the score's saved `ViolatesAssertPolicy` condition, not
+# today's dataset. Conversations without per-category judgments or a recorded policy are left out
 # of these two rates and counted separately. Rates are reported separately for each technique and
 # for the baseline, with 90% Wilson intervals, and rates with fewer than 5 applicable conversations
 # are flagged. The result also has a violation rate for each judge dimension, read independently of
 # the other dimensions. Not-applicable answers and judge replies without a verdict, such as blocked
 # ones, are counted separately and left out of that rate. Graded dimensions add grade counts and the
-# median. There's also a violation rate for each taxonomy category over the conversations that
+# median for each recorded scale. There's also a violation rate for each taxonomy category over the conversations that
 # judged it relevant.
 # `model_dump_json()` gives a `metrics.json`-style document, and the GUI shows the same metrics on a
-# completed run's page.
+# completed run's page through `GET /api/analytics/assert?scenario_result_id=<run-id>`.
 
 # %%
 from pyrit.analytics import compute_assert_policy_metrics_async
@@ -277,8 +278,8 @@ for technique, technique_metrics in assert_metrics.techniques.items():
 #
 # ### Judge dimensions and presets
 #
-# By default the judges score ASSERT's two built-in dimensions: `policy_violation` and
-# `overrefusal`. Add more with `judge_presets`. PyRIT ships ASSERT's judge presets: `safety-core`
+# By default the judge scores ASSERT's two built-in dimensions: `policy_violation` and
+# `overrefusal`. Add more from judge presets. PyRIT ships ASSERT's judge presets: `safety-core`
 # (the built-ins), `safety-extended`, `grounding`, `operational`, `communication`, `robustness`,
 # `alignment`, `policy-adherence`, `tool-use`, `multi-turn`, and `instruction-following`.
 # `list_assert_judge_presets()` from `pyrit.score` returns them with their dimensions.
@@ -323,53 +324,42 @@ for technique, technique_metrics in assert_metrics.techniques.items():
 #     violation_at: hedged
 # ```
 #
-# Pass your file as `judge_preset_files` in Python:
+# Build one `AssertJudgeScorer` per dimension. The objective scorer decides success, and auxiliary
+# scorers record the other dimensions:
 #
 # ```python
-# assert_scenario.set_params_from_args(
-#     args={
-#         "objective_target": objective_target,
-#         "dataset_overrides": ScenarioDatasetRequest(sources=[DatasetSourceInput(name="assert_travel")]),
-#         "judge_presets": ["safety-extended"],
-#         "judge_preset_files": [Path("travel-budget.yaml")],
-#         "judge_samples": 3,
-#     }
-# )
+# from pyrit.score import AssertJudgeScorer, load_assert_judge_preset, load_assert_judge_preset_file
+#
+# judge_target = OpenAIChatTarget()
+# dimensions = [
+#     "policy_violation",
+#     *load_assert_judge_preset("safety-extended").dimensions,
+#     *load_assert_judge_preset_file("travel-budget.yaml").dimensions,
+# ]
+# objective, *auxiliaries = [
+#     AssertJudgeScorer(chat_target=judge_target, dimension=dimension, samples=3) for dimension in dimensions
+# ]
+# assert_scenario = AssertPolicy(objective_scorer=objective, auxiliary_scorers=auxiliaries)
 # ```
 #
-# Built-in presets work from the command line too:
+# To pick an objective scorer in the GUI, register it in `ScorerRegistry` from an initializer.
 #
-# ```bash
-# pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_travel \
-#   --judge-presets safety-extended --judge-samples 3
-# ```
-#
-# Each enabled dimension gets its own judge call. The objective dimension decides success, and every
-# other dimension is an auxiliary true/false score on the same result, with the dimension name as
-# its category. With `judge_samples` above 1, the samples are combined by majority vote with ties
-# counted as failures, as in ASSERT. Undetermined samples are left out, and so is a sample whose
-# judgment is still invalid after its retries; scoring fails only when every sample does. In
-# `category_validated` mode, the per-category judgments are voted too and `policy_violation` is
-# recomputed from them. `AssertSampleVotes.from_metadata` returns every sample's verdict. Prefer an
-# odd sample count.
-#
-# To judge a narrower outcome instead of the built-in policy violation, disable it and make another
-# dimension the objective, for example `"disabled_judge_dimensions": ["policy_violation"]`
-# and `"objective_dimension": "budget_compliance"`. Non-default judge settings are part of the
-# scenario's identity, so a resumed run must use the same ones.
-#
-# Standalone, `build_assert_policy_scorer` accepts any of these dimensions and a `samples` count.
+# Each dimension gets its own judge call and true/false score, with the dimension name as its
+# category. With `samples` above 1, the samples are
+# combined by majority vote with ties counted as failures, as in ASSERT. Undetermined samples are
+# left out, and so is a sample whose judgment is still invalid after its retries; scoring fails only
+# when every sample does. In `category_validated` mode, the per-category judgments are voted too and
+# `policy_violation` is recomputed from them. `AssertSampleVotes.from_metadata` returns every
+# sample's verdict. Prefer an odd sample count.
 #
 # ### Execution traces
 #
-# Like ASSERT's traced targets, the judges can read what the application did,
-# not only what it said. Give the objective target `trace_config=capture.trace_config()` from a
-# `LocalTraceCapture`, and pass `trace_source=capture.source()` to `AssertPolicy`, or name a
-# registered source with the `trace_source` parameter. Each judge then reads the conversation's
-# model calls, tool calls with arguments and results, and agent steps, and is asked to cite them as `[T3]`.
-# `trace_requirement` sets the evidence a judge needs: `none` (the default) always judges, with whatever
-# traces exist, while `available` and `complete` leave results undetermined without some or complete
-# traces. If the target records no traces, the scenario logs a warning. See
+# Like ASSERT's traced targets, the judge can read what the application did, not only what it said.
+# Give the objective target `trace_config=capture.trace_config()` from a `LocalTraceCapture`, and
+# give the judge `trace_source=capture.source()`. Each dimension then reads the conversation's model
+# calls, tool calls with arguments and results, and agent steps, and is asked to cite them as `[T3]`.
+# The judge's `trace_requirement` sets the evidence it needs: `none` (the default) always judges, with
+# whatever traces exist, while `complete` leaves results undetermined without complete traces. See
 # [Judging with execution traces](../code/scoring/8_trace_evidence_scoring.ipynb).
 #
 # **Differences from ASSERT:**
@@ -377,13 +367,12 @@ for technique, technique_metrics in assert_metrics.techniques.items():
 # - Each conversation gets one judge call per dimension, so the verdicts can disagree. ASSERT's
 #   single call keeps them consistent, and each dimension's rate here has its own denominator.
 # - The built-in `policy_violation` and `overrefusal` dimensions are judged against the taxonomy
-#   and can't be redefined. To replace one, disable it and add a differently named dimension.
+#   and can't be redefined. To replace one, leave it out of `dimensions` and add a differently named one.
 # - A dimension with a `scale` also needs `violation_at`, because PyRIT judges every dimension as a
 #   violation or not. ASSERT reports grade counts instead of a violation rate for scaled dimensions;
 #   ASSERT metrics here report both.
-# - The impermissible and permissible rates come from the `policy_violation` judge's per-category
-#   judgments, so they aren't available in `direct` mode, when `policy_violation` is disabled, or
-#   with a supplied `objective_scorer`.
+# - The impermissible and permissible rates need the `policy_violation` judge's per-category
+#   judgments, so they aren't available when no judge supplies those judgments.
 # - A group with both inputs runs as the baseline and with each selected technique on the same
 #   objective, so the results are paired. ASSERT samples prompt and scenario cases separately.
 # - In `assert_package`, a stored user prompt opens the conversation without passing through the

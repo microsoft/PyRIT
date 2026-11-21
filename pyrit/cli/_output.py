@@ -66,7 +66,7 @@ def print_operation_list(*, items: list[Operation]) -> None:
         print(f"  {item.name}  {item.id}")
 
 
-def _truncate_text(text: str, max_length: int) -> str:
+def _truncate_text(text: str, *, max_length: int) -> str:
     """
     Truncate *text* to *max_length* characters, appending an ellipsis when cut.
 
@@ -137,7 +137,8 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
             print(f"    Default Datasets ({len(sc.default_datasets)}):")
             print(_wrap(text=", ".join(sc.default_datasets), indent="      "))
         options = sc.dataset_options
-        print(f"    Dataset selection: {options.mode.value}; overrides: {options.supports_overrides}")
+        minimum = f"; at least {options.min_selected} required" if options.min_selected else ""
+        print(f"    Dataset selection: {options.mode.value}; overrides: {options.supports_overrides}{minimum}")
         if options.allowed_names:
             print(_wrap(text="Options: " + ", ".join(options.allowed_names), indent="      "))
         defaults = sc.dataset_defaults
@@ -234,6 +235,19 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
             print(f"    Model: {model}")
         if identifier.endpoint:
             print(f"    Endpoint: {identifier.endpoint}")
+        print(f"    Account: {'Yours' if tgt.private else 'Shared'}")
+        if tgt.allow_credential_updates:
+            print("    Credential updates: allowed")
+        if tgt.credentials_rejected and tgt.allow_credential_updates:
+            print(
+                "    Credentials rejected by the provider on the last request; update them with "
+                f"'pyrit_scan set-target-credential {tgt.target_registry_name}'"
+            )
+        elif tgt.credentials_rejected:
+            print(
+                "    Credentials rejected by the provider on the last request; this target doesn't allow "
+                "credential updates, so ask whoever set it up"
+            )
     print("\n" + "=" * 80)
     print(f"\nTotal targets: {len(items)}")
 
@@ -348,7 +362,7 @@ def print_scenario_retry_warnings(*, run: ScenarioRunSummary, seen_attack_ids: s
             exc = retry.exception_type or "error"
             message = (retry.exception_message or "").strip().splitlines()
             if message:
-                exc = f"{exc}: {_truncate_text(message[0], 160)}"
+                exc = f"{exc}: {_truncate_text(message[0], max_length=160)}"
             location = _format_retry_location(retry)
             _cprint(
                 f"  ! retry #{retry.attempt_number} [{attack.atomic_attack_name}]{location}: {exc}",
@@ -415,7 +429,7 @@ def print_scenario_run_summary(*, run: ScenarioRunSummary) -> None:
         for failed in run.failed_attacks:
             error_type = failed.error_type or "Error"
             message = (failed.error_message or "").strip().splitlines()
-            detail = _truncate_text(message[0], 200) if message else "no detail"
+            detail = _truncate_text(message[0], max_length=200) if message else "no detail"
             retry_note = f" [{failed.total_retries} retries]" if failed.total_retries else ""
             print(f"    - {failed.atomic_attack_name}{retry_note}: {error_type}: {detail}")
 
@@ -494,13 +508,12 @@ async def _collect_conversation_entries_async(
         list[tuple[str, Any, list[dict[str, Any]]]]: ``(name, attack, structured_messages)`` triples.
     """
     from pyrit.cli._sources import RestApiConversationSource
-    from pyrit.output._derivation import select_attacks
+    from pyrit.output._derivation import attack_objective_scorer_identifier, select_attacks
     from pyrit.output.conversation.json import JsonConversationPrinter
 
     selected = select_attacks(result, attack_result_ids=attack_result_ids)
     if limit is not None:
         selected = selected[:limit]
-    objective_scorer_identifier = result.objective_scorer_identifier
 
     entries: list[tuple[str, Any, list[dict[str, Any]]]] = []
     for atomic_attack_name, attack_result in selected:
@@ -510,6 +523,9 @@ async def _collect_conversation_entries_async(
             await source.get_messages_async(conversation_id=attack_result.conversation_id)
             if attack_result.conversation_id
             else []
+        )
+        objective_scorer_identifier = attack_objective_scorer_identifier(
+            attack=attack_result, run_scorer_identifier=result.objective_scorer_identifier
         )
         structured = await JsonConversationPrinter(source=source).build_async(
             messages,
@@ -558,7 +574,12 @@ async def print_conversations_async(
         return
 
     from pyrit.cli._sources import RestApiConversationSource
-    from pyrit.output._derivation import attack_score_display, attack_technique_label, select_attacks
+    from pyrit.output._derivation import (
+        attack_objective_scorer_identifier,
+        attack_score_display,
+        attack_technique_label,
+        select_attacks,
+    )
     from pyrit.output.conversation.pretty import PrettyConversationPrinter
 
     selected = select_attacks(result, attack_result_ids=attack_result_ids)
@@ -570,7 +591,6 @@ async def print_conversations_async(
         print(f"\nNo conversations found for scenario {scenario_result_id}.")
         return
 
-    objective_scorer_identifier = result.objective_scorer_identifier
     _header(f"Conversations — scenario {scenario_result_id}")
     for index, (atomic_attack_name, attack_result) in enumerate(selected, start=1):
         technique = attack_technique_label(atomic_attack_name=atomic_attack_name, attack=attack_result)
@@ -588,6 +608,9 @@ async def print_conversations_async(
             await source.get_messages_async(conversation_id=attack_result.conversation_id)
             if attack_result.conversation_id
             else []
+        )
+        objective_scorer_identifier = attack_objective_scorer_identifier(
+            attack=attack_result, run_scorer_identifier=result.objective_scorer_identifier
         )
         printer = PrettyConversationPrinter(source=source)
         print(

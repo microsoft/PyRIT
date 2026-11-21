@@ -3,6 +3,7 @@ import type {
   AssertGenerationRequest,
   AssertReplication,
   AssertSamplingMethod,
+  AssertTaxonomy,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 
@@ -14,7 +15,8 @@ import {
   readString,
   readStringList,
 } from './generationFormHelpers'
-import { datasetNameFromText } from './promptGenerationPresentation'
+import { parseAssertTaxonomy } from './assertReview'
+import { datasetNameFromText, MAX_DATASET_NAME_LENGTH } from './promptGenerationPresentation'
 
 export type AssertDimensionMode = 'describe' | 'explicit'
 export type AssertInstructionMode = 'default' | 'custom' | 'target'
@@ -134,6 +136,8 @@ function readDimensions(value: unknown): AssertDimensionDraft[] {
 export function assertDraftFromRequest(request: Record<string, unknown>): {
   readonly behavior: AssertBehaviorDraft
   readonly settings: AssertSettingsDraft
+  /** The reviewed taxonomy the request carries, sent back unchanged to skip regenerating it. */
+  readonly taxonomy: AssertTaxonomy | null
 } {
   const defaults = defaultAssertSettings()
   const sampling = asRecord(request.sampling)
@@ -165,6 +169,7 @@ export function assertDraftFromRequest(request: Record<string, unknown>): {
         : typeof systemPrompt === 'string' ? 'custom' : 'default',
       targetSystemPrompt: typeof systemPrompt === 'string' ? systemPrompt : '',
     },
+    taxonomy: parseAssertTaxonomy(request.taxonomy),
   }
 }
 
@@ -244,10 +249,14 @@ export function assertBehaviorErrors(behavior: AssertBehaviorDraft): string[] {
   return errors
 }
 
-/** Builds the request for valid settings; check `assertSettingsErrors` first. */
+/**
+ * Builds the request for valid settings; check `assertSettingsErrors` first. A reviewed taxonomy
+ * must belong to the same behavior; generation then skips researching and building it.
+ */
 export function buildAssertRequest(
   settings: AssertSettingsDraft,
   behavior: AssertBehaviorDraft,
+  taxonomy: AssertTaxonomy | null = null,
 ): AssertGenerationRequest {
   const method = settings.samplingMethod
   const options = stratifyOptions(settings)
@@ -280,11 +289,16 @@ export function buildAssertRequest(
     web_search: settings.webSearch,
     target_system_prompt: settings.instructionMode === 'custom' ? settings.targetSystemPrompt : null,
     target_owns_instructions: settings.instructionMode === 'target',
+    ...(taxonomy ? { taxonomy } : {}),
   }
 }
 
-/** The default dataset name for one behavior of a suite: `<suite>_<behavior>`. */
+/**
+ * The default dataset name for one behavior of a suite: `<suite>_<behavior>`. A long suite label
+ * is shortened, not the behavior, so behaviors with a shared prefix keep distinct names.
+ */
 export function suiteDatasetName(prefix: string, behaviorName: string): string {
-  const cleanPrefix = datasetNameFromText(prefix)
-  return datasetNameFromText(cleanPrefix ? `${cleanPrefix}_${behaviorName}` : behaviorName)
+  const behavior = datasetNameFromText(behaviorName)
+  const cleanPrefix = datasetNameFromText(prefix).slice(0, Math.max(0, MAX_DATASET_NAME_LENGTH - behavior.length - 1))
+  return cleanPrefix ? `${cleanPrefix}_${behavior}` : behavior
 }

@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import re
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,6 +20,7 @@ from pyrit.models import (
     AssertDimension,
     AssertGeneratedGroupContent,
     AssertGenerationCheckpoint,
+    AssertGenerationConfig,
     AssertGenerationProvenance,
     AssertGenerationStage,
     AssertSuitePreset,
@@ -171,6 +174,29 @@ def test_checkpoint_rejects_invalid_group_assignment(assignment: dict[str, str])
         make_assert_checkpoint(groups=(make_assert_group_content(assignment=assignment),))
 
 
+@pytest.mark.parametrize("config_changes", [{"include_user_prompt": False}, {"include_adversarial_prompt": False}])
+def test_checkpoint_rejects_groups_that_differ_from_the_prompt_options(config_changes: dict[str, bool]) -> None:
+    with pytest.raises(ValidationError, match="Group 'group_000000' doesn't match the request's include_user_prompt"):
+        make_assert_checkpoint(
+            config=make_assert_config(**config_changes), groups=(make_assert_group_content(),), completed_batches=1
+        )
+
+
+def test_checkpoint_with_a_request_taxonomy_starts_at_the_taxonomy_stage() -> None:
+    config = make_assert_config(taxonomy=make_assert_taxonomy())
+    assert AssertGenerationCheckpoint(config=config).next_stage == AssertGenerationStage.TAXONOMY
+    copied = AssertGenerationCheckpoint(config=config, taxonomy=make_assert_taxonomy())
+    assert copied.systematization is None
+    assert copied.next_stage == AssertGenerationStage.DIMENSIONS
+
+
+def test_checkpoint_rejects_a_taxonomy_that_differs_from_the_request_taxonomy() -> None:
+    with pytest.raises(ValidationError, match="must match the request's taxonomy"):
+        AssertGenerationCheckpoint(
+            config=make_assert_config(taxonomy=make_assert_taxonomy()), taxonomy=_edited_taxonomy()
+        )
+
+
 @pytest.mark.parametrize(
     "completed, group_count, expected",
     [
@@ -216,10 +242,11 @@ def test_checkpoint_round_trips_through_json() -> None:
     assert restored.next_stage == AssertGenerationStage.SEED_GROUPS
 
 
-def test_with_reviewed_policy_taxonomy_edit_keeps_config() -> None:
+def test_with_reviewed_policy_taxonomy_edit_becomes_the_request_taxonomy() -> None:
     checkpoint = make_assert_checkpoint()
     reviewed = checkpoint.with_reviewed_policy(taxonomy=_edited_taxonomy(), dimensions=checkpoint.config.dimensions)
-    assert reviewed.config == checkpoint.config
+    assert reviewed.config.taxonomy == _edited_taxonomy()
+    assert reviewed.config.model_dump(exclude={"taxonomy"}) == checkpoint.config.model_dump(exclude={"taxonomy"})
     assert reviewed.taxonomy == _edited_taxonomy()
     assert reviewed.dimensions == checkpoint.dimensions
     assert reviewed.provenance.edited_stages == (AssertGenerationStage.TAXONOMY,)
@@ -235,7 +262,9 @@ def test_with_reviewed_policy_dimension_edit_makes_config_levels_explicit() -> N
     assert not checkpoint.config.dimensions[0].levels
     assert reviewed.dimensions == dimensions
     assert reviewed.config.dimensions == dimensions
-    assert reviewed.config.model_dump(exclude={"dimensions"}) == checkpoint.config.model_dump(exclude={"dimensions"})
+    assert reviewed.config.taxonomy == make_assert_taxonomy()
+    unchanged = {"dimensions", "taxonomy"}
+    assert reviewed.config.model_dump(exclude=unchanged) == checkpoint.config.model_dump(exclude=unchanged)
     assert reviewed.provenance.edited_stages == (AssertGenerationStage.DIMENSIONS,)
     assert reviewed.provenance.dimensions_conversation_id == "dimensions"
 
@@ -256,11 +285,13 @@ def test_with_reviewed_policy_dimension_edit_can_change_level_count() -> None:
     assert reviewed.dimensions == (dimension,)
 
 
-def test_with_reviewed_policy_unchanged_review_marks_nothing() -> None:
+def test_with_reviewed_policy_unchanged_review_fixes_the_policy_without_edits() -> None:
     checkpoint = _described_policy_checkpoint()
     reviewed = checkpoint.with_reviewed_policy(taxonomy=make_assert_taxonomy(), dimensions=_generated_dimensions())
-    assert reviewed == checkpoint
+    assert reviewed.provenance == checkpoint.provenance
     assert reviewed.provenance.edited_stages == ()
+    assert (reviewed.config.taxonomy, reviewed.config.dimensions) == (make_assert_taxonomy(), _generated_dimensions())
+    assert reviewed.model_dump(exclude={"config"}) == checkpoint.model_dump(exclude={"config"})
 
 
 def test_with_reviewed_policy_records_edited_stages_in_stage_order() -> None:
@@ -376,7 +407,60 @@ def test_presets_forbid_extra_fields(
     preset_type: type[AssertBehaviorPreset] | type[AssertSuitePreset], data: dict[str, Any]
 ) -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        preset_type.model_validate({**data, "kind": "behavior"})
+        preset_type.model_validate({**data, "unexpected": True})
+
+
+@pytest.mark.parametrize(
+    "preset_type, data, kind",
+    [(AssertBehaviorPreset, _BEHAVIOR_PRESET, "scenario"), (AssertSuitePreset, _SUITE_PRESET, "behavior")],
+)
+def test_presets_reject_another_kind(
+    preset_type: type[AssertBehaviorPreset] | type[AssertSuitePreset], data: dict[str, Any], kind: str
+) -> None:
+    with pytest.raises(ValidationError, match="kind"):
+        preset_type.model_validate({**data, "kind": kind})
+
+
+def test_preset_from_yaml_file_names_an_invalid_file(tmp_path: Path) -> None:
+    path = tmp_path / "prompt_injection.yaml"
+    path.write_text("kind: scenario\nname: prompt_injection\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=f"Invalid AssertBehaviorPreset file {re.escape(str(path))}"):
+        AssertBehaviorPreset.from_yaml_file(path)
+
+
+def test_preset_from_yaml_file_names_a_malformed_file(tmp_path: Path) -> None:
+    path = tmp_path / "prompt_injection.yaml"
+    path.write_text("kind: behavior\nname: prompt_injection\nsummary: [unclosed\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=f"Invalid YAML file '{re.escape(str(path))}'"):
+        AssertBehaviorPreset.from_yaml_file(path)
+
+
+def test_behavior_preset_to_config_uses_its_name_and_description() -> None:
+    preset = AssertBehaviorPreset.model_validate(_BEHAVIOR_PRESET)
+    config = preset.to_config(group_count=4, context="An email assistant.")
+    assert config == AssertGenerationConfig(
+        behavior_name=preset.name,
+        behavior_description=preset.description,
+        context="An email assistant.",
+        group_count=4,
+    )
+
+
+def test_suite_preset_to_configs_builds_one_request_per_behavior_in_its_context() -> None:
+    suite = AssertSuitePreset.model_validate(_SUITE_PRESET)
+    behaviors = {
+        name: AssertBehaviorPreset.model_validate({**_BEHAVIOR_PRESET, "name": name, "description": f"About {name}."})
+        for name in reversed(suite.behaviors)
+    }
+    configs = suite.to_configs(behaviors=behaviors, group_count=3)
+    assert configs == [behaviors[name].to_config(group_count=3, context=suite.context) for name in suite.behaviors]
+
+
+def test_suite_preset_to_configs_rejects_unknown_behaviors() -> None:
+    suite = AssertSuitePreset.model_validate(_SUITE_PRESET)
+    behaviors = {"prompt_injection": AssertBehaviorPreset.model_validate(_BEHAVIOR_PRESET)}
+    with pytest.raises(ValueError, match=r"refers to unknown behaviors: \['actionability_failures'\]"):
+        suite.to_configs(behaviors=behaviors, group_count=1)
 
 
 @pytest.mark.parametrize("field", ["name", "version", "summary", "description"])

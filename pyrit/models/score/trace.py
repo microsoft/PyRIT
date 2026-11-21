@@ -163,46 +163,12 @@ class ExecutionStepKind(str, Enum):
     OTHER = "other"
 
 
-class TraceContent(BaseModel):
-    """
-    Retained span content: a bounded prefix with the length and digest of the full value.
-
-    ``original_length`` and ``sha256`` describe the complete value after any redaction, so
-    truncated evidence still identifies what was observed. ``text`` is empty when content
-    is not retained.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    text: str = ""
-    original_length: int = Field(ge=0, strict=True)
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    truncated: bool = Field(default=False, strict=True)
-    redacted: bool = Field(default=False, strict=True)
-
-    @model_validator(mode="after")
-    def _validate_prefix(self) -> TraceContent:
-        """
-        Keep the retained prefix consistent with the described full value.
-
-        Returns:
-            TraceContent: The validated content.
-
-        Raises:
-            ValueError: If the prefix is longer than the value or truncation is misreported.
-        """
-        if len(self.text) > self.original_length:
-            raise ValueError("Retained trace content cannot be longer than the original value.")
-        if self.truncated != (len(self.text) < self.original_length):
-            raise ValueError("Trace content must be marked truncated exactly when text is a strict prefix.")
-        return self
-
-
 class ExecutionStep(_TraceInterval):
     """
     One normalized execution span: a model call, tool call, agent step, or other operation.
 
-    ``index`` is the step's stable position within its observation, used to cite it.
+    ``index`` is the step's stable position within its observation, used to cite it. Names,
+    labels, inputs, outputs, and errors are kept complete and exactly as observed.
     """
 
     index: int = Field(ge=0, strict=True)
@@ -210,12 +176,12 @@ class ExecutionStep(_TraceInterval):
     kind: ExecutionStepKind
     name: str = Field(min_length=1)
     status: TraceSpanStatus = TraceSpanStatus.UNSET
-    error_content: TraceContent | None = None
+    error_content: str | None = None
     model: str | None = None
     tool_name: ToolName | None = None
     call_id: str | None = Field(default=None, min_length=1)
     node_name: str | None = None
-    input_content: TraceContent | None = None
-    output_content: TraceContent | None = None
+    input_content: str | None = None
+    output_content: str | None = None
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
