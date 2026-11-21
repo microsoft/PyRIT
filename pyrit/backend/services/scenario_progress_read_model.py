@@ -7,7 +7,7 @@ import asyncio
 import logging
 import time
 import uuid
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pyrit.analytics import (
+    combine_outcome_statistics,
+    compute_outcome_statistics,
     compute_scenario_statistics,
     count_execution_units,
 )
@@ -23,6 +25,7 @@ from pyrit.analytics.scenario_statistics import (
     ScenarioPlanLookup,
     resolve_attack_result_attempt,
     resolve_execution_unit,
+    retry_attempt_count,
     retry_pressure,
 )
 from pyrit.common.path import SCORER_EVALS_PATH
@@ -36,6 +39,7 @@ from pyrit.models import (
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     ConversationSummary,
+    OutcomeStatistics,
     ScenarioAtomicGroupProgress,
     ScenarioAttackResultDelta,
     ScenarioAttackTechniqueDetails,
@@ -531,14 +535,14 @@ class ScenarioProgressReadModel:
                 "logical-unit progress rollups, but retained in overall producer counts.",
                 unattributed_attempts,
             )
-        latest_results = [
-            completions[-1]
+        latest_by_unit = {
+            unit: completions[-1]
             for unit in overall_units
             if (completions := [result for result in attempts_by_unit.get(unit, ()) if result.attempt_index is None])
-        ]
+        }
         objective_scorer = ScenarioProgressReadModel._build_objective_scorer(
             scorer_identifier=objective_scorer_identifier,
-            results=latest_results,
+            results=list(latest_by_unit.values()),
             metrics=scorer_metrics,
         )
 
@@ -635,6 +639,7 @@ class ScenarioProgressReadModel:
         seed_groups: list[ScenarioSeedGroupProgress] = []
         for seed_id, seed in seed_by_id.items():
             units = units_by_seed.get(seed_id, [])
+            latest = [latest_by_unit[unit] for unit in units if unit in latest_by_unit]
             counts = aggregate(
                 units=units,
                 planned=len(units) if plan_complete else None,
@@ -643,6 +648,16 @@ class ScenarioProgressReadModel:
                 ScenarioSeedGroupProgress(
                     id=seed_id,
                     objective=seed.objective,
+                    trial_outcomes=(
+                        combine_outcome_statistics(
+                            result.trial_outcomes
+                            if result.trial_outcomes is not None
+                            else compute_outcome_statistics({result.outcome: 1})
+                            for result in latest
+                        )
+                        if any(result.trial_outcomes is not None for result in latest)
+                        else None
+                    ),
                     **counts.model_dump(),
                 )
             )
@@ -915,7 +930,35 @@ class ScenarioProgressReadModel:
             ),
             related_conversation_ids=ScenarioProgressReadModel._read_related_conversation_ids(delta=delta),
             attempt_index=result_metadata.attempt_index,
+            trial_outcomes=ScenarioProgressReadModel._read_trial_outcomes(attack_metadata=delta.attack_metadata),
         )
+
+    @staticmethod
+    def _read_trial_outcomes(*, attack_metadata: dict[str, Any]) -> OutcomeStatistics | None:
+        """
+        Project persisted independent trials without loading their child rows.
+
+        Returns:
+            OutcomeStatistics | None: Recorded trial outcomes, or None for ordinary attacks.
+
+        Raises:
+            ValueError: If independent-trial metadata is malformed or incomplete.
+        """
+        if "independent_trials" not in attack_metadata:
+            return None
+        summary = attack_metadata["independent_trials"]
+        if not isinstance(summary, dict) or not isinstance(summary.get("trials"), list):
+            raise ValueError("Invalid independent_trials metadata: expected a summary with a trials list.")
+        counts: Counter[AttackOutcome] = Counter()
+        for trial in summary["trials"]:
+            if not isinstance(trial, dict):
+                raise ValueError("Invalid independent_trials metadata: each trial must be a mapping.")
+            counts[AttackOutcome(trial.get("outcome"))] += 1
+        statistics = compute_outcome_statistics(counts)
+        num_trials = summary.get("num_trials")
+        if type(num_trials) is not int or num_trials < 1 or statistics.total_results != num_trials:
+            raise ValueError("Invalid independent_trials metadata: num_trials must match the recorded trials.")
+        return statistics
 
     @staticmethod
     def _read_related_conversation_ids(*, delta: ScenarioAttackResultDelta) -> list[str]:
@@ -1282,7 +1325,7 @@ class ScenarioProgressReadModel:
             diagnostic_retries = max(
                 snapshot.summary.overall.retries,
                 ScenarioProgressReadModel.total_retry_pressure(
-                    attempts_per_unit=(len(attempts) for attempts in raw_attempts_by_unit.values()),
+                    attempts_per_unit=(retry_attempt_count(attempts) for attempts in raw_attempts_by_unit.values()),
                     persisted_retries=(r.total_retries for r in snapshot.results),
                 ),
             )

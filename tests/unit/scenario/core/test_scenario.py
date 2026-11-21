@@ -720,8 +720,8 @@ class TestScenarioInitialization2:
 
     async def test_initialize_async_deduplicates_logical_seed_groups_in_run_plan(self, mock_objective_target) -> None:
         duplicate_seed_groups = [
-            AttackSeedGroup(seeds=[SeedObjective(value="duplicate objective")]),
-            AttackSeedGroup(seeds=[SeedObjective(value="duplicate objective")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="duplicate objective", metadata={"source_row": 1})]),
+            AttackSeedGroup(seeds=[SeedObjective(value="duplicate objective", metadata={"source_row": 2})]),
         ]
         atomic_attack = MagicMock(spec=AtomicAttack)
         atomic_attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
@@ -744,6 +744,9 @@ class TestScenarioInitialization2:
         expected_seed_id = duplicate_seed_groups[0].logical_id
         assert persisted_plan["atomic_groups"][0]["seed_group_ids"] == [expected_seed_id]
         assert [seed_group["id"] for seed_group in persisted_plan["seed_groups"]] == [expected_seed_id]
+        assert [
+            snapshot["metadata"]["source_row"] for snapshot in persisted_plan["seed_groups"][0]["seed_metadata"]
+        ] == [1, 2]
         assert scenario._build_run_plan().model_dump(mode="json", exclude_none=True) == persisted_plan
         assert atomic_attack.seed_groups is duplicate_seed_groups
         assert len(atomic_attack.seed_groups) == 2
@@ -785,6 +788,54 @@ class TestScenarioInitialization2:
         assert [seed_group.id for seed_group in plan.seed_groups] == expected_seed_ids
         assert plan.seed_groups[0].prompts[0].value == "first prompt"
         assert plan.seed_groups[0].prompts[0].role == "user"
+
+    async def test_dataset_metadata_snapshot_survives_source_edits_and_resume_async(
+        self, mock_objective_target
+    ) -> None:
+        objective = SeedObjective(
+            value="snapshot objective",
+            dataset_name="snapshot dataset",
+            source="original source",
+            harm_categories=["test category"],
+            metadata={"expected": "ALLOW", "nested": {"tags": ["original"]}},
+        )
+        prompt = SeedPrompt(value="snapshot prompt", metadata={"prompt_field": "original"})
+        seed_group = AttackSeedGroup(seeds=[objective, prompt])
+        atomic = MagicMock(spec=AtomicAttack)
+        atomic.group_kind = ScenarioRunPlanGroupKind.ATTACK
+        atomic.seed_group_adaptations = {}
+        atomic.atomic_attack_name = "snapshot_attack"
+        atomic.display_group = "snapshot"
+        atomic.technique_name = "test"
+        atomic.technique_eval_hash = "snapshot-technique"
+        type(atomic).seed_groups = PropertyMock(return_value=[seed_group])
+        scenario = ConcreteScenario(version=1, atomic_attacks_to_return=[atomic])
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
+        run_id = scenario._scenario_result_id
+        assert run_id is not None
+        [stored] = await scenario._memory.get_scenario_results_async(scenario_result_ids=[run_id])
+        original_plan = stored.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
+        [planned_group] = original_plan["seed_groups"]
+        objective_snapshot, prompt_snapshot = planned_group["seed_metadata"]
+        assert objective_snapshot["id"] == str(objective.id)
+        assert objective_snapshot["dataset_name"] == "snapshot dataset"
+        assert objective_snapshot["source"] == "original source"
+        assert objective_snapshot["harm_categories"] == ["test category"]
+        assert objective_snapshot["metadata"] == {"expected": "ALLOW", "nested": {"tags": ["original"]}}
+        assert prompt_snapshot["metadata"] == {"prompt_field": "original"}
+        assert all("value" not in snapshot for snapshot in planned_group["seed_metadata"])
+
+        objective.metadata = {"expected": "ALLOW", "nested": {"tags": ["changed"]}}
+        objective.source = "changed source"
+        prompt.metadata = {"prompt_field": "changed"}
+        assert scenario._build_run_plan().model_dump(mode="json", exclude_none=True) == original_plan
+        resumed = ConcreteScenario(version=1, scenario_result_id=run_id, atomic_attacks_to_return=[atomic])
+        resumed.set_params_from_args(args={"objective_target": mock_objective_target})
+        await resumed.initialize_async()
+        assert resumed._build_run_plan().model_dump(mode="json", exclude_none=True) == original_plan
+        [after_resume] = await scenario._memory.get_scenario_results_async(scenario_result_ids=[run_id])
+        assert after_resume.metadata[SCENARIO_RUN_PLAN_METADATA_KEY] == original_plan
 
     async def test_initialize_async_sets_objective_target(self, mock_objective_target):
         """Test that initialize_async sets objective_target properly."""
@@ -2074,6 +2125,10 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         assert reconstructed is not None
         assert SCENARIO_RUN_PLAN_METADATA_KEY in reconstructed.metadata
         assert reconstructed.metadata["objective_hashes"] == legacy_metadata["objective_hashes"]
+        assert all(
+            "seed_metadata" not in group
+            for group in reconstructed.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]["seed_groups"]
+        )
 
     async def test_resume_discards_per_objective_attacks_outside_persisted_subset(self, mock_objective_target):
         def _sample_first_k(population, k):

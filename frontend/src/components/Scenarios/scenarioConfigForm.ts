@@ -116,8 +116,15 @@ export function buildSelectableTechniques(
   isBaselineForbidden: boolean,
 ): SelectableTechnique[] {
   return [
-    { ...BASELINE_TECHNIQUE, isBaseline: true, disabled: isBaselineForbidden },
-    ...techniqueOptions.map((technique) => ({ ...technique, isBaseline: false, disabled: false })),
+    {
+      ...BASELINE_TECHNIQUE,
+      isBaseline: true,
+      disabled: isBaselineForbidden,
+      unavailable_reason: isBaselineForbidden ? 'This scenario does not support a baseline comparison.' : null,
+    },
+    ...techniqueOptions.map((technique) => ({
+      ...technique, isBaseline: false, disabled: Boolean(technique.unavailable_reason),
+    })),
   ]
 }
 

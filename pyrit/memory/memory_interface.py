@@ -8193,15 +8193,23 @@ class MemoryInterface(abc.ABC):
         pressure_attempt = case((or_(units.c.has_execution_attempts == 0, is_execution, independent_error), 1), else_=0)
         is_completion = case((units.c.attempt_index.is_(None), 1), else_=0)
         is_error = units.c.outcome == AttackOutcome.ERROR.value
-        unit_retries = (
-            func.sum(pressure_attempt * units.c.total_retries).over(partition_by=unit_partition)
-            + func.sum(pressure_attempt).over(partition_by=unit_partition)
-            - 1
+        has_indexed_children = func.max(case((units.c.attempt_index.is_not(None), 1), else_=0)).over(
+            partition_by=unit_partition
         )
-        raw_unit_retries = (
-            func.sum(units.c.total_retries).over(partition_by=unit_partition)
-            + func.count().over(partition_by=unit_partition)
-            - 1
+        completion_count = func.sum(is_completion).over(partition_by=unit_partition)
+        retry_attempts = case(
+            (has_indexed_children == 1, completion_count),
+            else_=func.sum(pressure_attempt).over(partition_by=unit_partition),
+        )
+        raw_retry_attempts = case(
+            (has_indexed_children == 1, completion_count),
+            else_=func.count().over(partition_by=unit_partition),
+        )
+        unit_retries = func.sum(pressure_attempt * units.c.total_retries).over(partition_by=unit_partition) + case(
+            (retry_attempts > 1, retry_attempts - 1), else_=0
+        )
+        raw_unit_retries = func.sum(units.c.total_retries).over(partition_by=unit_partition) + case(
+            (raw_retry_attempts > 1, raw_retry_attempts - 1), else_=0
         )
         ranked = select(
             units.c.scenario_result_id,

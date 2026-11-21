@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.executor.attack.compound.repeated_attack import RepeatedAttack
     from pyrit.executor.attack.compound.sequential_attack import (
         SequenceCompletionPolicy,
         SequentialAttack,
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     )
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "RepeatedAttack": "pyrit.executor.attack.compound.repeated_attack",
     "SequenceCompletionPolicy": "pyrit.executor.attack.compound.sequential_attack",
     "SequentialAttack": "pyrit.executor.attack.compound.sequential_attack",
     "SequentialAttackResult": "pyrit.executor.attack.compound.sequential_attack",

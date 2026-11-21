@@ -301,6 +301,7 @@ class Scenario(ABC):
         self._name = name if name else type(self).__name__
         self._memory = CentralMemory.get_memory_instance()
         self._atomic_attacks: list[AtomicAttack] = []
+        self._seed_metadata_snapshots: dict[str, list[dict[str, Any]] | None] = {}
         self._scenario_result_id: str | None = str(scenario_result_id) if scenario_result_id else None
         self._scenario_registry_name: str | None = None
         self._initial_metadata: dict[str, Any] = {}
@@ -947,6 +948,7 @@ class Scenario(ABC):
 
         Raises:
             ValueError: If required target or baseline constraints are not satisfied.
+            IncompatibleTechniqueError: If selected techniques violate a scenario restriction.
         """
         if not self._params_resolved:
             self.set_params_from_args(args=self.params)
@@ -1004,6 +1006,19 @@ class Scenario(ABC):
                     f"{type(self).__name__} accepts at most {limit} concrete technique(s); "
                     f"received {[technique.value for technique in self._scenario_techniques]}."
                 )
+        available: list[ScenarioTechnique] = []
+        for technique in self._scenario_techniques:
+            reason = self.get_technique_unavailable_reason(technique)
+            if reason is None:
+                available.append(technique)
+                continue
+            message = f"Technique '{technique.value}' is incompatible with {type(self).__name__}: {reason}"
+            if self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
+                raise IncompatibleTechniqueError(message)
+            logger.warning("Skipping %s", message)
+        if self._scenario_techniques and not available:
+            raise IncompatibleTechniqueError("No compatible selected techniques remain for this scenario.")
+        self._scenario_techniques = available
         self._technique_converters = params.get("technique_converters") or {}
         self._resolved_default_dataset_config = self._resolve_default_dataset_config().with_overrides()
         self._dataset_config = (
@@ -1197,6 +1212,18 @@ class Scenario(ABC):
         if local_factory is not None:
             factories[local_factory.name] = local_factory
         return factories
+
+    def get_technique_unavailable_reason(self, technique: ScenarioTechnique) -> str | None:
+        """
+        Describe a scenario-owned technique restriction without constructing runtime roles.
+
+        Args:
+            technique (ScenarioTechnique): A concrete member of this scenario's catalog.
+
+        Returns:
+            str | None: Why the technique cannot be selected, or None when no restriction is known.
+        """
+        return None
 
     def _check_adversarial_target(self, *, target: PromptTarget) -> list[str]:
         """
@@ -1604,7 +1631,7 @@ class Scenario(ABC):
                 self._apply_persisted_run_plan(stored_plan=stored_plan)
             else:
                 self._apply_persisted_objectives(stored_result=stored_result)
-                reconstructed_plan = self._build_run_plan()
+                reconstructed_plan = self._build_run_plan(include_seed_metadata=False)
                 metadata = dict(stored_result.metadata)
                 metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = reconstructed_plan.model_dump(mode="json", exclude_none=True)
                 (
@@ -1680,13 +1707,28 @@ class Scenario(ABC):
             metadata["seed_group_adaptations"] = adaptations
         return metadata
 
-    def _build_run_plan(self) -> ScenarioRunPlan:
+    def _build_run_plan(self, *, include_seed_metadata: bool = True) -> ScenarioRunPlan:
         """
         Build the normalized persistent plan for the initialized atomic attacks.
+
+        Args:
+            include_seed_metadata: Capture seed metadata for new runs. Legacy reconstruction
+                omits it because the original dataset metadata was not recorded.
 
         Returns:
             ScenarioRunPlan: The versioned run plan.
         """
+        if not self._seed_metadata_snapshots:
+            for atomic_attack in self._atomic_attacks:
+                for seed_group in self._get_planned_seed_groups(atomic_attack=atomic_attack):
+                    snapshots = self._seed_metadata_snapshots.setdefault(
+                        seed_group.logical_id, [] if include_seed_metadata else None
+                    )
+                    if snapshots is not None:
+                        for seed in seed_group.seeds:
+                            snapshot = seed.model_dump(mode="json", exclude={"value"})
+                            if snapshot not in snapshots:
+                                snapshots.append(snapshot)
         seed_groups: dict[str, ScenarioRunPlanSeedGroup] = {}
         atomic_groups: list[ScenarioRunPlanAtomicGroup] = []
         for atomic_attack in self._atomic_attacks:
@@ -1711,6 +1753,7 @@ class Scenario(ABC):
                         id=seed_group_id,
                         objective_sha256=to_sha256(seed_group.objective.value),
                         objective=seed_group.objective.value,
+                        seed_metadata=self._seed_metadata_snapshots[seed_group_id],
                         prompts=[
                             ScenarioRunPlanSeedPrompt(
                                 value=prompt.value,
@@ -1792,6 +1835,7 @@ class Scenario(ABC):
         Raises:
             ValueError: If a planned atomic or seed group cannot be reconstructed.
         """
+        self._seed_metadata_snapshots = {group.id: group.seed_metadata for group in stored_plan.seed_groups}
         current_by_id = {
             self._get_atomic_group_id(atomic_attack=atomic_attack): atomic_attack
             for atomic_attack in self._atomic_attacks

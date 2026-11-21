@@ -595,6 +595,37 @@ async def get_scenario_run_results(scenario_result_id: IdentifierStr) -> Scenari
 
 
 @router.get(
+    "/runs/{scenario_result_id}/artifacts",
+    response_model=ScenarioResult,
+    responses={
+        404: {"model": ProblemDetail, "description": "Run not found"},
+        409: {"model": ProblemDetail, "description": "Run still active"},
+    },
+)
+async def get_scenario_run_artifacts_async(scenario_result_id: IdentifierStr) -> ScenarioResult:
+    """
+    Export all stored attack results and run metadata for a terminal scenario run.
+
+    Args:
+        scenario_result_id: The saved scenario run ID.
+
+    Returns:
+        ScenarioResult: Stored results, including partial results for failed or cancelled runs.
+    """
+    service = get_scenario_run_service()
+    try:
+        result = await service.get_run_results_async(scenario_result_id=scenario_result_id, allow_partial=True)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scenario run '{scenario_result_id}' not found",
+        )
+    return result
+
+
+@router.get(
     "/runs/{scenario_result_id}/paired-outcomes/details",
     response_model=PairedOutcomeDetailPage,
     responses={

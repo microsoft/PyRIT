@@ -3,14 +3,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Accordion, AccordionHeader, AccordionItem, AccordionPanel, Badge, Button,
   Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
-  MessageBar, MessageBarBody, ProgressBar, Spinner, Table, TableBody, TableCell,
+  MessageBar, MessageBarActions, MessageBarBody, ProgressBar, Spinner, Table, TableBody, TableCell,
   TableHeader, TableHeaderCell, TableRow, Text,
 } from '@fluentui/react-components'
-import { ArrowLeftRegular, ArrowClockwiseRegular, ChevronDownRegular, ChevronRightRegular, DismissRegular, PlayRegular, StopRegular } from '@fluentui/react-icons'
+import { ArrowLeftRegular, ArrowClockwiseRegular, ArrowDownloadRegular, ChevronDownRegular, ChevronRightRegular, DismissRegular, PlayRegular, StopRegular } from '@fluentui/react-icons'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 
 import AttackAttemptDetails from '@/components/AttackResults/AttackAttemptDetails'
-import { formatProgressSuccess, objectivePreview } from '@/components/AttackResults/attackAttemptFormatting'
+import { formatProgressSuccess, formatSeedGroupSuccess, objectivePreview } from '@/components/AttackResults/attackAttemptFormatting'
 import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { suiteExecutionRoutePath } from '@/components/ScenarioSuites/suiteRoutes'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
@@ -36,6 +36,7 @@ import {
   scenarioRunRoutePath,
 } from '@/utils/routeParams'
 import { isTerminalRunState } from '@/utils/scenarioRunProgress'
+import { downloadFile } from '@/utils/downloadFile'
 
 import AttackExecutionTable from './AttackExecutionTable'
 import PairedOutcomes from './PairedOutcomes'
@@ -60,6 +61,14 @@ export default function ScenarioRunPage() {
 interface ScenarioRunContentProps {
   readonly scenarioResultId: string
   readonly attackResultId: string | null
+}
+
+interface ArtifactDownloadState {
+  readonly pathname: string
+  readonly request: AbortController
+  readonly pending: boolean
+  readonly filename?: string
+  readonly error?: string
 }
 
 function seedDatasetNames(identities: ScenarioComponentIdentity[]): string {
@@ -102,6 +111,9 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   const [rerunPending, setRerunPending] = useState(false)
   const [rerunError, setRerunError] = useState<string | null>(null)
   const rerunRequest = useRef<AbortController | null>(null)
+  const [downloadState, setDownloadState] = useState<ArtifactDownloadState | null>(null)
+  const download = downloadState?.pathname === location.pathname ? downloadState : null
+  const downloadRequest = useRef<AbortController | null>(null)
   const detailsTrigger = useRef<HTMLElement | null>(null)
   const objectiveTrigger = useRef<HTMLElement | null>(null)
   const overviewTarget = useRef<HTMLElement | null>(null)
@@ -121,7 +133,10 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   useEffect(() => () => {
     rerunRequest.current?.abort()
     rerunRequest.current = null
+    downloadRequest.current?.abort()
+    downloadRequest.current = null
   }, [location.pathname])
+
   const seedObjectives = useMemo(
     () => new Map(state.plan?.seed_groups.map((seed) => [seed.id, seed.objective]) ?? []),
     [state.plan],
@@ -267,6 +282,30 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     }
   }
 
+  async function downloadArtifacts(): Promise<void> {
+    downloadRequest.current?.abort()
+    const controller = new AbortController()
+    downloadRequest.current = controller
+    const requestState = { pathname: location.pathname, request: controller, pending: true }
+    setDownloadState(requestState)
+    try {
+      const artifact = await scenariosApi.getRunArtifacts(scenarioResultId, controller.signal)
+      if (downloadRequest.current !== controller || controller.signal.aborted) return
+      const filename = `copyrit-scenario-${scenarioResultId.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`
+      downloadFile(artifact, filename)
+      setDownloadState({ ...requestState, pending: false, filename })
+    } catch (error: unknown) {
+      if (downloadRequest.current !== controller || controller.signal.aborted) return
+      setDownloadState({ ...requestState, pending: false, error: toApiError(error).detail })
+    } finally {
+      if (downloadRequest.current === controller) {
+        downloadRequest.current = null
+      }
+      setDownloadState((current: ArtifactDownloadState | null) =>
+        current?.request === controller && current.pending ? { ...current, pending: false } : current)
+    }
+  }
+
   async function cancel(): Promise<void> {
     setCancelling(true)
     setCancelError(null)
@@ -329,12 +368,29 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
           </div>
           <div className={styles.headerActions}>
             {active && <Link className={styles.backLink} to="/scanner/queue">View queue</Link>}
+            <Button icon={<ArrowDownloadRegular />} disabled={active || download?.pending === true}
+              title={active ? 'Artifacts are available once the scan completes, fails, or is cancelled.' : undefined}
+              onClick={() => { void downloadArtifacts() }}>{download?.pending ? 'Downloading...' : 'Download artifacts'}</Button>
             <Button icon={<ArrowClockwiseRegular />} disabled={rerunPending} onClick={() => { void rerun() }}>{rerunPending ? 'Loading...' : 'Rerun'}</Button>
             {active ? <Button icon={<StopRegular />} className={styles.touchTarget} onClick={() => { setCancelError(null); setCancelOpen(true) }}>Cancel</Button>
               : (run.status === 'FAILED' || run.status === 'CANCELLED') && <Button appearance="primary" icon={<PlayRegular />}
                 disabled={resume.pendingRunId !== null} onClick={() => { setRerunError(null); resume.requestResume(scenarioResultId) }}>Resume</Button>}
           </div>
         </header>
+        {download?.filename && <MessageBar intent="success" role="status" aria-live="polite" aria-label="Artifact download confirmation">
+          <MessageBarBody>
+            Download started: <Text weight="semibold">{download.filename}</Text>.
+            Check your browser's download location (usually Downloads), or the folder you chose in a Save as dialog.
+            The browser does not expose the exact saved path to this page.
+          </MessageBarBody>
+          <MessageBarActions>
+            <Button appearance="transparent" icon={<DismissRegular />} aria-label="Dismiss download confirmation"
+              onClick={() => { setDownloadState(null) }} />
+          </MessageBarActions>
+        </MessageBar>}
+        {download?.error && <MessageBar intent="error"><MessageBarBody>
+          {download.error}
+        </MessageBarBody></MessageBar>}
         {controlError && <MessageBar intent="error"><MessageBarBody>
           {controlError}
         </MessageBarBody></MessageBar>}
@@ -514,7 +570,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
         <section className={styles.section} aria-labelledby="objectives-heading">
           <Text as="h2" id="objectives-heading" size={500} weight="semibold">Datasets &amp; objectives</Text>
           <div className={styles.tableScroll}><Table size="small" aria-label="Datasets and objectives">
-            <TableHeader><TableRow><TableHeaderCell>Dataset</TableHeaderCell><TableHeaderCell>Objective</TableHeaderCell><TableHeaderCell>Attack success</TableHeaderCell><TableHeaderCell>Completed</TableHeaderCell></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHeaderCell>Dataset</TableHeaderCell><TableHeaderCell>Objective</TableHeaderCell><TableHeaderCell>Attack success rate</TableHeaderCell><TableHeaderCell>Completed</TableHeaderCell></TableRow></TableHeader>
             <TableBody>{summary.seed_groups.map((seed) => {
               const planSeed = planSeeds.get(seed.id)
               return <TableRow key={seed.id}>
@@ -525,7 +581,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
                 }}>
                   {objectivePreview(seed.objective ?? null, seed.id)}
                 </Button></TableCell>
-                <TableCell>{formatProgressSuccess(seed)}</TableCell>
+                <TableCell>{formatSeedGroupSuccess(seed)}</TableCell>
                 <TableCell>{seed.completed}{seed.planned === null ? '' : ` / ${seed.planned}`}</TableCell>
               </TableRow>
             })}</TableBody>

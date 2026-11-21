@@ -13,15 +13,18 @@ import type {
 } from '@/types'
 import { scenarioRunAttackRoutePath, scenarioRunRoutePath } from '@/utils/routeParams'
 import { INITIAL_SCENARIO_RUN_PROGRESS_STATE, type ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
+import { downloadFile } from '@/utils/downloadFile'
 
 import ScenarioRunPage from './ScenarioRunPage'
 
 jest.mock('@/hooks/useScenarioRunProgress', () => ({ useScenarioRunProgress: jest.fn() }))
 jest.mock('@/hooks/useScenarioQueue', () => ({ useScenarioQueue: jest.fn() }))
+jest.mock('@/utils/downloadFile', () => ({ downloadFile: jest.fn() }))
 jest.mock('@/services/api', () => ({ scenariosApi: {
   cancelRun: jest.fn(), resumeRun: jest.fn(), getLaunchConfiguration: jest.fn(), startRun: jest.fn(), getQueue: jest.fn(),
   getRunHierarchy: jest.fn(() => new Promise(() => {})), getRunHierarchyNode: jest.fn(),
   getPairedOutcomes: jest.fn(), getPairedOutcomeDetails: jest.fn(),
+  getRunArtifacts: jest.fn(),
 } }))
 
 const mockUseScenarioQueue = useScenarioQueue as jest.Mock
@@ -131,6 +134,91 @@ beforeEach(() => {
 })
 
 describe('ScenarioRunPage', () => {
+  it.each(['COMPLETED', 'FAILED', 'CANCELLED'] as const)('downloads artifacts to disk for a %s run beside Rerun', async (status) => {
+    const user = userEvent.setup()
+    state = makeState({ run: { ...RUN, status } })
+    const artifact = new Blob([JSON.stringify({ metadata: { expected: 'ALLOW' }, attack_results: {} })], { type: 'application/json' })
+    jest.mocked(scenariosApi.getRunArtifacts).mockResolvedValue(artifact)
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const button = screen.getByRole('button', { name: 'Download artifacts' })
+    expect(button.nextElementSibling).toBe(screen.getByRole('button', { name: 'Rerun' }))
+    await user.click(button)
+    expect(scenariosApi.getRunArtifacts).toHaveBeenCalledWith(RUN_ID, expect.any(AbortSignal))
+    await waitFor(() => expect(downloadFile).toHaveBeenCalledWith(artifact, `copyrit-scenario-${RUN_ID}.json`))
+    const confirmation = screen.getByLabelText('Artifact download confirmation')
+    expect(within(confirmation).getByText(`copyrit-scenario-${RUN_ID}.json`)).toBeInTheDocument()
+    expect(confirmation).toHaveTextContent('Download started:')
+    expect(confirmation).toHaveTextContent("Check your browser's download location")
+    expect(confirmation).toHaveTextContent('The browser does not expose the exact saved path to this page.')
+    expect(scenariosApi.startRun).not.toHaveBeenCalled()
+  })
+
+  it('disables artifacts while the run is active', async () => {
+    const user = userEvent.setup()
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const button = screen.getByRole('button', { name: 'Download artifacts' })
+    expect(button).toBeDisabled()
+    await user.click(button)
+    expect(scenariosApi.getRunArtifacts).not.toHaveBeenCalled()
+  })
+
+  it('reports artifacts errors without downloading and allows retry', async () => {
+    const user = userEvent.setup()
+    state = makeState({ run: { ...RUN, status: 'COMPLETED' } })
+    jest.mocked(scenariosApi.getRunArtifacts).mockRejectedValueOnce(new Error('Artifacts unavailable'))
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await user.click(screen.getByRole('button', { name: 'Download artifacts' }))
+    expect(await screen.findByText('Artifacts unavailable')).toBeInTheDocument()
+    expect(downloadFile).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('Artifact download confirmation')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download artifacts' })).toBeEnabled()
+  })
+
+  it('allows dismissing the artifacts download confirmation', async () => {
+    const user = userEvent.setup()
+    state = makeState({ run: { ...RUN, status: 'COMPLETED' } })
+    jest.mocked(scenariosApi.getRunArtifacts).mockResolvedValue(new Blob(['{}'], { type: 'application/json' }))
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await user.click(screen.getByRole('button', { name: 'Download artifacts' }))
+    expect(await screen.findByLabelText('Artifact download confirmation')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Dismiss download confirmation' }))
+    expect(screen.queryByLabelText('Artifact download confirmation')).not.toBeInTheDocument()
+  })
+
+  it('does not confirm artifacts when the browser cannot start the download', async () => {
+    const user = userEvent.setup()
+    state = makeState({ run: { ...RUN, status: 'COMPLETED' } })
+    jest.mocked(scenariosApi.getRunArtifacts).mockResolvedValue(new Blob(['{}'], { type: 'application/json' }))
+    jest.mocked(downloadFile).mockImplementationOnce(() => { throw new Error('Downloads blocked') })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await user.click(screen.getByRole('button', { name: 'Download artifacts' }))
+    expect(await screen.findByText('Downloads blocked')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Artifact download confirmation')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download artifacts' })).toBeEnabled()
+  })
+
+  it.each(['Leave run', 'Open attempt'])('aborts artifacts and ignores a late download after %s', async (navigation) => {
+    const user = userEvent.setup()
+    state = makeState({ run: { ...RUN, status: 'COMPLETED' } })
+    let resolveArtifact: ((blob: Blob) => void) | undefined
+    let requestSignal: AbortSignal | undefined
+    jest.mocked(scenariosApi.getRunArtifacts).mockImplementation((_id, signal) => new Promise((resolve) => {
+      resolveArtifact = resolve
+      requestSignal = signal
+    }))
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await user.click(screen.getByRole('button', { name: 'Download artifacts' }))
+    expect(screen.getByRole('button', { name: 'Downloading...' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: navigation }))
+    expect(requestSignal?.aborted).toBe(true)
+    const resolve = resolveArtifact
+    if (!resolve) throw new Error('The artifact request did not start.')
+    await act(async () => { resolve(new Blob(['{}'], { type: 'application/json' })) })
+    expect(downloadFile).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('Artifact download confirmation')).not.toBeInTheDocument()
+    if (navigation === 'Open attempt') expect(screen.getByRole('button', { name: 'Download artifacts' })).toBeEnabled()
+  })
+
   it('keeps comparison optional on completed scans and cancels it when collapsed', async () => {
     const user = userEvent.setup()
     state = makeState({
@@ -311,6 +399,30 @@ describe('ScenarioRunPage', () => {
     expect(objectives.getByRole('row', { name: /First objective/ })).toHaveTextContent('100%')
     expect(objectives.getByRole('row', { name: /Second objective/ })).toHaveTextContent('0%')
     expect(screen.queryByRole('heading', { name: 'Paired outcomes' })).not.toBeInTheDocument()
+  })
+
+  it('shows trial ASR for objectives without changing the group attack outcome or completion', () => {
+    state = makeState({
+      summary: {
+        ...SUMMARY,
+        seed_groups: [{
+          ...SUMMARY.seed_groups[0],
+          trial_outcomes: {
+            successes: 3, failures: 2, errors: 0, undetermined: 0,
+            total_results: 5, total_decided: 5, decided_share: 1,
+            success_rate: 0.6, success_rate_decided: 0.6, success_rate_all: 0.6,
+            outcome_shares: { success: 0.6, failure: 0.4, error: 0, undetermined: 0 },
+          },
+        }],
+      },
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const objectives = within(screen.getByRole('table', { name: 'Datasets and objectives' }))
+    const row = within(objectives.getByRole('row', { name: /First objective/ }))
+    expect(row.getByText('60% (3/5 trials)', { exact: true })).toBeInTheDocument()
+    expect(row.getByText('1 / 1', { exact: true })).toBeInTheDocument()
+    const attacks = within(screen.getByRole('table', { name: 'Direct attack results' }))
+    expect(attacks.getByText('True', { exact: true })).toBeInTheDocument()
   })
 
   it('keeps interrupted saved conversations reachable without inventing an outcome row', () => {

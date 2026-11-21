@@ -272,6 +272,7 @@ class ScenarioTechniqueSummary(BaseModel):
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     identifier: ComponentIdentifier | None = None
+    unavailable_reason: str | None = None
 
 
 class ScenarioRunSizeEstimate(BaseModel):

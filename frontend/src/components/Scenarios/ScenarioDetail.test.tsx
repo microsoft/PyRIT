@@ -272,6 +272,77 @@ function renderDetail(
 }
 
 describe('ScenarioDetail', () => {
+  it('uses one primary refusal scorer for CBRN and can return to the scenario default', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      scenario_name: 'airt.cbrn', supports_objective_scorer: true,
+      baseline_policy: 'forbidden', uses_default_adversarial_target: false,
+      supported_parameters: [{ name: 'num_trials', type_name: 'int', required: false, default: 5 }],
+    }))
+    renderDetail('/scanner/launch/airt.cbrn', { scorers: [
+      { scorer_registry_name: 'refusal', identifier: {
+        class_name: 'SelfAskRefusalScorer', hash: 'refusal-hash', scorer_type: 'true_false',
+      } },
+      { scorer_registry_name: 'inverted', identifier: {
+        class_name: 'TrueFalseInverterScorer', hash: 'inverted-hash', scorer_type: 'true_false',
+      } },
+      { scorer_registry_name: 'substring', identifier: {
+        class_name: 'SubStringScorer', hash: 'substring-hash', scorer_type: 'true_false',
+      } },
+      { scorer_registry_name: 'float-only', identifier: {
+        class_name: 'SelfAskLikertScorer', hash: 'float-hash', scorer_type: 'float_scale',
+      } },
+    ] })
+    const picker = await screen.findByRole('combobox', { name: 'Objective scorer' })
+    expect(picker).toHaveValue('')
+    expect(screen.queryByRole('combobox', { name: 'allow_scorer' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'refuse_scorer' })).not.toBeInTheDocument()
+    expect(within(picker).queryByRole('option', { name: /float-only/ })).not.toBeInTheDocument()
+    expect(within(picker).getByRole('option', { name: /refusal - SelfAskRefusalScorer/ })).toBeInTheDocument()
+    await user.selectOptions(picker, 'registered:refusal')
+    const reference = { registry_name: 'refusal', identifier_hash: 'refusal-hash' }
+    await waitFor(() => {
+      expect(mockEstimateRun.mock.calls.at(-1)?.[1].objective_scorer).toEqual(reference)
+    })
+    await user.selectOptions(picker, '')
+    await waitFor(() => {
+      expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('objective_scorer')
+    })
+    await user.selectOptions(picker, 'registered:refusal')
+    await confirmRunPreview(user)
+    expect(mockStartRun.mock.calls[0][0]).toMatchObject({
+      scenario_name: 'airt.cbrn',
+      objective_scorer: reference,
+      scenario_params: { num_trials: 5 },
+    })
+  })
+
+  it('disables scorer-incompatible techniques and excludes them from tag selections', async () => {
+    const user = userEvent.setup()
+    const reason = 'This technique cannot accept the population-specific scoring configuration.'
+    mockGetScenario.mockResolvedValue(makeScenario({
+      all_techniques: ['default_technique', 'crescendo', 'tap'],
+      technique_summaries: [
+        { name: 'default_technique', description: null, tags: ['single_turn'] },
+        { name: 'crescendo', description: null, tags: ['single_turn'] },
+        { name: 'tap', description: null, tags: ['single_turn'], unavailable_reason: reason },
+      ],
+    }))
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    const tap = await screen.findByRole('checkbox', { name: 'tap', exact: true })
+    expect(tap).toBeDisabled()
+    expect(tap).toHaveAccessibleDescription(reason)
+    await user.click(tap)
+    expect(tap).not.toBeChecked()
+    await user.click(screen.getAllByRole('button', { name: 'Select Single-turn techniques' })[0])
+    expect(screen.getByTestId('technique-default_technique')).toBeChecked()
+    expect(screen.getByTestId('technique-crescendo')).toBeChecked()
+    expect(tap).not.toBeChecked()
+    await waitFor(() => {
+      expect(mockEstimateRun.mock.calls.at(-1)?.[1].techniques).toEqual(['default_technique', 'crescendo'])
+    })
+  })
+
   it('keeps the existing component selectors without inline creation or readiness fields', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: true }))

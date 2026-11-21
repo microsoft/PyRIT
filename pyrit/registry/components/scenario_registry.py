@@ -223,6 +223,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
                 description=technique.description,
                 tags=sorted(technique.tags),
                 identifier=technique.identifier,
+                unavailable_reason=instance.get_technique_unavailable_reason(technique),
             )
             for technique in technique_class.get_all_techniques()
         )

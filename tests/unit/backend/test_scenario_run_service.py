@@ -4163,6 +4163,26 @@ class TestScenarioRunServiceGetResults:
         assert result is db_result
         assert result.attack_results["base64_attack"][0].outcome == AttackOutcome.SUCCESS
 
+    @pytest.mark.parametrize("run_state", [ScenarioRunState.FAILED, ScenarioRunState.CANCELLED])
+    async def test_partial_artifacts_do_not_weaken_completed_results_contract_async(
+        self, mock_memory, run_state
+    ) -> None:
+        db_result = _make_db_scenario_result(result_id="partial-run", run_state=run_state)
+        mock_memory.get_scenario_results_async = AsyncMock(return_value=[db_result])
+        service = ScenarioRunService()
+        assert await service.get_run_results_async(scenario_result_id="partial-run", allow_partial=True) is db_result
+        with pytest.raises(ValueError, match="only available for completed runs"):
+            await service.get_run_results_async(scenario_result_id="partial-run")
+
+    @pytest.mark.parametrize(
+        "run_state", [ScenarioRunState.CREATED, ScenarioRunState.QUEUED, ScenarioRunState.IN_PROGRESS]
+    )
+    async def test_artifacts_reject_active_runs_async(self, mock_memory, run_state) -> None:
+        db_result = _make_db_scenario_result(result_id="active-run", run_state=run_state)
+        mock_memory.get_scenario_results_async = AsyncMock(return_value=[db_result])
+        with pytest.raises(ValueError, match="only available for terminal runs"):
+            await ScenarioRunService().get_run_results_async(scenario_result_id="active-run", allow_partial=True)
+
 
 class TestScenarioRunServiceProgressReporting:
     """Tests that in-progress runs expose partial attack counts."""

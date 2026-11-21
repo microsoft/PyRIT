@@ -11,6 +11,7 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 if TYPE_CHECKING:
     from pyrit.executor.attack.component import ConversationManager, ConversationState, PrependedConversationConfig
     from pyrit.executor.attack.compound import (
+        RepeatedAttack,
         SequenceCompletionPolicy,
         SequentialAttack,
         SequentialAttackResult,
@@ -90,6 +91,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PromptSendingAttackParameters": "pyrit.executor.attack.single_turn",
     "RTASystemPromptPaths": "pyrit.executor.attack.multi_turn",
     "RedTeamingAttack": "pyrit.executor.attack.multi_turn",
+    "RepeatedAttack": "pyrit.executor.attack.compound",
     "SimulatedConversationResult": "pyrit.executor.attack.multi_turn",
     "SequenceCompletionPolicy": "pyrit.executor.attack.compound",
     "SequentialAttack": "pyrit.executor.attack.compound",

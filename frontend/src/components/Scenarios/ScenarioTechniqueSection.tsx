@@ -49,7 +49,6 @@ export default function ScenarioTechniqueSection({
   const identityStyles = useRegistryIdentityRowStyles()
   const identityId = useId()
   const techniqueLimitDescriptionId = `${identityId}-technique-limit`
-  const baselineUnavailableId = `${identityId}-baseline-unavailable`
   const [expandedIdentities, setExpandedIdentities] = useState<Set<string>>(new Set())
   const toggleIdentity = (name: string): void => {
     setExpandedIdentities((current: Set<string>) => {
@@ -116,6 +115,7 @@ export default function ScenarioTechniqueSection({
             && selectedTechniques.length >= maxConcreteTechniques
           const expanded = expandedIdentities.has(technique.name)
           const regionId = `${identityId}-${encodeURIComponent(technique.name)}`
+          const unavailableId = `${regionId}-unavailable`
           return (
             <div className={styles.techniqueOption} key={technique.name}>
             {singleTechnique && !technique.isBaseline ? (
@@ -126,6 +126,7 @@ export default function ScenarioTechniqueSection({
                 value={technique.name}
                 checked={selected && !selectionOverLimit}
                 disabled={disabled || technique.disabled}
+                aria-describedby={technique.disabled ? unavailableId : undefined}
                 onChange={() => onTechniqueChange(technique, true)}
                 data-testid={`technique-${technique.name}`}
               />
@@ -133,8 +134,8 @@ export default function ScenarioTechniqueSection({
               className={styles.selectionControl}
               label={technique.name}
               checked={selected}
-              disabled={disabled || technique.disabled || limited}
-              aria-describedby={technique.disabled ? baselineUnavailableId
+              disabled={disabled || (technique.disabled && !selected) || limited}
+              aria-describedby={technique.disabled ? unavailableId
                 : limited ? techniqueLimitDescriptionId : undefined}
               onChange={(_, data) => onTechniqueChange(technique, data.checked === true)}
               data-testid={technique.isBaseline ? 'baseline-checkbox' : `technique-${technique.name}`}
@@ -166,7 +167,7 @@ export default function ScenarioTechniqueSection({
                         appearance="outline"
                         checked={tagSelected}
                         disabled={disabled || tagMembers.length === 0 || (!tagSelected && exceedsLimit)}
-                        aria-describedby={tagMembers.length === 0 ? baselineUnavailableId
+                        aria-describedby={tagMembers.length === 0 ? unavailableId
                           : !tagSelected && exceedsLimit ? techniqueLimitDescriptionId : undefined}
                         onClick={() => onTagChange(tag)}
                         aria-label={`${tagSelected ? 'Clear' : 'Select'} ${techniqueSetName(tag)} techniques`}
@@ -178,8 +179,8 @@ export default function ScenarioTechniqueSection({
                 </div>
               )}
               {technique.disabled && (
-                <Text id={baselineUnavailableId} size={200} className={styles.hint}>
-                  This scenario does not support a baseline comparison.
+                <Text id={unavailableId} size={200} className={styles.hint}>
+                  {technique.unavailable_reason}
                 </Text>
               )}
             </div>

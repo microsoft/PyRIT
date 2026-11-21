@@ -375,6 +375,18 @@ def retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Itera
     return within_attempts + repeated_units
 
 
+def retry_attempt_count(attempts: Sequence[_CountableAttempt]) -> int:
+    """
+    Count rerunnable executions, not the ordered children within an execution.
+
+    Returns:
+        int: Top-level execution count, or the legacy attempt count without child positions.
+    """
+    if any(attempt.attempt_index is not None for attempt in attempts):
+        return sum(attempt.attempt_index is None for attempt in attempts)
+    return len(attempts)
+
+
 def compute_producer_counts(attempts: Iterable[_CountableAttempt]) -> ScenarioProducerCounts:
     """
     Compute role-aware attempt, error, and retry accounting across attempts.
@@ -464,8 +476,11 @@ def count_execution_units(
             counts[completions[-1].outcome] += 1
         execution_attempts = select_execution_attempts(attempts)
         errors += sum(int(attempt.outcome == AttackOutcome.ERROR) for attempt in execution_attempts)
+        retry_attempts = (
+            attempts if any(attempt.attempt_index is not None for attempt in attempts) else execution_attempts
+        )
         retries += retry_pressure(
-            attempts_per_unit=[len(execution_attempts)],
+            attempts_per_unit=[retry_attempt_count(retry_attempts)],
             persisted_retries=[attempt.total_retries for attempt in execution_attempts],
         )
         unit_attempts.extend(attempts)

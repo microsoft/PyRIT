@@ -66,7 +66,12 @@ from pyrit.scenario.scenarios.adaptive import (
 )
 from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
 from unit.async_utils import get_defined_tasks
-from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
+from unit.mocks import (
+    MockPromptTarget,
+    get_mock_target_identifier,
+    make_scenario_result,
+    make_sequential_attack_results,
+)
 
 
 def _make_delta(*, run_id: str, index: int = 0) -> ScenarioAttackResultDelta:
@@ -1092,6 +1097,90 @@ def test_seed_progress_keeps_counts_correct_without_rescanning_all_results(
     assert [seed.id for seed in summary.seed_groups] == ["seed-a", "seed-b", "shared", "unused"]
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("other_technique", [False, True])
+async def test_trial_asr_uses_latest_executions_across_progress_pages_async(
+    *, sqlite_instance: MemoryInterface, other_technique: bool
+) -> None:
+    techniques = ["repeated", "other"] if other_technique else ["repeated"]
+    plan = ScenarioRunPlan(
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id=name,
+                atomic_attack_name=name,
+                display_group=name,
+                technique_eval_hash="eval",
+                seed_group_ids=["seed-fixture"],
+            )
+            for name in techniques
+        ],
+        seed_groups=[ScenarioRunPlanSeedGroup(id="seed-fixture", objective_sha256="", objective="fixture")],
+    )
+    scenario = make_scenario_result(
+        attack_results={},
+        objective_target_identifier=get_mock_target_identifier(),
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")},
+    )
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario])
+    histories = [
+        ("repeated", [AttackOutcome.SUCCESS] * 5),
+        ("repeated", [AttackOutcome.SUCCESS] * 3 + [AttackOutcome.FAILURE] * 2),
+    ]
+    if other_technique:
+        histories.append(("other", [AttackOutcome.SUCCESS] + [AttackOutcome.FAILURE] * 9))
+    rows: list[AttackResult] = []
+    for name, outcomes in histories:
+        parent, children = make_sequential_attack_results(
+            atomic_attack_name=name,
+            envelope_outcome=AttackOutcome.SUCCESS,
+            child_outcomes=outcomes,
+            objective="fixture",
+        )
+        parent.metadata["independent_trials"] = {
+            "num_trials": len(outcomes),
+            "trials": [{"outcome": outcome.value} for outcome in outcomes],
+        }
+        rows.extend([parent, *children])
+    for index, row in enumerate(rows):
+        row.attribution_parent_id = str(scenario.id)
+        row.timestamp = datetime(2025, 1, 1, tzinfo=UTC) + timedelta(seconds=index)
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=rows)
+    service = ScenarioRunService()
+    try:
+        progress = await service.get_run_progress_async(scenario_result_id=str(scenario.id), since=None, limit=1)
+        assert progress is not None
+        assert len(progress.results) == 1
+        assert progress.has_more
+        seed = progress.summary.seed_groups[0]
+        assert seed.completed == seed.succeeded == len(techniques)
+        assert seed.trial_outcomes is not None
+        assert seed.trial_outcomes.successes == (4 if other_technique else 3)
+        assert seed.trial_outcomes.total_results == (15 if other_technique else 5)
+        assert seed.trial_outcomes.success_rate_all == pytest.approx(4 / 15 if other_technique else 0.6)
+        assert progress.results[0].outcome is AttackOutcome.SUCCESS
+        assert all(group.success_percentage == 100 for group in progress.summary.atomic_groups)
+    finally:
+        await service.close_async()
+
+
+@pytest.mark.parametrize("outcome", [AttackOutcome.ERROR, AttackOutcome.UNDETERMINED])
+def test_trial_outcomes_retain_non_decided_trials(outcome: AttackOutcome) -> None:
+    delta = _make_delta(run_id="non-decided-trials")
+    delta.attack_metadata["independent_trials"] = {
+        "num_trials": 3,
+        "trials": [{"outcome": value.value} for value in (AttackOutcome.SUCCESS, AttackOutcome.FAILURE, outcome)],
+    }
+    mapped = ScenarioProgressReadModel._map_progress_delta(
+        delta=delta, plan_lookup=ScenarioPlanLookup.from_plan(plan=None)
+    )
+    assert mapped.trial_outcomes is not None
+    assert mapped.trial_outcomes.total_results == 3
+    assert mapped.trial_outcomes.total_decided == 2
+    assert mapped.trial_outcomes.successes == 1
+    assert mapped.trial_outcomes.errors + mapped.trial_outcomes.undetermined == 1
+
+
 @pytest.mark.parametrize(
     ("active_group_ids", "terminal", "plan_complete", "expected_status", "expected_planned"),
     [
@@ -1516,7 +1605,7 @@ class TestScenarioResultRoles:
         snapshot_dump = _strip(snapshot.summary.model_dump())
         assert legacy_dump == snapshot_dump
         assert snapshot.summary.overall.planned == 2
-        assert snapshot.summary.overall.retries == 2
+        assert snapshot.summary.overall.retries == 0
         assert legacy.summary.overall.retries == 4
 
 

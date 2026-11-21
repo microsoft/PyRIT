@@ -733,6 +733,14 @@ export const scenariosApi = {
     return response.data
   },
 
+  getRunArtifacts: async (scenarioResultId: string, signal?: AbortSignal): Promise<Blob> => {
+    const response = await apiClient.get<Blob>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/artifacts`,
+      { responseType: 'blob', signal },
+    )
+    return response.data
+  },
+
   /** Lists scenario runs by creation time by default or by activity when requested. */
   listRuns: async (params?: {
     limit?: number

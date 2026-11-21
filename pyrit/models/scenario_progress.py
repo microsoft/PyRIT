@@ -52,6 +52,7 @@ class ScenarioRunPlanSeedGroup(BaseModel):
     objective_sha256: str
     objective: str
     prompts: list["ScenarioRunPlanSeedPrompt"] = Field(default_factory=list)
+    seed_metadata: list[dict[str, Any]] | None = None
 
 
 class ScenarioRunPlanSeedPrompt(BaseModel):
@@ -195,6 +196,8 @@ class ScenarioProgressResult(BaseModel):
     related_conversation_ids: list[str] = Field(default_factory=list)
     #: 1-based position of this result among its orchestration parent's children.
     attempt_index: int | None = Field(default=None, ge=1)
+    #: Independent trial outcomes recorded by this result, without its orchestration envelope.
+    trial_outcomes: OutcomeStatistics | None = None
 
 
 class ScenarioProgressCounts(BaseModel):
@@ -313,6 +316,8 @@ class ScenarioSeedGroupProgress(ScenarioProgressCounts):
 
     id: str
     objective: str | None = None
+    #: Latest executions expanded into independent trials, separate from logical-unit counts.
+    trial_outcomes: OutcomeStatistics | None = None
 
 
 class ScenarioAtomicGroupProgress(ScenarioProgressCounts):

@@ -1,6 +1,38 @@
-import { objectivePreview } from './attackAttemptFormatting'
+import type { OutcomeStatistics, ScenarioSeedGroupProgress } from '@/types'
+
+import { formatSeedGroupSuccess, objectivePreview } from './attackAttemptFormatting'
 
 const LONE_SURROGATE_REGEX = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
+describe('formatSeedGroupSuccess', () => {
+  const seed: ScenarioSeedGroupProgress = {
+    id: 'fixture', completed: 1, planned: 1, succeeded: 1, success_percentage: 100, errors: 0, retries: 0,
+  }
+  const trials: OutcomeStatistics = {
+    successes: 3, failures: 2, errors: 0, undetermined: 0,
+    total_results: 5, total_decided: 5, decided_share: 1,
+    success_rate: 0.6, success_rate_decided: 0.6, success_rate_all: 0.6,
+    outcome_shares: { success: 0.6, failure: 0.4, error: 0, undetermined: 0 },
+  }
+
+  it('uses the trial fraction instead of the successful parent outcome', () => {
+    expect(formatSeedGroupSuccess({ ...seed, trial_outcomes: trials })).toBe('60% (3/5 trials)')
+  })
+
+  it.each(['errors', 'undetermined'] as const)('does not present partial trial ASR with %s', (outcome: 'errors' | 'undetermined') => {
+    expect(formatSeedGroupSuccess({
+      ...seed, trial_outcomes: {
+        ...trials, [outcome]: 1, failures: 1, total_decided: 4, decided_share: 0.8,
+        success_rate: 0.75, success_rate_decided: 0.75,
+        outcome_shares: { success: 0.6, failure: 0.2, error: 0, undetermined: 0, [outcome]: 0.2 },
+      },
+    })).toBe('Undetermined')
+  })
+
+  it('preserves ordinary and older result formatting without independent trials', () => {
+    expect(formatSeedGroupSuccess(seed)).toBe('100%')
+  })
+})
 
 describe('objectivePreview', () => {
   it('truncates supplementary Unicode without splitting surrogate pairs (issue #3870 reproduction)', () => {

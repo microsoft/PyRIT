@@ -94,6 +94,53 @@ def _plan(*groups: ScenarioRunPlanAtomicGroup, seeds: list[ScenarioRunPlanSeedGr
 
 
 _HISTORIES = {
+    "independent_trials_with_real_retries_and_resume": _History(
+        plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
+        attempts=[
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.FAILURE,
+                seed_group_id="a",
+                result_role=AttackResultRole.TARGET_FACING,
+                attempt_index=1,
+                total_retries=2,
+            ),
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.FAILURE,
+                seed_group_id="a",
+                result_role=AttackResultRole.TARGET_FACING,
+                attempt_index=2,
+            ),
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.FAILURE,
+                seed_group_id="a",
+                result_role=AttackResultRole.ORCHESTRATION,
+                child_indices=(0, 1),
+            ),
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.SUCCESS,
+                seed_group_id="a",
+                result_role=AttackResultRole.TARGET_FACING,
+                attempt_index=1,
+                total_retries=1,
+            ),
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.SUCCESS,
+                seed_group_id="a",
+                result_role=AttackResultRole.ORCHESTRATION,
+                child_indices=(3,),
+            ),
+        ],
+    ),
     "retry_and_resume_recovered": _History(
         plan=_plan(
             _group(name="attack", eval_hash="eval", seed_ids=["a", "b"]), seeds=[_seed("a", "A"), _seed("b", "B")]
@@ -367,6 +414,7 @@ _HISTORIES = {
 
 # Effective-unit success percentages each history must report everywhere (None: no completed unit).
 _EXPECTED_OVERALL = {
+    "independent_trials_with_real_retries_and_resume": 100,
     "compound_failure": 0,
     "compound_late_error": 0,
     "compound_legacy_failure": 0,
@@ -395,11 +443,12 @@ _EXPECTED_OVERALL = {
 
 # Execution attempts, retries, and errors for histories with linked envelopes or children.
 _EXPECTED_ACCOUNTING = {
-    "compound_failure": (3, 2, 0),
-    "compound_late_error": (2, 1, 1),
+    "independent_trials_with_real_retries_and_resume": (3, 4, 0),
+    "compound_failure": (3, 0, 0),
+    "compound_late_error": (2, 0, 1),
     "compound_legacy_failure": (3, 2, 0),
     "compound_legacy_late_error": (2, 1, 1),
-    "target_facing_parent_with_child_links": (2, 1, 0),
+    "target_facing_parent_with_child_links": (2, 0, 0),
 }
 
 
@@ -494,6 +543,7 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
     assert detail.completed_attacks == sdk.overall.completed == progress.summary.overall.completed
     assert list_item.completed_attacks == sdk.overall.completed
     assert list_item.total_retries == detail.total_retries == sdk.overall.retries
+    assert progress.summary.overall.retries == sdk.overall.retries
     assert progress.summary.overall.succeeded == sdk.overall.succeeded
     assert progress.summary.overall.errors == sdk.overall.errors
     if history_name in _EXPECTED_ACCOUNTING:
@@ -540,6 +590,14 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
         assert progress_groups == sdk_groups
         for group in progress.summary.display_groups:
             assert group.outcomes == sdk.display_groups[group.display_group].outcomes
+            assert group.retries == sdk.display_groups[group.display_group].retries
+
+    aggregates = await sqlite_instance.get_scenario_history_aggregates_async(
+        scenario_result_ids=[scenario_result_id],
+        plan_scenario_ids=[scenario_result_id] if history.plan is not None else [],
+    )
+    if history_name in _EXPECTED_ACCOUNTING:
+        assert aggregates[scenario_result_id].total_retries == sdk.overall.retries
 
 
 async def test_child_without_envelope_cannot_complete_unit_on_any_surface_async(sqlite_instance) -> None:

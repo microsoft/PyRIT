@@ -10,12 +10,14 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.scenario.scenarios._dynamic_techniques import (
+        CBRNTechnique,
         CyberTechnique,
         JailbreakTechnique,
         LeakageTechnique,
         MultilingualTechnique,
         RapidResponseTechnique,
     )
+    from pyrit.scenario.scenarios.airt.cbrn import CBRN
     from pyrit.scenario.scenarios.airt.cyber import Cyber
     from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
     from pyrit.scenario.scenarios.airt.leakage import Leakage
@@ -25,6 +27,8 @@ if TYPE_CHECKING:
     from pyrit.scenario.scenarios.airt.scam import Scam, ScamTechnique
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "CBRN": "pyrit.scenario.scenarios.airt.cbrn",
+    "CBRNTechnique": "pyrit.scenario.scenarios._dynamic_techniques",
     "Cyber": "pyrit.scenario.scenarios.airt.cyber",
     "CyberTechnique": "pyrit.scenario.scenarios._dynamic_techniques",
     "Jailbreak": "pyrit.scenario.scenarios.airt.jailbreak",

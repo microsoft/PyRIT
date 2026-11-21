@@ -39,7 +39,6 @@ export default function ScenarioTechniqueSelector({
 }: ScenarioTechniqueSelectorProps) {
   const styles = useScenarioTechniqueSelectorStyles()
   const titleId = useId()
-  const baselineUnavailableId = `${titleId}-baseline-unavailable`
 
   const selectableTechniques = useMemo<SelectableTechnique[]>(
     () => buildSelectableTechniques(techniqueOptions, isBaselineForbidden),
@@ -114,14 +113,15 @@ export default function ScenarioTechniqueSelector({
       <div className={styles.techniqueList} role="group" aria-label="Techniques">
         {selectableTechniques.map((technique) => {
           const selected = isTechniqueSelected(technique)
+          const unavailableId = `${titleId}-${encodeURIComponent(technique.name)}-unavailable`
           return (
             <div className={styles.techniqueOption} key={technique.name}>
               <Checkbox
                 className={styles.selectionControl}
                 label={technique.name}
                 checked={selected}
-                disabled={disabled || technique.disabled}
-                aria-describedby={technique.disabled ? baselineUnavailableId : undefined}
+                disabled={disabled || (technique.disabled && !selected)}
+                aria-describedby={technique.disabled ? unavailableId : undefined}
                 onChange={(_, data) => handleTechniqueChange(technique, data.checked === true)}
                 data-testid={technique.isBaseline ? 'baseline-checkbox' : `technique-${technique.name}`}
               />
@@ -130,8 +130,8 @@ export default function ScenarioTechniqueSelector({
                   <Text size={200} className={styles.hint}>{technique.description}</Text>
                 )}
                 {technique.disabled && (
-                  <Text id={baselineUnavailableId} size={200} className={styles.hint}>
-                    This scenario does not support a baseline comparison.
+                  <Text id={unavailableId} size={200} className={styles.hint}>
+                    {technique.unavailable_reason}
                   </Text>
                 )}
               </div>

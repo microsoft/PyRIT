@@ -86,6 +86,9 @@ class _MetadataScenario:
         """Return the datasets a default run loads."""
         return ["sample"]
 
+    def get_technique_unavailable_reason(self, technique: ScenarioTechnique) -> str | None:
+        return None
+
 
 class _MarkdownMetadataScenario(_MetadataScenario):
     """
@@ -187,12 +190,14 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
         "description": "Runs the first attack.",
         "tags": ["default"],
         "identifier": None,
+        "unavailable_reason": None,
     }
     assert metadata.technique_summaries[1].model_dump() == {
         "name": "two",
         "description": None,
         "tags": ["default"],
         "identifier": None,
+        "unavailable_reason": None,
     }
     assert dict(metadata.aggregate_technique_expansions) == {
         "all": ("one", "two"),

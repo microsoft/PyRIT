@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from pyrit.scenario.core import ScenarioTechnique
 
     AdversarialBenchmarkTechnique: type[ScenarioTechnique]
+    CBRNTechnique: type[ScenarioTechnique]
     CyberTechnique: type[ScenarioTechnique]
     DoctorTechnique: type[ScenarioTechnique]
     ExecuteTechnique: type[ScenarioTechnique]
@@ -23,6 +24,7 @@ _REGISTRY_TECHNIQUE_BUILDERS = {
         "pyrit.scenario.scenarios.benchmark.adversarial",
         "_build_benchmark_technique",
     ),
+    "CBRNTechnique": ("pyrit.scenario.scenarios.airt.cbrn", "_build_cbrn_technique"),
     "CyberTechnique": ("pyrit.scenario.scenarios.airt.cyber", "_build_cyber_technique"),
     "ExecuteTechnique": ("pyrit.scenario.scenarios.technique.execute", "_build_execute_technique"),
     "LeakageTechnique": ("pyrit.scenario.scenarios.airt.leakage", "_build_leakage_technique"),

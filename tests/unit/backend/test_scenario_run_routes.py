@@ -614,6 +614,54 @@ class TestCancelScenarioRunRoute:
         assert "Cannot cancel" in response.json()["detail"]
 
 
+class TestGetScenarioRunArtifactsRoute:
+    @pytest.mark.parametrize(
+        "run_state", [ScenarioRunState.COMPLETED, ScenarioRunState.FAILED, ScenarioRunState.CANCELLED]
+    )
+    def test_artifacts_include_saved_metadata_and_all_result_records(self, client: TestClient, run_state) -> None:
+        trials = [
+            AttackResult(conversation_id=f"trial-{index}", objective="test objective", outcome=outcome)
+            for index, outcome in enumerate([AttackOutcome.SUCCESS, AttackOutcome.FAILURE])
+        ]
+        result = make_scenario_result(
+            scenario_run_state=run_state,
+            attack_results={"test attack": trials},
+            metadata={
+                "run_plan": {
+                    "seed_groups": [
+                        {
+                            "id": "test-group",
+                            "seed_metadata": [
+                                {"dataset_name": "test", "metadata": {"expected": "ALLOW", "custom": 42}}
+                            ],
+                        }
+                    ]
+                }
+            },
+        )
+        service = MagicMock(get_run_results_async=AsyncMock(return_value=result))
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service", return_value=service):
+            response = client.get("/api/scenarios/runs/test-run/artifacts")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["metadata"] == result.metadata
+        assert len(data["attack_results"]["test attack"]) == 2
+        assert data["scenario_run_state"] == run_state.value
+        service.get_run_results_async.assert_awaited_once_with(scenario_result_id="test-run", allow_partial=True)
+
+    @pytest.mark.parametrize("missing", [True, False])
+    def test_artifacts_report_missing_or_active_runs(self, client: TestClient, missing: bool) -> None:
+        service = MagicMock(
+            get_run_results_async=AsyncMock(
+                return_value=None,
+                side_effect=None if missing else ValueError("Artifacts are only available for terminal runs."),
+            )
+        )
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service", return_value=service):
+            response = client.get("/api/scenarios/runs/test-run/artifacts")
+        assert response.status_code == (404 if missing else 409)
+
+
 class TestGetScenarioRunResultsRoute:
     """Tests for GET /api/scenarios/runs/{id}/results."""
 

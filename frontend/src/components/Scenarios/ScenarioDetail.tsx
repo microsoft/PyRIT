@@ -689,11 +689,12 @@ function ScenarioLaunchForm({
         ...BASELINE_TECHNIQUE,
         isBaseline: true,
         disabled: isBaselineForbidden,
+        unavailable_reason: isBaselineForbidden ? 'This scenario does not support a baseline comparison.' : null,
       }] : []),
       ...(supportsTechniques ? techniqueOptions.map((technique) => ({
         ...technique,
         isBaseline: false,
-        disabled: false,
+        disabled: Boolean(technique.unavailable_reason),
       })) : []),
     ],
     [isBaselineForbidden, supportsBaseline, supportsTechniques, techniqueOptions],
@@ -740,7 +741,11 @@ function ScenarioLaunchForm({
 
   const techniqueSelectionOverLimit = supportsTechniques && scenario.max_concrete_techniques != null
     && selectedTechniques.length > scenario.max_concrete_techniques
-  const techniqueSelectionError = supportsTechniques && selectedTechniques.length === 0
+  const hasIncompatibleSelection = selectedTechniques.some((name) =>
+    techniqueOptions.some((technique) => technique.name === name && technique.unavailable_reason))
+  const techniqueSelectionError = hasIncompatibleSelection
+    ? 'Clear incompatible techniques before launching.'
+    : supportsTechniques && selectedTechniques.length === 0
     ? 'Select at least one attack technique.'
     : techniqueSelectionOverLimit
     ? `Select at most ${scenario.max_concrete_techniques} concrete technique(s).`
@@ -1061,7 +1066,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || Boolean(scorerError) || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan

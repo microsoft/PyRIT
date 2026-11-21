@@ -451,6 +451,27 @@ offer a bounded restart. Copy/branch, manual continuation, export and assessment
 stay disabled until the selected transcript is complete; legacy active/manual
 read behavior is unchanged.
 
+### Scenario result artifacts
+
+`GET /api/scenarios/runs/{scenario_result_id}/artifacts` returns the selected
+run as JSON: its configuration, labels, run plan, and stored attack and
+independent-trial results. Completed, failed, and cancelled runs can be exported;
+active runs return 409. The existing `/results` endpoint remains completed-only.
+
+In `/scanner/history`, **Download artifacts** (left of **Rerun**) starts the
+download and shows a dismissible filename confirmation. The browser controls the
+destination; the page cannot report the final disk path or confirm file-write
+completion.
+
+New runs snapshot selected seeds' dataset fields under
+`metadata.run_plan.seed_groups[].seed_metadata[]`: seed IDs, dataset names,
+sources, attribution, harm categories, and custom metadata. Seed values remain
+in the plan's objectives and prompts. Resume preserves the original snapshots;
+older runs are not backfilled.
+
+The export includes saved conversation IDs and trial references, not transcript
+bodies, media files, or every intermediate scorer judgment.
+
 ### Scenario result hierarchy
 
 These read-only APIs provide the backend foundation for compound-attack browsing.
@@ -461,6 +482,11 @@ Completion and success count logical execution units. The execution count uses
 the backend's raw producer attempt counts; neither is inferred from rendered
 rows. Missing or duplicate child references remain visible as saved positions,
 not additional results.
+For independent-trial attacks, "Datasets & objectives" instead shows trial ASR
+with its successful/total trial counts, using each execution unit's latest saved
+result. Counts are summed across techniques, not averaged as percentages.
+Errored or undetermined trials leave this trial ASR undetermined. Logical group
+outcomes and completion counts are unchanged.
 Available flat execution rows remain usable while relationships load or if the
 hierarchy request fails, with an explicit loading/error notice.
 

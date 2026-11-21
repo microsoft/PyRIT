@@ -28,9 +28,9 @@ export default function ChatScorerPicker({
 }: ChatScorerPickerProps) {
   const styles = useChatScorerPickerStyles()
   const selectedScorer = findRegisteredScorer(value ?? null, scorers, inherited)
-  const available = !value || selectedScorer !== undefined
   const eligibleScorers = scorers.filter((scorer: ScorerInstance) => usage === 'scenario'
     ? scorer.identifier.scorer_type === 'true_false' : isEligibleChatScorer(scorer))
+  const available = !value || (selectedScorer !== undefined && eligibleScorers.includes(selectedScorer))
   const selected = value === undefined && onUseLastUsed ? 'last-used'
     : selectedScorer && eligibleScorers.includes(selectedScorer)
     ? `registered:${selectedScorer.scorer_registry_name}` : value ? 'unavailable' : ''

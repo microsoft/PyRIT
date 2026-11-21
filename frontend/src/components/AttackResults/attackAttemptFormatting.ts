@@ -1,4 +1,4 @@
-import type { ScenarioProgressCounts, ScenarioProgressResult } from '@/types'
+import type { ScenarioProgressCounts, ScenarioProgressResult, ScenarioSeedGroupProgress } from '@/types'
 import { formatAnalyticsPercent } from '@/utils/attackAnalytics'
 
 const OBJECTIVE_PREVIEW_LENGTH = 96
@@ -9,6 +9,13 @@ export function formatProgressSuccess(counts: ScenarioProgressCounts): string {
       : formatAnalyticsPercent(counts.outcomes.success_rate_decided)
   }
   return counts.success_percentage === null ? 'Undetermined' : `${counts.success_percentage}%`
+}
+
+export function formatSeedGroupSuccess(seed: ScenarioSeedGroupProgress): string {
+  const trials = seed.trial_outcomes
+  if (!trials) return formatProgressSuccess(seed)
+  if (trials.total_results === 0 || trials.total_decided !== trials.total_results) return 'Undetermined'
+  return `${formatAnalyticsPercent(trials.success_rate_all)} (${trials.successes}/${trials.total_results} trials)`
 }
 
 /**

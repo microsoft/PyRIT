@@ -1636,6 +1636,7 @@ export interface ScenarioTechniqueSummary {
   description: string | null
   tags: string[]
   identifier?: ComponentIdentifier | null
+  unavailable_reason?: string | null
 }
 
 export interface ListRegisteredScenariosResponse {
@@ -2186,6 +2187,7 @@ export interface ScenarioProgressResult {
   score?: ScenarioProgressScore | null
   seed_identifiers?: ScenarioComponentIdentity[]
   related_conversation_ids?: string[]
+  trial_outcomes?: OutcomeStatistics | null
 }
 
 export interface ScenarioRunPlanSeedGroup {
@@ -2193,6 +2195,7 @@ export interface ScenarioRunPlanSeedGroup {
   objective_sha256: string
   objective: string
   prompts: ScenarioRunPlanSeedPrompt[]
+  seed_metadata?: Array<Record<string, unknown>> | null
 }
 
 export interface ScenarioRunPlanSeedPrompt {
@@ -2326,6 +2329,8 @@ export interface ScenarioDisplayGroupProgress extends ScenarioProgressCounts {
 export interface ScenarioSeedGroupProgress extends ScenarioProgressCounts {
   id: string
   objective?: string | null
+  /** Latest executions expanded into independent trials, not logical parent outcomes. */
+  trial_outcomes?: OutcomeStatistics | null
 }
 
 export interface ScenarioAtomicGroupProgress extends ScenarioProgressCounts {

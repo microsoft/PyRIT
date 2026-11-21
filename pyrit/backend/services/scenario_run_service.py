@@ -32,6 +32,7 @@ from pyrit.analytics.scenario_statistics import (
     ScenarioAttempt,
     ScenarioExecutionUnit,
     resolve_execution_unit,
+    retry_attempt_count,
     select_execution_attack_result_ids,
 )
 from pyrit.backend.models import (
@@ -2272,7 +2273,7 @@ class ScenarioRunService:
                 aggregates[run_id].raw_total_retries
                 if is_truncated
                 else ScenarioProgressReadModel.total_retry_pressure(
-                    attempts_per_unit=(len(a) for a in attempts_by_unit.values()),
+                    attempts_per_unit=(retry_attempt_count(a) for a in attempts_by_unit.values()),
                     persisted_retries=(d.total_retries for d in all_summaries),
                 )
             )
@@ -3295,12 +3296,15 @@ class ScenarioRunService:
             next_children_cursor=next_children_cursor,
         )
 
-    async def get_run_results_async(self, *, scenario_result_id: str) -> ScenarioResult | None:
+    async def get_run_results_async(
+        self, *, scenario_result_id: str, allow_partial: bool = False
+    ) -> ScenarioResult | None:
         """
         Get the ScenarioResult for a completed scenario run.
 
         Args:
             scenario_result_id: The scenario result ID.
+            allow_partial: Also allow the saved results of failed or cancelled runs.
 
         Returns:
             ScenarioResult if the run is completed and results exist, None if not found.
@@ -3315,7 +3319,15 @@ class ScenarioRunService:
         scenario_result = results[0]
         run_response = await self._build_response_from_db_async(scenario_result=scenario_result)
 
-        if run_response.status != ScenarioRunState.COMPLETED:
+        if allow_partial and run_response.status not in (
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.FAILED,
+            ScenarioRunState.CANCELLED,
+        ):
+            raise ValueError(
+                f"Artifacts are only available for terminal runs. Current status: '{run_response.status}'."
+            )
+        if not allow_partial and run_response.status != ScenarioRunState.COMPLETED:
             raise ValueError(f"Results are only available for completed runs. Current status: '{run_response.status}'.")
 
         return scenario_result
