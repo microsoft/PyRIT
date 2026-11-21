@@ -41,21 +41,19 @@ async def test_print_schema_raises_when_engine_none_async() -> None:
         await obj.print_schema_async()
 
 
-def test_print_schema_lists_every_table_and_column(
+def test_print_schema_lists_id_for_prompt_memory_entry(
     sqlite_instance: MemoryInterface, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # SQLiteMemory overrides the schema printer, so exercise the inherited implementation
-    # (used by AzureSQLMemory) against a real engine.
-    from pyrit.memory import AzureSQLMemory
-
-    obj = AzureSQLMemory.__new__(AzureSQLMemory)
-    obj.engine = sqlite_instance.engine
-
-    obj._print_schema()
+    # Exercise the base implementation, not SQLiteMemory's override.
+    MemoryInterface._print_schema(sqlite_instance)
 
     output = capsys.readouterr().out
-    assert f"Schema for {PromptMemoryEntry.__tablename__}:" in output
-    assert "  Column id (" in output
+    heading = f"Schema for {PromptMemoryEntry.__tablename__}:\n"
+    _, found, following = output.partition(heading)
+    assert found, f"Missing schema heading: {heading.strip()}"
+
+    table_output = following.partition("\nSchema for ")[0]
+    assert "  Column id (" in table_output
 
 
 async def test_get_all_embeddings_delegates_to_query(sqlite_instance: MemoryInterface):
