@@ -301,14 +301,15 @@ unresolved-attribute = "ignore"
 # generics (mostly `dict` and the attack context/strategy classes) across ~70 files.
 missing-type-argument = "ignore"
 # Tests read fixtures through `request.getfixturevalue(...)` and other Any-typed helpers into
-# annotated locals (32 findings). #4402 covers pyrit/ only, so the rule stays off for tests.
+# annotated locals. #4402 covers pyrit/ only, so the rule stays off for tests.
 unsound-assignment = "ignore"
 
 # SQLAlchemy 2.0 declarative models are written as `col: Mapped[T] = mapped_column(...)`
-# and `rel: Mapped[T] = relationship(...)`. Both calls are typed as returning Any-like
-# values, so unsound-assignment flags every column and relationship (196 findings with
-# one root cause). This is the documented idiom, not an unchecked boundary, and the
-# migrations depend on this file, so the rule stays off here permanently.
+# and `rel: Mapped[T] = relationship(...)`. Those calls return `MappedColumn[Any]` and
+# `_RelationshipDeclared[Any]`, so unsound-assignment flags every column and relationship.
+# This is the documented idiom, not an unchecked boundary, and the migrations depend on
+# this file, so the rule stays off here permanently. The override is file-wide: other
+# assignments in this file are not checked by the rule either.
 [[tool.ty.overrides]]
 include = ["pyrit/memory/memory_models.py"]
 [tool.ty.overrides.rules]
@@ -326,6 +327,7 @@ include = [
     "pyrit/backend/routes/version.py",
     "pyrit/backend/services/attack_service.py",
     "pyrit/backend/services/finding_export.py",
+    "pyrit/backend/services/prompt_generation_service.py",
     "pyrit/backend/services/scenario_service.py",
     "pyrit/cli/api_client.py",
     "pyrit/cli/pyrit_scan.py",
