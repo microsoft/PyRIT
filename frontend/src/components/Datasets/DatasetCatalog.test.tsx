@@ -577,6 +577,26 @@ describe('DatasetCatalog', () => {
     expect(screen.getByRole('link', { name: '(unnamed)' })).toBeInTheDocument()
   })
 
+  it('filters to generated datasets from the origin control', async () => {
+    const user = userEvent.setup()
+    mockCatalog([
+      makeDataset({ name: 'support_policy', selection_key: 'dataset:named:support_policy', origins: ['generated'] }),
+      makeDataset({ name: 'harmbench', selection_key: 'dataset:named:harmbench', origins: ['remote'] }),
+    ])
+    render(<Harness initialPath="/datasets" />)
+    await screen.findByRole('link', { name: 'support_policy' })
+
+    await user.click(screen.getByTestId('dataset-origin-filter'))
+    expect(await screen.findByRole('menuitemcheckbox', { name: 'Remote provider' })).toBeInTheDocument()
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Generated' }))
+
+    expect(currentUrl().searchParams.getAll('origin')).toEqual(['generated'])
+    expect(screen.getByRole('link', { name: 'support_policy' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'harmbench' })).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(screen.getByTestId('dataset-origin-filter')).toHaveValue('Origins: Generated')
+  })
+
   it('reaches search, clear, and the dataset link from the keyboard', async () => {
     const user = userEvent.setup()
     render(<Harness initialPath="/datasets" />)

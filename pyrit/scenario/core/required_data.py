@@ -155,14 +155,31 @@ class ScenarioRequiredData:
             configurations=configurations, fetch=fetch, validate_assembly=validate_assembly
         )
 
-    async def load_async(self) -> dict[str, list[Seed[Any]]]:
+    async def load_async(self, *, names: Sequence[str] | None = None) -> dict[str, list[Seed[Any]]]:
         """
         Read the required datasets from memory without fetching.
 
+        Args:
+            names (Sequence[str] | None): Read only these required datasets. Resume uses this to
+                restore state from the datasets its stored groups don't carry. The validators
+                check the full required data, so they run only when every dataset is read.
+
         Returns:
             dict[str, list[Seed]]: Seeds keyed by dataset name, in declaration order.
+
+        Raises:
+            DatasetConstraintError: If a name is not a required dataset.
         """
-        return await self._configuration.read_async()
+        if names is None:
+            return await self._configuration.read_async()
+        unknown = [name for name in names if name not in self.dataset_names]
+        if unknown:
+            raise DatasetConstraintError(f"Not required datasets: {unknown}.")
+        return {
+            name: await self._configuration._collect_seeds_for_dataset_async(dataset_name=name)
+            for name in self.dataset_names
+            if name in names
+        }
 
     def apply_overrides(
         self,
