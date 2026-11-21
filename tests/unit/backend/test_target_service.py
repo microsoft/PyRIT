@@ -151,6 +151,17 @@ class TestListTargets:
         assert second_page.items[0].target_registry_name != first_page.items[0].target_registry_name
         assert second_page.pagination.has_more is True
 
+    async def test_list_targets_rejects_a_stale_cursor(self) -> None:
+        """A cursor naming an unregistered target must not restart the listing."""
+        service = TargetService()
+
+        for i in range(5):
+            mock_target = _mock_prompt_target()
+            service._registry.instances.register(mock_target, name=f"target-{i}")
+
+        with pytest.raises(ValueError, match="not valid for the target registry"):
+            await service.list_targets_async(limit=2, cursor="target-gone")
+
     async def test_list_targets_last_page_has_no_more(self) -> None:
         """Test that the last page has has_more=False and no next_cursor."""
         service = TargetService()
