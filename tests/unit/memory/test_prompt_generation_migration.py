@@ -48,16 +48,16 @@ def test_prompt_generation_migration_and_guarded_downgrade() -> None:
             command.upgrade(config, PREVIOUS)
             before = set(sa.inspect(connection).get_table_names())
             command.upgrade(config, REVISION)
-            command.upgrade(config, "head")
             assert set(sa.inspect(connection).get_table_names()) == before | {"PromptGenerationEntries"}
+            # Downgrade from this revision, not head: a sibling migration branch merged at head stays applied.
+            command.downgrade(config, PREVIOUS)
+            assert set(sa.inspect(connection).get_table_names()) == before
+            command.upgrade(config, "head")
             indexes = {index["name"] for index in sa.inspect(connection).get_indexes("PromptGenerationEntries")}
             assert indexes == {
                 "ix_PromptGenerationEntries_created_at_id",
                 "ix_PromptGenerationEntries_dataset_name",
             }
-            command.downgrade(config, PREVIOUS)
-            assert set(sa.inspect(connection).get_table_names()) == before
-            command.upgrade(config, "head")
         check_schema_migrations(engine=engine)
         with engine.begin() as connection:
             connection.execute(
