@@ -154,7 +154,8 @@ export function conversationToMarkdown(
   ]
 
   for (const message of exported) {
-    lines.push('', `## ${ROLE_LABELS[message.role]} — ${inlineText(message.timestamp)}`, '', fencedBlock(message.content))
+    lines.push('', `## ${ROLE_LABELS[message.role]} — ${inlineText(message.timestamp)}`)
+    appendMarkdownBody(lines, message)
 
     if (message.originalContent != null && message.originalContent !== message.content) {
       lines.push('', '**Original (before conversion):**', '', fencedBlock(message.originalContent))
@@ -167,7 +168,6 @@ export function conversationToMarkdown(
       const description = message.error.description ? `: ${inlineText(message.error.description)}` : ''
       lines.push('', `**Error (${inlineText(message.error.type)})**${description}`)
     }
-    appendAttachmentList(lines, 'Attachments:', message.attachments)
   }
 
   return `${lines.join('\n')}\n`
@@ -328,6 +328,10 @@ function attachmentForExport(attachment: MessageAttachment): MessageAttachment {
   return next
 }
 
+function formatAttachmentItem(attachment: MessageAttachment): string {
+  return `- ${inlineText(attachment.type)}: ${inlineText(attachment.name)} (${inlineText(attachment.mimeType)})`
+}
+
 function appendAttachmentList(
   lines: string[],
   heading: string,
@@ -338,8 +342,68 @@ function appendAttachmentList(
   }
   lines.push('', `**${heading}**`, '')
   for (const attachment of attachments) {
-    lines.push(`- ${inlineText(attachment.type)}: ${inlineText(attachment.name)} (${inlineText(attachment.mimeType)})`)
+    lines.push(formatAttachmentItem(attachment))
   }
+}
+
+/**
+ * Render message body content into Markdown. When `displayPieces` is present
+ * and consistent with `attachments`, text and media are rendered in their
+ * chronological display order. Otherwise, falls back to flat `content` followed
+ * by flat `attachments`.
+ */
+function appendMarkdownBody(lines: string[], message: Message): void {
+  const pieces = message.displayPieces
+  if (pieces && pieces.length > 0) {
+    const mediaPieces = pieces.filter((piece) => piece.type === 'media' && piece.attachment)
+    if (mediaPieces.length === (message.attachments?.length ?? 0)) {
+      let pendingText: string[] = []
+      let inList = false
+      let renderedAny = false
+
+      const flushText = () => {
+        if (pendingText.length > 0) {
+          lines.push('', fencedBlock(pendingText.join('\n')))
+          pendingText = []
+          inList = false
+          renderedAny = true
+        }
+      }
+
+      for (const piece of pieces) {
+        if (piece.type === 'text') {
+          // Consecutive text pieces stay in one code block to avoid artificial split fences.
+          if (piece.content !== '') {
+            pendingText.push(piece.content)
+          }
+          continue
+        }
+
+        // A scores-only media piece has no attachment to render.
+        if (!piece.attachment) {
+          continue
+        }
+
+        flushText()
+        if (!inList) {
+          lines.push('')
+          inList = true
+        }
+        lines.push(formatAttachmentItem(piece.attachment))
+        renderedAny = true
+      }
+
+      flushText()
+      if (!renderedAny && message.content === '') {
+        lines.push('', fencedBlock(''))
+      }
+      return
+    }
+  }
+
+  // Fallback: flat content followed by flat attachments list
+  lines.push('', fencedBlock(message.content))
+  appendAttachmentList(lines, 'Attachments:', message.attachments)
 }
 
 function inlineText(value: string): string {
