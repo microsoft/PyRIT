@@ -698,7 +698,6 @@ class TestAttackRoutes:
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
             assert "request_converter_configurations" in response.text
             mock_get_service.return_value.add_message_async.assert_not_called()
-            mock_get_service.return_value.add_message_async.assert_not_called()
 
     def test_update_attack_not_found(self, client: TestClient) -> None:
         """Test updating a non-existent attack returns 404."""
