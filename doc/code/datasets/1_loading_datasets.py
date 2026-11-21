@@ -46,6 +46,7 @@
 # MM-SafetyBench [@liu2024mmsafetybench],
 # Moral Integrity Corpus [@ziems2022mic],
 # MOSSBench [@li2024mossbench],
+# MultiJail [@deng2024multilingual],
 # Multilingual Alignment Prism [@aakanksha2024multilingual],
 # Multilingual Vulnerabilities [@tang2025multilingual],
 # OR-Bench [@cui2024orbench],
