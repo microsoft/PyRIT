@@ -91,6 +91,7 @@ import {
   buildEstimateRequest,
   buildRunRequest,
   CONVERSATION_PARAMETER_NAMES,
+  acceptsAnyNamedDataset,
   MAX_MAX_CONCURRENCY,
   MAX_MAX_RETRIES,
   MIN_MAX_CONCURRENCY,
@@ -1037,7 +1038,10 @@ function ScenarioLaunchForm({
                     Seed examples used by this scan. Limits and filters control which examples are selected.
                   </ContextualHelpLabel>
                 </Text>
-                <DatasetActions />
+                <DatasetActions
+                  scenarioName={scenario.scenario_name}
+                  canGenerate={acceptsAnyNamedDataset(scenario, datasetOptions)}
+                />
               </div>
               <ScenarioDatasetTable
                 request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}

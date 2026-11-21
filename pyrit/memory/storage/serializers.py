@@ -265,7 +265,7 @@ class DataTypeSerializer(abc.ABC):
                     raise RuntimeError("self._memory.results_storage_io is not initialized")
                 await self._memory.results_storage_io.write_file_async(file_path, audio_data)
             finally:
-                local_temp_path.unlink(missing_ok=True)
+                await asyncio.to_thread(local_temp_path.unlink, missing_ok=True)
 
         # If local, we can just save straight to disk and do not need to delete temp file after
         else:
