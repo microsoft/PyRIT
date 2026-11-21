@@ -2084,12 +2084,6 @@ export type ScenarioRunEstimateState =
     }
   | ScenarioRunEstimateResult
 
-export type ScenarioRunEstimator = (
-  scenarioName: string,
-  request: ScenarioRunSizeEstimateRequest,
-  signal?: AbortSignal,
-) => Promise<ScenarioRunSizeEstimateResponse>
-
 export interface AttackErrorSummary {
   atomic_attack_name: string
   objective: string
