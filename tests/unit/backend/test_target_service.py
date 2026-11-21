@@ -15,9 +15,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from pyrit.backend.models import CreateTargetRequest
-from pyrit.backend.models.targets import TargetSaveabilityRequest
+from pyrit.backend.models.targets import TargetSaveabilityRequest, UnregisteredTarget
 from pyrit.backend.services import TargetService, get_target_service
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.models import ComponentIdentifier
@@ -86,6 +87,7 @@ async def test_manual_model_field_never_inherits_ambient_default_async(
 ) -> None:
     monkeypatch.setenv("OPENAI_CHAT_MODEL", "ambient-model")
     request = CreateTargetRequest(
+        name="manual_model",
         type="OpenAIChatTarget",
         params={"endpoint": "https://api.openai.com", "api_key": "test-key", "model_name": value},
         auth_mode="api_key",
@@ -547,7 +549,7 @@ async def test_create_github_copilot_target_async(
         patch.dict(os.environ, {"GITHUB_TOKEN": environment_token}),
     ):
         target = await service.create_target_async(
-            request=CreateTargetRequest(type="GitHubCopilotTarget", params=params)
+            request=CreateTargetRequest(name="new_target", type="GitHubCopilotTarget", params=params)
         )
 
     assert target.identifier.class_name == "GitHubCopilotTarget"
@@ -1062,6 +1064,7 @@ class TestCreateTarget:
         service = TargetService()
 
         request = CreateTargetRequest(
+            name="new_target",
             type="NonExistentTarget",
             params={},
         )
@@ -1074,6 +1077,7 @@ class TestCreateTarget:
         service = TargetService()
 
         request = CreateTargetRequest(
+            name="new_target",
             type="TextTarget",
             params={},
         )
@@ -1135,7 +1139,9 @@ class TestCreateTarget:
             "create_instance_async",
             wraps=service._registry.create_instance_async,
         ) as create:
-            await service.create_target_async(request=CreateTargetRequest(type="TextTarget", params={}))
+            await service.create_target_async(
+                request=CreateTargetRequest(name="new_target", type="TextTarget", params={})
+            )
 
         create.assert_awaited_once_with(
             name="TextTarget", params={}, external_input=True, allowed_path_params=frozenset()
@@ -1145,6 +1151,7 @@ class TestCreateTarget:
         """An invalid enum value from the JSON request raises a parameter error before target construction."""
         service = TargetService()
         request = CreateTargetRequest(
+            name="new_target",
             type="AzureBlobStorageTarget",
             params={
                 "container_url": "https://test.blob.core.windows.net/test",
@@ -1160,6 +1167,7 @@ class TestCreateTarget:
         """An explicit blob content type from JSON is coerced before target construction."""
         service = TargetService()
         request = CreateTargetRequest(
+            name="new_target",
             type="AzureBlobStorageTarget",
             params={
                 "container_url": "https://test.blob.core.windows.net/test",
@@ -1178,6 +1186,7 @@ class TestCreateTarget:
         service = TargetService()
 
         request = CreateTargetRequest(
+            name="new_target",
             type="TextTarget",
             params={},
         )
@@ -1194,6 +1203,7 @@ class TestCreateTarget:
             service = TargetService()
 
             request = CreateTargetRequest(
+                name="new_target",
                 type="OpenAIChatTarget",
                 params={
                     "model_name": "claude-sonnet-4-6",
@@ -1213,6 +1223,7 @@ class TestCreateTarget:
         service = TargetService()
 
         request = CreateTargetRequest(
+            name="new_target",
             type="OpenAIChatTarget",
             params={
                 "model_name": "my-gpt4o-deployment",
@@ -1287,6 +1298,7 @@ class TestCreateTargetEntraAuth:
                 service = TargetService()
 
                 request = CreateTargetRequest(
+                    name="new_target",
                     type="OpenAIChatTarget",
                     params={
                         "endpoint": "https://test.openai.azure.com/",
@@ -1315,6 +1327,7 @@ class TestCreateTargetEntraAuth:
                 service = TargetService()
 
                 request = CreateTargetRequest(
+                    name="new_target",
                     type="OpenAIChatTarget",
                     params={
                         "endpoint": "https://test.openai.azure.com/",
@@ -1349,6 +1362,7 @@ class TestCreateTargetEntraAuth:
                     "api_key": "original-key",
                 }
                 request = CreateTargetRequest(
+                    name="new_target",
                     type="OpenAIChatTarget",
                     params=dict(original_params),
                     auth_mode="identity",
@@ -1371,6 +1385,7 @@ class TestCreateTargetEntraAuth:
                 service = TargetService()
 
                 request = CreateTargetRequest(
+                    name="new_target",
                     type="AzureMLChatTarget",
                     params={"endpoint": "https://my-aml.region.inference.ml.azure.com/score"},
                     auth_mode="identity",
@@ -1388,6 +1403,7 @@ class TestCreateTargetEntraAuth:
     async def test_create_azure_blob_target_with_identity_preserves_auth_intent(self, sqlite_instance) -> None:
         service = TargetService()
         request = CreateTargetRequest(
+            name="new_target",
             type="AzureBlobStorageTarget",
             params={"container_url": "https://test.blob.core.windows.net/test"},
             auth_mode="identity",
@@ -1402,6 +1418,7 @@ class TestCreateTargetEntraAuth:
         """A caller-supplied sas_token must not silently override identity-based auth."""
         service = TargetService()
         request = CreateTargetRequest(
+            name="new_target",
             type="AzureBlobStorageTarget",
             params={
                 "container_url": "https://test.blob.core.windows.net/test",
@@ -1424,6 +1441,7 @@ class TestCreateTargetEntraAuth:
             service = TargetService()
 
             request = CreateTargetRequest(
+                name="new_target",
                 type="OpenAIChatTarget",
                 params={"endpoint": "https://api.openai.com/", "model_name": "gpt-4o"},
                 auth_mode="identity",
@@ -1443,6 +1461,7 @@ class TestCreateTargetEntraAuth:
                 service = TargetService()
 
                 request = CreateTargetRequest(
+                    name="new_target",
                     type="OpenAIChatTarget",
                     params={
                         "endpoint": "https://test.openai.azure.com/",
@@ -1468,6 +1487,7 @@ class TestCreateTargetEntraAuth:
                 service = TargetService()
 
                 request = CreateTargetRequest(
+                    name="new_target",
                     type="AzureMLChatTarget",
                     params={"endpoint": "https://my-aml.region.inference.ml.azure.com/score"},
                     auth_mode="identity",
@@ -1486,6 +1506,7 @@ class TestCreateTargetEntraAuth:
             service = TargetService()
 
             request = CreateTargetRequest(
+                name="new_target",
                 type="OpenAIChatTarget",
                 params={
                     "endpoint": "https://test.openai.azure.com/",
@@ -1506,6 +1527,7 @@ class TestCreateTargetEntraAuth:
         service = TargetService()
 
         request = CreateTargetRequest(
+            name="new_target",
             type="OpenAIChatTarget",
             params={
                 "endpoint": "https://test.openai.azure.com/",
@@ -1526,6 +1548,7 @@ class TestCreateTargetEntraAuth:
         service = TargetService()
 
         request = CreateTargetRequest(
+            name="new_target",
             type="OpenAIChatTarget",
             params={
                 "endpoint": "https://test.openai.azure.com/",
@@ -1548,6 +1571,7 @@ class TestCreateTargetEntraAuth:
                 service = TargetService()
 
                 request = CreateTargetRequest(
+                    name="new_target",
                     type="OpenAIChatTarget",
                     params={
                         "endpoint": "https://test.openai.azure.com/",
@@ -1568,6 +1592,7 @@ class TestCreateTargetEntraAuth:
         service = TargetService()
 
         request = CreateTargetRequest(
+            name="new_target",
             type="TextTarget",
             params={},
             auth_mode="identity",
@@ -1597,6 +1622,7 @@ class TestCreateRoundRobinTarget:
         service._registry.instances.register(target_b, name="target-b")
 
         rr_request = CreateTargetRequest(
+            name="new_target",
             type="RoundRobinTarget",
             params={"targets": ["target-a", "target-b"], "weights": [2, 1]},
         )
@@ -1615,6 +1641,7 @@ class TestCreateRoundRobinTarget:
         service._registry.instances.register(MockPromptTarget(), name="only-one")
 
         rr_request = CreateTargetRequest(
+            name="new_target",
             type="RoundRobinTarget",
             params={"targets": ["only-one"]},
         )
@@ -1627,6 +1654,7 @@ class TestCreateRoundRobinTarget:
         service = TargetService()
 
         rr_request = CreateTargetRequest(
+            name="new_target",
             type="RoundRobinTarget",
             params={"targets": ["does-not-exist-a", "does-not-exist-b"]},
         )
@@ -1763,6 +1791,7 @@ class TestCreateTargetNoKeyAuth:
         ):
             service = TargetService()
             request = CreateTargetRequest(
+                name="new_target",
                 type="OpenAIChatTarget",
                 params={
                     "endpoint": "http://localhost:11434/v1",
@@ -1781,6 +1810,7 @@ class TestCreateTargetNoKeyAuth:
     async def test_create_target_with_no_key_rejects_unsupported_type(self, sqlite_instance) -> None:
         service = TargetService()
         request = CreateTargetRequest(
+            name="new_target",
             type="AzureMLChatTarget",
             params={"endpoint": "https://example.inference.ml.azure.com/score"},
             auth_mode="none",
@@ -2061,6 +2091,27 @@ class TestSaveTarget:
         fetched = await service.get_target_async(target_registry_name="temporary_one")
         assert isinstance(fetched, TargetInstance)
         assert fetched.origin is RegistryEntryOrigin.TEMPORARY
+
+
+def test_a_registered_target_needs_a_name() -> None:
+    with pytest.raises(ValidationError, match="name is required when register=true"):
+        CreateTargetRequest(type="TextTarget", params={})
+
+    assert CreateTargetRequest(type="TextTarget", params={}, register=False).name is None
+
+
+async def test_builds_a_target_without_a_name_only_when_it_isnt_registered(sqlite_instance) -> None:
+    service = TargetService()
+
+    built = await service.create_target_async(request=CreateTargetRequest(type="TextTarget", params={}, register=False))
+    created = await service.create_target_async(
+        request=CreateTargetRequest(name="text_chat", type="TextTarget", params={})
+    )
+
+    assert isinstance(built, UnregisteredTarget)
+    assert isinstance(created, TargetInstance)
+    assert created.target_registry_name == "text_chat"
+    assert TargetRegistry.get_registry_singleton().instances.get_names() == ["text_chat"]
 
 
 @pytest.mark.usefixtures("sqlite_instance")

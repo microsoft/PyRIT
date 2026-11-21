@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { test, expect } from "./_fixtures";
 import { compatibilityHeaders, getCompatibilityId, mockVersion } from "./_compatibility";
 
@@ -72,6 +74,7 @@ test.describe("Targets API", () => {
   test("should create and retrieve a target @seeded", async ({ request }) => {
     test.setTimeout(90_000);
     const createPayload = {
+      name: `api-${randomUUID()}`,
       type: "OpenAIChatTarget",
       auth_mode: "api_key",
       params: {

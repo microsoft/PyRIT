@@ -110,13 +110,11 @@ class TargetParametersRequest(BaseModel):
 class CreateTargetRequest(TargetParametersRequest, RegistrationRequest):
     """Request to create a new target instance."""
 
-    # LEGACY COMPATIBILITY: The GUI now sends a name whenever it registers a target. Requiring the name for
-    # registered targets would break API callers that leave it out, so that is left to a separate breaking change.
     name: str | None = Field(
         None,
         min_length=1,
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
-        description="Unique registry name, required with persist; when omitted, the backend generates one",
+        description="Unique registry name, required unless register is false",
     )
     persist: bool = Field(
         False,
@@ -147,6 +145,13 @@ class CreateTargetRequest(TargetParametersRequest, RegistrationRequest):
     )
 
     @model_validator(mode="after")
+    def _validate_registration(self) -> "CreateTargetRequest":
+        # A copy is never registered, so the source check reports a registered copy instead.
+        if self.register_instance and self.name is None and self.source is None:
+            raise ValueError("name is required when register=true")
+        return self
+
+    @model_validator(mode="after")
     def _validate_source(self) -> "CreateTargetRequest":
         if self.source is None:
             return self
@@ -164,8 +169,6 @@ class CreateTargetRequest(TargetParametersRequest, RegistrationRequest):
             return self
         if not self.register_instance:
             raise ValueError("persist requires register=true")
-        if self.name is None:
-            raise ValueError("persist requires a name")
         # A saved target is restored with no caller, so it would come back shared, and its credentials can't change.
         if self.private:
             raise ValueError("A private target can't be saved; leave out persist or private")
@@ -173,7 +176,8 @@ class CreateTargetRequest(TargetParametersRequest, RegistrationRequest):
             raise ValueError(
                 "A saved target's credentials can't be updated; leave out persist or allow_credential_updates"
             )
-        validate_registry_name(self.name)
+        if self.name is not None:
+            validate_registry_name(self.name)
         return self
 
 
