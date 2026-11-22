@@ -598,7 +598,7 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
                 "recipe": recipe,
                 "recipe_digest": digest,
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
     def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:

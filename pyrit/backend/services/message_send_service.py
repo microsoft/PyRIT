@@ -44,7 +44,6 @@ from pyrit.backend.services.manual_send_scheduler import (
 )
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.target_service import get_target_service
-from pyrit.common import print_deprecation_message
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.models import (
@@ -1249,21 +1248,11 @@ class MessageSendService:
 
     def _resolve_request_converter_configs(self, *, request: AddMessageRequest) -> list[ConverterConfiguration]:
         """
-        Resolve legacy or structured request converter configurations.
+        Resolve the request's converter configurations.
 
         Returns:
             list[ConverterConfiguration]: Resolved request configurations.
         """
-        if request.converter_ids is not None:
-            print_deprecation_message(
-                old_item="AddMessageRequest.converter_ids",
-                new_item="AddMessageRequest.request_converter_configurations",
-                removed_in="1.3.0",
-            )
-        if request.converter_ids:
-            converters = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
-            return ConverterConfiguration.from_converters(converters=converters)
-
         return self._resolve_converter_configs(configurations=request.request_converter_configurations)
 
     def _resolve_converter_configs(

@@ -832,6 +832,21 @@ class TestUserMessageReuse:
 
 
 class TestFromSeedGroup:
+    @pytest.mark.parametrize("operation_id", [None, uuid.UUID("11111111-1111-1111-1111-111111111111")])
+    async def test_from_seed_group_preserves_operation_id_async(self, operation_id: uuid.UUID | None) -> None:
+        seed_group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Recall the supplied color."),
+                SeedPrompt(value="Remember blue.", role="user", sequence=0),
+            ]
+        )
+        params = await MultiPromptSendingAttackParameters.from_seed_group_async(
+            seed_group=seed_group, operation_id=operation_id
+        )
+        assert params.operation_id == operation_id
+        assert params.user_messages is not None
+        assert [message.get_value() for message in params.user_messages] == ["Remember blue."]
+
     async def test_from_seed_group_keeps_targeted_harm_categories(self):
         seed_group = AttackSeedGroup(
             seeds=[

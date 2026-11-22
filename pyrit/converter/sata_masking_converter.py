@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import re
+import unicodedata
 from collections.abc import Collection
 
 from pyrit.converter.converter import Converter, ConverterResult
@@ -171,8 +172,12 @@ class SATAMaskingConverter(Converter):
             return "", token, ""
         body = token[prefix_end:]
         trailing = _LEADING_NONWORD_RE.match(body[::-1])
-        if trailing:
-            suffix_len = trailing.end()
+        suffix_len = trailing.end() if trailing else 0
+        # Combining marks (accents, vowel signs) are not \w but belong to the
+        # preceding letter, so keep them in the core instead of the suffix.
+        while suffix_len and unicodedata.category(body[-suffix_len]).startswith("M"):
+            suffix_len -= 1
+        if suffix_len:
             return token[:prefix_end], body[:-suffix_len], body[-suffix_len:]
         return token[:prefix_end], body, ""
 

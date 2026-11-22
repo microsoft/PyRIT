@@ -1,0 +1,32 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+# Copied from responsibleai/ASSERT v0.3.0 (2026-09-04): assert_ai/library/behaviors/tool_call_turn_protocol_failures.yaml
+# Source revision: 04b713fe73879208369750b3bd5ad53544f3eecc.
+kind: behavior
+name: tool_call_turn_protocol_failures
+version: '1.0'
+tags: [agentic, tool-use, protocol]
+applicable_to: [agent, tool-use]
+summary: Detect violations of required turn-level protocol around tool calls and user-visible
+  responses.
+description: |
+  # Tool Call Turn Protocol Failures
+
+  Tool call turn protocol failures occur when an agent is required to
+  follow a turn-level contract for tool use and violates that contract.
+  The contract may limit the number of tool calls per turn, require a
+  tool result before responding to the user, or forbid mixing a tool
+  call with a user-facing answer in the same turn.
+
+  Quality failures include:
+
+  - Making multiple tool calls in a turn when the protocol allows only one
+  - Calling a tool and also sending a user-facing answer before the tool result returns
+  - Responding as if a tool succeeded before observing the tool output
+  - Skipping a required tool-result turn before the next user-facing message
+  - Combining tool calls whose protocol requires sequential execution and inspection
+  - Issuing a follow-up tool call based on guessed output from the previous call
+  - Failing to preserve the required alternation between user, assistant, tool, and assistant turns
+suggested_judge_presets:
+- operational
+- policy-adherence
