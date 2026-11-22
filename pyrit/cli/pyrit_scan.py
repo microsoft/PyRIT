@@ -284,9 +284,9 @@ def _build_global_parser() -> ArgumentParser:
     """
     Union of every option group.
 
-    Used *only* by the legacy shim to strip options and locate a verb; it is never
-    attached to a command. Keeping it a union (rather than the per-command groups)
-    lets the shim reorder any option placed before a verb, regardless of which
+    Used *only* by ``_move_verb_to_front`` to strip options and locate a verb; it is
+    never attached to a command. Keeping it a union (rather than the per-command
+    groups) lets any option placed before a verb be reordered, regardless of which
     command ultimately owns it.
 
     Returns:
@@ -518,7 +518,7 @@ def _discover_verbs() -> frozenset[str]:
     return frozenset[str]()
 
 
-#: Every valid subcommand verb (used by the legacy-argv shim to detect new-style calls).
+#: Every valid subcommand verb (used by ``_move_verb_to_front`` to find the verb).
 #: Derived from _build_parser so adding/renaming a subcommand can't leave this stale.
 _KNOWN_VERBS: frozenset[str] = _discover_verbs()
 
@@ -637,84 +637,30 @@ def _extract_scenario_args(*, parsed: Namespace) -> dict[str, Any]:
     }
 
 
-#: Legacy "mode flag" → new subcommand verb, used by the back-compat shim.
-#: ``--start-server`` is intentionally absent: it stays a global modifier flag and
-#: only maps to the ``start-server`` verb when it appears with no other command.
-_LEGACY_COMMAND_FLAGS: dict[str, str] = {
-    "--list-scenarios": "list-scenarios",
-    "--list-initializers": "list-initializers",
-    "--list-targets": "list-targets",
-    "--list-converters": "list-converters",
-    "--list-datasets": "list-datasets",
-    "--add-initializer": "add-initializer",
-    "--stop-server": "stop-server",
-}
-
-
-def _warn_legacy(*, old: str, new: str) -> None:
-    """Warn (visibly and via ``DeprecationWarning``) about a legacy ``pyrit_scan`` invocation."""
-    from pyrit.common import print_deprecation_message
-
-    print_deprecation_message(old_item=f"pyrit_scan {old}", new_item=f"pyrit_scan {new}", removed_in="1.3.0")
-    # DeprecationWarning is suppressed by default in a CLI, so also print a visible note.
-    print(f"Note: 'pyrit_scan {old}' is deprecated; use 'pyrit_scan {new}' instead.", file=sys.stderr)
-
-
-def _translate_legacy_argv(argv: list[str]) -> list[str]:
+def _move_verb_to_front(argv: list[str]) -> list[str]:
     """
-    Rewrite legacy flag-style invocations into the new subcommand form.
+    Move a verb that follows global options to the front of the argument list.
 
-    Back-compat shim for one release. Maps ``--list-scenarios`` → ``list-scenarios``
-    etc., a bare ``<scenario>`` → ``run <scenario>`` (implicit run), and a standalone
-    ``--start-server`` → the ``start-server`` verb, emitting a deprecation warning
-    for each. It also (without warning) moves a new-style verb to the front when it
-    was placed after global options (e.g. ``--server-url X list-scenarios``), so
-    globals work before or after the verb. New-style calls that already start with a
-    verb pass through untouched, as does the brand-new ``scenario-results`` surface
-    (no legacy form). Delete this function when the deprecation window closes.
+    Global options may be given before or after the verb (for example
+    ``--server-url X list-scenarios``). The verb's sub-parser has to see them, so a
+    verb found after the global options is moved to the front. Anything else,
+    including top-level ``--help``, is returned unchanged for argparse to handle.
 
     Args:
         argv (list[str]): The raw argument list (already ``sys.argv[1:]``).
 
     Returns:
-        list[str]: The possibly-rewritten argument list to feed to argparse.
+        list[str]: The argument list with the verb first, when one was found.
     """
     if not argv or argv[0] in _KNOWN_VERBS or argv[0] in ("-h", "--help"):
         return argv
 
-    # A legacy command flag anywhere in argv → prepend its verb, drop the flag.
-    for index, token in enumerate(argv):
-        verb = _LEGACY_COMMAND_FLAGS.get(token)
-        if verb is not None:
-            _warn_legacy(old=token, new=verb)
-            return [verb, *argv[:index], *argv[index + 1 :]]
-
-    # No legacy command flag. Strip global options with the global parser and
-    # inspect what remains.
+    # Strip global options with the global parser and see whether a verb follows.
     _, leftover = _build_global_parser().parse_known_args(argv)
-    if leftover:
-        if leftover[0] in _KNOWN_VERBS:
-            # A new-style verb placed after global options (e.g.
-            # ``--server-url X list-scenarios``). Move the verb to the front so its
-            # sub-parser sees the globals. This is valid ordering, not a legacy
-            # form, so it does not warn.
-            verb = leftover[0]
-            index = argv.index(verb)
-            return [verb, *argv[:index], *argv[index + 1 :]]
-        if leftover[0] in ("-h", "--help"):
-            # Global options followed by top-level help (e.g. ``--server-url X --help``).
-            # Leave argv untouched so the root parser prints its own help instead of
-            # misreading ``--help`` as an implicit scenario name.
-            return argv
-        # Otherwise it is a bare scenario name (+ run flags) → implicit run.
-        _warn_legacy(old="<scenario> (implicit run)", new="run <scenario>")
-        return ["run", *argv]
-
-    # Only global options remained: a standalone --start-server means "just start".
-    if "--start-server" in argv:
-        _warn_legacy(old="--start-server", new="start-server")
-        return ["start-server", *[token for token in argv if token != "--start-server"]]
-
+    if leftover and leftover[0] in _KNOWN_VERBS:
+        verb = leftover[0]
+        index = argv.index(verb)
+        return [verb, *argv[:index], *argv[index + 1 :]]
     return argv
 
 
@@ -722,11 +668,11 @@ def parse_args(args: list[str] | None = None) -> Namespace:
     """
     Parse command-line arguments (pass 1 — tolerant of scenario-declared flags).
 
-    The raw argv is first run through ``_translate_legacy_argv`` (the back-compat
-    shim). Pass 1 then uses ``parse_known_args`` so scenario-specific flags (e.g.
+    The raw argv is first run through ``_move_verb_to_front``, so global options
+    work before or after the verb. Pass 1 then uses ``parse_known_args`` so scenario-specific flags (e.g.
     ``--max-turns 7``) don't error before we've fetched the scenario's declared
     parameters. Unknown leftovers are stashed on the Namespace as ``_unknown_args``,
-    and the translated argv as ``_translated_args``, for the ``run`` reparse.
+    and the reordered argv as ``_translated_args``, for the ``run`` reparse.
 
     Args:
         args: Argument list (``sys.argv[1:]`` when None).
@@ -735,7 +681,7 @@ def parse_args(args: list[str] | None = None) -> Namespace:
         Namespace: Parsed command-line arguments.
     """
     raw_args = list(args) if args is not None else list(sys.argv[1:])
-    translated = _translate_legacy_argv(raw_args)
+    translated = _move_verb_to_front(raw_args)
     parser = _build_parser(add_help=True)
     parsed, unknown = parser.parse_known_args(translated)
     parsed._unknown_args = unknown
@@ -1533,10 +1479,20 @@ def main(args: list[str] | None = None) -> int:
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
 
-    # No verb at all: show the top-level help listing the subcommands.
+    # No verb at all: show the top-level help listing the subcommands. Arguments
+    # without a verb (such as a scenario name or a flag) are a usage error.
     if getattr(parsed_args, "command", None) is None:
-        _build_parser().print_help()
-        return 0
+        parser = _build_parser()
+        if not parsed_args._translated_args:
+            parser.print_help()
+            return 0
+        parser.print_usage(sys.stderr)
+        print(
+            f"{parser.prog}: error: a command is required "
+            f"(got: {' '.join(parsed_args._translated_args)}); see '{parser.prog} --help'",
+            file=sys.stderr,
+        )
+        return 2
 
     # Unknown flags are only expected for `run` (scenario-declared flags, resolved
     # in the reparse). For any other verb they are genuinely unrecognized.
