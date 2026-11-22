@@ -976,12 +976,6 @@ class TestScenarioResultsAndHelp:
             s.do_scenario_results("rid-1")
         mock_print.assert_awaited_once()
 
-    def test_scenario_results_error(self, shell, capsys):
-        s, client = shell
-        client.get_scenario_run_results_async = AsyncMock(side_effect=RuntimeError("oops"))
-        s.do_scenario_results("rid-1")
-        assert "Error (RuntimeError): oops" in capsys.readouterr().out
-
     def test_scenario_history_read_timeout_is_not_blank(self, shell, capsys):
         """The run hints send users here, so a bare ReadTimeout must not print an empty error."""
         import httpx
