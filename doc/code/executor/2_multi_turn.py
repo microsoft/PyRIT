@@ -114,6 +114,10 @@ await output_attack_async(result)
 #
 # `CrescendoAttack` escalates gradually: each turn nudges the target a little further. If the target
 # refuses, it backtracks the adversarial model's memory and tries a different angle.
+#
+# The `echo_chamber` scenario technique [@alobaid2026echochamber] runs `CrescendoAttack` with its own
+# adversarial prompt: the target writes a few sentences from neutral keywords, expands on the one closest
+# to the objective, and is then asked to build on its own earlier replies.
 
 # %%
 from pyrit.executor.attack import CrescendoAttack
