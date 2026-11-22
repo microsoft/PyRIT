@@ -73,7 +73,7 @@ class _AttaQDataset(_RemoteDatasetLoader):
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     harm_categories: list[str] = [category.value for category in AttaQCategory]
     size: str = "large"
-    tags: frozenset[str] = frozenset({"safety"})
+    tags: frozenset[str] = frozenset({"default", "safety"})
 
     def __init__(
         self,
