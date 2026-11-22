@@ -4,7 +4,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -83,7 +83,7 @@ class LikertScale(BaseModel):
         path: Path | str,
         *,
         evaluation_files: LikertScaleEvalFiles | None = None,
-    ) -> "LikertScale":
+    ) -> Self:
         """
         Load a Likert scale from a YAML file.
 

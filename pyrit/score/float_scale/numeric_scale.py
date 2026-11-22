@@ -3,7 +3,7 @@
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, model_validator
 
@@ -66,7 +66,7 @@ class NumericRubric(NumericRange):
     examples: str | None = None
 
     @classmethod
-    def from_yaml(cls, path: Path | str) -> "NumericRubric":
+    def from_yaml(cls, path: Path | str) -> Self:
         """
         Load a scale and its template parameters from a YAML file.
 
