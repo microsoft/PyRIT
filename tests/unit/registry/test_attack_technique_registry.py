@@ -5,15 +5,20 @@
 
 import inspect
 from collections.abc import Iterator
+from typing import assert_type
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.executor.attack import AttackScoringConfig
+from pyrit.converter import ROT13Converter
+from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
+from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack
 from pyrit.memory import MemoryInterface
-from pyrit.models import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, SeedPrompt
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget, TargetRequirements
-from pyrit.registry import AttackTechniqueRegistry, Registry, TargetRegistry
+from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, Registry, TargetRegistry
+from pyrit.registry.components.attack_technique_registry import ProjectedEditableTechniqueSettings
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
     SavedEntryReplacementError,
@@ -22,6 +27,7 @@ from pyrit.registry.instance_registry import (
 from pyrit.scenario import AttackTechniqueFactory, ScenarioTechnique
 from pyrit.scenario.core import ScorerOverridePolicy
 from pyrit.setup.initializers.techniques import build_technique_factories
+from unit.mocks import MockPromptTarget
 
 
 class _StubAttack:
@@ -734,3 +740,94 @@ class TestBuildTechniqueClassFromFactories:
                 class_name="CollidingTagTechnique",
                 factories=factories,
             )
+
+
+class TestGetEditableSettingsProjection:
+    """Tests for AttackTechniqueRegistry.get_editable_settings (PyRIT #4505 Case 1).
+
+    Live targets and converters project onto their registry names; a setting whose
+    live value is not registered is dropped, while an explicit None is preserved.
+    """
+
+    def test_projects_registered_names(self, scenario_selection_registry: AttackTechniqueRegistry) -> None:
+        target = MockPromptTarget()
+        TargetRegistry.get_registry_singleton().instances.register(target, name="adversarial_chat")
+        converter = ROT13Converter()
+        ConverterRegistry.get_registry_singleton().instances.register(converter, name="rot13")
+        config = AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[converter]),
+        )
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=PromptSendingAttack,
+            adversarial_chat=target,
+            attack_kwargs={"attack_converter_config": config},
+        )
+        settings = scenario_selection_registry.get_editable_settings(factory)
+        assert_type(settings, ProjectedEditableTechniqueSettings)
+        assert settings == {
+            "description": None,
+            "adversarial_chat": "adversarial_chat",
+            "request_converters": ["rot13"],
+            "response_converters": [],
+        }
+
+    def test_drops_unregistered_chat_and_converters(self, scenario_selection_registry: AttackTechniqueRegistry) -> None:
+        target = MockPromptTarget()
+        TargetRegistry.get_registry_singleton().instances.register(target, name="adversarial_chat")
+        converter = ROT13Converter()
+        ConverterRegistry.get_registry_singleton().instances.register(converter, name="rot13")
+        config = AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[converter]),
+        )
+        unregistered_chat = AttackTechniqueFactory(
+            name="test",
+            attack_class=PromptSendingAttack,
+            adversarial_chat=MockPromptTarget(),
+            attack_kwargs={"attack_converter_config": config},
+        )
+        settings = scenario_selection_registry.get_editable_settings(unregistered_chat)
+        assert "adversarial_chat" not in settings
+        assert settings["request_converters"] == ["rot13"]
+
+        unregistered_converter = AttackTechniqueFactory(
+            name="test",
+            attack_class=PromptSendingAttack,
+            adversarial_chat=target,
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(converters=[ROT13Converter()]),
+                ),
+            },
+        )
+        settings = scenario_selection_registry.get_editable_settings(unregistered_converter)
+        assert settings["adversarial_chat"] == "adversarial_chat"
+        assert "request_converters" not in settings
+
+    def test_prompt_fields_pass_through_and_unregistered_chat_drops(
+        self, scenario_selection_registry: AttackTechniqueRegistry
+    ) -> None:
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=CrescendoAttack,
+            adversarial_chat=MagicMock(spec=PromptTarget),
+            adversarial_system_prompt="Be evil",
+            adversarial_seed_prompt=SeedPrompt(value="seed text", data_type="text"),
+            adversarial_prompt_template=None,
+        )
+        settings = scenario_selection_registry.get_editable_settings(factory)
+        assert settings["adversarial_system_prompt"] == "Be evil"
+        assert settings["adversarial_seed_prompt"] == "seed text"
+        assert settings["adversarial_prompt_template"] is None
+        assert "adversarial_chat" not in settings
+
+    def test_none_chat_and_simulation_pass_through(self, scenario_selection_registry: AttackTechniqueRegistry) -> None:
+        from pyrit.models.technique_edit import SimulationSettings
+
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_journalist_interview",
+        )
+        settings = scenario_selection_registry.get_editable_settings(factory)
+        assert settings["adversarial_chat"] is None
+        assert "adversarial_chat" in settings
+        assert isinstance(settings["simulation"], SimulationSettings)
