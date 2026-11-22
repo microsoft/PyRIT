@@ -805,7 +805,11 @@ class AttackTechniqueFactory(Identifiable):
         if self.uses_adversarial:
             result["adversarial_chat"] = self._adversarial_chat
         if "attack_adversarial_config" in accepted:
-            for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
+            requirements = self._attack_class.ADVERSARIAL_PROMPT_REQUIREMENTS
+            consumed = None if requirements is None else requirements.get_template_variables().keys()
+            for name, slot in _ADVERSARIAL_PROMPT_SLOTS:
+                if consumed is not None and slot not in consumed:
+                    continue
                 prompt = getattr(self, f"_{name}")
                 if (
                     prompt is None
@@ -922,7 +926,7 @@ class AttackTechniqueFactory(Identifiable):
         for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
             previous = getattr(self, f"_{name}")
             value = getattr(settings, name)
-            if previous is None and isinstance(value, str):
+            if not previous and isinstance(value, str):
                 previous = self.get_adversarial_prompt_templates().get(name)
             if isinstance(previous, SeedPrompt) and isinstance(value, str):
                 value = previous.with_value(value)

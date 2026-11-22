@@ -75,6 +75,20 @@ function promptValue(configuration: TechniqueConfiguration | undefined, field: E
   return configuration?.prompt_templates?.[field]?.value ?? configuration?.settings[field] ?? ''
 }
 
+function isPromptField(field: string): field is EditableAdversarialPromptField {
+  return Object.prototype.hasOwnProperty.call(PROMPT_LABELS, field)
+}
+
+/** Server errors the API attributes to an edited prompt, keyed by that prompt. */
+function serverPromptErrors(err: unknown): Partial<Record<EditableAdversarialPromptField, string>> {
+  const result: Partial<Record<EditableAdversarialPromptField, string>> = {}
+  for (const { field, message } of toApiError(err).fieldErrors) {
+    const name = field.startsWith('changes.') ? field.slice('changes.'.length) : ''
+    if (isPromptField(name)) result[name] = message
+  }
+  return result
+}
+
 interface TechniqueEditorProps {
   onClose?: () => void
   onCreated?: () => void
@@ -121,8 +135,11 @@ export default function TechniqueEditor({
   const [submitError, setSubmitError] = useState(false)
   const [revision, setRevision] = useState(0)
   const [validating, setValidating] = useState(false)
+  const [apiPromptErrors, setApiPromptErrors] = useState<Partial<Record<EditableAdversarialPromptField, string>>>({})
+  const promptInputs = useRef<Partial<Record<EditableAdversarialPromptField, HTMLTextAreaElement | null>>>({})
 
   function update<Value>(setter: Dispatch<SetStateAction<Value>>, value: Value): void {
+    setApiPromptErrors({})
     if (autoApply) {
       onPending?.()
       setValidating(true)
@@ -170,8 +187,12 @@ export default function TechniqueEditor({
   }, [retry, original])
 
   useEffect(() => {
-    if (submitError && error) errorRef.current?.focus()
-  }, [error, submitError])
+    if (!submitError || !error) return
+    const field = (Object.keys(apiPromptErrors) as EditableAdversarialPromptField[])
+      .find((key) => apiPromptErrors[key] === error)
+    if (field) promptInputs.current[field]?.focus()
+    else errorRef.current?.focus()
+  }, [error, submitError, apiPromptErrors])
 
   const selected = types.find((entry) => entry.attack_type === selectedType)
   const parameters = original ? original.parameters : guiParameters(getAttackParameters(selected))
@@ -258,7 +279,9 @@ export default function TechniqueEditor({
       }).then((response) => {
         if (!ignore) onApplied?.(response)
       }).catch((err: unknown) => {
-        if (!ignore) setError(toApiError(err).detail)
+        if (ignore) return
+        setError(toApiError(err).detail)
+        setApiPromptErrors(serverPromptErrors(err))
       }).finally(() => {
         if (!ignore) setValidating(false)
       })
@@ -289,6 +312,7 @@ export default function TechniqueEditor({
     setSubmitting(true)
     setError(null)
     setSubmitError(false)
+    setApiPromptErrors({})
     try {
       if (original) {
         if (editError || changes === undefined) throw new Error(editError ?? 'Technique settings are invalid.')
@@ -301,7 +325,10 @@ export default function TechniqueEditor({
         if (active.current) onCreated?.()
       }
     } catch (err) {
-      if (active.current) fail(toApiError(err).detail)
+      if (active.current) {
+        setApiPromptErrors(serverPromptErrors(err))
+        fail(toApiError(err).detail)
+      }
     } finally {
       if (active.current) setSubmitting(false)
     }
@@ -309,8 +336,9 @@ export default function TechniqueEditor({
 
   const inputsDisabled = disabled || submitting
   const shownError = autoApply && revision > 0 ? editError ?? error : error
+  const fieldErrors = { ...apiPromptErrors, ...promptErrors }
   // Prompt text errors are shown on their own field.
-  const displayedError = shownError && !Object.values(promptErrors).includes(shownError) ? shownError : null
+  const displayedError = shownError && !Object.values(fieldErrors).includes(shownError) ? shownError : null
   const content = (
             // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- only keeps Enter in a field from submitting the form
             <div className={styles.form} onKeyDown={(event) => {
@@ -413,7 +441,7 @@ export default function TechniqueEditor({
                         const template = original?.prompt_templates?.[field]
                         const customized = value !== promptValue(original, field)
                         return <HelpField key={field} label={label} help={help}
-                          validationState={promptErrors[field] ? 'error' : undefined} validationMessage={promptErrors[field]}>
+                          validationState={fieldErrors[field] ? 'error' : undefined} validationMessage={fieldErrors[field]}>
                           {template && <div className={styles.promptControls}>
                             <Badge appearance="tint" color={customized ? 'brand' : 'informative'}>{customized ? 'Customized' : 'Default'}</Badge>
                             <Button className={styles.action} size="small" appearance="subtle" disabled={inputsDisabled || !customized}
@@ -421,6 +449,7 @@ export default function TechniqueEditor({
                               onClick={() => update(setter, promptValue(original, field))}>Reset to default</Button>
                           </div>}
                           <Textarea className={styles.prompt} resize="vertical" value={value}
+                            ref={(element) => { promptInputs.current[field] = element }}
                             disabled={inputsDisabled} onChange={(_, data) => update(setter, data.value)} />
                           {template && template.parameters.length > 0 && <Text size={200}>
                             Template variables: {template.parameters.map((parameter) => `{{ ${parameter} }}`).join(', ')}

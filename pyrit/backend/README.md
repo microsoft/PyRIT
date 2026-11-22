@@ -736,7 +736,8 @@ Changes apply to the current run, not registered techniques or packaged defaults
 persona; unchanged prompts add no override. Blank edits are invalid, and edited prompts
 may use only the template variables the attack supplies. API `null` clears a supplied
 override rather than restoring the selected technique's original prompt. Fixed
-system-prompt prefixes are read-only.
+system-prompt prefixes are read-only. A rejected prompt edit returns `400` with
+`errors[].field` naming the prompt, for example `changes.adversarial_system_prompt`.
 
 Additions are runtime-only and available in compatible scenarios. Restart or
 reinitialize PyRIT to remove them. Existing scenario snapshots and runs do not

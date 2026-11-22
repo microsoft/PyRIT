@@ -528,6 +528,26 @@ def test_edits_reject_declared_variables_execution_never_supplies(edit_catalog: 
         )
 
 
+@pytest.mark.parametrize("attack_class", [CrescendoAttack, TreeOfAttacksWithPruningAttack])
+@pytest.mark.parametrize("field", ["adversarial_seed_prompt", "adversarial_prompt_template"])
+def test_unconsumed_prompt_slots_are_read_only(
+    edit_catalog: AttackTechniqueRegistry, attack_class: type[AttackStrategy], field: str
+) -> None:
+    source = AttackTechniqueFactory(name="unconsumed", attack_class=attack_class)
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    assert field not in source.get_editable_settings()
+    assert configuration.read_only[field] == "Not consumed by this attack."
+    with pytest.raises(ValueError, match=f"Technique settings are read-only: {field}"):
+        TechniqueEditService.validate(
+            TechniqueOverride(
+                source_name=source.name,
+                source_identity=configuration.source_identity,
+                changes=TechniqueChanges.model_validate({field: "Ignored {{ unknown_variable }}"}),
+            )
+        )
+
+
 @pytest.mark.parametrize(
     "field", ["adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"]
 )
@@ -593,6 +613,30 @@ def test_empty_source_strings_follow_runtime_fallback_rules(edit_catalog: Attack
         assert configuration.prompt_templates[field].value == inherited[field].value
         assert getattr(configuration.settings, field) == ""
     assert configuration.prompt_templates["adversarial_prompt_template"].value == ""
+
+
+def test_empty_source_prompt_edit_keeps_inherited_metadata(edit_catalog: AttackTechniqueRegistry) -> None:
+    source = AttackTechniqueFactory(name="empty_prompt", attack_class=CrescendoAttack, adversarial_system_prompt="")
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    inherited = AttackTechniqueFactory(
+        name="inherited", attack_class=CrescendoAttack
+    ).get_adversarial_prompt_templates()["adversarial_system_prompt"]
+    text = configuration.prompt_templates["adversarial_system_prompt"].value + "\nKeep the dialogue focused."
+    admitted = TechniqueEditService.validate(
+        TechniqueOverride(
+            source_name=source.name,
+            source_identity=configuration.source_identity,
+            changes=TechniqueChanges(adversarial_system_prompt=text),
+        )
+    )
+    copied = TechniqueEditService.resolve(TechniqueOverride.model_validate_json(admitted.override.model_dump_json()))
+    prompt = copied.get_effective_settings().adversarial_system_prompt
+    assert isinstance(prompt, SeedPrompt)
+    assert prompt.value == text
+    assert prompt.response_json_schema == inherited.response_json_schema
+    assert prompt.response_json_schema is not None
+    assert prompt.parameters == inherited.parameters
 
 
 @pytest.mark.parametrize(
@@ -1290,6 +1334,47 @@ def test_edit_routes_and_invalid_selection(
             techniques=["plain"],
             technique_override=TechniqueOverride.model_validate(response.json()["override"]),
         )
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        (
+            "Bad {{ unknown_variable }}",
+            "adversarial_system_prompt has unsupported template variables: unknown_variable",
+        ),
+        ("Bad {{ objective", "Invalid prompt template"),
+        (" ", "adversarial_system_prompt must contain non-empty text"),
+    ],
+)
+def test_edit_route_names_the_rejected_prompt_field(
+    edit_catalog: AttackTechniqueRegistry, compatibility_headers: dict[str, str], text: str, message: str
+) -> None:
+    source = AttackTechniqueFactory(name="crescendo", attack_class=CrescendoAttack)
+    edit_catalog.register_from_factories([source])
+    client = TestClient(app, headers=compatibility_headers)
+    response = client.post(
+        "/api/techniques/crescendo/edit",
+        json={
+            "source_name": source.name,
+            "source_identity": source.get_configuration_identity(),
+            "changes": {"adversarial_system_prompt": text},
+        },
+    )
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert message in body["detail"]
+    assert body["errors"] == [{"field": "changes.adversarial_system_prompt", "message": body["detail"]}]
+
+
+def test_edit_route_keeps_request_wide_errors_unattributed(
+    edit_catalog: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    spec = _specification(changes=TechniqueChanges(description="Edited")).model_dump(mode="json", exclude_unset=True)
+    response = client.post("/api/techniques/role_play_movie_script/edit", json={**spec, "source_identity": "stale"})
+    assert response.status_code == 400, response.text
+    assert "errors" not in response.json()
 
 
 def test_edit_route_limits_description_and_dependency_identities(

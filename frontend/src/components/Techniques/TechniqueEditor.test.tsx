@@ -251,6 +251,53 @@ describe('TechniqueEditor', () => {
     expect(field.getAttribute('aria-describedby')?.split(' ')).toContain(alert.id)
   })
 
+  it('should show server prompt rejections on the prompt field and keep request-wide errors in the banner', async () => {
+    const user = userEvent.setup()
+    const message = 'adversarial_system_prompt has unsupported template variables: unknown_variable'
+    const rejection = (data: unknown) => ({
+      isAxiosError: true, message: 'Request failed', config: {}, toJSON: () => ({}),
+      response: { status: 400, data, headers: { 'Content-Type': 'application/json' }, config: {} },
+    })
+    techniques.validateEdit
+      .mockRejectedValueOnce(rejection({
+        detail: message, errors: [{ field: 'changes.adversarial_system_prompt', message }],
+      }))
+      .mockRejectedValueOnce(rejection({ detail: 'Source technique configuration changed.' }))
+    render(<FluentProvider theme={webLightTheme}>
+      <TechniqueEditor original={promptConfiguration()} autoApply onApplied={jest.fn()} />
+    </FluentProvider>)
+    const field = await screen.findByRole('textbox', { name: 'Adversarial system prompt' })
+    await user.clear(field)
+    await user.paste('Use {{ unknown_variable }}.')
+    await waitFor(() => expect(field).toHaveAttribute('aria-invalid', 'true'))
+    const fieldError = screen.getByText(message)
+    expect(field.getAttribute('aria-describedby')?.split(' ')).toContain(fieldError.id)
+    expect(screen.getAllByText(message)).toHaveLength(1)
+    await user.type(field, ' ')
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('Source technique configuration changed.')).toBeInTheDocument()
+    expect(field).not.toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('should focus the rejected prompt field when Apply to run fails for it', async () => {
+    const user = userEvent.setup()
+    const message = 'adversarial_system_prompt: Invalid prompt template: unexpected end of template'
+    techniques.validateEdit.mockRejectedValueOnce({
+      isAxiosError: true, message: 'Request failed', config: {}, toJSON: () => ({}),
+      response: { status: 400, data: { detail: message, errors: [{ field: 'changes.adversarial_system_prompt', message }] },
+        headers: { 'Content-Type': 'application/json' }, config: {} },
+    })
+    render(tree(promptConfiguration()))
+    const field = await screen.findByRole('textbox', { name: 'Adversarial system prompt' })
+    await user.clear(field)
+    await user.paste('Bad {{ objective')
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(field).toHaveAttribute('aria-invalid', 'true'))
+    expect(field).toHaveFocus()
+    expect(screen.queryByRole('alert')).toHaveTextContent(message)
+    expect(screen.getAllByText(message)).toHaveLength(1)
+  })
+
   it('should keep a field reset when an earlier auto-apply response arrives late', async () => {
     const user = userEvent.setup()
     const original = promptConfiguration()
