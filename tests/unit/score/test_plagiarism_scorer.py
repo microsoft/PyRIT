@@ -663,6 +663,7 @@ def _ty_check_probe(probe: Path) -> tuple[int, str]:
     return result.returncode, result.stdout + result.stderr
 
 
+@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("metric", list(PlagiarismMetric), ids=lambda m: m.name)
 def test_plagiarism_score_handles_every_metric(metric: PlagiarismMetric) -> None:
     """Every PlagiarismMetric reaches its own branch instead of the trailing ValueError."""

@@ -1076,6 +1076,7 @@ def _ty_check_probe(probe: Path) -> tuple[int, str]:
     return result.returncode, result.stdout + result.stderr
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_javascript_keeps_known_packages_as_written() -> None:
     """JAVASCRIPT is an explicit branch that adds no built-ins and does not normalize names."""
     scorer = PackageHallucinationScorer(known_packages={"Lodash", "left_pad"}, ecosystem=PackageEcosystem.JAVASCRIPT)
