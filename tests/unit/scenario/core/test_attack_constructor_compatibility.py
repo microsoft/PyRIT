@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import inspect
 import typing
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from unit.dispatch_exhaustiveness import assert_dispatch_exhaustiveness
 
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
@@ -123,6 +126,33 @@ class TestScorerPolicy:
         )
         with pytest.raises(ValueError, match="error detail"):
             helper._apply_scorer_policy("error detail")
+
+    def test_apply_scorer_policy_accepts_plain_string_values(self):
+        helper = _ConstructorCompatibilityHelper(attack_class=_StubAttack, scorer_override_policy="raise")
+        with pytest.raises(ValueError, match="error detail"):
+            helper._apply_scorer_policy("error detail")
+
+    def test_apply_scorer_policy_unknown_value_keeps_silent_fallback(self, caplog):
+        helper = _ConstructorCompatibilityHelper(attack_class=_StubAttack, scorer_override_policy="future")
+        helper._apply_scorer_policy("unknown policy detail")
+        assert "unknown policy detail" not in caplog.text
+
+    @pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
+    def test_apply_scorer_policy_dispatch_type_exhaustiveness(self, tmp_path: Path, *, extend_enum: bool) -> None:
+        source_file = inspect.getsourcefile(ScorerOverridePolicy)
+        assert source_file is not None
+        source = Path(source_file).read_text(encoding="utf-8")
+        last_member = '    RAISE = "raise"\n'
+        assert source.count(last_member) == 1
+        if extend_enum:
+            source = source.replace(last_member, last_member + '    FUTURE = "future"\n')
+        assert_dispatch_exhaustiveness(
+            tmp_path=tmp_path,
+            probe_source=source,
+            extended=extend_enum,
+            assertions=["assert_never(policy)"],
+            new_member="ScorerOverridePolicy.FUTURE",
+        )
 
 
 class TestUnwrapOptional:
