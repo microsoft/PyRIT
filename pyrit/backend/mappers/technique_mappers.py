@@ -115,7 +115,9 @@ def technique_to_configuration(
     registry = AttackTechniqueRegistry.get_registry_singleton()
     metadata = AttackRegistry.get_registry_singleton().get_class_metadata(factory.attack_class)
     parameters = registry.get_editable_parameters(factory)
-    values = registry.get_editable_settings(factory)
+    # Copy into a plain dict: the projected settings are a TypedDict, and the
+    # editor response adds the "params" key on top of them.
+    values: dict[str, Any] = dict(registry.get_editable_settings(factory))
     effective = factory.get_effective_attack_kwargs()
     values["params"] = {
         parameter.name: project_parameter_value(
