@@ -229,12 +229,6 @@ pyrit.score.scorer_evaluation.krippendorff:krippendorff_alpha
 pyrit.score.scorer_evaluation.scorer_evaluator:ScorerEvaluator.evaluate_dataset_async
 pyrit.score.scorer_evaluation.scorer_evaluator:ScorerEvaluator.from_scorer
 pyrit.score.scorer_prompt_validator:ScorerPromptValidator.validate
-pyrit.score.true_false.regex.shell_command_output_scorer:_curl_mode_then
-pyrit.score.true_false.regex.shell_command_output_scorer:_curl_number_option
-pyrit.score.true_false.regex.shell_command_output_scorer:_curl_option
-pyrit.score.true_false.regex.shell_command_output_scorer:_download_command
-pyrit.score.true_false.regex.shell_command_output_scorer:_quoted_option
-pyrit.score.true_false.regex.shell_command_output_scorer:_shell_options
 pyrit.score.true_false.true_false_score_aggregator:_and
 pyrit.score.true_false.true_false_score_aggregator:_or
 pyrit.setup.environment_loading:_print_msg
