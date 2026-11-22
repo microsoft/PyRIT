@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -78,20 +78,23 @@ class PresidioPiiScorer(MessageTrueFalseScorer):
                 "score_threshold": self._score_threshold,
                 "language": self._language,
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score a text piece for PII entity detections.
 
         Args:
-            message_piece: The message piece to score.
-            objective: The objective to evaluate against.
+            message_piece (MessagePiece): The message piece to score.
+            expectation (ScoringExpectation | None): The scoring criteria. Only its objective is read.
 
         Returns:
             list[Score]: A single score: True if any entity found, False otherwise.
         """
+        objective = expectation.objective if expectation else None
         text = message_piece.converted_value
         analyzer = self._get_analyzer()
 
