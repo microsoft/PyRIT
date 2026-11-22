@@ -16,12 +16,15 @@ execution fallback. Execution outcomes never advance the pool.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
 from pyrit.models import (
+    ScenarioRunPlanScorerBinding,
     Scorable,
+    ScorerCapabilityName,
     ScorerIdentifier,
     ScoringExpectation,
     scoring_expectation_fingerprint,
@@ -31,6 +34,7 @@ from pyrit.score.expectation_errors import AmbiguousConditionError, ExpectationM
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pyrit.score.scorer import Scorer
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 __all__ = [
@@ -70,6 +74,17 @@ class ConflictingScorerRequirementsError(ValueError):
     """Two requirement owners ask for different evaluations."""
 
 
+#: How a scorer that lacks each capability falls short, and how to provide it.
+_MISSING_CAPABILITY: dict[ScorerCapabilityName, str] = {
+    ScorerCapabilityName.TRUE_FALSE: "does not return a single true/false verdict per scoring call",
+    ScorerCapabilityName.FLOAT_SCALE: "does not return float-scale results",
+    ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE: (
+        "does not keep a float value on each true/false verdict. Use a FloatScaleThresholdScorer, "
+        "or a TrueFalseFallbackScorer whose scorers both keep one"
+    ),
+}
+
+
 @dataclass(frozen=True, kw_only=True)
 class ScorerRequirements:
     """
@@ -79,25 +94,30 @@ class ScorerRequirements:
     and technique, and the dataset or prepared population. ``combine`` merges them.
 
     Attributes:
-        preserves_float_scale_value (bool): The attack ranks by float feedback, so each
-            complete, applicable true/false result must keep a finite ``[0, 1]`` value.
+        required (frozenset[ScorerCapabilityName]): The output guarantees the scorer must
+            make. Most attacks require ``TRUE_FALSE``; an attack that ranks by float feedback
+            also requires ``PRESERVES_FLOAT_SCALE_VALUE``. Any iterable is accepted.
         evaluation (str | None): The question the run promises to answer, such as
             ``"psychosocial.imminent_crisis"``. ``None`` adds no constraint. A key names a
             question; it does not claim two judges are calibrated alike.
     """
 
-    preserves_float_scale_value: bool = False
+    required: frozenset[ScorerCapabilityName] = field(default_factory=frozenset)
     evaluation: str | None = None
 
     def __post_init__(self) -> None:
         """
-        Validate the declared values.
+        Validate the declared values and freeze ``required``.
 
         Raises:
             TypeError: If a field has the wrong type.
         """
-        if not isinstance(self.preserves_float_scale_value, bool):
-            raise TypeError("ScorerRequirements.preserves_float_scale_value must be a bool.")
+        if isinstance(self.required, (str, bytes)) or not isinstance(self.required, Iterable):
+            raise TypeError("ScorerRequirements.required must be an iterable of ScorerCapabilityName.")
+        required = frozenset(self.required)
+        if not all(isinstance(item, ScorerCapabilityName) for item in required):
+            raise TypeError("ScorerRequirements.required must contain only ScorerCapabilityName values.")
+        object.__setattr__(self, "required", required)
         _validate_evaluation_key(self.evaluation, owner="ScorerRequirements")
 
     @classmethod
@@ -106,7 +126,7 @@ class ScorerRequirements:
         Merge requirements from several owners.
 
         Evaluation keys must agree: absence adds no constraint and different values
-        conflict. Feedback requirements combine with OR.
+        conflict. Required capabilities are the union of every owner's.
 
         Args:
             *requirements (ScorerRequirements | None): The owners' requirements; ``None`` is skipped.
@@ -119,13 +139,13 @@ class ScorerRequirements:
             ConflictingScorerRequirementsError: If two owners require different evaluations.
         """
         evaluation: str | None = None
-        preserves = False
+        required: set[ScorerCapabilityName] = set()
         for item in requirements:
             if item is None:
                 continue
             if not isinstance(item, ScorerRequirements):
                 raise TypeError("Scorer requirements must be ScorerRequirements or None.")
-            preserves = preserves or item.preserves_float_scale_value
+            required.update(item.required)
             if item.evaluation is None:
                 continue
             if evaluation is not None and evaluation != item.evaluation:
@@ -134,7 +154,41 @@ class ScorerRequirements:
                     "cannot both decide success for the same run."
                 )
             evaluation = item.evaluation
-        return cls(preserves_float_scale_value=preserves, evaluation=evaluation)
+        return cls(required=frozenset(required), evaluation=evaluation)
+
+    def check(self, *, scorer: Scorer) -> list[str]:
+        """
+        Report every required capability the scorer lacks, without scoring.
+
+        The evaluation key is not checked here: it binds a pool candidate, not a scorer.
+
+        Args:
+            scorer (Scorer): The configured scorer.
+
+        Returns:
+            list[str]: One message per missing capability, in a stable order; empty when all are met.
+        """
+        capabilities = scorer.capabilities
+        name = type(scorer).__name__
+        return [
+            f"{name} {_MISSING_CAPABILITY[capability]} (requires '{capability.value}')."
+            for capability in sorted(self.required, key=lambda item: item.value)
+            if not capabilities.includes(capability=capability)
+        ]
+
+    def validate(self, *, scorer: Scorer) -> None:
+        """
+        Require the scorer to make every required capability.
+
+        Args:
+            scorer (Scorer): The configured scorer.
+
+        Raises:
+            ValueError: Naming every missing capability.
+        """
+        errors = self.check(scorer=scorer)
+        if errors:
+            raise ValueError("\n".join(errors))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -158,12 +212,14 @@ class ScorerCandidate:
         Validate the candidate.
 
         Raises:
-            TypeError: If the scorer is not a ``TrueFalseScorer``.
+            TypeError: If the scorer does not return a single true/false verdict.
         """
-        from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+        from pyrit.score.scorer import Scorer
 
-        if not isinstance(self.scorer, TrueFalseScorer):
-            raise TypeError("ScorerCandidate.scorer must be a TrueFalseScorer.")
+        if not isinstance(self.scorer, Scorer) or not self.scorer.capabilities.includes(
+            capability=ScorerCapabilityName.TRUE_FALSE
+        ):
+            raise TypeError("ScorerCandidate.scorer must be a true/false scorer.")
         _validate_evaluation_key(self.evaluation, owner="ScorerCandidate")
 
     @property
@@ -180,12 +236,10 @@ class ScorerMismatchKind(str, Enum):
     EVIDENCE = "evidence"
     #: The candidate's evaluation binding differs from what the population requires.
     EVALUATION = "evaluation"
-    #: The attack ranks by float feedback and the scorer does not guarantee it.
-    FLOAT_FEEDBACK = "float_feedback"
+    #: The scorer lacks a required capability, such as float feedback for ranking.
+    CAPABILITY = "capability"
     #: The scorer cannot evaluate a condition or criterion an input carries.
     CONDITION = "condition"
-    #: The attack's narrower scoring config cannot carry this scorer, as TAP's needs a threshold scorer.
-    SCORING_CONFIG = "scoring_config"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -237,6 +291,19 @@ class ScorerSelection:
     def evaluation(self) -> str | None:
         """The selected candidate's evaluation key."""
         return self.candidate.evaluation
+
+    def to_run_plan_binding(self) -> ScenarioRunPlanScorerBinding:
+        """
+        Record this selection for a scenario run plan, so resume can verify it.
+
+        Returns:
+            ScenarioRunPlanScorerBinding: The selected candidate's index, evaluation, and scorer hash.
+        """
+        return ScenarioRunPlanScorerBinding(
+            candidate_index=self.candidate_index,
+            evaluation=self.evaluation,
+            scorer_hash=self.scorer.get_identifier().hash,
+        )
 
 
 class NoCompatibleScorerError(ValueError):
@@ -470,11 +537,9 @@ class CompatibleScorers:
                 kind=ScorerMismatchKind.EVALUATION,
                 detail=f"is bound to {bound}; the population requires {required}.",
             )
-        if requirements.preserves_float_scale_value and not capabilities.preserves_float_scale_value:
-            return mismatch(
-                kind=ScorerMismatchKind.FLOAT_FEEDBACK,
-                detail="does not guarantee a float value on each true/false result.",
-            )
+        missing = requirements.check(scorer=candidate.scorer)
+        if missing:
+            return mismatch(kind=ScorerMismatchKind.CAPABILITY, detail=" ".join(missing))
         for expectation in expectations:
             try:
                 candidate.scorer.prepare_expectation(expectation=expectation)
