@@ -279,8 +279,33 @@ class TestGCGCandidateProposer:
 
         for worker in workers:
             assert worker.tokenizer.get_vocab.call_count == expected_reads
-        # Only the group representative samples; its unsampleable ids are cached per embedding width too.
-        assert workers[1].tokenizer.__len__.call_count == expected_reads
+            # Unsampleable ids are cached per embedding width too.
+            assert worker.tokenizer.__len__.call_count == expected_reads
+
+    def test_group_masks_the_union_of_its_workers_unsampleable_ids(self) -> None:
+        # Same vocabulary, but only the first worker flags id 1 as special and only the second flags id 2.
+        workers = [_create_mock_worker((1, 4)), _create_mock_worker((1, 4))]
+        workers[0].tokenizer.all_special_ids = [1]
+        workers[1].tokenizer.all_special_ids = [2]
+        for worker in workers:
+            worker.tokenizer.added_tokens_decoder = {}
+        sampling = MagicMock(spec=SamplingStrategy)
+        sampling.sample_candidates.return_value = torch.tensor([[0]])
+        candidate_filter = MagicMock(spec=CandidateFilter)
+        candidate_filter.filter_candidates.return_value = ["res"]
+        proposer = GCGCandidateProposer(
+            workers=workers,
+            prompts=[_create_mock_prompt_manager(), _create_mock_prompt_manager()],
+            sampling=sampling,
+            candidate_filter=candidate_filter,
+            main_device=torch.device("cpu"),
+        )
+
+        batch = proposer.propose_candidates(batch_size=1, topk=2, current_control_str="test")
+
+        assert batch.group_worker_indices == [1]
+        gradient = sampling.sample_candidates.call_args.kwargs["gradient"]
+        assert torch.isinf(gradient[0]).tolist() == [False, True, True, False]
 
 
 @pytest.mark.parametrize(
@@ -358,12 +383,12 @@ def test_proposal_groups_by_vocabulary_within_embedding_rows(
 
     assert batch.group_worker_indices == representatives
     assert batch.control_candidates_by_group == expected_candidates
+    # The proposer masks each worker's [UNK] (a special token) and any padding rows before summing.
+    for worker, gradient in zip(workers, gradients, strict=True):
+        gradient[..., get_unsampleable_toks(tokenizer=worker.tokenizer, num_embeddings=embedding_rows)] = float("inf")
     group_start = 0
     for call, worker_index in zip(sampling.sample_candidates.call_args_list, representatives, strict=True):
         expected_gradient = torch.stack(gradients[group_start : worker_index + 1]).sum(dim=0)
-        # The proposer masks [UNK] (a special token) and any padding rows before sampling.
-        unsampleable = get_unsampleable_toks(tokenizer=workers[worker_index].tokenizer, num_embeddings=embedding_rows)
-        expected_gradient[..., unsampleable] = float("inf")
         torch.testing.assert_close(call.kwargs["gradient"], expected_gradient)
         group_start = worker_index + 1
 

@@ -120,9 +120,16 @@ class GCGPromptManager(PromptManager):
 
         Returns:
             torch.Tensor: Batch of new candidate control token sequences.
+
+        Raises:
+            ValueError: If every token id is masked.
         """
         if not allow_non_ascii:
             grad[:, self._nonascii_toks.to(grad.device)] = np.inf
+        # Masked ids are +inf; topk past the finite ones would sample them.
+        topk = min(topk, int(torch.isfinite(grad).sum(dim=1).min()))
+        if topk == 0:
+            raise ValueError("Every token id is masked, so there is nothing to sample")
         top_indices = (-grad).topk(topk, dim=1).indices
         control_toks = self.control_toks.to(grad.device)
         original_control_toks = control_toks.repeat(batch_size, 1)

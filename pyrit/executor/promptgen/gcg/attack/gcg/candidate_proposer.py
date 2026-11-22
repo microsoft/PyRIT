@@ -147,6 +147,10 @@ class GCGCandidateProposer:
             if key not in identities:
                 identities[key] = _hf_vocabulary_identity(tokenizer=worker.tokenizer, num_embeddings=new_grad.shape[-1])
             new_vocab = identities[key]
+            # Masked per worker before summing, so a group excludes the union of its workers' ids.
+            if key not in worker._unsampleable_toks:
+                worker._unsampleable_toks[key] = get_unsampleable_toks(tokenizer=worker.tokenizer, num_embeddings=key)
+            new_grad[..., worker._unsampleable_toks[key].to(new_grad.device)] = float("inf")
 
             if grad is None:
                 grad = torch.zeros_like(new_grad)
@@ -231,14 +235,6 @@ class GCGCandidateProposer:
         Raises:
             ValueError: If neither sample_fn nor sampling strategy was provided.
         """
-        # Cached on the worker by embedding rows, like the vocabulary identities, since proposers are per step.
-        worker = self._workers[worker_idx]
-        num_embeddings = gradient.shape[-1]
-        if num_embeddings not in worker._unsampleable_toks:
-            worker._unsampleable_toks[num_embeddings] = get_unsampleable_toks(
-                tokenizer=worker.tokenizer, num_embeddings=num_embeddings
-            )
-        gradient[..., worker._unsampleable_toks[num_embeddings].to(gradient.device)] = float("inf")
         if self._sample_fn is not None:
             return self._sample_fn(
                 worker_index=worker_idx,

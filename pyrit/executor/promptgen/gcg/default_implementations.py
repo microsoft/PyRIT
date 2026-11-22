@@ -89,9 +89,16 @@ class StandardGCGSampling:
             torch.Tensor: Candidate suffix token sequences with shape
             ``(batch_size, control_length)`` on the same device as
             ``gradient``.
+
+        Raises:
+            ValueError: If every token id is masked.
         """
         if not allow_non_ascii:
             gradient[:, non_ascii_tokens.to(gradient.device)] = np.inf
+        # Masked ids are +inf; topk past the finite ones would sample them.
+        top_k = min(top_k, int(torch.isfinite(gradient).sum(dim=1).min()))
+        if top_k == 0:
+            raise ValueError("Every token id is masked, so there is nothing to sample")
         top_indices = (-gradient).topk(top_k, dim=1).indices
         control_tokens = control_tokens.to(gradient.device)
         original_control_tokens = control_tokens.repeat(batch_size, 1)

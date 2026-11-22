@@ -175,6 +175,35 @@ class TestStandardGCGSampling:
 
         assert torch.equal(default_out, legacy_out)
 
+    @pytest.mark.parametrize("legacy", [False, True])
+    def test_top_k_never_reaches_masked_ids(self, legacy: bool) -> None:
+        # Column 0 is unsampleable (+inf from the proposer) and column 3 is non-ASCII.
+        gradient = torch.zeros(3, 4)
+        gradient[:, 0] = float("inf")
+        control_tokens = torch.tensor([1, 2, 1])
+        non_ascii_tokens = torch.tensor([3])
+
+        def sample(grad: torch.Tensor) -> torch.Tensor:
+            if legacy:
+                prompt_manager = self._make_legacy_prompt_manager(
+                    control_tokens=control_tokens, non_ascii_tokens=non_ascii_tokens
+                )
+                return prompt_manager.sample_control(grad, 64, topk=4, allow_non_ascii=False)
+            return StandardGCGSampling().sample_candidates(
+                gradient=grad,
+                control_tokens=control_tokens,
+                batch_size=64,
+                top_k=4,
+                temperature=1.0,
+                allow_non_ascii=False,
+                non_ascii_tokens=non_ascii_tokens,
+            )
+
+        assert set(sample(gradient.clone()).unique().tolist()) <= {1, 2}
+        gradient[:, 1:3] = float("inf")
+        with pytest.raises(ValueError, match="Every token id is masked"):
+            sample(gradient)
+
 
 class TestCrossEntropyLoss:
     """Parity: ``CrossEntropyLoss`` vs ``AttackPrompt.target_loss`` +

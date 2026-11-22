@@ -1734,6 +1734,7 @@ class TestGCGMultiPromptAttackStepWiring:
     def _make_tokenizer() -> MagicMock:
         tokenizer = MagicMock()
         tokenizer.vocab_size = 100
+        tokenizer.__len__.return_value = 100
 
         def decode_fn(ids, **_kwargs):
             values = ids.tolist() if hasattr(ids, "tolist") else list(ids)
