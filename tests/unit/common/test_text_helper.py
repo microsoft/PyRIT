@@ -17,6 +17,7 @@ from pyrit.common.text_helper import escape_control_characters, graphemes, is_no
         ("\U0001f1ee\U0001f1f3!", ["\U0001f1ee\U0001f1f3", "!"]),
         ("\U0001f468‍\U0001f469‍\U0001f467", ["\U0001f468‍\U0001f469‍\U0001f467"]),
         ("नमस्ते", ["न", "म", "स्ते"]),
+        # Conjunct canary for mrab-regex#636: regex 2026.11.x never applies GB9c (see the regex pin in pyproject.toml)
         ("क्षमा", ["क्ष", "मा"]),
         ("a\r\nb", ["a", "\r\n", "b"]),
     ],

@@ -83,6 +83,7 @@ async def test_flip_converter_resegmentation_edge_cases_async() -> None:
     double_flipped_flags = (await converter.convert_async(prompt=flipped_flags)).output_text
     assert flipped_flags == "🇫🇺🇸🇮🇳"
     assert double_flipped_flags != unpaired_flags
+    assert double_flipped_flags == "🇳🇸🇮🇫🇺"
 
     # Leading combining marks attach to preceding characters when reversed
     combining = "\u0301abc"
@@ -90,6 +91,7 @@ async def test_flip_converter_resegmentation_edge_cases_async() -> None:
     double_flipped_combining = (await converter.convert_async(prompt=flipped_combining)).output_text
     assert flipped_combining == "cba\u0301"
     assert double_flipped_combining != combining
+    assert double_flipped_combining == "a\u0301bc"
 
 
 async def test_flip_converter_input_not_supported():
