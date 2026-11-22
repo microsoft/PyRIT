@@ -383,7 +383,7 @@ async def _persist_dataset_async(
         upload_id = reservation.result()
     except DatasetNameConflictError as exc:
         raise DatasetAPIException(
-            status_code=409, message="A stored dataset or upload already uses this name."
+            status_code=409, message="A stored dataset, upload, or prompt generation already uses this name."
         ) from exc
 
     async def write_media_async() -> None:

@@ -223,6 +223,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             )
 
         self._objective_scorer = objective_scorer
+        self._validate_objective_scorer(scorer=self._objective_scorer)
         self._use_score_as_feedback = attack_scoring_config.use_score_as_feedback
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
 

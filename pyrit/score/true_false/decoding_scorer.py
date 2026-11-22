@@ -65,7 +65,7 @@ class DecodingScorer(MessageTrueFalseScorer):
                 "text_matcher": self._text_matcher.__class__.__name__,
                 "text_matcher_params": get_matcher_params() if callable(get_matcher_params) else None,
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
     async def _score_piece_with_expectation_async(
