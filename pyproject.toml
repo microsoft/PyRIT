@@ -323,8 +323,6 @@ unsound-assignment = "ignore"
 # deletes this override. Do not add files here: new code is checked by the rule.
 [[tool.ty.overrides]]
 include = [
-    "pyrit/auth/browser_session_copilot_authenticator.py",
-    "pyrit/embedding/openai_text_embedding.py",
     "pyrit/executor/promptgen/gcg/attack/base/attack_manager.py",
     "pyrit/executor/promptgen/gcg/attack/gcg/candidate_proposer.py",
     "pyrit/executor/promptgen/gcg/attack/gcg/gcg_attack.py",
@@ -334,11 +332,6 @@ include = [
     "pyrit/models/parameter.py",
     "pyrit/models/score/observation.py",
     "pyrit/models/score/scorable.py",
-    "pyrit/prompt_target/azure_blob_storage_target.py",
-    "pyrit/prompt_target/common/discover_target_capabilities.py",
-    "pyrit/prompt_target/openai/openai_error_handling.py",
-    "pyrit/prompt_target/openai/openai_response_target.py",
-    "pyrit/prompt_target/prompt_shield_target.py",
     "pyrit/registry/components/target_registry.py",
     "pyrit/registry/registry_recipe_restore.py",
     "pyrit/registry/registry_recipe_rules.py",
