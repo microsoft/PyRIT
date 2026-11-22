@@ -50,6 +50,7 @@ class TestAttackScoringConfig:
     def test_init_raises_error_for_non_true_false_objective_scorer(self):
         """Test that initialization raises ValueError for non-TrueFalseScorer objective_scorer."""
         mock_scorer = MagicMock(spec=Scorer)
+        mock_scorer.capabilities.includes.return_value = False
 
         with pytest.raises(ValueError, match="Objective scorer must be a TrueFalseScorer"):
             AttackScoringConfig(objective_scorer=mock_scorer)
@@ -57,6 +58,7 @@ class TestAttackScoringConfig:
     def test_init_raises_error_for_non_true_false_refusal_scorer(self):
         """Test that initialization raises ValueError for non-TrueFalseScorer refusal_scorer."""
         mock_scorer = MagicMock(spec=Scorer)
+        mock_scorer.capabilities.includes.return_value = False
 
         with pytest.raises(ValueError, match="Refusal scorer must be a TrueFalseScorer"):
             AttackScoringConfig(refusal_scorer=mock_scorer)

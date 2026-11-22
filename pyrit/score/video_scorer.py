@@ -166,7 +166,7 @@ class VideoHelper:
         self.image_scorer._validate_expectation(expectation=frame_expectation)
         video_path = message_piece.converted_value
 
-        if not Path(video_path).exists():
+        if not await asyncio.to_thread(Path(video_path).exists):
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
         # Extract frames from video
@@ -388,4 +388,4 @@ class VideoHelper:
             # unchanged when the video's own audio track is already compliant WAV, so guard
             # against deleting the caller's source file (matching _transcribe_audio_async).
             if should_cleanup and audio_path and audio_path != video_path:
-                Path(audio_path).unlink(missing_ok=True)
+                await asyncio.to_thread(Path(audio_path).unlink, missing_ok=True)
