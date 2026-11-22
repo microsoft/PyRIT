@@ -61,7 +61,7 @@ from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import SavedEntryOwner, TargetInstance
-from pyrit.registry import SavedEntryConflictError, SavedEntryStorageError
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -635,10 +635,6 @@ class TestAttackRoutes:
     @pytest.mark.parametrize(
         "converter_fields",
         [
-            {
-                "converter_ids": ["legacy-converter"],
-                "request_converter_configurations": [{"converter_ids": ["request-converter"]}],
-            },
             {"request_converter_configurations": []},
             {"request_converter_configurations": [{"converter_ids": []}]},
             {"response_converter_configurations": []},
@@ -678,11 +674,29 @@ class TestAttackRoutes:
                     "pieces": [{"original_value": "Hello"}],
                     "target_conversation_id": "attack-1",
                     "send": False,
-                    "converter_ids": ["legacy-converter"],
+                    "request_converter_configurations": [{"converter_ids": ["request-converter"]}],
                 },
             )
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
             mock_get_service.return_value.add_message_async.assert_not_called()
+
+    @pytest.mark.parametrize("converter_ids", [["legacy-converter"], [], None])
+    def test_add_message_rejects_removed_top_level_converter_ids(
+        self, client: TestClient, converter_ids: list[str] | None
+    ) -> None:
+        """Test that a client still sending converter_ids is rejected instead of sent without converters."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            response = client.post(
+                "/api/attacks/attack-1/messages",
+                json={
+                    "pieces": [{"original_value": "Hello"}],
+                    "target_conversation_id": "attack-1",
+                    "target_registry_name": "test-target",
+                    "converter_ids": converter_ids,
+                },
+            )
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+            assert "request_converter_configurations" in response.text
             mock_get_service.return_value.add_message_async.assert_not_called()
 
     def test_update_attack_not_found(self, client: TestClient) -> None:
@@ -1493,6 +1507,80 @@ class TestTargetRoutes:
         assert response.status_code == status_code
         assert response.json()["detail"] == str(error)
 
+    def test_create_target_marks_a_save_refusal_so_the_target_can_be_created_without_saving(
+        self, client: TestClient
+    ) -> None:
+        refusal = NotSaveableError("Saved entries can't hold credentials ('api_key').")
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=refusal)
+
+            response = client.post(
+                "/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}, "persist": True}
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {
+            "type": "/errors/not-saveable",
+            "title": "Can't be saved",
+            "status": 400,
+            "detail": "Saved entries can't hold credentials ('api_key'). It can still be created without saving it.",
+            "instance": "/api/targets",
+            "not_saveable_reason": "Saved entries can't hold credentials ('api_key').",
+        }
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("persist", [False, True])
+    def test_create_target_answers_a_taken_name_with_an_untyped_conflict(
+        self, client: TestClient, persist: bool
+    ) -> None:
+        name = f"taken_{uuid.uuid4().hex[:8]}"
+        body = {"name": name, "type": "TextTarget", "params": {}}
+        assert client.post("/api/targets", json=body).status_code == status.HTTP_201_CREATED
+
+        response = client.post("/api/targets", json={**body, "persist": persist})
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json() == {"detail": f"Instance '{name}' already exists"}
+
+    def test_create_target_leaves_other_bad_requests_unmarked(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("bad endpoint"))
+
+            response = client.post("/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {"detail": "bad endpoint"}
+
+    def test_check_target_saveability_answers_with_the_save_checks(self, client: TestClient) -> None:
+        params = {"endpoint": "https://contoso.openai.azure.com/openai/v1", "model_name": "gpt-4o", "api_key": "sk-1"}
+
+        with_key = client.post("/api/targets/saveability", json={"type": "OpenAIChatTarget", "params": params})
+        with_identity = client.post(
+            "/api/targets/saveability", json={"type": "OpenAIChatTarget", "params": params, "auth_mode": "identity"}
+        )
+
+        assert with_key.status_code == status.HTTP_200_OK
+        assert with_key.json() == {"not_saveable_reason": "Saved entries can't hold credentials ('api_key')."}
+        assert with_identity.json() == {"not_saveable_reason": None}
+
+    @pytest.mark.parametrize(
+        ("error", "status_code"),
+        [
+            (ValueError("bad endpoint"), status.HTTP_400_BAD_REQUEST),
+            (PermissionError("requires administrator access"), status.HTTP_403_FORBIDDEN),
+        ],
+    )
+    def test_check_target_saveability_refuses_what_creating_would(
+        self, client: TestClient, error: Exception, status_code: int
+    ) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.check_saveability_async = AsyncMock(side_effect=error)
+
+            response = client.post("/api/targets/saveability", json={"type": "TextTarget", "params": {}})
+
+        assert response.status_code == status_code
+        assert response.json() == {"detail": str(error)}
+
     def test_create_target_passes_the_saved_entries_source_and_no_owner_when_sign_in_is_off(
         self, client: TestClient
     ) -> None:
@@ -1599,6 +1687,24 @@ class TestTargetRoutes:
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert data["target_registry_name"] == "target-1"
+
+    def test_get_target_named_saveability_reaches_the_lookup(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_target_async = AsyncMock(
+                return_value=TargetInstance(
+                    target_registry_name="saveability",
+                    identifier=TargetIdentifier(class_name="TextTarget"),
+                    capabilities=TargetCapabilities(),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/targets/saveability")
+
+            assert response.status_code == status.HTTP_200_OK
+            assert response.json()["target_registry_name"] == "saveability"
+            assert mock_service.get_target_async.call_args.kwargs["target_registry_name"] == "saveability"
 
     def test_get_target_not_found(self, client: TestClient) -> None:
         """Test getting a non-existent target."""

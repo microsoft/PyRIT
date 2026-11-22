@@ -131,6 +131,26 @@ async def test_validators_run_on_every_read_async(*, sqlite_instance: SQLiteMemo
 
 
 @pytest.mark.usefixtures("patch_central_database")
+async def test_named_read_reads_only_those_datasets_without_validators_async(*, sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[_dataset("b", count=2)], added_by="test")
+    # "a" is absent and the validator would reject "b", but a named read touches neither.
+    required = ScenarioRequiredData(
+        sources=[DatasetSource(name="a"), DatasetSource(name="b")], validators=[_require_count(3)]
+    )
+
+    seeds = await required.load_async(names=["b"])
+
+    assert {name: [seed.value for seed in values] for name, values in seeds.items()} == {"b": ["b-0", "b-1"]}
+
+
+async def test_named_read_rejects_a_dataset_that_is_not_required_async() -> None:
+    required = ScenarioRequiredData(sources=[DatasetSource(name="a")])
+
+    with pytest.raises(DatasetConstraintError, match=r"Not required datasets: \['c'\]"):
+        await required.load_async(names=["c"])
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_refresh_replaces_the_complete_dataset_async(*, sqlite_instance: SQLiteMemory) -> None:
     await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[_dataset("a", count=5)], added_by="test")
     provider = _provider(SeedDataset(dataset_name="a", seeds=[SeedObjective(value="fresh", dataset_name="a")]))
