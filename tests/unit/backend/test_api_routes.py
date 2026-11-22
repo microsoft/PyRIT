@@ -12,13 +12,13 @@ import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NotRequired, get_type_hints
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
 
 import pytest
 from fastapi import Request, status
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import AuthenticatedUser
@@ -2057,7 +2057,7 @@ class TestVersionRoutes:
     @pytest.mark.parametrize("commit", ["abc123", None])
     def test_get_version_with_build_info(self, *, client: TestClient, commit: str | None) -> None:
         """Test getting version with build info from Docker."""
-        build_info: version_routes.BuildInfo = {
+        build_info: dict[str, str | bool | None] = {
             "source": "git" if commit is not None else "pypi",
             "commit": commit,
             "modified": False,
@@ -2110,16 +2110,10 @@ class TestVersionRoutes:
         assert data["commit"] is None
 
     def test_build_info_keys_are_not_required(self) -> None:
-        """The BuildInfo contract keeps absent keys distinguishable from nullable values."""
-        assert get_type_hints(version_routes.BuildInfo, include_extras=True) == {
-            "source": NotRequired[str],
-            "commit": NotRequired[str | None],
-            "modified": NotRequired[bool],
-            "display": NotRequired[str],
-        }
-        assert version_routes.BuildInfo.__required_keys__ == frozenset()
-        assert version_routes.BuildInfo.__optional_keys__ == {"source", "commit", "modified", "display"}
-        assert version_routes.BuildInfo() == {}
+        """Every build-info key may be absent and defaults to None."""
+        assert version_routes.BuildInfo() == version_routes.BuildInfo(
+            source=None, commit=None, modified=None, display=None
+        )
 
     def test_get_version_build_info_absent_display_falls_back(self, client: TestClient) -> None:
         """A build-info file without `display` falls back to the package version."""
@@ -2127,7 +2121,7 @@ class TestVersionRoutes:
         with (
             patch("pyrit.backend.routes.version.Path") as mock_path_class,
             patch("pyrit.backend.routes.version.asyncio.to_thread", new=to_thread_mock),
-            patch.object(version_routes, "_load_build_info", return_value={"source": "git"}),
+            patch.object(version_routes, "_load_build_info", return_value=version_routes.BuildInfo(source="git")),
         ):
             mock_path_instance = MagicMock()
             mock_path_instance.exists.return_value = True
@@ -2151,36 +2145,34 @@ class TestVersionRoutes:
             )
         )
 
-        assert version_routes._load_build_info(build_info_path) == {
-            "source": "git",
-            "commit": None,
-            "modified": True,
-            "display": "abc + local",
-        }
+        assert version_routes._load_build_info(build_info_path) == version_routes.BuildInfo(
+            source="git",
+            commit=None,
+            modified=True,
+            display="abc + local",
+        )
 
     def test_load_build_info_rejects_non_object(self, tmp_path: Path) -> None:
         build_info_path = tmp_path / "build_info.json"
         build_info_path.write_text(json.dumps(["git"]))
 
-        with pytest.raises(ValueError, match="must contain a JSON object, got list"):
+        with pytest.raises(ValidationError, match="Input should be an object"):
             version_routes._load_build_info(build_info_path)
 
     @pytest.mark.parametrize(
-        ("key", "value", "expected"),
+        ("key", "value"),
         [
-            ("source", 1, "str"),
-            ("commit", 123, "str"),
-            ("modified", "true", "bool"),
-            ("display", None, "str"),
+            ("source", 1),
+            ("commit", 123),
+            ("modified", "true"),
+            ("display", 5),
         ],
     )
-    def test_load_build_info_rejects_wrong_value_type(
-        self, *, tmp_path: Path, key: str, value: object, expected: str
-    ) -> None:
+    def test_load_build_info_rejects_wrong_value_type(self, *, tmp_path: Path, key: str, value: object) -> None:
         build_info_path = tmp_path / "build_info.json"
         build_info_path.write_text(json.dumps({key: value}))
 
-        with pytest.raises(ValueError, match=f"Build info '{key}' must be {expected}, got {type(value).__name__}"):
+        with pytest.raises(ValidationError, match=key):
             version_routes._load_build_info(build_info_path)
 
     def test_get_version_ignores_malformed_build_info(self, *, client: TestClient, tmp_path: Path) -> None:
