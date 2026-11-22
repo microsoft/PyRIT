@@ -84,6 +84,23 @@ async def test_prompt_shield_scorer_rejects_unexpected_user_prompt_analysis_asyn
     target.send_prompt_async.assert_awaited_once()
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("analysis_json", ['"attack"', "null", '["junk"]'])
+async def test_prompt_shield_scorer_rejects_unexpected_documents_analysis_async(
+    *, sqlite_instance: MemoryInterface, analysis_json: str
+) -> None:
+    response_text = f'{{"userPromptAnalysis":{{"attackDetected":false}},"documentsAnalysis":{analysis_json}}}'
+    target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = get_mock_target_identifier("MockShieldTarget")
+    target.send_prompt_async = AsyncMock(return_value=[generate_shield_response(response_text)])
+    scorer = PromptShieldScorer(prompt_shield_target=target)
+
+    with pytest.raises(RuntimeError, match="documentsAnalysis") as error:
+        await scorer.score_text_async("Check for prompt injection")
+    assert isinstance(error.value.__cause__, ValueError)
+    target.send_prompt_async.assert_awaited_once()
+
+
 async def test_prompt_shield_scorer_metadata_is_the_response_text(sqlite_instance, sample_response_json_str: str):
     """The Score model only accepts flat str/int/float metadata values, so the endpoint
     body has to be stored as the JSON text it arrived as rather than as a parsed object."""
