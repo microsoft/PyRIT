@@ -48,10 +48,18 @@ describe('ScorerMetricsDetails', () => {
   })
 
   it('should keep the unavailable fallback for missing metrics', () => {
-    renderScorer({ accuracy: 0.94, f1_score: null })
+    renderScorer({ accuracy: 0.94, f1_score: null, num_responses: 7 })
     expectMetric('Accuracy', '94.00%')
     expectMetric('F1 score', 'Unavailable')
     expectMetric('Precision', 'Unavailable')
     expectMetric('Recall', 'Unavailable')
+    expectMetric('Num responses', '7')
+    expect(screen.queryByRole('group', { name: 'Coverage' })).not.toBeInTheDocument()
+  })
+
+  it.each([0, 7, 10])('should show coverage when %i of 10 responses are scored', scored => {
+    renderScorer({ accuracy: 1, num_responses: scored, num_input_responses: 10 })
+    expectMetric('Accuracy', '100.00%')
+    expectMetric('Coverage', `${scored} / 10 scored`)
   })
 })

@@ -727,6 +727,8 @@ class ScenarioProgressReadModel:
             precision=official_metrics.precision,
             recall=official_metrics.recall,
             average_score_time_seconds=official_metrics.average_score_time_seconds,
+            num_responses=official_metrics.num_responses,
+            num_input_responses=official_metrics.num_input_responses,
         )
 
     @staticmethod
