@@ -38,9 +38,11 @@ from pyrit.models import (
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
+    InvalidFloatFeedbackError,
     Message,
     MessagePiece,
     Score,
+    ScorerCapabilityName,
     ScoreStatus,
     ScoringExpectation,
     SeedPrompt,
@@ -52,6 +54,7 @@ from pyrit.score import (
     MessageScorable,
     MessageScorer,
     Scorer,
+    TrueFalseFallbackScorer,
     TrueFalseScorer,
 )
 
@@ -110,6 +113,29 @@ _STRICT_ADVERSARIAL_CHAT_SCHEMA: dict = {
 }
 
 
+#: The threshold ``AttackBuilder`` gives its mock objective scorer unless a test sets another.
+_DEFAULT_THRESHOLD = 0.8
+
+
+def _threshold_score_mock(value: float, *, threshold: float = _DEFAULT_THRESHOLD) -> MagicMock:
+    """
+    Mock what a FloatScaleThresholdScorer returns for a scale value.
+
+    TAP takes success from the verdict and ranks by the scale value the scorer keeps, so the
+    mock carries both, as the real scorer's result does.
+    """
+    return MagicMock(
+        spec=Score,
+        score_type="true_false",
+        get_value=MagicMock(return_value=value >= threshold),
+        is_undetermined=False,
+        score_metadata={"original_float_value": value},
+        scorer_class_identifier=ComponentIdentifier(class_name="FloatScaleThresholdScorer", class_module="test"),
+        scored_expectation=None,
+        observation_ids=[],
+    )
+
+
 @dataclass
 class NodeMockConfig:
     """Configuration for creating mock _TreeOfAttacksNode objects."""
@@ -159,14 +185,7 @@ class MockNodeFactory:
 
         # Set up objective score
         if config.objective_score_value is not None:
-            node.objective_score = MagicMock(
-                spec=Score,
-                get_value=MagicMock(return_value=config.objective_score_value),
-                is_undetermined=False,
-                score_metadata=None,
-                scored_expectation=None,
-                observation_ids=[],
-            )
+            node.objective_score = _threshold_score_mock(config.objective_score_value)
         else:
             node.objective_score = None
 
@@ -279,7 +298,7 @@ class AttackBuilder:
             class_module="pyrit.score",
         )
 
-        scoring_config = TAPAttackScoringConfig(
+        scoring_config = AttackScoringConfig(
             objective_scorer=mock_threshold_scorer,
             auxiliary_scorers=self.auxiliary_scorers,
         )
@@ -374,6 +393,23 @@ class TestHelpers:
             score_value_description="Test score",
             score_rationale="Test rationale",
             score_metadata={"test": "metadata"},
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=ComponentIdentifier(
+                class_name="MockScorer",
+                class_module="test_module",
+            ),
+        )
+
+    @staticmethod
+    def create_objective_score(value: float, *, threshold: float = _DEFAULT_THRESHOLD) -> Score:
+        """Create the true/false Score a threshold scorer returns, keeping the scale value."""
+        return Score(
+            score_type="true_false",
+            score_value=str(value >= threshold).lower(),
+            score_category=["test"],
+            score_value_description="Test score",
+            score_rationale="Test rationale",
+            score_metadata={"test": "metadata", "original_float_value": value},
             message_piece_id=str(uuid.uuid4()),
             scorer_class_identifier=ComponentIdentifier(
                 class_name="MockScorer",
@@ -632,7 +668,7 @@ class TestTreeOfAttacksInitialization:
         assert len(attack._auxiliary_scorers) == 2
 
     def test_init_accepts_base_attack_scoring_config(self, attack_builder):
-        """Test that TAP accepts AttackScoringConfig and converts to TAPAttackScoringConfig."""
+        """TAP keeps the AttackScoringConfig it is given."""
         # Set up attack builder with default mocks
         attack_builder.with_default_mocks()
 
@@ -646,7 +682,6 @@ class TestTreeOfAttacksInitialization:
             class_module="pyrit.score",
         )
 
-        # Pass base AttackScoringConfig (not TAPAttackScoringConfig)
         base_config = AttackScoringConfig(
             objective_scorer=mock_threshold_scorer,
             use_score_as_feedback=False,
@@ -659,10 +694,8 @@ class TestTreeOfAttacksInitialization:
             attack_scoring_config=base_config,
         )
 
-        # Verify it was converted to TAPAttackScoringConfig
         result = attack.get_attack_scoring_config()
-        assert isinstance(result, TAPAttackScoringConfig)
-        assert result.threshold == 0.8
+        assert result is base_config
         assert result.use_score_as_feedback is False
 
     def test_get_objective_target_returns_correct_target(self, attack_builder):
@@ -678,12 +711,10 @@ class TestTreeOfAttacksInitialization:
         result = attack.get_attack_scoring_config()
 
         assert result is not None
-        assert isinstance(result, TAPAttackScoringConfig)
-        # The objective_scorer should be a FloatScaleThresholdScorer (or mock of one)
+        assert isinstance(result, AttackScoringConfig)
         assert result.objective_scorer is not None
+        assert result.objective_scorer.threshold == 0.75
         assert len(result.auxiliary_scorers) == 1
-        # TAPAttackScoringConfig exposes threshold property
-        assert result.threshold == 0.75
 
     async def test_tree_depth_validation_with_prepended_conversation(self, attack_builder, helpers):
         """Test that prepended conversation turns are validated against tree_depth."""
@@ -792,7 +823,7 @@ class TestPruningLogic:
         # Verify only top 3 nodes remain
         assert len(context.nodes) == 3
         remaining_scores = [
-            node.objective_score.get_value() for node in context.nodes if node.objective_score is not None
+            normalize_score_to_float(node.objective_score) for node in context.nodes if node.objective_score is not None
         ]
         assert sorted(remaining_scores, reverse=True) == [0.9, 0.7, 0.5]
 
@@ -817,7 +848,7 @@ class TestPruningLogic:
         undetermined_node = node_factory.create_node(NodeMockConfig(node_id="undetermined"))
         undetermined_node.objective_score = helpers.create_undetermined_score()
         complete_zero_node = node_factory.create_node(NodeMockConfig(node_id="complete_zero"))
-        complete_zero_node.objective_score = helpers.create_score(0.0)
+        complete_zero_node.objective_score = helpers.create_objective_score(0.0)
 
         completed = basic_attack._get_completed_nodes_sorted_by_score([undetermined_node, complete_zero_node])
 
@@ -836,8 +867,8 @@ class TestPruningLogic:
     def test_sort_equal_complete_scores_is_stable(self, basic_attack, node_factory, helpers):
         first_node = node_factory.create_node(NodeMockConfig(node_id="first"))
         second_node = node_factory.create_node(NodeMockConfig(node_id="second"))
-        first_node.objective_score = helpers.create_score(0.5)
-        second_node.objective_score = helpers.create_score(0.5)
+        first_node.objective_score = helpers.create_objective_score(0.5)
+        second_node.objective_score = helpers.create_objective_score(0.5)
         nodes = [first_node, second_node]
 
         assert basic_attack._get_completed_nodes_sorted_by_score(nodes) == nodes
@@ -941,7 +972,7 @@ class TestPruningLogic:
 
         # Verify the best node (0.9 score) was selected
         assert context.best_objective_score is not None
-        assert context.best_objective_score.get_value() == 0.9
+        assert normalize_score_to_float(context.best_objective_score) == 0.9
         assert context.best_conversation_id is not None
 
     def test_update_best_performing_node_tracks_adversarial_conversation_id(self, basic_attack, node_factory, helpers):
@@ -1012,7 +1043,7 @@ class TestPruningLogic:
 
         # Should select the only valid node
         assert context.best_objective_score is not None
-        assert context.best_objective_score.get_value() == 0.6
+        assert normalize_score_to_float(context.best_objective_score) == 0.6
         assert context.best_conversation_id == valid_node.objective_target_conversation_id
 
     def test_update_best_performing_node_with_all_invalid_nodes(self, basic_attack, node_factory, helpers):
@@ -1102,7 +1133,7 @@ class TestPruningLogic:
         undetermined_node = node_factory.create_node(NodeMockConfig(node_id="undetermined"))
         undetermined_node.objective_score = helpers.create_undetermined_score()
         complete_node = node_factory.create_node(NodeMockConfig(node_id="complete"))
-        complete_node.objective_score = helpers.create_score(0.4)
+        complete_node.objective_score = helpers.create_objective_score(0.4)
         context.nodes = [undetermined_node, complete_node]
 
         basic_attack._update_best_performing_node(context)
@@ -1165,7 +1196,11 @@ class TestPruningLogic:
         # 4 completed nodes with tree_width=3 → 1 pruned (lowest score = a blocked node)
         assert len(context.nodes) == 3
         remaining_scores = sorted(
-            [node.objective_score.get_value() for node in context.nodes if node.objective_score is not None],
+            [
+                normalize_score_to_float(node.objective_score)
+                for node in context.nodes
+                if node.objective_score is not None
+            ],
             reverse=True,
         )
         assert remaining_scores == [0.8, 0.6, 0.0]
@@ -1510,7 +1545,7 @@ class TestHelperMethods:
         assert "/10" in result
 
     def test_is_objective_achieved(self, attack_builder, helpers):
-        """Test _is_objective_achieved logic with mock scores."""
+        """Success is the scorer's verdict, not its float value compared against a threshold."""
         attack = attack_builder.with_default_mocks().with_threshold(0.8).build()
         context = helpers.create_basic_context()
 
@@ -1518,17 +1553,17 @@ class TestHelperMethods:
         context.best_objective_score = None
         assert attack._is_objective_achieved(context=context) is False
 
-        # Test 2: Score below threshold
-        context.best_objective_score = MagicMock(get_value=MagicMock(return_value=0.5), score_metadata=None)
+        # Test 2: A false verdict fails, however high its float value
+        context.best_objective_score = helpers.create_objective_score(0.95, threshold=0.99)
         assert attack._is_objective_achieved(context=context) is False
 
-        # Test 3: Score at threshold
-        context.best_objective_score = MagicMock(get_value=MagicMock(return_value=0.8), score_metadata=None)
+        # Test 3: A true verdict succeeds, however low its float value
+        context.best_objective_score = helpers.create_objective_score(0.3, threshold=0.2)
         assert attack._is_objective_achieved(context=context) is True
 
-        # Test 4: Score above threshold
-        context.best_objective_score = MagicMock(get_value=MagicMock(return_value=0.9), score_metadata=None)
-        assert attack._is_objective_achieved(context=context) is True
+        # Test 4: An undetermined verdict does not succeed
+        context.best_objective_score = helpers.create_undetermined_score()
+        assert attack._is_objective_achieved(context=context) is False
 
     async def test_is_objective_achieved_with_threshold_scores(self, attack_builder, helpers):
         """Test _is_objective_achieved with realistic FloatScaleThresholdScorer output.
@@ -2910,26 +2945,28 @@ def test_tap_init_raises_when_objective_scorer_is_none():
         )
 
 
-def test_tap_scoring_config_threshold_raises_for_reassigned_invalid_scorer():
-    """threshold re-validates objective_scorer at access time, not just at construction.
-
-    __init__ already rejects a non-FloatScaleThresholdScorer objective_scorer, so this
-    exercises the defensive re-check by mutating the attribute after construction.
-    """
+def test_tap_scoring_config_threshold_raises_for_a_scorer_without_a_threshold():
+    """The deprecated threshold property reads only a FloatScaleThresholdScorer objective scorer."""
     mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
     mock_threshold_scorer.threshold = 0.8
-    scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
+    with pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig is deprecated"):
+        scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
 
     scoring_config.objective_scorer = MagicMock(spec=Scorer)
 
-    with pytest.raises(TypeError, match="TAP objective scorer must be a FloatScaleThresholdScorer"):
+    with (
+        pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig.threshold"),
+        pytest.raises(TypeError, match="needs a FloatScaleThresholdScorer objective scorer"),
+    ):
         _ = scoring_config.threshold
 
 
-def test_tap_attack_result_tree_visualization_getter_returns_value():
+@pytest.mark.parametrize("has_root", [False, True])
+def test_tap_attack_result_tree_visualization_getter_returns_value(has_root):
     """Test that TAPAttackResult.tree_visualization returns the stored tree."""
     tree = Tree()
-    tree.create_node("root", "root")
+    if has_root:
+        tree.create_node("root", "root")
     result = TAPAttackResult(
         conversation_id="conv1",
         objective="test",
@@ -2945,6 +2982,14 @@ def test_tap_attack_result_tree_visualization_getter_returns_none_when_missing()
         objective="test",
     )
     assert result.tree_visualization is None
+
+
+@pytest.mark.parametrize("value", [0, "invalid"])
+def test_tap_attack_result_tree_visualization_rejects_invalid_metadata(value):
+    result = TAPAttackResult(conversation_id="conv1", objective="test", metadata={"tree_visualization": value})
+
+    with pytest.raises(TypeError, match="tree_visualization must be a Tree or None"):
+        _ = result.tree_visualization
 
 
 # ---------------------------------------------------------------------------
@@ -2977,7 +3022,9 @@ class _ScenarioNodeBehavior:
     json_err: bool = False
 
 
-def _make_node_with_behavior(*, behavior: _ScenarioNodeBehavior, node_id: str) -> MagicMock:
+def _make_node_with_behavior(
+    *, behavior: _ScenarioNodeBehavior, node_id: str, threshold: float = _DEFAULT_THRESHOLD
+) -> MagicMock:
     """Create a mock node that applies the given behavior during send_prompt_async."""
     _call_behaviors: list[_ScenarioNodeBehavior] = [behavior]
 
@@ -3001,21 +3048,9 @@ def _make_node_with_behavior(*, behavior: _ScenarioNodeBehavior, node_id: str) -
         # Normal completion
         node.completed = True
         if b.error is not None:
-            node.objective_score = MagicMock(
-                spec=Score,
-                get_value=MagicMock(return_value=0.0),
-                score_metadata=None,
-                scored_expectation=None,
-                observation_ids=[],
-            )
+            node.objective_score = _threshold_score_mock(0.0, threshold=threshold)
         elif b.score is not None:
-            node.objective_score = MagicMock(
-                spec=Score,
-                get_value=MagicMock(return_value=b.score),
-                score_metadata=None,
-                scored_expectation=None,
-                observation_ids=[],
-            )
+            node.objective_score = _threshold_score_mock(b.score, threshold=threshold)
 
     node = MagicMock()
     node.node_id = node_id
@@ -3249,7 +3284,7 @@ class TestTAPScenarios:
             nodes = []
             for i in range(count):
                 b = _get_next_behavior(depth)
-                node = _make_node_with_behavior(behavior=b, node_id=f"d{depth}_n{i}")
+                node = _make_node_with_behavior(behavior=b, node_id=f"d{depth}_n{i}", threshold=threshold)
                 next_depth = depth + 1
 
                 def _dup_factory(parent=node, d=next_depth):
@@ -3257,7 +3292,9 @@ class TestTAPScenarios:
                     parent._call_behaviors.append(_get_next_behavior(d))
                     # Create child with its own behavior
                     cb = _get_next_behavior(d)
-                    child = _make_node_with_behavior(behavior=cb, node_id=f"d{d}_n{_depth_counters.get(d, 0) - 1}")
+                    child = _make_node_with_behavior(
+                        behavior=cb, node_id=f"d{d}_n{_depth_counters.get(d, 0) - 1}", threshold=threshold
+                    )
                     child.parent_id = parent.node_id
                     child._vis_node_id = parent._vis_node_id
                     child.duplicate_async = AsyncMock(side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd))
@@ -3266,7 +3303,9 @@ class TestTAPScenarios:
                 def _dup_child(parent_node, d):
                     parent_node._call_behaviors.append(_get_next_behavior(d))
                     cb = _get_next_behavior(d)
-                    child = _make_node_with_behavior(behavior=cb, node_id=f"d{d}_n{_depth_counters.get(d, 0) - 1}")
+                    child = _make_node_with_behavior(
+                        behavior=cb, node_id=f"d{d}_n{_depth_counters.get(d, 0) - 1}", threshold=threshold
+                    )
                     child.parent_id = parent_node.node_id
                     child._vis_node_id = parent_node._vis_node_id
                     child.duplicate_async = AsyncMock(side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd))
@@ -3285,7 +3324,9 @@ class TestTAPScenarios:
                 node = depth1_nodes[_depth1_idx[0]]
                 _depth1_idx[0] += 1
             else:
-                node = _make_node_with_behavior(behavior=_B(fail=True), node_id=f"extra_{_depth1_idx[0]}")
+                node = _make_node_with_behavior(
+                    behavior=_B(fail=True), node_id=f"extra_{_depth1_idx[0]}", threshold=threshold
+                )
                 _depth1_idx[0] += 1
             return node
 
@@ -3295,16 +3336,16 @@ class TestTAPScenarios:
             with patch.object(attack._memory, "get_message_pieces_async", return_value=[]):
                 result = await attack._perform_async(context=context)
 
+        best = normalize_score_to_float(context.best_objective_score) if context.best_objective_score else None
         assert result.outcome == expected_outcome, (
-            f"Expected {expected_outcome}, got {result.outcome}. "
-            f"Best score: {context.best_objective_score.get_value() if context.best_objective_score else 'None'}"
+            f"Expected {expected_outcome}, got {result.outcome}. Best score: {best if best is not None else 'None'}"
         )
         assert result.max_depth_reached == expected_max_depth
 
         if expected_best_score > 0:
             assert context.best_objective_score is not None
-            assert abs(context.best_objective_score.get_value() - expected_best_score) < 0.01, (
-                f"Expected best score ~{expected_best_score}, got {context.best_objective_score.get_value()}"
+            assert abs(normalize_score_to_float(context.best_objective_score) - expected_best_score) < 0.01, (
+                f"Expected best score ~{expected_best_score}, got {best}"
             )
 
 
@@ -3369,14 +3410,18 @@ class TestModalityRouterIntegration:
             ]
         )
 
-    async def test_node_send_prompt_to_target_forwards_prev_image(self, node_components):
-        """Objective accepting {text, image_path} gets prev image attached on turn N."""
+    @pytest.mark.parametrize("supports_multi_turn", [True, False])
+    async def test_node_send_prompt_to_target_forwards_prev_image(self, node_components, supports_multi_turn):
+        """Objective accepting {text, image_path} gets prev image attached on turn N, also when it is single-turn."""
         # Override the router to point at an image-capable objective.
         node_components["objective_target"].configuration.capabilities.input_modalities = frozenset(
             {frozenset({"text"}), frozenset({"text", "image_path"})}
         )
         node_components["objective_target"].configuration.capabilities.output_modalities = frozenset(
             {frozenset({"image_path"})}
+        )
+        node_components["objective_target"].configuration.includes.side_effect = lambda capability: (
+            capability == CapabilityName.MULTI_TURN and supports_multi_turn
         )
         node_components["modality_router"] = _ModalityFeedbackRouter(
             adversarial_chat=node_components["adversarial_chat"],
@@ -3666,3 +3711,113 @@ class TestTAPAdversarialIdentity:
         )
         assert attack._adversarial_chat_system_seed_prompt.value == "tap persona {{ desired_prefix }}"
         assert attack.get_identifier().params["adversarial_system_prompt"] == "tap persona {{ desired_prefix }}"
+
+
+class _FloatFeedbackJudge(TrueFalseScorer):
+    """A true/false scorer that does or does not promise to keep a float value."""
+
+    def __init__(self, *, promises: bool) -> None:
+        self._promises = promises
+        super().__init__()
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier(params={"promises": self._promises})
+
+    def _preserves_float_scale_value(self) -> bool:
+        return self._promises
+
+    async def _score_scorable_async(self, *, scorable: Any, expectation: ScoringExpectation | None) -> list[Score]:
+        return []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestVerdictFirstSuccess:
+    """TAP takes success from the verdict and ranks by the float value the scorer kept."""
+
+    def test_a_true_verdict_survives_pruning_against_a_higher_false_one(self, attack_builder, node_factory, helpers):
+        attack = attack_builder.with_default_mocks().with_tree_params(tree_width=1).build()
+        context = helpers.create_basic_context()
+        higher_false = node_factory.create_node(NodeMockConfig(node_id="higher_false"))
+        higher_false.objective_score = helpers.create_objective_score(0.65, threshold=0.7)
+        lower_true = node_factory.create_node(NodeMockConfig(node_id="lower_true"))
+        lower_true.objective_score = helpers.create_objective_score(0.6, threshold=0.5)
+        context.nodes = [higher_false, lower_true]
+
+        attack._prune_nodes_to_maintain_width(context)
+        attack._update_best_performing_node(context)
+
+        assert [node.node_id for node in context.nodes] == ["lower_true"]
+        assert context.best_conversation_id == lower_true.objective_target_conversation_id
+        assert attack._is_objective_achieved(context=context) is True
+
+    def test_false_verdicts_rank_by_their_float_value(self, basic_attack, node_factory, helpers):
+        nodes = []
+        for node_id, value in [("low", 0.2), ("high", 0.7), ("mid", 0.5)]:
+            node = node_factory.create_node(NodeMockConfig(node_id=node_id))
+            node.objective_score = helpers.create_objective_score(value, threshold=0.9)
+            nodes.append(node)
+        ranked = basic_attack._get_completed_nodes_sorted_by_score(nodes)
+        assert [node.node_id for node in ranked] == ["high", "mid", "low"]
+
+    def test_a_complete_score_without_its_promised_value_is_an_error(self, basic_attack, node_factory, helpers):
+        node = node_factory.create_node(NodeMockConfig(node_id="broken"))
+        node.objective_score = helpers.create_objective_score(0.6)
+        node.objective_score.score_metadata = {}
+        with pytest.raises(InvalidFloatFeedbackError, match="promised a float value"):
+            basic_attack._get_completed_nodes_sorted_by_score([node])
+
+    async def test_success_reason_names_the_verdict_not_a_threshold(self, attack_builder, helpers):
+        attack = attack_builder.with_default_mocks().build()
+        context = helpers.create_basic_context()
+        context.best_objective_score = helpers.create_objective_score(0.6, threshold=0.5)
+        with patch.object(attack, "_create_attack_result_async", new_callable=AsyncMock) as create:
+            await attack._create_success_result_async(context)
+        reason = create.call_args.kwargs["outcome_reason"]
+        assert reason == "Objective scorer returned true (score 0.60)"
+        assert "threshold" not in reason
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestFloatFeedbackScorers:
+    @staticmethod
+    def _build(builder, scoring_config: AttackScoringConfig) -> TreeOfAttacksWithPruningAttack:
+        return TreeOfAttacksWithPruningAttack(
+            objective_target=builder.objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=builder.adversarial_chat),
+            attack_scoring_config=scoring_config,
+        )
+
+    def test_any_scorer_that_keeps_the_value_qualifies(self, attack_builder):
+        fallback = TrueFalseFallbackScorer(
+            scorer=_FloatFeedbackJudge(promises=True), fallback_scorer=_FloatFeedbackJudge(promises=True)
+        )
+        attack = self._build(attack_builder.with_default_mocks(), AttackScoringConfig(objective_scorer=fallback))
+        assert attack.get_attack_scoring_config().objective_scorer is fallback
+
+    def test_a_scorer_that_does_not_keep_the_value_is_rejected(self, attack_builder):
+        config = AttackScoringConfig(objective_scorer=_FloatFeedbackJudge(promises=False))
+        with pytest.raises(
+            ValueError,
+            match=r"TreeOfAttacksWithPruningAttack objective scorer: _FloatFeedbackJudge does not keep a float value",
+        ):
+            self._build(attack_builder.with_default_mocks(), config)
+
+    def test_the_deprecated_config_is_checked_the_same_way(self, attack_builder):
+        with pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig is deprecated"):
+            config = TAPAttackScoringConfig(objective_scorer=_FloatFeedbackJudge(promises=False))
+        with pytest.raises(ValueError, match="preserves_float_scale_value"):
+            self._build(attack_builder.with_default_mocks(), config)
+
+    def test_tap_requires_a_verdict_that_keeps_its_float_value(self):
+        assert TreeOfAttacksWithPruningAttack.OBJECTIVE_SCORER_REQUIREMENTS.required == {
+            ScorerCapabilityName.TRUE_FALSE,
+            ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE,
+        }
+
+    def test_reading_the_threshold_is_deprecated(self):
+        with pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig is deprecated"):
+            config = TAPAttackScoringConfig(
+                objective_scorer=FloatScaleThresholdScorer(scorer=MagicMock(spec=FloatScaleScorer), threshold=0.6)
+            )
+        with pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig.threshold"):
+            assert config.threshold == 0.6

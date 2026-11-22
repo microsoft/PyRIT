@@ -28,7 +28,7 @@ class OutputMatchesScorer(MessageTrueFalseScorer):
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
             params={"matching_version": 1},
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
     async def _score_piece_with_expectation_async(
