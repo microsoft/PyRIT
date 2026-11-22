@@ -10,32 +10,6 @@ from PIL import Image
 from pyrit.converter import ImageMirrorConverter
 
 
-@pytest.fixture
-def sample_image_bytes():
-    """Sample RGB image for testing with configurable format and size."""
-
-    def _create_image(format="PNG", size=(200, 200)):  # noqa: A002
-        img = Image.new("RGB", size, color=(125, 125, 125))
-        img_bytes = BytesIO()
-        img.save(img_bytes, format=format)
-        return img_bytes.getvalue()
-
-    return _create_image
-
-
-@pytest.fixture
-def sample_transparent_image_bytes():
-    """Sample RGBA image with transparency for testing with configurable format."""
-
-    def _create_image(format="PNG"):  # noqa: A002
-        img = Image.new("RGBA", (200, 200), color=(125, 125, 125, 128))
-        img_bytes = BytesIO()
-        img.save(img_bytes, format=format)
-        return img_bytes.getvalue()
-
-    return _create_image
-
-
 def _quadrant_image() -> Image.Image:
     """A 2x2 image with a distinct color in each quadrant."""
     image = Image.new("RGB", (2, 2))
@@ -86,7 +60,7 @@ def test_image_mirror_converter_horizontal_flip_moves_pixels() -> None:
     assert output_format == "PNG"
     assert mirrored.size == (2, 2)
     # Each row is reversed: red/green swap places, blue/yellow swap places.
-    assert list(mirrored.getdata()) == [(0, 255, 0), (255, 0, 0), (255, 255, 0), (0, 0, 255)]
+    assert list(mirrored.get_flattened_data()) == [(0, 255, 0), (255, 0, 0), (255, 255, 0), (0, 0, 255)]
 
 
 def test_image_mirror_converter_vertical_flip_moves_pixels() -> None:
@@ -96,7 +70,7 @@ def test_image_mirror_converter_vertical_flip_moves_pixels() -> None:
     assert output_format == "PNG"
     assert mirrored.size == (2, 2)
     # Each column is reversed: red/blue swap places, green/yellow swap places.
-    assert list(mirrored.getdata()) == [(0, 0, 255), (255, 255, 0), (255, 0, 0), (0, 255, 0)]
+    assert list(mirrored.get_flattened_data()) == [(0, 0, 255), (255, 255, 0), (255, 0, 0), (0, 255, 0)]
 
 
 @pytest.mark.parametrize("direction", ["horizontal", "vertical"])
@@ -200,4 +174,4 @@ def test_image_mirror_converter_preserves_png_alpha() -> None:
     assert output_format == "PNG"
     with Image.open(mirrored_io) as mirrored:
         assert mirrored.mode == "RGBA"
-        assert list(mirrored.getdata()) == [(40, 200, 20, 255), (200, 40, 20, 0)]
+        assert list(mirrored.get_flattened_data()) == [(40, 200, 20, 255), (200, 40, 20, 0)]
