@@ -647,6 +647,28 @@ class TestAssertGenerator:
             cause = cause.__cause__
         assert cause is timeout
 
+    async def test_failed_conversation_reset_is_logged_and_keeps_the_generation_error_async(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        target = make_assert_generation_target()
+        timeout = TimeoutError("Request timeout")
+        with (
+            patch.object(target, "_send_prompt_to_target_async", side_effect=timeout),
+            patch.object(
+                target, "reset_conversation_async", new_callable=AsyncMock, side_effect=RuntimeError("reset failed")
+            ) as reset,
+            caplog.at_level("WARNING"),
+        ):
+            with pytest.raises(RuntimeError, match="Error sending prompt") as error:
+                await AssertGenerator(target=target).execute_async(config=make_assert_config())
+        reset.assert_awaited_once()
+        assert "Failed to reset ASSERT generation conversation" in caplog.text
+        assert "reset failed" in caplog.text
+        cause = error.value
+        while cause.__cause__ is not None:
+            cause = cause.__cause__
+        assert cause is timeout
+
     def test_immutable_target_history_is_rejected(self) -> None:
         target = make_assert_generation_target()
         target.apply_capabilities(

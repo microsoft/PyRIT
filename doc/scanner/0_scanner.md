@@ -41,6 +41,12 @@ from ambient environment variables. A configured deterministic objective scorer
 needs no scoring model; techniques without generation need no adversarial model.
 See [scan targets](../code/setup/0_setup.md#scan-targets) for setup options.
 
+Select named datasets with `--datasets <name> [<name> ...]`. For example,
+`foundry.assert_policy` has no default datasets: if it reports "Select a dataset.",
+pass the names of stored ASSERT datasets with `--datasets`. Create groups with
+`AssertGenerator` and store them with `AssertProvider` as shown in the
+[ASSERT generation guide](../code/executor/7_promptgen.ipynb).
+
 ### Connecting to CoPyRIT
 
 Point a local configuration file at the remote backend:
@@ -73,7 +79,7 @@ PyRIT ships with scenarios organized into the following families:
 | Family | Scenarios | Documentation |
 |--------|-----------|---------------|
 | **Adaptive** | TextAdaptive | [Adaptive Scenarios](adaptive.ipynb) |
-| **AIRT** | RapidResponse, Psychosocial, Cyber, Jailbreak, Multilingual, Leakage, Scam | [AIRT Scenarios](airt.ipynb) |
+| **AIRT** | RapidResponse, Psychosocial, Cyber, Jailbreak, Multilingual, Leakage, AggregationLeakage, Scam | [AIRT Scenarios](airt.ipynb) |
 | **Benchmark** | AdversarialBenchmark | [Benchmark Scenarios](benchmark.ipynb) |
 | **Foundry** | RedTeamAgent | [Foundry Scenarios](foundry.ipynb) |
 | **Garak** | Encoding, FigStep, WebInjection, Doctor, SystemPromptExtraction, PackageHallucination, AudioAchillesHeel | [Garak Scenarios](garak.ipynb) |

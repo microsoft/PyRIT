@@ -357,6 +357,84 @@ async def test_get_attack_results_by_conversation_id(sqlite_instance: MemoryInte
     assert retrieved_results[0].conversation_id == "conv_1"
 
 
+async def test_get_attack_results_breaks_timestamp_ties_by_the_greater_id(sqlite_instance: MemoryInterface):
+    """Legacy duplicate rows sharing a timestamp keep one deterministic winner.
+
+    The paginated SQL anti-join keeps the greater id on equal timestamps, so
+    the post-fetch Python dedup must apply the same rule or the unpaginated
+    detail view and the paginated list disagree on which attack owns the
+    conversation.
+    """
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    tied = datetime(2026, 1, 1, tzinfo=UTC)
+    low = str(UUID(int=1))
+    high = str(UUID(int=2))
+    conversation_id = "conv_tie"
+
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            AttackResult(
+                attack_result_id=low,
+                conversation_id=conversation_id,
+                objective="older id",
+                outcome=AttackOutcome.FAILURE,
+                timestamp=tied,
+            ),
+            AttackResult(
+                attack_result_id=high,
+                conversation_id=conversation_id,
+                objective="newer id",
+                outcome=AttackOutcome.SUCCESS,
+                timestamp=tied,
+            ),
+        ]
+    )
+
+    retrieved_results = await sqlite_instance.get_attack_results_async(conversation_id=conversation_id)
+
+    assert len(retrieved_results) == 1
+    assert retrieved_results[0].attack_result_id == high
+    assert retrieved_results[0].outcome == AttackOutcome.SUCCESS
+
+
+async def test_get_attack_results_tiebreak_agrees_across_paths_for_native_order_flipped_ids(
+    sqlite_instance: MemoryInterface,
+):
+    """IDs whose native and string order disagree keep one winner on both paths.
+
+    SQL Server orders uniqueidentifier columns by byte groups, which flips this
+    exact pair relative to str(UUID); the anti-join therefore normalizes both
+    id operands through the backend ordering expression. On SQLite both the
+    paginated anti-join and the post-fetch dedup must keep the row whose
+    string id is greater.
+    """
+    from datetime import UTC, datetime
+
+    tied = datetime(2026, 1, 1, tzinfo=UTC)
+    string_greater = "00000001-0000-4000-8000-000000000000"
+    string_lesser = "00000000-0000-4000-8000-000000000001"
+    for attack_result_id in (string_lesser, string_greater):
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                AttackResult(
+                    attack_result_id=attack_result_id,
+                    conversation_id="conv_native_vs_string",
+                    objective=attack_result_id,
+                    outcome=AttackOutcome.SUCCESS,
+                    timestamp=tied,
+                )
+            ]
+        )
+
+    paginated = await sqlite_instance.get_attack_results_async(limit=10)
+    unpaginated = await sqlite_instance.get_attack_results_async(conversation_id="conv_native_vs_string")
+
+    assert [result.attack_result_id for result in paginated] == [string_greater]
+    assert [result.attack_result_id for result in unpaginated] == [string_greater]
+
+
 async def test_get_attack_results_by_objective(sqlite_instance: MemoryInterface):
     """Test retrieving attack results by objective substring."""
     # Create and add attack results
@@ -2292,7 +2370,8 @@ async def test_get_attack_results_pagination_returns_recency_ordered_page(sqlite
 
 def test_get_attack_results_pagination_uses_not_exists_anti_join() -> None:
     """Pagination probes for a newer duplicate instead of ranking the full result set."""
-    condition = MemoryInterface._attack_results_not_superseded_condition(conditions=[])
+    instance = object.__new__(SQLiteMemory)
+    condition = instance._attack_results_not_superseded_condition(conditions=[])
     statement = select(AttackResultEntry.id).where(condition)
     sql = str(statement.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True})).upper()
 

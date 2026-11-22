@@ -78,7 +78,7 @@ class ScorerMetrics:
     ``to_json``) and loading them from JSON files on disk (see
     ``from_json_file``).
 
-    Args:
+    Attributes:
         num_responses (int): Total number of responses evaluated.
         num_input_responses (int | None): Number of responses supplied before excluding scores that
             could not reach a verdict. None for metrics recorded before this field existed.
@@ -168,7 +168,7 @@ class HarmScorerMetrics(ScorerMetrics):
     """
     Metrics for evaluating a harm scorer against a HumanLabeledDataset.
 
-    Args:
+    Attributes:
         mean_absolute_error (float): The mean absolute error between the model scores and the gold scores.
         mae_standard_error (float): The standard error of the mean absolute error. This can be used to calculate
             a confidence interval for the mean absolute error.
@@ -224,6 +224,12 @@ class HarmScorerMetrics(ScorerMetrics):
             below this value has not beaten a constant guess on this dataset. It is computed in-sample, so it
             is the best any constant could do here and is a demanding reference. None for results recorded
             before this field existed.
+        single_trial_mean_absolute_error (float, Optional): The mean absolute error of the individual
+            scoring trials, averaged over the trials. `mean_absolute_error` is computed from the median
+            model score across the trials, which is steadier than any one of them, whereas a scorer
+            normally scores a response once; this is the error to expect from that single run. None when
+            there is a single scoring trial, where it would equal `mean_absolute_error`, or for results
+            recorded before this field existed.
     """
 
     mean_absolute_error: float
@@ -243,6 +249,7 @@ class HarmScorerMetrics(ScorerMetrics):
     mean_absolute_error_unanimous: float | None = field(default=None, kw_only=True)
     mean_absolute_error_contested: float | None = field(default=None, kw_only=True)
     baseline_mean_absolute_error: float | None = field(default=None, kw_only=True)
+    single_trial_mean_absolute_error: float | None = field(default=None, kw_only=True)
     _harm_definition_obj: HarmDefinition | None = field(default=None, init=False, repr=False)
 
     def get_harm_definition(self) -> HarmDefinition | None:
@@ -277,15 +284,33 @@ class ObjectiveScorerMetrics(ScorerMetrics):
     """
     Metrics for evaluating an objective scorer against a HumanLabeledDataset.
 
-    Args:
+    Attributes:
         accuracy (float): The accuracy of the model scores when using the majority vote of
-            human scores as the gold label.
+            human scores as the gold label. With several scoring trials, the model score for a
+            response is the majority vote of its trials; see `single_trial_accuracy`.
+        accuracy_standard_error (float): The standard error of the accuracy estimate.
         f1_score (float): The F1 score of the model scores, an indicator of performance of the
             LLM scorer in its alignment with human scores.
         precision (float): The precision of the model scores, an indicator of the model's accuracy
             in its positive predictions.
         recall (float): The recall of the model scores, an indicator of the model's ability to correctly
             identify positive labels.
+        specificity (float | None, optional): The true negative rate ``TN / (TN + FP)`` over
+            evaluated responses that reached a verdict. ``None`` when there are no gold-negative
+            responses (whereas ``precision`` and ``recall`` retain their existing ``0.0``
+            convention when undefined) or for metrics recorded before this field existed.
+        true_positive (int | None, optional): Number of gold-positive responses scored positive
+            among evaluated responses that reached a verdict (``num_responses``). ``None`` for
+            metrics recorded before this field existed.
+        false_positive (int | None, optional): Number of gold-negative responses scored positive
+            among evaluated responses that reached a verdict (``num_responses``). ``None`` for
+            metrics recorded before this field existed.
+        true_negative (int | None, optional): Number of gold-negative responses scored negative
+            among evaluated responses that reached a verdict (``num_responses``). ``None`` for
+            metrics recorded before this field existed.
+        false_negative (int | None, optional): Number of gold-positive responses scored negative
+            among evaluated responses that reached a verdict (``num_responses``). ``None`` for
+            metrics recorded before this field existed.
         trial_scores (np.ndarray | None): The raw scores from each trial. Shape is (num_trials, num_responses).
             Useful for debugging and analyzing scorer variance.
         baseline_accuracy (float, Optional): The accuracy of a scorer that ignores the response and always
@@ -298,6 +323,18 @@ class ObjectiveScorerMetrics(ScorerMetrics):
             other constant, always answering false, has an F1 score of 0.0, so this is the best F1 any
             constant could reach. A scorer whose `f1_score` is not above this value has not beaten a constant
             guess on this dataset. None for results recorded before this field existed.
+        single_trial_accuracy (float, Optional): The accuracy of the individual scoring trials, averaged
+            over the trials. `accuracy` describes the majority vote of the trials, which can be right on a
+            response that one of its trials got wrong, whereas a scorer normally scores a response once;
+            this is the accuracy to expect from that single run. None when there is a single scoring
+            trial, where it would equal `accuracy`, or for results recorded before this field existed.
+        num_inconsistent_responses (int, Optional): Number of responses on which the scoring trials did
+            not all return the same verdict. None when there is a single scoring trial or for results
+            recorded before this field existed.
+        krippendorff_alpha_model (float, Optional): Krippendorff's alpha for the model scores across the
+            scoring trials, as reported for harm scorers. This measures how well the scorer agrees with
+            itself from one run to the next. None when there is a single scoring trial or for results
+            recorded before this field existed.
     """
 
     accuracy: float
@@ -305,8 +342,16 @@ class ObjectiveScorerMetrics(ScorerMetrics):
     f1_score: float
     precision: float
     recall: float
+    specificity: float | None = field(default=None, kw_only=True)
+    true_positive: int | None = field(default=None, kw_only=True)
+    false_positive: int | None = field(default=None, kw_only=True)
+    true_negative: int | None = field(default=None, kw_only=True)
+    false_negative: int | None = field(default=None, kw_only=True)
     baseline_accuracy: float | None = field(default=None, kw_only=True)
     baseline_f1_score: float | None = field(default=None, kw_only=True)
+    single_trial_accuracy: float | None = field(default=None, kw_only=True)
+    num_inconsistent_responses: int | None = field(default=None, kw_only=True)
+    krippendorff_alpha_model: float | None = field(default=None, kw_only=True)
 
 
 @dataclass
@@ -321,7 +366,7 @@ class ScorerMetricsWithIdentity(Generic[M]):
     - ScorerMetricsWithIdentity[ObjectiveScorerMetrics] has metrics: ObjectiveScorerMetrics
     - ScorerMetricsWithIdentity[HarmScorerMetrics] has metrics: HarmScorerMetrics
 
-    Args:
+    Attributes:
         scorer_identifier (ComponentIdentifier): The scorer's configuration identifier.
         metrics (M): The evaluation metrics (ObjectiveScorerMetrics or HarmScorerMetrics).
     """

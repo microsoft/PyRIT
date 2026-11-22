@@ -69,6 +69,7 @@ class ChatEvaluation:
     score: Score | None = None
     failure: ScoringFailure | None = None
     reused: bool = False
+    side_effect_evidence_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -285,6 +286,7 @@ class ChatScoringService:
         scorer: Scorer | None,
         error: str | None = None,
         reuse: bool = False,
+        side_effect_evidence_only: bool = False,
     ) -> ChatEvaluation:
         """
         Evaluate a saved response, or reuse a complete stored result for the same evaluation.
@@ -297,24 +299,48 @@ class ChatScoringService:
             scorer (Scorer | None): The resolved scorer, or None when it could not be resolved.
             error (str | None): Why the scorer could not be resolved. Defaults to None.
             reuse (bool): Return a complete stored result instead of evaluating again. Defaults to False.
+            side_effect_evidence_only (bool): Judge only side effects, without publishing the anchor
+                as a target response. Defaults to False.
 
         Returns:
             The score or failure, and whether a stored result was reused.
         """
-        if reuse and scorer is not None and error is None:
+        if (
+            reuse
+            and scorer is not None
+            and error is None
+            and (not side_effect_evidence_only or scorer.judges_side_effects())
+        ):
             existing = await self._complete_result_async(scorer=scorer, selection=selection, response=response)
             if existing is not None:
-                return ChatEvaluation(selection=selection, response=response, score=existing, reused=True)
+                return ChatEvaluation(
+                    selection=selection,
+                    response=response,
+                    score=existing,
+                    reused=True,
+                    side_effect_evidence_only=side_effect_evidence_only,
+                )
         piece = response.message_pieces[0]
         try:
             if error is not None or scorer is None:
                 raise ValueError(error or "The chat scorer is unavailable.")
             results = await score_attack_response_async(
-                response=response, objective_scorer=scorer, auxiliary_scorers=[], expectation=selection.expectation
+                response=response,
+                objective_scorer=scorer,
+                auxiliary_scorers=[],
+                expectation=selection.expectation,
+                side_effect_evidence_only=side_effect_evidence_only,
             )
             if not results["objective_scores"]:
+                if side_effect_evidence_only:
+                    return ChatEvaluation(selection=selection, response=response, side_effect_evidence_only=True)
                 raise ValueError("The scorer did not return an objective score.")
-            return ChatEvaluation(selection=selection, response=response, score=results["objective_scores"][0])
+            return ChatEvaluation(
+                selection=selection,
+                response=response,
+                score=results["objective_scores"][0],
+                side_effect_evidence_only=side_effect_evidence_only,
+            )
         except Exception as exc:
             logger.exception("Chat scoring failed for response '%s'.", piece.id)
             failure = ScoringFailure(
@@ -324,7 +350,12 @@ class ChatScoringService:
                 conversation_id=str(piece.conversation_id),
                 error=error or self.failure_detail(exception=exc, response_id=str(piece.id)),
             )
-            return ChatEvaluation(selection=selection, response=response, failure=failure)
+            return ChatEvaluation(
+                selection=selection,
+                response=response,
+                failure=failure,
+                side_effect_evidence_only=side_effect_evidence_only,
+            )
 
     async def publish_async(
         self,
@@ -366,7 +397,7 @@ class ChatScoringService:
             if message_fields is not None:
                 fields.update(message_fields(attack))
             if current:
-                fields.update(self._evaluation_fields(attack=attack, evaluation=evaluation))
+                fields.update(await self._evaluation_fields_async(attack=attack, evaluation=evaluation))
             try:
                 await memory.update_attack_result_conditionally_async(
                     attack_result_id=attack_result_id,
@@ -557,7 +588,7 @@ class ChatScoringService:
         )
         return next((score for score in matches if not score.is_undetermined), None)
 
-    def _evaluation_fields(self, *, attack: AttackResult, evaluation: ChatEvaluation) -> dict[str, Any]:
+    async def _evaluation_fields_async(self, *, attack: AttackResult, evaluation: ChatEvaluation) -> dict[str, Any]:
         """
         Prepare the attack fields that record an evaluation for the current selection.
 
@@ -573,8 +604,28 @@ class ChatScoringService:
         fields: dict[str, Any] = {"attack_metadata": {AttackResult.SCORING_ERRORS_KEY: errors}}
         if not self.is_latest_response(attack=attack, piece=piece):
             return fields
+        if evaluation.side_effect_evidence_only:
+            memory = CentralMemory.get_memory_instance()
+            anchor_ids = {str(anchor.id) for anchor in evaluation.response.message_pieces}
+            # Storage spaces out tied piece timestamps within a message, so compare stored times on both sides.
+            stored_anchor = await memory.get_message_pieces_async(prompt_ids=list(anchor_ids))
+            anchor_timestamp = max(anchor.timestamp for anchor in stored_anchor or evaluation.response.message_pieces)
+            newer = await memory.get_message_pieces_async(
+                attack_result_id=attack.attack_result_id,
+                sent_after=anchor_timestamp,
+            )
+            conversations = attack.get_active_conversation_ids()
+            if any(
+                str(message.id) not in anchor_ids
+                and message.timestamp > anchor_timestamp
+                and str(message.conversation_id) in conversations
+                for message in newer
+            ):
+                return fields
         score = evaluation.score
-        fields.update(last_response_id=piece.id, automated_score_id=score.id if score else None)
+        fields["automated_score_id"] = score.id if score else None
+        if not evaluation.side_effect_evidence_only:
+            fields["last_response_id"] = piece.id
         if attack.human_score is None:
             fields.update(
                 outcome=(attack_outcome_from_score(score) if score else AttackOutcome.UNDETERMINED).value,
@@ -595,6 +646,7 @@ class ChatScoringService:
             "attack_metadata": attack.metadata,
             "human_score_id": attack.human_score.id if attack.human_score else None,
             "last_response_id": attack.last_response.id if attack.last_response else None,
+            "automated_score_id": attack.automated_score.id if attack.automated_score else None,
         }
 
     async def _apply_context_async(
