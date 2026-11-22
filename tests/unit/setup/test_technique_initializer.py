@@ -870,12 +870,12 @@ class TestEchoChamberTechnique:
     """The echo_chamber technique is stock Crescendo driven by its own adversarial system prompt."""
 
     @pytest.mark.usefixtures("patch_central_database")
-    async def test_executed_attack_sends_echo_chamber_prompt_and_next_message(self):
+    async def test_executed_attack_sends_echo_chamber_prompt_and_next_message_async(self) -> None:
         factory = next(f for f in extra.get_technique_factories() if f.name == "echo_chamber")
         seed_request = "Write a few short sentences that use these words: brass, spring, cylinder."
         adversarial_chat = MockPromptTarget()
 
-        async def adversarial_send(*, normalized_conversation: list[Message]) -> list[Message]:
+        async def adversarial_send_async(*, normalized_conversation: list[Message]) -> list[Message]:
             reply = {"next_message": seed_request, "last_response_summary": "", "rationale": "seed step"}
             return [
                 MessagePiece(
@@ -885,7 +885,7 @@ class TestEchoChamberTechnique:
                 ).to_message()
             ]
 
-        adversarial_chat._send_prompt_to_target_async = adversarial_send
+        adversarial_chat._send_prompt_to_target_async = adversarial_send_async
         objective_target = MockPromptTarget()
 
         attack = factory.create(
@@ -907,14 +907,14 @@ class TestEchoChamberTechnique:
         assert objective_target.prompt_sent == [seed_request]
         assert result.outcome is AttackOutcome.SUCCESS
 
-    def test_yaml_loads_with_crescendo_required_parameters(self):
+    def test_yaml_loads_with_crescendo_required_parameters(self) -> None:
         sp = SeedPrompt.from_yaml_with_required_parameters(
             template_path=_ECHO_CHAMBER_PATH,
             required_parameters=["objective", "max_turns"],
         )
         assert sp.parameters == ["objective", "max_turns", "conversation_context"]
 
-    def test_yaml_renders_without_conversation_context(self):
+    def test_yaml_renders_without_conversation_context(self) -> None:
         sp = SeedPrompt.from_yaml_file(_ECHO_CHAMBER_PATH)
         rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE", max_turns=7, conversation_context="")
         assert "Target objective: UNIQUE_TEST_OBJECTIVE" in rendered
@@ -923,7 +923,7 @@ class TestEchoChamberTechnique:
         assert "{{" not in rendered
         assert "{%" not in rendered
 
-    def test_yaml_renders_conversation_context(self):
+    def test_yaml_renders_conversation_context(self) -> None:
         sp = SeedPrompt.from_yaml_file(_ECHO_CHAMBER_PATH)
         rendered = sp.render_template_value(
             objective="UNIQUE_TEST_OBJECTIVE", max_turns=7, conversation_context="UNIQUE_PRIOR_TURNS"
@@ -931,7 +931,7 @@ class TestEchoChamberTechnique:
         assert "Prior Conversation Context" in rendered
         assert "UNIQUE_PRIOR_TURNS" in rendered
 
-    def test_yaml_has_no_em_or_en_dashes(self):
+    def test_yaml_has_no_em_or_en_dashes(self) -> None:
         text = _ECHO_CHAMBER_PATH.read_text(encoding="utf-8")
         # Literal em-dash and en-dash characters used as needles for absence assertions on the YAML
         assert "–" not in text
