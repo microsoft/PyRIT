@@ -2052,7 +2052,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
     async def test_resume_state_hook_gets_stored_groups_and_names_deleted_datasets(self, mock_objective_target) -> None:
         received: list[dict[str, list[AttackSeedGroup]]] = []
 
-        class _StatefulScenario(self._OverridingScenario):
+        class _StatefulScenario(self._OverridingScenario):  # ty: ignore[unsupported-base]
             async def _prepare_resume_state_async(self, *, seed_groups_by_dataset):
                 received.append(seed_groups_by_dataset)
                 await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
@@ -2089,7 +2089,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
     ) -> None:
         missing = MissingDatasetError("no seeds", dataset_name="unlisted")
 
-        class _UnlistedScenario(self._OverridingScenario):
+        class _UnlistedScenario(self._OverridingScenario):  # ty: ignore[unsupported-base]
             async def _prepare_resume_state_async(self, *, seed_groups_by_dataset):
                 raise missing
 
@@ -2113,7 +2113,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
     async def test_resume_reraises_other_dataset_errors_unchanged(self, mock_objective_target) -> None:
         invalid = DatasetConstraintError("templates are invalid")
 
-        class _InvalidScenario(self._OverridingScenario):
+        class _InvalidScenario(self._OverridingScenario):  # ty: ignore[unsupported-base]
             async def _prepare_resume_state_async(self, *, seed_groups_by_dataset):
                 raise invalid
 

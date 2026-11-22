@@ -158,7 +158,7 @@ class AgentThreatRulesScorer(RegexScorer):
                 "fields": list(self._atr_fields),
                 "categories": self._score_categories,
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
     async def _score_piece_with_expectation_async(

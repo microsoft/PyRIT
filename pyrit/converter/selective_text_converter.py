@@ -304,7 +304,7 @@ class SelectiveTextConverter(Converter):
         words = prompt.split(self._word_separator)
 
         # Get selected word indices
-        selected_indices = self._selection_strategy.select_words(words=words)  # type: ignore[ty:unresolved-attribute]
+        selected_indices = self._selection_strategy.select_words(words=words)  # type: ignore[ty:missing-attribute]
 
         # If no words selected, return original prompt
         if not selected_indices:
