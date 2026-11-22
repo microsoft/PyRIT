@@ -474,7 +474,7 @@ class ShellCommandOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         base_identifier = super()._build_identifier()
         return self._create_identifier(
             params={**base_identifier.params, "normalize_option_escapes": self._use_default_patterns},
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
     async def _score_piece_with_expectation_async(

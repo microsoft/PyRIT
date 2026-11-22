@@ -76,9 +76,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.22",
     "reportlab>=4.4.4",
-    # 2026.11.x breaks \X on Indic conjuncts (GB9c never applies, mrab-regex#636), which graphemes() relies on.
-    # Remove the upper bound once that is fixed upstream (#4308).
-    "regex>=2024.11.6,<2026.11",
+    "regex>=2024.11.6",
     "segno>=1.6.6",
     "scipy>=1.15.3",
     "SQLAlchemy[asyncio]>=2.0.41",
@@ -280,7 +278,7 @@ redundant-condition-strict = "ignore"
 [[tool.ty.overrides]]
 include = ["tests/unit/**"]
 [tool.ty.overrides.rules]
-call-non-callable = "ignore"
+not-callable = "ignore"
 invalid-assignment = "ignore"
 invalid-await = "ignore"
 invalid-parameter-default = "ignore"
@@ -294,9 +292,13 @@ unsupported-operator = "ignore"
 # relaxed here: tests read private/mock attributes and subclass library types
 # with loosened signatures / runtime-validation-failure arguments.
 invalid-argument-type = "ignore"
-invalid-method-override = "ignore"
+incompatible-method-override = "ignore"
 no-matching-overload = "ignore"
-unresolved-attribute = "ignore"
+missing-attribute = "ignore"
+# ty 0.0.105 split these out of missing-attribute (unions) and not-callable
+# (abstract classes); keep them relaxed here for the same reasons as their parents.
+missing-union-attribute = "ignore"
+abstract-class-instantiation = "ignore"
 # Enabled for pyrit/ (clean) but still relaxed here: tests/unit has 318 bare
 # generics (mostly `dict` and the attack context/strategy classes) across ~70 files.
 missing-type-argument = "ignore"
