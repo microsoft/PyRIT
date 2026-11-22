@@ -2962,7 +2962,7 @@ class MemoryInterface(abc.ABC):
                     query = query.limit(limit)
                 return query.all()
             except SQLAlchemyError as e:
-                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:unresolved-attribute]
+                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:missing-attribute]
                 raise
 
     def _execute_batched_query(
@@ -3250,7 +3250,7 @@ class MemoryInterface(abc.ABC):
                 ):
                     raise ValueError("Prompt entries used by scorer observations are immutable.")
                 for entry in entries:
-                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
+                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:missing-attribute]
                     if isinstance(entry, (AttackResultEntry, ScenarioResultEntry)):
                         assert entry_in_session is None or isinstance(
                             entry_in_session, (AttackResultEntry, ScenarioResultEntry)
