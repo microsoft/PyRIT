@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+from pyrit.auth import caller_principal_scope
 from pyrit.backend.models import CreateConverterRequest, CreateScorerRequest, CreateTargetRequest
 from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.backend.services.converter_service import get_converter_service
@@ -26,9 +27,10 @@ async def build_saved_entry_async(stored: StoredRecipe, *, upload_directory: str
     """
     Build one saved entry with the create the API uses for its kind, and register it under its name.
 
-    The entry passes the same checks a create request does. Restore runs as the server, and a saved file
-    doesn't record who saved it, so a target is built as an administrator would build it. A target that
-    uploads files gets this server's upload folder, as it does through the API.
+    The entry passes the same checks a create request does. Restore runs as the server and can't tell who
+    wrote a saved file, so a target is built as an administrator would build it, for no caller: it sees
+    only shared entries and has no owner. A target that uploads files gets this server's upload folder, as
+    it does through the API.
 
     Args:
         stored (StoredRecipe): The checked recipe to build.
@@ -38,16 +40,17 @@ async def build_saved_entry_async(stored: StoredRecipe, *, upload_directory: str
         RecipeRejectedError: If the recipe doesn't make a valid create request.
     """
     request = _create_request(stored)
-    if isinstance(request, CreateTechniqueRequest):
-        await get_technique_service().create_async(request)
-    elif isinstance(request, CreateTargetRequest):
-        await get_target_service().create_target_async(
-            request=request, upload_directory=upload_directory, is_admin=True
-        )
-    elif isinstance(request, CreateConverterRequest):
-        await get_converter_service().create_converter_async(request=request)
-    else:
-        await get_scorer_service().create_scorer_async(request=request)
+    with caller_principal_scope(None):
+        if isinstance(request, CreateTechniqueRequest):
+            await get_technique_service().create_async(request)
+        elif isinstance(request, CreateTargetRequest):
+            await get_target_service().create_target_async(
+                request=request, upload_directory=upload_directory, is_admin=True
+            )
+        elif isinstance(request, CreateConverterRequest):
+            await get_converter_service().create_converter_async(request=request)
+        else:
+            await get_scorer_service().create_scorer_async(request=request)
 
 
 def _create_request(

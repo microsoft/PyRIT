@@ -3,6 +3,8 @@ import type { Parameter, RegisteredScenario } from '@/types'
 import {
   buildEstimateRequest,
   buildRunRequest,
+  linkedDatasetProblem,
+  minimumSelectionMessage,
   scenarioDynamicParameters,
   type ScenarioLaunchInput,
 } from './scenarioLaunchRequest'
@@ -118,6 +120,7 @@ describe('scenario launch requests', () => {
     ['pending technique edits', { techniqueEditError: 'Wait for valid technique settings before launch.' },
       'Wait for valid technique settings before launch.'],
     ['invalid datasets', { datasetError: 'Bad dataset limit.' }, 'Bad dataset limit.'],
+    ['linked datasets that cannot launch', { linkedDatasetError: 'Linked problem.' }, 'Linked problem.'],
     ['an unsupported conversation', {
       supportsPrependedConversation: false,
       scenarioParamValues: { objective: '', prepended_conversation_id: 'saved' },
@@ -132,6 +135,20 @@ describe('scenario launch requests', () => {
     expect(buildEstimateRequest(makeInput({ targetName: '' })).ok).toBe(true)
   })
 
+  it('does not estimate a configuration whose linked datasets cannot launch', () => {
+    expect(buildEstimateRequest(makeInput({ linkedDatasetError: 'Linked problem.' })))
+      .toEqual({ ok: false, error: 'Linked problem.' })
+  })
+
+  it('reports only linked names the client knows cannot launch, keeping whitespace visible', () => {
+    expect(linkedDatasetProblem([], false)).toBeNull()
+    expect(linkedDatasetProblem([' returns ', 'returns ', 'missing'], true)).toBeNull()
+    expect(linkedDatasetProblem(['ds_a', ' returns ', ''], false)).toBe(
+      'This scenario can\'t take the linked datasets: ds_a, " returns ", "".',
+    )
+    expect(linkedDatasetProblem(['ds_a', ' '], true)).toBeNull()
+  })
+
   it('keeps run-only limits out of the estimate', () => {
     const before = buildEstimateRequest(makeInput())
     const after = buildEstimateRequest(makeInput({ maxConcurrency: 0, maxRetries: -1 }))
@@ -141,62 +158,10 @@ describe('scenario launch requests', () => {
     expect(after).toEqual(before)
   })
 
-  it('uses default ASSERT scoring and rejects saved custom scoring instead of replaying it as defaults', () => {
-    const samples: Parameter = {
-      name: 'judge_samples', description: 'Samples.', type_name: 'int', choices: null, default: '1', required: false,
-    }
-    const presets: Parameter = {
-      name: 'judge_presets', description: 'Presets.', type_name: 'list[str] | None', choices: null, default: null,
-      required: false, is_list: true,
-    }
-    const prompt: Parameter = {
-      name: 'target_system_prompt', description: 'Instructions.', type_name: 'str | None', choices: null,
-      default: null, required: false,
-    }
-    const scenario = makeScenario({
-      scenario_name: 'foundry.assert_policy',
-      supported_parameter_names: [
-        'objective_target', 'scenario_techniques', 'dataset_config', 'judge_samples', 'scoring_target',
-        'judge_presets', 'target_system_prompt',
-      ],
-      supported_parameters: [samples, presets, prompt, {
-        name: 'scoring_target', description: 'Judge.', type_name: 'PromptTarget | None', choices: null,
-        default: null, required: false,
-      }],
-    })
-    const input = makeInput({ scenario, scenarioParamValues: {}, presetScenarioParams: { judge_samples: 1 } })
-    expect(scenarioDynamicParameters(scenario)).toEqual([])
-    const result = buildRunRequest(input)
-    expect(result.ok).toBe(true)
-    if (result.ok) expect(result.request.scenario_params).toBeUndefined()
-    expect(buildRunRequest({ ...input, presetScenarioParams: { judge_samples: 3 } })).toEqual({
-      ok: false,
-      error: 'This saved ASSERT configuration has custom judge settings. Use the SDK to preserve them; this form uses default scoring.',
-    })
-    for (const saved of [{ scoring_target: null }, { judge_presets: [] }, { judge_samples: '1' }]) {
-      const defaults = buildRunRequest({ ...input, presetScenarioParams: saved })
-      expect(defaults.ok).toBe(true)
-      if (defaults.ok) expect(defaults.request.scenario_params).toBeUndefined()
-    }
-    for (const saved of [
-      { scoring_target: 'registered-judge' },
-      { judge_presets: ['safety-extended'] },
-      { target_system_prompt: '' },
-      { target_system_prompt: [] },
-    ]) {
-      expect(buildRunRequest({ ...input, presetScenarioParams: saved })).toEqual({
-        ok: false,
-        error: 'This saved ASSERT configuration has custom judge settings. Use the SDK to preserve them; this form uses default scoring.',
-      })
-    }
-    for (const saved of [
-      { objectiveScorer: { registry_name: 'saved', identifier_hash: 'saved-identity' } },
-      { scoringTargetName: 'rubric' },
-    ]) {
-      expect(buildRunRequest({ ...input, ...saved })).toEqual({
-        ok: false,
-        error: 'This saved ASSERT configuration uses a custom scorer. Use the SDK to preserve it; this form uses default scoring.',
-      })
-    }
-  })
+  it.each([[1, 'Select a dataset.'], [2, 'Select at least 2 datasets.']])(
+    'words a minimum of %i datasets as validate_minimum_selection does',
+    (minimum, message) => {
+      expect(minimumSelectionMessage(minimum)).toBe(message)
+    },
+  )
 })

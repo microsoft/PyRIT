@@ -263,12 +263,13 @@ class TestLifespan:
             ) as create_listener,
             patch.object(server, "main_loop", new_callable=AsyncMock) as serve_requests,
         ):
-            await server.serve()
+            with pytest.raises(SystemExit) as exc_info:
+                await server.serve()
 
+        assert exc_info.value.code == 3
         assert isinstance(server.lifespan, LifespanOn)
         assert server.lifespan.startup_failed
         assert server.lifespan.should_exit
-        assert server.should_exit
         assert not server.started
         configuration.assert_not_called()
         frontend.assert_not_called()

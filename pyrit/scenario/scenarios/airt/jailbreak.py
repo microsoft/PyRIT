@@ -161,7 +161,7 @@ def _build_jailbreak_technique() -> type[ScenarioTechnique]:
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-explicit-return]
         class_name="JailbreakTechnique",
         factories=list(_extra_default_factories().values()),
         default_names=set(_DEFAULT_TECHNIQUES),
@@ -200,6 +200,7 @@ class Jailbreak(Scenario):
     """
 
     VERSION: int = 4
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = True
 
     #: Baseline (an un-jailbroken prompt-send over the objectives) is included by default: a model
     #: that complies with the bare objective is itself interesting signal. Callers opt out per run
