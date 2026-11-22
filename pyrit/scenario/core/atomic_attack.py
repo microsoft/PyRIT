@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from pyrit.common import print_deprecation_message
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
@@ -28,6 +29,7 @@ from pyrit.models import (
     AttackSeedGroup,
     ObjectiveTargetEvaluationIdentifier,
     ScenarioRunPlanGroupKind,
+    ScenarioRunPlanScorerBinding,
     config_hash,
 )
 from pyrit.scenario.core.technique_requirements import PreparedSeedGroup, prepare_seed_group
@@ -38,6 +40,40 @@ if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
+
+
+def compute_atomic_group_id(
+    *,
+    atomic_attack_name: str,
+    technique_eval_hash: str,
+    objective_scorer_binding: ScenarioRunPlanScorerBinding | None,
+) -> str:
+    """
+    Compute the stable ID of an atomic group from its name, technique, and scorer selection.
+
+    Pool runs also key the group by its selected objective scorer and evaluation, so a
+    different selection is a different unit of work. Single-scorer runs keep their IDs.
+
+    Args:
+        atomic_attack_name (str): The group's name.
+        technique_eval_hash (str): The technique's evaluation hash.
+        objective_scorer_binding (ScenarioRunPlanScorerBinding | None): The pool selection, or
+            None for single-scorer runs.
+
+    Returns:
+        str: The atomic-group ID.
+    """
+    key: dict[str, Any] = {
+        "atomic_attack_name": atomic_attack_name,
+        "technique_eval_hash": str(technique_eval_hash),
+    }
+    if objective_scorer_binding is not None:
+        key["objective_scorer"] = {
+            "candidate_index": objective_scorer_binding.candidate_index,
+            "evaluation": objective_scorer_binding.evaluation,
+            "scorer_hash": objective_scorer_binding.scorer_hash,
+        }
+    return config_hash(key)
 
 
 class AtomicAttack:
@@ -68,6 +104,7 @@ class AtomicAttack:
         objective_scorer: TrueFalseScorer | None = None,
         memory_labels: dict[str, str] | None = None,
         group_kind: ScenarioRunPlanGroupKind = ScenarioRunPlanGroupKind.ATTACK,
+        objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None,
         **attack_execute_params: Any,
     ) -> None:
         """
@@ -95,6 +132,8 @@ class AtomicAttack:
                 ``build_baseline_atomic_attack`` passes ``BASELINE`` and Adaptive
                 scenarios pass ``ADAPTIVE``. It describes the group and does not
                 change its identity or what it executes.
+            objective_scorer_binding: The candidate a scorer pool selected for this group.
+                ``None`` for single-scorer runs.
             **attack_execute_params: Additional parameters to pass to the attack
                 execution method.
 
@@ -150,6 +189,7 @@ class AtomicAttack:
             else None
         )
         self._objective_scorer = objective_scorer
+        self._objective_scorer_binding = objective_scorer_binding
         self._memory_labels = memory_labels or {}
         self._attack_execute_params = attack_execute_params
         # Set via set_scenario_result_id() by Scenario._execute_scenario_async
@@ -226,6 +266,11 @@ class AtomicAttack:
         return self._group_kind
 
     @property
+    def objective_scorer_binding(self) -> ScenarioRunPlanScorerBinding | None:
+        """The pool selection behind this group's objective scorer, or None for single-scorer runs."""
+        return self._objective_scorer_binding
+
+    @property
     def technique_eval_hash(self) -> str:
         """
         Behavioral evaluation hash for this atomic attack's technique configuration.
@@ -272,12 +317,15 @@ class AtomicAttack:
 
     @property
     def logical_group_id(self) -> str:
-        """The stable identity of this planned atomic-attack group."""
-        return config_hash(
-            {
-                "atomic_attack_name": self.atomic_attack_name,
-                "technique_eval_hash": self.technique_eval_hash,
-            }
+        """
+        The stable identity of this planned atomic-attack group.
+
+        The run plan, the workers' active-group tracking, and adaptation metadata all use this ID.
+        """
+        return compute_atomic_group_id(
+            atomic_attack_name=self.atomic_attack_name,
+            technique_eval_hash=self.technique_eval_hash,
+            objective_scorer_binding=self._objective_scorer_binding,
         )
 
     @property
@@ -332,10 +380,8 @@ class AtomicAttack:
         """
         Keep only seed groups whose ``objective_sha256`` is in ``hashes``.
 
-        Inverse of ``drop_seed_groups_with_hashes``: used on resume to
-        replay the originally-sampled subset and ignore any seed groups that
-        were added since (or that landed in this run's fresh ``random.sample``
-        draw and are no longer in the persisted set).
+        Deprecated: resume used this to replay the originally-sampled subset. A scenario run now
+        stores the seed groups it planned and resumes from them, so nothing needs to filter.
 
         Args:
             hashes (set[str]): SHA256 hashes of objective text for seed
@@ -347,6 +393,11 @@ class AtomicAttack:
             union these across atomic attacks to detect persisted hashes that
             no longer exist in the dataset.
         """
+        print_deprecation_message(
+            old_item="AtomicAttack.keep_seed_groups_with_hashes",
+            new_item="the seed groups a scenario run stores for resume",
+            removed_in="1.4.0",
+        )
         retained: set[str] = set()
         new_groups: list[AttackSeedGroup] = []
         for sg in self._seed_groups:

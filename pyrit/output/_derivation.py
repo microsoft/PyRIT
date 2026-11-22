@@ -203,6 +203,28 @@ def attack_technique_label(*, atomic_attack_name: str, attack: AttackResult) -> 
     return attack.technique_name or atomic_attack_name
 
 
+def attack_objective_scorer_identifier(
+    *, attack: AttackResult, run_scorer_identifier: ComponentIdentifier | None
+) -> ComponentIdentifier | None:
+    """
+    Return the objective scorer that judged an attack.
+
+    Each attack records the scorer it ran with. That can differ from the run's: a run with a
+    scorer pool has no single scorer, and selects one per attack population. Results without
+    that record use the run's scorer.
+
+    Args:
+        attack (AttackResult): The attack whose judge to find.
+        run_scorer_identifier (ComponentIdentifier | None): The run's objective scorer, if it has one.
+
+    Returns:
+        ComponentIdentifier | None: The attack's recorded scorer, otherwise the run's.
+    """
+    strategy = attack.get_attack_strategy_identifier()
+    recorded = strategy.get_child("objective_scorer") if strategy is not None else None
+    return recorded if recorded is not None else run_scorer_identifier
+
+
 def select_attacks(
     result: ScenarioResult,
     *,

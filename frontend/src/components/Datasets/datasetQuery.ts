@@ -3,6 +3,7 @@ import type { DatasetInfo } from '@/types'
 const SEARCH_PARAM = 'q'
 const MODALITY_PARAM = 'modality'
 const HARM_CATEGORY_PARAM = 'harm_category'
+const ORIGIN_PARAM = 'origin'
 const UNLABELED_PARAM = 'unlabeled'
 const SORT_PARAM = 'sort'
 
@@ -30,6 +31,8 @@ export interface DatasetCatalogQuery {
   readonly modalities: readonly string[]
   readonly harmCategories: readonly string[]
   readonly unlabeled: boolean
+  /** Seed origins such as `generated` or `remote`; a dataset matches if any of its seeds has one. */
+  readonly origins: readonly string[]
   readonly sort: DatasetSort
 }
 
@@ -38,6 +41,7 @@ export const DEFAULT_DATASET_CATALOG_QUERY: DatasetCatalogQuery = {
   modalities: [],
   harmCategories: [],
   unlabeled: false,
+  origins: [],
   sort: DEFAULT_DATASET_SORT,
 }
 
@@ -55,6 +59,7 @@ export function catalogQueryFromSearchParams(params: URLSearchParams): DatasetCa
     modalities: [...new Set(params.getAll(MODALITY_PARAM))],
     harmCategories: [...new Set(params.getAll(HARM_CATEGORY_PARAM))],
     unlabeled: params.get(UNLABELED_PARAM) === 'true',
+    origins: [...new Set(params.getAll(ORIGIN_PARAM))],
     sort: sortValue != null && isDatasetSort(sortValue) ? sortValue : DEFAULT_DATASET_SORT,
   }
 }
@@ -67,6 +72,7 @@ export function catalogQueryToSearchParams(query: DatasetCatalogQuery): URLSearc
   for (const modality of new Set(query.modalities)) params.append(MODALITY_PARAM, modality)
   for (const category of new Set(query.harmCategories)) params.append(HARM_CATEGORY_PARAM, category)
   if (query.unlabeled) params.set(UNLABELED_PARAM, 'true')
+  for (const origin of new Set(query.origins)) params.append(ORIGIN_PARAM, origin)
   if (query.sort !== DEFAULT_DATASET_SORT) params.set(SORT_PARAM, query.sort)
   return params
 }
@@ -77,6 +83,7 @@ export function catalogQueryIsDefault(query: DatasetCatalogQuery): boolean {
     && query.modalities.length === 0
     && query.harmCategories.length === 0
     && !query.unlabeled
+    && query.origins.length === 0
     && query.sort === DEFAULT_DATASET_SORT
 }
 
@@ -132,6 +139,11 @@ function matchesHarm(dataset: DatasetInfo, query: DatasetCatalogQuery): boolean 
   return categoryMatch || unlabeledMatch
 }
 
+function matchesOrigins(dataset: DatasetInfo, origins: readonly string[]): boolean {
+  if (origins.length === 0) return true
+  return origins.some((origin) => dataset.origins?.includes(origin) === true)
+}
+
 function countSort(sort: DatasetSort): 'asc' | 'desc' | null {
   switch (sort) {
     case 'logical_examples':
@@ -167,6 +179,7 @@ export function filterDatasets(
     if (!matchesSearch(dataset.name, query.search)) continue
     if (!matchesModalities(dataset, query)) continue
     if (!matchesHarm(dataset, query)) continue
+    if (!matchesOrigins(dataset, query.origins)) continue
     matched.push(dataset)
   }
 

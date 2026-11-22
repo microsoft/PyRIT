@@ -21,7 +21,7 @@ from pyrit.models import (
     ScenarioSuiteExecutionSummary,
     Score,
 )
-from pyrit.output._derivation import select_attacks
+from pyrit.output._derivation import attack_objective_scorer_identifier, select_attacks
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 from pyrit.output.conversation.json import JsonConversationMemoryPrinter, JsonConversationPrinter
@@ -209,8 +209,8 @@ async def output_scenario_conversations_async(
     Print every attack's summary and conversation for a scenario result as one JSON document.
 
     The document has the same format as the CLI's ``scenario-results --view conversations
-    --format json`` output, and each response keeps only the score from the scenario's objective
-    scorer. Conversations are read from memory and every attack is included unless you pass
+    --format json`` output, and each response keeps only the score from the objective scorer that
+    judged its attack. Conversations are read from memory and every attack is included unless you pass
     ``attack_result_ids``, ``outcome``, or ``limit``, so narrow large scenarios.
 
     Args:
@@ -250,7 +250,7 @@ async def output_scenario_full_async(
 
     The report has the same format as the CLI's ``scenario-results --view full`` output with
     ``--format json`` or ``--format html``, and each response keeps only the score from the
-    scenario's objective scorer. The overview always covers the whole scenario;
+    objective scorer that judged its attack. The overview always covers the whole scenario;
     ``attack_result_ids``, ``outcome``, and ``limit`` only choose which conversations are included.
 
     Args:
@@ -324,7 +324,6 @@ async def _collect_conversation_entries_async(
     if not selected:
         return []
 
-    objective_scorer_identifier = result.objective_scorer_identifier
     source = MemoryConversationSource()
     printer = JsonConversationPrinter(source=source)
     entries: list[ConversationEntry] = []
@@ -332,6 +331,9 @@ async def _collect_conversation_entries_async(
         # Orchestration envelopes have no conversation of their own.
         messages = (
             await source.get_messages_async(conversation_id=attack.conversation_id) if attack.conversation_id else []
+        )
+        objective_scorer_identifier = attack_objective_scorer_identifier(
+            attack=attack, run_scorer_identifier=result.objective_scorer_identifier
         )
         structured = await printer.build_async(
             messages,
