@@ -97,12 +97,11 @@ class Execute(Scenario):
         """Initialize the scenario with an optional scorer and resume ID."""
         self._prepended_conversation_hash: str | None = None
         self._local_technique_hash: str | None = None
-        self._objective_scorer: TrueFalseScorer = objective_scorer or self._get_default_objective_scorer()
         super().__init__(
             version=self.VERSION,
             technique_class=_build_execute_technique(),
             default_dataset_config=DatasetAttackConfiguration(seed_groups=[], max_total="all"),
-            objective_scorer=self._objective_scorer,
+            objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 
@@ -212,6 +211,15 @@ class Execute(Scenario):
             note=f"One objective. Up to {attempts} technique attempt(s) run inside one unit; baseline is not retried.",
         )
 
+    async def _prepare_resume_state_async(self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]) -> None:
+        """
+        Re-read the prepended conversation, so resume refuses a conversation that changed.
+
+        Args:
+            seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
+        """
+        await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
@@ -297,6 +305,12 @@ class Execute(Scenario):
             policy=context.incompatible_technique_policy,
         ):
             raise IncompatibleTechniqueError(f"Technique '{name}' is incompatible with the objective target")
+        missing = factory.check_objective_scorer(scorer=self._objective_scorer)
+        if missing:
+            raise IncompatibleTechniqueError(
+                f"Technique '{name}' is incompatible with the objective scorer:\n" + "\n".join(missing)
+            )
+        scoring_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
         if self.params.get("prompt") is not None and not factory.supports_prompt:
             raise IncompatibleTechniqueError(f"Technique '{name}' cannot send a separate prompt")
         groups = await asyncio.to_thread(
@@ -321,7 +335,7 @@ class Execute(Scenario):
         technique = await asyncio.to_thread(
             factory.create,
             objective_target=context.objective_target,
-            attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
+            attack_scoring_config=scoring_config,
             seed_group=prepared.seed_group,
             extra_request_converters=(
                 ConverterConfiguration.from_converters(converters=converters) if converters else None

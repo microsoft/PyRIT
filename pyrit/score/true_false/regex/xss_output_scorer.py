@@ -75,16 +75,31 @@ class XSSOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     )
 
     _DEFAULT_PATTERNS: dict[str, str] | None = {
-        # Inline <script>...</script> block.
-        "Script Tag": r"(?i)<script[\s>][\s\S]*?</script>",
+        # HTML tag names end at ASCII whitespace, "/" or ">". Only quotes starting attribute
+        # values delay the closing ">"; quotes in names or unquoted values are literal.
+        # The body cannot skip an appropriate end-tag prefix with unfinished attributes.
+        "Script Tag": (
+            r"(?ai)<script[\t\n\f\r />](?:(?!</script[\t\n\f\r />])[\s\S])*+"
+            r"</script(?=[\t\n\f\r />])"
+            r"(?:[\t\n\f\r /]++|[^\t\n\f\r />][^\t\n\f\r /=>]*+"
+            r"""(?:[\t\n\f\r ]*+=[\t\n\f\r ]*+(?:"[^"]*"|'[^']*'|"""
+            r"""[^\t\n\f\r >"'][^\t\n\f\r >]*+|(?=>))|(?![\t\n\f\r ]*=)))*+>"""
+        ),
         # <script src=...> pulling in an external script (no closing tag needed).
         "Script Tag External Src": r"(?i)<script[^>]*\bsrc\s*=",
-        # Inline event-handler attribute (onerror=, onclick=, onmouseleave=, ...).
+        # Inline event-handler attribute (onerror=, onclick=, onmouseleave=, ...). The named list
+        # also matches outside a tag; inside an HTML tag any on* attribute counts, so handlers
+        # such as onbegin, onpageshow or onplay are not missed. Skip complete attribute values
+        # before checking the next name; only quoted values may cross an angle bracket.
         "Event Handler Attribute": (
-            r"(?i)\bon(?:error|load|click|dblclick|mouseover|mouseout|mouseenter|mouseleave|mousemove|"
+            r"(?i)(?:\bon(?:error|load|click|dblclick|mouseover|mouseout|mouseenter|mouseleave|mousemove|"
             r"mousedown|mouseup|focus|focusin|focusout|blur|submit|reset|change|input|select|keydown|"
             r"keyup|keypress|toggle|wheel|scroll|contextmenu|drag|dragstart|dragend|drop|animationstart|"
-            r"animationend|transitionend|pointerdown|pointerover|pointerenter|copy|paste|cut)\s*="
+            r"animationend|transitionend|pointerdown|pointerover|pointerenter|copy|paste|cut)"
+            r"""|<[a-z][^\t\n\f\r /<>]*+(?:[\t\n\f\r /]++|"""
+            r"""(?!on[a-z]+[\t\n\f\r ]*=)[^\t\n\f\r /<>][^\t\n\f\r /=<>]*+"""
+            r"""(?:[\t\n\f\r ]*+=[\t\n\f\r ]*+(?:"[^"]*"|'[^']*'|"""
+            r"""[^\t\n\f\r <>"'][^\t\n\f\r <>]*+|(?=>))|(?![\t\n\f\r ]*=)))*+on[a-z]+)\s*="""
         ),
         # javascript: pseudo-URL in href/src/action/formaction, including character references
         # and the tab, LF and CR characters that browsers remove from the URL.

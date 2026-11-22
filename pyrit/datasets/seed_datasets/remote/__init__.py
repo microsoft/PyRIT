@@ -74,6 +74,12 @@ if TYPE_CHECKING:
         _FortressDataset,
     )
     from pyrit.datasets.seed_datasets.remote.garak_audio_dataset import _GarakAudioAchillesHeelDataset
+    from pyrit.datasets.seed_datasets.remote.garak_leak_replay_dataset import (
+        _GarakLeakReplayGuardianDataset,
+        _GarakLeakReplayLiteratureDataset,
+        _GarakLeakReplayNYTDataset,
+        _GarakLeakReplayPotterDataset,
+    )
     from pyrit.datasets.seed_datasets.remote.garak_package_hallucination_dataset import (
         _GarakCratesDataset,
         _GarakDartDataset,
@@ -237,6 +243,10 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "_GarakCratesDataset": "pyrit.datasets.seed_datasets.remote.garak_package_hallucination_dataset",
     "_GarakDartDataset": "pyrit.datasets.seed_datasets.remote.garak_package_hallucination_dataset",
     "_GarakDrhSystemPromptDataset": "pyrit.datasets.seed_datasets.remote.garak_system_prompt_dataset",
+    "_GarakLeakReplayGuardianDataset": "pyrit.datasets.seed_datasets.remote.garak_leak_replay_dataset",
+    "_GarakLeakReplayLiteratureDataset": "pyrit.datasets.seed_datasets.remote.garak_leak_replay_dataset",
+    "_GarakLeakReplayNYTDataset": "pyrit.datasets.seed_datasets.remote.garak_leak_replay_dataset",
+    "_GarakLeakReplayPotterDataset": "pyrit.datasets.seed_datasets.remote.garak_leak_replay_dataset",
     "_GarakNpmDataset": "pyrit.datasets.seed_datasets.remote.garak_package_hallucination_dataset",
     "_GarakPerlDataset": "pyrit.datasets.seed_datasets.remote.garak_package_hallucination_dataset",
     "_GarakPypiDataset": "pyrit.datasets.seed_datasets.remote.garak_package_hallucination_dataset",

@@ -18,7 +18,7 @@ import math
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, assert_never, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, assert_never, cast, get_args
 from uuid import UUID
 
 import aiofiles
@@ -41,6 +41,7 @@ from pyrit.cli._cli_args import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from pyrit.cli._target_credentials import CredentialSource
     from pyrit.models import Parameter
     from pyrit.models.catalog import (
         RunScenarioRequest,
@@ -116,8 +117,9 @@ or connect to an existing server with --server-url.
 
 Global options (--server-url, --config-file, --log-level) are listed below and
 work before or after the verb. Backend commands (run, list-*, add-initializer,
-scenario-results, scenario-history) also accept --start-server, --startup-timeout,
-and --request-timeout; run 'pyrit_scan <command> --help' to see them.
+scenario-results, scenario-history, set-target-credential) also accept
+--start-server, --startup-timeout, and --request-timeout; run
+'pyrit_scan <command> --help' to see them.
 
 Examples:
   # Start the backend server
@@ -149,6 +151,16 @@ Examples:
 
   # Register a custom initializer from a Python script
   pyrit_scan add-initializer ./my_custom_init.py
+
+  # Replace the key of a target with a token read from an
+  # 'ant auth login --profile copyrit' session, re-sent until Ctrl+C
+  pyrit_scan set-target-credential claude --from-ant --ant-profile copyrit --keep-fresh
+
+  # Or replace it with a key from an environment variable
+  pyrit_scan set-target-credential claude --from-env ANTHROPIC_API_KEY
+
+  # Or set a request header instead, such as a gateway token or a cookie
+  pyrit_scan set-target-credential team-model --prompt --header X-Team-Token
 
   # Connect to a remote server
   pyrit_scan list-scenarios --server-url http://remote:8000
@@ -271,9 +283,9 @@ def _build_global_parser() -> ArgumentParser:
     """
     Union of every option group.
 
-    Used *only* by the legacy shim to strip options and locate a verb; it is never
-    attached to a command. Keeping it a union (rather than the per-command groups)
-    lets the shim reorder any option placed before a verb, regardless of which
+    Used *only* by ``_move_verb_to_front`` to strip options and locate a verb; it is
+    never attached to a command. Keeping it a union (rather than the per-command
+    groups) lets any option placed before a verb be reordered, regardless of which
     command ultimately owns it.
 
     Returns:
@@ -298,6 +310,10 @@ def _add_run_arguments(*, parser: ArgumentParser, scenario_params: list[Paramete
         help="Name of the scenario to run",
     )
     parser.add_argument("--target", type=str, help=ARG_HELP["target"])
+    parser.add_argument("--scoring-target", type=str, help="Registered target for the scenario scoring rubric")
+    parser.add_argument(
+        "--adversarial-target", type=str, help="Registered generation target; never inferred from --target"
+    )
     parser.add_argument(
         "--initializers",
         type=_parse_initializer_arg,
@@ -434,7 +450,57 @@ def _build_parser(*, scenario_params: list[Parameter] | None = None, add_help: b
     )
     subparsers.add_parser("stop-server", parents=[common_parent], help="Stop the backend server")
 
+    _add_target_credential_parser(subparsers=subparsers, client_parents=client_parents)
+
     return parser
+
+
+#: Default minutes between refreshes for --keep-fresh.
+_DEFAULT_REFRESH_MINUTES = 15
+
+
+def _add_target_credential_parser(*, subparsers: Any, client_parents: list[ArgumentParser]) -> None:
+    """Register the verb that replaces the key of a target."""
+    set_parser = subparsers.add_parser(
+        "set-target-credential",
+        parents=client_parents,
+        help="Replace the API key or a request header of a target that allows credential updates",
+    )
+    set_parser.add_argument("target", type=str, help="Registry name of the target")
+    set_parser.add_argument(
+        "--header",
+        metavar="NAME",
+        help=(
+            "Set the credential as this request header instead of the API key, such as X-Api-Key, "
+            "Authorization (include the scheme, such as 'Bearer ...'), or Cookie (the whole cookie string)"
+        ),
+    )
+    _add_credential_source_arguments(parser=set_parser)
+
+
+def _add_credential_source_arguments(*, parser: ArgumentParser) -> None:
+    """Register where a target credential is read from; it is never a command-line value."""
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--prompt", action="store_true", help="Type the credential at a hidden prompt")
+    source.add_argument("--from-env", metavar="VAR", help="Read the credential from an environment variable")
+    source.add_argument(
+        "--from-ant",
+        action="store_true",
+        help="Read an Anthropic token with 'ant auth print-credentials --access-token'",
+    )
+    parser.add_argument("--ant-profile", metavar="NAME", help="ant profile to read (default: ant's active profile)")
+    parser.add_argument(
+        "--keep-fresh",
+        action="store_true",
+        help="With --from-ant, keep running and re-send a fresh token on an interval until Ctrl+C",
+    )
+    parser.add_argument(
+        "--refresh-minutes",
+        type=positive_int,
+        default=_DEFAULT_REFRESH_MINUTES,
+        metavar="N",
+        help=f"Minutes between --keep-fresh refreshes (default: {_DEFAULT_REFRESH_MINUTES})",
+    )
 
 
 def _discover_verbs() -> frozenset[str]:
@@ -451,7 +517,7 @@ def _discover_verbs() -> frozenset[str]:
     return frozenset[str]()
 
 
-#: Every valid subcommand verb (used by the legacy-argv shim to detect new-style calls).
+#: Every valid subcommand verb (used by ``_move_verb_to_front`` to find the verb).
 #: Derived from _build_parser so adding/renaming a subcommand can't leave this stale.
 _KNOWN_VERBS: frozenset[str] = _discover_verbs()
 
@@ -510,14 +576,16 @@ def _scenario_param_kwargs(*, parameter: Parameter) -> dict[str, Any]:
     Returns:
         dict[str, Any]: kwargs ready to pass to ``ArgumentParser.add_argument``.
     """
+    from pyrit.models.parameter import _unwrap_optional
+
     kwargs: dict[str, Any] = {
         "dest": f"{_SCENARIO_DEST_PREFIX}{parameter.name}",
         "default": argparse.SUPPRESS,
         "help": parameter.description,
     }
-    param_type = parameter.param_type
+    param_type = _unwrap_optional(parameter.param_type)
     element_type: Any
-    if get_origin(param_type) is list:
+    if parameter.is_list:
         type_args = get_args(param_type)
         element_type = type_args[0] if type_args else str
         kwargs["nargs"] = "+"
@@ -568,84 +636,30 @@ def _extract_scenario_args(*, parsed: Namespace) -> dict[str, Any]:
     }
 
 
-#: Legacy "mode flag" → new subcommand verb, used by the back-compat shim.
-#: ``--start-server`` is intentionally absent: it stays a global modifier flag and
-#: only maps to the ``start-server`` verb when it appears with no other command.
-_LEGACY_COMMAND_FLAGS: dict[str, str] = {
-    "--list-scenarios": "list-scenarios",
-    "--list-initializers": "list-initializers",
-    "--list-targets": "list-targets",
-    "--list-converters": "list-converters",
-    "--list-datasets": "list-datasets",
-    "--add-initializer": "add-initializer",
-    "--stop-server": "stop-server",
-}
-
-
-def _warn_legacy(*, old: str, new: str) -> None:
-    """Warn (visibly and via ``DeprecationWarning``) about a legacy ``pyrit_scan`` invocation."""
-    from pyrit.common import print_deprecation_message
-
-    print_deprecation_message(old_item=f"pyrit_scan {old}", new_item=f"pyrit_scan {new}", removed_in="1.3.0")
-    # DeprecationWarning is suppressed by default in a CLI, so also print a visible note.
-    print(f"Note: 'pyrit_scan {old}' is deprecated; use 'pyrit_scan {new}' instead.", file=sys.stderr)
-
-
-def _translate_legacy_argv(argv: list[str]) -> list[str]:
+def _move_verb_to_front(argv: list[str]) -> list[str]:
     """
-    Rewrite legacy flag-style invocations into the new subcommand form.
+    Move a verb that follows global options to the front of the argument list.
 
-    Back-compat shim for one release. Maps ``--list-scenarios`` → ``list-scenarios``
-    etc., a bare ``<scenario>`` → ``run <scenario>`` (implicit run), and a standalone
-    ``--start-server`` → the ``start-server`` verb, emitting a deprecation warning
-    for each. It also (without warning) moves a new-style verb to the front when it
-    was placed after global options (e.g. ``--server-url X list-scenarios``), so
-    globals work before or after the verb. New-style calls that already start with a
-    verb pass through untouched, as does the brand-new ``scenario-results`` surface
-    (no legacy form). Delete this function when the deprecation window closes.
+    Global options may be given before or after the verb (for example
+    ``--server-url X list-scenarios``). The verb's sub-parser has to see them, so a
+    verb found after the global options is moved to the front. Anything else,
+    including top-level ``--help``, is returned unchanged for argparse to handle.
 
     Args:
         argv (list[str]): The raw argument list (already ``sys.argv[1:]``).
 
     Returns:
-        list[str]: The possibly-rewritten argument list to feed to argparse.
+        list[str]: The argument list with the verb first, when one was found.
     """
     if not argv or argv[0] in _KNOWN_VERBS or argv[0] in ("-h", "--help"):
         return argv
 
-    # A legacy command flag anywhere in argv → prepend its verb, drop the flag.
-    for index, token in enumerate(argv):
-        verb = _LEGACY_COMMAND_FLAGS.get(token)
-        if verb is not None:
-            _warn_legacy(old=token, new=verb)
-            return [verb, *argv[:index], *argv[index + 1 :]]
-
-    # No legacy command flag. Strip global options with the global parser and
-    # inspect what remains.
+    # Strip global options with the global parser and see whether a verb follows.
     _, leftover = _build_global_parser().parse_known_args(argv)
-    if leftover:
-        if leftover[0] in _KNOWN_VERBS:
-            # A new-style verb placed after global options (e.g.
-            # ``--server-url X list-scenarios``). Move the verb to the front so its
-            # sub-parser sees the globals. This is valid ordering, not a legacy
-            # form, so it does not warn.
-            verb = leftover[0]
-            index = argv.index(verb)
-            return [verb, *argv[:index], *argv[index + 1 :]]
-        if leftover[0] in ("-h", "--help"):
-            # Global options followed by top-level help (e.g. ``--server-url X --help``).
-            # Leave argv untouched so the root parser prints its own help instead of
-            # misreading ``--help`` as an implicit scenario name.
-            return argv
-        # Otherwise it is a bare scenario name (+ run flags) → implicit run.
-        _warn_legacy(old="<scenario> (implicit run)", new="run <scenario>")
-        return ["run", *argv]
-
-    # Only global options remained: a standalone --start-server means "just start".
-    if "--start-server" in argv:
-        _warn_legacy(old="--start-server", new="start-server")
-        return ["start-server", *[token for token in argv if token != "--start-server"]]
-
+    if leftover and leftover[0] in _KNOWN_VERBS:
+        verb = leftover[0]
+        index = argv.index(verb)
+        return [verb, *argv[:index], *argv[index + 1 :]]
     return argv
 
 
@@ -653,11 +667,11 @@ def parse_args(args: list[str] | None = None) -> Namespace:
     """
     Parse command-line arguments (pass 1 — tolerant of scenario-declared flags).
 
-    The raw argv is first run through ``_translate_legacy_argv`` (the back-compat
-    shim). Pass 1 then uses ``parse_known_args`` so scenario-specific flags (e.g.
+    The raw argv is first run through ``_move_verb_to_front``, so global options
+    work before or after the verb. Pass 1 then uses ``parse_known_args`` so scenario-specific flags (e.g.
     ``--max-turns 7``) don't error before we've fetched the scenario's declared
     parameters. Unknown leftovers are stashed on the Namespace as ``_unknown_args``,
-    and the translated argv as ``_translated_args``, for the ``run`` reparse.
+    and the reordered argv as ``_translated_args``, for the ``run`` reparse.
 
     Args:
         args: Argument list (``sys.argv[1:]`` when None).
@@ -666,7 +680,7 @@ def parse_args(args: list[str] | None = None) -> Namespace:
         Namespace: Parsed command-line arguments.
     """
     raw_args = list(args) if args is not None else list(sys.argv[1:])
-    translated = _translate_legacy_argv(raw_args)
+    translated = _move_verb_to_front(raw_args)
     parser = _build_parser(add_help=True)
     parsed, unknown = parser.parse_known_args(translated)
     parsed._unknown_args = unknown
@@ -1007,6 +1021,10 @@ def _build_run_request(*, parsed_args: Namespace, scenario_name: str) -> RunScen
         "scenario_name": scenario_name,
         "target_name": parsed_args.target or "",
     }
+    for role in ("scoring", "adversarial"):
+        name = getattr(parsed_args, f"{role}_target", None)
+        if name:
+            kwargs[f"{role}_target_name"] = name
 
     if parsed_args.initializers:
         init_names: list[str] = []
@@ -1176,6 +1194,194 @@ async def _handle_run_async(*, client: Any, parsed_args: Namespace) -> int:
     return await _run_scenario_async(client=client, parsed_args=reparsed)
 
 
+def _credential_source_from_args(*, parsed_args: Namespace) -> CredentialSource:
+    """
+    Select the target credential source requested on the command line.
+
+    Returns:
+        CredentialSource: The selected source; argparse requires exactly one.
+
+    Raises:
+        ValueError: If source-specific options are combined with the wrong source.
+    """
+    from pyrit.cli._target_credentials import CredentialSource, CredentialSourceKind
+
+    if parsed_args.ant_profile and not parsed_args.from_ant:
+        raise ValueError("--ant-profile requires --from-ant.")
+    if parsed_args.keep_fresh and not parsed_args.from_ant:
+        raise ValueError("--keep-fresh requires --from-ant, because only ant tokens expire and can be re-read.")
+    if parsed_args.prompt:
+        return CredentialSource(kind=CredentialSourceKind.PROMPT)
+    if parsed_args.from_env:
+        return CredentialSource(kind=CredentialSourceKind.ENVIRONMENT, environment_variable=parsed_args.from_env)
+    return CredentialSource(kind=CredentialSourceKind.ANT, ant_profile=parsed_args.ant_profile)
+
+
+async def _send_target_credential_async(
+    *, client: Any, target_name: str, source: CredentialSource, header: str | None, expected_private: bool
+) -> None:
+    """
+    Read a credential from its source and set it as a target's API key, or as one of its request headers.
+
+    The request names the visibility the target had when the command started, so the server refuses it if a
+    different target has since taken the name.
+    """
+    from pyrit.cli._target_credentials import read_target_credential_async
+
+    credential = await read_target_credential_async(source=source, target_name=target_name, header=header)
+    await client.set_target_credential_async(
+        target_registry_name=target_name, credential=credential, header=header, expected_private=expected_private
+    )
+
+
+async def _keep_target_credential_fresh_async(
+    *,
+    client: Any,
+    target_name: str,
+    target_hash: str,
+    private: bool,
+    source: CredentialSource,
+    header: str | None,
+    refresh_minutes: int,
+) -> int:
+    """
+    Re-send a fresh credential on an interval until the user stops the command.
+
+    Temporary failures (an unavailable credential source, sign-in, or backend, a timeout, a 429 or a 5xx
+    response) are reported and retried at the next interval. The command stops when the target is gone
+    or is no longer the one the credential was set for, such as after the backend restarts and removes a
+    target created through the API and someone else takes its name, or when the backend refuses the
+    credential. The server also refuses an update for a target that isn't private or shared as expected.
+
+    Args:
+        client: The open API client.
+        target_name: The target's registry name.
+        target_hash: The identifier hash of the target the credential was first set for.
+        private: Whether the target the credential was first set for is private.
+        source: Where to re-read the credential.
+        header: The request header the credential is set as, or None for the API key.
+        refresh_minutes: Minutes between refreshes.
+
+    Returns:
+        int: Exit code ``0`` after the user stops the command, or ``1`` when refreshing can't continue.
+    """
+    import httpx
+
+    from pyrit.cli._auth import CliAuthenticationError
+    from pyrit.cli._target_credentials import TargetCredentialError
+    from pyrit.cli.api_client import ServerNotAvailableError
+
+    recreate_hint = (
+        "Targets created through the API are removed when the backend restarts or reinitializes. Create "
+        f"'{target_name}' again if you need it, then run 'pyrit_scan set-target-credential {target_name} ...'."
+    )
+    print(f"Keeping your credential for '{target_name}' fresh every {refresh_minutes} minute(s). Press Ctrl+C to stop.")
+    try:
+        while True:
+            await asyncio.sleep(refresh_minutes * 60)
+            try:
+                target = await client.get_target_async(target_registry_name=target_name)
+                if target is None or target.identifier.hash != target_hash or target.private != private:
+                    print(
+                        f"Error: '{target_name}' is no longer the target you set your credential for, so refreshing "
+                        f"stopped. {recreate_hint}",
+                        file=sys.stderr,
+                    )
+                    return 1
+                await _send_target_credential_async(
+                    client=client, target_name=target_name, source=source, header=header, expected_private=private
+                )
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+                if status_code != 429 and status_code < 500:
+                    print(f"Error: could not refresh your credential for '{target_name}': {exc}", file=sys.stderr)
+                    if status_code == 404:
+                        print(recreate_hint, file=sys.stderr)
+                    return 1
+                print(f"Warning: could not refresh your credential for '{target_name}': {exc}", file=sys.stderr)
+                continue
+            except (TargetCredentialError, CliAuthenticationError, ServerNotAvailableError, httpx.HTTPError) as exc:
+                print(f"Warning: could not refresh your credential for '{target_name}': {exc}", file=sys.stderr)
+                continue
+            print(f"Refreshed your credential for '{target_name}'.")
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print(f"\nStopped refreshing. Your last credential for '{target_name}' stays set until it expires.")
+        return 0
+
+
+def _response_detail(response: Any) -> str:
+    """
+    Return the reason a backend gave for refusing a request.
+
+    Returns:
+        str: The response's ``detail``, or its status line when it has none.
+    """
+    try:
+        detail = response.json().get("detail")
+    except (ValueError, AttributeError):
+        detail = None
+    return str(detail) if detail else f"The server refused the request ({response.status_code})."
+
+
+async def _handle_set_target_credential_async(*, client: Any, parsed_args: Namespace) -> int:
+    """
+    Handle ``set-target-credential``: replace the API key or a request header of a target that allows it.
+
+    Returns:
+        int: Exit code (``0`` on success, ``1`` on failure).
+
+    Raises:
+        httpx.HTTPStatusError: For a backend error other than a refused update.
+    """
+    import httpx
+
+    from pyrit.cli._target_credentials import TargetCredentialError
+
+    target_name = parsed_args.target
+    try:
+        source = _credential_source_from_args(parsed_args=parsed_args)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 1
+    target = await client.get_target_async(target_registry_name=target_name)
+    if target is None:
+        print(f"Error: Target '{target_name}' not found on server.")
+        return 1
+    if not target.allow_credential_updates:
+        print(
+            f"Error: Target '{target_name}' doesn't allow credential updates. Ask whoever created it, or create "
+            "your own target."
+        )
+        return 1
+    if not target.private:
+        print(f"Warning: Target '{target_name}' is shared; everyone's requests will use this credential.")
+    header = parsed_args.header
+    try:
+        await _send_target_credential_async(
+            client=client, target_name=target_name, source=source, header=header, expected_private=target.private
+        )
+    except TargetCredentialError as exc:
+        print(f"Error: {exc}")
+        return 1
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code not in {400, 403, 409}:
+            raise
+        print(f"Error: {_response_detail(exc.response)}")
+        return 1
+    print(f"Set your credential for '{target_name}' from {source.description}.")
+    if not parsed_args.keep_fresh:
+        return 0
+    return await _keep_target_credential_fresh_async(
+        client=client,
+        target_name=target_name,
+        target_hash=target.identifier.hash,
+        private=target.private,
+        source=source,
+        header=header,
+        refresh_minutes=parsed_args.refresh_minutes,
+    )
+
+
 #: Post-client verbs, each a uniform ``(*, client, parsed_args) -> int`` handler. Reached
 #: only after the API client is open (start-server/stop-server are handled earlier, before
 #: any client exists), so dispatch here is a pure table lookup with no branching.
@@ -1184,6 +1390,7 @@ _CLIENT_HANDLERS: dict[str, Callable[..., Any]] = {
     "add-initializer": _handle_add_initializer_async,
     "scenario-results": _handle_results_async,
     "scenario-history": _handle_scenario_history_async,
+    "set-target-credential": _handle_set_target_credential_async,
     **dict.fromkeys(_LIST_VERBS, _handle_list_commands_async),
 }
 
@@ -1270,10 +1477,20 @@ def main(args: list[str] | None = None) -> int:
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
 
-    # No verb at all: show the top-level help listing the subcommands.
+    # No verb at all: show the top-level help listing the subcommands. Arguments
+    # without a verb (such as a scenario name or a flag) are a usage error.
     if getattr(parsed_args, "command", None) is None:
-        _build_parser().print_help()
-        return 0
+        parser = _build_parser()
+        if not parsed_args._translated_args:
+            parser.print_help()
+            return 0
+        parser.print_usage(sys.stderr)
+        print(
+            f"{parser.prog}: error: a command is required "
+            f"(got: {' '.join(parsed_args._translated_args)}); see '{parser.prog} --help'",
+            file=sys.stderr,
+        )
+        return 2
 
     # Unknown flags are only expected for `run` (scenario-declared flags, resolved
     # in the reparse). For any other verb they are genuinely unrecognized.

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.common.async_compatibility import run_legacy_sync_async
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-    from pyrit.score import TrueFalseScorer
+    from pyrit.score import CompatibleScorers, TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,10 @@ class Leakage(Scenario):
     construct attack techniques.
     """
 
+    SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = True
+
     VERSION: int = 2
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = True
 
     @classmethod
     def _get_additional_scoring_questions(cls) -> list[Path]:
@@ -101,7 +104,7 @@ class Leakage(Scenario):
     def __init__(
         self,
         *,
-        objective_scorer: TrueFalseScorer | None = None,
+        objective_scorer: TrueFalseScorer | CompatibleScorers | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
         """
@@ -110,11 +113,10 @@ class Leakage(Scenario):
         Args:
             objective_scorer: Scorer for evaluating leakage detection.
                 Defaults to a composite scorer (leakage detection + refusal backstop).
+                Or a ``CompatibleScorers`` pool, from which each dataset selects the first
+                candidate that meets its ``DatasetSource.scorer_requirements`` and accepts its objectives.
             scenario_result_id: Optional ID of an existing scenario result to resume.
         """
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-
         technique_class = _build_leakage_technique()
 
         super().__init__(
@@ -146,6 +148,7 @@ class Leakage(Scenario):
         return await run_legacy_sync_async(
             build_matrix_atomic_attacks,
             context=context,
-            objective_scorer=self._objective_scorer,
+            objective_scorer=self._objective_scorer_input,
+            scorer_requirements=self._get_objective_scorer_requirements(),
             extra_factories={factory.name: factory for factory in _leakage_factories()},
         )

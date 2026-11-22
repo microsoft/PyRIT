@@ -25,16 +25,24 @@ if TYPE_CHECKING:
         ProgramBehaves,
         ProgramCase,
         ProgramResult,
+        ToolArgumentRequirement,
         ToolCallRequirement,
         ToolsCalled,
+        ToolsCalledInOrder,
+        ViolatesAssertPolicy,
     )
     from pyrit.models.score.expectation import (
         ScoringExpectation,
         scoring_expectation_fingerprint,
     )
+    from pyrit.models.score.float_feedback import (
+        FloatFeedback,
+        InvalidFloatFeedbackError,
+    )
     from pyrit.models.score.observation import (
         Acquisition,
         ConversationObservationPayload,
+        ExecutionTraceObservationPayload,
         Observation,
         ObservationPayload,
         ProgramExecutionObservationPayload,
@@ -62,14 +70,18 @@ if TYPE_CHECKING:
         UndeterminedScoreError,
         UnvalidatedScore,
     )
+    from pyrit.models.score.scorer_capabilities import ScorerCapabilities, ScorerCapabilityName
     from pyrit.models.score.surface import SurfaceBaseline, SurfaceCoverage, SurfaceEntry, SurfaceMatch
-    from pyrit.models.score.text_matcher import Contains, Equals, Regex, TextMatcher
+    from pyrit.models.score.text_matcher import Contains, Equals, Regex, StartsWith, TextMatcher
     from pyrit.models.score.trace import (
+        ExecutionStep,
+        ExecutionStepKind,
         ToolExecution,
         TraceCoverage,
         TraceQuery,
         TraceQueryResult,
         TraceSpan,
+        TraceSpanEvent,
         TraceSpanStatus,
     )
 
@@ -84,6 +96,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Contains": "pyrit.models.score.text_matcher",
     "Equals": "pyrit.models.score.text_matcher",
     "Regex": "pyrit.models.score.text_matcher",
+    "StartsWith": "pyrit.models.score.text_matcher",
     "TextMatcher": "pyrit.models.score.text_matcher",
     "OutputMatches": "pyrit.models.score.condition",
     "Acquisition": "pyrit.models.score.observation",
@@ -94,6 +107,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ContentScorable": "pyrit.models.score.scorable",
     "ContentWritten": "pyrit.models.score.condition",
     "DivergesFromRepetition": "pyrit.models.score.condition",
+    "ExecutionStep": "pyrit.models.score.trace",
+    "FloatFeedback": "pyrit.models.score.float_feedback",
+    "InvalidFloatFeedbackError": "pyrit.models.score.float_feedback",
+    "ExecutionStepKind": "pyrit.models.score.trace",
+    "ExecutionTraceObservationPayload": "pyrit.models.score.observation",
     "ScorerTargetResponsePayload": "pyrit.models.score.observation",
     "MatchesObjective": "pyrit.models.score.condition",
     "MessageScorable": "pyrit.models.score.scorable",
@@ -104,6 +122,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Score": "pyrit.models.score.score",
     "ScoreStatus": "pyrit.models.score.score",
     "ScoreType": "pyrit.models.score.score",
+    "ScorerCapabilities": "pyrit.models.score.scorer_capabilities",
+    "ScorerCapabilityName": "pyrit.models.score.scorer_capabilities",
     "ScoringExpectation": "pyrit.models.score.expectation",
     "SurfaceBaseline": "pyrit.models.score.surface",
     "SurfaceCoverage": "pyrit.models.score.surface",
@@ -111,18 +131,22 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SurfaceMatch": "pyrit.models.score.surface",
     "SurfaceObservationPayload": "pyrit.models.score.observation",
     "SurfaceScorable": "pyrit.models.score.scorable",
+    "ToolArgumentRequirement": "pyrit.models.score.condition",
     "ToolCallRequirement": "pyrit.models.score.condition",
     "ToolEventsObservationPayload": "pyrit.models.score.observation",
     "ToolExecution": "pyrit.models.score.trace",
     "ToolsCalled": "pyrit.models.score.condition",
+    "ToolsCalledInOrder": "pyrit.models.score.condition",
     "TraceCoverage": "pyrit.models.score.trace",
     "TraceQuery": "pyrit.models.score.trace",
     "TraceQueryResult": "pyrit.models.score.trace",
     "TraceScorable": "pyrit.models.score.scorable",
     "TraceSpan": "pyrit.models.score.trace",
+    "TraceSpanEvent": "pyrit.models.score.trace",
     "TraceSpanStatus": "pyrit.models.score.trace",
     "UndeterminedScoreError": "pyrit.models.score.score",
     "UnvalidatedScore": "pyrit.models.score.score",
+    "ViolatesAssertPolicy": "pyrit.models.score.condition",
     "scorable_from_dict": "pyrit.models.score.scorable",
     "scoring_expectation_fingerprint": "pyrit.models.score.expectation",
 }

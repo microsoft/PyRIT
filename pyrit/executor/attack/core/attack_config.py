@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from pyrit.executor.core import StrategyConverterConfig
-from pyrit.models import AdversarialPrompts, JsonSchemaDefinition, SeedPrompt
+from pyrit.models import AdversarialPrompts, JsonSchemaDefinition, ScorerCapabilityName, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
 
@@ -283,15 +283,17 @@ class AttackScoringConfig:
         Validate configuration values.
 
         Raises:
-            ValueError: If the objective or refusal scorers are not of type TrueFalseScorer.
+            ValueError: If the objective or refusal scorer does not return a true/false verdict.
         """
-        # Enforce objective scorer type: must be a true/false scorer if provided
-        if self.objective_scorer and not isinstance(self.objective_scorer, TrueFalseScorer):
+        if self.objective_scorer and not _returns_true_false(self.objective_scorer):
             raise ValueError("Objective scorer must be a TrueFalseScorer")
 
-        # Enforce refusal scorer type: must be a true/false scorer if provided
-        if self.refusal_scorer and not isinstance(self.refusal_scorer, TrueFalseScorer):
+        if self.refusal_scorer and not _returns_true_false(self.refusal_scorer):
             raise ValueError("Refusal scorer must be a TrueFalseScorer")
+
+
+def _returns_true_false(scorer: object) -> bool:
+    return isinstance(scorer, Scorer) and scorer.capabilities.includes(capability=ScorerCapabilityName.TRUE_FALSE)
 
 
 @dataclass

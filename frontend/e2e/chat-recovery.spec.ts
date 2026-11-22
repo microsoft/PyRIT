@@ -842,92 +842,104 @@ test.describe("Chat processing recovery @seeded", () => {
     await expect(page.getByTestId("chat-input")).toHaveValue("Retain this unsent draft");
   });
 
-  test("preserves an image converter while a recovered attachment is serialized for sending", async ({
-    page, request, localTarget, imageConverterId,
-  }) => {
-    await installDeferredFileReads(page);
-    await page.getByTestId("file-input").setInputFiles({
-      name: "evidence.png",
-      mimeType: "image/png",
-      buffer: Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAwCAIAAAAuKetIAAAAaElEQVR4nNXOQREAIAzAsFJxCEMTAhGxB9coyNrnUiZxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEufvwNQDpI4B3CU+2fUAAAAASUVORK5CYII=",
-        "base64",
-      ),
-    });
-    await page.getByTestId("toggle-converter-panel-btn").click();
-    const panel = page.getByTestId("converter-panel");
-    await panel.getByRole("tab", { name: "Image", exact: true }).click();
-    await panel.getByRole("combobox", { name: "Add converter", exact: true }).click();
-    await page.getByTestId(`converter-option-${imageConverterId}`).click();
-    await expect(panel.getByTestId(`converter-item-${imageConverterId}`)).toBeVisible();
-    await panel.getByRole("button", { name: "Convert", exact: true }).click();
-    await expect(page.getByTestId("converter-preview-result")).toBeVisible();
-    await expect(page.getByTestId("clear-media-conversion-image")).toBeVisible();
-    await panel.getByRole("button", { name: "Close converters", exact: true }).click();
-    localTarget.setProcessingFailure(true);
-    const [originalRequest, first] = await Promise.all([
-      page.waitForRequest(isMessagePost),
-      sendFromComposer(page, "Recover this image"),
-    ]);
-    expect(first.messages.target_response_status?.response_error).toBe("processing");
-    const originalSend: AddMessageRequest = originalRequest.postDataJSON();
-    expect(originalSend.pieces).toEqual([
-      expect.objectContaining({ data_type: "text", original_value: "Recover this image" }),
-      expect.objectContaining({ data_type: "image_path" }),
-    ]);
-    expect(originalSend.pieces[1].applied_converter_ids).toEqual([imageConverterId]);
-    expect(originalSend.request_converter_configurations).toBeUndefined();
-    expect(originalSend).not.toHaveProperty("converter_ids");
-    const attackId = first.attack.attack_result_id;
-    const otherId = await createConversation(request, attackId);
-    await selectConversation(page, otherId);
-    await expect(page.getByTestId("chat-input")).toBeEnabled();
-    await expect(page.getByTestId("chat-input")).toHaveValue("");
-    await expect(page.getByRole("button", { name: "Remove evidence.png", exact: true })).toHaveCount(0);
-    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(0);
-    await selectConversation(page, first.attack.conversation_id);
-    await expect(page.getByTestId("chat-input")).toHaveValue("Recover this image");
-    await expect(page.getByRole("button", { name: "Remove evidence.png", exact: true })).toBeVisible();
-    await expect(page.getByTestId("clear-media-conversion-image")).toBeVisible();
-    await page.getByRole("button", { name: "Copy or Branch", exact: true }).last().click();
-    const recover = page.getByRole("menuitem", { name: "Branch conversation", exact: true });
-    await expect(recover).toBeEnabled();
-    await page.evaluate(() => { document.documentElement.dataset.deferRecoveryReads = "true"; });
-    try {
-      await recover.click();
-      await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
-      await expect(page.getByTestId("chat-input")).toHaveValue("Recover this image");
-      await expect(page.getByTestId("clear-media-conversion-image")).toBeVisible();
-      expect(await page.evaluate(
-        () => document.documentElement.dataset.recoveryReadCount,
-      )).toBeUndefined();
-      localTarget.setProcessingFailure(false);
-      const [resentRequest, sent] = await Promise.all([
-        page.waitForRequest(isMessagePost),
-        sendFromComposer(page),
-        (async () => {
-          await expect.poll(() => page.evaluate(
-            () => document.documentElement.dataset.recoveryReadCount,
-          )).toBe("1");
-          await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
-          expect(localTarget.requestBodies).toHaveLength(1);
-          await page.evaluate(() => {
-            document.dispatchEvent(new CustomEvent("release-recovery-read", { detail: 0 }));
-          });
-        })(),
-      ]);
-      const resent: AddMessageRequest = resentRequest.postDataJSON();
-      expect(resent.pieces[1].applied_converter_ids).toEqual([imageConverterId]);
-      expect(resent.pieces).toEqual(originalSend.pieces);
-      expect(resent).not.toHaveProperty("converter_ids");
-      expect(sent.messages.target_response_status?.response_error).toBe("none");
-      const initialConverters = first.messages.messages[0].message_pieces[1].converter_identifiers;
-      expect(initialConverters).toHaveLength(1);
-      expect(sent.messages.messages[0].message_pieces[1].converter_identifiers).toEqual(initialConverters);
-    } finally {
-      await page.evaluate(() => {
-        document.dispatchEvent(new CustomEvent("release-recovery-read", { detail: "all" }));
+  for (const refreshLease of [false, true]) {
+    test(`preserves an image converter while a recovered attachment is serialized for sending (${refreshLease ? "refreshed lease" : "cached upload"})`, async ({
+      page, request, localTarget, imageConverterId,
+    }) => {
+      await installDeferredFileReads(page);
+      await page.getByTestId("file-input").setInputFiles({
+        name: "evidence.png",
+        mimeType: "image/png",
+        buffer: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAwCAIAAAAuKetIAAAAaElEQVR4nNXOQREAIAzAsFJxCEMTAhGxB9coyNrnUiZxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEufvwNQDpI4B3CU+2fUAAAAASUVORK5CYII=",
+          "base64",
+        ),
       });
-    }
-  });
+      await page.getByTestId("toggle-converter-panel-btn").click();
+      const panel = page.getByTestId("converter-panel");
+      await panel.getByRole("tab", { name: "Image", exact: true }).click();
+      await panel.getByRole("combobox", { name: "Add converter", exact: true }).click();
+      await page.getByTestId(`converter-option-${imageConverterId}`).click();
+      await expect(panel.getByTestId(`converter-item-${imageConverterId}`)).toBeVisible();
+      await panel.getByRole("button", { name: "Convert", exact: true }).click();
+      await expect(page.getByTestId("converter-preview-result")).toBeVisible();
+      await expect(page.getByTestId("clear-media-conversion-image")).toBeVisible();
+      await panel.getByRole("button", { name: "Close converters", exact: true }).click();
+      localTarget.setProcessingFailure(true);
+      const [originalRequest, first] = await Promise.all([
+        page.waitForRequest(isMessagePost),
+        sendFromComposer(page, "Recover this image"),
+      ]);
+      expect(first.messages.target_response_status?.response_error).toBe("processing");
+      const originalSend: AddMessageRequest = originalRequest.postDataJSON();
+      expect(originalSend.pieces).toEqual([
+        expect.objectContaining({ data_type: "text", original_value: "Recover this image" }),
+        expect.objectContaining({ data_type: "image_path" }),
+      ]);
+      expect(originalSend.pieces[1].applied_converter_ids).toEqual([imageConverterId]);
+      expect(originalSend.request_converter_configurations).toBeUndefined();
+      expect(originalSend).not.toHaveProperty("converter_ids");
+      const attackId = first.attack.attack_result_id;
+      const otherId = await createConversation(request, attackId);
+      await selectConversation(page, otherId);
+      await expect(page.getByTestId("chat-input")).toBeEnabled();
+      await expect(page.getByTestId("chat-input")).toHaveValue("");
+      await expect(page.getByRole("button", { name: "Remove evidence.png", exact: true })).toHaveCount(0);
+      await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(0);
+      await selectConversation(page, first.attack.conversation_id);
+      await expect(page.getByTestId("chat-input")).toHaveValue("Recover this image");
+      await expect(page.getByRole("button", { name: "Remove evidence.png", exact: true })).toBeVisible();
+      await expect(page.getByTestId("clear-media-conversion-image")).toBeVisible();
+      await page.getByRole("button", { name: "Copy or Branch", exact: true }).last().click();
+      const recover = page.getByRole("menuitem", { name: "Branch conversation", exact: true });
+      await expect(recover).toBeEnabled();
+      await page.evaluate(() => { document.documentElement.dataset.deferRecoveryReads = "true"; });
+      try {
+        await recover.click();
+        await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+        await expect(page.getByTestId("chat-input")).toHaveValue("Recover this image");
+        await expect(page.getByTestId("clear-media-conversion-image")).toBeVisible();
+        expect(await page.evaluate(
+          () => document.documentElement.dataset.recoveryReadCount,
+        )).toBeUndefined();
+        if (refreshLease) {
+          await page.clock.setFixedTime(new Date(Date.now() + 24 * 60 * 60 * 1000));
+        }
+        localTarget.setProcessingFailure(false);
+        const [resentRequest, sent] = await Promise.all([
+          page.waitForRequest(isMessagePost),
+          sendFromComposer(page),
+          (async () => {
+            if (!refreshLease) return;
+            await expect.poll(() => page.evaluate(
+              () => document.documentElement.dataset.recoveryReadCount,
+            )).toBe("1");
+            await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+            expect(localTarget.requestBodies).toHaveLength(1);
+            await page.evaluate(() => {
+              document.dispatchEvent(new CustomEvent("release-recovery-read", { detail: 0 }));
+            });
+          })(),
+        ]);
+        const resent: AddMessageRequest = resentRequest.postDataJSON();
+        expect(resent.pieces[1].applied_converter_ids).toEqual([imageConverterId]);
+        expect(resent.pieces).toEqual(originalSend.pieces);
+        expect(resent).not.toHaveProperty("converter_ids");
+        expect(sent.messages.target_response_status?.response_error).toBe("none");
+        if (!refreshLease) {
+          expect(await page.evaluate(
+            () => document.documentElement.dataset.recoveryReadCount,
+          )).toBeUndefined();
+        }
+        expect(localTarget.requestBodies).toHaveLength(2);
+        const initialConverters = first.messages.messages[0].message_pieces[1].converter_identifiers;
+        expect(initialConverters).toHaveLength(1);
+        expect(sent.messages.messages[0].message_pieces[1].converter_identifiers).toEqual(initialConverters);
+      } finally {
+        await page.evaluate(() => {
+          document.dispatchEvent(new CustomEvent("release-recovery-read", { detail: "all" }));
+        });
+      }
+    });
+  }
 });

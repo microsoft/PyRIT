@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import {
   Button, Combobox, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
-  Field, Input, MessageBar, MessageBarBody, Option, Select, Text, Textarea,
+  Field, Input, MessageBar, MessageBarBody, Option, Select, Switch, Text, Textarea,
 } from '@fluentui/react-components'
 
 import { operationsApi } from '@/services/api'
@@ -15,6 +15,7 @@ import { useFindingDialogStyles } from './FindingDialog.styles'
 
 const EMPTY_DRAFT: FindingCreate = {
   title: '', description: '', severity: 'moderate', severity_other: null, harm_type: null, harm_type_other: null,
+  demonstrated: true,
 }
 
 /** One save attempt. The id repeats while the input does, so a retry returns a finding a lost response saved. */
@@ -27,6 +28,8 @@ interface FindingDialogProps {
   initialValues?: FindingCreate
   editing?: boolean
   context?: React.ReactNode
+  /** The title of the finding this one is a sub-finding of. The parent is shown, not edited. */
+  parentTitle?: string
   /** Shows an optional attack ID to link as evidence. */
   evidenceField?: boolean
   saveDisabled?: boolean
@@ -35,12 +38,15 @@ interface FindingDialogProps {
 }
 
 export default function FindingDialog({
-  initialValues = EMPTY_DRAFT, editing = false, context, evidenceField = false, saveDisabled = false, onSave, onClose,
+  initialValues = EMPTY_DRAFT, editing = false, context, parentTitle, evidenceField = false, saveDisabled = false,
+  onSave, onClose,
 }: FindingDialogProps) {
   const styles = useFindingDialogStyles()
+  const [initialDraft] = useState<FindingCreate>({ ...EMPTY_DRAFT, ...initialValues })
   const [draft, setDraft] = useState<FindingCreate>({ ...EMPTY_DRAFT, ...initialValues })
   const [attackResultId, setAttackResultId] = useState('')
   const [error, setError] = useState('')
+  const [attackResultIdError, setAttackResultIdError] = useState('')
   const [saving, setSaving] = useState(false)
   const submitting = useRef(false)
   const attempt = useRef<{ signature: string; id: string } | null>(null)
@@ -51,7 +57,7 @@ export default function FindingDialog({
   const [harmSearch, setHarmSearch] = useState('')
   const classificationsValid = (draft.severity !== 'other' || Boolean(draft.severity_other?.trim()))
     && (draft.harm_type !== 'Other' || Boolean(draft.harm_type_other?.trim()))
-  const canSave = !saveDisabled && Boolean(draft.title.trim()) && classificationsValid && harmTypes !== null
+  const canSave = !saveDisabled && !attackResultIdError && Boolean(draft.title.trim()) && classificationsValid && harmTypes !== null
     && !optionsError
 
   useEffect(() => {
@@ -63,25 +69,40 @@ export default function FindingDialog({
   }, [optionsRevision])
 
   useEffect(() => {
-    if (!draft.title && !draft.description && !draft.severity_other && !draft.harm_type && !draft.harm_type_other
-      && draft.severity === initialValues.severity && !attackResultId) return
+    // Clean means the draft still equals its initial values. An edit dialog
+    // opens prefilled, so emptiness can never prove it clean; every watched
+    // field is compared against what the dialog started with.
+    const unchanged = (field: keyof FindingCreate): boolean => draft[field] === initialDraft[field]
+    const demonstratedUnchanged = (draft.demonstrated ?? true) === (initialDraft.demonstrated ?? true)
+    if (unchanged('title') && unchanged('description') && unchanged('severity_other')
+      && unchanged('harm_type') && unchanged('harm_type_other') && unchanged('severity')
+      && demonstratedUnchanged && !attackResultId) return
     const protectDraft = (event: BeforeUnloadEvent): void => { event.preventDefault() }
     window.addEventListener('beforeunload', protectDraft)
     return () => { window.removeEventListener('beforeunload', protectDraft) }
-  }, [draft.title, draft.description, draft.severity_other, draft.harm_type, draft.harm_type_other, draft.severity, initialValues.severity, attackResultId])
+  }, [draft, initialDraft, attackResultId])
 
   const save = async (): Promise<void> => {
     if (submitting.current || !canSave) return
     submitting.current = true
     setSaving(true)
     setError('')
+    setAttackResultIdError('')
     const trimmedAttackResultId = attackResultId.trim()
     const signature = JSON.stringify([draft, trimmedAttackResultId])
     if (attempt.current?.signature !== signature) attempt.current = { signature, id: generateClientId() }
     try {
       await onSave(draft, { id: attempt.current.id, attackResultId: trimmedAttackResultId })
     } catch (cause: unknown) {
-      setError(toApiError(cause).detail)
+      const apiError = toApiError(cause)
+      const evidenceMessages = apiError.fieldErrors.filter(item => evidenceField && item.field.split('.').pop() === 'attack_result_id')
+        .map(item => item.message)
+      const otherMessages = apiError.fieldErrors.filter(item => !evidenceField || item.field.split('.').pop() !== 'attack_result_id')
+        .map(item => `${item.field.replace(/^body\./, '')}: ${item.message}`)
+      setAttackResultIdError(evidenceMessages.join(' '))
+      if (evidenceMessages.length === 0 || otherMessages.length > 0) {
+        setError([otherMessages.length > 0 ? '' : apiError.detail, ...otherMessages].filter(Boolean).join(' '))
+      }
     } finally {
       submitting.current = false
       setSaving(false)
@@ -91,10 +112,11 @@ export default function FindingDialog({
   return (
     <Dialog open onOpenChange={(_, data) => { if (!data.open && !submitting.current) onClose() }}>
       <DialogSurface><DialogBody>
-        <DialogTitle>{editing ? 'Edit finding' : 'New finding'}</DialogTitle>
+        <DialogTitle>{editing ? 'Edit finding' : parentTitle !== undefined ? 'New sub-finding' : 'New finding'}</DialogTitle>
         <DialogContent>
           <form className={styles.form} onSubmit={event => { event.preventDefault(); void save() }}>
             {context ?? <Text>Record a human assessment. No attack is required.</Text>}
+            {parentTitle !== undefined && <Text>Sub-finding of “{parentTitle}”</Text>}
             {error && <MessageBar intent="error" aria-live="polite"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
             <Field label="Title" required>
               <Input value={draft.title} disabled={saving} name="title" autoComplete="off"
@@ -157,10 +179,15 @@ export default function FindingDialog({
               <Textarea value={draft.description} disabled={saving} resize="vertical" name="description" autoComplete="off"
                 onChange={(_, data) => { setDraft(value => ({ ...value, description: data.value })) }} />
             </Field>
+            <Field hint="Turn off for a step that was attempted but not achieved. Paths that use it show as partial.">
+              <Switch label="Demonstrated" checked={draft.demonstrated ?? true} disabled={saving} name="demonstrated"
+                onChange={(_, data) => { setDraft(value => ({ ...value, demonstrated: data.checked })) }} />
+            </Field>
             {evidenceField && <Field label="Evidence attack ID"
+              validationState={attackResultIdError ? 'error' : 'none'} validationMessage={attackResultIdError || undefined}
               hint="Optional. Links a saved attack as evidence; the attack is not changed. Its ID is in the attack's address.">
               <Input value={attackResultId} disabled={saving} name="attack_result_id" autoComplete="off"
-                onChange={(_, data) => { setAttackResultId(data.value) }} />
+                onChange={(_, data) => { setAttackResultId(data.value); setAttackResultIdError('') }} />
             </Field>}
             <div className={styles.actions}>
               <Button className={styles.button} disabled={saving} onClick={onClose}>Cancel</Button>

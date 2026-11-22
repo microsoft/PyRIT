@@ -1,5 +1,7 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import { mobileTouchTarget } from '../../styles/touchTargets'
+import { MINIMUM_TOUCH_TARGET_SIZE, TOUCH_INPUT_QUERY, mobileTouchTarget } from '../../styles/touchTargets'
+
+import { TARGET_FILTER_RESET_WIDTH } from './TargetFiltersBar.styles'
 
 export const useTargetTableStyles = makeStyles({
   tableContainer: {
@@ -103,11 +105,53 @@ export const useTargetTableStyles = makeStyles({
     color: tokens.colorPaletteRedForeground1,
     fontSize: tokens.fontSizeBase500,
   },
+  accountColumn: {
+    width: '110px',
+  },
+  accountCell: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+  },
+  credentialsAcceptedIcon: {
+    color: tokens.colorStatusSuccessForeground1,
+    fontSize: tokens.fontSizeBase400,
+  },
+  credentialsRejectedIcon: {
+    color: tokens.colorStatusDangerForeground1,
+  },
+  credentialsHelp: {
+    maxWidth: '20rem',
+    overflowWrap: 'anywhere',
+  },
   helpHeader: {
     cursor: 'help',
   },
   visibilityControls: {
-    marginBottom: tokens.spacingVerticalS,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: tokens.spacingVerticalS,
+    marginBottom: tokens.spacingVerticalM,
+  },
+  detectionControls: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalS,
+    marginInlineStart: `calc(${TARGET_FILTER_RESET_WIDTH} + ${tokens.spacingHorizontalS})`,
+    [TOUCH_INPUT_QUERY]: {
+      marginInlineStart: `calc(${MINIMUM_TOUCH_TARGET_SIZE} + ${tokens.spacingHorizontalS})`,
+    },
+  },
+  visibilityInactive: {
+    color: tokens.colorNeutralForegroundDisabled,
+  },
+  selectionCell: {
+    width: '48px',
+  },
+  detectionCell: {
+    width: '120px',
   },
   noMatchState: {
     display: 'flex',

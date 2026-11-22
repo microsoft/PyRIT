@@ -20,6 +20,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetSource,
     DatasetSourceKind,
 )
+from pyrit.scenario.core.required_data import ScenarioRequiredData
 
 
 def apply_dataset_overrides(
@@ -92,20 +93,41 @@ def validate_dataset_selection(
         raise DatasetConstraintError(f"Dataset sources are fixed: {', '.join(defaults.dataset_names)}.")
     if options.mode is DatasetSelectionMode.SUBSET and (not names or set(names) - set(options.allowed_names)):
         raise DatasetConstraintError(f"Select datasets from: {', '.join(options.allowed_names)}.")
+    validate_minimum_selection(config=config, options=options)
     if options.max_selected is not None and len(names) > options.max_selected:
         raise DatasetConstraintError(f"Select at most {options.max_selected} dataset(s).")
 
 
-def project_dataset_settings(config: DatasetAttackConfiguration) -> ScenarioDatasetSettings:
+def validate_minimum_selection(*, config: DatasetAttackConfiguration, options: ScenarioDatasetOptions) -> None:
+    """
+    Require the declared minimum of named datasets, with or without overrides. Inline seeds need none.
+
+    Raises:
+        DatasetConstraintError: If fewer datasets are selected than the scenario requires.
+    """
+    minimum = options.min_selected
+    if minimum is None or config.source_kind is DatasetSourceKind.INLINE or len(config.dataset_names) >= minimum:
+        return
+    raise DatasetConstraintError("Select a dataset." if minimum == 1 else f"Select at least {minimum} datasets.")
+
+
+def project_dataset_settings(
+    config: DatasetAttackConfiguration, *, required_data: ScenarioRequiredData | None = None
+) -> ScenarioDatasetSettings:
     """
     Project configuration settings without memory reads or live wire objects.
+
+    Required datasets come first as uncapped sources, so clients keep seeing and
+    refreshing every dataset a run loads.
 
     Returns:
         ScenarioDatasetSettings: Effective settings for response data.
     """
     children = config.configurations if isinstance(config, CompoundDatasetAttackConfiguration) else (config,)
+    required_sources = required_data.project_sources() if required_data is not None else []
     return ScenarioDatasetSettings(
-        sources=[
+        sources=required_sources
+        + [
             ScenarioDatasetSourceSettings(
                 name=source.name,
                 max_size=child.source_limit(source.name),

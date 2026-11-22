@@ -39,6 +39,7 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     PrependedConversationConfig,
     PromptSendingAttack,
+    RedTeamingAttack,
 )
 from pyrit.models import (
     AttackTechniqueSeedGroup,
@@ -70,6 +71,7 @@ if TYPE_CHECKING:
     from pyrit.models.technique_edit import SimulationChanges
     from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score import Scorer
 
 logger = logging.getLogger(__name__)
 
@@ -445,6 +447,20 @@ class AttackTechniqueFactory(Identifiable):
             requirements=requirements or TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True)),
         )
 
+    def check_adversarial_target(self, *, target: PromptTarget) -> list[str]:
+        """
+        Check the selected attack and any simulation's actual generation consumer.
+
+        Returns:
+            list[str]: Unsatisfied consumer requirements, without model traffic.
+        """
+        errors: list[str] = []
+        if self.uses_adversarial:
+            errors.extend(self.attack_class.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
+        if self.seed_technique is not None and self.seed_technique.has_simulated_conversation:
+            errors.extend(RedTeamingAttack.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
+        return list(dict.fromkeys(errors))
+
     def _derive_uses_adversarial(self) -> bool:
         """
         Auto-derive ``uses_adversarial`` from the attack class signature and seed shape.
@@ -622,6 +638,9 @@ class AttackTechniqueFactory(Identifiable):
 
         Returns:
             bool: ``True`` when the converter can be appended safely.
+
+        Raises:
+            TypeError: If the baked ``attack_converter_config`` is not an ``AttackConverterConfig``.
         """
         if "attack_converter_config" not in self._compatibility_helper.accepted_params:
             return False
@@ -630,6 +649,8 @@ class AttackTechniqueFactory(Identifiable):
         converter_config = self._attack_kwargs.get("attack_converter_config")
         if converter_config is None:
             return "text" in converter_type.SUPPORTED_INPUT_TYPES
+        if not isinstance(converter_config, AttackConverterConfig):
+            raise TypeError("attack_converter_config must be an AttackConverterConfig")
 
         for configuration in converter_config.request_converters:
             next_output_types: set[PromptDataType] = set()
@@ -937,7 +958,7 @@ class AttackTechniqueFactory(Identifiable):
                     "settings": self.get_effective_settings(),
                     "attack_type": f"{self._attack_class.__module__}.{self._attack_class.__qualname__}",
                     "seeds": self._seed_technique,
-                    "requirements": self._requirements,
+                    "requirements": self._requirements_identity(),
                     "scorer_policy": self._scorer_override_policy,
                     "prefix": self._adversarial_system_prompt_prefix,
                     "feedback": self._use_score_as_feedback,
@@ -946,6 +967,21 @@ class AttackTechniqueFactory(Identifiable):
                 }
             )
         )
+
+    def _requirements_identity(self) -> Any:
+        """
+        Serialize the technique requirements for the configuration fingerprint.
+
+        Scorer requirements that require nothing are left out, so a technique saved before
+        that field existed keeps its fingerprint.
+
+        Returns:
+            Any: The serialized requirements.
+        """
+        value = self._configuration_value(self._requirements)
+        if self._requirements.objective_scorer == type(self._requirements.objective_scorer)():
+            value.pop("objective_scorer", None)
+        return value
 
     @classmethod
     def _configuration_value(cls, value: Any) -> Any:
@@ -1041,6 +1077,28 @@ class AttackTechniqueFactory(Identifiable):
     def scoring_config_type(self) -> type | None:
         """The required ``attack_scoring_config`` subtype, or ``None`` if any config is accepted."""
         return self._compatibility_helper.scoring_config_type
+
+    def check_objective_scorer(self, *, scorer: Scorer | None = None) -> list[str]:
+        """
+        Check that a scenario's objective scoring would judge this technique's attack.
+
+        Scenarios pass a plain ``AttackScoringConfig``. An attack that does not accept one, or
+        requires a narrower config, would drop it and judge with its own scorer instead.
+
+        Args:
+            scorer (Scorer | None): The objective scorer to check against the attack's and the
+                technique's needs. ``None`` checks only that the scoring configuration is accepted.
+
+        Returns:
+            list[str]: Every unmet requirement; empty when the scoring would judge the attack.
+        """
+        errors: list[str] = []
+        reason = self._compatibility_helper.scoring_config_incompatibility(config_type=AttackScoringConfig)
+        if reason is not None:
+            errors.append(reason)
+        if scorer is not None:
+            errors.extend(self._requirements.objective_scorer_for(attack_class=self._attack_class).check(scorer=scorer))
+        return errors
 
     @_capture_creation
     def with_adversarial_system_prompt_prefix(self, prefix: str) -> AttackTechniqueFactory:
@@ -1151,9 +1209,9 @@ class AttackTechniqueFactory(Identifiable):
 
         Args:
             objective_target: The target to attack (always required at create time).
-            attack_scoring_config: The scoring config to use for the attack. This is important
-                for attacks like TAP that may need a more specific scorer than the
-                scorer the scenario provides.
+            attack_scoring_config: The scoring config to use for the attack. It is forwarded
+                when the attack's ``attack_scoring_config`` annotation accepts its type;
+                otherwise the factory's scorer override policy decides.
             seed_group: Optional group whose named adversarial prompts configure this
                 attack instance. Target messages remain execution inputs.
             adversarial_chat: Optional adversarial chat target to use for this
@@ -1288,7 +1346,7 @@ class AttackTechniqueFactory(Identifiable):
         """
         Apply this technique's ``use_score_as_feedback`` override to a scoring config.
 
-        A shallow copy keeps the config's scorers and subtype (e.g. TAP's) without
+        A shallow copy keeps the config's scorers and subtype without
         re-running its constructor, and leaves the original config unchanged.
 
         Args:
@@ -1324,12 +1382,17 @@ class AttackTechniqueFactory(Identifiable):
         Returns:
             AttackConverterConfig | None: The selected config with any extra request converters appended,
                 or None when neither a config nor extra converters are present.
+
+        Raises:
+            TypeError: If the selected non-None converter config is not an ``AttackConverterConfig``.
         """
-        base: AttackConverterConfig | None = (
+        base = (
             attack_converter_config_override
             if attack_converter_config_override is not None
             else self._attack_kwargs.get("attack_converter_config")
         )
+        if base is not None and not isinstance(base, AttackConverterConfig):
+            raise TypeError("attack_converter_config must be an AttackConverterConfig")
 
         if not extra_request_converters:
             return base
@@ -1498,5 +1561,7 @@ class AttackTechniqueFactory(Identifiable):
             technique_seed_ids = [SeedIdentifier.from_seed(seed) for seed in self._seed_technique.seeds]
             if technique_seed_ids:
                 children["technique_seeds"] = technique_seed_ids
+            if self._seed_technique.continue_final_assistant_message:
+                params["continue_final_assistant_message"] = True
 
         return ComponentIdentifier.of(self, params=params, children=children)

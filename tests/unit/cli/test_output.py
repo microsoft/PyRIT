@@ -9,6 +9,7 @@ All public ``print_*`` functions accept typed ``pyrit.models`` objects
 ``ScenarioRunSummary``, ``ScenarioResult``).
 """
 
+import inspect
 import json
 from datetime import UTC, datetime
 from typing import Literal
@@ -17,10 +18,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.cli import _output
+from pyrit.common import REQUIRED_VALUE
 from pyrit.models import (
     AttackOutcome,
     Parameter,
     RetryEvent,
+    ScenarioDatasetOptions,
     ScenarioRunListItem,
     ScenarioRunState,
     TargetCapabilities,
@@ -149,6 +152,26 @@ def test_header_prints_with_cyan(capsys):
     assert "Section Title" in captured.out
 
 
+@pytest.mark.parametrize(
+    ("text", "max_length", "expected"),
+    [
+        ("", 10, ""),
+        ("short", 10, "short"),
+        ("exact", 5, "exact"),
+        ("longer text", 8, "longe..."),
+        ("word  more", 9, "word..."),
+        ("long", 3, "..."),
+    ],
+)
+def test_truncate_text_preserves_behavior(*, text: str, max_length: int, expected: str) -> None:
+    assert _output._truncate_text(text, max_length=max_length) == expected
+
+
+def test_truncate_text_max_length_is_keyword_only() -> None:
+    parameter = inspect.signature(_output._truncate_text).parameters["max_length"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+
+
 def test_wrap_short_text_single_line():
     result = _output._wrap(text="short text", indent="  ")
     assert result == "  short text"
@@ -226,6 +249,13 @@ def test_print_scenario_list_minimal_fields(capsys):
     assert "MinScenario" in captured.out
 
 
+@pytest.mark.parametrize(("min_selected", "suffix"), [(None, ""), (1, "; at least 1 required")])
+def test_print_scenario_list_shows_the_dataset_minimum(capsys, min_selected, suffix):
+    options = ScenarioDatasetOptions(min_selected=min_selected)
+    _output.print_scenario_list(items=[_make_scenario(dataset_options=options)])
+    assert f"Dataset selection: any; overrides: True{suffix}\n" in capsys.readouterr().out
+
+
 def test_print_scenario_list_no_max_dataset_size(capsys):
     items = [
         _make_scenario(
@@ -298,6 +328,44 @@ def test_print_initializer_list_shows_falsy_defaults(capsys):
     assert "[default: 0]" in captured.out
     label_line = next(line for line in captured.out.splitlines() if "label" in line)
     assert "[default:" not in label_line
+
+
+@pytest.mark.parametrize("catalog_type", ["scenario", "initializer"])
+@pytest.mark.parametrize("round_trip", [False, True])
+def test_print_catalog_required_parameters_and_falsy_defaults(
+    *, capsys: pytest.CaptureFixture[str], catalog_type: str, round_trip: bool
+) -> None:
+    parameters = [
+        Parameter(name="count", description="Required count.", param_type=int, default=REQUIRED_VALUE),
+        Parameter(name="tags", description="Required tags.", param_type=list[str], default=REQUIRED_VALUE),
+        Parameter(name="verbose", description="Chatty output.", param_type=bool, default=False),
+        Parameter(name="retries", description="Retry count.", param_type=int, default=0),
+        Parameter(name="label", description="Optional label.", param_type=str, default=None),
+    ]
+    if catalog_type == "scenario":
+        scenario = _make_scenario(supported_parameters=parameters)
+        if round_trip:
+            scenario = RegisteredScenario.model_validate_json(scenario.model_dump_json())
+        _output.print_scenario_list(items=[scenario])
+    else:
+        initializer = _make_initializer(supported_parameters=parameters)
+        if round_trip:
+            initializer = RegisteredInitializer.model_validate_json(initializer.model_dump_json())
+        _output.print_initializer_list(items=[initializer])
+
+    output = capsys.readouterr().out
+    for name in ("count", "tags"):
+        line = next(line for line in output.splitlines() if f"- {name}" in line)
+        assert "[required]" in line
+        assert "[default:" not in line
+    assert "REQUIRED_VALUE" not in output
+    for name, value in (("verbose", False), ("retries", 0)):
+        line = next(line for line in output.splitlines() if f"- {name}" in line)
+        default = repr(str(value)) if round_trip and catalog_type == "scenario" else str(value)
+        assert f"[default: {default}]" in line
+    label_line = next(line for line in output.splitlines() if "- label" in line)
+    assert "[default:" not in label_line
+    assert "[required]" not in label_line
 
 
 # ---------------------------------------------------------------------------
@@ -750,6 +818,28 @@ async def test_print_conversations_async_renders_messages_and_objective_score(ca
     assert "clearly harmful" in out
     assert "refusal rationale" not in out
     assert "Total attacks: 1" in out
+
+
+@pytest.mark.parametrize("fmt", ["pretty", "json"])
+async def test_print_conversations_async_shows_the_score_of_the_judge_each_attack_recorded(fmt, capsys):
+    from pyrit.models import AttackResult, ComponentIdentifier
+
+    # A scorer-pool run has no single objective scorer; each attack records the judge it used.
+    judge = ComponentIdentifier(class_name="HateScorer", class_module="tests.unit.mocks")
+    other = ComponentIdentifier(class_name="RefusalScorer", class_module="tests.unit.mocks")
+    attack_identity = ComponentIdentifier(
+        class_name="PromptSendingAttack", class_module="tests.unit.mocks", children={"objective_scorer": judge}
+    )
+    result = _result_with_attacks({"tech_a": [("conv-1", "extract secrets")]})
+    scores = [_score_json(scorer=other, rationale="refusal rationale"), _score_json(scorer=judge, rationale="judged")]
+    client = _FakeMessagesClient({"conv-1": _scored_conversation(scores=scores)})
+
+    with patch.object(AttackResult, "get_attack_strategy_identifier", return_value=attack_identity):
+        await _output.print_conversations_async(result=result, client=client, scenario_result_id="SID", format=fmt)
+
+    out = capsys.readouterr().out
+    assert "judged" in out
+    assert "refusal rationale" not in out
 
 
 async def test_print_conversations_async_without_objective_scorer_shows_no_scores(capsys):
