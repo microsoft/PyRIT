@@ -840,9 +840,7 @@ class AttackTechniqueFactory(Identifiable):
             feedback_template=self._adversarial_prompt_template,
             system_prompt_prefix=self._adversarial_system_prompt_prefix if include_prefix else None,
         )
-        return {
-            field: templates[slot] for field, slot in _ADVERSARIAL_PROMPT_SLOTS if slot in templates
-        }
+        return {field: templates[slot] for field, slot in _ADVERSARIAL_PROMPT_SLOTS if slot in templates}
 
     def get_adversarial_prompt_variables(self) -> dict[str, frozenset[str]]:
         """
