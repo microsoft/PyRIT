@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import openai
 import pytest
 from mcp.types import Tool as MCPToolDefinition
 from openai.types.chat import ChatCompletion
@@ -17,6 +18,7 @@ from PIL import Image
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
+from pyrit.exceptions import PyritException, RateLimitException
 from pyrit.models import Message, MessagePiece, PromptDataType, RequestTraceContext
 from pyrit.prompt_target import (
     CapabilityHandlingPolicy,
@@ -127,7 +129,7 @@ async def test_strict_discovery_preserves_declared_input_when_asset_is_missing()
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("status_code", [400, 401, 403, 422, 429, 500])
+@pytest.mark.parametrize("status_code", [400, 401, 403, 404, 408, 422, 429, 500, 503])
 async def test_strict_discovery_rejects_operational_http_errors(status_code: int) -> None:
     target = MockPromptTarget()
     original = target.configuration
@@ -142,7 +144,7 @@ async def test_strict_discovery_rejects_operational_http_errors(status_code: int
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("status_code", [None, 400, 422])
+@pytest.mark.parametrize("status_code", [None, 400, 404, 415, 422, 501])
 async def test_strict_discovery_treats_request_rejection_as_unsupported(status_code: int | None) -> None:
     target = MockPromptTarget(
         custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_json_output=True))
@@ -175,6 +177,104 @@ async def test_strict_discovery_treats_request_rejection_as_unsupported(status_c
         )
     assert not result.supports_json_output
     assert not target.capabilities.supports_json_output
+
+
+def _openai_status_error(error_type: type[openai.APIStatusError], status_code: int, message: str) -> Exception:
+    request = httpx.Request("POST", "https://example.test/v1/chat/completions")
+    body = {"message": message, "code": status_code}
+    return error_type(message, response=httpx.Response(status_code, request=request, json=body), body=body)
+
+
+def _image_probe_target() -> MockPromptTarget:
+    return MockPromptTarget(
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                input_modalities=frozenset({frozenset({"text"}), frozenset({"text", "image_path"})}),
+            )
+        )
+    )
+
+
+async def _discover_with_image_error_async(*, target: PromptTarget, error: Exception) -> tuple[TargetCapabilities, int]:
+    image_calls = 0
+
+    async def send_async(*, message: Message) -> list[Message]:
+        nonlocal image_calls
+        if any(piece.original_value_data_type == "image_path" for piece in message.message_pieces):
+            image_calls += 1
+            raise error
+        return _ok_response()
+
+    with (
+        patch.object(target, "send_prompt_async", new_callable=AsyncMock, side_effect=send_async),
+        patch("pyrit.prompt_target.common.discover_target_capabilities._supports_chat_probes", return_value=True),
+    ):
+        result = await discover_target_capabilities_async(
+            target=target,
+            capabilities=[CapabilityName.MULTI_TURN],
+            raise_on_error=True,
+            retries=1,
+            apply=True,
+        )
+    return result, image_calls
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "error",
+    [
+        _openai_status_error(openai.NotFoundError, 404, "No endpoints found that support image input"),
+        _openai_status_error(openai.BadRequestError, 400, "Invalid content type. image_url is only supported by..."),
+        _openai_status_error(openai.UnprocessableEntityError, 422, "image input is not supported"),
+        PyritException(status_code=404, message="LiteLLM error: NotFoundError"),
+    ],
+)
+async def test_strict_discovery_applies_results_when_provider_rejects_input_after_control(error: Exception) -> None:
+    target = _image_probe_target()
+
+    result, image_calls = await _discover_with_image_error_async(target=target, error=error)
+
+    assert image_calls == 1, "a rejected request is not retried"
+    assert result.input_modalities == frozenset({frozenset({"text"})})
+    assert result.supports_multi_turn
+    assert target.capabilities == result
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "error",
+    [
+        _openai_status_error(openai.AuthenticationError, 401, "Invalid API key"),
+        _openai_status_error(openai.PermissionDeniedError, 403, "Access denied"),
+        _openai_status_error(openai.RateLimitError, 429, "Rate limit exceeded"),
+        _openai_status_error(openai.InternalServerError, 503, "Service unavailable"),
+        openai.APIConnectionError(request=httpx.Request("POST", "https://example.test")),
+        RateLimitException(),
+        PyritException(message="Authentication failed"),
+    ],
+)
+async def test_strict_discovery_aborts_on_operational_error_after_control(error: Exception) -> None:
+    target = _image_probe_target()
+    original = target.configuration
+
+    with pytest.raises(CapabilityDiscoveryError, match="Modality probe"):
+        await _discover_with_image_error_async(target=target, error=error)
+
+    assert target.configuration is original
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_strict_discovery_rejection_status_comes_from_the_wrapped_cause() -> None:
+    target = _image_probe_target()
+    try:
+        raise RuntimeError("probe failed") from _openai_status_error(openai.NotFoundError, 404, "No endpoints")
+    except RuntimeError as wrapped:
+        error = wrapped
+
+    result, _ = await _discover_with_image_error_async(target=target, error=error)
+
+    assert result.input_modalities == frozenset({frozenset({"text"})})
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -739,7 +839,7 @@ class TestToolCallHistoryDiscovery:
     def _target() -> OpenAIChatTarget:
         return OpenAIChatTarget(model_name="unknown", endpoint="https://example.invalid", api_key="not-a-key")
 
-    @pytest.mark.parametrize("status_code", [None, 400, 422])
+    @pytest.mark.parametrize("status_code", [None, 400, 404, 422])
     @pytest.mark.parametrize("include_text", [False, True])
     @pytest.mark.parametrize("explicit_modalities", [False, True])
     async def test_strict_rejection_removes_tested_declarations_async(
