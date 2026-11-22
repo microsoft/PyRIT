@@ -26,7 +26,7 @@ class AzureStorageAuth:
 
         Args:
             blob_service_client (BlobServiceClient): An instance of BlobServiceClient to interact
-            with Azure Blob Storage.
+                with Azure Blob Storage.
 
         Returns:
             UserDelegationKey: A user delegation key valid for one day.

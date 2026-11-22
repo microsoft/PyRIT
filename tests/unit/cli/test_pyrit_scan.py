@@ -8,6 +8,7 @@ Unit tests for the pyrit_scan CLI module (thin REST client).
 import asyncio
 import logging
 from argparse import Namespace
+from contextlib import nullcontext
 from datetime import UTC
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -330,57 +331,62 @@ class TestClientHandlerTable:
         assert set(pyrit_scan._CLIENT_HANDLERS) == expected
 
 
-class TestLegacyArgvShim:
-    """The back-compat shim maps old flag forms to verbs and warns."""
+class TestVerbPlacement:
+    """Global options work before or after the verb; arguments without a verb are a usage error."""
 
-    def test_legacy_list_flag_maps_to_verb(self):
-        with pytest.warns(DeprecationWarning, match="list-scenarios"):
-            args = pyrit_scan.parse_args(["--list-scenarios"])
-        assert args.command == "list-scenarios"
-
-    def test_legacy_stop_server_flag_maps_to_verb(self):
-        with pytest.warns(DeprecationWarning, match="stop-server"):
-            args = pyrit_scan.parse_args(["--stop-server"])
-        assert args.command == "stop-server"
-
-    def test_legacy_add_initializer_flag_maps_to_verb(self):
-        with pytest.warns(DeprecationWarning, match="add-initializer"):
-            args = pyrit_scan.parse_args(["--add-initializer", "a.py", "b.py"])
-        assert args.command == "add-initializer"
-        assert args.files == ["a.py", "b.py"]
-
-    def test_legacy_flag_preserves_globals(self):
-        with pytest.warns(DeprecationWarning):
-            args = pyrit_scan.parse_args(["--server-url", "http://x", "--list-targets"])
-        assert args.command == "list-targets"
-        assert args.server_url == "http://x"
-
-    def test_implicit_run_maps_to_run_verb(self):
-        with pytest.warns(DeprecationWarning, match="run <scenario>"):
-            args = pyrit_scan.parse_args(["foundry", "--target", "t"])
-        assert args.command == "run"
-        assert args.scenario_name == "foundry"
-        assert args.target == "t"
-
-    def test_standalone_start_server_flag_maps_to_verb(self):
-        with pytest.warns(DeprecationWarning, match="start-server"):
-            args = pyrit_scan.parse_args(["--start-server"])
-        assert args.command == "start-server"
-
-    def test_new_style_verb_does_not_warn(self, recwarn):
+    def test_new_style_verb(self):
         args = pyrit_scan.parse_args(["list-scenarios"])
         assert args.command == "list-scenarios"
-        assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
 
-    def test_legacy_flag_prints_visible_note(self, capsys):
-        with pytest.warns(DeprecationWarning):
-            pyrit_scan.parse_args(["--list-scenarios"])
-        assert "Note:" in capsys.readouterr().err
-
-    def test_global_before_verb_does_not_warn(self, recwarn):
+    def test_global_before_verb_moves_verb_to_front(self):
         args = pyrit_scan.parse_args(["--server-url", "http://x", "list-scenarios"])
         assert args.command == "list-scenarios"
-        assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+        assert args.server_url == "http://x"
+
+    def test_start_server_verb_with_benchmark_pipeline_options(self):
+        # The form .azuredevops/adversarial-benchmark.yml uses.
+        args = pyrit_scan.parse_args(
+            ["start-server", "--config-file", "conf.yaml", "--log-level", "INFO", "--startup-timeout", "180"]
+        )
+        assert args.command == "start-server"
+        assert args.startup_timeout == 180
+        assert not args._unknown_args
+
+    def test_start_server_modifier_before_verb(self):
+        args = pyrit_scan.parse_args(["--start-server", "list-targets"])
+        assert args.command == "list-targets"
+        assert args.start_server is True
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--list-scenarios"],
+            ["--list-initializers"],
+            ["--list-targets"],
+            ["--list-converters"],
+            ["--list-datasets"],
+            ["--add-initializer", "a.py", "b.py"],
+            ["--stop-server"],
+            ["--server-url", "http://x", "--list-targets"],
+            ["foundry", "--target", "t"],
+            ["--start-server"],
+        ],
+    )
+    def test_removed_flag_style_forms_are_usage_errors(self, argv, capsys):
+        with patch.object(pyrit_scan, "_run_async") as mock_run:
+            assert pyrit_scan.main(argv) == 2
+        mock_run.assert_not_called()
+        assert "error:" in capsys.readouterr().err
+
+    def test_commandless_arguments_error_names_them(self, capsys):
+        assert pyrit_scan.main(["--server-url", "http://x", "--list-targets"]) == 2
+        err = capsys.readouterr().err
+        assert "a command is required" in err
+        assert "--server-url http://x --list-targets" in err
+
+    def test_no_arguments_shows_help(self, capsys):
+        assert pyrit_scan.main([]) == 0
+        assert "<command>" in capsys.readouterr().out
 
     @pytest.mark.parametrize("value", ["0", "-1", "inf", "nan", "slow"])
     def test_parse_args_rejects_invalid_startup_timeout(self, value):
@@ -907,7 +913,12 @@ class TestBuildRunRequest:
     def test_limit_presence_matches_shell_parser(self, value: str | None) -> None:
         flags = [] if value is None else ["--max-dataset-size", value]
         parsed = pyrit_scan.parse_args(["run", "test", "--target", "target", *flags])
-        request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="test")
+        with (
+            pytest.warns(DeprecationWarning, match=r"--max-dataset-size.*removed in 1\.4\.0")
+            if value is not None
+            else nullcontext()
+        ):
+            request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="test")
         shell_args = parse_run_arguments(
             args_string="test --target target " + ("--max-dataset-size ''" if value == "" else " ".join(flags))
         )

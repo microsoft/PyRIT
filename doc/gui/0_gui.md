@@ -124,6 +124,15 @@ Each scenario defines a test workflow with its techniques, data, and scoring.
 Open one to select a target and adjust the settings it supports, such as
 techniques, dataset selection, and concurrency.
 
+**Browse datasets** in the Datasets section header opens the dataset catalog in a
+new tab. **Reset datasets** returns the datasets and the per-dataset limit to the
+scenario's defaults, and appears once you change them. To open a scanner with
+datasets already selected, add one `dataset` parameter per name, for example
+`/scanner/launch/foundry.red_team_agent?dataset=harmbench&dataset=my_dataset`. The
+names replace the default or preset datasets; other dataset settings, such as
+limits and filters, stay. A scenario that can't take the linked datasets won't
+launch with them and offers a link to open it without them.
+
 Use the chevron on the right of a technique to inspect its identity JSON.
 This does not change the checkbox selection on the left.
 
@@ -216,8 +225,31 @@ Editing a preset preserves unchanged parameter values exactly, including commas
 and whitespace inside list entries, empty lists, duplicates, and their order.
 Editing a list field uses the comma-separated format shown in the editor.
 
-Targets, converters, and techniques added only to the live registry must be
-recreated after a backend restart or reinitialization. Use
+**New Target** saves the target, so it comes back after the backend restarts or
+is reinitialized. Give it a registry name of lowercase letters, digits, and
+underscores that starts with a letter; the dialog suggests one from the target
+type and model. Saved targets are kept in `registry_recipes_source`
+(`~/.pyrit/registry_recipes` unless set in your `.pyrit_conf`). To remove a saved
+target, delete its file (`targets/<name>.json`) there, and the file of any saved
+round robin that uses it, then restart the backend. If a startup initializer later
+registers a target under a saved target's name, the saved one isn't restored and
+the backend isn't ready until that file is renamed or removed and the backend
+restarted. Before that restart, update or remove the file of each saved round
+robin that uses the old name: restore finds its members by name, so it would
+otherwise send to the initializer's target in place of the saved one.
+
+Saved targets can't hold credentials yet, so choose Identity-based or No key
+authentication when the target supports it. A target that needs an API key or
+another credential value, a type that can't be saved, a round robin that uses a
+Temporary target, or a target that only you can use or that allows credential
+updates is created as **Temporary** instead, and the dialog says why.
+A Temporary target is gone after the backend restarts or is reinitialized.
+
+The Targets table labels each target **Saved**, **From configuration**
+(registered by an initializer at startup), or **Temporary**.
+
+Converters and techniques added only to the live registry must be recreated
+after a backend restart or reinitialization. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
 
 Use **Auto-detect capabilities** to select targets and run live checks. Results
@@ -235,7 +267,8 @@ for shared behavior.
 
 Browse datasets already loaded into backend memory. Open a dataset to inspect
 its examples, search text, or filter by seed type. Supported media can be
-previewed on request.
+previewed on request. The **Origins** filter lists datasets whose seeds came from
+a given origin, such as local files or a remote provider.
 
 Use **Import into Chat** to stage an example directly into Chat without copying
 text or reattaching files:
@@ -261,6 +294,39 @@ Load data through PyRIT; the visible catalog checks for changes each minute. See
 [datasets](../code/datasets/0_dataset.md) for loading options.
 
 ![Datasets page with stored dataset summaries](images/datasets.png)
+
+### Generate datasets
+
+**Generate datasets** creates a new dataset with one of PyRIT's
+[prompt generators](../code/executor/7_promptgen.ipynb):
+
+- **ASSERT policy dataset**: write a policy, such as "Explain published return
+  policies. Do not disclose another customer's private order details.", or start
+  from a bundled ASSERT behavior. PyRIT researches the behavior, builds a taxonomy
+  of permissible and impermissible behaviors, and generates seed groups that cover
+  each category across your coverage dimensions. Select **Pause for review after:
+  Resolve coverage dimensions** to edit the taxonomy and dimension levels before seed
+  groups are generated.
+- **ASSERT suite**: generate one dataset per behavior for a bundled application
+  context, or for behaviors you choose, with shared settings.
+- **Objective dataset**: generate distinct attack objectives from instructions.
+
+Every target role starts with your default adversarial target; a generation opened
+from an earlier one keeps that generation's targets. When web search is on, the
+research target must support web search. Before you start, the form checks the
+request and targets and estimates the model calls and tokens without calling a target. Generation runs in the background; you
+can leave the page, cancel, or retry. Retry resumes from the last completed stage,
+including after a backend restart. Generations are stored with the memory's
+results, next to media output. Each completed generation stores a new dataset; to
+change a dataset, choose **Edit & regenerate** and save it under a new name. An ASSERT
+dataset whose taxonomy was reviewed reuses that taxonomy until you change the policy. When an ASSERT
+dataset is ready, **Run foundry.assert_policy** opens the scanner with it selected.
+To list the datasets you generated, set the catalog's **Origins** filter to
+**Generated**. On the launch page and in the preset editor, a scanner that accepts
+any named dataset also has **Generate datasets** next to **Browse datasets**;
+Generate opens the ASSERT form for `foundry.assert_policy`, which needs at least
+one dataset, and the generator list for other scanners. Scanners with fixed or
+allow-listed datasets show only **Browse datasets**.
 
 ## History
 
@@ -309,10 +375,33 @@ Select an operation in the labels bar to associate new chats and scans with it.
 The operation page brings its findings, linked evidence, and execution history
 together.
 
+A finding can be broken into sub-findings, at any depth, to record a
+decomposition such as a multi-step attack. Use **Add sub-finding** on a
+finding, and expand **Sub-findings** to see them, oldest first in the order
+they were added. Findings are numbered the way an export of all the findings
+numbers them, so sub-finding *1.2* is the second sub-finding of finding *1*, and
+paths refer to their steps by those numbers. Each finding keeps its own severity, and turning off
+**Demonstrated** marks a step that was attempted but not achieved. **Edit
+paths** records the ordered ways a finding's direct sub-findings demonstrate
+it, for example *recon → obtain credentials → pull records* and *recon →
+phish an admin → pull records*. A saved path shows as **Complete** when every
+step was demonstrated and **Partial** otherwise. Deleting a finding also deletes its
+sub-findings; a sub-finding that a path uses can't be deleted or moved until
+you remove it from that path.
+
+:::{div}
+:class: col-page-right
+
+![A finding with four sub-findings, numbered 1.1 to 1.4 in the order they were added; 1.2 Obtain creds was not demonstrated. Two paths order the direct sub-findings: Credential theft is partial because of 1.2, and Phishing is complete. The exported report numbers and nests the sub-findings and marks each path complete or partial.](../assets/finding-decomposition.svg)
+
+:::
+
 **Export findings** on the operation page downloads the findings you select as
-one Word or Markdown document to paste into a report. Evidence appears as links
-to the attacks in PyRIT, without transcripts or media. Nothing is redacted, so
-store and share exported files with care.
+one Word or Markdown document to paste into a report. Selecting a finding
+includes its sub-findings, numbered under it in the order they were added (1,
+1.1, 1.2, …), with its paths, their saved descriptions, and any steps that were not
+demonstrated. Evidence appears as links to the attacks in PyRIT, without transcripts or media. Nothing
+is redacted, so store and share exported files with care.
 
 ![Operations page with a test operation](images/operations.png)
 

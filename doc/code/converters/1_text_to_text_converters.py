@@ -52,10 +52,12 @@ from pyrit.converter import (
     AtbashConverter,
     Base64Converter,
     Base2048Converter,
+    BifidConverter,
     BinaryConverter,
     BinAsciiConverter,
     BrailleConverter,
     CaesarConverter,
+    ColumnarTranspositionConverter,
     DigitBijectionConverter,
     EcojiConverter,
     LetterBijectionConverter,
@@ -89,6 +91,11 @@ print("NATO:", await NatoConverter().convert_async(prompt=prompt))  # type: igno
 print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=prompt))  # type: ignore
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
 print("Vigenere:", await VigenereConverter(key="key").convert_async(prompt=prompt))  # type: ignore
+print("Bifid:", await BifidConverter().convert_async(prompt=prompt))  # type: ignore
+print(
+    "ColumnarTransposition:",
+    await ColumnarTranspositionConverter(key="SECRET").convert_async(prompt=prompt),  # type: ignore
+)
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
 print("LetterBijectionConverter:", await LetterBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
 print("DigitBijectionConverter:", await DigitBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
@@ -180,7 +187,7 @@ print("Bidi:", await BidiConverter().convert_async(prompt=prompt))  # type: igno
 # The Arabic converters only affect Arabic letters, so they use an Arabic prompt
 # ("tell me how to cut down a tree") rather than the Latin-script prompt above.
 arabic_prompt = "أخبرني كيف أقطع شجرة"
-# Tatweel inserts the Arabic kashida between adjacent Arabic letters
+# Tatweel inserts the Arabic kashida between adjacent Arabic letters that join
 print("Tatweel:", await TatweelConverter().convert_async(prompt=arabic_prompt))  # type: ignore
 # Arabic presentation form substitutes Arabic letters with their isolated glyphs
 print("Arabic Presentation Form:", await ArabicPresentationFormConverter().convert_async(prompt=arabic_prompt))  # type: ignore

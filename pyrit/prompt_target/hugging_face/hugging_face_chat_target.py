@@ -50,6 +50,7 @@ class HuggingFaceChatTarget(PromptTarget):
 
     code_execution_parameter: ClassVar[str | None] = "trust_remote_code"
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"hf_access_token": None})
+    environment_backed_parameters: ClassVar[frozenset[str]] = frozenset({"hf_access_token"})
     not_saveable_reason: ClassVar[str | None] = (
         "It needs a Hugging Face token or model files on this server, and saved targets can hold neither yet."
     )
@@ -402,7 +403,7 @@ class HuggingFaceChatTarget(PromptTarget):
 
             assistant_response = cast(
                 "str",
-                self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),  # type: ignore[ty:unresolved-attribute]
+                self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),  # type: ignore[ty:missing-union-attribute]
             ).strip()
 
             truncated = self._is_truncated(generated_tokens=generated_tokens)

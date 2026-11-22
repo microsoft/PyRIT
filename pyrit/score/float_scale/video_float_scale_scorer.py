@@ -111,7 +111,7 @@ class VideoFloatScaleScorer(
                 "image_objective_template": self._video_helper.image_objective_template,
                 "audio_objective_template": self._video_helper.audio_objective_template,
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             sub_scorers=sub_scorer_ids,
         )
 
