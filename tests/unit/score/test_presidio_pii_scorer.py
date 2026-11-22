@@ -8,9 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.memory.central_memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.score.true_false.presidio_pii_scorer import PresidioPiiScorer
+from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.score import PresidioPiiScorer
 
 
 @dataclass
