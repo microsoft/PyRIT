@@ -521,7 +521,7 @@ class PackageHallucinationScorer(MessageTrueFalseScorer):
                 # The reference set decides every verdict, so its content is part of the identity.
                 "known_packages_digest": hashlib.sha256("\0".join(sorted(self._known_packages)).encode()).hexdigest(),
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
     @staticmethod
