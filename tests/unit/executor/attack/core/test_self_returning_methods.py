@@ -54,7 +54,7 @@ def test_attack_preparation_failure_from_result_preserves_subclass_type() -> Non
     assert isinstance(failure, _DerivedAttackPreparationFailure)
 
 
-async def test_objective_target_lifecycle_aenter_preserves_subclass_type() -> None:
+async def test_objective_target_lifecycle_aenter_preserves_subclass_type_async() -> None:
     lifecycle = _DerivedLifecycle(objective_target=MagicMock(spec=PromptTarget), logger=logging.getLogger(__name__))
 
     async with lifecycle as entered:

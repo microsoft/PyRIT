@@ -45,7 +45,7 @@ def test_backend_auth_config_from_payload_preserves_subclass_type() -> None:
     assert isinstance(config, _DerivedBackendAuthConfig)
 
 
-async def test_api_client_aenter_preserves_subclass_type() -> None:
+async def test_api_client_aenter_preserves_subclass_type_async() -> None:
     client = _DerivedApiClient(base_url="http://localhost:8000")
     with (
         patch("pyrit._compatibility.get_compatibility_id", return_value="build"),

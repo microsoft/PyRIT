@@ -12,7 +12,7 @@ class _DerivedCredential(AsyncTokenProviderCredential):
     pass
 
 
-async def test_aenter_preserves_subclass_type() -> None:
+async def test_aenter_preserves_subclass_type_async() -> None:
     credential = _DerivedCredential(lambda: "token")
 
     async with credential as entered:
