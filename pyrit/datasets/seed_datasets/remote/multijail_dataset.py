@@ -8,6 +8,7 @@ from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import _RemoteDatasetLoader
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 
 class MultiJailLanguage(Enum):
@@ -46,8 +47,37 @@ class _MultiJailDataset(_RemoteDatasetLoader):
     ]
     HF_DATASET_NAME: str = "DAMO-NLP-SG/MultiJail"
 
+    # The `tags` column uses the Anthropic red-team taxonomy. Each label is mapped
+    # (n:1 or n:many) onto the canonical HarmCategory taxonomy following the choices
+    # already made for the same concepts in _BeaverTailsDataset and _AyaRedteamingDataset;
+    # the raw label is preserved in each seed's `multijail_tags` metadata.
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "adult content": [HarmCategory.SEXUAL_CONTENT],
+        "animal abuse": [HarmCategory.OTHER],
+        "bullying & harassment": [HarmCategory.HARASSMENT],
+        "child abuse": [HarmCategory.GROOMING, HarmCategory.SEXUAL_CONTENT, HarmCategory.CHILD_LEAKAGE],
+        "conspiracy theories & misinformation": [HarmCategory.INFO_INTEGRITY],
+        "discrimination & injustice": [HarmCategory.REPRESENTATIONAL, HarmCategory.HATE_SPEECH],
+        "fraud & deception": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+        "hate speech & offensive language": [HarmCategory.HATE_SPEECH],
+        "non-violent unethical behavior (e.g. lying, cheating, etc.)": [HarmCategory.OTHER],
+        "property crime & vandalism": [HarmCategory.COORDINATION_HARM],
+        "self-harm": [HarmCategory.SELF_HARM],
+        "sexual exploitation & human trafficking": [HarmCategory.SEXUAL_CONTENT, HarmCategory.COORDINATION_HARM],
+        "soliciting personally identifiable information": [HarmCategory.PPI],
+        "substance abuse & banned substances": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],
+        "terrorism & organized crime": [HarmCategory.VIOLENT_EXTREMISM, HarmCategory.COORDINATION_HARM],
+        "theft": [HarmCategory.COORDINATION_HARM],
+        "violence & incitement": [
+            HarmCategory.VIOLENT_CONTENT,
+            HarmCategory.VIOLENT_THREATS,
+            HarmCategory.COORDINATION_HARM,
+        ],
+        "weapons": [HarmCategory.REGULATED_GOODS],
+    }
+
     modalities: list[str] = ["text"]
-    size: str = "large"  # 315 prompts across 10 languages
+    size: str = "medium"  # 315 prompts, each human-translated into 10 languages
     tags: set[str] = {"default", "safety", "multilingual"}
     harm_categories: list[str] = [
         "adult content",
@@ -71,7 +101,16 @@ class _MultiJailDataset(_RemoteDatasetLoader):
     ]
 
     def __init__(self, *, languages: list[MultiJailLanguage] | None = None) -> None:
-        """Initialize the MultiJail dataset loader."""
+        """
+        Initialize the MultiJail dataset loader.
+
+        Args:
+            languages (list[MultiJailLanguage] | None): Languages to load prompts for.
+                Defaults to None, which loads all ten languages.
+
+        Raises:
+            ValueError: If any value in languages is not a MultiJailLanguage.
+        """
         if languages is None:
             self.languages = list(MultiJailLanguage)
         else:
@@ -88,6 +127,9 @@ class _MultiJailDataset(_RemoteDatasetLoader):
     async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch MultiJail prompts for the selected languages.
+
+        Args:
+            cache (bool): Whether to cache the fetched dataset. Defaults to True.
 
         Returns:
             SeedDataset: The prompts for the selected languages.
@@ -112,7 +154,15 @@ class _MultiJailDataset(_RemoteDatasetLoader):
                     parsed_tags = []
             else:
                 parsed_tags = raw_tags if isinstance(raw_tags, list) else []
-            harm_categories = [str(category).strip() for category in parsed_tags if str(category).strip()]
+            if not isinstance(parsed_tags, (list, tuple)):
+                # A bare literal such as "'Self-harm'" parses to a plain string,
+                # which must not be iterated character by character below.
+                parsed_tags = [parsed_tags]
+            source_tags = [str(category).strip() for category in parsed_tags if str(category).strip()]
+            harm_categories = self._standardize_harm_categories(
+                source_tags,
+                alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+            )
 
             for language in self.languages:
                 text = row.get(language.value)
@@ -126,11 +176,12 @@ class _MultiJailDataset(_RemoteDatasetLoader):
                         source=f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}",
                         authors=self._AUTHORS,
                         groups=self._GROUPS,
-                        harm_categories=harm_categories,
+                        harm_categories=harm_categories if harm_categories else None,
                         metadata={
                             "multijail_language": language.value,
                             "multijail_id": str(row.get("id", "")),
                             "multijail_source": str(row.get("source", "")),
+                            "multijail_tags": ", ".join(source_tags),
                         },
                     )
                 )
