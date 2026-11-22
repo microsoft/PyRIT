@@ -96,9 +96,9 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         return self._create_identifier(
             params={
                 "threshold": self._threshold,
-                "float_scale_aggregator": self._float_scale_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+                "float_scale_aggregator": self._float_scale_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             sub_scorers=[self._scorer.get_identifier()],
         )
 
@@ -226,7 +226,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             # threshold can only be applied to a single value. Silently taking the
             # first one would decide the verdict from one category and drop the rest.
             raise ValueError(
-                f"{self._float_scale_aggregator.__name__} returned {len(aggregate_results)} results. "  # type: ignore[ty:unresolved-attribute]
+                f"{self._float_scale_aggregator.__name__} returned {len(aggregate_results)} results. "  # type: ignore[ty:missing-attribute]
                 "FloatScaleThresholdScorer requires an aggregator that combines the scores into exactly "
                 "one result, such as FloatScaleScoreAggregator.MAX; a by-category aggregator such as "
                 "FloatScaleScorerByCategory.MAX cannot be thresholded."

@@ -9,6 +9,7 @@ import {
   attacksApi,
   convertersApi,
   datasetsApi,
+  promptGeneratorsApi,
   scenarioPresetsApi,
   scenariosApi,
   targetsApi,
@@ -43,6 +44,7 @@ jest.mock('@/services/api', () => ({
     harm_categories: ['cyber', 'violence', 'other'], has_unlabeled_harm_categories: false,
   })) }) },
   scenarioPresetsApi: { get: jest.fn() },
+  promptGeneratorsApi: { list: jest.fn().mockResolvedValue({ items: [] }) },
   scenariosApi: {
     estimateRun: jest.fn(),
     getScenario: jest.fn(),
@@ -3467,13 +3469,23 @@ describe('ScenarioDetail', () => {
       expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeEnabled()
     })
 
-    it('should open Browse datasets from the Datasets header in a new tab', async () => {
+    it('should open Browse datasets in a new tab and the ASSERT generator from the Datasets header', async () => {
+      jest.mocked(promptGeneratorsApi.list).mockResolvedValueOnce({ items: [{
+        name: 'assert', display_name: 'ASSERT policy dataset', description: 'Policy datasets.',
+        stages: [], target_roles: [], follow_up_scenario: 'foundry.assert_policy',
+      }] })
       mockGetScenario.mockResolvedValue(policyScenario())
       renderDetail(POLICY_PATH)
 
       const actions = await screen.findByRole('group', { name: 'Dataset actions' })
-      expect(within(actions).getAllByRole('link').map((link) => link.textContent)).toEqual(['Browse datasets'])
-      expect(within(actions).getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('target', '_blank')
+      expect(await within(actions).findByRole('link', { name: 'Generate datasets' }))
+        .toHaveAttribute('href', '/datasets/generate/new?generator=assert')
+      expect(within(actions).getAllByRole('link').map((link) => link.textContent)).toEqual([
+        'Browse datasets', 'Generate datasets',
+      ])
+      const browse = within(actions).getByRole('link', { name: 'Browse datasets' })
+      expect(browse).toHaveAttribute('href', '/datasets')
+      expect(browse).toHaveAttribute('target', '_blank')
       expect(screen.getAllByRole('link', { name: 'Browse datasets' })).toHaveLength(1)
     })
   })
@@ -3616,7 +3628,7 @@ describe('ScenarioDetail', () => {
     it.each([
       ['fixes its datasets', 'fixed' as const, []],
       ['allows only named alternatives', 'subset' as const, ['figstep', 'figstep_pro']],
-    ])('offers Browse datasets in the header when the scenario %s', async (_label, mode, allowedNames) => {
+    ])('offers only Browse datasets when the scenario %s', async (_label, mode, allowedNames) => {
       mockGetScenario.mockResolvedValue(makeScenario({
         dataset_options: {
           mode, allowed_names: allowedNames, max_selected: null, per_dataset_limit: false, total_limit: true,
@@ -3628,6 +3640,7 @@ describe('ScenarioDetail', () => {
       const actions = await screen.findByRole('group', { name: 'Dataset actions' })
       expect(within(actions).getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
       expect(screen.getAllByRole('link', { name: 'Browse datasets' })).toHaveLength(1)
+      expect(within(actions).queryByText('Generate datasets')).not.toBeInTheDocument()
     })
 
     it('shows the shared dataset actions without an ASSERT requirement', async () => {
@@ -3635,6 +3648,8 @@ describe('ScenarioDetail', () => {
 
       const actions = await screen.findByRole('group', { name: 'Dataset actions' })
       expect(within(actions).getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+      expect(await within(actions).findByRole('link', { name: 'Generate datasets' }))
+        .toHaveAttribute('href', '/datasets/generate/new')
       expect(screen.getByRole('combobox', { name: 'Add dataset' })).not.toBeRequired()
     })
   })
