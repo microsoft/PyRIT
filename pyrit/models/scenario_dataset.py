@@ -4,9 +4,9 @@
 """Shared scenario dataset inputs and selection capabilities."""
 
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 from pyrit.models.dataset_limit import normalize_dataset_limit
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
@@ -53,12 +53,19 @@ class ScenarioDatasetOptions(BaseModel):
 
     mode: DatasetSelectionMode = DatasetSelectionMode.ANY
     allowed_names: list[str] = Field(default_factory=list)
+    min_selected: int | None = Field(None, ge=1)
     max_selected: int | None = Field(None, ge=1)
     per_dataset_limit: bool = True
     total_limit: bool = True
     supports_overrides: bool = True
     filters: bool = True
     source_settings: bool = True
+
+    @model_validator(mode="after")
+    def _validate_selection_bounds(self) -> Self:
+        if self.min_selected is not None and self.max_selected is not None and self.min_selected > self.max_selected:
+            raise ValueError("min_selected can't exceed max_selected.")
+        return self
 
 
 class DatasetSourceInput(BaseModel):

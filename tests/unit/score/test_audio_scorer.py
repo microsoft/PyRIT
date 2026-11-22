@@ -447,6 +447,44 @@ class TestPyAVAudioConversion:
             if result != non_compliant_wav_file and os.path.exists(result):
                 os.remove(result)
 
+    @pytest.mark.parametrize(
+        ("file_name", "container_format"),
+        [
+            ("clip.mp4", "mp4"),
+            ("clip.mov", "mov"),
+            ("clip.mkv", "matroska"),
+            ("clip.avi", "avi"),
+            ("clip.WAV", "wav"),
+            ("clip.audio", "wav"),
+        ],
+    )
+    def test_audio_to_wav_converts_matching_pcm_outside_wav_file(self, tmp_path, file_name, container_format):
+        """16 kHz mono PCM in another container, or in a WAV without a .wav path, is still written to a .wav file."""
+        from pyrit.score.audio_transcript_scorer import _is_compliant_wav
+
+        source_path = str(tmp_path / file_name)
+        with av.open(source_path, "w", format=container_format) as container:
+            stream = container.add_stream("pcm_s16le", rate=16000, layout="mono")
+            frame = av.AudioFrame.from_ndarray(np.zeros((1, 8000), dtype=np.int16), format="s16", layout="mono")
+            frame.rate = 16000
+            for packet in stream.encode(frame):
+                container.mux(packet)
+            for packet in stream.encode(None):
+                container.mux(packet)
+
+        assert _is_compliant_wav(source_path, sample_rate=16000, channels=1) is False
+
+        result = _audio_to_wav(source_path, sample_rate=16000, channels=1)
+        try:
+            assert result != source_path
+            assert result.endswith(".wav")
+            with av.open(result) as converted:
+                assert converted.format.name == "wav"
+            assert _is_compliant_wav(result, sample_rate=16000, channels=1) is True
+        finally:
+            if result != source_path:
+                os.remove(result)
+
     def test_audio_to_wav_removes_temp_file_when_conversion_fails(self, tmp_path):
         """A failed conversion must not leave its temporary WAV behind."""
         not_audio = tmp_path / "not_audio.mp4"

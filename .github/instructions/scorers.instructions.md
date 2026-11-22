@@ -79,6 +79,16 @@ Requirements:
 - Objective scoring owns required coverage. Optional auxiliary selection is an orchestration
   policy, not a permissive leaf mode. Generic flat helpers validate each root independently.
 
+## Output guarantees
+
+- `CAPABILITIES` names only the result family every instance returns: `TrueFalseScorer` and
+  `FloatScaleScorer` declare it, and subclasses inherit it unchanged. Class creation rejects any
+  other entry, both families together, or a subclass that drops its base's family.
+- A scorer promises float feedback (`PRESERVES_FLOAT_SCALE_VALUE`) only by overriding
+  `_preserves_float_scale_value()`, which may depend on configuration. Scoring then rejects a
+  complete true/false result without a finite `[0, 1]` `FloatFeedback` value, and score reuse
+  requires stored feedback, so attacks that rank by feedback can rely on it.
+
 ## Common pitfalls
 
 - Forgetting ``*`` after ``self`` — the new check will surface this at
