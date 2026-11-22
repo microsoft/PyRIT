@@ -154,7 +154,6 @@ class OpenAITTSTarget(OpenAITarget):
         # which some models (e.g. gpt-4o-mini-tts) reject.
         optional_parameters: dict[str, Any] = {}
         if self._speed is not None:
-            body_parameters["speed"] = self._speed
             optional_parameters["speed"] = self._speed
 
         # Use unified error handler for consistent error handling
