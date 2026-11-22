@@ -35,6 +35,7 @@ async def test_convert_async_long_text():
         ("\u0939\u093f\u0902\u0926\u0940", "\u0939\u093f\u0902\u200b\u0926\u0940"),
         ("\U0001f1ee\U0001f1f3\U0001f44d\U0001f3fd", "\U0001f1ee\U0001f1f3\u200b\U0001f44d\U0001f3fd"),
         ("\U0001f468\u200d\U0001f469\u200d\U0001f467ok", "\U0001f468\u200d\U0001f469\u200d\U0001f467\u200bo\u200bk"),
+        ("a\r\nb", "a\u200b\r\n\u200bb"),
     ],
 )
 async def test_convert_async_keeps_grapheme_clusters(*, prompt: str, expected: str) -> None:

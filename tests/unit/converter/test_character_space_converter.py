@@ -73,6 +73,7 @@ async def test_character_space_preserves_backslashes_async(*, prompt: str, expec
         ("\U0001f1ee\U0001f1f3\U0001f44d\U0001f3fd", "\U0001f1ee\U0001f1f3 \U0001f44d\U0001f3fd"),
         ("\U0001f468\u200d\U0001f469\u200d\U0001f467ok", "\U0001f468\u200d\U0001f469\u200d\U0001f467 o k"),
         ("a#\ufe0f\u20e3b!", "a #\ufe0f\u20e3 b"),
+        ("a\r\nb", "a \r\n b"),
     ],
 )
 async def test_character_space_keeps_grapheme_clusters_async(*, prompt: str, expected: str) -> None:
