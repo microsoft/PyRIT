@@ -21,14 +21,14 @@ import type {
   CreateTechniqueRequest, Parameter, RegistryReferenceOption, TechniqueTypeEntry,
   TechniqueConfiguration, TechniqueChanges, TechniqueEditResponse, SimulationChanges,
   ConverterInstance, ConverterSelection,
-  TechniquePromptField,
+  EditableAdversarialPromptField,
 } from '@/types'
 
 import { useTechniqueEditorStyles } from './TechniqueEditor.styles'
 
 const SCALAR_TYPES = new Set(['str', 'int', 'float', 'bool', 'list[str]', 'list[int]', 'list[float]', 'list[bool]'])
 const VALIDATION_DELAY_MS = 300
-const PROMPT_LABELS: Record<TechniquePromptField, string> = {
+const PROMPT_LABELS: Record<EditableAdversarialPromptField, string> = {
   adversarial_system_prompt: 'Adversarial system prompt',
   adversarial_seed_prompt: 'Adversarial seed prompt',
   adversarial_prompt_template: 'Adversarial per-turn prompt',
@@ -71,7 +71,7 @@ function referenceValue(value: ParameterFormValue | undefined): string | string[
   return typeof value === 'string' || Array.isArray(value) ? value : ''
 }
 
-function promptValue(configuration: TechniqueConfiguration | undefined, field: TechniquePromptField): string {
+function promptValue(configuration: TechniqueConfiguration | undefined, field: EditableAdversarialPromptField): string {
   return configuration?.prompt_templates?.[field]?.value ?? configuration?.settings[field] ?? ''
 }
 
@@ -176,6 +176,16 @@ export default function TechniqueEditor({
   const selected = types.find((entry) => entry.attack_type === selectedType)
   const parameters = original ? original.parameters : guiParameters(getAttackParameters(selected))
   const editable = (field: string): boolean => !original || original.editable_fields.includes(field)
+  const promptDrafts = [
+    ['adversarial_system_prompt', systemPrompt], ['adversarial_seed_prompt', seedPrompt],
+    ['adversarial_prompt_template', turnPrompt],
+  ] as const
+  const promptErrors: Partial<Record<EditableAdversarialPromptField, string>> = {}
+  for (const [key, next] of promptDrafts) {
+    if (original && editable(key) && next !== promptValue(original, key) && !next.trim()) promptErrors[key] = (
+      `${PROMPT_LABELS[key]} must contain non-empty text. Use Reset to default to restore the selected technique's prompt.`
+    )
+  }
 
   const editChanges = (): TechniqueChanges => {
     if (!original) throw new Error('A source technique is required for editing.')
@@ -202,16 +212,13 @@ export default function TechniqueEditor({
     if (editable('adversarial_chat') && adversarialTarget !== (original.settings.adversarial_chat ?? '')) {
       changes.adversarial_chat = adversarialTarget || null
     }
-    for (const [key, next] of [
-      ['adversarial_system_prompt', systemPrompt], ['adversarial_seed_prompt', seedPrompt],
-      ['adversarial_prompt_template', turnPrompt],
-    ] as const) {
-      if (editable(key) && next !== promptValue(original, key)) {
-        if (!next.trim()) throw new Error(
-          `${PROMPT_LABELS[key]} must contain non-empty text. Use Reset to default to restore the selected technique's prompt.`,
-        )
-        changes[key] = next
-      }
+    for (const [key, next] of promptDrafts) {
+      if (!editable(key) || next === promptValue(original, key)) continue
+      const promptError = promptErrors[key]
+      if (promptError) throw new Error(promptError)
+      // A reloaded null clear displays the built-in prompt; keep the clear until that text changes.
+      changes[key] = initial?.settings[key] === null && original.settings[key] != null
+        && next === promptValue(initial, key) ? null : next
     }
     if (original.settings.simulation) {
       const turns = Number(numTurns)
@@ -301,7 +308,9 @@ export default function TechniqueEditor({
   }
 
   const inputsDisabled = disabled || submitting
-  const displayedError = autoApply && revision > 0 ? editError ?? error : error
+  const shownError = autoApply && revision > 0 ? editError ?? error : error
+  // Prompt text errors are shown on their own field.
+  const displayedError = shownError && !Object.values(promptErrors).includes(shownError) ? shownError : null
   const content = (
             // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- only keeps Enter in a field from submitting the form
             <div className={styles.form} onKeyDown={(event) => {
@@ -393,9 +402,9 @@ export default function TechniqueEditor({
                       {selected?.supports_adversarial && <>
                       {([
                         ['adversarial_system_prompt', systemPrompt, setSystemPrompt,
-                          "Instructions that guide the attack-writing model. These are not the objective target's system instructions."],
+                          "Instructions that guide the attacker model. These are not the objective target's system instructions."],
                         ['adversarial_seed_prompt', seedPrompt, setSeedPrompt,
-                          'The starting message for the attack-writing model, used to prepare its first attack prompt.'],
+                          'The starting message for the attacker model, used to prepare its first attack prompt.'],
                         ['adversarial_prompt_template', turnPrompt, setTurnPrompt,
                           'Instructions used to request the next attack prompt on each turn. The attack supplies the current conversation context.'],
                       ] as const).map(([field, value, setter, help]) => {
@@ -403,7 +412,8 @@ export default function TechniqueEditor({
                         const label = PROMPT_LABELS[field]
                         const template = original?.prompt_templates?.[field]
                         const customized = value !== promptValue(original, field)
-                        return <HelpField key={field} label={label} help={help}>
+                        return <HelpField key={field} label={label} help={help}
+                          validationState={promptErrors[field] ? 'error' : undefined} validationMessage={promptErrors[field]}>
                           {template && <div className={styles.promptControls}>
                             <Badge appearance="tint" color={customized ? 'brand' : 'informative'}>{customized ? 'Customized' : 'Default'}</Badge>
                             <Button className={styles.action} size="small" appearance="subtle" disabled={inputsDisabled || !customized}

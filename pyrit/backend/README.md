@@ -730,25 +730,13 @@ constructors; the factory retains omitted arguments and explicit `None` values.
 The basic GUI supports scalar inputs and one level of declared structured settings.
 It hides nested structured settings that the shared resolver cannot construct.
 
-The run-local technique editor prefills consumed adversarial prompt templates, including
-built-in defaults such as Crescendo's system prompt. Configuration responses keep
-`prompt_templates` (text, template parameters, and `technique` or `builtin` origin)
-separate from supplied `settings`; inherited settings remain unset. Any fixed
-`system_prompt_prefix` is read-only and is applied once at execution.
-Unused prompt slots are not editable in the GUI.
-
-Each prompt shows **Default** or **Customized** and offers **Reset to default**.
-Reset restores the selected technique's original effective template, including any
-technique-specific persona, and removes that field's run-local override. Viewing
-defaults or applying unchanged text does not materialize inherited settings.
-Empty or whitespace-only edited prompts are invalid; use **Reset to default** instead
-of clearing a field. The editor keeps invalid drafts pending rather than applying a
-different built-in prompt. The API still supports explicit `null` to clear a supplied
-override, which is distinct from restoring the selected technique's default.
-Prompt edits preserve template metadata and response schemas. Changes affect only
-the current run; registered techniques and packaged defaults remain unchanged.
-All consumed edited templates are checked for syntax and supported variables,
-including Python-created `SeedPrompt` objects without construction-time rendering.
+The run-local editor shows effective adversarial prompts and edits only consumed slots.
+Changes apply to the current run, not registered techniques or packaged defaults.
+**Reset to default** restores the selected technique's original prompt, including any
+persona; unchanged prompts add no override. Blank edits are invalid, and edited prompts
+may use only the template variables the attack supplies. API `null` clears a supplied
+override rather than restoring the selected technique's original prompt. Fixed
+system-prompt prefixes are read-only.
 
 Additions are runtime-only and available in compatible scenarios. Restart or
 reinitialize PyRIT to remove them. Existing scenario snapshots and runs do not

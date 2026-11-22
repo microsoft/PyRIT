@@ -117,16 +117,9 @@ def technique_to_configuration(
     parameters = registry.get_editable_parameters(factory)
     values = registry.get_editable_settings(factory)
     templates = factory.get_adversarial_prompt_templates()
+    variables = factory.get_adversarial_prompt_variables()
     prompt_templates = {
-        name: TechniquePromptTemplate(
-            value=prompt.value,
-            parameters=prompt.parameters or prompt.get_template_parameter_names(),
-            source=(
-                "builtin"
-                if values.get(name) is None or name != "adversarial_prompt_template" and not values.get(name)
-                else "technique"
-            ),
-        )
+        name: TechniquePromptTemplate(value=prompt.value, parameters=sorted(variables[name]))
         for name, prompt in templates.items()
         if name in values and prompt.data_type == "text"
     }

@@ -53,7 +53,7 @@ function promptConfiguration(): TechniqueConfiguration {
     prompt_templates: {
       adversarial_system_prompt: {
         value: 'Escalate toward {{ objective }} over {{ max_turns }} turns.',
-        parameters: ['objective', 'max_turns'], source: 'builtin',
+        parameters: ['objective', 'max_turns'],
       },
     },
     system_prompt_prefix: 'Keep questions concise.',
@@ -96,7 +96,7 @@ describe('TechniqueEditor', () => {
     const original = promptConfiguration()
     const initial = promptConfiguration()
     initial.prompt_templates = {
-      adversarial_system_prompt: { value: 'Custom guidance.', parameters: ['objective', 'max_turns'], source: 'technique' },
+      adversarial_system_prompt: { value: 'Custom guidance.', parameters: ['objective', 'max_turns'] },
     }
     initial.settings.params = { max_attempts_on_failure: 3 }
     render(tree(original, jest.fn(), initial))
@@ -137,10 +137,10 @@ describe('TechniqueEditor', () => {
     const original = promptConfiguration()
     original.settings.adversarial_system_prompt = 'Original persona.'
     original.prompt_templates = {
-      adversarial_system_prompt: { value: 'Original persona.', parameters: [], source: 'technique' },
+      adversarial_system_prompt: { value: 'Original persona.', parameters: [] },
     }
     const initial = { ...original, prompt_templates: {
-      adversarial_system_prompt: { value: 'Edited persona.', parameters: [], source: 'technique' as const },
+      adversarial_system_prompt: { value: 'Edited persona.', parameters: [] },
     } }
     render(tree(original, jest.fn(), initial))
     await user.click(await screen.findByRole('button', { name: 'Reset adversarial system prompt to default' }))
@@ -166,7 +166,7 @@ describe('TechniqueEditor', () => {
     original.settings[field] = 'Selected technique prompt.'
     original.prompt_templates = {
       ...original.prompt_templates,
-      [field]: { value: 'Selected technique prompt.', parameters: [], source: 'technique' },
+      [field]: { value: 'Selected technique prompt.', parameters: [] },
     }
     const onApplied = jest.fn()
     render(tree(original, onApplied))
@@ -194,7 +194,7 @@ describe('TechniqueEditor', () => {
       const original = promptConfiguration()
       original.settings.adversarial_system_prompt = 'Original persona.'
       original.prompt_templates = {
-        adversarial_system_prompt: { value: 'Original persona.', parameters: [], source: 'technique' },
+        adversarial_system_prompt: { value: 'Original persona.', parameters: [] },
       }
       const onApplied = jest.fn()
       const onPending = jest.fn()
@@ -218,6 +218,37 @@ describe('TechniqueEditor', () => {
     } finally {
       jest.useRealTimers()
     }
+  })
+
+  it('should keep a saved null prompt clear when an unrelated setting changes', async () => {
+    const user = userEvent.setup()
+    const original = promptConfiguration()
+    original.settings.adversarial_system_prompt = 'Original persona.'
+    original.prompt_templates = { adversarial_system_prompt: { value: 'Original persona.', parameters: [] } }
+    const initial = promptConfiguration()
+    render(tree(original, jest.fn(), initial))
+    expect(await screen.findByRole('textbox', { name: 'Adversarial system prompt' }))
+      .toHaveValue(initial.prompt_templates?.adversarial_system_prompt?.value)
+    await user.clear(screen.getByRole('spinbutton', { name: 'max_attempts_on_failure' }))
+    await user.type(screen.getByRole('spinbutton', { name: 'max_attempts_on_failure' }), '4')
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(1))
+    expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({
+      params: { max_attempts_on_failure: 4 }, adversarial_system_prompt: null,
+    })
+  })
+
+  it('should show blank prompt errors on the prompt field', async () => {
+    const user = userEvent.setup()
+    render(<FluentProvider theme={webLightTheme}>
+      <TechniqueEditor original={promptConfiguration()} autoApply onApplied={jest.fn()} />
+    </FluentProvider>)
+    const field = await screen.findByRole('textbox', { name: 'Adversarial system prompt' })
+    await user.clear(field)
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('Adversarial system prompt must contain non-empty text.')
+    expect(field).toHaveAttribute('aria-invalid', 'true')
+    expect(field.getAttribute('aria-describedby')?.split(' ')).toContain(alert.id)
   })
 
   it('should keep a field reset when an earlier auto-apply response arrives late', async () => {

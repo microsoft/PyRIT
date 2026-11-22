@@ -41,6 +41,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
     RedTeamingAttack,
     SimulatedConversationResult,
+    TreeOfAttacksWithPruningAttack,
 )
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
@@ -358,7 +359,6 @@ def test_effective_prompt_defaults_match_execution_without_materializing_setting
         resolve_user_messages=requirements.accepts_user_messages,
     )
     assert configuration.prompt_templates["adversarial_system_prompt"].value == resolved.system_prompt.value
-    assert all(template.source == "builtin" for template in configuration.prompt_templates.values())
     assert configuration.settings.adversarial_system_prompt is None
     if requirements.accepts_user_messages:
         assert configuration.prompt_templates["adversarial_seed_prompt"].value == resolved.first_message.value
@@ -411,7 +411,6 @@ def test_inherited_prompt_edit_preserves_metadata_prefix_and_replay(edit_catalog
     combined = edited.get_adversarial_prompt_templates(include_prefix=True)["adversarial_system_prompt"].value
     assert combined == f"Use concise questions.\n\n{text}"
     assert source.get_effective_settings().adversarial_system_prompt is None
-    assert admitted.configuration.prompt_templates["adversarial_system_prompt"].source == "technique"
     assert admitted.configuration.prompt_templates["adversarial_system_prompt"].value == text
 
 
@@ -433,7 +432,6 @@ def test_explicit_persona_templates_remain_the_selected_technique_defaults(
     configuration = TechniqueEditService.configuration(source.name)
     for field, prompt in source.get_adversarial_prompt_templates().items():
         assert configuration.prompt_templates[field].value == prompt.value
-        assert configuration.prompt_templates[field].source == "technique"
 
 
 @pytest.mark.parametrize("text", ["Bad {{ unknown_variable }}", "Bad {{ objective", ""])
@@ -485,6 +483,49 @@ def test_invalid_python_created_template_edits_are_rejected(
         )
     assert prompt.value == "Use {{ objective }}"
     assert source.get_editable_settings()[field] == prompt.value
+
+
+@pytest.mark.parametrize(
+    ("attack_class", "persona", "variable"),
+    [
+        (RedTeamingAttack, None, "max_turns"),
+        (TreeOfAttacksWithPruningAttack, "Start with {{ desired_prefix }}.", "conversation_context"),
+        (CrescendoAttack, "Reach {{ objective }} in {{ max_turns }} turns.", "conversation_context"),
+    ],
+)
+def test_system_prompt_edits_accept_every_variable_execution_supplies(
+    edit_catalog: AttackTechniqueRegistry, attack_class: type[AttackStrategy], persona: str | None, variable: str
+) -> None:
+    source = AttackTechniqueFactory(name="supplied", attack_class=attack_class, adversarial_system_prompt=persona)
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    template = configuration.prompt_templates["adversarial_system_prompt"]
+    assert variable in template.parameters
+    text = f"{template.value}\nAlso use {{{{ {variable} }}}}."
+    admitted = TechniqueEditService.validate(
+        TechniqueOverride(
+            source_name=source.name,
+            source_identity=configuration.source_identity,
+            changes=TechniqueChanges(adversarial_system_prompt=text),
+        )
+    )
+    assert admitted.configuration.prompt_templates["adversarial_system_prompt"].value == text
+
+
+def test_edits_reject_declared_variables_execution_never_supplies(edit_catalog: AttackTechniqueRegistry) -> None:
+    prompt = SeedPrompt(value="Use {{ objective }}", parameters=["objective", "unbound"], is_jinja_template=True)
+    source = AttackTechniqueFactory(name="declared", attack_class=RedTeamingAttack, adversarial_system_prompt=prompt)
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    assert "unbound" not in configuration.prompt_templates["adversarial_system_prompt"].parameters
+    with pytest.raises(ValueError, match="unsupported template variables: unbound"):
+        TechniqueEditService.validate(
+            TechniqueOverride(
+                source_name=source.name,
+                source_identity=configuration.source_identity,
+                changes=TechniqueChanges(adversarial_system_prompt="Use {{ objective }} and {{ unbound }}"),
+            )
+        )
 
 
 @pytest.mark.parametrize(
@@ -550,10 +591,8 @@ def test_empty_source_strings_follow_runtime_fallback_rules(edit_catalog: Attack
     ).get_adversarial_prompt_templates()
     for field in ("adversarial_system_prompt", "adversarial_seed_prompt"):
         assert configuration.prompt_templates[field].value == inherited[field].value
-        assert configuration.prompt_templates[field].source == "builtin"
         assert getattr(configuration.settings, field) == ""
     assert configuration.prompt_templates["adversarial_prompt_template"].value == ""
-    assert configuration.prompt_templates["adversarial_prompt_template"].source == "technique"
 
 
 @pytest.mark.parametrize(

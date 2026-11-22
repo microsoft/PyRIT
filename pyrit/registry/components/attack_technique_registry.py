@@ -464,17 +464,11 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         )
         factory = source.with_settings(settings=settings, simulation=changes.simulation, converter_changes=converters)
         if supplied & {"adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"}:
-            original_templates = source.get_adversarial_prompt_templates()
+            variables = source.get_adversarial_prompt_variables()
             for name, prompt in factory.get_adversarial_prompt_templates(include_prefix=True).items():
                 if name not in supplied or getattr(changes, name) is None:
                     continue
-                original = original_templates[name]
-                allowed = set(original.parameters or []) | set(original.get_template_parameter_names())
-                if name != "adversarial_system_prompt":
-                    allowed.add("objective")
-                if name == "adversarial_prompt_template":
-                    allowed.add("feedback_text")
-                if unknown := set(prompt.get_template_parameter_names()) - allowed:
+                if unknown := set(prompt.get_template_parameter_names()) - variables[name]:
                     raise ValueError(f"{name} has unsupported template variables: {', '.join(sorted(unknown))}")
         return self._with_replay_converter_roles(factory) if changes.request_converters else factory
 

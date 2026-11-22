@@ -3,7 +3,7 @@
 
 """Technique catalog responses and runtime construction requests."""
 
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
@@ -55,8 +55,8 @@ class TechniquePromptTemplate(BaseModel):
     """Effective template display, separate from the source settings and edit patch."""
 
     value: str
+    # Variables execution supplies to this prompt slot, which an edited prompt may use.
     parameters: list[str] = Field(default_factory=list)
-    source: Literal["technique", "builtin"]
 
 
 class TechniqueConfiguration(BaseModel):

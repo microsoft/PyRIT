@@ -1613,6 +1613,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
     ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
         default_system_prompt_path=DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
         system_prompt_parameters=("desired_prefix",),
+        system_prompt_variables=("objective", "desired_prefix", "conversation_context"),
     )
 
     @classmethod

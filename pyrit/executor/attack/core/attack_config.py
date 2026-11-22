@@ -96,6 +96,21 @@ class AdversarialPromptRequirements:
     default_system_prompt_path: str | Path
     system_prompt_parameters: tuple[str, ...]
     accepts_user_messages: bool = False
+    # Every variable execution renders into the system prompt, beyond the required parameters.
+    system_prompt_variables: tuple[str, ...] = ("objective", "max_turns")
+
+    def get_template_variables(self) -> dict[str, frozenset[str]]:
+        """
+        Get the variables execution supplies to each consumed prompt slot.
+
+        Returns:
+            dict[str, frozenset[str]]: Supplied variable names keyed by prompt slot.
+        """
+        variables = {"system_prompt": frozenset(self.system_prompt_variables) | set(self.system_prompt_parameters)}
+        if self.accepts_user_messages:
+            variables["first_message"] = frozenset({"objective"})
+            variables["feedback_template"] = frozenset({"objective", "feedback_text"})
+        return variables
 
     def resolve_templates(
         self,

@@ -77,6 +77,11 @@ logger = logging.getLogger(__name__)
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+_ADVERSARIAL_PROMPT_SLOTS = (
+    ("adversarial_system_prompt", "system_prompt"),
+    ("adversarial_seed_prompt", "first_message"),
+    ("adversarial_prompt_template", "feedback_template"),
+)
 
 
 @dataclass
@@ -836,14 +841,21 @@ class AttackTechniqueFactory(Identifiable):
             system_prompt_prefix=self._adversarial_system_prompt_prefix if include_prefix else None,
         )
         return {
-            field: templates[slot]
-            for field, slot in (
-                ("adversarial_system_prompt", "system_prompt"),
-                ("adversarial_seed_prompt", "first_message"),
-                ("adversarial_prompt_template", "feedback_template"),
-            )
-            if slot in templates
+            field: templates[slot] for field, slot in _ADVERSARIAL_PROMPT_SLOTS if slot in templates
         }
+
+    def get_adversarial_prompt_variables(self) -> dict[str, frozenset[str]]:
+        """
+        Get the template variables execution supplies to each consumed prompt.
+
+        Returns:
+            dict[str, frozenset[str]]: Supplied variable names keyed by editable factory field.
+        """
+        requirements = self._attack_class.ADVERSARIAL_PROMPT_REQUIREMENTS
+        if requirements is None or "attack_adversarial_config" not in self._compatibility_helper.accepted_params:
+            return {}
+        variables = requirements.get_template_variables()
+        return {field: variables[slot] for field, slot in _ADVERSARIAL_PROMPT_SLOTS if slot in variables}
 
     @property
     def adversarial_system_prompt_prefix(self) -> str | None:
