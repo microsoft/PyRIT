@@ -7,7 +7,7 @@ Pre-warm the ScenarioRegistry metadata cache.
 Each registered ``Scenario`` is instantiated once so the registry can read the
 strategy class, default strategy, and default dataset configuration off the
 instance. The results are cached on ``Registry._metadata_cache``; the
-first ``--list-scenarios`` / GUI call is then a cache hit. Per-scenario
+first ``list-scenarios`` / GUI call is then a cache hit. Per-scenario
 instantiation failures surface loudly here at startup rather than later.
 """
 
