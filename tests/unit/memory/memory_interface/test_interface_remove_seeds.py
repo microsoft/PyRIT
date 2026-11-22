@@ -512,7 +512,7 @@ async def test_remove_seed_groups_rolls_back_on_error(sqlite_instance: MemoryInt
     assert len(await sqlite_instance.get_seeds_async()) == 1
 
 
-async def test_remove_seeds_empty_prompt_group_ids_removes_nothing(sqlite_instance: MemoryInterface):
+async def test_remove_seeds_empty_prompt_group_ids_removes_nothing_async(sqlite_instance: MemoryInterface) -> None:
     seed_prompts = [
         SeedPrompt(value=f"prompt{i}", dataset_name="ds", data_type="text", prompt_group_id=uuid.uuid4())
         for i in range(3)
@@ -525,7 +525,7 @@ async def test_remove_seeds_empty_prompt_group_ids_removes_nothing(sqlite_instan
     assert len(await sqlite_instance.get_seeds_async(dataset_name="ds")) == 3
 
 
-async def test_remove_seed_groups_empty_value_sha256_removes_nothing(sqlite_instance: MemoryInterface):
+async def test_remove_seed_groups_empty_value_sha256_removes_nothing_async(sqlite_instance: MemoryInterface) -> None:
     seed_prompts = [
         SeedPrompt(value=f"prompt{i}", dataset_name="ds", data_type="text", prompt_group_id=uuid.uuid4())
         for i in range(3)
