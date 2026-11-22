@@ -25,7 +25,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, NotRequired, ParamSpec, TypedDict, TypeVar
 
 from pydantic import BaseModel
 
@@ -68,7 +68,7 @@ if TYPE_CHECKING:
     from pyrit.converter import Converter
     from pyrit.executor.attack import AttackStrategy
     from pyrit.models import AttackSeedGroup
-    from pyrit.models.technique_edit import SimulationChanges
+    from pyrit.models.technique_edit import SimulationChanges, SimulationSettings
     from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import Scorer
@@ -89,6 +89,35 @@ class TechniqueFactorySettings:
     adversarial_system_prompt: str | SeedPrompt | None
     adversarial_seed_prompt: str | SeedPrompt | None
     adversarial_prompt_template: str | SeedPrompt | None
+
+
+class EditableTechniqueSettings(TypedDict):
+    """
+    Lossless editable settings with live references, before registry-name projection.
+
+    Key presence is the contract: an absent key means the setting is not editable
+    (opaque state stays on the source), while an explicit ``None`` value means the
+    setting is editable but unset. ``description`` is always present (``None`` when
+    the factory was built without one). ``adversarial_chat`` is present only when
+    the technique uses an adversarial chat, and ``None`` when no target is baked in
+    (it is resolved lazily at ``create()`` time). Each adversarial prompt field is
+    present only when the attack accepts ``attack_adversarial_config``, and ``None``
+    when the prompt is unset; a non-text prompt stays opaque and the key is absent.
+    Converter lists are present only when the attack accepts
+    ``attack_converter_config`` and every chain item applies unconditionally; an
+    empty list means no converters are configured (never ``None``). ``simulation``
+    is present only when the seed technique carries simulation settings (never
+    ``None``).
+    """
+
+    description: str | None
+    adversarial_chat: NotRequired[PromptTarget | None]
+    adversarial_system_prompt: NotRequired[str | None]
+    adversarial_seed_prompt: NotRequired[str | None]
+    adversarial_prompt_template: NotRequired[str | None]
+    request_converters: NotRequired[list[Converter]]
+    response_converters: NotRequired[list[Converter]]
+    simulation: NotRequired[SimulationSettings]
 
 
 def _capture_creation(method: Callable[_P, _R]) -> Callable[_P, _R]:
@@ -788,14 +817,14 @@ class AttackTechniqueFactory(Identifiable):
             raise TypeError("attack_converter_config must be an AttackConverterConfig")
         return config
 
-    def get_editable_settings(self) -> dict[str, Any]:
+    def get_editable_settings(self) -> EditableTechniqueSettings:
         """
         Expose lossless settings supported by this factory, before registry-name projection.
 
         Returns:
-            dict[str, Any]: Supported fields with live references; unsupported state stays on the source.
+            EditableTechniqueSettings: Supported fields with live references; unsupported state stays on the source.
         """
-        result: dict[str, Any] = {"description": self._description}
+        result: EditableTechniqueSettings = {"description": self._description}
         accepted = self._compatibility_helper.accepted_params
         if self.uses_adversarial:
             result["adversarial_chat"] = self._adversarial_chat
