@@ -217,7 +217,15 @@ jobs:
         # docs retain their historical build tolerance.
         if: steps.cache.outputs.cache-hit != 'true' && matrix.slug == 'latest'
         working-directory: doc
-        run: uv run --frozen --no-sync jupyter-book build --site --strict --check-links
+        # External sites such as github.com intermittently answer CI link
+        # checks with 503, so retry once. MyST caches links that resolved, so
+        # the retry re-checks only the failures.
+        run: |
+          check() { uv run --frozen --no-sync jupyter-book build --site --strict --check-links; }
+          check && exit 0
+          echo "::warning::Link check failed; retrying once in 30 seconds."
+          sleep 30
+          check
 
       - name: Build the static HTML site
         if: steps.cache.outputs.cache-hit != 'true'

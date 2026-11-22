@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import math
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
+from pydantic import ValidationError as PydanticValidationError
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.exceptions import InvalidJsonException
@@ -19,10 +21,21 @@ from pyrit.executor.promptgen.core import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
-from pyrit.models import JsonResponseConfig, JsonSchemaDefinition, Message, SeedPrompt
+from pyrit.models import (
+    JsonResponseConfig,
+    JsonSchemaDefinition,
+    Message,
+    PromptGenerationEstimate,
+    PromptGenerationStageEstimate,
+    SeedPrompt,
+    TargetObjectiveGenerationRequest,
+)
 from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
     from jsonschema.protocols import Validator
 
     from pyrit.prompt_target import PromptTarget
@@ -54,6 +67,8 @@ class TargetObjectiveGenerator(
 
     DEFAULT_SYSTEM_PROMPT_PATH = EXECUTOR_SEED_PROMPT_PATH / "promptgen" / "target_objective_generator.yaml"
     _CLEANUP_TIMEOUT_SECONDS = 5.0
+    GENERATION_ROLE: ClassVar[str] = "generation"
+    OUTPUT_TOKENS_PER_OBJECTIVE: ClassVar[int] = 60
 
     def __init__(
         self,
@@ -105,6 +120,41 @@ class TargetObjectiveGenerator(
         self._timeout_seconds = timeout_seconds
         self._normalizer = PromptNormalizer()
 
+    @classmethod
+    def estimate(
+        cls, *, instructions: str, count: int, harm_categories: Sequence[str] = ()
+    ) -> PromptGenerationEstimate:
+        """
+        Estimate the model calls and tokens of a request with the bundled prompt, without calling a target.
+
+        Args:
+            instructions (str): What the objectives should cover.
+            count (int): The number of objectives to generate.
+            harm_categories (Sequence[str]): Harm categories to apply.
+
+        Returns:
+            PromptGenerationEstimate: One call and an approximate token range.
+
+        Raises:
+            ValueError: If the request is invalid, as execution would reject it.
+        """
+        _validate_request(instructions=instructions, count=count, harm_categories=harm_categories)
+        characters = len(_load_default_prompt_text(cls.DEFAULT_SYSTEM_PROMPT_PATH)) + len(
+            _request_text(instructions=instructions, count=count, harm_categories=harm_categories)
+        )
+        tokens = PromptGenerationEstimate.tokens_from_characters(characters) + count * cls.OUTPUT_TOKENS_PER_OBJECTIVE
+        stage = PromptGenerationStageEstimate(
+            stage="objectives",
+            target_role=cls.GENERATION_ROLE,
+            min_calls=1,
+            max_calls=1,
+            min_tokens=tokens,
+            max_tokens=tokens,
+        )
+        return PromptGenerationEstimate(
+            stages=(stage,), exact_calls=True, notes=("JSON validation retries can add calls.",)
+        )
+
     async def execute_with_context_async(
         self, *, context: TargetObjectiveGeneratorContext
     ) -> TargetObjectiveGeneratorResult:
@@ -124,12 +174,9 @@ class TargetObjectiveGenerator(
             return await super().execute_with_context_async(context=context)
 
     def _validate_context(self, *, context: TargetObjectiveGeneratorContext) -> None:
-        if not isinstance(context.instructions, str) or not context.instructions.strip():
-            raise ValueError("instructions must be a non-empty string.")
-        if isinstance(context.count, bool) or not isinstance(context.count, int) or context.count < 1:
-            raise ValueError("count must be a positive integer.")
-        if any(not category.strip() for category in context.harm_categories):
-            raise ValueError("harm_categories must contain non-empty strings.")
+        _validate_request(
+            instructions=context.instructions, count=context.count, harm_categories=context.harm_categories
+        )
 
     async def _setup_async(self, *, context: TargetObjectiveGeneratorContext) -> None:
         prompt = self._system_prompt.value
@@ -141,12 +188,8 @@ class TargetObjectiveGenerator(
         context._conversation_initialized = True
 
     async def _perform_async(self, *, context: TargetObjectiveGeneratorContext) -> TargetObjectiveGeneratorResult:
-        prompt = json.dumps(
-            {
-                "instructions": context.instructions,
-                "count": context.count,
-                "harm_categories": context.harm_categories,
-            }
+        prompt = _request_text(
+            instructions=context.instructions, count=context.count, harm_categories=context.harm_categories
         )
         message = Message.from_prompt(prompt=prompt, role="user")
         message.message_pieces[0].prompt_metadata = self._json_response_config.to_metadata()
@@ -224,3 +267,47 @@ class TargetObjectiveGenerator(
         ):
             raise ValueError("response_json_schema must require an objectives array with string items.")
         return Draft202012Validator(schema)
+
+
+_INVALID_REQUEST_MESSAGES = {
+    "instructions": "instructions must be a non-empty string.",
+    "count": "count must be a positive integer.",
+    "harm_categories": "harm_categories must contain non-empty strings.",
+}
+
+
+def _validate_request(*, instructions: object, count: object, harm_categories: Sequence[object]) -> None:
+    """
+    Check a request against the rules of ``TargetObjectiveGenerationRequest``.
+
+    Raises:
+        ValueError: If a field breaks those rules, naming the first field that does.
+    """
+    try:
+        TargetObjectiveGenerationRequest.model_validate(
+            {"instructions": instructions, "count": count, "harm_categories": harm_categories}
+        )
+    except PydanticValidationError as error:
+        field = str(error.errors()[0]["loc"][0])
+        raise ValueError(_INVALID_REQUEST_MESSAGES[field]) from error
+
+
+def _request_text(*, instructions: str, count: int, harm_categories: Sequence[str]) -> str:
+    """
+    Serialize the generation request that is sent to the target.
+
+    Returns:
+        str: The JSON request text.
+    """
+    return json.dumps({"instructions": instructions, "count": count, "harm_categories": list(harm_categories)})
+
+
+@functools.cache
+def _load_default_prompt_text(path: Path) -> str:
+    """
+    Read the bundled prompt once, so estimates don't read files on the request path.
+
+    Returns:
+        str: The prompt text.
+    """
+    return SeedPrompt.from_yaml_file(path).value

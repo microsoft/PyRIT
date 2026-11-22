@@ -1,4 +1,4 @@
-import { decodeBlobErrorAsync, retryAfterMilliseconds, toApiError } from './errors'
+import { apiErrorMessage, decodeBlobErrorAsync, isNotSaveableError, notSaveableReason, retryAfterMilliseconds, toApiError } from './errors'
 import type { ApiError } from './errors'
 
 // ---------------------------------------------------------------------------
@@ -10,8 +10,9 @@ function makeAxiosError(opts: {
   code?: string
   message?: string
   hasResponse?: boolean
+  contentType?: string
 }): unknown {
-  const { status, data, code, message = 'Request failed', hasResponse = true } = opts
+  const { status, data, code, message = 'Request failed', hasResponse = true, contentType } = opts
 
   const err: Record<string, unknown> = {
     isAxiosError: true,
@@ -22,7 +23,8 @@ function makeAxiosError(opts: {
   }
 
   if (hasResponse && status !== undefined) {
-    err.response = { status, data, headers: {}, config: {} }
+    const headers = contentType === undefined ? {} : { 'Content-Type': contentType }
+    err.response = { status, data, headers, config: {} }
   }
 
   return err
@@ -73,22 +75,57 @@ describe('toApiError', () => {
     expect(result.raw).toBe(err)
   })
 
-  // 2. Axios error with plain-string body (e.g. proxy HTML)
-  it('uses a plain-string response body as detail', () => {
-    const err = makeAxiosError({
-      status: 502,
-      data: '<html><body>Bad Gateway</body></html>',
-    })
+  // 2. Axios error with plain-text body
+  it('uses a plain-text response body as detail', () => {
+    const err = makeAxiosError({ status: 500, data: 'Internal Server Error' })
 
     const result = toApiError(err)
 
-    expect(result.status).toBe(502)
-    expect(result.detail).toBe('<html><body>Bad Gateway</body></html>')
+    expect(result.status).toBe(500)
+    expect(result.detail).toBe('Internal Server Error')
     expect(result.type).toBeUndefined()
     expect(result.isNetworkError).toBe(false)
   })
 
-  // 3. Axios error with HTML body (nginx 502 — object without detail)
+  it.each([
+    ['a text/html page that starts with a comment', 503, 'text/html; charset=utf-8',
+      '<!-- App Service -->\n<p>Service unavailable</p>'],
+    ['an untyped nginx page', 502, undefined, '<html><body>Bad Gateway</body></html>'],
+    [
+      'an untyped page with a comment before its doctype',
+      503,
+      'application/octet-stream',
+      "<!-- proxy -->\n<!DOCTYPE html PUBLIC '-//W3C//DTD XHTML 1.0 Transitional//EN'><html><head>"
+        + '<title>Service unavailable</title></head><body></body></html>',
+    ],
+  ])('falls back to the status message instead of showing %s', (_name, status, contentType, data) => {
+    const result = toApiError(makeAxiosError({ status, data, contentType }))
+
+    expect(result.status).toBe(status)
+    expect(result.detail).toBe(`Server error (${status})`)
+    expect(result.isNetworkError).toBe(false)
+  })
+
+  it('keeps explicit text/plain diagnostics that start with a tag', () => {
+    const diagnostic = '<body> element missing from template'
+    const result = toApiError(makeAxiosError({ status: 500, data: diagnostic, contentType: 'text/plain' }))
+
+    expect(result.detail).toBe(diagnostic)
+  })
+
+  it('recognizes an untyped page after an XML declaration and repeated comments', () => {
+    const page = `<?xml version="1.0"?>\n${'<!-- a --> '.repeat(1_000)}<html></html>`
+
+    expect(toApiError(makeAxiosError({ status: 503, data: page })).detail).toBe('Server error (503)')
+  })
+
+  it('keeps an untyped body of unterminated comment-like text without slow backtracking', () => {
+    const body = `<!--${'--><!--'.repeat(50_000)}`
+
+    expect(toApiError(makeAxiosError({ status: 500, data: body })).detail).toBe(body)
+  })
+
+  // 3. Axios error with a JSON body that lacks detail
   it('falls back to status text when JSON body lacks detail', () => {
     const err = makeAxiosError({
       status: 500,
@@ -246,14 +283,16 @@ describe('decodeBlobErrorAsync', () => {
     expect(toApiError(err)).toMatchObject({ status: 404, detail: 'Operation not found' })
   })
 
-  it('keeps a non-JSON Blob body, such as a proxy page, as readable text', async () => {
+  it('keeps a non-JSON Blob body, such as a proxy page, as text without showing its markup', async () => {
     const page = '<html><body>Bad Gateway</body></html>'
-    const err = makeAxiosError({ status: 502, data: new Blob([page], { type: 'text/html' }) })
+    const err = makeAxiosError({
+      status: 502, data: new Blob([page], { type: 'text/html' }), contentType: 'text/html',
+    })
 
     await decodeBlobErrorAsync(err)
 
     expect(err).toMatchObject({ response: { status: 502, data: page } })
-    expect(toApiError(err)).toMatchObject({ status: 502, detail: page })
+    expect(toApiError(err)).toMatchObject({ status: 502, detail: 'Server error (502)' })
   })
 
   it('leaves the error failing with its status when the Blob cannot be read', async () => {
@@ -297,5 +336,59 @@ describe('decodeBlobErrorAsync', () => {
     await decodeBlobErrorAsync(makeAxiosError({ hasResponse: false }))
 
     expect(notAxios.response.data).toBe(body)
+  })
+})
+
+describe('isNotSaveableError', () => {
+  it('should recognize the typed refusal to save', () => {
+    const refused = toApiError(makeAxiosError({ status: 400, data: { type: '/errors/not-saveable', detail: 'No.' } }))
+
+    expect(isNotSaveableError(refused)).toBe(true)
+  })
+
+  it.each([
+    ['an untyped bad request', 400, { detail: 'Bad endpoint.' }],
+    ['another problem type', 400, { type: '/errors/validation-error', detail: 'Bad name.' }],
+    ['the problem type on another status', 409, { type: '/errors/not-saveable', detail: 'Taken.' }],
+  ])('should not treat %s as a refusal to save', (_, status, data) => {
+    expect(isNotSaveableError(toApiError(makeAxiosError({ status, data })))).toBe(false)
+  })
+})
+
+describe('notSaveableReason', () => {
+  it('should give the cause of a refusal to save without the rest of its detail', () => {
+    const refused = toApiError(makeAxiosError({
+      status: 400,
+      data: { type: '/errors/not-saveable', detail: 'No. It can still be created without saving it.', not_saveable_reason: 'No.' },
+    }))
+
+    expect(notSaveableReason(refused)).toBe('No.')
+  })
+
+  it.each([
+    ['a refusal without a cause', 400, { type: '/errors/not-saveable', detail: 'No.' }],
+    ['another bad request with a cause', 400, { detail: 'Bad endpoint.', not_saveable_reason: 'No.' }],
+  ])('should give no cause for %s', (_, status, data) => {
+    expect(notSaveableReason(toApiError(makeAxiosError({ status, data })))).toBeNull()
+  })
+})
+
+describe('apiErrorMessage', () => {
+  it('adds each distinct field message with its field to the detail, without the pydantic prefixes', () => {
+    const error = toApiError(makeAxiosError({
+      status: 422,
+      data: {
+        detail: 'Request validation failed',
+        errors: [
+          { field: 'body.datasets.sources.0.name', message: 'String should have at least 1 character' },
+          { field: 'body.datasets.sources.0.name', message: 'String should have at least 1 character' },
+          { field: 'body.datasets.sources.1.name', message: 'Value error, Dataset names must be non-empty.' },
+        ],
+      },
+    }))
+    expect(apiErrorMessage(error)).toBe('Request validation failed: '
+      + 'datasets.sources.0.name: String should have at least 1 character; '
+      + 'datasets.sources.1.name: Dataset names must be non-empty.')
+    expect(apiErrorMessage(toApiError(new Error('Plain failure.')))).toBe('Plain failure.')
   })
 })
