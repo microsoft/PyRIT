@@ -296,6 +296,12 @@ describe('TechniqueEditor', () => {
     expect(field).toHaveFocus()
     expect(screen.queryByRole('alert')).toHaveTextContent(message)
     expect(screen.getAllByText(message)).toHaveLength(1)
+
+    await user.type(field, ' }}')
+    expect(field).toHaveFocus()
+    expect(field).toHaveValue('Bad {{ objective }}')
+    expect(field).not.toHaveAttribute('aria-invalid', 'true')
+    expect(screen.queryByText(message)).not.toBeInTheDocument()
   })
 
   it('should keep a field reset when an earlier auto-apply response arrives late', async () => {

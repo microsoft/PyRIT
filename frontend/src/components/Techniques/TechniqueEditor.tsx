@@ -132,14 +132,18 @@ export default function TechniqueEditor({
   const [retry, setRetry] = useState(0)
   const active = useRef(true)
   const errorRef = useRef<HTMLDivElement>(null)
-  const [submitError, setSubmitError] = useState(false)
   const [revision, setRevision] = useState(0)
   const [validating, setValidating] = useState(false)
   const [apiPromptErrors, setApiPromptErrors] = useState<Partial<Record<EditableAdversarialPromptField, string>>>({})
   const promptInputs = useRef<Partial<Record<EditableAdversarialPromptField, HTMLTextAreaElement | null>>>({})
+  const [focusRequest, setFocusRequest] = useState<{ field?: EditableAdversarialPromptField } | null>(null)
 
   function update<Value>(setter: Dispatch<SetStateAction<Value>>, value: Value): void {
-    setApiPromptErrors({})
+    if (Object.keys(apiPromptErrors).length) {
+      // A server prompt rejection describes the previous draft.
+      setApiPromptErrors({})
+      setError(null)
+    }
     if (autoApply) {
       onPending?.()
       setValidating(true)
@@ -187,12 +191,10 @@ export default function TechniqueEditor({
   }, [retry, original])
 
   useEffect(() => {
-    if (!submitError || !error) return
-    const field = (Object.keys(apiPromptErrors) as EditableAdversarialPromptField[])
-      .find((key) => apiPromptErrors[key] === error)
-    if (field) promptInputs.current[field]?.focus()
+    if (!focusRequest) return
+    if (focusRequest.field) promptInputs.current[focusRequest.field]?.focus()
     else errorRef.current?.focus()
-  }, [error, submitError, apiPromptErrors])
+  }, [focusRequest])
 
   const selected = types.find((entry) => entry.attack_type === selectedType)
   const parameters = original ? original.parameters : guiParameters(getAttackParameters(selected))
@@ -290,7 +292,10 @@ export default function TechniqueEditor({
   }, [autoApply, original, revision, changesJson, editError, onApplied])
 
   const submit = async (): Promise<void> => {
-    const fail = (message: string): void => { setError(message); setSubmitError(true) }
+    const fail = (message: string, field?: EditableAdversarialPromptField): void => {
+      setError(message)
+      setFocusRequest({ field })
+    }
     const parsedTags = tags.split(',').map((tag) => tag.trim()).filter(Boolean)
     if (!selected) { fail('Select an attack type.'); return }
     const result = buildParametersFromForm(parameters, values)
@@ -311,7 +316,6 @@ export default function TechniqueEditor({
     }
     setSubmitting(true)
     setError(null)
-    setSubmitError(false)
     setApiPromptErrors({})
     try {
       if (original) {
@@ -326,8 +330,10 @@ export default function TechniqueEditor({
       }
     } catch (err) {
       if (active.current) {
-        setApiPromptErrors(serverPromptErrors(err))
-        fail(toApiError(err).detail)
+        const detail = toApiError(err).detail
+        const rejected = serverPromptErrors(err)
+        setApiPromptErrors(rejected)
+        fail(detail, (Object.keys(rejected) as EditableAdversarialPromptField[]).find((key) => rejected[key] === detail))
       }
     } finally {
       if (active.current) setSubmitting(false)
