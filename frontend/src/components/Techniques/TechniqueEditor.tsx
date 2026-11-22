@@ -472,7 +472,7 @@ export default function TechniqueEditor({
                 </>
               )}
               {autoApply && validating && !editError && <Spinner size="tiny" label="Validating technique settings..." />}
-              {autoApply && !validating && revision > 0 && !displayedError && <Text role="status">Technique settings applied to this run.</Text>}
+              {autoApply && !validating && revision > 0 && !shownError && <Text role="status">Technique settings applied to this run.</Text>}
             </div>
   )
 

@@ -263,8 +263,9 @@ describe('TechniqueEditor', () => {
         detail: message, errors: [{ field: 'changes.adversarial_system_prompt', message }],
       }))
       .mockRejectedValueOnce(rejection({ detail: 'Source technique configuration changed.' }))
+    const onApplied = jest.fn()
     render(<FluentProvider theme={webLightTheme}>
-      <TechniqueEditor original={promptConfiguration()} autoApply onApplied={jest.fn()} />
+      <TechniqueEditor original={promptConfiguration()} autoApply onApplied={onApplied} />
     </FluentProvider>)
     const field = await screen.findByRole('textbox', { name: 'Adversarial system prompt' })
     await user.clear(field)
@@ -273,10 +274,16 @@ describe('TechniqueEditor', () => {
     const fieldError = screen.getByText(message)
     expect(field.getAttribute('aria-describedby')?.split(' ')).toContain(fieldError.id)
     expect(screen.getAllByText(message)).toHaveLength(1)
+    expect(screen.queryByText('Technique settings applied to this run.')).not.toBeInTheDocument()
     await user.type(field, ' ')
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(2))
     expect(await screen.findByText('Source technique configuration changed.')).toBeInTheDocument()
     expect(field).not.toHaveAttribute('aria-invalid', 'true')
+    expect(screen.queryByText('Technique settings applied to this run.')).not.toBeInTheDocument()
+    expect(onApplied).not.toHaveBeenCalled()
+    await user.type(field, ' ')
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText('Technique settings applied to this run.')).toBeInTheDocument()
   })
 
   it('should focus the rejected prompt field when Apply to run fails for it', async () => {
