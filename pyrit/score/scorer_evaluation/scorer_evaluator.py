@@ -518,7 +518,7 @@ class ScorerEvaluator(abc.ABC):
         Returns:
             list[list[Score]]: One score list for each response.
         """
-        results = await batch_task_async(
+        return await batch_task_async(
             task_func=self.scorer.score_async,
             task_arguments=["scorable", "expectation"],
             prompt_target=self.scorer.get_chat_target(),
@@ -528,7 +528,6 @@ class ScorerEvaluator(abc.ABC):
                 [ScoringExpectation(objective=objective) for objective in objectives],
             ],
         )
-        return cast("list[list[Score]]", results)
 
     @staticmethod
     def _score_matches_harm_category(*, score: Score, harm_category: str) -> bool:

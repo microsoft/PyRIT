@@ -14,7 +14,7 @@ from contextlib import AbstractAsyncContextManager, nullcontext
 from contextvars import copy_context
 from functools import partial
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 from uuid import uuid4
 
 from pyrit.common.attack_result_scope import get_current_attack_result_id
@@ -331,7 +331,7 @@ class PromptNormalizer:
             "send_context",
         ]
 
-        responses = await batch_task_async(
+        return await batch_task_async(
             prompt_target=target,
             batch_size=batch_size,
             items_to_batch=batch_items,
@@ -339,8 +339,6 @@ class PromptNormalizer:
             task_arguments=batch_item_keys,
             target=target,
         )
-        # Each batch result is the Message returned by send_prompt_async.
-        return cast("list[Message]", responses)
 
     async def convert_values_async(
         self,

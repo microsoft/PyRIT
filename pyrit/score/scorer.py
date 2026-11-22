@@ -1642,7 +1642,7 @@ class Scorer(Identifiable, abc.ABC):
             **task_kwargs,
         )
 
-        # results is a list[list[Score]] and needs to be flattened
+        # Flatten the per-scorable score lists into one list
         return [score for sublist in results for score in sublist]
 
     async def score_image_batch_async(

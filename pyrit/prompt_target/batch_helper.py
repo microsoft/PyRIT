@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from collections.abc import Callable, Generator, Sequence
-from typing import Any
+from collections.abc import Awaitable, Callable, Generator, Sequence
+from typing import Any, TypeVar
 
 from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+
+_BatchResult = TypeVar("_BatchResult")
 
 
 def _get_chunks(*args: Sequence[Any], batch_size: int) -> Generator[list[Sequence[Any]], None, None]:
@@ -70,10 +72,10 @@ async def batch_task_async(
     prompt_target: PromptTarget | None = None,
     batch_size: int,
     items_to_batch: Sequence[Sequence[Any]],
-    task_func: Callable[..., Any],
+    task_func: Callable[..., Awaitable[_BatchResult]],
     task_arguments: list[str],
     **task_kwargs: Any,
-) -> list[Any]:
+) -> list[_BatchResult]:
     """
     Perform provided task in batches and validate parameters using helpers.
 
@@ -89,14 +91,14 @@ async def batch_task_async(
         **task_kwargs: Any other keyword arguments that task needs
 
     Returns:
-        responses(list): List of results from the batched function
+        list[_BatchResult]: One ``task_func`` result per batched item, in input order.
 
     Raises:
         ValueError: When the batch size is not an integer of at least 1.
         ValueError: When no items to batch are provided.
         ValueError: When number of lists of items to batch does not match number of task arguments.
     """
-    responses = []
+    responses: list[_BatchResult] = []
 
     _validate_batch_size(batch_size)
     _validate_rate_limit_parameters(prompt_target=prompt_target, batch_size=batch_size)
