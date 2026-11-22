@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing import assert_type
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -346,3 +347,23 @@ def test_scorer_validation_raises_typed_errors_with_existing_messages():
         MessageToolCallScorer().prepare_expectation(expectation=ScoringExpectation())
     assert isinstance(excinfo.value, ValueError)
     assert excinfo.value.scorer_name == "MessageToolCallScorer"
+
+
+def test_self_factories_return_subclass() -> None:
+    """Self-typed factories return the subclass they are called on (PyRIT #4504)."""
+
+    class _SubRequirements(ScorerRequirements):
+        pass
+
+    combined = _SubRequirements.combine(ScorerRequirements(evaluation=CRISIS))
+    assert_type(combined, _SubRequirements)
+    assert isinstance(combined, _SubRequirements)
+    assert combined.evaluation == CRISIS
+
+    class _SubPool(CompatibleScorers):
+        pass
+
+    pool = _SubPool.from_scorer(_substring())
+    assert_type(pool, _SubPool)
+    assert isinstance(pool, _SubPool)
+    assert len(pool.candidates) == 1
