@@ -4,6 +4,7 @@ import type {
   RegisteredComponentReference,
   RegisteredScenario,
   RunScenarioRequest,
+  ScenarioDatasetOptions,
   ScenarioDatasetRequest,
   ScenarioRunSizeEstimateRequest,
   TechniqueOverride,
@@ -42,6 +43,11 @@ export const OBJECTIVE_PARAMETER_NAMES = new Set(['objective', 'harm_categories'
 
 export function supportsParameter(scenario: RegisteredScenario, name: string): boolean {
   return scenario.supported_parameter_names.includes(name)
+}
+
+/** Whether a newly generated dataset can be selected: the scenario takes datasets and accepts any dataset name. */
+export function acceptsAnyNamedDataset(scenario: RegisteredScenario, options: ScenarioDatasetOptions): boolean {
+  return supportsParameter(scenario, 'dataset_config') && options.supports_overrides && options.mode === 'any'
 }
 
 /** Whether the scenario declares that a launch needs datasets selected, such as one without defaults. */
