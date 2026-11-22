@@ -76,9 +76,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.22",
     "reportlab>=4.4.4",
-    # 2026.11.x breaks \X on Indic conjuncts (GB9c never applies, mrab-regex#636), which graphemes() relies on.
-    # Remove the upper bound once that is fixed upstream (#4308).
-    "regex>=2024.11.6,<2026.11",
+    "regex>=2024.11.6",
     "segno>=1.6.6",
     "scipy>=1.15.3",
     "SQLAlchemy[asyncio]>=2.0.41",
@@ -280,7 +278,7 @@ redundant-condition-strict = "ignore"
 [[tool.ty.overrides]]
 include = ["tests/unit/**"]
 [tool.ty.overrides.rules]
-call-non-callable = "ignore"
+not-callable = "ignore"
 invalid-assignment = "ignore"
 invalid-await = "ignore"
 invalid-parameter-default = "ignore"
@@ -294,9 +292,13 @@ unsupported-operator = "ignore"
 # relaxed here: tests read private/mock attributes and subclass library types
 # with loosened signatures / runtime-validation-failure arguments.
 invalid-argument-type = "ignore"
-invalid-method-override = "ignore"
+incompatible-method-override = "ignore"
 no-matching-overload = "ignore"
-unresolved-attribute = "ignore"
+missing-attribute = "ignore"
+# ty 0.0.105 split these out of missing-attribute (unions) and not-callable
+# (abstract classes); keep them relaxed here for the same reasons as their parents.
+missing-union-attribute = "ignore"
+abstract-class-instantiation = "ignore"
 # Enabled for pyrit/ (clean) but still relaxed here: tests/unit has 318 bare
 # generics (mostly `dict` and the attack context/strategy classes) across ~70 files.
 missing-type-argument = "ignore"
@@ -333,10 +335,7 @@ include = [
     "pyrit/cli/pyrit_scan.py",
     "pyrit/common/cli_helpers.py",
     "pyrit/common/yaml_loadable.py",
-    "pyrit/converter/decomposition_converter.py",
     "pyrit/embedding/openai_text_embedding.py",
-    "pyrit/executor/attack/multi_turn/tree_of_attacks.py",
-    "pyrit/executor/attack/single_turn/many_shot_jailbreak.py",
     "pyrit/executor/promptgen/gcg/attack/base/attack_manager.py",
     "pyrit/executor/promptgen/gcg/attack/gcg/candidate_proposer.py",
     "pyrit/executor/promptgen/gcg/attack/gcg/gcg_attack.py",
@@ -350,8 +349,6 @@ include = [
     "pyrit/models/parameter.py",
     "pyrit/models/score/observation.py",
     "pyrit/models/score/scorable.py",
-    "pyrit/prompt_normalizer/json_retry.py",
-    "pyrit/prompt_normalizer/prompt_normalizer.py",
     "pyrit/prompt_target/azure_blob_storage_target.py",
     "pyrit/prompt_target/common/discover_target_capabilities.py",
     "pyrit/prompt_target/openai/openai_error_handling.py",
@@ -361,8 +358,6 @@ include = [
     "pyrit/registry/registry_recipe_restore.py",
     "pyrit/registry/registry_recipe_rules.py",
     "pyrit/registry/registry_recipe_save.py",
-    "pyrit/scenario/core/attack_technique_factory.py",
-    "pyrit/scenario/scenarios/foundry/assert_policy.py",
     "pyrit/score/float_scale/local_violence_classifier_scorer.py",
     "pyrit/score/llm_scoring.py",
     "pyrit/score/observation/otel_execution_trace_source.py",
@@ -471,6 +466,8 @@ fixable = [
 ]
 select = [
     "A",  # https://docs.astral.sh/ruff/rules/#flake8-builtins-a
+    "ASYNC240",  # blocking-path-method-in-async-function
+    "ASYNC250",  # blocking-input-in-async-function
     "B",  # https://docs.astral.sh/ruff/rules/#flake8-bugbear-b
     "C4",  # https://docs.astral.sh/ruff/rules/#flake8-comprehensions-c4
     "CPY001",  # missing-copyright-notice
@@ -565,12 +562,14 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 # ERA001: jupytext markdown cells look like commented-out code
 # LOG: notebooks use root logger for convenience
 # PLE1142: top-level await is valid in Jupyter notebooks
-"doc/**" = ["ANN", "CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142"]
+# ASYNC240: example code favors readability over off-loop path calls
+"doc/**" = ["ANN", "CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142", "ASYNC240"]
 # Backend API routes raise HTTPException handled by FastAPI, not true exceptions
 "pyrit/backend/**/*.py" = ["DOC501", "B008"]
 "pyrit/__init__.py" = ["D104"]
 # Allow broad pytest.raises(Exception) in tests
-"tests/**/*.py" = ["ANN", "B017"]
+# ASYNC240: blocking path calls in test setup do not affect library users
+"tests/**/*.py" = ["ANN", "B017", "ASYNC240"]
 # Migration revisions are immutable once added. Keep RUF100 enabled for new
 # revisions while exempting only existing files with stale noqa directives.
 "pyrit/memory/alembic/versions/1b3d5f7a9c2e_persist_scored_expectation.py" = ["RUF100"]
@@ -591,6 +590,8 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 "build_scripts/**/*.py" = ["ANN"]
 "docker/**/*.py" = ["ANN"]
 "frontend/dev.py" = ["ANN"]
+# ASYNC240: e2e fixture backends are test code, like tests/
+"frontend/e2e/**/*.py" = ["ASYNC240"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
