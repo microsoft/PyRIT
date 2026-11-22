@@ -12,6 +12,9 @@ from urllib.parse import quote
 from typing_extensions import override
 
 from pyrit.common.task_utils import gather_with_cleanup_async
+from pyrit.datasets.seed_datasets.remote.beaver_tails_dataset import (
+    _BeaverTailsDataset,
+)
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
@@ -76,6 +79,11 @@ class _CoSafeDataset(_RemoteDatasetLoader):
 
     The single-turn files in the dataset's ``Single Prompt/`` directory are not loaded.
 
+    CoSafe's categories are the BeaverTails taxonomy (the conversations were built from
+    BeaverTails questions), so each seed's ``harm_categories`` is standardized to canonical
+    ``HarmCategory`` names with the same alias mapping the BeaverTails loader uses. The raw
+    category label stays in ``metadata["category"]``.
+
     Reference: [@yu2024cosafe]
 
     Source: https://github.com/ErxinYu/CoSafe-Dataset, pinned to a known commit. The
@@ -93,8 +101,8 @@ class _CoSafeDataset(_RemoteDatasetLoader):
 
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     harm_categories: list[str] = [category.value for category in CoSafeCategory]
-    size: str = "large"
-    tags: frozenset[str] = frozenset({"safety", "jailbreak", "multiturn"})
+    size: str = "large"  # 1,400 conversations (seed groups); size is counted in groups, not the 7,000 prompts
+    tags: frozenset[str] = frozenset({"default", "safety", "jailbreak", "multiturn"})
 
     def __init__(
         self,
@@ -207,8 +215,8 @@ class _CoSafeDataset(_RemoteDatasetLoader):
                 or not message["content"]
             ):
                 raise ValueError(
-                    f"CoSafe {category.value} conversation {index} has a message without a user or assistant "
-                    "role and non-empty content."
+                    f"CoSafe {category.value} conversation {index} has a message that is not a dict with a "
+                    "user or assistant role and non-empty string content."
                 )
         while messages and messages[-1]["role"] == "assistant":
             messages.pop()
@@ -217,6 +225,12 @@ class _CoSafeDataset(_RemoteDatasetLoader):
 
         group_id = uuid.uuid4()
         metadata = {"category": category.value, "conversation_index": index}
+        # CoSafe uses the BeaverTails category labels, so standardize them with the same mapping.
+        raw_labels: list[str] = str(category.value).split(",")
+        harm_categories = self._standardize_harm_categories(
+            raw_labels,
+            alias_overrides=_BeaverTailsDataset.HARM_CATEGORY_ALIAS_OVERRIDES,
+        )
         return [
             SeedPrompt(
                 value=message["content"],
@@ -224,7 +238,7 @@ class _CoSafeDataset(_RemoteDatasetLoader):
                 role=self._role(message["role"]),
                 sequence=sequence,
                 dataset_name=self.dataset_name,
-                harm_categories=[category.value],
+                harm_categories=list(harm_categories),
                 description=_DESCRIPTION,
                 authors=_AUTHORS,
                 source=_DATASET_URL,

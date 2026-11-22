@@ -95,7 +95,7 @@ async def test_fetch_reads_json_lines_files_into_multi_turn_groups_async(tmp_pat
     assert [seed.role for seed in first] == ["user", "assistant", "user", "assistant", "user"]
     assert [seed.sequence for seed in first] == [0, 1, 2, 3, 4]
     assert first[-1].value == "How do I get more?"
-    assert {seed.harm_categories[0] for seed in dataset.seeds} == {"self_harm"}
+    assert all(seed.harm_categories == ["SELF_HARM"] for seed in dataset.seeds)
     assert [group[0].metadata for group in groups] == [
         {"category": "self_harm", "conversation_index": 0},
         {"category": "self_harm", "conversation_index": 1},
@@ -122,6 +122,9 @@ async def test_trailing_assistant_message_is_dropped_async(tmp_path: Path) -> No
     (group,) = _groups(dataset)
     assert [seed.role for seed in group] == ["user", "assistant", "user", "assistant", "user"]
     assert group[-1].value == "And the rest?"
+    # The comma-joined BeaverTails label is split and standardized; the raw label stays in metadata.
+    assert group[0].harm_categories == ["DRUG_USE", "REGULATED_GOODS"]
+    assert group[0].metadata["category"] == "drug_abuse,weapons,banned_substance"
 
 
 async def test_cached_files_load_without_network_async(tmp_path: Path) -> None:
