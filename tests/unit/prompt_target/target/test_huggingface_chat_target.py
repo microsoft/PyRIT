@@ -25,6 +25,7 @@ from pyrit.exceptions import EmptyResponseException
 from pyrit.models import (
     Message,
     MessagePiece,
+    TokenUsage,
 )
 from pyrit.prompt_target import HuggingFaceChatTarget
 
@@ -1187,3 +1188,37 @@ async def test_empty_response_that_was_not_truncated_still_raises() -> None:
 
     with pytest.raises(EmptyResponseException):
         await target.send_prompt_async(message=_user_message("Hello"))
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+@pytest.mark.parametrize(
+    ("new_token_ids", "decoded_text"),
+    [([101, _EOS_TOKEN_ID], "answer"), ([101, 102, 103], "")],
+    ids=["response", "empty-truncated-response"],
+)
+async def test_response_records_token_usage_async(new_token_ids: list[int], decoded_text: str) -> None:
+    target = await _target_generating(new_token_ids=new_token_ids, decoded_text=decoded_text)
+
+    response = await target.send_prompt_async(message=_user_message("Hello"))
+
+    usage = TokenUsage.from_metadata(response[0].message_pieces[0].prompt_metadata)
+    assert usage == TokenUsage(
+        input_tokens=len(_PROMPT_TOKEN_IDS),
+        output_tokens=len(new_token_ids),
+        total_tokens=len(_PROMPT_TOKEN_IDS) + len(new_token_ids),
+    )
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_caller_supplied_token_usage_is_replaced_async() -> None:
+    target = await _target_generating(new_token_ids=[101, _EOS_TOKEN_ID], decoded_text="answer")
+    message = _user_message("Hello")
+    message.message_pieces[0].prompt_metadata = {"token_usage_input_tokens": 999, "token_usage_audio_tokens": 7}
+
+    response = await target.send_prompt_async(message=message)
+
+    metadata = response[0].message_pieces[0].prompt_metadata
+    assert metadata["token_usage_input_tokens"] == len(_PROMPT_TOKEN_IDS)
+    assert "token_usage_audio_tokens" not in metadata
