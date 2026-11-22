@@ -5076,13 +5076,14 @@ class MemoryInterface(abc.ABC):
             conditions.append(text_match(column=SeedEntry.value, pattern=value_pattern))
         elif value:
             conditions.append(SeedEntry.value == value if exact else text_match(column=SeedEntry.value, value=value))
-        if value_sha256:
+        # An explicitly empty sequence matches nothing (None means "no filter"), so a delete never widens.
+        if value_sha256 is not None:
             conditions.append(SeedEntry.value_sha256.in_(value_sha256))
         if dataset_name:
             conditions.append(SeedEntry.dataset_name == dataset_name)
         elif dataset_name_pattern is not None:
             conditions.append(text_match(column=SeedEntry.dataset_name, pattern=dataset_name_pattern))
-        if prompt_group_ids:
+        if prompt_group_ids is not None:
             conditions.append(SeedEntry.prompt_group_id.in_(prompt_group_ids))
         if data_types:
             data_type_conditions = SeedEntry.data_type.in_(data_types)

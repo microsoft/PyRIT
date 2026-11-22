@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -509,3 +510,29 @@ async def test_remove_seed_groups_rolls_back_on_error(sqlite_instance: MemoryInt
 
     # The failed deletion is rolled back, so the group is still present.
     assert len(await sqlite_instance.get_seeds_async()) == 1
+
+
+async def test_remove_seeds_empty_prompt_group_ids_removes_nothing(sqlite_instance: MemoryInterface):
+    seed_prompts = [
+        SeedPrompt(value=f"prompt{i}", dataset_name="ds", data_type="text", prompt_group_id=uuid.uuid4())
+        for i in range(3)
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(seeds=seed_prompts, added_by="test")
+
+    removed = await sqlite_instance.remove_seeds_from_memory_async(dataset_name="ds", prompt_group_ids=[])
+
+    assert removed == 0
+    assert len(await sqlite_instance.get_seeds_async(dataset_name="ds")) == 3
+
+
+async def test_remove_seed_groups_empty_value_sha256_removes_nothing(sqlite_instance: MemoryInterface):
+    seed_prompts = [
+        SeedPrompt(value=f"prompt{i}", dataset_name="ds", data_type="text", prompt_group_id=uuid.uuid4())
+        for i in range(3)
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(seeds=seed_prompts, added_by="test")
+
+    removed = await sqlite_instance.remove_seed_groups_from_memory_async(dataset_name="ds", value_sha256=[])
+
+    assert removed == 0
+    assert len(await sqlite_instance.get_seeds_async(dataset_name="ds")) == 3
