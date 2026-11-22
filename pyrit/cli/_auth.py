@@ -11,7 +11,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -42,7 +42,7 @@ class BackendAuthConfig:
     scopes: tuple[str, ...]
 
     @classmethod
-    def from_payload(cls, payload: Any) -> BackendAuthConfig:
+    def from_payload(cls, payload: Any) -> Self:
         """
         Validate an ``/api/auth/config`` response.
 

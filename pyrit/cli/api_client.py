@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
@@ -95,7 +95,7 @@ class PyRITApiClient:
         self._compatibility_id: str | None = None
         self._compatibility_error: CompatibilityError | None = None
 
-    async def __aenter__(self) -> PyRITApiClient:
+    async def __aenter__(self) -> Self:
         """
         Open the underlying ``httpx.AsyncClient``.
 

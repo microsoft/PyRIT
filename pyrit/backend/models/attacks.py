@@ -11,7 +11,7 @@ This is the attack-centric API design where every user interaction targets a mod
 import copy
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, Self, cast
 
 from pydantic import (
     AfterValidator,
@@ -90,7 +90,7 @@ class ScoreView(Score):
         return "Unknown"
 
     @classmethod
-    def from_domain(cls, score: Score, *, is_objective_score: bool = False) -> "ScoreView":
+    def from_domain(cls, score: Score, *, is_objective_score: bool = False) -> Self:
         """
         Build a ``ScoreView`` from a domain ``Score`` without re-validating.
 
@@ -160,7 +160,7 @@ class MessagePieceView(MessagePiece):
         objective_score_id: uuid.UUID | str | None = None,
         original_value_url: str | None = None,
         converted_value_url: str | None = None,
-    ) -> "MessagePieceView":
+    ) -> Self:
         """
         Build a ``MessagePieceView`` from a domain piece without re-validating.
 
