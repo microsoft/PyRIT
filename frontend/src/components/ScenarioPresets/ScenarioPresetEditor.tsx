@@ -28,6 +28,7 @@ import {
   uniqueTechniqueOptions,
   type ScenarioConfigFormState,
 } from '@/components/Scenarios/scenarioConfigForm'
+import { acceptsAnyNamedDataset } from '@/components/Scenarios/scenarioLaunchRequest'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -522,7 +523,10 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                     onChange={(datasets) => updateConfig({ datasets })}
                     onValidationChange={setDatasetError}
                   />
-                  <DatasetActions />
+                  <DatasetActions
+                    scenarioName={scenario.scenario_name}
+                    canGenerate={acceptsAnyNamedDataset(scenario, datasetBaseline.options)}
+                  />
                 </>}
               </div>
             </section>
