@@ -177,6 +177,7 @@ class TestSeedDatasetProvider:
                 {"SlowProvider": slow_provider, "FailingProvider": failing_provider},
                 clear=True,
             ),
+            patch.object(SeedDatasetProvider, "_materialize_builtin_providers"),
             patch("pyrit.datasets.seed_datasets.seed_dataset_provider.tqdm") as mock_tqdm,
             pytest.raises(RuntimeError, match="503") as exc_info,
         ):
