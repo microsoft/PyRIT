@@ -76,8 +76,8 @@ import { datasetTotalLimit, scenarioDatasetDefaults, scenarioDatasetOptions } fr
 import { formatCarriedParameterPreview } from './scenarioLaunchPresentation'
 import { normalizeScenarioMarkdown } from './scenarioMarkdown'
 import { carriedPresetScenarioParams, seedPresetTechniques, untouchedPresetScenarioParams } from './scenarioPresetSeed'
+import { BASELINE_TECHNIQUE } from './scenarioConfigForm'
 import {
-  BASELINE_TECHNIQUE,
   exceedsTechniqueLimit,
   initialScenarioLaunchForm,
   reduceScenarioLaunchForm,
