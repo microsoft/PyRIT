@@ -324,13 +324,6 @@ unsound-assignment = "ignore"
 [[tool.ty.overrides]]
 include = [
     "pyrit/auth/browser_session_copilot_authenticator.py",
-    "pyrit/backend/middleware/runtime.py",
-    "pyrit/backend/routes/targets.py",
-    "pyrit/backend/routes/version.py",
-    "pyrit/backend/services/attack_service.py",
-    "pyrit/backend/services/finding_export.py",
-    "pyrit/backend/services/prompt_generation_service.py",
-    "pyrit/backend/services/scenario_service.py",
     "pyrit/cli/api_client.py",
     "pyrit/cli/pyrit_scan.py",
     "pyrit/common/cli_helpers.py",
@@ -358,12 +351,6 @@ include = [
     "pyrit/registry/registry_recipe_restore.py",
     "pyrit/registry/registry_recipe_rules.py",
     "pyrit/registry/registry_recipe_save.py",
-    "pyrit/score/float_scale/local_violence_classifier_scorer.py",
-    "pyrit/score/llm_scoring.py",
-    "pyrit/score/observation/otel_execution_trace_source.py",
-    "pyrit/score/scorer.py",
-    "pyrit/score/scorer_prompt_validator.py",
-    "pyrit/score/true_false/prompt_shield_scorer.py",
 ]
 [tool.ty.overrides.rules]
 unsound-assignment = "ignore"
