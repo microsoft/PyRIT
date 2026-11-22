@@ -40,6 +40,7 @@ from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
+    from typing import Self
 
     from pyrit.score.observation.execution import _ObservationEvidence
 
@@ -82,7 +83,7 @@ class ContentClassifier(BaseModel):
         return self
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> ContentClassifier:
+    def from_yaml(cls, path: str | Path) -> Self:
         """
         Load a content classifier from a YAML file.
 
@@ -291,7 +292,7 @@ class SelfAskCategoryScorer(MessageTrueFalseScorer):
         response_handler: ResponseHandler | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
         validator: ScorerPromptValidator | None = None,
-    ) -> SelfAskCategoryScorer:
+    ) -> Self:
         """
         Build a scorer whose system prompt and response contract use one content classifier.
 

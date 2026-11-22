@@ -22,6 +22,7 @@ from pyrit.common.yaml_helper import safe_load_yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Self
 
 SHIELDGEMMA_DEFAULT_POLICY_PATH = (SCORER_SEED_PROMPT_PATH / "shieldgemma" / "shieldgemma_policy.yaml").resolve()
 
@@ -113,7 +114,7 @@ class ShieldGemmaPolicy(BaseModel):
         return self
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> ShieldGemmaPolicy:
+    def from_yaml(cls, path: str | Path) -> Self:
         """
         Load a ShieldGemma policy from YAML.
 
@@ -133,7 +134,7 @@ class ShieldGemmaPolicy(BaseModel):
         return cls.model_validate(loaded)
 
     @classmethod
-    def default(cls) -> ShieldGemmaPolicy:
+    def default(cls) -> Self:
         """
         Load the bundled ShieldGemma policy.
 
