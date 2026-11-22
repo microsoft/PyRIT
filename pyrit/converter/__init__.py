@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from pyrit.converter.base64_converter import Base64Converter
     from pyrit.converter.base2048_converter import Base2048Converter
     from pyrit.converter.bidi_converter import BidiConverter
+    from pyrit.converter.bifid_converter import BifidConverter
     from pyrit.converter.bijection_converter import (
         DigitBijectionConverter,
         LetterBijectionConverter,
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
     from pyrit.converter.code_attack_converter import CodeAttackConverter
     from pyrit.converter.codechameleon_converter import CodeChameleonConverter
     from pyrit.converter.colloquial_wordswap_converter import ColloquialWordswapConverter
+    from pyrit.converter.columnar_transposition_converter import ColumnarTranspositionConverter
     from pyrit.converter.converter import Converter, ConverterResult, get_converter_modalities
     from pyrit.converter.decomposition_converter import DecompositionConverter
     from pyrit.converter.denylist_converter import DenylistConverter
@@ -170,6 +172,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "Base2048Converter": "pyrit.converter.base2048_converter",
     "Base64Converter": "pyrit.converter.base64_converter",
     "BidiConverter": "pyrit.converter.bidi_converter",
+    "BifidConverter": "pyrit.converter.bifid_converter",
     "DigitBijectionConverter": "pyrit.converter.bijection_converter",
     "LetterBijectionConverter": "pyrit.converter.bijection_converter",
     "TokenBijectionConverter": "pyrit.converter.bijection_converter",
@@ -183,6 +186,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "CodeAttackConverter": "pyrit.converter.code_attack_converter",
     "CodeChameleonConverter": "pyrit.converter.codechameleon_converter",
     "ColloquialWordswapConverter": "pyrit.converter.colloquial_wordswap_converter",
+    "ColumnarTranspositionConverter": "pyrit.converter.columnar_transposition_converter",
     "ContentWordSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "ConverterResult": "pyrit.converter.converter",
     "DecompositionConverter": "pyrit.converter.decomposition_converter",

@@ -554,7 +554,7 @@ class Parameter(BaseModel):
             except ValidationError as exc:
                 raise ValueError(f"Parameter '{self.name}' expects {self.type_name}: {exc}") from exc
 
-    def validate(self) -> None:  # type: ignore[ty:invalid-method-override]
+    def validate(self) -> None:  # type: ignore[ty:incompatible-method-override]
         """
         Reject a declaration with an unsupported ``param_type``.
 

@@ -78,7 +78,7 @@ class FindingListItem(Finding):
     evidence_count: int = Field(ge=0)
     child_count: int = Field(ge=0, description="The number of direct sub-findings")
     # A response narrows each path to include its derived completeness; list items are never reassigned.
-    paths: tuple[FindingPathItem, ...] = ()  # type: ignore[ty:invalid-mutable-override]
+    paths: tuple[FindingPathItem, ...] = ()  # type: ignore[ty:incompatible-mutable-override]
 
 
 class AttackFindingItem(Finding):
