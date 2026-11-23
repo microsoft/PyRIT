@@ -249,18 +249,18 @@ class Registry(ABC, Generic[T, MetadataT]):
         with cls._singletons_lock:
             instance = cls._singletons.get(cls)
             if instance is not None:
-                return instance  # type: ignore[ty:invalid-return-type]
+                return instance  # type: ignore[ty:invalid-explicit-return]
             construction_lock = cls._singleton_construction_locks.setdefault(cls, threading.Lock())
 
         with construction_lock:
             with cls._singletons_lock:
                 instance = cls._singletons.get(cls)
                 if instance is not None:
-                    return instance  # type: ignore[ty:invalid-return-type]
+                    return instance  # type: ignore[ty:invalid-explicit-return]
             instance = cls()
             with cls._singletons_lock:
                 cls._singletons[cls] = instance
-            return instance  # type: ignore[ty:invalid-return-type]
+            return instance  # type: ignore[ty:invalid-explicit-return]
 
     @classmethod
     def reset_registry_singleton(cls) -> None:

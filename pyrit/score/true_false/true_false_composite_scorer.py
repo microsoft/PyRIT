@@ -96,7 +96,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         )
         return self._create_identifier(
             params={"sub_scorers_order_independent": True} if order_independent else None,
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             sub_scorers=[s.get_identifier() for s in self._scorers],
         )
 
