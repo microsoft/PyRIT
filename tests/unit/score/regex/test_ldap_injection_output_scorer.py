@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.models import ScorerEvaluationIdentifier, config_hash
 from pyrit.score import LDAPInjectionOutputScorer, TrueFalseAggregatorFunc, TrueFalseScoreAggregator
+from pyrit.score.true_false.regex.ldap_injection_output_scorer import _has_null_byte_termination
 
 
 @pytest.mark.parametrize(
@@ -172,6 +174,63 @@ async def test_ldap_injection_scorer_malformed_url_does_not_stall(patch_central_
     score = (await scorer.score_text_async(malformed_text))[0]
     assert score.get_value() is False
 
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # A long run of encoded closers with no null byte used to be rescanned from every closer.
+        pytest.param("%29%28" * 25_000, False, id="encoded-closers"),
+        pytest.param("a%29" * 40_000, False, id="values-and-closers"),
+        pytest.param("a%29" * 40_000 + " %00", False, id="closers-then-space-and-null"),
+        pytest.param("%29%28" * 25_000 + "%00", True, id="closers-then-null"),
+        # One closer whose run a parenthesis cuts before many null bytes is checked once, not per null byte.
+        pytest.param("a)" + "x" * 100_000 + "(" + "%00" * 100_000, False, id="blocked-closer-then-nulls"),
+    ],
+)
+async def test_ldap_injection_scorer_scales_on_long_closer_runs(text: str, expected: bool, patch_central_database):
+    scorer = LDAPInjectionOutputScorer()
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "admin*)%00",
+        "a))%00",
+        "a) )%00",
+        "a\u2028)x\\0g",
+        "\u017f)%00",
+        "a)%29x\x00",
+        "a)(%00",
+        "a) %00",
+        "a)x\\0a",
+        "a)x\\0F",
+        "a)%2900",
+        ")%00",
+        "%29%00",
+        "(%00",
+        "a%29x(y%00",
+        "a%29x\\x00",
+    ],
+)
+def test_ldap_null_byte_check_matches_default_pattern(text: str) -> None:
+    pattern = LDAPInjectionOutputScorer._DEFAULT_PATTERNS["Null Byte Filter Termination"]
+    assert _has_null_byte_termination(text) is (re.search(pattern, text) is not None)
+
+
+
+async def test_ldap_null_byte_check_skipped_when_subclass_replaces_default(patch_central_database):
+    class NarrowNullByteScorer(LDAPInjectionOutputScorer):
+        _DEFAULT_PATTERNS = {
+            **(LDAPInjectionOutputScorer._DEFAULT_PATTERNS or {}),
+            "Null Byte Filter Termination": r"(?i)admin\)%00",
+        }
+
+    scorer = NarrowNullByteScorer()
+    assert (await scorer.score_text_async("user*)%00"))[0].get_value() is False
+    assert (await scorer.score_text_async("admin)%00"))[0].get_value() is True
 
 async def test_ldap_injection_scorer_custom_patterns(patch_central_database):
     custom = {"Marker": r"DANGER_LDAP_\d+"}
