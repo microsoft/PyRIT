@@ -3658,7 +3658,7 @@ class TestScenarioRunServiceCancelRun:
         mock_memory.get_scenario_result_header_async.side_effect = [initial, latest]
         service = ScenarioRunService()
 
-        with pytest.raises(ValueError, match="Cannot cancel run"):
+        with pytest.raises(ValueError, match=rf"^Cannot cancel run in '{latest_state.value}' state\.$"):
             await service.cancel_run_async(scenario_result_id="sr-uuid-1")
 
         assert mock_memory.get_scenario_result_header_async.await_count == 2
@@ -4493,7 +4493,7 @@ class TestScenarioRunServiceRecovery:
         mock_memory.get_scenario_result_header_async.return_value = db_result
 
         service = ScenarioRunService()
-        with pytest.raises(ValueError, match="Cannot cancel run"):
+        with pytest.raises(ValueError, match=r"^Cannot cancel run in 'COMPLETED' state\.$"):
             await service.cancel_run_async(scenario_result_id="sr-done")
         mock_memory.get_scenario_results_async.assert_not_awaited()
 
@@ -4503,7 +4503,7 @@ class TestScenarioRunServiceRecovery:
         mock_memory.get_scenario_result_header_async.return_value = db_result
 
         service = ScenarioRunService()
-        with pytest.raises(ValueError, match="Cannot cancel run"):
+        with pytest.raises(ValueError, match=r"^Cannot cancel run in 'CANCELLED' state\.$"):
             await service.cancel_run_async(scenario_result_id="sr-cancelled")
         mock_memory.get_scenario_results_async.assert_not_awaited()
 
@@ -4854,7 +4854,7 @@ class TestScenarioRunServiceGetResults:
         mock_memory.get_scenario_results_async = AsyncMock(return_value=[db_result])
 
         service = ScenarioRunService()
-        with pytest.raises(ValueError, match="only available for completed runs"):
+        with pytest.raises(ValueError, match=r"only available for completed runs\. Current status: 'IN_PROGRESS'\.$"):
             (await service.get_run_results_async(scenario_result_id="sr-running"))
 
     async def test_get_results_returns_details_for_completed_run(self, mock_memory) -> None:

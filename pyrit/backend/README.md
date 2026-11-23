@@ -217,8 +217,9 @@ or keep an uploaded file. A saved converter or scorer can use this server's keys
 the configuration do. A target left out of the
 request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
 converter copy made with `source` can't be saved yet, and a private converter or scorer can't be saved (**422**). A
-taken name receives **409**, and storage that can't
-be written receives **503**. Each listed converter's and scorer's `origin` is `saved`, `configuration`, or
+taken converter name receives **409** with or without `persist`, a taken scorer name receives **409** when saving
+and **400** otherwise, and storage that can't be written receives **503**. Each listed converter's and scorer's
+`origin` is `saved`, `configuration`, or
 `temporary`, as for targets. `DELETE /api/converters/{id}`
 refuses a saved converter (**409**); delete it with `DELETE /api/saved-entries/converters/{id}` instead.
 
@@ -1045,9 +1046,8 @@ API callers are trusted operators, so these are intentional exceptions:
   only files from the media folders above.
 - Initializers and custom initializer scripts are trusted Python. Uploading scripts requires
   an administrator and `allow_custom_initializers: true`.
-- `GitHubCopilotTarget.working_directory`, `HuggingFaceChatTarget.model_path`, and
-  `LocalRefusalClassifierScorer.model_id` may name local folders; callers set them like any
-  other operator setting.
+- `GitHubCopilotTarget.working_directory` and `HuggingFaceChatTarget.model_path` may name local
+  folders; callers set them like any other operator setting.
 
 ## Strict Lockstep Compatibility
 
