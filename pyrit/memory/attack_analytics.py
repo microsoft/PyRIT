@@ -588,9 +588,10 @@ class AttackAnalyticsReader:
                                 operation=lambda: connection.exec_driver_sql("BEGIN"), control=control
                             )
                 elif dialect == "mssql":
-                    old_timeout = getattr(driver, "timeout", None)
-                    if not isinstance(old_timeout, int):
+                    timeout = getattr(driver, "timeout", None)
+                    if not isinstance(timeout, int):
                         raise NotImplementedError("Azure SQL analytics requires an ODBC query-timeout property")
+                    old_timeout = timeout
                     await self._odbc_timeout_async(driver=driver, timeout=max(1, math.ceil(control.remaining)))
                 else:
                     raise NotImplementedError(f"Attack analytics does not support {dialect!r}")

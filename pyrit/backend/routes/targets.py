@@ -8,6 +8,8 @@ Provides endpoints for managing target instances.
 Target types are set at app startup via initializers - you cannot add new types at runtime.
 """
 
+from typing import cast
+
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
@@ -86,8 +88,8 @@ def _target_upload_directory(request: Request) -> str | None:
     Returns:
         str | None: The configured folder, or None when the server configures none.
     """
-    directory: str | None = getattr(request.app.state, "target_upload_directory", None)
-    return directory
+    # RuntimeLifecycle sets this from the validated server config, always as str | None.
+    return cast("str | None", getattr(request.app.state, "target_upload_directory", None))
 
 
 def _saved_entry_owner(request: Request) -> SavedEntryOwner | None:

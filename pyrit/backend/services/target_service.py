@@ -175,6 +175,14 @@ class TargetService:
                     try:
                         results.append(await self._probe_capabilities_async(source))
                     except (CapabilityDiscoveryError, ValueError) as exc:
+                        logger.warning(
+                            "Capability detection failed for target %r (child %d, %s): %s",
+                            target_registry_name,
+                            index + 1,
+                            type(source).__name__,
+                            exc,
+                            exc_info=exc,
+                        )
                         if isinstance(target, RoundRobinTarget):
                             error_type = (
                                 CapabilityDiscoveryError if isinstance(exc, CapabilityDiscoveryError) else ValueError
@@ -305,7 +313,7 @@ class TargetService:
             return None
         return self._build_instance_from_entry(entry)
 
-    def get_target_object(self, *, target_registry_name: str) -> Any | None:
+    def get_target_object(self, *, target_registry_name: str) -> PromptTarget | None:
         """
         Get the actual target object for use in attacks.
 

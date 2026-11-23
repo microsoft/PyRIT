@@ -9,7 +9,7 @@ import uuid
 from abc import abstractmethod
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, final, overload
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final, overload
 
 from pyrit.common import print_deprecation_message
 from pyrit.common.task_utils import gather_with_cleanup_async
@@ -20,6 +20,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Condition,
     ContentScorable,
+    FloatFeedback,
     Identifiable,
     MatchesObjective,
     Message,
@@ -29,6 +30,7 @@ from pyrit.models import (
     ScorableUnion,
     Score,
     ScorerCapabilities,
+    ScorerCapabilityName,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
     ScoreStatus,
@@ -80,6 +82,18 @@ def _read_snapshot_participation(score: Score) -> SnapshotParticipation | None:
     """
     raw: Any = score._snapshot_participation
     return raw if _is_snapshot_participation(raw) else None
+
+
+def _keeps_float_feedback(score: Score) -> bool:
+    """
+    Report whether a stored result meets the float feedback promise.
+
+    Returns:
+        bool: True for undetermined or non-true/false results, and for complete ones with a usable value.
+    """
+    if score.score_type != "true_false" or score.is_undetermined:
+        return True
+    return FloatFeedback.read(score) is not None
 
 
 def _is_snapshot_participation(value: Any) -> bool:
@@ -195,11 +209,15 @@ async def _legacy_score_scorable_async(
     )
     resolver = getattr(self, "_message_resolver", None) or MessageScorableResolver()
     message = await resolver.resolve_async(scorable=scorable, memory=self._memory)
-    legacy_score_async = self._score_async  # type: ignore[ty:unresolved-attribute]
+    legacy_score_async = self._score_async  # type: ignore[ty:missing-attribute]
     with _scoring_message_context(message):
-        scores: list[Score] = await legacy_score_async(
-            message,
-            objective=expectation.objective if expectation else None,
+        # The legacy hook contract returns list[Score]; the call is Any because the hook is read dynamically.
+        scores: list[Score] = cast(
+            "list[Score]",
+            await legacy_score_async(
+                message,
+                objective=expectation.objective if expectation else None,
+            ),
         )
     return scores
 
@@ -260,15 +278,15 @@ def _adapt_legacy_message_scorer(cls: type) -> None:
         else:
             score_async = MessageScorer._score_async
 
-        cls._score_async = score_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+        cls._score_async = score_async  # type: ignore[ty:invalid-assignment, ty:missing-attribute]
         if not defines("_score_piece_with_expectation_async"):
-            cls._score_piece_with_expectation_async = MessageScorer._score_piece_with_expectation_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+            cls._score_piece_with_expectation_async = MessageScorer._score_piece_with_expectation_async  # type: ignore[ty:invalid-assignment, ty:missing-attribute]
         if not defines("_get_supported_pieces"):
-            cls._get_supported_pieces = MessageScorer._get_supported_pieces  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+            cls._get_supported_pieces = MessageScorer._get_supported_pieces  # type: ignore[ty:invalid-assignment, ty:missing-attribute]
 
-    if not cls.SUPPORTED_SCORABLE_TYPES:  # type: ignore[ty:unresolved-attribute]
-        cls.SUPPORTED_SCORABLE_TYPES = MessageScorer.SUPPORTED_SCORABLE_TYPES  # type: ignore[ty:unresolved-attribute]
-    cls._score_scorable_async = _legacy_score_scorable_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+    if not cls.SUPPORTED_SCORABLE_TYPES:  # type: ignore[ty:missing-attribute]
+        cls.SUPPORTED_SCORABLE_TYPES = MessageScorer.SUPPORTED_SCORABLE_TYPES  # type: ignore[ty:missing-attribute]
+    cls._score_scorable_async = _legacy_score_scorable_async  # type: ignore[ty:invalid-assignment, ty:missing-attribute]
 
 
 class Scorer(Identifiable, abc.ABC):
@@ -293,6 +311,9 @@ class Scorer(Identifiable, abc.ABC):
     #: Wrappers expose their children instead of declaring their own criterion.
     CONDITION_TYPE: ClassVar[type[Condition] | None] = None
     SUPPORTED_SCORABLE_TYPES: ClassVar[tuple[type[Scorable], ...]] = ()
+    #: The result family every instance of the class returns: ``TRUE_FALSE`` or ``FLOAT_SCALE``.
+    #: Float feedback is promised only through ``_preserves_float_scale_value``, which scoring enforces.
+    CAPABILITIES: ClassVar[frozenset[ScorerCapabilityName]] = frozenset()
 
     _identifier: ComponentIdentifier | None = None
 
@@ -303,7 +324,8 @@ class Scorer(Identifiable, abc.ABC):
         See ``.github/instructions/scorers.instructions.md`` for the contract.
 
         Raises:
-            TypeError: If a subclass declares invalid or independently derived condition capabilities.
+            TypeError: If a subclass declares invalid or independently derived condition capabilities,
+                or a ``CAPABILITIES`` set other than its result family.
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
@@ -322,7 +344,29 @@ class Scorer(Identifiable, abc.ABC):
             "_get_child_scorers" in base.__dict__ for base in cls.__mro__ if base is not Scorer
         ):
             raise TypeError(f"{cls.__name__} wraps scorers and cannot declare its own CONDITION_TYPE.")
+        cls._check_result_family()
         _adapt_legacy_message_scorer(cls)
+
+    @classmethod
+    def _check_result_family(cls) -> None:
+        """
+        Require ``CAPABILITIES`` to name at most one result family, keeping any family a base declares.
+
+        Raises:
+            TypeError: If it names another guarantee, combines both families, or drops an inherited family.
+        """
+        families = frozenset({ScorerCapabilityName.TRUE_FALSE, ScorerCapabilityName.FLOAT_SCALE})
+        declared = frozenset(cls.CAPABILITIES)
+        if declared - families:
+            raise TypeError(
+                f"{cls.__name__}.CAPABILITIES may name only its result family. Override "
+                "_preserves_float_scale_value to promise float feedback, so scoring enforces the promise."
+            )
+        inherited = families & frozenset().union(*[getattr(base, "CAPABILITIES", ()) for base in cls.__mro__[1:]])
+        if len(declared | inherited) > 1:
+            raise TypeError(f"{cls.__name__} cannot return both true/false and float-scale results.")
+        if not inherited <= declared:
+            raise TypeError(f"{cls.__name__}.CAPABILITIES must keep the result family its base declares.")
 
     def __init__(
         self,
@@ -511,8 +555,8 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             PromptTarget | None: The chat target, or None if not applicable.
         """
-        prompt_target: PromptTarget | None = getattr(self, "_prompt_target", None)
-        return prompt_target
+        # Only scorers that hold a target define _prompt_target; absence means no target.
+        return cast("PromptTarget | None", getattr(self, "_prompt_target", None))
 
     def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
         """
@@ -554,20 +598,16 @@ class Scorer(Identifiable, abc.ABC):
     @property
     def scorer_type(self) -> ScoreType:
         """
-        The scorer type based on class hierarchy.
+        The scorer type, from the result family the scorer declares.
 
         Returns:
-            ScoreType: "true_false" for TrueFalseScorerBase subclasses,
-                      "float_scale" for FloatScaleScorerBase subclasses,
+            ScoreType: "true_false" for scorers declaring ``TRUE_FALSE``,
+                      "float_scale" for scorers declaring ``FLOAT_SCALE``,
                       "unknown" for other scorers.
         """
-        # Import here to avoid circular imports
-        from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
-        from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
-
-        if isinstance(self, TrueFalseScorer):
+        if ScorerCapabilityName.TRUE_FALSE in self.CAPABILITIES:
             return "true_false"
-        if isinstance(self, FloatScaleScorer):
+        if ScorerCapabilityName.FLOAT_SCALE in self.CAPABILITIES:
             return "float_scale"
         return "unknown"
 
@@ -577,19 +617,37 @@ class Scorer(Identifiable, abc.ABC):
         Describe what this configured scorer accepts and guarantees, without scoring.
 
         The view is derived from the scorer's existing contracts (supported evidence types,
-        condition coverage, result family) plus ``_preserves_float_scale_value``, so it is
-        never a second declaration that can drift. Building it constructs nothing and calls
-        no model.
+        condition coverage, declared ``CAPABILITIES``) plus ``_preserves_float_scale_value``,
+        so it is never a second declaration that can drift. Building it constructs nothing
+        and calls no model.
 
         Returns:
             ScorerCapabilities: The derived capability view.
         """
+        supported = set(self.CAPABILITIES)
+        if self._preserves_float_scale_value():
+            supported.add(ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE)
         return ScorerCapabilities(
             scorable_types=self.get_supported_scorable_types(),
             condition_types=self.get_condition_types(),
-            result_family=self.scorer_type,
-            preserves_float_scale_value=self._preserves_float_scale_value(),
+            supported=frozenset(supported),
         )
+
+    def _validate_float_feedback(self, *, scores: Sequence[Score]) -> None:
+        """
+        Hold this scorer to its float feedback promise, when it makes one.
+
+        Args:
+            scores (Sequence[Score]): Results this scorer is about to return.
+
+        Raises:
+            InvalidFloatFeedbackError: If a complete true/false result lacks a finite value in ``[0, 1]``.
+        """
+        if not self._preserves_float_scale_value():
+            return
+        for score in scores:
+            if score.score_type == "true_false" and not score.is_undetermined:
+                FloatFeedback.require(score)
 
     def _preserves_float_scale_value(self) -> bool:
         """
@@ -937,11 +995,13 @@ class Scorer(Identifiable, abc.ABC):
 
         Raises:
             ValueError: If a wrapper reuses an intermediate result ID.
+            InvalidFloatFeedbackError: If this scorer promises float feedback and a result lacks it.
         """
         if not scores:
             return []
 
         self.validate_return_scores(scores=scores)
+        self._validate_float_feedback(scores=scores)
         intermediate_ids = {str(score.id) for score in intermediate_scores}
         if any(str(score.id) in intermediate_ids for score in scores):
             raise ValueError("A wrapper must create a new result instead of reusing an intermediate score ID.")
@@ -977,6 +1037,9 @@ class Scorer(Identifiable, abc.ABC):
 
         Returns:
             list[Score]: The validated child scores.
+
+        Raises:
+            InvalidFloatFeedbackError: If this scorer promises float feedback and a result lacks it.
         """
         self._validate_expectation(expectation=expectation)
         with _scoring_scorable_context(scorable):
@@ -984,6 +1047,7 @@ class Scorer(Identifiable, abc.ABC):
         self._stamp_scored_expectation(scores=scores, expectation=expectation)
         if scores:
             self.validate_return_scores(scores=scores)
+            self._validate_float_feedback(scores=scores)
             _collect_scores(scores)
         return scores
 
@@ -1064,6 +1128,9 @@ class Scorer(Identifiable, abc.ABC):
         """
         prepared = self.prepare_expectation(expectation=expectation)
         candidates = self.find_matching_scores(scores=scores, scorable=scorable, expectation=prepared)
+        if self._preserves_float_scale_value():
+            # A stored result without the promised value cannot stand in for a fresh one.
+            candidates = [score for score in candidates if _keeps_float_feedback(score)]
         if not candidates:
             return []
         return await self._filter_matching_scores_by_snapshot_async(

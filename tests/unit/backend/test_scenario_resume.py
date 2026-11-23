@@ -43,6 +43,7 @@ from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackIdentifier,
     AttackOutcome,
+    AttackSeedGroup,
     ComponentIdentifier,
     DatasetFetchPolicy,
     DatasetSourceInput,
@@ -714,7 +715,7 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
     reads = 0
     original_load = yaml_seed_loader._read_yaml
     original_read = sqlite_instance.get_seeds_async
-    original_write = sqlite_instance.add_scenario_results_to_memory_async
+    original_write = sqlite_instance.add_planned_scenario_result_async
 
     class OfflineFoundry(RedTeamAgent):
         def __init__(self, *, scenario_result_id: str | None = None) -> None:
@@ -750,9 +751,11 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
         assert asyncio.get_running_loop() is loop
         return await original_read(**kwargs)
 
-    async def write_results_async(*, scenario_results: Sequence[ScenarioResult]) -> None:
+    async def write_results_async(
+        *, scenario_result: ScenarioResult, seed_groups_by_dataset: Mapping[str, Sequence[AttackSeedGroup]]
+    ) -> None:
         assert asyncio.get_running_loop() is loop
-        await original_write(scenario_results=scenario_results)
+        await original_write(scenario_result=scenario_result, seed_groups_by_dataset=seed_groups_by_dataset)
 
     async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
         assert asyncio.get_running_loop() is loop
@@ -778,7 +781,7 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
             patch.object(yaml_seed_loader, "_read_yaml", side_effect=load_template),
             patch.object(sqlite_instance, "get_seeds_async", side_effect=read_seeds_async) as read_seeds,
             patch.object(
-                sqlite_instance, "add_scenario_results_to_memory_async", side_effect=write_results_async
+                sqlite_instance, "add_planned_scenario_result_async", side_effect=write_results_async
             ) as write,
             patch.object(target, "_send_prompt_to_target_async", side_effect=send_async),
         ):
