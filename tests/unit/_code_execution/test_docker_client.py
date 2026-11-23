@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, TypeVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_event_async
+from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async, wait_for_event_async
 
 from pyrit._code_execution import DockerRuntimeProfile, DockerSandboxClient, SandboxExecutionError, docker_client
 from pyrit._code_execution.docker_client import _ClientOutput, _ContainerState, _InvocationResult
@@ -482,7 +482,7 @@ async def test_startup_is_owned_until_cleanup_async(client: DockerSandboxClient,
     ):
         task = asyncio.create_task(_run_async(client))
         try:
-            await asyncio.wait_for(entered.wait(), timeout=5)
+            await wait_for_event_async(event=entered, tasks=[task])
             if not failed:
                 for _ in range(2):
                     task.cancel()
@@ -491,7 +491,7 @@ async def test_startup_is_owned_until_cleanup_async(client: DockerSandboxClient,
                 assert all(call.args[0] in ("info", "image") for call in control.call_args_list)
             release.set()
             with pytest.raises(SandboxExecutionError if failed else asyncio.CancelledError):
-                await asyncio.wait_for(task, timeout=5)
+                await wait_for_completion_async(future=task)
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)
@@ -552,7 +552,7 @@ async def test_input_cancellation_aborts_buffered_writes_async(stage: str) -> No
     stream.transport.abort.side_effect = released.set
     stream.drain, stream.wait_closed = AsyncMock(side_effect=drain_async), AsyncMock(side_effect=close_async)
     task = asyncio.create_task(DockerSandboxClient._feed_stdin_async(stream=stream, data="input"))
-    await asyncio.wait_for(blocked.wait(), timeout=5)
+    await wait_for_event_async(event=blocked, tasks=[task])
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -596,9 +596,9 @@ async def test_file_work_does_not_block_or_outlive_the_call_async(
             release.set()
             if cancel:
                 with pytest.raises(asyncio.CancelledError):
-                    await asyncio.wait_for(task, timeout=5)
+                    await wait_for_completion_async(future=task)
             else:
-                assert (await asyncio.wait_for(task, timeout=5)).events[0].exit_code == 0
+                assert (await wait_for_completion_async(future=task)).events[0].exit_code == 0
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)
@@ -636,15 +636,15 @@ async def test_repeated_cancellation_drains_process_cleanup_async(client: Docker
             _run_async(client) if phase == "container" else client._control_async("inspect", "test")
         )
         try:
-            await asyncio.wait_for(running.wait(), timeout=5)
+            await wait_for_event_async(event=running, tasks=[task])
             task.cancel()
-            await asyncio.wait_for(cleaning.wait(), timeout=5)
+            await wait_for_event_async(event=cleaning, tasks=[task])
             task.cancel()
             await asyncio.sleep(0.01)
             assert not task.done()
             release.set()
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(task, timeout=5)
+                await wait_for_completion_async(future=task)
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)

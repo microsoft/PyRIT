@@ -27,7 +27,12 @@ from pyrit.prompt_target.openai._openai_realtime_event_router import (
     _OpenAIRealtimeEventRouter,
 )
 from pyrit.prompt_target.openai.openai_realtime_target import _RealtimeReceiveState
-from tests.unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
+from tests.unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    settle_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 _CLEAN_UNDERLYING_MODEL_ENV = {
@@ -944,7 +949,7 @@ async def test_receive_events_soft_finishes_when_grace_expires(target):
     mock_connection.__aiter__.side_effect = _events
 
     with patch.object(_RealtimeReceiveState, "GRACE_PERIOD_SEC", 0.05):
-        result = await asyncio.wait_for(target.receive_events_async(conversation_id), timeout=5)
+        result = await asyncio.wait_for(target.receive_events_async(conversation_id), timeout=TEST_WATCHDOG_SECONDS)
 
     assert result.audio_bytes == b"audio"
     assert result.transcripts == ["late"]

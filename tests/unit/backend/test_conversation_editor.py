@@ -347,7 +347,7 @@ class TestConversationEditor:
                     ),
                 )
                 try:
-                    await asyncio.wait_for(entered.wait(), timeout=5)
+                    await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
                     with pytest.raises(ManualSendConflictError, match="already in progress"):
                         await service.save_conversation_async(request=edit)
                     history = await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)

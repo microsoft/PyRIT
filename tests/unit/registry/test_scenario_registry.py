@@ -18,6 +18,7 @@ from pyrit.scenario.core import (
     get_default_adversarial_target,
     override_default_adversarial_target,
 )
+from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
 
 
@@ -140,21 +141,21 @@ async def test_construction_offload_retains_context_and_ownership_async(
             )
             task = asyncio.create_task(operation)
         try:
-            await asyncio.wait_for(entered.wait(), 5)
+            await wait_for_event_async(event=entered, tasks=[task])
             if cancelled:
                 task.cancel()
                 barrier = asyncio.Event()
                 loop.call_soon(barrier.set)
-                await asyncio.wait_for(barrier.wait(), 5)
+                await asyncio.wait_for(barrier.wait(), TEST_WATCHDOG_SECONDS)
                 assert not task.done()
                 release.set()
                 with pytest.raises(asyncio.CancelledError):
-                    await asyncio.wait_for(task, 5)
+                    await wait_for_completion_async(future=task)
                 finish.assert_not_awaited()
             else:
                 assert not task.done()
                 release.set()
-                assert await asyncio.wait_for(task, 5) is scenario
+                assert await wait_for_completion_async(future=task) is scenario
                 finish.assert_awaited_once()
             if estimate:
                 scenario.initialize_async.assert_not_awaited()

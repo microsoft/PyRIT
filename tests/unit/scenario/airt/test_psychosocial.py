@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async, wait_for_event_async
 
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.converter import (
@@ -185,14 +186,14 @@ async def test_crescendo_construction_keeps_initialization_responsive_async(
         initialize = asyncio.create_task(scenario.initialize_async())
         try:
             # Readiness includes setup and thread scheduling, not just event-loop responsiveness.
-            await asyncio.wait_for(entered.wait(), 30)
+            await wait_for_event_async(event=entered, tasks=[initialize])
             heartbeat = asyncio.Event()
             loop.call_soon(heartbeat.set)
-            await asyncio.wait_for(heartbeat.wait(), 5)
+            await asyncio.wait_for(heartbeat.wait(), TEST_WATCHDOG_SECONDS)
             assert not initialize.done()
             assert not release.is_set()
             release.set()
-            await asyncio.wait_for(initialize, 30)
+            await wait_for_completion_async(future=initialize)
         finally:
             release.set()
             if not initialize.done():

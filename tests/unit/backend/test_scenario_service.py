@@ -53,7 +53,13 @@ from pyrit.scenario.core import (
 from pyrit.scenario.scenarios.airt import Scam
 from pyrit.scenario.scenarios.garak import Exploitation
 from pyrit.score import SubStringScorer
-from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    get_defined_tasks,
+    settle_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 from unit.mocks import MockPromptTarget, make_technique_class
 
 # The estimate key's registry view when the caller sees no private entries.
@@ -928,7 +934,7 @@ class TestScenarioServiceListScenarios:
         service = ScenarioService()
         service._compute_default_run_size_estimate_async = AsyncMock(side_effect=cancelled_estimate_async)
         waiter = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
-        await asyncio.wait_for(started.wait(), timeout=1)
+        await wait_for_event_async(event=started, tasks=[waiter])
 
         service._estimate_tasks[
             (
@@ -1071,7 +1077,7 @@ class TestScenarioServiceListScenarios:
 
         catalog_task = asyncio.create_task(service.list_scenarios_async())
         try:
-            await asyncio.wait_for(two_started.wait(), timeout=30)
+            await wait_for_event_async(event=two_started, tasks=[catalog_task])
             await asyncio.sleep(0)
 
             assert service._run_default_estimate_async.await_count == 2
@@ -1267,18 +1273,18 @@ class TestScenarioServiceListScenarios:
                 cache_key=(metadata.registry_name, metadata.scenario_version),
             )
         )
-        await asyncio.wait_for(started.wait(), timeout=1)
+        await wait_for_event_async(event=started, tasks=[compute_task])
 
         compute_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await compute_task
 
-        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        await asyncio.wait_for(cancelled.wait(), timeout=TEST_WATCHDOG_SECONDS)
         assert service._estimate_semaphore.locked()
         assert len(service._timed_out_estimate_workers) == 1
 
         release.set()
-        async with asyncio.timeout(1):
+        async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
             while service._timed_out_estimate_workers:
                 await asyncio.sleep(0)
 
@@ -1332,13 +1338,13 @@ class TestScenarioServiceListScenarios:
             try:
                 with patch("pyrit.backend.services.scenario_service._DEFAULT_ESTIMATE_TIMEOUT_SECONDS", 0.02):
                     first_result = await service._get_default_run_size_estimate_async(metadata=first_metadata)
-                await asyncio.wait_for(first_started.wait(), timeout=10)
+                await asyncio.wait_for(first_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
 
                 with patch.object(service._estimate_semaphore, "acquire", side_effect=acquire_second_async):
                     second_task = asyncio.create_task(
                         service._get_default_run_size_estimate_async(metadata=second_metadata)
                     )
-                    await asyncio.wait_for(second_waiting.wait(), timeout=10)
+                    await wait_for_event_async(event=second_waiting, tasks=[second_task])
 
                     assert first_started.is_set()
                     assert service._estimate_semaphore.locked()
@@ -1346,12 +1352,12 @@ class TestScenarioServiceListScenarios:
                     assert not second_task.done()
 
                     release_first.set()
-                    second_result = await asyncio.wait_for(second_task, timeout=10)
+                    second_result = await wait_for_completion_async(future=second_task)
             finally:
                 release_first.set()
                 tasks = [*service._estimate_tasks.values(), *service._timed_out_estimate_workers]
                 tasks.extend(get_defined_tasks(second_task))
-                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10)
+                await settle_tasks_async(*tasks)
 
         assert first_result.estimated_attack_count is None
         assert first_result.note is not None and "timed out" in first_result.note
@@ -1665,7 +1671,7 @@ class TestScenarioServiceListScenarios:
             for index in range(3)
         ]
         try:
-            await asyncio.wait_for(two_started.wait(), timeout=30)
+            await wait_for_event_async(event=two_started, tasks=tasks)
             await asyncio.sleep(0)
 
             assert service._estimate_configured_run_size_async.await_count == 2
@@ -1706,10 +1712,10 @@ class TestScenarioServiceListScenarios:
         service._run_default_estimate_async = AsyncMock(side_effect=estimate_async)
 
         estimate_task = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
-        await asyncio.wait_for(started.wait(), timeout=1)
+        await wait_for_event_async(event=started, tasks=[estimate_task])
         catalog = await asyncio.wait_for(
             service.list_scenarios_async(include_estimates=False),
-            timeout=1,
+            timeout=TEST_WATCHDOG_SECONDS,
         )
         assert not estimate_task.done()
 
