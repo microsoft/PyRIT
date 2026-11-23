@@ -14,15 +14,24 @@ if TYPE_CHECKING:
     from pyrit.setup.initializers.load_default_datasets import LoadDefaultDatasets
     from pyrit.setup.initializers.preload_scenario_metadata import PreloadScenarioMetadata
     from pyrit.setup.initializers.refresh_datasets import RefreshDatasets
+    from pyrit.setup.initializers.scenario_suites import HorizontalTechniquesSuite, ScenarioSuiteInitializer
     from pyrit.setup.initializers.scorers import ScorerInitializer, ScorerInitializerTags
     from pyrit.setup.initializers.targets import TargetInitializer
     from pyrit.setup.initializers.techniques import TechniqueInitializer
     from pyrit.setup.initializers.tools import ToolsInitializer
-    from pyrit.setup.pyrit_initializer import PyRITInitializer
+    from pyrit.setup.pyrit_initializer import (
+        InitializerDefaultsInfo,
+        InitializerInfo,
+        InitializerParameterInfo,
+        PyRITInitializer,
+    )
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "Parameter": "pyrit.models.parameter",
     "PyRITInitializer": "pyrit.setup.pyrit_initializer",
+    "InitializerInfo": "pyrit.setup.pyrit_initializer",
+    "InitializerDefaultsInfo": "pyrit.setup.pyrit_initializer",
+    "InitializerParameterInfo": "pyrit.setup.pyrit_initializer",
     "ConverterInitializer": "pyrit.setup.initializers.converters",
     "TechniqueInitializer": "pyrit.setup.initializers.techniques",
     "ToolsInitializer": "pyrit.setup.initializers.tools",
@@ -32,6 +41,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "LoadDefaultDatasets": "pyrit.setup.initializers.load_default_datasets",
     "PreloadScenarioMetadata": "pyrit.setup.initializers.preload_scenario_metadata",
     "RefreshDatasets": "pyrit.setup.initializers.refresh_datasets",
+    "HorizontalTechniquesSuite": "pyrit.setup.initializers.scenario_suites",
+    "ScenarioSuiteInitializer": "pyrit.setup.initializers.scenario_suites",
 }
 
 __all__ = list(_LAZY_EXPORTS)

@@ -4,10 +4,9 @@
 import functools
 from collections.abc import Callable, Iterable
 
-from pyrit.models import Score, UndeterminedScoreError
+from pyrit.models import FloatFeedback, Score, UndeterminedScoreError
 from pyrit.score.score_aggregator_result import ScoreAggregatorResult
 from pyrit.score.score_utils import (
-    ORIGINAL_FLOAT_VALUE_KEY,
     combine_metadata_and_categories,
     format_score_for_rationale,
 )
@@ -152,7 +151,7 @@ def _create_aggregator(
         if len(scores_list) > 1:
             # A child's original float doesn't describe the combined verdict, and normalize_score_to_float
             # would prefer it over the verdict.
-            metadata.pop(ORIGINAL_FLOAT_VALUE_KEY, None)
+            metadata = FloatFeedback.remove_from(metadata)
 
         return ScoreAggregatorResult(
             value=result,
@@ -168,6 +167,7 @@ def _create_aggregator(
 
 def _create_binary_aggregator(
     name: str,
+    *,
     op: BinaryBoolOp,
     true_msg: str,
     false_msg: str,
@@ -218,16 +218,16 @@ class TrueFalseScoreAggregator:
 
     AND: TrueFalseAggregatorFunc = _create_binary_aggregator(
         "AND",
-        _and,
-        "All constituent scorers returned True in an AND composite scorer.",
-        "At least one constituent scorer returned False in an AND composite scorer.",
+        op=_and,
+        true_msg="All constituent scorers returned True in an AND composite scorer.",
+        false_msg="At least one constituent scorer returned False in an AND composite scorer.",
     )
 
     OR: TrueFalseAggregatorFunc = _create_binary_aggregator(
         "OR",
-        _or,
-        "At least one constituent scorer returned True in an OR composite scorer.",
-        "All constituent scorers returned False in an OR composite scorer.",
+        op=_or,
+        true_msg="At least one constituent scorer returned True in an OR composite scorer.",
+        false_msg="All constituent scorers returned False in an OR composite scorer.",
     )
 
     MAJORITY: TrueFalseAggregatorFunc = _create_aggregator(
@@ -239,17 +239,17 @@ class TrueFalseScoreAggregator:
 
     AND_RAISE_ON_EMPTY: TrueFalseAggregatorFunc = _create_binary_aggregator(
         "AND_RAISE_ON_EMPTY",
-        _and,
-        "All constituent scorers returned True in an AND composite scorer.",
-        "At least one constituent scorer returned False in an AND composite scorer.",
+        op=_and,
+        true_msg="All constituent scorers returned True in an AND composite scorer.",
+        false_msg="At least one constituent scorer returned False in an AND composite scorer.",
         raise_on_empty=True,
     )
 
     OR_RAISE_ON_EMPTY: TrueFalseAggregatorFunc = _create_binary_aggregator(
         "OR_RAISE_ON_EMPTY",
-        _or,
-        "At least one constituent scorer returned True in an OR composite scorer.",
-        "All constituent scorers returned False in an OR composite scorer.",
+        op=_or,
+        true_msg="At least one constituent scorer returned True in an OR composite scorer.",
+        false_msg="All constituent scorers returned False in an OR composite scorer.",
         raise_on_empty=True,
     )
 

@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING
 
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 from pyrit.executor.promptgen import TargetObjectiveGenerator
-from pyrit.models import SeedDataset, SeedObjective, SeedOrigin
+from pyrit.models import SeedDataset, SeedObjective, SeedOrigin, TargetObjectiveGenerationRequest
 
 if TYPE_CHECKING:
+    from pyrit.executor.promptgen import TargetObjectiveGeneratorResult
     from pyrit.models import SeedPrompt
     from pyrit.prompt_target import PromptTarget
 
@@ -75,16 +76,46 @@ class TargetObjectiveProvider(SeedDatasetProvider):
         result = await self._generator.execute_async(
             instructions=self._instructions, count=self._count, harm_categories=self._harm_categories
         )
+        request = TargetObjectiveGenerationRequest(
+            instructions=self._instructions, count=self._count, harm_categories=self._harm_categories
+        )
+        return self.package_result(dataset_name=self.dataset_name, result=result, request=request)
+
+    @classmethod
+    def package_result(
+        cls,
+        *,
+        dataset_name: str,
+        result: TargetObjectiveGeneratorResult,
+        request: TargetObjectiveGenerationRequest,
+    ) -> SeedDataset:
+        """
+        Package generated objectives as a named dataset.
+
+        Args:
+            dataset_name (str): Destination name, assigned to every seed.
+            result (TargetObjectiveGeneratorResult): The generated objectives.
+            request (TargetObjectiveGenerationRequest): The request that generated the objectives. Its harm
+                categories label every seed, and every seed stores it, so it can be read back and run again.
+
+        Returns:
+            SeedDataset: Text objectives with generation evidence references and no actor attribution.
+
+        Raises:
+            ValueError: If dataset_name is empty.
+        """
+        if not isinstance(dataset_name, str) or not dataset_name.strip():
+            raise ValueError("dataset_name must be a non-empty string.")
         return SeedDataset(
-            dataset_name=self.dataset_name,
+            dataset_name=dataset_name,
             seeds=[
                 SeedObjective(
                     value=value,
-                    dataset_name=self.dataset_name,
+                    dataset_name=dataset_name,
                     origin=SeedOrigin.GENERATED,
                     is_jinja_template=False,
-                    harm_categories=list(self._harm_categories),
-                    metadata={"generation_conversation_id": result.conversation_id},
+                    harm_categories=list(request.harm_categories),
+                    metadata={"generation_conversation_id": result.conversation_id, **request.to_metadata()},
                 )
                 for value in result.objectives
             ],

@@ -22,7 +22,11 @@ from pyrit.models.catalog import (
     TechniqueRecipe,
 )
 from pyrit.models.catalog.registry_recipe import RECIPE_SCHEMA_VERSION
-from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, _read_regular_file
+from pyrit.registry.file_document_storage import (
+    DocumentConflictError,
+    DocumentStorageUnavailableError,
+    _read_regular_file,
+)
 from pyrit.registry.registry_recipe_storage import MAX_FAILURE_MESSAGE_LENGTH, RegistryRecipeStorage
 
 _TARGET = {
@@ -355,3 +359,62 @@ class TestRegistryRecipeStorageListing:
 
         with pytest.raises(DocumentStorageUnavailableError):
             RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
+
+
+class TestRegistryRecipeStorageWrites:
+    def test_creates_a_recipe_that_lists_back_with_its_owner_and_version(self, tmp_path: Path) -> None:
+        storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path))
+        recipe = ComponentRecipe.model_validate(_TARGET | {"owner": {"oid": "user-oid", "name": "Ada"}})
+
+        version = storage.create_recipe(name="contoso_gpt4o", recipe=recipe)
+
+        stored = storage.list_recipes().recipes["contoso_gpt4o"]
+        assert (stored.recipe, stored.version) == (recipe, version)
+        assert json.loads((tmp_path / "targets" / "contoso_gpt4o.json").read_text())["owner"] == {
+            "oid": "user-oid",
+            "name": "Ada",
+        }
+
+    def test_leaves_out_an_owner_that_was_not_recorded(self, tmp_path: Path) -> None:
+        storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path))
+
+        storage.create_recipe(name="contoso_gpt4o", recipe=ComponentRecipe.model_validate(_TARGET))
+
+        assert "owner" not in json.loads((tmp_path / "targets" / "contoso_gpt4o.json").read_text())
+
+    @pytest.mark.parametrize(
+        ("kind", "recipe"),
+        [
+            (RegistryRecipeKind.TARGETS, ComponentRecipe(class_module="m", class_name="TextTarget")),
+            (RegistryRecipeKind.TECHNIQUES, TechniqueRecipe.model_validate({"type": "RedTeamingAttack"})),
+        ],
+    )
+    def test_labels_a_new_recipe_with_the_format_version_this_pyrit_writes(
+        self, tmp_path: Path, kind: RegistryRecipeKind, recipe: ComponentRecipe | TechniqueRecipe
+    ) -> None:
+        storage = RegistryRecipeStorage(kind=kind, source=str(tmp_path))
+
+        with patch("pyrit.registry.registry_recipe_storage.RECIPE_SCHEMA_VERSION", 2):
+            storage.create_recipe(name="contoso", recipe=recipe)
+
+        assert json.loads((tmp_path / kind.value / "contoso.json").read_text())["schema_version"] == 2
+        assert recipe.schema_version == 1
+
+    def test_refuses_to_create_a_recipe_that_is_already_saved(self, tmp_path: Path) -> None:
+        storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path))
+        storage.create_recipe(name="contoso_gpt4o", recipe=ComponentRecipe.model_validate(_TARGET))
+        before = (tmp_path / "targets" / "contoso_gpt4o.json").read_bytes()
+        other = ComponentRecipe.model_validate(_TARGET | {"params": {}})
+
+        with pytest.raises(DocumentConflictError):
+            storage.create_recipe(name="contoso_gpt4o", recipe=other)
+
+        assert (tmp_path / "targets" / "contoso_gpt4o.json").read_bytes() == before
+
+    def test_deletes_a_recipe_once(self, tmp_path: Path) -> None:
+        storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path))
+        storage.create_recipe(name="contoso_gpt4o", recipe=ComponentRecipe.model_validate(_TARGET))
+
+        assert storage.delete_recipe("contoso_gpt4o") is True
+        assert storage.delete_recipe("contoso_gpt4o") is False
+        assert storage.list_recipes().recipes == {}

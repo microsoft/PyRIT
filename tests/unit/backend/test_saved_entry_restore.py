@@ -7,23 +7,31 @@ import sys
 from collections.abc import Iterator
 from functools import partial
 from pathlib import Path
-from types import ModuleType
+from types import MappingProxyType, ModuleType
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from pyrit.auth import caller_principal_scope
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.models.catalog import RegistryRecipeKind, RegistryRestoreReport, RestoreFailureReason
-from pyrit.prompt_target import HTTPXAPITarget, OpenAIChatTarget
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.prompt_target import GitHubCopilotTarget, OpenAIChatTarget
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    ScorerRegistry,
+    TargetRegistry,
+    get_entry_owner,
+    is_private_entry,
+)
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 
 _IDENTITY_TARGET = {
     "class_module": "pyrit.prompt_target.openai.openai_chat_target",
     "class_name": "OpenAIChatTarget",
     "auth_mode": "identity",
-    "params": {"endpoint": "https://contoso.openai.azure.com/openai/v1", "model_name": "gpt-4o"},
+    "params": {"endpoint": "https://contoso.openai.azure.com/openai/v1", "headers": "{}", "model_name": "gpt-4o"},
 }
 _REGISTRIES = (TargetRegistry, ConverterRegistry, ScorerRegistry, AttackTechniqueRegistry)
 
@@ -101,6 +109,18 @@ async def test_restores_each_kind_through_its_create(tmp_path: Path) -> None:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+async def test_a_target_named_like_the_saveability_route_is_restored(tmp_path: Path) -> None:
+    # POST /api/targets/saveability doesn't clash with GET /api/targets/{name}, so the name stays valid.
+    _save(tmp_path, RegistryRecipeKind.TARGETS, "saveability", _IDENTITY_TARGET)
+
+    report = await _restore(tmp_path)
+
+    assert report.failures == []
+    assert [ref.name for ref in report.restored] == ["saveability"]
+    assert isinstance(TargetRegistry.get_registry_singleton().instances.get("saveability"), OpenAIChatTarget)
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_a_target_its_create_refuses_fails_only_that_entry(tmp_path: Path) -> None:
     _save(
         tmp_path,
@@ -114,56 +134,18 @@ async def test_a_target_its_create_refuses_fails_only_that_entry(tmp_path: Path)
     )
     _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
 
-    with patch.dict(sys.modules, {"copilot": ModuleType("copilot")}), patch.dict(os.environ, {"GITHUB_TOKEN": ""}):
+    with (
+        patch.dict(sys.modules, {"copilot": ModuleType("copilot")}),
+        patch.dict(os.environ, {"GITHUB_TOKEN": ""}),
+        # A token-less Copilot target would use the server's token, which saved entries refuse before building.
+        patch.object(GitHubCopilotTarget, "server_fallback_parameters", MappingProxyType({})),
+    ):
         report = await _restore(tmp_path)
 
     (failure,) = report.failures
     assert (failure.name, failure.reason) == ("copilot", RestoreFailureReason.BUILD_ERROR)
     assert "GitHub Copilot requires a GitHub token" in failure.message
     assert [ref.name for ref in report.restored] == ["contoso_gpt4o"]
-
-
-@pytest.mark.usefixtures("patch_central_database")
-async def test_a_target_that_uploads_files_gets_this_servers_upload_folder(tmp_path: Path) -> None:
-    uploads = tmp_path / "uploads"
-    uploads.mkdir()
-    recipes = tmp_path / "recipes"
-    _save(
-        recipes,
-        RegistryRecipeKind.TARGETS,
-        "uploader",
-        {
-            "class_module": "pyrit.prompt_target.http_target.httpx_api_target",
-            "class_name": "HTTPXAPITarget",
-            "params": {"http_url": "https://example.test/upload"},
-        },
-    )
-
-    report = await _restore(recipes, upload_directory=str(uploads))
-
-    assert report.failures == []
-    target = TargetRegistry.get_registry_singleton().instances.get("uploader")
-    assert isinstance(target, HTTPXAPITarget)
-    assert target.allowed_upload_directory == uploads.resolve()
-
-
-@pytest.mark.usefixtures("patch_central_database")
-async def test_a_target_that_uploads_files_fails_where_the_server_sets_no_upload_folder(tmp_path: Path) -> None:
-    _save(
-        tmp_path,
-        RegistryRecipeKind.TARGETS,
-        "uploader",
-        {
-            "class_module": "pyrit.prompt_target.http_target.httpx_api_target",
-            "class_name": "HTTPXAPITarget",
-            "params": {"http_url": "https://example.test/upload"},
-        },
-    )
-
-    (failure,) = (await _restore(tmp_path)).failures
-
-    assert (failure.name, failure.reason) == ("uploader", RestoreFailureReason.BUILD_ERROR)
-    assert "target_upload_directory" in failure.message
 
 
 async def test_a_technique_its_create_request_refuses_is_invalid(tmp_path: Path) -> None:
@@ -174,3 +156,16 @@ async def test_a_technique_its_create_request_refuses_is_invalid(tmp_path: Path)
     assert (failure.name, failure.reason) == ("types", RestoreFailureReason.INVALID_RECIPE)
     assert failure.message.startswith("Not a valid create request: name:")
     assert "types" not in AttackTechniqueRegistry.get_registry_singleton().instances.get_names()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_restore_runs_as_the_server_so_saved_entries_are_shared_and_unowned(tmp_path: Path) -> None:
+    _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
+
+    with caller_principal_scope("admin"):
+        await _restore(tmp_path)
+
+    with caller_principal_scope("bob"):
+        entry = TargetRegistry.get_registry_singleton().instances.get_entry("contoso_gpt4o")
+    assert entry is not None
+    assert (get_entry_owner(entry), is_private_entry(entry)) == (None, False)

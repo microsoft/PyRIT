@@ -10,7 +10,7 @@ import types
 from abc import ABC, abstractmethod
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin
 
@@ -39,7 +39,7 @@ _SCALAR_NAME_TO_TYPE: dict[str, type | types.UnionType] = {
 }
 
 
-class ComponentType(str, Enum):
+class ComponentType(StrEnum):
     """
     The component family a registry reference resolves to.
 
@@ -96,8 +96,8 @@ class Parameter(BaseModel):
     value's live Python type and its allowed set (a ``Literal[...]`` or ``Enum``
     *is* the allowed set) and drives ``coerce_value`` / ``validate``; it is **not**
     serialized. Serialization instead projects the type into the display fields
-    ``type_name``, ``choices``, ``is_list``, ``sensitive``, ``multiline``, and
-    ``identity_conflicting`` (plus ``required`` from the ``REQUIRED_VALUE``
+    ``type_name``, ``choices``, ``is_list``, ``sensitive``, ``multiline``,
+    ``identity_conflicting``, and ``copy_locked`` (plus ``required`` from the ``REQUIRED_VALUE``
     sentinel), so a consumer can rebuild a usable contract from the registry
     without the live type travelling on the wire.
 
@@ -149,6 +149,13 @@ class Parameter(BaseModel):
     identity_conflicting: bool = Field(
         default=False,
         description="Whether this parameter must be omitted when identity-based authentication is selected.",
+    )
+    copy_locked: bool = Field(
+        default=False,
+        description=(
+            "Whether a private copy keeps its source's value, because the parameter chooses where requests go "
+            "or how they authenticate."
+        ),
     )
     destination: ParameterDestination = Field(
         default=ParameterDestination.CONSTRUCTOR,
@@ -547,7 +554,7 @@ class Parameter(BaseModel):
             except ValidationError as exc:
                 raise ValueError(f"Parameter '{self.name}' expects {self.type_name}: {exc}") from exc
 
-    def validate(self) -> None:  # type: ignore[ty:invalid-method-override]
+    def validate(self) -> None:  # type: ignore[ty:incompatible-method-override]
         """
         Reject a declaration with an unsupported ``param_type``.
 

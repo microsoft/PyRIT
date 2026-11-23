@@ -49,8 +49,10 @@ class CapabilityName(str, Enum):
     EDITABLE_HISTORY = "supports_editable_history"
     SYSTEM_PROMPT = "supports_system_prompt"
     STREAMING_AUDIO = "supports_streaming_audio"
+    PREFILL = "supports_prefill"
     TEMPERATURE = "supports_temperature"
     WEB_SEARCH = "supports_web_search"
+    RESPONSES = "supports_responses"
 
 
 class TargetCapabilities(BaseModel):
@@ -101,6 +103,12 @@ class TargetCapabilities(BaseModel):
     #: Whether the target natively supports system prompts.
     supports_system_prompt: bool = False
 
+    #: Whether the adapter can send the full conversation, including the objective and a
+    #: caller-supplied trailing assistant prefix. This describes request support, not a
+    #: guarantee that the model continues the prefix as intended or that an attack succeeds.
+    #: Deployments that reject this request shape can disable it through custom configuration.
+    supports_prefill: bool = False
+
     #: Whether the target supports the streaming audio API: opening a long-lived
     #: streaming session via ``open_streaming_session`` that pushes user audio chunks,
     #: delivers VAD-committed audio to the attack for converter work, swaps committed
@@ -113,6 +121,11 @@ class TargetCapabilities(BaseModel):
 
     #: Whether web search is configured and available to this target.
     supports_web_search: bool = False
+
+    #: Whether the target replies to the requests it receives. Write-only targets
+    #: (e.g., ``TextTarget``) deliver each request without replying, so a send that
+    #: returns no response is a successful delivery rather than a missing response.
+    supports_responses: bool = True
 
     #: The input modalities supported by the target, as combinations of data types
     #: (e.g., ``{{"text"}, {"image_path", "text"}}``). Serialized as a sorted list of

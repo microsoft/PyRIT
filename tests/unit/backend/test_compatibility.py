@@ -597,11 +597,12 @@ async def test_uvicorn_auto_lifespan_exits_before_listening_on_invalid_provenanc
         ) as create_listener,
         patch.object(server, "main_loop", new_callable=AsyncMock) as serve_requests,
     ):
-        await server.serve()
+        with pytest.raises(SystemExit) as exc_info:
+            await server.serve()
+    assert exc_info.value.code == 3
     assert isinstance(server.lifespan, LifespanOn)
     assert server.lifespan.startup_failed
     assert server.lifespan.should_exit
-    assert server.should_exit
     assert not server.started
     assert not hasattr(test_app.state, "compatibility_id")
     read_stamp.assert_called_once()

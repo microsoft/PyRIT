@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+import traceback
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
@@ -14,6 +15,7 @@ from pyrit.backend.models import (
     ScenarioSuiteListResponse,
     ScenarioSuiteResponse,
 )
+from pyrit.common.azure_storage import redact_urls
 from pyrit.models import (
     PresetIssue,
     ScenarioSuite,
@@ -23,7 +25,7 @@ from pyrit.models.catalog import (
     ScenarioSuiteRegistryEntry,
 )
 from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
-from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
 
 logger = logging.getLogger(__name__)
 
@@ -217,20 +219,23 @@ class ScenarioSuiteService:
 
             stored_version = registry.get_preset_version(name=preset_name)
         except DocumentStorageUnavailableError as error:
-            # The message leaves out credentials; the error behind it, which a traceback would show, may not.
-            logger.warning(f"Could not project scenario preset '{preset_name}': {error}")
+            # The error behind it can carry a SAS URL, so the traceback is logged with URL credentials removed.
+            details = redact_urls("".join(traceback.format_exception(error)).rstrip())
+            logger.warning(f"Could not project scenario preset '{preset_name}': {error}\n{details}")
+            if isinstance(error, DocumentUnreadableError):
+                message = (
+                    f"Scenario preset '{preset_name}' can't be read: {error.reason}; "
+                    "repair or replace the preset before running this suite."
+                )
+            else:
+                message = (
+                    f"Scenario preset '{preset_name}' could not be checked because preset storage is "
+                    "temporarily unavailable; retry when storage is available."
+                )
             return _PresetProjection(
                 origin=None,
                 version=None,
-                issues=(
-                    PresetIssue(
-                        field="preset_name",
-                        message=(
-                            f"Scenario preset '{preset_name}' could not be checked because preset storage is "
-                            "temporarily unavailable; retry when storage is available."
-                        ),
-                    ),
-                ),
+                issues=(PresetIssue(field="preset_name", message=message),),
             )
 
         if stored_version is None:

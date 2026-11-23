@@ -2,10 +2,13 @@
 # Licensed under the MIT license.
 
 import itertools
+import json
 import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Sequence
-from typing import Any, NoReturn, cast
+from contextlib import AsyncExitStack
+from types import MappingProxyType
+from typing import Any, ClassVar, NoReturn, cast
 
 from pyrit.auth import ensure_async_token_provider
 from pyrit.exceptions import (
@@ -23,11 +26,13 @@ from pyrit.models import (
     PromptDataType,
     ToolDefinition,
 )
+from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
     build_response_format,
     build_text_chat_messages,
     is_text_only_conversation,
+    should_skip_audio_piece,
     validate_chat_tool_message,
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
@@ -48,7 +53,21 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
 from pyrit.prompt_target.common.tool_call_history import (
     TOOL_CALL_INPUT_MODALITIES,
+    parse_function_call,
     parse_function_tool_declarations,
+)
+from pyrit.prompt_target.common.tool_loop import (
+    InvalidToolCallsError,
+    PendingToolCall,
+    ToolFunction,
+    dispatch_tool_call_async,
+    run_tool_loop_async,
+)
+from pyrit.prompt_target.common.tool_provider import (
+    Tool,
+    ToolProvider,
+    _ScopedToolProvider,
+    collect_tools_async,
 )
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
@@ -204,7 +223,31 @@ class LiteLLMChatTarget(PromptTarget):
             provider or gateway is not known to accept W3C trace context. Pass
             ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint; each request then
             sends a fresh ``traceparent`` in ``extra_headers``.
+        tools: Executable tools advertised to the model.
+        tool_providers: Providers discovered within each send's resource scope.
+        execute_tools: Execute configured tools locally, or return calls to the caller.
+        max_tool_rounds: Maximum completions containing locally dispatched calls per send.
+            Calls beyond the limit receive error results without execution.
     """
+
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
+
+    # Environment variables read when ``api_key`` or ``endpoint`` is omitted. Subclasses that pin a
+    # provider override these; None skips the lookup and leaves it to LiteLLM.
+    _API_KEY_ENVIRONMENT_VARIABLE: ClassVar[str | None] = "LITELLM_API_KEY"
+    _ENDPOINT_ENVIRONMENT_VARIABLE: ClassVar[str | None] = "LITELLM_ENDPOINT"
+    # Header names, compared case-insensitively, that identifiers never record.
+    _CREDENTIAL_HEADERS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "authorization",
+            "proxy-authorization",
+            "x-api-key",
+            "api-key",
+            "ocp-apim-subscription-key",
+            "cookie",
+            "set-cookie",
+        }
+    )
 
     # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
     # model metadata at construction time (see ``_derive_capabilities_from_litellm``).
@@ -214,6 +257,7 @@ class LiteLLMChatTarget(PromptTarget):
             supports_multi_turn=True,
             supports_multi_message_pieces=True,
             supports_editable_history=True,
+            supports_prefill=True,
             supports_system_prompt=True,
             input_modalities=_TEXT_INPUT,
         )
@@ -241,6 +285,10 @@ class LiteLLMChatTarget(PromptTarget):
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
         trace_config: TargetTraceConfig | None = None,
+        tools: Sequence[Tool] | None = None,
+        tool_providers: Sequence[ToolProvider] | None = None,
+        execute_tools: bool = True,
+        max_tool_rounds: int = 10,
     ) -> None:
         """
         Initialize a LiteLLMChatTarget.
@@ -257,6 +305,15 @@ class LiteLLMChatTarget(PromptTarget):
         validate_top_p(top_p)
         validate_presence_penalty(presence_penalty)
         validate_frequency_penalty(frequency_penalty)
+        if isinstance(max_tool_rounds, bool) or not isinstance(max_tool_rounds, int) or max_tool_rounds < 0:
+            raise ValueError("max_tool_rounds must be a nonnegative integer.")
+        self._direct_tools = list(tools or [])
+        self._tool_providers = list(tool_providers or [])
+        self._execute_tools = execute_tools
+        self._max_tool_rounds = max_tool_rounds
+        self._suppress_tools = False
+        if execute_tools and (tools or tool_providers) and (extra_body_parameters or {}).get("n", n) not in (None, 1):
+            raise ValueError("Automatic tool execution requires n=1.")
 
         super().__init__(
             model_name=resolved_model,
@@ -266,14 +323,15 @@ class LiteLLMChatTarget(PromptTarget):
             trace_config=trace_config,
         )
 
-        # Resolve api_key: explicit value/callable > LITELLM_API_KEY env var > None (LiteLLM
+        # Resolve api_key: explicit value/callable > _API_KEY_ENVIRONMENT_VARIABLE > None (LiteLLM
         # then reads provider-specific env vars itself). ``ensure_async_token_provider`` wraps a
         # sync token provider so we can uniformly await it at request time.
-        if api_key is None:
-            api_key = os.environ.get("LITELLM_API_KEY")
+        if api_key is None and self._API_KEY_ENVIRONMENT_VARIABLE:
+            api_key = os.environ.get(self._API_KEY_ENVIRONMENT_VARIABLE)
         self._api_key = ensure_async_token_provider(api_key)
 
-        self._endpoint = endpoint or os.environ.get("LITELLM_ENDPOINT")
+        endpoint_variable = self._ENDPOINT_ENVIRONMENT_VARIABLE
+        self._endpoint = endpoint or (os.environ.get(endpoint_variable) if endpoint_variable else None)
         self._headers = headers
         self._temperature = temperature
         self._top_p = top_p
@@ -367,6 +425,7 @@ class LiteLLMChatTarget(PromptTarget):
             supports_multi_turn=True,
             supports_multi_message_pieces=True,
             supports_editable_history=True,
+            supports_prefill=self._DEFAULT_CONFIGURATION.capabilities.supports_prefill,
             supports_system_prompt=True,
             supports_json_output=supports_json_output,
             supports_json_schema=supports_json_schema,
@@ -413,8 +472,23 @@ class LiteLLMChatTarget(PromptTarget):
                 "n": self._n,
                 "stop": self._stop,
                 "extra_body_parameters": self._extra_body_parameters,
+                "tools": [self._tool_definition(tool) for tool in self._direct_tools] or None,
+                "tool_providers": [provider.identifier for provider in self._tool_providers] or None,
+                "execute_tools": None if self._execute_tools else False,
+                "max_tool_rounds": self._max_tool_rounds if self._direct_tools or self._tool_providers else None,
             },
         )
+
+    def _identifier_headers(self) -> dict[str, str] | None:
+        """
+        Return the configured headers without credentials, for identifiers that record headers.
+
+        Returns:
+            dict[str, str] | None: The non-credential headers, or None when there are none.
+        """
+        return {
+            name: value for name, value in (self._headers or {}).items() if name.lower() not in self._CREDENTIAL_HEADERS
+        } or None
 
     def is_json_response_supported(self) -> bool:
         """
@@ -427,19 +501,127 @@ class LiteLLMChatTarget(PromptTarget):
 
     # Not decorated with ``pyrit_target_retry``: LiteLLM owns transient/rate-limit retry via
     # ``num_retries`` (see ``__init__``). Stacking both would multiply the retry count.
-    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        async with AsyncExitStack() as stack:
+            for provider in () if self._suppress_tools else self._tool_providers:
+                if isinstance(provider, _ScopedToolProvider):
+                    await stack.enter_async_context(provider.execution_scope_async())
+            tools = (
+                []
+                if self._suppress_tools
+                else await collect_tools_async(tools=self._direct_tools, providers=self._tool_providers)
+            )
+            self._validate_tool_definitions(tools)
+            request = normalized_conversation[-1]
+            if not tools or not self._execute_tools:
+                return await self._send_completion_async(
+                    conversation=normalized_conversation, request=request, tools=tools
+                )
+
+            async def send_async(conversation: Sequence[Message]) -> Message:
+                [reply] = await self._send_completion_async(
+                    conversation=list(conversation), request=request, tools=tools
+                )
+                return reply
+
+            async def resolve_tools_async() -> tuple[Sequence[Tool], Mapping[str, ToolFunction]]:
+                return tools, {}
+
+            return await run_tool_loop_async(
+                conversation=normalized_conversation,
+                request_piece=request.message_pieces[0],
+                send_async=send_async,
+                find_calls=self._tool_call_finder(normalized_conversation),
+                dispatch_async=lambda call: dispatch_tool_call_async(
+                    call=call, resolve_tools_async=resolve_tools_async
+                ),
+                max_tool_rounds=self._max_tool_rounds,
+            )
+
+    @staticmethod
+    def _tool_definition(tool: Tool) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+                "strict": tool.strict,
+            },
+        }
+
+    def _validate_tool_definitions(self, tools: Sequence[Tool]) -> None:
+        declared = {
+            definition.get("function", {}).get("name")
+            for definition in (self._extra_body_parameters or {}).get("tools") or []
+        }
+        conflicts = {tool.name for tool in tools} & declared
+        if conflicts:
+            raise ValueError(f"Tools conflict with extra_body_parameters declarations: {sorted(conflicts)}")
+
+    @staticmethod
+    def _tool_call_finder(conversation: Sequence[Message]) -> Callable[[Message], list[PendingToolCall]]:
+        """
+        Build the shared tool loop's call reader, rejecting calls whose IDs would corrupt history.
+
+        Args:
+            conversation: The conversation being sent, whose call IDs cannot be reused.
+
+        Returns:
+            A function returning a response's calls in order, or raising ``InvalidToolCallsError``.
+        """
+        seen_ids = {
+            parse_function_call(piece).id
+            for message in conversation
+            for piece in message.message_pieces
+            if piece.converted_value_data_type == "function_call"
+        }
+
+        def find_calls(reply: Message) -> list[PendingToolCall]:
+            call_pieces = [
+                piece for piece in reply.message_pieces if piece.converted_value_data_type == "function_call"
+            ]
+            if not call_pieces:
+                return []
+            if any(piece.is_truncated or piece.response_error != "none" for piece in reply.message_pieces):
+                raise InvalidToolCallsError("Truncated or failed tool calls were not executed.")
+            try:
+                calls = [parse_function_call(piece) for piece in call_pieces]
+            except ValueError as exc:
+                raise InvalidToolCallsError(f"Invalid tool calls: {exc}") from exc
+            ids = [call.id for call in calls]
+            if len(set(ids)) != len(ids) or seen_ids.intersection(ids):
+                raise InvalidToolCallsError("Invalid tool calls: Duplicate or reused tool call ID.")
+            seen_ids.update(ids)
+            return [
+                PendingToolCall(
+                    call_id=call.id,
+                    name=call.function.name if isinstance(call.function, FunctionCall) else None,
+                    arguments=call.function.arguments if isinstance(call.function, FunctionCall) else call.function,
+                    section=json.loads(piece.converted_value),
+                )
+                for call, piece in zip(calls, call_pieces, strict=True)
+            ]
+
+        return find_calls
+
+    @limit_requests_per_minute
+    async def _send_completion_async(
+        self, *, conversation: list[Message], request: Message, tools: Sequence[Tool]
+    ) -> list[Message]:
         litellm = self._import_litellm()
 
-        message = normalized_conversation[-1]
+        message = request
         request_piece: MessagePiece = message.message_pieces[0]
 
         logger.info(f"Sending prompt to LiteLLM target ({self._model_name}): {message}")
 
         json_config = self._get_json_response_config(message_piece=request_piece)
-        messages = await self._build_chat_messages_async(normalized_conversation)
+        messages = await self._build_chat_messages_async(conversation)
         api_key = await self._resolve_api_key_async()
         body = self._construct_request_body(messages=messages, json_config=json_config, api_key=api_key)
+        if tools:
+            body["tools"] = [*body.get("tools", []), *(self._tool_definition(tool) for tool in tools)]
         # Applied after the passthrough merge so ``extra_body_parameters`` cannot drop the context.
         # LiteLLM merges ``headers`` with ``extra_headers`` and then the provider-specific headers,
         # so all three are checked for manual values.
@@ -511,6 +693,33 @@ class LiteLLMChatTarget(PromptTarget):
         return await build_multimodal_chat_messages_async(
             conversation, prefer_transcript_for_history=prefer_transcript_for_history
         )
+
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
+        """
+        Match the shared Chat Completions builder's historical wire modalities.
+
+        Args:
+            message_piece: Historical message piece to check.
+            has_text_piece: Whether its message contains a text piece.
+
+        Returns:
+            PromptDataType | None: The wire modality, or None for omitted audio.
+        """
+        prefer_transcript_for_history = bool(
+            self._audio_response_config and self._audio_response_config.prefer_transcript_for_history
+        )
+        if should_skip_audio_piece(
+            message_piece=message_piece,
+            is_last_message=False,
+            has_text_piece=has_text_piece,
+            prefer_transcript_for_history=prefer_transcript_for_history,
+        ):
+            return None
+        if message_piece.is_blocked_error():
+            return "text"
+        return message_piece.converted_value_data_type
 
     def _construct_request_body(
         self,

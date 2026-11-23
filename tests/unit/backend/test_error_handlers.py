@@ -157,10 +157,10 @@ class TestErrorHandlers:
         )
         assert all(record.exc_info is None for record in caplog.records)
 
-    def test_storage_failure_log_leaves_out_a_sas_url_from_the_error_behind_it(
+    def test_storage_failure_log_keeps_the_error_behind_it_without_its_sas_url(
         self, app: FastAPI, client: TestClient, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Test that a SAS URL in the error behind a storage failure stays out of the log, even at debug level."""
+        """Test that the debug log shows the error behind a storage failure, with its SAS URL left out."""
 
         @app.get("/test")
         async def test_endpoint() -> dict:
@@ -179,6 +179,7 @@ class TestErrorHandlers:
             "Scenario preset storage at https://account.blob.core.windows.net/presets is unavailable: "
             "ServiceRequestError (GET /test)"
         ) in caplog.messages
+        assert "ServiceRequestError: https://account.blob.core.windows.net/presets" in caplog.text
         assert "secret-sig" not in caplog.text
 
     def test_unreadable_document_returns_503_with_the_reason(self, app: FastAPI, client: TestClient) -> None:

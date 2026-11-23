@@ -14,6 +14,7 @@ import pytest
 from mcp.types import Tool as MCPToolDefinition
 from openai.types.chat import ChatCompletion
 from PIL import Image
+from sqlalchemy.exc import ProgrammingError
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
@@ -211,9 +212,93 @@ async def test_strict_discovery_rejects_blocked_response_without_changing_capabi
     target = MockPromptTarget()
     original = target.configuration
     with patch.object(target, "send_prompt_async", new_callable=AsyncMock, return_value=_error_response()):
-        with pytest.raises(CapabilityDiscoveryError):
+        with pytest.raises(CapabilityDiscoveryError, match="'blocked' error response: blocked"):
             await discover_target_capabilities_async(target=target, raise_on_error=True, apply=True)
     assert target.configuration is original
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_strict_discovery_reports_the_http_failure() -> None:
+    target = MockPromptTarget()
+    request = httpx.Request("POST", "https://example.test")
+    error = httpx.HTTPStatusError(
+        "Incorrect API key provided", request=request, response=httpx.Response(status_code=401, request=request)
+    )
+    with patch.object(target, "send_prompt_async", new_callable=AsyncMock, side_effect=error):
+        with pytest.raises(CapabilityDiscoveryError) as raised:
+            await discover_target_capabilities_async(target=target, raise_on_error=True, retries=0)
+    assert str(raised.value) == (
+        "Control request ['text'] failed: HTTPStatusError (HTTP 401): Incorrect API key provided; "
+        "capabilities were not changed."
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_strict_discovery_reports_why_no_control_request_passed() -> None:
+    target = MockPromptTarget()
+    with patch.object(
+        target, "send_prompt_async", new_callable=AsyncMock, side_effect=ValueError("Invalid API settings")
+    ):
+        with pytest.raises(CapabilityDiscoveryError) as raised:
+            await discover_target_capabilities_async(target=target, raise_on_error=True, retries=0)
+    assert str(raised.value) == (
+        "No declared input passed a control request (Control request ['text']: ValueError: Invalid API settings); "
+        "capabilities were not changed."
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_strict_discovery_names_the_capability_and_the_failed_turn() -> None:
+    target = MockPromptTarget()
+    sends = 0
+
+    async def send_async(*, message: Message) -> list[Message]:
+        nonlocal sends
+        sends += 1
+        # The control request and the first turn succeed; the history turn fails.
+        if sends > 2:
+            raise ConnectionError("offline")
+        return _ok_response()
+
+    with (
+        patch.object(target, "send_prompt_async", new_callable=AsyncMock, side_effect=send_async),
+        patch("pyrit.prompt_target.common.discover_target_capabilities._supports_chat_probes", return_value=True),
+    ):
+        with pytest.raises(CapabilityDiscoveryError) as raised:
+            await discover_target_capabilities_async(
+                target=target,
+                capabilities=[CapabilityName.MULTI_TURN],
+                test_modalities=set(),
+                raise_on_error=True,
+                retries=0,
+            )
+    assert str(raised.value) == (
+        "supports_multi_turn: Multi-turn probe (turn 2) failed: ConnectionError: offline; "
+        "capabilities were not changed."
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_strict_discovery_reports_the_database_error_that_blocked_a_probe() -> None:
+    target = MockPromptTarget()
+    error = ProgrammingError(
+        'INSERT INTO "Conversations" (conversation_id) VALUES (?)',
+        ("capability-probe-id",),
+        Exception("String or binary data would be truncated in table 'Conversations'"),
+    )
+    with (
+        patch.object(target, "send_prompt_async", new_callable=AsyncMock, return_value=_ok_response()),
+        patch.object(target._memory, "add_conversation_to_memory_async", new_callable=AsyncMock, side_effect=error),
+        patch("pyrit.prompt_target.common.discover_target_capabilities._supports_chat_probes", return_value=True),
+    ):
+        with pytest.raises(CapabilityDiscoveryError) as raised:
+            await discover_target_capabilities_async(
+                target=target, capabilities=[CapabilityName.MULTI_TURN], test_modalities=set(), raise_on_error=True
+            )
+    assert str(raised.value) == (
+        "supports_multi_turn: Could not prepare the multi-turn probe: ProgrammingError: "
+        "String or binary data would be truncated in table 'Conversations'; capabilities were not changed."
+    )
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1598,7 +1683,10 @@ class TestVerifyTargetAsync:
         # because multi-turn issues 2 sends).
         assert target._send_prompt_to_target_async.await_count <= 3
 
-    async def test_discover_target_capabilities_async_preserves_declared_when_capabilities_narrowed(self) -> None:
+    @pytest.mark.parametrize("apply", [False, True])
+    async def test_discover_target_capabilities_async_preserves_declared_when_capabilities_narrowed(
+        self, apply: bool
+    ) -> None:
         """
         When ``capabilities`` narrows the probe set, capabilities NOT in the
         narrowed set must fall back to the target's declared values rather
@@ -1609,6 +1697,7 @@ class TestVerifyTargetAsync:
             supports_system_prompt=True,
             supports_json_schema=True,
             supports_editable_history=True,
+            supports_prefill=True,
         )
         target = MockPromptTarget()
         target._configuration = TargetConfiguration(capabilities=declared)
@@ -1618,6 +1707,7 @@ class TestVerifyTargetAsync:
             target=target,
             capabilities={CapabilityName.JSON_OUTPUT},
             per_probe_timeout_s=2.0,
+            apply=apply,
         )
 
         # The probed capability reflects the queried result.
@@ -1627,6 +1717,8 @@ class TestVerifyTargetAsync:
         assert result.supports_system_prompt is True
         assert result.supports_json_schema is True
         assert result.supports_editable_history is True
+        assert result.supports_prefill is True
+        assert target.capabilities.supports_prefill is True
 
     async def test_discover_target_capabilities_async_drops_editable_history_when_multi_turn_probe_fails(self) -> None:
         """Editable history must not remain true when probing disproves multi-turn support."""
