@@ -36,7 +36,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import FloatScaleThresholdScorer, SelfAskRefusalScorer, TrueFalseScorer
+from pyrit.score import FloatScaleThresholdScorer, RefusalScorerPaths, SelfAskRefusalScorer, TrueFalseScorer
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
 
@@ -374,6 +374,8 @@ class TestCrescendoAttackInitialization:
         # Verify default scorers were created
         assert isinstance(attack._objective_scorer, FloatScaleThresholdScorer)
         assert isinstance(attack._refusal_scorer, SelfAskRefusalScorer)
+        expected_lenient_prompt = SeedPrompt.from_yaml_file(RefusalScorerPaths.OBJECTIVE_LENIENT.value)
+        assert attack._refusal_scorer._system_prompt == expected_lenient_prompt.value
 
     @pytest.mark.parametrize(
         "system_prompt_path",
