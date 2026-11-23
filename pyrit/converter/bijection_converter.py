@@ -481,10 +481,13 @@ class TokenBijectionConverter(BijectionConverter):
             )
         delimiter = re.escape(self._TOKEN_DELIMITER)
         letter = r"[^\W\d_]"
-        # Custom code words may also contain digits, "_", or punctuation ("gpt4").
-        extra = sorted({char for word in self._inverse_mapping for char in word if not re.fullmatch(letter, char)})
-        if extra:
-            letter = rf"(?:{letter}|[{re.escape(''.join(extra))}])"
+        # Custom code words may also contain digits, "_", punctuation, or spaces ("gpt4", "ice cream").
+        # They are matched whole, so those characters never join ordinary text into one chain.
+        non_letter_words = sorted(
+            (word for word in self._inverse_mapping if not re.fullmatch(rf"{letter}+", word)), key=len, reverse=True
+        )
+        if non_letter_words:
+            letter = rf"(?:(?i:{'|'.join(map(re.escape, non_letter_words))})|{letter})"
         # `\b` misses encoded runs beside digits, `_`, or non-ASCII letters, so decode() works on
         # whole letter chains instead: a letter stretch plus any stretches joined to it by single
         # delimiters. "--" is matched first so a literal hyphen is never split between two chains.

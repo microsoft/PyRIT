@@ -726,7 +726,7 @@ def test_token_converter_decode_accepts_title_case_non_ascii_code_word():
     assert converter.decode(f"\u039a\u03b1\u03b9-{converter.mapping['b']}") == "Ab"
 
 
-@pytest.mark.parametrize("code_word", ["gpt4", "foo_bar", "a.b"])
+@pytest.mark.parametrize("code_word", ["gpt4", "foo_bar", "a.b", "ice cream"])
 @pytest.mark.parametrize("original", ["ab", "Ab", "a1", "b4 a_b"])
 async def test_token_converter_round_trips_code_words_with_non_letters(*, code_word: str, original: str) -> None:
     converter = TokenBijectionConverter(
@@ -736,6 +736,17 @@ async def test_token_converter_round_trips_code_words_with_non_letters(*, code_w
 
     encoded = await converter.convert_async(prompt=original)
     assert converter.decode(encoded.output_text) == original
+
+
+@pytest.mark.parametrize("code_word", ["a.b", "ice cream"])
+def test_token_converter_non_letter_code_word_does_not_join_surrounding_text(code_word: str):
+    converter = TokenBijectionConverter(
+        tokenizer=_mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)}),
+        mapping=dict(zip(string.ascii_lowercase, [code_word, *_PLAIN_VOCAB_WORDS[:25]], strict=True)),
+    )
+
+    assert converter.decode("Answer is cat dog.") == "Answer is b c."
+    assert converter.decode("Hello.cat") == "Hello.b"
 
 
 @pytest.mark.parametrize("invalid_code_word", ["", "Cat", "e-mail"])
