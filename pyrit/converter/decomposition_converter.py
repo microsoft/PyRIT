@@ -7,7 +7,7 @@ import pathlib
 import re
 import uuid
 from collections import Counter
-from typing import Any
+from typing import Any, cast
 
 from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -73,11 +73,11 @@ def _tokens(text: str) -> list[str]:
     Returns:
         list[str]: The lowercase word tokens.
     """
-    tokens: list[str] = re.findall(r"\w+", text.lower(), flags=re.UNICODE)
-    return tokens
+    # A pattern without groups makes findall return the matched strings.
+    return cast("list[str]", re.findall(r"\w+", text.lower(), flags=re.UNICODE))
 
 
-def _token_recall(source: list[str], got: list[str]) -> float:
+def _token_recall(source: list[str], *, got: list[str]) -> float:
     """
     Compute the fraction of source tokens (as a multiset) preserved in got.
 
@@ -231,11 +231,9 @@ class DecompositionConverter(Converter):
         Raises:
             InvalidJsonException: If the response is missing, unparseable, or fails validation.
         """
-        conversation_id = str(uuid.uuid4())
-        (
-            await self._converter_target.set_system_prompt_async(
-                system_prompt=self._decomposition_prompt.render_template_value(), conversation_id=conversation_id
-            )
+        # The decomposition instructions are sent in the user turn; see Converter._prepend_instructions.
+        user_prompt = self._prepend_instructions(
+            instructions=self._decomposition_prompt.render_template_value(), prompt=objective
         )
 
         prompt_metadata = JsonResponseConfig(
@@ -248,10 +246,10 @@ class DecompositionConverter(Converter):
                 MessagePiece(
                     role="user",
                     original_value=objective,
-                    converted_value=objective,
+                    converted_value=user_prompt,
                     original_value_data_type="text",
                     converted_value_data_type="text",
-                    conversation_id=conversation_id,
+                    conversation_id=str(uuid.uuid4()),
                     sequence=0,
                     prompt_metadata=prompt_metadata,
                     converter_identifiers=[self.get_identifier()],
@@ -312,7 +310,7 @@ class DecompositionConverter(Converter):
                     f"but the decomposition produced {noun_count}"
                 )
 
-        recall = _token_recall(_tokens(objective), _tokens(" ".join(words)))
+        recall = _token_recall(_tokens(objective), got=_tokens(" ".join(words)))
         if recall < _MIN_RECALL:
             raise InvalidJsonException(message=f"reconstruction recall {recall:.2f} below {_MIN_RECALL}")
         return words, types

@@ -20,6 +20,7 @@ policies together:
 | Field | Denominator | Meaning |
 |---|---|---|
 | `success_rate_decided` | Successes + failures | Success among decided outcomes, the existing ASR default. |
+| `success_rate_ci_lower`, `success_rate_ci_upper` | Successes + failures | 95% Wilson score confidence interval bounds for the observed decided-outcome rate (`None` when `total_decided == 0`). |
 | `success_rate_all` | All four outcomes | Success among every selected result, including errors and undetermined outcomes. |
 
 `success_rate` remains the compatible stored field; `success_rate_decided` is its
@@ -32,6 +33,8 @@ has `success_rate_decided=None` and `success_rate_all=0.0`. Neither rate require
 use that whole selected cohort. Empty outcome shares are zero, and an empty
 cohort's decided share is `None`. All proportions are between 0 and 1.
 Both success rates are calculated from counts, never by averaging subgroup rates.
+If a positive Wilson upper bound is too small to represent as a float, it rounds
+outward to the smallest positive float rather than collapsing the interval to zero.
 
 Population selection is separate from denominator selection. A failed
 attempt followed by a successful retry yields 50% raw-result ASR even if the
@@ -212,6 +215,34 @@ Older runs without a saved run plan and separately executed runs are not
 supported. The reported difference is descriptive and does not establish that
 the attack caused an outcome to change. No confidence interval is provided,
 because small and constant paired samples need careful uncertainty treatment.
+
+### ASSERT policy metrics
+
+`compute_assert_policy_metrics_async(result)` reports **impermissible behavior
+violated** and **permissible behavior violated** for a `foundry.assert_policy` run.
+It counts the same latest execution units as `compute_scenario_statistics`,
+separately for each technique and the baseline. Each conversation counts once
+per stance the judge found relevant, as violated if any relevant category of that
+stance was violated, and as not applicable if none was relevant.
+
+Category relevance comes from `AssertCategoryJudgment`; permissibility comes
+from the `ViolatesAssertPolicy` in the policy score's saved `scored_expectation`.
+Analytics never rereads today's seed datasets. Scores without that recorded
+policy or per-category judgments are counted as exclusions, not guessed from
+their generated category. A verdict that contradicts its category judgments
+is rejected.
+
+The result includes independent dimension rates, per-policy category rates,
+and exclusion counts. N/A and missing verdicts stay outside rate denominators.
+Grade counts and medians remain separate for each recorded scale. Rates use
+ASSERT's 90% Wilson interval and flag fewer than five applicable conversations.
+A supplied unmarked or composing objective scorer is reported as `objective`;
+its underlying ASSERT judgments remain independent dimension results.
+
+The run page exposes the same result through
+`GET /api/analytics/assert?scenario_result_id=<run-id>`. The filter selects a
+saved run, not a scenario catalog entry. See the
+[Foundry notebook](../../scanner/foundry.ipynb) for an executed example.
 
 ### Scenario producer accounting
 

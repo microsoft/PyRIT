@@ -25,13 +25,14 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.adversarial_prompts import AdversarialPrompts
     from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
     from pyrit.models.seeds.attack_technique_seed_group import AttackTechniqueSeedGroup
+    from pyrit.models.seeds.gcg_seed_metadata import GCGSeedMetadata
     from pyrit.models.seeds.seed import Seed
     from pyrit.models.seeds.seed_dataset import SeedDataset
     from pyrit.models.seeds.seed_dataset_summary import SeedDatasetSummary
     from pyrit.models.seeds.seed_group import SeedGroup, SeedUnion
     from pyrit.models.seeds.seed_group_requirements import SeedGroupRequirements
     from pyrit.models.seeds.seed_grouping import group_seeds_into_attack_groups
-    from pyrit.models.seeds.seed_objective import SeedObjective
+    from pyrit.models.seeds.seed_objective import SeedObjective, build_objective_decomposition_tree
     from pyrit.models.seeds.seed_origin import SeedOrigin
     from pyrit.models.seeds.seed_prompt import SeedPrompt
     from pyrit.models.seeds.seed_record import SeedRecord
@@ -51,7 +52,9 @@ if TYPE_CHECKING:
     )
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "GCGSeedMetadata": "pyrit.models.seeds.gcg_seed_metadata",
     "AdversarialPrompts": "pyrit.models.seeds.adversarial_prompts",
+    "build_objective_decomposition_tree": "pyrit.models.seeds.seed_objective",
     "load_seed_dataset_from_yaml": "pyrit.models.seeds.yaml_seed_loader",
     "load_seed_from_yaml": "pyrit.models.seeds.yaml_seed_loader",
     "load_seed_prompt_from_yaml_with_required_parameters": "pyrit.models.seeds.yaml_seed_loader",

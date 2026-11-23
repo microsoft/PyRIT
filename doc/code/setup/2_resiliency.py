@@ -13,12 +13,14 @@
 #
 # PyRIT provides multiple layers of retry and resiliency mechanisms to handle failures gracefully during security testing. This notebook explains the different retry mechanisms, how they work together, and how to configure them for your use case.
 #
+# Recorded output below predates explicit scan roles. Historical "fallback default objective scorer" messages describe a scoring rubric, not automatic target provisioning. Configure each required model role explicitly, as in the example below.
+#
 # ## Overview: Different Levels of Retry Mechanisms
 #
 # PyRIT implements retries at multiple levels, each serving a different purpose:
 #
 # 1. Low-level Retries (e.g. `pyrit_target_retry`). These automatically attempt to retry certain target errors under known conditions. For example, if there is an HTTP `RateLimitError` on an LLM endpoint, the target can use this attribute to automatically make the HTTP request again with an exponential backoff.
-# 2. Mid-level Retries (e.g. `pyrit_json_retry`). These automatically attempt to retry under known conditions. As an exmaple, if a scorer expects an LLM response to have specific JSON, and that is JSON malformed, the scorer can use this attribute to ask the LLM to try scoring again. This does not have an exponential backoff.
+# 2. Mid-level Retries (e.g. `pyrit_json_retry`). These automatically attempt to retry under known conditions. As an example, if a scorer expects an LLM response to have specific JSON, and that JSON is malformed, the scorer can use this attribute to ask the LLM to try scoring again. This does not have an exponential backoff.
 # 3. High-level/Scenario-Level Retries: High-level workflow that retries the entire scenario when anything goes wrong, including unknown exceptions. If you are sending thousands of prompts, this can happen! It has logic to pick up where it left off in the scenario execution.
 #
 # Understanding when and how to use each is key to building robust security testing workflows. It's also important to understand these retries are stacked on top of each other. For example, if a target is unresponsive for five requests (a low level retry), a higher level still counts that as a "success".
@@ -122,7 +124,7 @@
 
 # %%
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.scenario.foundry import FoundryTechnique, RedTeamAgent
+from pyrit.scenario.scenarios.foundry import FoundryTechnique, RedTeamAgent
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets, TechniqueInitializer
 
@@ -134,6 +136,7 @@ await initialize_pyrit_async(
 )  # type: ignore
 
 objective_target = OpenAIChatTarget()
+scoring_target = OpenAIChatTarget()
 
 # Create a scenario with retry configuration
 scenario = RedTeamAgent()
@@ -141,6 +144,7 @@ scenario = RedTeamAgent()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
+        "scoring_target": scoring_target,
         "max_concurrency": 5,
         "max_retries": 3,
         "scenario_techniques": [FoundryTechnique.Base64],
@@ -210,6 +214,7 @@ print(f"Total results: {len(result.attack_results)}")
 # resumed_scenario.set_params_from_args(
 #     args={
 #         "objective_target": objective_target,
+#         "scoring_target": scoring_target,
 #         "scenario_techniques": [FoundryTechnique.Base64],
 #     }
 # )

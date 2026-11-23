@@ -93,6 +93,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
     allowing for various attack techniques and scenarios.
     """
 
+    ADVERSARIAL_TARGET_REQUIREMENTS = _ADVERSARIAL_REQUIREMENTS
     ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
         default_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
         system_prompt_parameters=("objective",),
@@ -155,6 +156,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         warn_if_set(config=attack_scoring_config, log=self._logger, unused_fields=["refusal_scorer"])
 
         self._objective_scorer = attack_scoring_config.objective_scorer
+        self._validate_objective_scorer(scorer=self._objective_scorer)
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
         self._use_score_as_feedback = attack_scoring_config.use_score_as_feedback
 
@@ -163,7 +165,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # The adversarial target must natively support multi-turn dialogue and system prompts;
         # the class-level ``TARGET_REQUIREMENTS`` only covers ``objective_target``.
         try:
-            _ADVERSARIAL_REQUIREMENTS.validate(target=self._adversarial_chat)
+            type(self).ADVERSARIAL_TARGET_REQUIREMENTS.validate(target=self._adversarial_chat)
         except ValueError as exc:
             raise ValueError(f"RedTeamingAttack {exc}") from exc
 

@@ -20,7 +20,7 @@ function hoistFromInner(
   const inners = target.inner_targets ?? []
   if (inners.length > 0) {
     const values = new Set(inners.map(pick).filter((value): value is string => Boolean(value)))
-    if (values.size === 1) return [...values][0]
+    if (values.size === 1) return [...values][0] ?? null
   }
   return null
 }
@@ -33,6 +33,12 @@ export function targetType(target: TargetInstance): string {
 /** The deployment/model name, hoisted from inner targets for composite targets. */
 export function targetModelName(target: TargetInstance): string | null {
   return hoistFromInner(target, (t) => t.identifier.model_name)
+}
+
+/** A target's picker label: its registry name, with the model when known. */
+export function targetOptionLabel(target: TargetInstance): string {
+  const model = targetModelName(target)
+  return model ? `${target.target_registry_name} (${model})` : target.target_registry_name
 }
 
 /** The underlying model name, hoisted from inner targets for composite targets. */
@@ -110,8 +116,9 @@ export function resolveTargetByIdentifierHash(
     (target) => targetIdentifierHash(target) === identifierHash,
   )
 
-  if (matches.length === 1) {
-    return { status: 'resolved', target: matches[0] }
+  const first = matches[0]
+  if (matches.length === 1 && first) {
+    return { status: 'resolved', target: first }
   }
   return { status: matches.length === 0 ? 'unavailable' : 'ambiguous' }
 }

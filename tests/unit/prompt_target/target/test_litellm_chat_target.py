@@ -6,7 +6,9 @@ import base64
 import json
 import sys
 import types
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
+from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,23 +28,35 @@ from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AttackOutcome,
+    CapabilityName,
     JsonResponseConfig,
     Message,
     MessagePiece,
     MessageScorable,
+    ReasoningContentMetadata,
     RequestTraceContext,
     ScoringExpectation,
     ToolCallRequirement,
+    ToolExecutionMetadata,
+    ToolLoopStop,
+    ToolLoopStopReason,
     ToolsCalled,
     TraceScorable,
 )
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import (
+    ClaudeChatTarget,
+    FunctionTool,
     LiteLLMChatTarget,
     OpenAIChatAudioConfig,
     TargetCapabilities,
     TargetConfiguration,
     TargetTraceConfig,
+    ToolInfrastructureError,
+    discover_target_capabilities_async,
+    tool,
 )
+from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
 from pyrit.score import InMemoryTraceClient, InMemoryTraceExporter, OtelToolCallScorer, OtelTraceSource
 
 # ---------------------------------------------------------------------------
@@ -160,6 +174,396 @@ def _user_message(text="test prompt", conversation_id="convo"):
 
 def _disabled_json_config() -> JsonResponseConfig:
     return JsonResponseConfig.from_metadata(metadata={})
+
+
+def _tool_response(*, calls: list[tuple[str, str, str]], finish_reason: str = "tool_calls") -> Any:
+    response = _mock_response(content="Checking.", finish_reason=finish_reason)
+    response.choices[0].message.tool_calls = []
+    for call_id, name, arguments in calls:
+        call = MagicMock()
+        call.id = call_id
+        call.function.name = name
+        call.function.arguments = arguments
+        response.choices[0].message.tool_calls.append(call)
+    return response
+
+
+@pytest.fixture
+def weather_tool() -> tuple[FunctionTool, list[str]]:
+    executions: list[str] = []
+
+    @tool
+    async def weather_async(*, location: str) -> str:
+        executions.append(location)
+        return f"Sunny in {location}"
+
+    return weather_async, executions
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestLiteLLMToolLoop:
+    @pytest.mark.parametrize("target_class", [LiteLLMChatTarget, ClaudeChatTarget])
+    @pytest.mark.parametrize("executable", [False, True])
+    async def test_null_passthrough_tools_are_omitted_async(
+        self,
+        *,
+        litellm_stub: Any,
+        weather_tool: tuple[FunctionTool, list[str]],
+        target_class: type[LiteLLMChatTarget],
+        executable: bool,
+    ) -> None:
+        target = target_class(
+            model_name="anthropic/claude-sonnet-4-6",
+            tools=[weather_tool[0]] if executable else None,
+            extra_body_parameters={"tools": None},
+        )
+        litellm_stub.acompletion.return_value = _mock_response()
+        await target.send_prompt_async(message=_user_message())
+        body = litellm_stub.acompletion.call_args.kwargs
+        if executable:
+            assert body["tools"][0]["function"]["name"] == "weather_async"
+        else:
+            assert "tools" not in body
+        assert weather_tool[1] == []
+
+    async def test_duplicate_registrations_fail_before_sending_async(
+        self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]]
+    ) -> None:
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[weather_tool[0], weather_tool[0]])
+        with pytest.raises(ValueError, match="Duplicate tool name"):
+            await target.send_prompt_async(message=_user_message())
+        litellm_stub.acompletion.assert_not_awaited()
+
+    async def test_passthrough_tool_conflict_fails_before_sending_async(
+        self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]]
+    ) -> None:
+        target = LiteLLMChatTarget(
+            model_name="openai/gpt-4o",
+            tools=[weather_tool[0]],
+            extra_body_parameters={"tools": [{"type": "function", "function": {"name": "weather_async"}}]},
+        )
+        with pytest.raises(ValueError, match="conflict"):
+            await target.send_prompt_async(message=_user_message())
+        litellm_stub.acompletion.assert_not_awaited()
+
+    async def test_unserializable_result_propagates_after_execution_async(self, litellm_stub: Any) -> None:
+        executions: list[str] = []
+
+        @tool
+        async def unserializable_async() -> object:
+            executions.append("ran")
+            return object()
+
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[unserializable_async])
+        litellm_stub.acompletion.side_effect = [
+            _tool_response(calls=[("a", "unserializable_async", "{}")]),
+            _mock_response("Recovered."),
+        ]
+        with pytest.raises(TypeError):
+            await target.send_prompt_async(message=_user_message())
+        assert executions == ["ran"]
+        assert litellm_stub.acompletion.await_count == 1
+
+    async def test_arguments_are_validated_like_openai_response_target_async(self, litellm_stub: Any) -> None:
+        received: list[int] = []
+
+        @tool
+        async def count_async(*, value: int) -> str:
+            received.append(value)
+            return "counted"
+
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[count_async])
+        litellm_stub.acompletion.side_effect = [
+            _tool_response(calls=[("a", "count_async", '{"value":"7"}')]),
+            _mock_response("Done."),
+        ]
+        replies = await target.send_prompt_async(message=_user_message())
+        assert received == [7]
+        assert json.loads(replies[1].get_value())["output"] == "counted"
+
+    @pytest.mark.parametrize("max_rounds", [-1, True, 1.5])
+    def test_invalid_budget(self, max_rounds: Any) -> None:
+        with pytest.raises(ValueError, match="nonnegative integer"):
+            LiteLLMChatTarget(model_name="openai/gpt-4o", max_tool_rounds=max_rounds)
+
+    @pytest.mark.parametrize("extra", [{}, {"n": 2}])
+    def test_multiple_completions_rejected(
+        self, *, weather_tool: tuple[FunctionTool, list[str]], extra: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ValueError, match="n=1"):
+            LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[weather_tool[0]], n=2, extra_body_parameters=extra)
+
+    async def test_multicall_multiround_and_persisted_replay_async(
+        self, *, litellm_stub: Any, sqlite_instance: SQLiteMemory, weather_tool: tuple[FunctionTool, list[str]]
+    ) -> None:
+        configured, executions = weather_tool
+        target = LiteLLMChatTarget(
+            model_name="openai/gpt-4o", underlying_model="gpt-4o", tools=[configured], max_tool_rounds=2
+        )
+        litellm_stub.acompletion.side_effect = [
+            _tool_response(
+                calls=[("a", "weather_async", '{"location":"SF"}'), ("b", "weather_async", '{"location":"NY"}')]
+            ),
+            _tool_response(calls=[("c", "weather_async", '{"location":"LA"}')]),
+            _mock_response("Done."),
+            _mock_response("Second."),
+        ]
+        normalizer = PromptNormalizer()
+        result = await normalizer.send_prompt_async(target=target, message=_user_message(), conversation_id="loop")
+        assert result.get_value() == "Done."
+        history = await sqlite_instance.get_conversation_messages_async(conversation_id="loop")
+        assert [message.api_role for message in history] == [
+            "user",
+            "assistant",
+            "tool",
+            "tool",
+            "assistant",
+            "tool",
+            "assistant",
+        ]
+        assert history[1].message_pieces[0].converted_value == "Checking."
+        assert executions == ["SF", "NY", "LA"]
+        target.validate_tool_history(history)
+        await normalizer.send_prompt_async(target=target, message=_user_message("Second"), conversation_id="loop")
+        messages = litellm_stub.acompletion.call_args.kwargs["messages"]
+        assert [message["role"] for message in messages] == [
+            "user",
+            "assistant",
+            "tool",
+            "tool",
+            "assistant",
+            "tool",
+            "assistant",
+            "user",
+        ]
+        assert [message["tool_call_id"] for message in messages if message["role"] == "tool"] == ["a", "b", "c"]
+        assert executions == ["SF", "NY", "LA"]
+
+    @pytest.mark.parametrize("budget", [0, 1])
+    async def test_exhaustion_never_executes_beyond_budget_async(
+        self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]], budget: int
+    ) -> None:
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[weather_tool[0]], max_tool_rounds=budget)
+        litellm_stub.acompletion.side_effect = [
+            _tool_response(calls=[("a", "weather_async", '{"location":"SF"}')]),
+            _tool_response(calls=[("b", "weather_async", '{"location":"NY"}')]),
+        ]
+        responses = await target.send_prompt_async(message=_user_message())
+        assert weather_tool[1] == (["SF"] if budget else [])
+        assert responses[-1].get_piece().response_error == "processing"
+        output = responses[-2].get_piece()
+        assert "max_tool_rounds_exhausted" in output.converted_value
+        assert ToolExecutionMetadata.from_metadata(metadata=output.prompt_metadata).invoked is False
+        assert litellm_stub.acompletion.await_count == budget + 1
+        stop = ToolLoopStop.from_metadata(metadata=responses[-1].get_piece().prompt_metadata)
+        assert stop.reason == ToolLoopStopReason.MAX_TOOL_ROUNDS_EXHAUSTED
+
+    @pytest.mark.parametrize(
+        ("name", "arguments"),
+        [
+            ("unknown", "{}"),
+            ("weather_async", "{"),
+            ("weather_async", "[]"),
+            ("weather_async", "{}"),
+            ("weather_async", '{"location":"SF","extra":1}'),
+        ],
+    )
+    async def test_dispatch_errors_return_linked_results_without_execution_async(
+        self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]], name: str, arguments: str
+    ) -> None:
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[weather_tool[0]])
+        litellm_stub.acompletion.side_effect = [
+            _tool_response(calls=[("a", name, arguments)]),
+            _mock_response("Recovered."),
+        ]
+        replies = await target.send_prompt_async(message=_user_message())
+        assert weather_tool[1] == []
+        assert replies[-1].get_value() == "Recovered."
+        result = json.loads(replies[1].get_value())
+        assert result["call_id"] == "a"
+        assert "error" in json.loads(result["output"])
+        assert ToolExecutionMetadata.from_metadata(metadata=replies[1].get_piece().prompt_metadata).invoked is False
+
+    @pytest.mark.parametrize("call_id", ["", " ", "duplicate"])
+    async def test_invalid_or_duplicate_ids_stop_before_batch_execution_async(
+        self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]], call_id: str
+    ) -> None:
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[weather_tool[0]])
+        calls = [(call_id, "weather_async", '{"location":"SF"}')]
+        if call_id == "duplicate":
+            calls *= 2
+        litellm_stub.acompletion.return_value = _tool_response(calls=calls)
+        replies = await target.send_prompt_async(message=_user_message())
+        assert weather_tool[1] == []
+        assert replies[-1].get_piece().response_error == "processing"
+        assert "Invalid tool calls" in replies[-1].get_value()
+        assert litellm_stub.acompletion.await_count == 1
+        stop = ToolLoopStop.from_metadata(metadata=replies[-1].get_piece().prompt_metadata)
+        assert stop.reason == ToolLoopStopReason.INVALID_TOOL_CALLS
+
+    async def test_reused_id_from_prior_round_does_not_reexecute_async(
+        self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]]
+    ) -> None:
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[weather_tool[0]])
+        litellm_stub.acompletion.side_effect = [
+            _tool_response(calls=[("a", "weather_async", '{"location":"SF"}')]),
+            _tool_response(calls=[("a", "weather_async", '{"location":"NY"}')]),
+        ]
+        replies = await target.send_prompt_async(message=_user_message())
+        assert weather_tool[1] == ["SF"]
+        assert "reused" in replies[-1].get_value()
+
+    async def test_truncation_never_executes_partial_calls_async(
+        self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]]
+    ) -> None:
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[weather_tool[0]])
+        litellm_stub.acompletion.return_value = _tool_response(
+            calls=[("a", "weather_async", '{"location":')], finish_reason="length"
+        )
+        replies = await target.send_prompt_async(message=_user_message())
+        assert weather_tool[1] == []
+        assert replies[0].get_piece().is_truncated
+        assert replies[-1].get_piece().response_error == "processing"
+        stop = ToolLoopStop.from_metadata(metadata=replies[-1].get_piece().prompt_metadata)
+        assert stop.reason == ToolLoopStopReason.INVALID_TOOL_CALLS
+
+    async def test_continuation_failure_propagates_after_execution_async(
+        self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]]
+    ) -> None:
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", underlying_model="gpt-4o", tools=[weather_tool[0]])
+        litellm_stub.acompletion.side_effect = [
+            _tool_response(calls=[("a", "weather_async", '{"location":"SF"}')]),
+            RuntimeError("offline failure"),
+        ]
+        with pytest.raises(Exception, match="offline failure"):
+            await target.send_prompt_async(message=_user_message())
+        assert weather_tool[1] == ["SF"]
+        assert litellm_stub.acompletion.await_count == 2
+
+    @pytest.mark.parametrize("cancel", [False, True])
+    async def test_tool_errors_and_cancellation_close_provider_scope_async(
+        self, *, litellm_stub: Any, cancel: bool
+    ) -> None:
+        @tool
+        async def failing_async() -> str:
+            if cancel:
+                raise asyncio.CancelledError
+            raise RuntimeError("Tool failed.")
+
+        events: list[str] = []
+
+        class Provider:
+            identifier = {"provider": "test"}
+
+            @asynccontextmanager
+            async def execution_scope_async(self) -> AsyncGenerator[None, None]:
+                events.append("open")
+                try:
+                    yield
+                finally:
+                    events.append("close")
+
+            async def get_tools_async(self) -> list[FunctionTool]:
+                assert events == ["open"]
+                return [failing_async]
+
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", tool_providers=[Provider()])
+        litellm_stub.acompletion.side_effect = [
+            _tool_response(calls=[("a", "failing_async", "{}")]),
+            _mock_response("Recovered."),
+        ]
+        with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
+            await target.send_prompt_async(message=_user_message())
+        assert events == ["open", "close"]
+        assert litellm_stub.acompletion.await_count == 1
+
+    @pytest.mark.parametrize("target_class", [LiteLLMChatTarget, ClaudeChatTarget])
+    @pytest.mark.parametrize("failure_index", [0, 1, 2])
+    @pytest.mark.parametrize("failure_invoked", [True, False])
+    async def test_infrastructure_failure_ends_round_with_complete_persisted_history_async(
+        self,
+        *,
+        litellm_stub: Any,
+        sqlite_instance: SQLiteMemory,
+        target_class: type[LiteLLMChatTarget],
+        failure_index: int,
+        failure_invoked: bool,
+    ) -> None:
+        executions: list[int] = []
+        events: list[str] = []
+
+        @tool
+        async def unstable_async(*, index: int) -> str:
+            executions.append(index)
+            if index == failure_index:
+                raise ToolInfrastructureError("Sandbox unavailable.", invoked=failure_invoked)
+            return f"completed {index}"
+
+        class Provider:
+            identifier = {"provider": "isolated-test"}
+
+            @asynccontextmanager
+            async def execution_scope_async(self) -> AsyncGenerator[None, None]:
+                events.append("open")
+                try:
+                    yield
+                finally:
+                    events.append("close")
+
+            async def get_tools_async(self) -> list[FunctionTool]:
+                return [unstable_async]
+
+        target = target_class(model_name="anthropic/claude-sonnet-4-6", tool_providers=[Provider()])
+        litellm_stub.acompletion.side_effect = [
+            _tool_response(calls=[(str(index), "unstable_async", json.dumps({"index": index})) for index in range(3)]),
+            _mock_response("Another model request must not occur."),
+        ]
+        reply = await PromptNormalizer().send_prompt_async(
+            target=target, message=_user_message(), conversation_id="infrastructure-failure"
+        )
+        assert reply.get_piece().response_error == "processing"
+        assert "Sandbox unavailable." in reply.get_value()
+        stop = ToolLoopStop.from_metadata(metadata=reply.get_piece().prompt_metadata)
+        assert stop.reason == ToolLoopStopReason.TOOL_INFRASTRUCTURE_ERROR
+        assert litellm_stub.acompletion.await_count == 1
+        assert executions == list(range(failure_index + 1))
+        assert events == ["open", "close"]
+        history = await sqlite_instance.get_conversation_messages_async(conversation_id="infrastructure-failure")
+        assert [message.api_role for message in history] == ["user", "assistant", "tool", "tool", "tool", "assistant"]
+        outputs = history[2:5]
+        assert [json.loads(message.get_value())["call_id"] for message in outputs] == ["0", "1", "2"]
+        assert [
+            ToolExecutionMetadata.from_metadata(metadata=message.get_piece().prompt_metadata).invoked
+            for message in outputs
+        ] == [index < failure_index or (index == failure_index and failure_invoked) for index in range(3)]
+        errors = [json.loads(json.loads(message.get_value())["output"])["error"] for message in outputs[failure_index:]]
+        assert errors == ["tool_infrastructure_error"] + ["tool_not_executed"] * (2 - failure_index)
+        assert "Sandbox" not in outputs[failure_index].get_value()
+        target.validate_tool_history(history)
+
+    async def test_execution_opt_out_advertises_but_returns_calls_async(
+        self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]]
+    ) -> None:
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[weather_tool[0]], execute_tools=False)
+        litellm_stub.acompletion.return_value = _tool_response(calls=[("a", "weather_async", '{"location":"SF"}')])
+        replies = await target.send_prompt_async(message=_user_message())
+        assert len(replies) == 1
+        assert litellm_stub.acompletion.call_args.kwargs["tools"][0]["function"]["name"] == "weather_async"
+        assert weather_tool[1] == []
+
+    async def test_probe_neither_discovers_nor_executes_tools_async(self, litellm_stub: Any) -> None:
+        from pyrit.prompt_target import discover_target_capabilities_async
+
+        class Provider:
+            identifier = {"provider": "test"}
+
+            async def get_tools_async(self) -> list[FunctionTool]:
+                raise AssertionError("Probes must not discover tools.")
+
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", tool_providers=[Provider()])
+        litellm_stub.acompletion.return_value = _mock_response()
+        await discover_target_capabilities_async(target=target, capabilities=["supports_multi_turn"], retries=0)
+        assert "tools" not in litellm_stub.acompletion.call_args.kwargs
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -332,6 +736,27 @@ def test_custom_configuration_overrides_derivation(patch_central_database, litel
     supported = {ty for combo in t.capabilities.input_modalities for ty in combo}
     assert supported == {"text"}
     assert t.capabilities.supports_json_output is False
+    assert t.capabilities.supports_prefill is False
+
+
+@pytest.mark.parametrize("underlying_model", [None, "gpt-4o", "unknown-model"])
+def test_prefill_survives_capability_derivation(patch_central_database, litellm_stub, underlying_model):
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o", underlying_model=underlying_model)
+    assert target.capabilities.supports_prefill is True
+
+
+@pytest.mark.parametrize("underlying_model", [None, "gpt-4o"])
+def test_custom_prefill_opt_out_wins_over_model_metadata(patch_central_database, litellm_stub, underlying_model):
+    custom = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True, supports_editable_history=True, supports_prefill=False
+        )
+    )
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o", underlying_model=underlying_model, custom_configuration=custom
+    )
+    assert target.configuration is custom
+    assert target.capabilities.supports_prefill is False
 
 
 # ---------------------------------------------------------------------------
@@ -632,6 +1057,66 @@ async def test_send_prompt_parses_audio_response(patch_central_database, litellm
     assert audio_piece.converted_value == "/path/to/audio.wav"
 
 
+async def test_send_prompt_replays_audio_response_as_transcript_without_audio_input(patch_central_database, tmp_path):
+    """Stored assistant audio must not block the next text turn when the adapter sends only its transcript."""
+    audio_file = tmp_path / "response.wav"
+    audio_file.write_bytes(b"fake audio bytes")
+    litellm, exc_mod = _make_litellm_stub(supports_audio_input=False, supports_audio_output=True)
+    litellm.acompletion = AsyncMock(side_effect=[_mock_audio_response("Spoken response"), _mock_response("Follow-up")])
+    conversation_id = "litellm-audio-history"
+
+    with (
+        patch.dict(sys.modules, {"litellm": litellm, "litellm.exceptions": exc_mod}),
+        patch("pyrit.prompt_target.common.chat_completions_response_parser.data_serializer_factory") as mock_factory,
+    ):
+        mock_serializer = MagicMock()
+        mock_serializer.value = str(audio_file)
+        mock_serializer.save_data_async = AsyncMock()
+        mock_factory.return_value = mock_serializer
+
+        target = LiteLLMChatTarget(
+            model_name="openai/gpt-4o-audio-preview",
+            audio_response_config=OpenAIChatAudioConfig(voice="alloy", audio_format="wav"),
+        )
+        assert not any("audio_path" in combo for combo in target.capabilities.input_modalities)
+
+        normalizer = PromptNormalizer()
+        first = await normalizer.send_prompt_async(
+            message=_user_message("Hi", conversation_id=conversation_id), target=target, conversation_id=conversation_id
+        )
+        assert [piece.converted_value_data_type for piece in first.message_pieces] == ["text", "audio_path"]
+
+        second = await normalizer.send_prompt_async(
+            message=_user_message("Continue", conversation_id=conversation_id),
+            target=target,
+            conversation_id=conversation_id,
+        )
+
+    assert second.get_value() == "Follow-up"
+    assert litellm.acompletion.await_count == 2
+    second_messages = litellm.acompletion.await_args_list[1].kwargs["messages"]
+    assert [message["role"] for message in second_messages] == ["user", "assistant", "user"]
+    assert second_messages[1]["content"] == [{"type": "text", "text": "Spoken response"}]
+    assert second_messages[-1]["content"] == [{"type": "text", "text": "Continue"}]
+    assert not any(part.get("type") == "input_audio" for message in second_messages for part in message["content"])
+
+
+def test_audio_history_validation_still_rejects_current_user_audio(patch_central_database, litellm_stub):
+    """Assistant-audio history support must not enable unsupported live audio input."""
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o-audio-preview",
+        audio_response_config=OpenAIChatAudioConfig(voice="alloy", audio_format="wav"),
+    )
+    audio_request = MessagePiece(
+        role="user",
+        original_value="/path/to/input.wav",
+        original_value_data_type="audio_path",
+    ).to_message()
+
+    with pytest.raises(ValueError, match="Received: audio_path"):
+        target._validate_request(normalized_conversation=[audio_request])
+
+
 # ---------------------------------------------------------------------------
 # JSON output
 # ---------------------------------------------------------------------------
@@ -757,6 +1242,63 @@ async def test_token_limit_truncation_with_no_content_does_not_raise(target, lit
 
 
 # ---------------------------------------------------------------------------
+# Reasoning text (``message.reasoning_content``)
+# ---------------------------------------------------------------------------
+
+
+async def test_reasoning_content_is_stored_in_response_metadata(target, litellm_stub):
+    response = _mock_response("The answer is 4.")
+    response.choices[0].message.reasoning_content = "2 + 2 is 4."
+    litellm_stub.acompletion = AsyncMock(return_value=response)
+
+    result = await target.send_prompt_async(message=_user_message())
+
+    pieces = result[0].message_pieces
+    assert [piece.converted_value for piece in pieces] == ["The answer is 4."]
+    assert ReasoningContentMetadata.from_metadata(metadata=pieces[0].prompt_metadata) == ReasoningContentMetadata(
+        content="2 + 2 is 4."
+    )
+
+
+async def test_reasoning_content_absent_when_model_returns_none(target, litellm_stub):
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("The answer is 4."))
+
+    result = await target.send_prompt_async(message=_user_message())
+
+    assert ReasoningContentMetadata.from_metadata(metadata=result[0].message_pieces[0].prompt_metadata) is None
+
+
+async def test_reasoning_content_kept_when_token_limit_leaves_no_answer(target, litellm_stub):
+    """The whole budget went to reasoning: the answer is empty, but the reasoning is still recorded."""
+    response = _mock_response(content=None, finish_reason="length")
+    response.choices[0].message.reasoning_content = "Let me think about this step by step"
+    litellm_stub.acompletion = AsyncMock(return_value=response)
+
+    result = await target.send_prompt_async(message=_user_message())
+
+    piece = result[0].message_pieces[0]
+    assert piece.response_error == "empty"
+    assert piece.is_truncated is True
+    assert ReasoningContentMetadata.from_metadata(metadata=piece.prompt_metadata) == ReasoningContentMetadata(
+        content="Let me think about this step by step"
+    )
+
+
+async def test_reasoning_content_kept_when_response_is_content_filtered(target, litellm_stub):
+    response = _mock_response(content="partial answer", finish_reason="content_filter")
+    response.choices[0].message.reasoning_content = "The user is asking for"
+    litellm_stub.acompletion = AsyncMock(return_value=response)
+
+    result = await target.send_prompt_async(message=_user_message("bad prompt"))
+
+    piece = result[0].message_pieces[0]
+    assert piece.converted_value_data_type == "error"
+    assert ReasoningContentMetadata.from_metadata(metadata=piece.prompt_metadata) == ReasoningContentMetadata(
+        content="The user is asking for"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Exception translation
 # ---------------------------------------------------------------------------
 
@@ -789,6 +1331,70 @@ async def test_unknown_error_wrapped_in_pyrit_exception(target, litellm_stub):
     litellm_stub.acompletion = AsyncMock(side_effect=RuntimeError("something broke"))
     with pytest.raises(PyritException, match="LiteLLM error"):
         await target.send_prompt_async(message=_user_message())
+
+
+@pytest.mark.parametrize("status_code", [None, 400, 422, 403, 500])
+async def test_provider_error_preserves_status_async(
+    target: LiteLLMChatTarget, litellm_stub: Any, status_code: int | None
+) -> None:
+    error = _StubLiteLLMError("Provider rejected request", status_code=status_code)
+    litellm_stub.acompletion.side_effect = error
+    with pytest.raises(PyritException) as caught:
+        await target.send_prompt_async(message=_user_message())
+    assert caught.value.status_code == (status_code or 500)
+    assert caught.value.__cause__ is error
+
+
+@pytest.mark.parametrize("status_code", [400, 422])
+async def test_strict_discovery_records_provider_rejection_after_control_async(
+    target: LiteLLMChatTarget, litellm_stub: Any, status_code: int
+) -> None:
+    calls: list[dict[str, object]] = []
+    expected = target.capabilities.model_copy(update={"supports_json_output": False})
+
+    async def complete_async(**kwargs: object) -> object:
+        calls.append(kwargs)
+        if kwargs.get("response_format"):
+            raise litellm_stub.exceptions.BadRequestError("JSON mode unsupported", status_code=status_code)
+        return _mock_response()
+
+    litellm_stub.acompletion.side_effect = complete_async
+    result = await discover_target_capabilities_async(
+        target=target,
+        capabilities=[CapabilityName.JSON_OUTPUT],
+        test_modalities={frozenset({"text"})},
+        retries=0,
+        apply=True,
+        raise_on_error=True,
+    )
+    assert "response_format" not in calls[0]
+    assert calls[1]["response_format"] == {"type": "json_object"}
+    assert result == expected
+    assert target.capabilities == expected
+
+
+@pytest.mark.parametrize("status_code", [401, 500])
+async def test_strict_discovery_preserves_configuration_on_operational_failure_async(
+    target: LiteLLMChatTarget, litellm_stub: Any, status_code: int
+) -> None:
+    original = target.configuration
+
+    async def complete_async(**kwargs: object) -> object:
+        if kwargs.get("response_format"):
+            raise _StubLiteLLMError("Operational failure", status_code=status_code)
+        return _mock_response()
+
+    litellm_stub.acompletion.side_effect = complete_async
+    with pytest.raises(CapabilityDiscoveryError):
+        await discover_target_capabilities_async(
+            target=target,
+            capabilities=[CapabilityName.JSON_OUTPUT],
+            test_modalities={frozenset({"text"})},
+            retries=0,
+            apply=True,
+            raise_on_error=True,
+        )
+    assert target.configuration is original
 
 
 # ---------------------------------------------------------------------------

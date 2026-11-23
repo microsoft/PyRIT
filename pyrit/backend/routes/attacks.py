@@ -35,6 +35,7 @@ from pyrit.backend.models import (
 )
 from pyrit.backend.models.attacks import AttackMetadata, SaveConversationRequest
 from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr
+from pyrit.backend.models.operations import AttackFindingListResponse
 from pyrit.backend.models.scores import ApplyChatScorerRequest, ApplyChatScorerResponse
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services import get_attack_service
@@ -43,6 +44,7 @@ from pyrit.backend.services.chat_scoring_service import ChatScoringError, get_ch
 from pyrit.backend.services.history_replay import HistoryReplayError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.media_persistence import MediaAccessDeniedError
+from pyrit.backend.services.operation_service import OperationService
 from pyrit.common import print_deprecation_message
 from pyrit.memory.memory_interface import AttackStateConflictError
 
@@ -114,6 +116,25 @@ async def get_saved_conversation_async(conversation_id: IdentifierStr) -> AddMes
     if response is None:
         raise HTTPException(status_code=404, detail="Saved chat conversation not found")
     return response
+
+
+def _reconcile_legacy_filter(*, legacy_name: str, dedicated: list[str] | None, legacy: list[str]) -> None:
+    """
+    Reconcile a legacy label alias with its dedicated query parameter.
+
+    The legacy values arrive through label parsing rather than the dedicated
+    parameter's field constraints, so the dedicated limit is enforced here, and
+    the conflict check compares the values as a set because the two spellings
+    of one filter list their values in any order.
+    """
+    overlong = [value for value in legacy if len(value) > 128]
+    if overlong:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{legacy_name} values must be at most 128 characters",
+        )
+    if dedicated is not None and set(dedicated) != set(legacy):
+        raise HTTPException(status_code=422, detail=f"{legacy_name} conflicts with legacy label={legacy_name} filter")
 
 
 @router.get(
@@ -199,8 +220,11 @@ async def list_attacks(  # pyrit-async-suffix-exempt
             new_item="GET /attacks?operator=...",
             removed_in="1.4.0",
         )
-        if operator is not None and operator != legacy_operator:
-            raise HTTPException(status_code=422, detail="operator conflicts with legacy label=operator filter")
+        _reconcile_legacy_filter(
+            legacy_name="operator",
+            dedicated=operator,
+            legacy=legacy_operator,
+        )
         operator = legacy_operator
     if legacy_operation is not None:
         print_deprecation_message(
@@ -208,8 +232,11 @@ async def list_attacks(  # pyrit-async-suffix-exempt
             new_item="GET /attacks?operation=...",
             removed_in="1.4.0",
         )
-        if operation is not None and operation != legacy_operation:
-            raise HTTPException(status_code=422, detail="operation conflicts with legacy label=operation filter")
+        _reconcile_legacy_filter(
+            legacy_name="operation",
+            dedicated=operation,
+            legacy=legacy_operation,
+        )
         operation = legacy_operation
     # Strip empty strings from the list-valued query params. The service layer
     # coerces an all-empty ``converter_types`` list to None ("no filter"); the
@@ -306,6 +333,13 @@ async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:  
     except HistoryReplayError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValueError as e:
+        if "must be provided together" in str(e):
+            # A half provided branching spec is a request body problem, the
+            # same rejection the conversation endpoint answers with 400.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            ) from e
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
@@ -372,6 +406,20 @@ async def get_attack_metadata_async(
     if metadata is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Attack '{attack_result_id}' not found")
     return metadata
+
+
+@router.get("/{attack_result_id}/findings", response_model=AttackFindingListResponse)
+async def get_attack_findings_async(attack_result_id: uuid.UUID) -> AttackFindingListResponse:
+    """
+    List the findings that link this attack as evidence, across all Operations.
+
+    An attack with no linked findings, including a running scan attack that is not saved yet,
+    returns an empty list rather than 404.
+
+    Returns:
+        AttackFindingListResponse: The linked findings with their Operation names and evidence links.
+    """
+    return await OperationService().list_attack_findings_async(attack_result_id)
 
 
 @router.patch(
@@ -632,8 +680,7 @@ async def add_message(  # pyrit-async-suffix-exempt
 
     Request and response converters can be supplied as ordered, registry-backed
     configurations. Each configuration can target message piece indexes, prompt
-    data types, or both. The global ``converter_ids`` request pipeline remains
-    available for compatibility but is deprecated.
+    data types, or both.
 
     Returns:
         AddMessageResponse: Updated attack with new message(s).

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Query, Session
 from pyrit.common import Singleton
 from pyrit.converter import Base64Converter
 from pyrit.memory import (
+    AttackResultEntry,
     AttackResultKeysetCursor,
     AzureSQLMemory,
     EmbeddingDataEntry,
@@ -194,6 +195,7 @@ def test_remove_seeds_metadata_only_matches_scalar_json_types(
     session.query.return_value = query
     query.filter.return_value = query
     query.delete.return_value = 1
+    query.first.return_value = None
 
     with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
         if remove_groups:
@@ -204,7 +206,7 @@ def test_remove_seeds_metadata_only_matches_scalar_json_types(
             removed = uninitialized_memory_interface._execute_remove_seeds_from_memory(metadata={"payload": value})
 
     assert removed == 1
-    condition = query.filter.call_args.args[0]
+    condition = query.filter.call_args_list[-1 if remove_groups else 0].args[0]
     compiled = condition.compile(dialect=mssql.dialect())
     assert "[metadata_0].[type] IN (1, 2, 3)" in str(compiled)
     assert compiled.params["md_key_0"] == "payload"
@@ -509,7 +511,7 @@ async def test_update_prompt_entries_by_conversation_id(memory_interface: AzureS
     "partial_match, expected_value",
     [
         (False, "testvalue"),
-        (True, "%testvalue%"),
+        (True, "%TestValue%"),
     ],
     ids=["exact_match", "partial_match"],
 )
@@ -523,7 +525,12 @@ def test_get_condition_json_property_match_bind_params(
         partial_match=partial_match,
     )
     # Extract the compiled bind parameters (param names include a random uid suffix)
-    params = condition.compile().params
+    params = condition.compile(dialect=mssql.dialect()).params
+    if partial_match:
+        assert "$.key" in params.values()
+        assert expected_value in params.values()
+        assert "ESCAPE '/'" in str(condition.compile(dialect=mssql.dialect()))
+        return
     pp_params = {k: v for k, v in params.items() if k.startswith("pp_")}
     mv_params = {k: v for k, v in params.items() if k.startswith("mv_")}
     assert len(pp_params) == 1
@@ -630,6 +637,23 @@ def test_get_conversation_stats_uses_one_latest_row_apply(
     assert sql.upper().count("SELECT TOP 1") == 1
     assert "OUTER APPLY" in sql.upper()
     assert "p2.converted_value_data_type AS last_data_type" in sql
+
+
+def test_latest_per_conversation_tiebreak_orders_uuids_canonically(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The anti-join tiebreak normalizes both id operands for SQL Server.
+
+    Native uniqueidentifier ordering differs from the SDK string comparison,
+    so an unnormalized comparison would crown a different tie winner than the
+    post-fetch Python dedup on the same rows.
+    """
+    condition = uninitialized_memory_interface._attack_results_not_superseded_condition(conditions=[])
+    statement = select(AttackResultEntry.id).where(condition)
+    sql = str(statement.compile(dialect=mssql.dialect())).upper()
+
+    assert "LOWER(CAST(NEWER.ID AS VARCHAR(36)))" in sql
+    assert "LOWER(CAST([ATTACKRESULTENTRIES].ID AS VARCHAR(36)))" in sql
 
 
 def test_get_conversation_stats_chunks_within_bind_budget(
@@ -822,7 +846,7 @@ def test_scenario_progress_cursor_and_order_use_canonical_uuid_order(
     [
         (False, False, "LOWER(JSON_VALUE("),
         (True, False, "JSON_VALUE("),
-        (False, True, "LOWER(JSON_VALUE("),
+        (False, True, "LOWER((SELECT"),
     ],
     ids=["case_insensitive_exact", "case_sensitive_exact", "case_insensitive_partial"],
 )
@@ -839,7 +863,7 @@ def test_get_condition_json_property_match_sql_text(
         partial_match=partial_match,
         case_sensitive=case_sensitive,
     )
-    sql_text = str(condition.compile(compile_kwargs={"literal_binds": False}))
+    sql_text = str(condition.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": False}))
     assert expected_sql_fragment in sql_text
     # When case_sensitive=False, LOWER must wrap the entire JSON_VALUE(...) call
     if not case_sensitive:

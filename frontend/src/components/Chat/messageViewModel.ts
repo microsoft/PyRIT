@@ -67,9 +67,9 @@ export function formatStructuredMessage(text: string): string | null {
     const formatted = JSON.stringify(parsed, null, 2)
     // Restore the exact numeric lexemes in place of the placeholders
     const restoreRegex = new RegExp(`"${nonce}(\\d+)__"`, 'g')
-    return formatted.replace(restoreRegex, (match, index) => {
+    return formatted.replace(restoreRegex, (match: string, index: string) => {
       const numIndex = Number(index)
-      return numIndex in numbers ? numbers[numIndex] : match
+      return numbers[numIndex] ?? match
     })
   } catch {
     return null

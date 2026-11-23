@@ -34,8 +34,15 @@ from pyrit.backend.services.manual_send_scheduler import get_manual_send_schedul
 from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
+from pyrit.backend.services.staged_media import staged_media_store
 from pyrit.memory import AzureSQLMemory, SQLiteMemory
 from pyrit.setup import ConfigurationLoader
+
+
+@pytest.fixture(autouse=True)
+def isolated_staged_media(tmp_path: Path) -> Iterator[None]:
+    with patch.object(staged_media_store, "_directory", tmp_path / "uploads"):
+        yield
 
 
 async def test_health_responds_while_database_operation_is_pending(sqlite_instance: SQLiteMemory) -> None:
@@ -256,12 +263,13 @@ class TestLifespan:
             ) as create_listener,
             patch.object(server, "main_loop", new_callable=AsyncMock) as serve_requests,
         ):
-            await server.serve()
+            with pytest.raises(SystemExit) as exc_info:
+                await server.serve()
 
+        assert exc_info.value.code == 3
         assert isinstance(server.lifespan, LifespanOn)
         assert server.lifespan.startup_failed
         assert server.lifespan.should_exit
-        assert server.should_exit
         assert not server.started
         configuration.assert_not_called()
         frontend.assert_not_called()

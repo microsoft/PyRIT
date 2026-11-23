@@ -60,6 +60,7 @@ function MetricCell({ name, value }: { name: string; value: unknown }) {
       ) : (
         <Tooltip relationship="description"
           content={`${scorerMetricDescription(name)} Recorded value: ${String(value)}`}>
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the metric description tooltip */}
           <span className={styles.numeric} tabIndex={0}>{display}</span>
         </Tooltip>
       )}

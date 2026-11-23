@@ -25,7 +25,7 @@ from pyrit.models import (
     TargetIdentifier,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import ConverterRegistry, ScorerRegistry, SourceRegistry, TargetRegistry
 from pyrit.registry.resolution import (
     _registry_getter_for_component_type,
     derive_parameters,
@@ -33,6 +33,7 @@ from pyrit.registry.resolution import (
     reject_non_external_params,
     resolve_constructor_args,
     resolve_declared_params,
+    resolve_reference_value,
     validate_declared_params,
 )
 
@@ -670,7 +671,7 @@ class TestDeriveParameters:
     def test_optional_annotation_preserved(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}
         assert params["note"].param_type == str | None
-        assert params["note"].type_name == "str"
+        assert params["note"].type_name == "str | None"
 
     def test_descriptions_parsed(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}
@@ -727,6 +728,15 @@ class TestDeriveParameters:
         assert params["http_request"].multiline
         assert params["note"].multiline
         assert TargetIdentifier.get_multiline_parameter_names() == frozenset({"http_request"})
+
+    def test_component_copy_locked_names_mark_only_declared_parameters(self) -> None:
+        class _Locked(_Plain):
+            COPY_LOCKED_PARAMETER_NAMES = frozenset({"note"})
+
+        params = {p.name: p for p in derive_parameters(cls=_Locked)}
+        assert params["note"].copy_locked
+        assert not params["mode"].copy_locked
+        assert not any(p.copy_locked for p in derive_parameters(cls=_Plain))
 
     def test_order_follows_signature(self) -> None:
         names = [p.name for p in derive_parameters(cls=_Plain)]
@@ -795,6 +805,7 @@ _RESOLVABLE_COMPONENT_REGISTRIES = {
     ComponentType.TARGET: TargetRegistry,
     ComponentType.CONVERTER: ConverterRegistry,
     ComponentType.SCORER: ScorerRegistry,
+    ComponentType.SOURCE: SourceRegistry,
 }
 # Scenarios are created by name, never referenced by name inside another component,
 # so they are deliberately not wired for reference resolution.
@@ -820,3 +831,11 @@ def test_resolvable_component_type_maps_to_its_registry(component_type: Componen
 @pytest.mark.parametrize("component_type", sorted(_NON_RESOLVABLE_COMPONENT_TYPES))
 def test_non_resolvable_component_type_has_no_registry(component_type: ComponentType) -> None:
     assert _registry_getter_for_component_type(component_type) is None
+
+
+@pytest.mark.parametrize("component_type", sorted(_NON_RESOLVABLE_COMPONENT_TYPES))
+def test_non_resolvable_component_type_error_names_type_by_value(component_type: ComponentType) -> None:
+    with pytest.raises(ValueError) as exc_info:
+        resolve_reference_value(component_type=component_type, value="some_name", owner="Owner", name="param")
+
+    assert str(exc_info.value) == f"Owner.param: no registry is wired for component type '{component_type.value}'."

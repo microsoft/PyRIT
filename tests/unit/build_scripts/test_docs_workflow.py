@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +15,7 @@ from typing import Any
 
 import pytest
 import yaml
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 from build_scripts import compose_docs_dist, inject_version_picker, resolve_docs_matrix
 
@@ -156,7 +159,9 @@ def test_workflow_checks_out_immutable_tested_ref_and_its_parent() -> None:
 def test_rendered_cache_uses_tested_workflow_and_exact_source_commit() -> None:
     workflow = _workflow()
     matrix_step = _step(job="versions", name="Compute matrix")
-    assert matrix_step["env"]["WORKFLOW_HASH"] == "${{ hashFiles('.github/workflows/docs.yml') }}"
+    assert " ".join(matrix_step["env"]["WORKFLOW_HASH"].split()) == (
+        "${{ hashFiles('.github/workflows/docs.yml', '.github/docs-versions.yml', 'build_scripts/pin_docs_theme.py') }}"
+    )
     assert ".github/workflows/docs.yml" in _checkout("versions")["with"]["sparse-checkout"].splitlines()
     assert 'echo "workflow_hash=$WORKFLOW_HASH" >> "$GITHUB_OUTPUT"' in matrix_step["run"]
     assert workflow["jobs"]["versions"]["outputs"]["workflow_hash"] == "${{ steps.matrix.outputs.workflow_hash }}"
@@ -170,24 +175,89 @@ def test_rendered_cache_uses_tested_workflow_and_exact_source_commit() -> None:
     assert "restore-keys" not in cache
 
 
+def test_workflow_pins_immutable_theme_from_current_config() -> None:
+    helper_checkout = _step(job="build", name="Checkout docs build helper")
+    assert helper_checkout["if"] == "steps.cache.outputs.cache-hit != 'true'"
+    assert helper_checkout["with"] == {
+        "ref": "${{ github.sha }}",
+        "path": ".docs-workflow",
+        "sparse-checkout": "build_scripts/pin_docs_theme.py",
+        "sparse-checkout-cone-mode": "false",
+    }
+    pin = _step(job="build", name="Pin MyST theme")
+    assert pin["if"] == "steps.cache.outputs.cache-hit != 'true'"
+    assert "python .docs-workflow/build_scripts/pin_docs_theme.py" in pin["run"]
+    assert "--config doc/myst.yml" in pin["run"]
+    assert '--template "${{ matrix.template }}"' in pin["run"]
+
+    config = resolve_docs_matrix.load_config(CONFIG)
+    for entry in config["versions"]:
+        assert entry["template"].startswith("https://github.com/myst-templates/book-theme/archive/")
+        assert entry["template"].endswith(".zip")
+        assert len(entry["template"].removesuffix(".zip").rsplit("/", 1)[-1]) == 40
+
+
 def test_only_main_push_or_dispatch_can_publish_with_write_permissions() -> None:
     workflow = _workflow()
     assert set(workflow["on"]) == {"push", "pull_request", "workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["cache-mode"] == "read"
     jobs = workflow["jobs"]
-    for name in ("versions", "build", "compose"):
+    for name in ("versions", "build", "seed-cache", "compose"):
         assert jobs[name].get("permissions", workflow["permissions"]) == {"contents": "read"}
         assert "environment" not in jobs[name]
+    cache_seed = jobs["seed-cache"]
+    assert cache_seed["if"] == "github.event_name == 'push'"
+    assert cache_seed["cache-mode"] == "write-only"
+    assert cache_seed["needs"] == ["versions", "build"]
+    assert cache_seed["strategy"]["matrix"] == "${{ fromJson(needs.versions.outputs.matrix) }}"
+    assert _step(job="seed-cache", name="Download built site")["with"] == {
+        "name": "site-${{ matrix.slug }}",
+        "path": "doc/_build/html",
+    }
+    cache_save = _step(job="seed-cache", name="Save built site to cache")
+    assert cache_save["uses"].startswith("actions/cache/save@")
+    assert cache_save["with"]["key"] == (
+        "docs-${{ needs.versions.outputs.workflow_hash }}-${{ matrix.slug }}-${{ steps.sha.outputs.sha }}"
+    )
     deploy = jobs["deploy"]
-    assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
+    assert deploy["permissions"] == {"actions": "read", "contents": "read", "pages": "write", "id-token": "write"}
     assert deploy["needs"] == "compose"
     assert " ".join(deploy["if"].split()) == PUBLISH_IF
     upload = _step(job="compose", name="Upload Pages artifact")
     assert " ".join(upload["if"].split()) == PUBLISH_IF
     assert jobs["compose"]["needs"] == ["versions", "build"]
     assert jobs["compose"]["if"] == "needs.versions.outputs.compose == 'true'"
-    assert len(deploy["steps"]) == 1
-    assert deploy["steps"][0]["uses"].startswith("actions/deploy-pages@")
+    assert _step(job="deploy", name="Deploy to GitHub Pages")["uses"].startswith("actions/deploy-pages@")
+
+
+def test_pages_recovery_reuses_composed_artifact_and_fails_closed() -> None:
+    steps = _workflow()["jobs"]["deploy"]["steps"]
+    check = _step(job="deploy", name="Check deployment recovery safety")
+    deploy = _step(job="deploy", name="Deploy to GitHub Pages")
+    diagnose = _step(job="diagnose", name="Diagnose failed Pages deployment")
+    assert _checkout("deploy")["with"] == {
+        "ref": "${{ github.sha }}",
+        "persist-credentials": "false",
+        "sparse-checkout": "build_scripts",
+    }
+    assert steps.index(check) < steps.index(deploy)
+    assert "if" not in check
+    diagnosis = _workflow()["jobs"]["diagnose"]
+    assert diagnosis["needs"] == "deploy"
+    assert diagnosis["if"] == "failure() && needs.deploy.result == 'failure'"
+    assert diagnosis["permissions"] == {"actions": "read", "contents": "read", "pages": "read"}
+    assert _checkout("diagnose")["with"] == _checkout("deploy")["with"]
+    for step, mode in [(check, "preflight"), (diagnose, "diagnose")]:
+        assert step["uses"] == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
+        assert step["with"]["retries"] == "0"
+        assert f"mode: '{mode}'" in step["with"]["script"]
+        assert "docs_deployment.cjs" in step["with"]["script"]
+        assert "Number(process.env.GITHUB_RUN_ATTEMPT)" in step["with"]["script"]
+    assert "with" not in deploy
+    assert _step(job="compose", name="Upload Pages artifact")["with"] == {"path": "dist", "retention-days": "7"}
+    assert all("download-artifact" not in step.get("uses", "") for step in steps)
+    assert all("continue-on-error" not in step for step in steps)
 
 
 def test_workflow_preserves_full_build_and_frozen_release_dependencies() -> None:
@@ -202,11 +272,29 @@ def test_workflow_preserves_full_build_and_frozen_release_dependencies() -> None
     assert "dependency-groups" in install
     assert "--group dev" in install and "--extra dev" in install
     build = _step(job="build", name="Build the static HTML site")
-    assert build["run"] == "uv run --frozen --no-sync jupyter-book build --all --html"
+    assert build["run"] == "uv run --frozen --no-sync jupyter-book build --html"
     upload = _step(job="build", name="Upload built site")
     assert upload["with"]["name"] == "site-${{ matrix.slug }}"
     assert upload["with"]["if-no-files-found"] == "error"
     assert all("continue-on-error" not in step for job in jobs.values() for step in job["steps"])
+
+
+def test_pages_build_never_selects_pdf_exports() -> None:
+    commands = [
+        shlex.split(line)
+        for step in _workflow()["jobs"]["build"]["steps"]
+        for line in step.get("run", "").splitlines()
+        if "jupyter-book build" in line
+    ]
+    assert commands
+    for command in commands:
+        assert "--html" in command or "--site" in command
+        assert "--all" not in command
+        assert "--pdf" not in command
+    upload = _step(job="build", name="Upload built site")
+    assert upload["with"]["path"] == "doc/_build/html"
+    cache = _step(job="build", name="Restore built site from cache")
+    assert cache["with"]["path"] == "doc/_build/html"
 
 
 def test_workflow_checks_current_docs_links_before_rendering() -> None:
@@ -214,9 +302,52 @@ def test_workflow_checks_current_docs_links_before_rendering() -> None:
     check = _step(job="build", name="Check documentation links")
     assert check["if"] == "steps.cache.outputs.cache-hit != 'true' && matrix.slug == 'latest'"
     assert check["working-directory"] == "doc"
-    assert check["run"] == "uv run --frozen --no-sync jupyter-book build --site --strict --check-links"
+    assert "uv run --frozen --no-sync jupyter-book build --site --strict --check-links" in check["run"]
     assert steps.index(_step(job="build", name="Generate API reference (pydoc2json + gen_api_md)")) < steps.index(check)
     assert steps.index(check) < steps.index(_step(job="build", name="Build the static HTML site"))
+
+
+@pytest.mark.parametrize(
+    ("first_status", "retry_status", "expected_status", "attempts"),
+    [(0, 9, 0, 1), (7, 0, 0, 2), (7, 9, 9, 2)],
+    ids=["initial-success", "retry-success", "persistent-failure"],
+)
+def test_workflow_link_check_retries_once_and_preserves_failure(
+    *, tmp_path: Path, first_status: int, retry_status: int, expected_status: int, attempts: int
+) -> None:
+    if os.name == "nt":
+        candidates = [
+            Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Git" / "bin" / "bash.exe",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Git" / "bin" / "bash.exe",
+        ]
+        bash = next((str(candidate) for candidate in candidates if candidate.is_file()), None)
+    else:
+        bash = shutil.which("bash")
+    assert bash is not None, "Bash is required to exercise the documentation workflow"
+    command = _step(job="build", name="Check documentation links")["run"]
+    stubs = f"""
+calls=0
+uv() {{
+    printf 'uv:%s\\n' "$*"
+    calls=$((calls + 1))
+    if [ "$calls" -eq 1 ]; then return {first_status}; fi
+    return {retry_status}
+}}
+sleep() {{ printf 'sleep:%s\\n' "$*"; }}
+"""
+    result = subprocess.run(
+        [bash, "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", stubs + command],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=TEST_WATCHDOG_SECONDS,
+        env=dict(os.environ),
+    )
+
+    assert result.returncode == expected_status, result.stderr
+    invocation = "uv:run --frozen --no-sync jupyter-book build --site --strict --check-links"
+    events = [line for line in result.stdout.splitlines() if line.startswith(("uv:", "sleep:"))]
+    assert events == ([invocation] if attempts == 1 else [invocation, "sleep:30", invocation])
 
 
 def test_docs_and_dependency_inputs_trigger_pr_validation_and_main_publication() -> None:

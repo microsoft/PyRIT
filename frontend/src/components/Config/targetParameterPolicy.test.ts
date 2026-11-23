@@ -66,6 +66,8 @@ describe('metadata-driven target parameters', () => {
     makeParameter({ name: 'working_directory', type_name: 'Path | str | None' }),
     makeParameter({ name: 'mode', type_name: 'CustomEnum', choices: ['a', 'b'] }),
     makeParameter({ name: 'stop', type_name: 'list[str]', is_list: true }),
+    makeParameter({ name: 'optional_stop', type_name: 'list[str] | None', is_list: true }),
+    makeParameter({ name: 'optional_counts', type_name: 'list[int | None] | None', is_list: true }),
     makeParameter({ name: 'extra_body_parameters', type_name: 'dict[str, typing.Any]' }),
   ])('renders $name from metadata', (parameter) => {
     expect(isMetadataDrivenTargetParameter('OpenAIChatTarget', parameter)).toBe(true)
@@ -80,6 +82,7 @@ describe('metadata-driven target parameters', () => {
     }),
     makeParameter({ name: 'mixed_scalar', type_name: 'str | bytes | None' }),
     makeParameter({ name: 'mixed', type_name: 'list[str | bytes]', is_list: true }),
+    makeParameter({ name: 'optional_mixed', type_name: 'list[str | bytes] | None', is_list: true }),
   ])('does not claim unsupported parameter $name is renderable', (parameter) => {
     expect(isMetadataDrivenTargetParameter('ExampleTarget', parameter)).toBe(false)
   })

@@ -16,7 +16,7 @@ function humanizeTechniqueSetName(name: string): string {
     return knownLabel
   }
   const words = name.replace(/_/g, ' ')
-  return words.length > 0 ? `${words[0].toUpperCase()}${words.slice(1)}` : name
+  return words.length > 0 ? `${words[0]?.toUpperCase() ?? ''}${words.slice(1)}` : name
 }
 
 export function techniqueSetMembers(scenario: RegisteredScenario, name: string): string[] {
@@ -27,18 +27,4 @@ export function techniqueSetMembers(scenario: RegisteredScenario, name: string):
 
 export function techniqueSetName(name: string): string {
   return humanizeTechniqueSetName(name)
-}
-
-export function techniqueSetDisplayName(scenario: RegisteredScenario, name: string): string {
-  const displayName = techniqueSetName(name)
-  return name === scenario.default_technique ? `${displayName} (default)` : displayName
-}
-
-export function techniqueSetOptionLabel(scenario: RegisteredScenario, name: string): string {
-  const count = techniqueSetMembers(scenario, name).length
-  const countLabel = `${count.toLocaleString()} technique${count === 1 ? '' : 's'}`
-  const displayName = techniqueSetDisplayName(scenario, name)
-  return name === scenario.default_technique
-    ? `${displayName} — ${countLabel}`
-    : `${displayName} (${countLabel})`
 }

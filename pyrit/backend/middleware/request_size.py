@@ -3,10 +3,13 @@
 
 """Reject requests whose URL or body is larger than the backend accepts."""
 
+from starlette._utils import get_route_path
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from pyrit.backend.models.datasets import DatasetUploadLimits
 
 
 class RequestTooLargeError(HTTPException):
@@ -56,13 +59,16 @@ class RequestSizeLimitMiddleware:
         if len(path) + len(scope.get("query_string", b"")) > self.MAX_URL_LENGTH:
             await self._reject_async(scope=scope, receive=receive, send=send, status=414, title="URI Too Long")
             return
+        maximum = self.MAX_BODY_BYTES
+        if scope["method"] == "POST" and get_route_path(scope).rstrip("/") == "/api/datasets":
+            maximum = DatasetUploadLimits.from_environment().request_bytes
         content_length = Headers(scope=scope).get("content-length", "")
-        if content_length.isdigit() and int(content_length) > self.MAX_BODY_BYTES:
+        if content_length.isdigit() and int(content_length) > maximum:
             await self._reject_async(scope=scope, receive=receive, send=send, status=413, title="Content Too Large")
             return
-        await self.app(scope, self._limit_body(receive), send)
+        await self.app(scope, self._limit_body(receive, maximum=maximum), send)
 
-    def _limit_body(self, receive: Receive) -> Receive:
+    def _limit_body(self, receive: Receive, *, maximum: int | None = None) -> Receive:
         """
         Wrap ``receive`` so bodies sent without a reliable ``Content-Length`` are also capped.
 
@@ -76,7 +82,7 @@ class RequestSizeLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.MAX_BODY_BYTES:
+                if received > (self.MAX_BODY_BYTES if maximum is None else maximum):
                     raise RequestTooLargeError
             return message
 

@@ -24,6 +24,13 @@ for (const width of [1280, 390]) {
       headers, data: { title, severity: 'other', severity_other: severity, harm_type: 'Other', harm_type_other: harmType },
     })
     expect(findingResponse.status()).toBe(201)
+    const parent: Finding = await findingResponse.json()
+    // Sub-findings render in a narrower, indented panel; the low severity keeps the picker's badge lookup unique.
+    const nestedTitle = `Nested step ${'unbroken'.repeat(30)}`
+    const nestedResponse = await request.post(`/api/operations/${operation.id}/findings`, {
+      headers, data: { title: nestedTitle, severity: 'low', parent_finding_id: parent.id },
+    })
+    expect(nestedResponse.status()).toBe(201)
 
     await page.goto(`/operations/${operation.id}`)
     await waitForAppReady(page)
@@ -41,6 +48,20 @@ for (const width of [1280, 390]) {
     if (!badgeBox || !timeBox) throw new Error('Expected visible finding metadata.')
     expect(badgeBox.x + badgeBox.width <= timeBox.x || badgeBox.y + badgeBox.height <= timeBox.y).toBeTruthy()
     await expect(finding.getByText(`Harm-type: ${harmType}`, { exact: true })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
+
+    await page.getByRole('button', { name: `Sub-findings (1): ${title}`, exact: true }).click()
+    const nestedHeading = page.getByRole('heading', { name: nestedTitle, exact: true })
+    await expect(nestedHeading).toBeVisible()
+    const nested = page.getByRole('region', { name: `Sub-findings of ${title}`, exact: true })
+      .getByRole('listitem').filter({ has: nestedHeading })
+    expect(await nested.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy()
+    expect(await finding.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy()
+    for (const action of ['Edit finding', 'Add sub-finding', 'Delete finding']) {
+      const box = await nested.getByRole('button', { name: `${action}: ${nestedTitle}`, exact: true }).boundingBox()
+      if (!box) throw new Error(`Expected a visible ${action} action on the sub-finding.`)
+      expect(box.x + box.width).toBeLessThanOrEqual(width)
+    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
 
     const attackResponse = await request.post('/api/attacks', {
@@ -129,12 +150,13 @@ test('creates a unique operation and records findings within it @seeded', async 
   await expect(page.getByRole('button', { name: 'New finding' })).toBeFocused()
   await page.setViewportSize({ width: 390, height: 300 })
   const confirmation = page.locator('[aria-live="polite"]').filter({ hasText: 'Finding saved:' })
-  const confirmationBox = await confirmation.boundingBox()
-  const findingBox = await page.getByRole('heading', { level: 2, name: title }).boundingBox()
-  expect(confirmationBox).not.toBeNull()
-  expect(findingBox).not.toBeNull()
-  expect(await confirmation.evaluate(element => element.scrollHeight <= element.clientHeight)).toBeTruthy()
-  expect(confirmationBox!.y + confirmationBox!.height).toBeLessThanOrEqual(findingBox!.y)
+  const findingHeading = page.getByRole('heading', { level: 2, name: title })
+  await expect(confirmation).toBeVisible()
+  await expect.poll(async () => confirmation.evaluate((element, heading) => {
+    if (!heading) throw new Error('The saved finding heading is missing')
+    return element.getBoundingClientRect().bottom <= heading.getBoundingClientRect().top
+      && element.scrollHeight <= element.clientHeight
+  }, await findingHeading.elementHandle())).toBe(true)
   await page.setViewportSize({ width: 1280, height: 720 })
   await page.reload()
   await expect(page.getByRole('heading', { level: 2, name: title })).toBeVisible()
@@ -479,7 +501,8 @@ test('exports selected findings as Word and Markdown @seeded', async ({ page, re
   expect(markdownFile.filename).toMatch(new RegExp(`${filenameStart}\\.md$`))
   const markdown = markdownFile.content.toString('utf8')
   expect(markdown.startsWith(`# Findings - ${operation.name}\n\n`)).toBeTruthy()
-  expect(markdown.match(/^## .*$/gm)).toEqual(selectedTitles.map(title => `## ${title}`))
+  // Every exported finding is numbered, in the order the dialog lists them.
+  expect(markdown.match(/^## .*$/gm)).toEqual(selectedTitles.map((title, index) => `## ${index + 1} ${title}`))
   for (const title of excludedTitles) {
     expect(markdown).not.toContain(title)
   }

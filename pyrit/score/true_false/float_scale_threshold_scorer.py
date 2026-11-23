@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from pyrit.models import (
     ComponentIdentifier,
+    FloatFeedback,
     Scorable,
     ScorableUnion,
     Score,
@@ -23,6 +24,7 @@ from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.scorer import Scorer, SnapshotParticipation, _set_snapshot_participation
+from pyrit.score.true_false.multi_label_true_false_scorer import MultiLabelTrueFalseScorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
@@ -68,6 +70,8 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         Raises:
             ValueError: If the threshold is non-finite or not in (0, 1].
         """
+        if isinstance(scorer, MultiLabelTrueFalseScorer):
+            raise ValueError("Multi-label true/false verdicts require TrueFalseScoreSelector, not a float threshold.")
         self._scorer = scorer
         self._threshold = threshold
         self._float_scale_aggregator = float_scale_aggregator
@@ -92,9 +96,9 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         return self._create_identifier(
             params={
                 "threshold": self._threshold,
-                "float_scale_aggregator": self._float_scale_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+                "float_scale_aggregator": self._float_scale_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             sub_scorers=[self._scorer.get_identifier()],
         )
 
@@ -126,6 +130,15 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         scoped = copy.copy(self)
         scoped._scorer = scoped_inner
         return scoped
+
+    def _preserves_float_scale_value(self) -> bool:
+        """
+        Promise the aggregated scale value on every complete verdict.
+
+        Returns:
+            bool: Always True; each complete result keeps the value the threshold was applied to.
+        """
+        return True
 
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return the scorer whose value is compared to the threshold."""
@@ -213,7 +226,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             # threshold can only be applied to a single value. Silently taking the
             # first one would decide the verdict from one category and drop the rest.
             raise ValueError(
-                f"{self._float_scale_aggregator.__name__} returned {len(aggregate_results)} results. "  # type: ignore[ty:unresolved-attribute]
+                f"{self._float_scale_aggregator.__name__} returned {len(aggregate_results)} results. "  # type: ignore[ty:missing-attribute]
                 "FloatScaleThresholdScorer requires an aggregator that combines the scores into exactly "
                 "one result, such as FloatScaleScoreAggregator.MAX; a by-category aggregator such as "
                 "FloatScaleScorerByCategory.MAX cannot be thresholded."
@@ -275,9 +288,6 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         score.scorer_class_identifier = self.get_identifier()
         score.observation_ids = _merge_observation_ids(scores=scores)
         # Store the original float value in metadata for granular comparison
-        score.score_metadata = {
-            **aggregate_score.metadata,
-            ORIGINAL_FLOAT_VALUE_KEY: aggregate_value,
-        }
+        score.score_metadata = FloatFeedback(value=aggregate_value).write_to(aggregate_score.metadata)
 
         return [score]

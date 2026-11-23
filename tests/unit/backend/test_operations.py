@@ -202,7 +202,11 @@ def test_findings_are_created_and_listed_under_an_operation(compatibility_header
     assert finding["description"] == ""
     client.post(f"/api/operations/{other_id}/findings", json={"title": "Elsewhere", "severity": "low"})
     listed = client.get(f"/api/operations/{operation_id}/findings", params={"limit": 1}).json()
-    assert listed == {"items": [{**finding, "evidence_count": 0}], "has_more": False, "next_offset": None}
+    assert listed == {
+        "items": [{**finding, "evidence_count": 0, "child_count": 0}],
+        "has_more": False,
+        "next_offset": None,
+    }
     counts = {item["name"]: item["finding_counts"] for item in client.get("/api/operations").json()["items"]}
     assert counts == {"Case": {"informational": 1}, "Other": {"low": 1}}
 
@@ -231,7 +235,7 @@ def test_finding_api_round_trips_optional_and_custom_classifications(compatibili
     assert response.status_code == 201
     finding = response.json()
     assert {key: finding[key] for key in body} == body
-    assert client.get(path).json()["items"] == [{**finding, "evidence_count": 0}]
+    assert client.get(path).json()["items"] == [{**finding, "evidence_count": 0, "child_count": 0}]
     updated = client.put(f"{path}/{finding['id']}", json={"title": "Edited", "severity": "low", "harm_type": "Malware"})
     assert updated.status_code == 200
     assert updated.json()["harm_type"] == "Malware"
@@ -360,7 +364,7 @@ def test_finding_update_and_delete_preserve_identity_and_operation(
     edited = client.put(finding_path, json={"title": "Edited", "severity": "critical", "description": "Notes"})
     assert edited.status_code == 200
     assert edited.json() == {**original, "title": "Edited", "severity": "critical", "description": "Notes"}
-    assert client.get(path).json()["items"] == [{**edited.json(), "evidence_count": 0}]
+    assert client.get(path).json()["items"] == [{**edited.json(), "evidence_count": 0, "child_count": 0}]
     deleted = client.delete(finding_path)
     assert deleted.status_code == 204
     assert deleted.content == b""
@@ -393,7 +397,7 @@ def test_finding_mutations_reject_wrong_operations_and_invalid_fields(
         assert client.put(finding_path, json=invalid).status_code == 422
     assert TestClient(app).put(finding_path, json=body).status_code != 200
     assert TestClient(app).delete(finding_path).status_code != 204
-    assert client.get(path).json()["items"] == [{**original, "evidence_count": 0}]
+    assert client.get(path).json()["items"] == [{**original, "evidence_count": 0, "child_count": 0}]
 
 
 @pytest.fixture
@@ -645,14 +649,30 @@ async def test_finding_search_is_literal_case_insensitive_async(sqlite_instance:
     assert page.items[0].evidence_count == 0
 
 
+@pytest.mark.usefixtures("patch_central_database")
+def test_findings_route_forwards_patterns_and_rejects_conflicts(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation = client.post("/api/operations", json={"name": "Pattern search"}).json()
+    path = f"/api/operations/{operation['id']}/findings"
+    for title in ("100%_Proof", "100XXProof", "other"):
+        assert client.post(path, json={"title": title, "severity": "low"}).status_code == 201
+    page = client.get(path, params={"title_pattern": "100%proof"})
+    assert page.status_code == 200
+    assert {item["title"] for item in page.json()["items"]} == {"100%_Proof", "100XXProof"}
+    literal = client.get(path, params={"title": "%_proof"})
+    assert [item["title"] for item in literal.json()["items"]] == ["100%_Proof"]
+    for params in ({"title_pattern": "/"}, {"title": "", "title_pattern": "%"}):
+        assert client.get(path, params=params).status_code == 400
+
+
 async def test_concurrent_attach_preserves_one_association_async(
     tmp_path: Path,
 ) -> None:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     with patch.object(memory, "cleanup"):
-        memory.__init__(db_path=tmp_path / "evidence.db", skip_schema_migration=True)
+        memory.__init__(db_path=tmp_path / "evidence.db", _defer_initialization=True)
     try:
-        await asyncio.to_thread(Base.metadata.create_all, memory.engine)
+        await memory.initialize_async()
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             operation, finding, attack = await _store_evidence_source_async(memory)
             request = FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id)

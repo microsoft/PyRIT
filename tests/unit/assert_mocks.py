@@ -12,6 +12,8 @@ from pyrit.models import (
     AdversarialPrompts,
     AssertCoverage,
     AssertDimension,
+    AssertGeneratedGroupContent,
+    AssertGenerationCheckpoint,
     AssertGenerationConfig,
     AssertGenerationProvenance,
     AssertGroupMetadata,
@@ -125,12 +127,52 @@ def make_assert_systematization() -> AssertSystematization:
     )
 
 
+def make_assert_group_content(
+    *, index: int = 0, assignment: dict[str, str] | None = None, conversation_id: str = "group_batch_0"
+) -> AssertGeneratedGroupContent:
+    """Build one generated group consistent with the policy and explicit-dimension fixtures."""
+    return AssertGeneratedGroupContent(
+        group_id=f"group_{index:06d}",
+        assignment=assignment or {"behavior": "public_policy", "channel": "chat"},
+        title=f"Support interaction {index}",
+        objective=f"Explain the published return policy for item {index}.",
+        user_prompt=f"Explain the return policy for item {index}.",
+        adversarial_instructions="You are a customer returning a purchase. Ask about the return period.",
+        conversation_id=conversation_id,
+    )
+
+
+def make_assert_checkpoint(
+    *,
+    config: AssertGenerationConfig | None = None,
+    groups: tuple[AssertGeneratedGroupContent, ...] = (),
+    completed_batches: int = 0,
+) -> AssertGenerationCheckpoint:
+    """Build progress with a generated policy and the config's explicit dimensions, ready for seed groups."""
+    config = config or make_assert_config()
+    return AssertGenerationCheckpoint(
+        config=config,
+        systematization=make_assert_systematization(),
+        taxonomy=make_assert_taxonomy(),
+        dimensions=config.dimensions,
+        provenance=AssertGenerationProvenance(
+            systematization_conversation_id="research", taxonomy_conversation_id="taxonomy"
+        ),
+        completed_batches=completed_batches,
+        groups=groups,
+    )
+
+
 def make_assert_result(
-    *, config: AssertGenerationConfig | None = None, duplicate_text: bool = False, system_prompt: str = ""
+    *,
+    config: AssertGenerationConfig | None = None,
+    duplicate_text: bool = False,
+    system_prompt: str = "",
+    taxonomy: AssertTaxonomy | None = None,
 ) -> AssertGeneratorResult:
     """Build native seed groups, assignments, and coverage without model calls."""
     config = config or make_assert_config()
-    taxonomy = make_assert_taxonomy()
+    taxonomy = taxonomy or make_assert_taxonomy()
     dimensions = tuple(
         dimension
         if dimension.levels
@@ -161,6 +203,11 @@ def make_assert_result(
         batch_id = f"group_batch_{index // 5}"
         if batch_id not in conversation_ids:
             conversation_ids.append(batch_id)
+        instructions = (
+            f"You are a customer returning item {index}. Ask about the return period, then clarify."
+            if config.include_adversarial_prompt
+            else None
+        )
         metadata = AssertGroupMetadata(
             group_id=f"group_{index}",
             config=config,
@@ -168,6 +215,7 @@ def make_assert_result(
             dimensions=dimensions,
             behavior_category=assignment["behavior"],
             dimension_values={key: value for key, value in assignment.items() if key != "behavior"},
+            tester_instructions=instructions,
             provenance=AssertGenerationProvenance(
                 systematization_conversation_id=shared_ids[0],
                 taxonomy_conversation_id=shared_ids[1],
@@ -195,7 +243,6 @@ def make_assert_result(
             seeds.append(SeedPrompt(value=value, role="user", sequence=1, **common))
         prompts = None
         if config.include_adversarial_prompt:
-            instructions = f"You are a customer returning item {index}. Ask about the return period, then clarify."
             prompt = SeedPrompt(
                 value="Objective: {{ objective }}\nUser instructions: {{ tester_instructions }}",
                 parameters=["objective", "tester_instructions"],
@@ -247,8 +294,10 @@ async def assert_generation_response_async(*, normalized_conversation: list[Mess
     stage = request.prompt_metadata["assert_stage"]
     if stage == "systematization":
         value = make_assert_systematization().model_dump(mode="json")
+        value["behavior"] = value["concept_spec"]["behavior"] = payload["behavior_name"]
     elif stage == "taxonomy":
         value = make_assert_taxonomy().model_dump(mode="json")
+        value["behavior"]["name"] = payload["behavior_name"]
     elif stage == "dimensions":
         value = {
             "dimensions": [

@@ -83,6 +83,28 @@ print("All dataset names in memory:", all_dataset_names)
 # - **Harm categories**: Find seeds related to specific harm types
 #
 # Below are examples demonstrating different query patterns:
+#
+# Text searches are case-insensitive literal substrings: `get_seeds_async(value="100%")`
+# finds a literal percent sign, not every value starting with `100`. List filters search decoded elements,
+# not JSON syntax. Exact dataset names, hashes, metadata and other equality filters are unchanged.
+#
+# Wildcards are explicit: `get_seeds_async(value_pattern="100%")` finds values starting with `100`;
+# `value_pattern="%100%"` finds them anywhere; `value_pattern="%/_%"` finds a literal underscore.
+# `%` matches any number of characters, `_` matches one, and `/` escapes the next character.
+# Brackets, `*` and backslashes are literal. Patterns are not automatically wrapped in `%`.
+# A dangling `/` raises `ValueError`. `None` means no filter; an explicit empty pattern matches empty text.
+#
+# Use `authors_patterns`, `harm_categories_patterns`, `groups_patterns` or `parameters_patterns`
+# instead of the corresponding literal lists; all listed patterns must match decoded elements.
+# Literal/pattern companions cannot be supplied together, including empty queries. The compatibility
+# exception is `dataset_name`: it still takes precedence over `dataset_name_pattern`.
+# Dataset examples use `value_search` for literals and `value_pattern` for patterns.
+#
+# Migration: callers relying on implicit `%` or `_` wildcards must use a pattern companion.
+# Case-insensitive searches use Unicode lowercasing, subject to backend locale/collation limits,
+# not full Unicode case folding or accent stripping. Removal still defaults to exact matching:
+# a pattern companion explicitly opts into pattern deletion even with the default `exact=True`.
+# Preview a pattern via `get_seeds_async` or `get_seed_groups_async` before deleting it.
 
 
 # %%

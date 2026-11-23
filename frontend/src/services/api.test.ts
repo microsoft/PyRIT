@@ -23,6 +23,7 @@ import {
   apiClient,
   authApi,
   healthApi,
+  mediaApi,
   initializersApi,
   versionApi,
   configurationApi,
@@ -37,15 +38,26 @@ import {
   scenarioSuitesApi,
   datasetsApi,
   analyticsApi,
+  promptGenerationsApi,
+  promptGeneratorsApi,
   setMsalInstance,
 } from "./api";
 import { compatibility, COMPATIBILITY_HEADER } from "./compatibility";
 import { toApiError } from "./errors";
 import { makeAnalyticsFacets, makeAnalyticsReport, makeAnalyticsResults } from "@/test-utils/analyticsFixtures";
-import type { FindingExportRequest } from "@/types";
+import type { AttackFindingListResponse, FindingExportRequest } from "@/types";
+import { makeTarget } from "@/test-utils/targetFixtures";
 import { DEFAULT_ANALYTICS_VIEW } from "@/utils/attackAnalytics";
 
 describe("api service", () => {
+  it("should stage media without creating or sending a message", async () => {
+    const request = { data_type: "image_path", content: "aW1hZ2U=", mime_type: "image/png" };
+    const response = { value: "/stored/image.png" };
+    jest.mocked(apiClient.post).mockResolvedValueOnce({ data: response });
+    expect(await mediaApi.upload(request)).toEqual(response);
+    expect(apiClient.post).toHaveBeenCalledWith("/media/uploads", request);
+  });
+
   describe("operationsApi", () => {
     it("reads canonical harm categories without copying the taxonomy into the frontend", async () => {
       const options = { harm_types: ["Malware", "Other"] };
@@ -92,6 +104,23 @@ describe("api service", () => {
       expect(await operationsApi.deleteFinding("a/b", "c/d")).toBeUndefined();
       expect(apiClient.delete).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd");
     });
+    it("filters sub-findings and replaces a finding's paths under encoded IDs", async () => {
+      const page = { items: [], has_more: false, next_offset: null };
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: page });
+      await operationsApi.listFindings("a/b", { limit: 100, offset: 0, parent_finding_id: "c/d" });
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings", {
+        params: { limit: 100, offset: 0, parent_finding_id: "c/d" },
+      });
+      await operationsApi.listFindings("a/b", { limit: 20, offset: 0, top_level: true });
+      expect(apiClient.get).toHaveBeenLastCalledWith("/operations/a%2Fb/findings", {
+        params: { limit: 20, offset: 0, top_level: true },
+      });
+      const request = { paths: [{ name: "Credential theft", steps: ["e", "f"] }] };
+      const saved = { id: "c/d", paths: [{ id: "path", name: "Credential theft", steps: ["e", "f"], complete: false }] };
+      (apiClient.put as jest.Mock).mockResolvedValueOnce({ data: saved });
+      expect(await operationsApi.replaceFindingPaths("a/b", "c/d", request)).toEqual(saved);
+      expect(apiClient.put).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd/paths", request);
+    });
     it("downloads the explicitly selected findings as a cancellable file", async () => {
       const request: FindingExportRequest = {
         finding_ids: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
@@ -129,6 +158,96 @@ describe("api service", () => {
     });
   });
 
+  describe("promptGeneratorsApi", () => {
+    it("lists generators and the ASSERT templates with cancellation", async () => {
+      const controller = new AbortController();
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: { items: [] } });
+
+      await expect(promptGeneratorsApi.list(controller.signal)).resolves.toEqual({ items: [] });
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generators", { signal: controller.signal });
+      await promptGeneratorsApi.listAssertBehaviors(controller.signal);
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generators/assert/behaviors", { signal: controller.signal });
+      await promptGeneratorsApi.listAssertSuites();
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generators/assert/suites", { signal: undefined });
+    });
+  });
+
+  describe("promptGenerationsApi", () => {
+    const createRequest = {
+      generator: "assert",
+      dataset_name: "returns_policy",
+      request: { behavior_name: "returns" },
+      targets: { generation: "gpt" },
+      pause_for_review: true,
+    };
+
+    it("reads, creates, checks, and deletes generations under encoded IDs", async () => {
+      const detail = { id: "a/b", status: "queued" };
+      const controller = new AbortController();
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: detail });
+      (apiClient.post as jest.Mock).mockResolvedValue({ data: detail });
+      (apiClient.delete as jest.Mock).mockResolvedValue({ data: undefined });
+
+      await promptGenerationsApi.list(controller.signal);
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generations", { signal: controller.signal });
+      await expect(promptGenerationsApi.get("a/b", controller.signal)).resolves.toEqual(detail);
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generations/a%2Fb", { signal: controller.signal });
+      await promptGenerationsApi.create(createRequest);
+      expect(apiClient.post).toHaveBeenCalledWith("/prompt-generations", createRequest);
+      await promptGenerationsApi.preflight(createRequest, controller.signal);
+      expect(apiClient.post).toHaveBeenCalledWith("/prompt-generations/preflight", createRequest, { signal: controller.signal });
+      await promptGenerationsApi.remove("a/b");
+      expect(apiClient.delete).toHaveBeenCalledWith("/prompt-generations/a%2Fb");
+    });
+
+    it("queues a batch that shares settings", async () => {
+      const batch = {
+        generator: "assert",
+        label: "Suite",
+        items: [{ dataset_name: "suite_returns", request: {} }],
+        targets: {},
+        pause_for_review: false,
+      };
+      (apiClient.post as jest.Mock).mockResolvedValue({ data: { items: [] } });
+
+      await expect(promptGenerationsApi.createBatch(batch)).resolves.toEqual({ items: [] });
+      expect(apiClient.post).toHaveBeenCalledWith("/prompt-generations/batch", batch);
+    });
+
+    it("posts lifecycle actions without a body", async () => {
+      (apiClient.post as jest.Mock).mockResolvedValue({ data: { id: "a/b" } });
+
+      await promptGenerationsApi.continueAfterReview("a/b");
+      await promptGenerationsApi.cancel("a/b");
+      await promptGenerationsApi.retry("a/b");
+
+      expect((apiClient.post as jest.Mock).mock.calls).toEqual([
+        ["/prompt-generations/a%2Fb/continue"],
+        ["/prompt-generations/a%2Fb/cancel"],
+        ["/prompt-generations/a%2Fb/retry"],
+      ]);
+    });
+
+    it("reads and saves reviews, estimates, and dataset sources", async () => {
+      const controller = new AbortController();
+      const review = { generation_id: "a/b", stage: "dimensions", payload: {} };
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: {} });
+      (apiClient.put as jest.Mock).mockResolvedValue({ data: review });
+
+      await promptGenerationsApi.getReview("a/b", controller.signal);
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generations/a%2Fb/review", { signal: controller.signal });
+      await expect(promptGenerationsApi.saveReview("a/b", { taxonomy: {} })).resolves.toEqual(review);
+      expect(apiClient.put).toHaveBeenCalledWith("/prompt-generations/a%2Fb/review", { payload: { taxonomy: {} } });
+      await promptGenerationsApi.getEstimate("a/b");
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generations/a%2Fb/estimate", { signal: undefined });
+      await promptGenerationsApi.getRequestFromDataset("dataset:named:x&y", controller.signal);
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generations/from-dataset", {
+        params: { selection_key: "dataset:named:x&y" },
+        signal: controller.signal,
+      });
+    });
+  });
+
   describe("scenarioPresetsApi", () => {
     it("lists definitions without opting in to run-size estimates", async () => {
       const response = { source: "presets", items: [] };
@@ -150,6 +269,20 @@ describe("api service", () => {
       expect(apiClient.get).toHaveBeenCalledWith("/scenario-presets", {
         params: { include_estimates: true },
         signal: controller.signal,
+      });
+    });
+
+    it("deletes an encoded name only at the version that was read", async () => {
+      (apiClient.delete as jest.Mock).mockResolvedValue({ data: undefined });
+
+      await scenarioPresetsApi.remove("a/b", "v1");
+      await scenarioPresetsApi.remove("a/b");
+
+      expect(apiClient.delete).toHaveBeenNthCalledWith(1, "/scenario-presets/a%2Fb", {
+        params: { expected_version: "v1" },
+      });
+      expect(apiClient.delete).toHaveBeenNthCalledWith(2, "/scenario-presets/a%2Fb", {
+        params: { expected_version: undefined },
       });
     });
   });
@@ -186,8 +319,14 @@ describe("api service", () => {
         suite,
         expected_version: "v1",
       });
+      await scenarioSuitesApi.remove("a/b", "v1");
+      expect(apiClient.delete).toHaveBeenLastCalledWith("/scenario-suites/a%2Fb", {
+        params: { expected_version: "v1" },
+      });
       await scenarioSuitesApi.remove("a/b");
-      expect(apiClient.delete).toHaveBeenCalledWith("/scenario-suites/a%2Fb");
+      expect(apiClient.delete).toHaveBeenLastCalledWith("/scenario-suites/a%2Fb", {
+        params: { expected_version: undefined },
+      });
       await expect(scenarioSuitesApi.launch("a/b", launch)).resolves.toEqual(execution);
       expect(apiClient.post).toHaveBeenCalledWith("/scenario-suites/a%2Fb/launch", launch);
       await expect(scenarioSuitesApi.getExecution("execution/id", controller.signal)).resolves.toEqual(execution);
@@ -584,6 +723,21 @@ describe("api service", () => {
   });
 
   describe("targetsApi", () => {
+    it("should encode the detection name, guard the identifier, and unwrap the saved target", async () => {
+      const target = makeTarget({ target_registry_name: "team/a b?#" });
+      const updated = {
+        ...target,
+        capabilities: { ...target.capabilities, supports_multi_turn: false },
+      };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: updated });
+
+      expect(await targetsApi.detectCapabilities(target)).toBe(updated);
+      expect(apiClient.post).toHaveBeenLastCalledWith(
+        "/targets/team%2Fa%20b%3F%23/detect-capabilities",
+        { expected_hash: target.identifier.hash },
+      );
+    });
+
     it("should list target types from registry metadata", async () => {
       const response = { data: { items: [] } };
       (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
@@ -821,6 +975,28 @@ describe("api service", () => {
       expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack/metadata", {
         params: { conversation_id: "selected" },
       });
+    });
+
+    it("should get the findings linked to an attack", async () => {
+      const data: AttackFindingListResponse = {
+        attack_result_id: "attack/id",
+        items: [{
+          id: "finding", operation_id: "operation", operation_name: "Red team", evidence_id: "evidence",
+          title: "Protected system instructions disclosed", description: "", severity: "important",
+          created_at: "2026-11-06T00:00:00Z",
+        }],
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data });
+
+      expect(await attacksApi.getAttackFindings("attack/id")).toEqual(data);
+      expect(apiClient.get).toHaveBeenCalledTimes(1);
+      expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/findings");
+    });
+
+    it("should propagate attack finding errors", async () => {
+      const error = new Error("Findings unavailable");
+      (apiClient.get as jest.Mock).mockRejectedValueOnce(error);
+      await expect(attacksApi.getAttackFindings("attack")).rejects.toBe(error);
     });
 
     it("should get attack messages", async () => {
@@ -1487,6 +1663,21 @@ describe("api service", () => {
     it("refuses to list or read seeds without a selection key", async () => {
       await expect(datasetsApi.listSeedExamples({ selection_key: "" })).rejects.toThrow(/selection key/);
       await expect(datasetsApi.getSeedExample("example-1", "")).rejects.toThrow(/selection key/);
+      expect(apiClient.get).not.toHaveBeenCalled();
+    });
+
+    it.each(["", "100%", "%/_%", "a//b"])("forwards a seed pattern unchanged: %s", async (pattern: string) => {
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { items: [] } });
+      await datasetsApi.listSeedExamples({ selection_key: "dataset:unnamed", value_pattern: pattern });
+      expect((apiClient.get as jest.Mock).mock.calls[0][1].params).toEqual({
+        selection_key: "dataset:unnamed", value_pattern: pattern,
+      });
+    });
+
+    it("rejects a literal/pattern conflict even when the literal search is empty", async () => {
+      await expect(datasetsApi.listSeedExamples({
+        selection_key: "dataset:unnamed", search: "", value_pattern: "%",
+      })).rejects.toThrow(/either/);
       expect(apiClient.get).not.toHaveBeenCalled();
     });
 
