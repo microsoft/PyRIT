@@ -2,11 +2,9 @@
 # Licensed under the MIT license.
 
 import itertools
-import json
 import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Sequence
-from contextlib import AsyncExitStack
 from types import MappingProxyType
 from typing import Any, ClassVar, NoReturn, cast
 
@@ -25,7 +23,6 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
 )
-from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
     build_response_format,
@@ -43,6 +40,13 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     is_content_filter_response,
     validate_chat_completion_response,
 )
+from pyrit.prompt_target.common.chat_completions_tool_loop import (
+    chat_tool_definition,
+    send_with_tools_async,
+    tool_identifier_params,
+    validate_passthrough_tool_conflicts,
+    validate_tool_loop_settings,
+)
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import (
     TargetCapabilities,
@@ -50,20 +54,8 @@ from pyrit.prompt_target.common.target_capabilities import (
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
-from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES, parse_function_call
-from pyrit.prompt_target.common.tool_loop import (
-    InvalidToolCallsError,
-    PendingToolCall,
-    ToolFunction,
-    dispatch_tool_call_async,
-    run_tool_loop_async,
-)
-from pyrit.prompt_target.common.tool_provider import (
-    Tool,
-    ToolProvider,
-    _ScopedToolProvider,
-    collect_tools_async,
-)
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
+from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
@@ -300,15 +292,16 @@ class LiteLLMChatTarget(PromptTarget):
         validate_top_p(top_p)
         validate_presence_penalty(presence_penalty)
         validate_frequency_penalty(frequency_penalty)
-        if isinstance(max_tool_rounds, bool) or not isinstance(max_tool_rounds, int) or max_tool_rounds < 0:
-            raise ValueError("max_tool_rounds must be a nonnegative integer.")
+        validate_tool_loop_settings(
+            max_tool_rounds=max_tool_rounds,
+            runs_tools=execute_tools and bool(tools or tool_providers),
+            n=(extra_body_parameters or {}).get("n", n),
+        )
         self._direct_tools = list(tools or [])
         self._tool_providers = list(tool_providers or [])
         self._execute_tools = execute_tools
         self._max_tool_rounds = max_tool_rounds
         self._suppress_tools = False
-        if execute_tools and (tools or tool_providers) and (extra_body_parameters or {}).get("n", n) not in (None, 1):
-            raise ValueError("Automatic tool execution requires n=1.")
 
         super().__init__(
             model_name=resolved_model,
@@ -456,10 +449,12 @@ class LiteLLMChatTarget(PromptTarget):
                 "n": self._n,
                 "stop": self._stop,
                 "extra_body_parameters": self._extra_body_parameters,
-                "tools": [self._tool_definition(tool) for tool in self._direct_tools] or None,
-                "tool_providers": [provider.identifier for provider in self._tool_providers] or None,
-                "execute_tools": None if self._execute_tools else False,
-                "max_tool_rounds": self._max_tool_rounds if self._direct_tools or self._tool_providers else None,
+                **tool_identifier_params(
+                    tools=self._direct_tools,
+                    tool_providers=self._tool_providers,
+                    execute_tools=self._execute_tools,
+                    max_tool_rounds=self._max_tool_rounds,
+                ),
             },
         )
 
@@ -486,108 +481,21 @@ class LiteLLMChatTarget(PromptTarget):
     # Not decorated with ``pyrit_target_retry``: LiteLLM owns transient/rate-limit retry via
     # ``num_retries`` (see ``__init__``). Stacking both would multiply the retry count.
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
-        async with AsyncExitStack() as stack:
-            for provider in () if self._suppress_tools else self._tool_providers:
-                if isinstance(provider, _ScopedToolProvider):
-                    await stack.enter_async_context(provider.execution_scope_async())
-            tools = (
-                []
-                if self._suppress_tools
-                else await collect_tools_async(tools=self._direct_tools, providers=self._tool_providers)
-            )
-            self._validate_tool_definitions(tools)
-            request = normalized_conversation[-1]
-            if not tools or not self._execute_tools:
-                return await self._send_completion_async(
-                    conversation=normalized_conversation, request=request, tools=tools
-                )
-
-            async def send_async(conversation: Sequence[Message]) -> Message:
-                [reply] = await self._send_completion_async(
-                    conversation=list(conversation), request=request, tools=tools
-                )
-                return reply
-
-            async def resolve_tools_async() -> tuple[Sequence[Tool], Mapping[str, ToolFunction]]:
-                return tools, {}
-
-            return await run_tool_loop_async(
-                conversation=normalized_conversation,
-                request_piece=request.message_pieces[0],
-                send_async=send_async,
-                find_calls=self._tool_call_finder(normalized_conversation),
-                dispatch_async=lambda call: dispatch_tool_call_async(
-                    call=call, resolve_tools_async=resolve_tools_async
-                ),
-                max_tool_rounds=self._max_tool_rounds,
-            )
-
-    @staticmethod
-    def _tool_definition(tool: Tool) -> dict[str, Any]:
-        return {
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.parameters,
-                "strict": tool.strict,
-            },
-        }
+        request = normalized_conversation[-1]
+        return await send_with_tools_async(
+            normalized_conversation=normalized_conversation,
+            tools=() if self._suppress_tools else self._direct_tools,
+            tool_providers=() if self._suppress_tools else self._tool_providers,
+            execute_tools=self._execute_tools,
+            max_tool_rounds=self._max_tool_rounds,
+            validate_tools=self._validate_tool_definitions,
+            send_completion_async=lambda conversation, tools: self._send_completion_async(
+                conversation=conversation, request=request, tools=tools
+            ),
+        )
 
     def _validate_tool_definitions(self, tools: Sequence[Tool]) -> None:
-        declared = {
-            definition.get("function", {}).get("name")
-            for definition in (self._extra_body_parameters or {}).get("tools") or []
-        }
-        conflicts = {tool.name for tool in tools} & declared
-        if conflicts:
-            raise ValueError(f"Tools conflict with extra_body_parameters declarations: {sorted(conflicts)}")
-
-    @staticmethod
-    def _tool_call_finder(conversation: Sequence[Message]) -> Callable[[Message], list[PendingToolCall]]:
-        """
-        Build the shared tool loop's call reader, rejecting calls whose IDs would corrupt history.
-
-        Args:
-            conversation: The conversation being sent, whose call IDs cannot be reused.
-
-        Returns:
-            A function returning a response's calls in order, or raising ``InvalidToolCallsError``.
-        """
-        seen_ids = {
-            parse_function_call(piece).id
-            for message in conversation
-            for piece in message.message_pieces
-            if piece.converted_value_data_type == "function_call"
-        }
-
-        def find_calls(reply: Message) -> list[PendingToolCall]:
-            call_pieces = [
-                piece for piece in reply.message_pieces if piece.converted_value_data_type == "function_call"
-            ]
-            if not call_pieces:
-                return []
-            if any(piece.is_truncated or piece.response_error != "none" for piece in reply.message_pieces):
-                raise InvalidToolCallsError("Truncated or failed tool calls were not executed.")
-            try:
-                calls = [parse_function_call(piece) for piece in call_pieces]
-            except ValueError as exc:
-                raise InvalidToolCallsError(f"Invalid tool calls: {exc}") from exc
-            ids = [call.id for call in calls]
-            if len(set(ids)) != len(ids) or seen_ids.intersection(ids):
-                raise InvalidToolCallsError("Invalid tool calls: Duplicate or reused tool call ID.")
-            seen_ids.update(ids)
-            return [
-                PendingToolCall(
-                    call_id=call.id,
-                    name=call.function.name if isinstance(call.function, FunctionCall) else None,
-                    arguments=call.function.arguments if isinstance(call.function, FunctionCall) else call.function,
-                    section=json.loads(piece.converted_value),
-                )
-                for call, piece in zip(calls, call_pieces, strict=True)
-            ]
-
-        return find_calls
+        validate_passthrough_tool_conflicts(tools=tools, extra_body_parameters=self._extra_body_parameters or {})
 
     @limit_requests_per_minute
     async def _send_completion_async(
@@ -605,7 +513,7 @@ class LiteLLMChatTarget(PromptTarget):
         api_key = await self._resolve_api_key_async()
         body = self._construct_request_body(messages=messages, json_config=json_config, api_key=api_key)
         if tools:
-            body["tools"] = [*body.get("tools", []), *(self._tool_definition(tool) for tool in tools)]
+            body["tools"] = [*body.get("tools", []), *(chat_tool_definition(tool) for tool in tools)]
         # Applied after the passthrough merge so ``extra_body_parameters`` cannot drop the context.
         # LiteLLM merges ``headers`` with ``extra_headers`` and then the provider-specific headers,
         # so all three are checked for manual values.

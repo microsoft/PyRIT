@@ -33,11 +33,19 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     detect_response_content,
     save_audio_response_async,
 )
+from pyrit.prompt_target.common.chat_completions_tool_loop import (
+    chat_tool_definition,
+    send_with_tools_async,
+    tool_identifier_params,
+    validate_passthrough_tool_conflicts,
+    validate_tool_loop_settings,
+)
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
     TargetCapabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
@@ -81,6 +89,10 @@ class OpenAIChatTarget(OpenAITarget):
             Note that you will be charged based on the number of generated tokens across all
             of the choices. Keep n as 1 to minimize costs.
         extra_body_parameters (dict): Additional parameters to send in the request body
+        tools (Sequence[Tool]): Executable tools advertised to the model.
+        tool_providers (Sequence[ToolProvider]): Providers discovered within each send's resource scope.
+        execute_tools (bool): Execute configured tools locally, or return calls to the caller.
+        max_tool_rounds (int): Maximum completions containing locally dispatched calls per send.
 
     """
 
@@ -115,6 +127,10 @@ class OpenAIChatTarget(OpenAITarget):
         audio_response_config: OpenAIChatAudioConfig | None = None,
         extra_body_parameters: dict[str, Any] | None = None,
         custom_configuration: TargetConfiguration | None = None,
+        tools: Sequence[Tool] | None = None,
+        tool_providers: Sequence[ToolProvider] | None = None,
+        execute_tools: bool = True,
+        max_tool_rounds: int = 10,
         **kwargs: Any,
     ) -> None:
         """
@@ -151,6 +167,15 @@ class OpenAIChatTarget(OpenAITarget):
                 that support it (e.g., gpt-4o-audio-preview). When provided, enables audio modality in responses.
             extra_body_parameters (dict, Optional): Additional parameters to be included in the request body.
             custom_configuration (TargetConfiguration, Optional): Override the default target configuration.
+            tools (Sequence[Tool], Optional): Tools to advertise to the model and execute on the host.
+            tool_providers (Sequence[ToolProvider], Optional): Providers whose tools are discovered within
+                each send's execution scope, advertised to the model, and executed on the host.
+            execute_tools (bool, Optional): Whether to execute returned calls locally. If False, return the
+                first response, with its calls, without running them. Defaults to True.
+            max_tool_rounds (int, Optional): The most completions per send whose calls run locally. Calls in
+                a later completion get error results without running, and the send ends with an error
+                response. A tool raising ``ToolInfrastructureError`` also ends the send with an error
+                response, after every call in its round has a result. Defaults to 10.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional ``AsyncOpenAI`` constructor options.
                 For example, ``{"timeout": 180}`` sets a three-minute timeout. Custom ``http_client``
@@ -158,6 +183,7 @@ class OpenAIChatTarget(OpenAITarget):
 
         Raises:
             PyritException: If a generation parameter is out of bounds or a penalty is non-finite.
+            ValueError: If max_tool_rounds is not a nonnegative integer, or tools run locally with n above 1.
             RateLimitException: If the target is rate-limited.
             httpx.HTTPStatusError: If the request fails with a 400 Bad Request or 429 Too Many Requests error.
             json.JSONDecodeError: If the response from the target is not valid JSON.
@@ -168,6 +194,11 @@ class OpenAIChatTarget(OpenAITarget):
         validate_top_p(top_p)
         validate_presence_penalty(presence_penalty)
         validate_frequency_penalty(frequency_penalty)
+        validate_tool_loop_settings(
+            max_tool_rounds=max_tool_rounds,
+            runs_tools=execute_tools and bool(tools or tool_providers),
+            n=(extra_body_parameters or {}).get("n", n),
+        )
 
         self._temperature = temperature
         self._top_p = top_p
@@ -177,6 +208,11 @@ class OpenAIChatTarget(OpenAITarget):
         self._seed = seed
         self._n = n
         self._audio_response_config = audio_response_config
+        self._direct_tools = list(tools or [])
+        self._tool_providers = list(tool_providers or [])
+        self._execute_tools = execute_tools
+        self._max_tool_rounds = max_tool_rounds
+        self._suppress_tools = False
 
         # Merge audio config into extra_body_parameters if provided
         if audio_response_config:
@@ -216,6 +252,12 @@ class OpenAIChatTarget(OpenAITarget):
                 "seed": self._seed,
                 "n": self._n,
                 "extra_body_parameters": self._extra_body_parameters,
+                **tool_identifier_params(
+                    tools=self._direct_tools,
+                    tool_providers=self._tool_providers,
+                    execute_tools=self._execute_tools,
+                    max_tool_rounds=self._max_tool_rounds,
+                ),
             },
         )
 
@@ -241,11 +283,9 @@ class OpenAIChatTarget(OpenAITarget):
             "generativelanguage.googleapis.com": "https://generativelanguage.googleapis.com/v1beta/openai",
         }
 
-    @pyrit_target_retry
-    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
-        Asynchronously sends a message and handles the response within a managed conversation context.
+        Send the conversation, running the model's calls to configured tools locally.
 
         Args:
             normalized_conversation (list[Message]): The full conversation
@@ -253,19 +293,38 @@ class OpenAIChatTarget(OpenAITarget):
                 pipeline. The current message is the last element.
 
         Returns:
-            list[Message]: A list containing the response from the prompt target.
+            list[Message]: Every response and tool result for the normalizer to persist, in order.
         """
-        message = normalized_conversation[-1]
-        message_piece: MessagePiece = message.message_pieces[0]
+        request = normalized_conversation[-1]
+        return await send_with_tools_async(
+            normalized_conversation=normalized_conversation,
+            tools=() if self._suppress_tools else self._direct_tools,
+            tool_providers=() if self._suppress_tools else self._tool_providers,
+            execute_tools=self._execute_tools,
+            max_tool_rounds=self._max_tool_rounds,
+            validate_tools=lambda tools: validate_passthrough_tool_conflicts(
+                tools=tools, extra_body_parameters=self._extra_body_parameters or {}
+            ),
+            send_completion_async=lambda conversation, tools: self._send_completion_async(
+                conversation=conversation, request=request, tools=tools
+            ),
+        )
+
+    @pyrit_target_retry
+    @limit_requests_per_minute
+    async def _send_completion_async(
+        self, *, conversation: list[Message], request: Message, tools: Sequence[Tool]
+    ) -> list[Message]:
+        message_piece: MessagePiece = request.message_pieces[0]
         json_config = self._get_json_response_config(message_piece=message_piece)
 
-        logger.info(f"Sending the following prompt to the prompt target: {message}")
+        logger.info(f"Sending the following prompt to the prompt target: {request}")
 
-        body = await self._construct_request_body_async(conversation=normalized_conversation, json_config=json_config)
-        self._prepare_request_generation(body=body, request=message)
+        body = await self._construct_request_body_async(conversation=conversation, json_config=json_config, tools=tools)
+        self._prepare_request_generation(body=body, request=request)
         response = await self._handle_openai_request_async(
             api_call=lambda: self._client.chat.completions.create(**body),
-            request=message,
+            request=request,
         )
         return [response]
 
@@ -457,7 +516,7 @@ class OpenAIChatTarget(OpenAITarget):
         )
 
     async def _construct_request_body_async(
-        self, *, conversation: MutableSequence[Message], json_config: JsonResponseConfig
+        self, *, conversation: MutableSequence[Message], json_config: JsonResponseConfig, tools: Sequence[Tool] = ()
     ) -> dict[str, Any]:
         messages = await self._build_chat_messages_async(conversation)
         response_format = self._build_response_format(json_config)
@@ -480,7 +539,10 @@ class OpenAIChatTarget(OpenAITarget):
             body_parameters.update(deepcopy(self._extra_body_parameters))
 
         # Filter out None values
-        return {k: v for k, v in body_parameters.items() if v is not None}
+        body: dict[str, Any] = {k: v for k, v in body_parameters.items() if v is not None}
+        if tools:
+            body["tools"] = [*body.get("tools", []), *(chat_tool_definition(tool) for tool in tools)]
+        return body
 
     def _build_response_format(self, json_config: JsonResponseConfig) -> dict[str, Any] | None:
         return build_response_format(json_config=json_config)

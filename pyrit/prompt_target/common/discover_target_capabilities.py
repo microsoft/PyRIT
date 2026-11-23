@@ -255,7 +255,7 @@ def _disable_probe_tools(*, target: PromptTarget) -> Generator[None, None, None]
                 target._extra_body_parameters["extra_body"] = {
                     key: value for key, value in extra_body.items() if key not in tool_settings
                 }
-        if isinstance(target, (OpenAIResponseTarget, LiteLLMChatTarget)):
+        if isinstance(target, (OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget)):
             stack.callback(setattr, target, "_execute_tools", target._execute_tools)
             stack.callback(setattr, target, "_suppress_tools", target._suppress_tools)
             target._execute_tools = False

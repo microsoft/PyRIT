@@ -15,11 +15,13 @@ from pyrit.models import JsonResponseConfig, Message, MessagePiece, ToolExecutio
 from pyrit.prompt_target import (
     FunctionTool,
     MCPToolProvider,
+    OpenAIChatTarget,
     OpenAIResponseTarget,
     ToolProvider,
     collect_tools_async,
     tool,
 )
+from pyrit.registry import TargetRegistry
 
 
 @tool
@@ -157,6 +159,43 @@ def test_openai_response_target_identifier_includes_advertised_tool_definition(p
             "strict": False,
         }
     ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, OpenAIResponseTarget])
+def test_openai_target_copy_keeps_tools_and_providers(target_class: type[OpenAIChatTarget]) -> None:
+    provider = MagicMock(spec=ToolProvider)
+    provider.identifier = {"type": "test"}
+    source = target_class(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tools=[add],
+        tool_providers=[provider],
+        execute_tools=False,
+        max_tool_rounds=3,
+    )
+
+    copy = TargetRegistry().recreate_instance(source=source, params={})
+
+    assert list(copy._direct_tools) == [add]
+    assert copy._tool_providers == [provider]
+    assert copy._execute_tools is False
+    assert copy._max_tool_rounds == 3
+    assert copy.get_identifier().hash == source.get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, OpenAIResponseTarget])
+def test_openai_target_copy_adds_tools_to_a_tool_less_source(target_class: type[OpenAIChatTarget]) -> None:
+    source = target_class(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="mock-key")
+
+    copy = TargetRegistry().recreate_instance(source=source, params={"tools": [add], "max_tool_rounds": 2})
+
+    assert list(copy._direct_tools) == [add]
+    assert copy._max_tool_rounds == 2
+    assert not source._direct_tools
+    assert copy.get_identifier().params["tools"]
 
 
 async def test_identifier_does_not_depend_on_tool_discovery(patch_central_database) -> None:
