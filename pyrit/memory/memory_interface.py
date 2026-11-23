@@ -134,6 +134,7 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     DATASET_NAME_RELEASING_STATUSES,
+    DEFAULT_FINDING_FIELDS,
     MEDIA_PATH_DATA_TYPES,
     AdversarialPrompts,
     AtomicAttackEvaluationIdentifier,
@@ -158,7 +159,6 @@ from pyrit.models import (
     Finding,
     FindingCreate,
     FindingEvidence,
-    FindingSeverity,
     IdentifierFilter,
     IdentifierType,
     Message,
@@ -207,6 +207,9 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
+
+# Callers that don't pass the active fields' severity order get PyRIT 1.2's, which the default fields keep.
+_DEFAULT_SEVERITY_ORDER: tuple[str, ...] = tuple(DEFAULT_FINDING_FIELDS.severity_order)
 
 
 @dataclass(frozen=True)
@@ -1481,21 +1484,27 @@ class MemoryInterface(abc.ABC):
         limit: int = 20,
         offset: int = 0,
         title_query: str | None = None,
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
         title_pattern: str | None = None,
         parent_finding_id: uuid.UUID | None = None,
         top_level_only: bool = False,
     ) -> list[Finding]:
         """
-        Read one page of findings, highest severity first, then newest first.
+        Read one page of findings in ``severity_order``, then newest first.
 
         Without a parent or top-level filter, every finding is listed, including sub-findings. A parent's direct
         sub-findings are listed oldest first instead, the order a decomposition is usually written in.
 
         Args:
-            operation_id (uuid.UUID | None): Only findings of this operation. Defaults to None.
-            limit (int): The page size. Defaults to 20.
-            offset (int): The number of findings to skip. Defaults to 0.
-            title_query (str | None): Case-insensitive literal title substring. Defaults to None.
+            operation_id (uuid.UUID | None): The operation whose findings to read. Defaults to None, which reads
+                findings from every operation.
+            limit (int): Maximum number of findings to return. Defaults to 20.
+            offset (int): Number of findings to skip. Defaults to 0.
+            title_query (str | None): Case-insensitive text the title must contain. Wildcard characters match
+                literally. Defaults to None.
+            severity_order (Sequence[str]): Severity keys from highest to lowest. Stored values that aren't listed
+                sort after them. Defaults to the default finding fields' order, as in PyRIT 1.2. An empty order
+                sorts newest first.
             title_pattern (str | None): Full LIKE pattern instead of title_query. Defaults to None.
             parent_finding_id (uuid.UUID | None): Only the direct sub-findings of this finding, oldest first.
                 Defaults to None.
@@ -1529,13 +1538,17 @@ class MemoryInterface(abc.ABC):
                     casefold=title_pattern is None,
                 )
             )
-        order = self._sub_finding_order() if parent_finding_id is not None else self._finding_order()
+        order = self._sub_finding_order() if parent_finding_id is not None else self._finding_order(severity_order)
         statement = statement.order_by(*order).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
 
     async def get_finding_subtrees_async(
-        self, *, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+        self,
+        *,
+        operation_id: uuid.UUID,
+        finding_ids: Sequence[uuid.UUID],
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
     ) -> list[Finding]:
         """
         Read findings of one operation together with all of their sub-findings, at any depth.
@@ -1545,6 +1558,12 @@ class MemoryInterface(abc.ABC):
         every path step is in the result.
 
         IDs that are not in the operation are omitted.
+
+        Args:
+            operation_id (uuid.UUID): The operation whose findings to read.
+            finding_ids (Sequence[uuid.UUID]): The findings whose subtrees to read.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to the default finding fields' order.
 
         Returns:
             list[Finding]: Each finding once, in the same order as ``get_findings_async``.
@@ -1559,6 +1578,7 @@ class MemoryInterface(abc.ABC):
                 session=session,
                 operation_id=operation_id,
                 finding_ids=[finding_id for level in levels for finding_id in level],
+                severity_order=severity_order,
             )
 
     async def get_finding_child_counts_async(self, *, finding_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
@@ -1582,12 +1602,22 @@ class MemoryInterface(abc.ABC):
         return counts
 
     async def get_findings_by_ids_async(
-        self, *, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+        self,
+        *,
+        operation_id: uuid.UUID,
+        finding_ids: Sequence[uuid.UUID],
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
     ) -> list[Finding]:
         """
-        Read selected findings of one operation, highest severity first, then newest first.
+        Read selected findings of one operation in ``severity_order``, then newest first.
 
         IDs that are not in the operation are omitted.
+
+        Args:
+            operation_id (uuid.UUID): The operation whose findings to read.
+            finding_ids (Sequence[uuid.UUID]): The findings to read.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to the default finding fields' order.
 
         Returns:
             list[Finding]: The selected findings, in the same order as ``get_findings_async``.
@@ -1596,11 +1626,16 @@ class MemoryInterface(abc.ABC):
             return []
         async with await self.get_session_async() as session:
             return await self._read_findings_by_ids_async(
-                session=session, operation_id=operation_id, finding_ids=finding_ids
+                session=session, operation_id=operation_id, finding_ids=finding_ids, severity_order=severity_order
             )
 
     async def _read_findings_by_ids_async(
-        self, *, session: AsyncSession, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+        self,
+        *,
+        session: AsyncSession,
+        operation_id: uuid.UUID,
+        finding_ids: Sequence[uuid.UUID],
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
     ) -> list[Finding]:
         """
         Read selected findings of one operation within the caller's session, in dashboard order.
@@ -1612,7 +1647,9 @@ class MemoryInterface(abc.ABC):
         # The operation filter takes one of the statement's binds.
         chunk_size = max(1, self._MAX_BIND_VARS - 1)
         ordered_ids = await session.scalars(
-            select(FindingEntry.id).where(FindingEntry.operation_id == operation_id).order_by(*self._finding_order())
+            select(FindingEntry.id)
+            .where(FindingEntry.operation_id == operation_id)
+            .order_by(*self._finding_order(severity_order))
         )
         selected_ids = [finding_id for finding_id in ordered_ids if finding_id in requested]
         findings: dict[uuid.UUID, Finding] = {}
@@ -1741,10 +1778,15 @@ class MemoryInterface(abc.ABC):
             return entry.get_evidence() if entry else None
 
     async def get_findings_for_attack_result_async(
-        self, *, attack_result_id: uuid.UUID
+        self, *, attack_result_id: uuid.UUID, severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER
     ) -> list[tuple[Finding, FindingEvidence]]:
         """
-        Read every finding that links an attack result as evidence, highest severity first, then newest first.
+        Read every finding that links an attack result as evidence, in ``severity_order``, then newest first.
+
+        Args:
+            attack_result_id (uuid.UUID): The attack result the findings link as evidence.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to the default finding fields' order.
 
         Returns:
             list[tuple[Finding, FindingEvidence]]: Each linked finding with the evidence that links it.
@@ -1753,7 +1795,7 @@ class MemoryInterface(abc.ABC):
             select(FindingEntry, FindingEvidenceEntry)
             .join(FindingEvidenceEntry, FindingEvidenceEntry.finding_id == FindingEntry.id)
             .where(FindingEvidenceEntry.attack_result_id == attack_result_id)
-            .order_by(*self._finding_order())
+            .order_by(*self._finding_order(severity_order))
         )
         async with await self.get_session_async() as session:
             rows = (await session.execute(statement)).all()
@@ -1795,29 +1837,34 @@ class MemoryInterface(abc.ABC):
         async with await self.get_session_async() as session:
             return dict((await session.execute(statement)).all())
 
-    async def get_finding_severity_counts_async(self) -> dict[uuid.UUID, dict[FindingSeverity, int]]:
+    async def get_finding_severity_counts_async(self) -> dict[uuid.UUID, dict[str, int]]:
         """
         Count every operation's findings by severity in one query.
 
         Returns:
-            dict[uuid.UUID, dict[FindingSeverity, int]]: Counts for operations with findings.
+            dict[uuid.UUID, dict[str, int]]: Counts for operations with findings.
         """
         statement = select(FindingEntry.operation_id, FindingEntry.severity, func.count()).group_by(
             FindingEntry.operation_id, FindingEntry.severity
         )
-        counts: dict[uuid.UUID, dict[FindingSeverity, int]] = {}
+        counts: dict[uuid.UUID, dict[str, int]] = {}
         async with await self.get_session_async() as session:
             for operation_id, severity, count in (await session.execute(statement)).all():
-                counts.setdefault(operation_id, {})[FindingSeverity(severity)] = count
+                counts.setdefault(operation_id, {})[severity] = count
         return counts
 
     @staticmethod
-    def _finding_order() -> "tuple[ColumnElement[Any], ...]":
-        severity_order = case(
-            {severity.value: position for position, severity in enumerate(FindingSeverity)},
+    def _finding_order(severity_order: Sequence[str]) -> "tuple[ColumnElement[Any], ...]":
+        newest_first = (FindingEntry.created_at.desc(), FindingEntry.id.desc())
+        if not severity_order:
+            # case() with no branches compiles to SQL that both dialects reject.
+            return newest_first
+        rank = case(
+            {key: position for position, key in enumerate(severity_order)},
             value=FindingEntry.severity,
+            else_=len(severity_order),
         )
-        return severity_order, FindingEntry.created_at.desc(), FindingEntry.id.desc()
+        return rank, *newest_first
 
     @staticmethod
     def _sub_finding_order() -> "tuple[ColumnElement[Any], ...]":
