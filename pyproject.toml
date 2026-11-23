@@ -157,6 +157,7 @@ opencv = [
 
 presidio = [
     "presidio-analyzer>=2.2.0",
+    "spacy>=3.8.13,!=3.8.14,!=3.8.15",  # 3.8.14-3.8.15 missing cp314 wheels
 ]
 
 speech = [
