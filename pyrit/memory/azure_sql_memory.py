@@ -190,8 +190,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             token_bytes = token.token.encode("utf-16-le")
             attrs = dict(params.pop("attrs_before", {}))
             attrs[self.SQL_COPT_SS_ACCESS_TOKEN] = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
-            connection: aioodbc.Connection = await aioodbc.connect(dsn=dsn, attrs_before=attrs, **params)
-            return connection
+            # aioodbc ships no type information; connect() returns an aioodbc.Connection.
+            return cast("aioodbc.Connection", await aioodbc.connect(dsn=dsn, attrs_before=attrs, **params))
 
         engine = create_async_engine(
             url,
@@ -245,8 +245,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             # get_required_value() is typed to return Any because it can also preserve callables
             # (e.g. token providers). This call site only ever passes a str | None, so the
             # runtime value is guaranteed to be a str.
-            resolved_value: str = value
-            return resolved_value
+            return cast("str", value)
         except ValueError:
             return None
 

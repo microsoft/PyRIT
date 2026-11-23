@@ -44,6 +44,10 @@ if TYPE_CHECKING:
         ComicJailbreakTemplateConfig,
         _ComicJailbreakDataset,
     )
+    from pyrit.datasets.seed_datasets.remote.cosafe_dataset import (
+        CoSafeCategory,
+        _CoSafeDataset,
+    )
     from pyrit.datasets.seed_datasets.remote.cyberseceval_mitre_dataset import (
         CyberSecEvalMitreCategory,
         _CyberSecEvalMitreDataset,
@@ -181,6 +185,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AnthropicModelWrittenEvalCategory": "pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset",
     "CoCoNotCategory": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
     "CoCoNotSplit": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
+    "CoSafeCategory": "pyrit.datasets.seed_datasets.remote.cosafe_dataset",
     "CyberSecEvalInjectionType": "pyrit.datasets.seed_datasets.remote.cyberseceval_prompt_injection_dataset",
     "CyberSecEvalMitreCategory": "pyrit.datasets.seed_datasets.remote.cyberseceval_mitre_dataset",
     "CyberSecEvalRiskCategory": "pyrit.datasets.seed_datasets.remote.cyberseceval_prompt_injection_dataset",
@@ -224,6 +229,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "_CategoricalHarmfulQADataset": "pyrit.datasets.seed_datasets.remote.categorical_harmful_qa_dataset",
     "_CoCoNotContrastDataset": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
     "_CoCoNotRefusalDataset": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
+    "_CoSafeDataset": "pyrit.datasets.seed_datasets.remote.cosafe_dataset",
     "_ComicJailbreakDataset": "pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset",
     "COMIC_JAILBREAK_TEMPLATES": "pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset",
     "ComicJailbreakTemplateConfig": "pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset",

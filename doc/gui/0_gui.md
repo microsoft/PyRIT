@@ -124,6 +124,15 @@ Each scenario defines a test workflow with its techniques, data, and scoring.
 Open one to select a target and adjust the settings it supports, such as
 techniques, dataset selection, and concurrency.
 
+**Browse datasets** in the Datasets section header opens the dataset catalog in a
+new tab. **Reset datasets** returns the datasets and the per-dataset limit to the
+scenario's defaults, and appears once you change them. To open a scanner with
+datasets already selected, add one `dataset` parameter per name, for example
+`/scanner/launch/foundry.red_team_agent?dataset=harmbench&dataset=my_dataset`. The
+names replace the default or preset datasets; other dataset settings, such as
+limits and filters, stay. A scenario that can't take the linked datasets won't
+launch with them and offers a link to open it without them.
+
 Use the chevron on the right of a technique to inspect its identity JSON.
 This does not change the checkbox selection on the left.
 
@@ -283,7 +292,8 @@ for shared behavior.
 
 Browse datasets already loaded into backend memory. Open a dataset to inspect
 its examples, search text, or filter by seed type. Supported media can be
-previewed on request.
+previewed on request. The **Origins** filter lists datasets whose seeds came from
+a given origin, such as local files or a remote provider.
 
 Use **Import into Chat** to stage an example directly into Chat without copying
 text or reattaching files:
@@ -309,6 +319,39 @@ Load data through PyRIT; the visible catalog checks for changes each minute. See
 [datasets](../code/datasets/0_dataset.md) for loading options.
 
 ![Datasets page with stored dataset summaries](images/datasets.png)
+
+### Generate datasets
+
+**Generate datasets** creates a new dataset with one of PyRIT's
+[prompt generators](../code/executor/7_promptgen.ipynb):
+
+- **ASSERT policy dataset**: write a policy, such as "Explain published return
+  policies. Do not disclose another customer's private order details.", or start
+  from a bundled ASSERT behavior. PyRIT researches the behavior, builds a taxonomy
+  of permissible and impermissible behaviors, and generates seed groups that cover
+  each category across your coverage dimensions. Select **Pause for review after:
+  Resolve coverage dimensions** to edit the taxonomy and dimension levels before seed
+  groups are generated.
+- **ASSERT suite**: generate one dataset per behavior for a bundled application
+  context, or for behaviors you choose, with shared settings.
+- **Objective dataset**: generate distinct attack objectives from instructions.
+
+Every target role starts with your default adversarial target; a generation opened
+from an earlier one keeps that generation's targets. When web search is on, the
+research target must support web search. Before you start, the form checks the
+request and targets and estimates the model calls and tokens without calling a target. Generation runs in the background; you
+can leave the page, cancel, or retry. Retry resumes from the last completed stage,
+including after a backend restart. Generations are stored with the memory's
+results, next to media output. Each completed generation stores a new dataset; to
+change a dataset, choose **Edit & regenerate** and save it under a new name. An ASSERT
+dataset whose taxonomy was reviewed reuses that taxonomy until you change the policy. When an ASSERT
+dataset is ready, **Run foundry.assert_policy** opens the scanner with it selected.
+To list the datasets you generated, set the catalog's **Origins** filter to
+**Generated**. On the launch page and in the preset editor, a scanner that accepts
+any named dataset also has **Generate datasets** next to **Browse datasets**;
+Generate opens the ASSERT form for `foundry.assert_policy`, which needs at least
+one dataset, and the generator list for other scanners. Scanners with fixed or
+allow-listed datasets show only **Browse datasets**.
 
 ## History
 

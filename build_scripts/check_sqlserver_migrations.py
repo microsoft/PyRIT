@@ -9,6 +9,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 import sqlalchemy as sa
+from alembic import command
 from alembic.script import ScriptDirectory
 
 from pyrit.memory.migration import (
@@ -46,12 +47,18 @@ def _temporary_database() -> Generator[sa.Engine, None, None]:
 
 
 def main() -> None:
-    """Apply all migrations to a fresh database and validate the resulting schema."""
+    """Apply all migrations to a fresh database, round-trip the newest one, and validate the schema."""
     with _temporary_database() as engine:
         with engine.connect() as connection:
             if sa.inspect(connection).get_table_names():
                 raise RuntimeError("SQL Server migration validation requires a fresh database.")
         run_schema_migrations(engine=engine)
+        check_schema_migrations(engine=engine)
+        # Round-trip the newest migration so its SQL Server downgrade runs too.
+        with engine.begin() as connection:
+            config = _make_config(connection=connection)
+            command.downgrade(config, "-1")
+            command.upgrade(config, "head")
         check_schema_migrations(engine=engine)
         with engine.connect() as connection:
             heads = ScriptDirectory.from_config(_make_config(connection=connection)).get_heads()

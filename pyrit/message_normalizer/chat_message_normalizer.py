@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import base64
 import json
 from pathlib import Path
@@ -196,7 +197,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         audio_format = self.SUPPORTED_AUDIO_FORMATS[ext]
 
         # Read and encode the audio file
-        if not Path(audio_path).is_file():
+        if not await asyncio.to_thread(Path(audio_path).is_file):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         async with aiofiles.open(audio_path, "rb") as f:
