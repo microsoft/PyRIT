@@ -183,9 +183,10 @@ class LiteLLMChatTarget(PromptTarget):
             ``LITELLM_MODEL`` environment variable.
         api_key: Optional API key, or a callable that returns an access token (sync or async).
             When omitted, falls back to the ``LITELLM_API_KEY`` environment variable and then
-            to LiteLLM's own provider-specific environment variable lookup.
+            to LiteLLM's own provider-specific environment variable lookup. An empty string
+            skips the ``LITELLM_API_KEY`` fallback.
         endpoint: Optional base URL override (e.g. for a self-hosted proxy or LiteLLM gateway).
-            Falls back to the ``LITELLM_ENDPOINT`` environment variable.
+            Falls back to the ``LITELLM_ENDPOINT`` environment variable unless it is an empty string.
         headers: Optional extra HTTP headers forwarded to the provider (``extra_headers``).
         temperature: Sampling temperature (0-2).
         top_p: Nucleus sampling probability (0-1).
@@ -337,10 +338,12 @@ class LiteLLMChatTarget(PromptTarget):
         # sync token provider so we can uniformly await it at request time.
         if api_key is None and self._API_KEY_ENVIRONMENT_VARIABLE:
             api_key = os.environ.get(self._API_KEY_ENVIRONMENT_VARIABLE)
-        self._api_key = ensure_async_token_provider(api_key)
+        self._api_key = None if api_key == "" else ensure_async_token_provider(api_key)
 
         endpoint_variable = self._ENDPOINT_ENVIRONMENT_VARIABLE
-        self._endpoint = endpoint or (os.environ.get(endpoint_variable) if endpoint_variable else None)
+        if endpoint is None and endpoint_variable:
+            endpoint = os.environ.get(endpoint_variable)
+        self._endpoint = endpoint or None
         self._headers = headers
         self._temperature = temperature
         self._top_p = top_p
@@ -502,12 +505,12 @@ class LiteLLMChatTarget(PromptTarget):
             raise ValueError(
                 "Separate temperature settings are not supported when extra_body_parameters sets temperature"
             )
-        # Resolved values, so a copy never reads this server's environment for what its source already resolved.
+        # Resolved values, with "" for unset ones, so a copy never reads this server's environment.
         return {
             **self._reconstruction_parameters,
             "model_name": self._model_name,
-            "endpoint": self._endpoint,
-            "api_key": self._api_key,
+            "endpoint": self._endpoint or "",
+            "api_key": "" if self._api_key is None else self._api_key,
             "underlying_model": self._underlying_model,
             "custom_configuration": self.configuration,
         }

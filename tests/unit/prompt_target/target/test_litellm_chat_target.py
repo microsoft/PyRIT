@@ -4,6 +4,7 @@
 import asyncio
 import base64
 import json
+import os
 import sys
 import types
 from collections.abc import AsyncGenerator, Callable
@@ -675,6 +676,26 @@ class TestLiteLLMReconstruction:
             copy = TargetRegistry().recreate_instance(source=source, params={})
         assert (copy._model_name, copy._api_key, copy._endpoint) == expected
 
+    @pytest.mark.parametrize(
+        ("target_class", "model_name", "variables"),
+        [
+            (LiteLLMChatTarget, "openai/gpt-4o", ("LITELLM_API_KEY", "LITELLM_ENDPOINT")),
+            (ClaudeChatTarget, "claude-sonnet-4-6", ("ANTHROPIC_API_KEY",)),
+            (LiteLLMDecisionTarget, "openai/gpt-4o", ("LITELLM_API_KEY", "LITELLM_ENDPOINT")),
+        ],
+    )
+    def test_copy_keeps_unset_values_unset_when_the_environment_sets_them(
+        self, *, target_class: type[LiteLLMChatTarget], model_name: str, variables: tuple[str, ...]
+    ) -> None:
+        with patch.dict("os.environ"):
+            for variable in variables:
+                os.environ.pop(variable, None)
+            source = target_class(model_name=model_name)
+        with patch.dict("os.environ", dict.fromkeys(variables, "environment-value")):
+            copy = TargetRegistry().recreate_instance(source=source, params={})
+        assert (copy._api_key, copy._endpoint) == (None, None)
+        assert copy.get_identifier().hash == source.get_identifier().hash
+
     async def test_copy_reuses_the_resolved_token_provider_async(self) -> None:
         source = LiteLLMChatTarget(model_name="azure/gpt-4o", api_key=lambda: "test-token")
         copy = TargetRegistry().recreate_instance(source=source, params={})
@@ -744,6 +765,12 @@ def test_init_endpoint_from_env(patch_central_database, litellm_stub):
     with patch.dict("os.environ", {"LITELLM_ENDPOINT": "http://localhost:4000"}):
         t = LiteLLMChatTarget(model_name="openai/gpt-4o")
     assert t._endpoint == "http://localhost:4000"
+
+
+def test_init_empty_api_key_and_endpoint_skip_the_environment(patch_central_database, litellm_stub):
+    with patch.dict("os.environ", {"LITELLM_API_KEY": "sk-env", "LITELLM_ENDPOINT": "http://localhost:4000"}):
+        t = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key="", endpoint="")
+    assert (t._api_key, t._endpoint) == (None, None)
 
 
 def test_drop_params_defaults_to_true_in_body(target):
