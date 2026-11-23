@@ -258,6 +258,7 @@ if TYPE_CHECKING:
         ContentWritten,
         ConversationObservationPayload,
         ConversationScorable,
+        DisclosesSecret,
         DivergesFromRepetition,
         Equals,
         ExecutionStep,
@@ -323,6 +324,13 @@ if TYPE_CHECKING:
         AssertSampleVote,
         AssertSampleVotes,
         AssertSkipReason,
+    )
+    from pyrit.models.scorer_selection_report import (
+        ScorerCandidateVerdict,
+        ScorerMismatchKind,
+        ScorerSelectionEntry,
+        ScorerSelectionReport,
+        ScorerVerdictStatus,
     )
     from pyrit.models.seeds import (
         AdversarialPrompts,
@@ -558,6 +566,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ContentScorable": "pyrit.models.score",
     "ContentWritten": "pyrit.models.score",
     "construct_response_from_request": "pyrit.models.messages.conversations",
+    "DisclosesSecret": "pyrit.models.score",
     "display_choices": "pyrit.models.parameter",
     "DivergesFromRepetition": "pyrit.models.score",
     "EmbeddingData": "pyrit.models.embeddings",
@@ -711,6 +720,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioRunPlan": "pyrit.models.scenario_progress",
     "ScenarioRunPlanAtomicGroup": "pyrit.models.scenario_progress",
     "ScenarioRunPlanScorerBinding": "pyrit.models.scenario_progress",
+    "ScorerCandidateVerdict": "pyrit.models.scorer_selection_report",
+    "ScorerMismatchKind": "pyrit.models.scorer_selection_report",
+    "ScorerSelectionEntry": "pyrit.models.scorer_selection_report",
+    "ScorerSelectionReport": "pyrit.models.scorer_selection_report",
+    "ScorerVerdictStatus": "pyrit.models.scorer_selection_report",
     "ScenarioRunPlanGroupKind": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedPrompt": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedGroup": "pyrit.models.scenario_progress",

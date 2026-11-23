@@ -45,6 +45,7 @@ from pyrit.models import (
     DatasetFetchPolicy,
     DatasetLimitInput,
     DatasetLimitState,
+    DatasetSelectionMode,
     IndeterminateDatasetSize,
     Parameter,
     RegistryReference,
@@ -69,6 +70,7 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     ScenarioRunState,
     ScorerEvaluationIdentifier,
+    ScorerSelectionReport,
     config_hash,
 )
 from pyrit.models.scenario_readiness import (
@@ -84,11 +86,16 @@ from pyrit.registry.resolution import resolve_declared_params, resolve_reference
 from pyrit.scenario.core.atomic_attack import AtomicAttack, compute_atomic_group_id
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
+    DatasetConstraintError,
     DatasetSource,
     DatasetSourceKind,
     MissingDatasetError,
 )
-from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
+from pyrit.scenario.core.dataset_overrides import (
+    apply_dataset_overrides,
+    project_dataset_settings,
+    validate_minimum_selection,
+)
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.required_data import ScenarioRequiredData
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -581,7 +588,7 @@ class Scenario(ABC):
         common case). Override *this* method only to **remove or replace** a common input,
         composing against ``super().supported_parameters()``.
 
-        Implemented as a classmethod so ``--list-scenarios`` can introspect without
+        Implemented as a classmethod so ``list-scenarios`` can introspect without
         instantiating.
 
         Returns:
@@ -814,6 +821,13 @@ class Scenario(ABC):
             allow_missing_required=True,
         )
         self._params_resolved = True
+        # Options depend on the current configuration, so drop any left by an earlier call on this instance.
+        self._dataset_config = self._resolve_default_dataset_config()
+        try:
+            validate_minimum_selection(config=self._dataset_config, options=self.get_dataset_options())
+        except DatasetConstraintError as error:
+            # A scenario that needs a dataset and has no default has no default run to size.
+            return ScenarioRunSizeEstimate.unavailable(note=str(error))
         return await self.get_run_size_estimate_async(target_is_configured=False)
 
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = True
@@ -1081,6 +1095,7 @@ class Scenario(ABC):
             )
         self._load_required_data_like_dataset_config()
         self._validate_runtime_configuration()
+        validate_minimum_selection(config=self._dataset_config, options=options)
 
     def _validate_dataset_scorer_requirements(self) -> None:
         """
@@ -1190,7 +1205,19 @@ class Scenario(ABC):
     DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions()
 
     def get_dataset_options(self) -> ScenarioDatasetOptions:
-        """Return the scenario's named-dataset capabilities for the current parameters."""
+        """
+        Return the scenario's named-dataset capabilities for the current parameters.
+
+        Named sources can't replace inline seeds, so an inline configuration reports its sources as
+        fixed, with no required selection. Limits and filters keep their declared capabilities.
+
+        Returns:
+            ScenarioDatasetOptions: The permitted dataset overrides.
+        """
+        if self._dataset_config.source_kind is DatasetSourceKind.INLINE:
+            return self.DATASET_OPTIONS.model_copy(
+                update={"mode": DatasetSelectionMode.FIXED, "allowed_names": [], "min_selected": None}
+            )
         return self.DATASET_OPTIONS
 
     def get_default_dataset_settings(self) -> ScenarioDatasetSettings:
@@ -1433,6 +1460,36 @@ class Scenario(ABC):
                         identifier=self._resolved_scoring_target.get_identifier(),
                     )
                 )
+
+    def get_scorer_selection_report(self) -> ScorerSelectionReport:
+        """
+        Report which objective scorer each planned atomic group will use, and why earlier candidates were passed over.
+
+        The report is built from the planned atomic groups, so it covers every scenario that selects
+        from a ``CompatibleScorers`` pool, and after a resume only the groups still planned. Call it
+        after ``initialize_async`` and before ``run_async``: building it sends no prompt and calls no
+        judge model. Groups whose scorer was not selected from a pool have no entry.
+
+        Returns:
+            ScorerSelectionReport: One entry per pool-selected group, in plan order.
+
+        Raises:
+            ValueError: If the scenario has not been initialized.
+        """
+        if not self._atomic_attacks:
+            raise ValueError("The scorer selection report reads the planned groups. Call initialize_async first.")
+        return ScorerSelectionReport(
+            entries=[
+                atomic.objective_scorer_selection.to_report_entry(
+                    atomic_attack_name=atomic.atomic_attack_name,
+                    display_group=atomic.display_group,
+                    technique=atomic.technique_name,
+                    group_kind=atomic.group_kind,
+                )
+                for atomic in self._atomic_attacks
+                if atomic.objective_scorer_selection is not None
+            ]
+        )
 
     def get_readiness(self) -> ScenarioReadiness:
         """

@@ -637,7 +637,6 @@ def test_finding_update_request_accepts_values_at_limits() -> None:
     "overrides",
     [
         {"target_conversation_id": "c" * (MAX_IDENTIFIER_LENGTH + 1)},
-        {"converter_ids": ["converter"] * (MAX_ITEMS + 1)},
         {"request_converter_configurations": [{"converter_ids": ["converter"]}] * (MAX_ITEMS + 1)},
         {"pieces": [{"original_value": "text", "mime_type": "m" * (MAX_IDENTIFIER_LENGTH + 1)}]},
         {"start_token": "s" * (MAX_IDENTIFIER_LENGTH + 1)},

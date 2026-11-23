@@ -20,11 +20,19 @@ if TYPE_CHECKING:
     from pyrit.setup.initializers.targets import TargetInitializer
     from pyrit.setup.initializers.techniques import TechniqueInitializer
     from pyrit.setup.initializers.tools import ToolsInitializer
-    from pyrit.setup.pyrit_initializer import PyRITInitializer
+    from pyrit.setup.pyrit_initializer import (
+        InitializerDefaultsInfo,
+        InitializerInfo,
+        InitializerParameterInfo,
+        PyRITInitializer,
+    )
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "Parameter": "pyrit.models.parameter",
     "PyRITInitializer": "pyrit.setup.pyrit_initializer",
+    "InitializerInfo": "pyrit.setup.pyrit_initializer",
+    "InitializerDefaultsInfo": "pyrit.setup.pyrit_initializer",
+    "InitializerParameterInfo": "pyrit.setup.pyrit_initializer",
     "ConverterInitializer": "pyrit.setup.initializers.converters",
     "FindingsInitializer": "pyrit.setup.initializers.findings",
     "TechniqueInitializer": "pyrit.setup.initializers.techniques",

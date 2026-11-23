@@ -12,7 +12,7 @@ Downgrading moves the default fields' values back into the old columns, and refu
 that PyRIT 1.2 has no column for.
 
 Revision ID: d43b1bcf9c56
-Revises: 3e55dd099e38
+Revises: 0d3592c62ad8
 Create Date: 2026-10-27 12:00:00.000000
 """
 
@@ -26,7 +26,7 @@ from pyrit.memory.memory_models import CustomUUID
 
 # revision identifiers, used by Alembic.
 revision: str = "d43b1bcf9c56"
-down_revision: str | None = "3e55dd099e38"
+down_revision: str | None = "0d3592c62ad8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -137,7 +137,8 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
             print(f"    Default Datasets ({len(sc.default_datasets)}):")
             print(_wrap(text=", ".join(sc.default_datasets), indent="      "))
         options = sc.dataset_options
-        print(f"    Dataset selection: {options.mode.value}; overrides: {options.supports_overrides}")
+        minimum = f"; at least {options.min_selected} required" if options.min_selected else ""
+        print(f"    Dataset selection: {options.mode.value}; overrides: {options.supports_overrides}{minimum}")
         if options.allowed_names:
             print(_wrap(text="Options: " + ", ".join(options.allowed_names), indent="      "))
         defaults = sc.dataset_defaults

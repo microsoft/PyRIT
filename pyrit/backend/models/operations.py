@@ -110,7 +110,7 @@ class FindingListItem(FindingResponse):
     evidence_count: int = Field(ge=0)
     child_count: int = Field(ge=0, description="The number of direct sub-findings")
     # A response narrows each path to include its derived completeness; list items are never reassigned.
-    paths: tuple[FindingPathItem, ...] = ()  # type: ignore[ty:invalid-mutable-override]
+    paths: tuple[FindingPathItem, ...] = ()  # type: ignore[ty:incompatible-mutable-override]
     rows: list[FindingValueRow] = Field(description="The filled values in configured order, labelled for display")
     retired: list[tuple[str, str]] = Field(
         description="The (key, value) of each stored value that no active field or level uses, in stored order"

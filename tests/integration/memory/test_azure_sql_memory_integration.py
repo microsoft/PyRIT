@@ -17,6 +17,8 @@ from pyrit.memory import (
     PromptMemoryEntry,
 )
 from pyrit.memory.memory_models import (
+    CONVERSATION_ID_MAX_LENGTH,
+    ConversationEntry,
     ScenarioResultEntry,
 )
 from pyrit.models import (
@@ -24,6 +26,7 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    Conversation,
     MessagePiece,
     ScenarioIdentifier,
     ScenarioResult,
@@ -150,6 +153,10 @@ async def cleanup_conversation_data_async(
                     # Delete message pieces
                     session.query(PromptMemoryEntry).filter(
                         PromptMemoryEntry.conversation_id.in_(conversation_ids)
+                    ).delete(synchronize_session=False)
+
+                    session.query(ConversationEntry).filter(
+                        ConversationEntry.conversation_id.in_(conversation_ids)
                     ).delete(synchronize_session=False)
 
                     session.commit()
@@ -367,6 +374,37 @@ async def test_metadata_string_filters_exclude_containers_async(
         assert {seed.id for seed in remaining} == {container.id, groups[2].id, groups[3].id}
     finally:
         await azuresql_instance.remove_seeds_from_memory_async(dataset_name=test_id)
+
+
+async def test_longest_conversation_id_persists_in_every_table(azuresql_instance: AzureSQLMemory):
+    """SQL Server stores a conversation_id of the full allowed length, not only a bare UUID."""
+    test_id = generate_test_id()
+    conversation_id = f"long-conversation-{test_id}-".ljust(CONVERSATION_ID_MAX_LENGTH, "x")
+
+    async with cleanup_conversation_data_async(azuresql_instance, [conversation_id]):
+        await azuresql_instance.add_conversation_to_memory_async(
+            conversation=Conversation(conversation_id=conversation_id)
+        )
+        await azuresql_instance.add_message_pieces_to_memory_async(
+            message_pieces=[MessagePiece(conversation_id=conversation_id, role="user", original_value="hi")]
+        )
+        await azuresql_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                AttackResult(
+                    conversation_id=conversation_id,
+                    objective="Store a long conversation id",
+                    atomic_attack_identifier=get_test_atomic_attack_identifier(),
+                    outcome=AttackOutcome.UNDETERMINED,
+                    labels={"long_conversation_id_test": test_id},
+                )
+            ]
+        )
+
+        messages = await azuresql_instance.get_conversation_messages_async(conversation_id=conversation_id)
+        results = await azuresql_instance.get_attack_results_async(labels={"long_conversation_id_test": test_id})
+
+    assert [message.message_pieces[0].original_value for message in messages] == ["hi"]
+    assert [result.conversation_id for result in results] == [conversation_id]
 
 
 async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
