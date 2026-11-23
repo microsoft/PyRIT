@@ -29,6 +29,7 @@ from pyrit.executor.attack import (
 from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
+from pyrit.memory import SQLiteMemory
 from pyrit.message_normalizer import HistorySquashNormalizer, MessageStringNormalizer
 from pyrit.models import (
     AttackOutcome,
@@ -858,3 +859,79 @@ class TestFromSeedGroup:
         params = await MultiPromptSendingAttackParameters.from_seed_group_async(seed_group=seed_group)
 
         assert params.targeted_harm_categories == ["violence"]
+
+    async def test_from_seed_group_keeps_turns_before_first_user_turn_as_history_async(self) -> None:
+        seed_group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="You are a helpful bot.", role="system", sequence=0),
+                SeedPrompt(value="turn one", role="user", sequence=1),
+                SeedPrompt(value="turn two", role="user", sequence=2),
+            ]
+        )
+
+        params = await MultiPromptSendingAttackParameters.from_seed_group_async(seed_group=seed_group)
+
+        assert params.prepended_conversation is not None
+        assert [(m.api_role, m.get_value()) for m in params.prepended_conversation] == [
+            ("system", "You are a helpful bot.")
+        ]
+        assert params.user_messages is not None
+        assert [(m.api_role, m.get_value()) for m in params.user_messages] == [
+            ("user", "turn one"),
+            ("user", "turn two"),
+        ]
+
+    async def test_from_seed_group_without_leading_history_has_no_prepended_conversation_async(self) -> None:
+        seed_group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="turn one", role="user", sequence=0),
+            ]
+        )
+
+        params = await MultiPromptSendingAttackParameters.from_seed_group_async(seed_group=seed_group)
+
+        assert params.prepended_conversation is None
+
+    @pytest.mark.parametrize("role", ["assistant", "system"])
+    async def test_from_seed_group_rejects_scripted_turn_after_first_user_turn_async(self, *, role: str) -> None:
+        seed_group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="turn one", role="user", sequence=0),
+                SeedPrompt(value="scripted", role=role, sequence=1),
+                SeedPrompt(value="turn two", role="user", sequence=2),
+            ]
+        )
+
+        with pytest.raises(ValueError, match=f"the {role} turn at sequence 1 can't be sent"):
+            await MultiPromptSendingAttackParameters.from_seed_group_async(seed_group=seed_group)
+
+    async def test_seed_group_system_prompt_is_history_not_a_request_async(
+        self, *, sqlite_instance: SQLiteMemory
+    ) -> None:
+        target = MockPromptTarget()
+        attack = MultiPromptSendingAttack(objective_target=target)
+        seed_group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="You are a helpful bot.", role="system", sequence=0),
+                SeedPrompt(value="turn one", role="user", sequence=1),
+                SeedPrompt(value="turn two", role="user", sequence=2),
+            ]
+        )
+
+        result = await AttackExecutor().execute_attack_from_seed_groups_async(attack=attack, seed_groups=[seed_group])
+
+        [attack_result] = result.completed_results
+        conversation = await sqlite_instance.get_conversation_messages_async(
+            conversation_id=attack_result.conversation_id
+        )
+        assert [(m.api_role, m.get_value()) for m in conversation] == [
+            ("system", "You are a helpful bot."),
+            ("user", "turn one"),
+            ("assistant", "default"),
+            ("user", "turn two"),
+            ("assistant", "default"),
+        ]
