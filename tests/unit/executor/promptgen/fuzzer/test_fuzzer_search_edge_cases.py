@@ -48,8 +48,8 @@ def test_uct_score_at_step_zero_matches_step_one_and_is_finite() -> None:
 def test_uct_score_prefers_less_visited_nodes_with_equal_rewards() -> None:
     explorer = _explorer()
 
-    rarely_visited = explorer._calculate_uct_score(node=_node(visited_num=1, rewards=0.5), step=10)
-    often_visited = explorer._calculate_uct_score(node=_node(visited_num=10, rewards=0.5), step=10)
+    rarely_visited = explorer._calculate_uct_score(node=_node(visited_num=1, rewards=0.0), step=10)
+    often_visited = explorer._calculate_uct_score(node=_node(visited_num=10, rewards=0.0), step=10)
 
     assert rarely_visited > often_visited
 
