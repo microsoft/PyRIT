@@ -39,10 +39,13 @@ interface HarnessProps {
   compatibleOnly?: boolean
   metadataError?: string | null
   onReload?: jest.Mock
+  required?: boolean
+  selectionError?: string | null
 }
 function Harness({
   options = OPTIONS, defaults = DEFAULTS, datasets = DATASETS, initialRequest = {}, onChange = jest.fn(), onLoad = jest.fn(),
   loading = false, preparing = false, compatibleOnly = false, metadataError = null, onReload = jest.fn(),
+  required = false, selectionError = null,
 }: HarnessProps) {
   const [request, setRequest] = useState<ScenarioDatasetRequest>(initialRequest)
   const [validation, setValidation] = useState<string | null>(null)
@@ -60,7 +63,7 @@ function Harness({
   return <FluentProvider theme={webLightTheme}><MemoryRouter>
     <ScenarioDatasetTable request={request} defaults={defaults} effective={effective} options={options}
       datasets={datasets} disabled={false} loading={loading} preparing={preparing} metadataError={metadataError}
-      compatibleOnly={compatibleOnly}
+      compatibleOnly={compatibleOnly} required={required} selectionError={selectionError}
       loadEnabled onLoad={onLoad} onReload={onReload} onValidationChange={setValidation}
       onChange={(next) => { setRequest(next); onChange(next) }} />
     <button disabled={validation !== null}>Launch</button>
@@ -97,10 +100,40 @@ describe('ScenarioDatasetTable', () => {
     expect(screen.queryByRole('button', { name: 'Reset datasets', exact: true })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Load datasets', exact: true })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Remove stored' })).toBeInTheDocument()
+    // Compatible choices are already stored, so there is no loading rule to pick.
+    expect(screen.queryByRole('radiogroup', { name: 'Dataset loading' })).not.toBeInTheDocument()
     view.rerender(<Harness compatibleOnly defaults={{ ...DEFAULTS, sources: [] }} datasets={[STORED]}
       onReload={reload} onLoad={load} metadataError="Compatible listing unavailable" />)
-    await user.click(screen.getByRole('button', { name: 'Retry loading compatible datasets' }))
+    // Retry sits in the error it fixes, and the picker waits for a listing.
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('Compatible listing unavailable')
+    const retry = within(alert.parentElement as HTMLElement).getByRole('button', { name: 'Retry loading compatible datasets' })
+    expect(retry).toHaveTextContent('Retry')
+    expect(screen.getByRole('combobox', { name: 'Add dataset' })).toBeDisabled()
+    await user.click(retry)
     expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the required picker and its validation when no compatible dataset exists', () => {
+    render(<Harness compatibleOnly required selectionError="Select a dataset." defaults={{ ...DEFAULTS, sources: [] }}
+      datasets={[]} />)
+    const picker = screen.getByRole('combobox', { name: 'Add dataset' })
+    expect(picker).toBeRequired()
+    expect(picker).toHaveAccessibleDescription(expect.stringContaining('Select a dataset.'))
+    expect(screen.getByText('No compatible datasets available.')).toBeInTheDocument()
+  })
+
+  it('shows one loading status for a linked selection and names a selection the listing omits', () => {
+    const linked = { sources: [{ name: 'linked' }] }
+    const view = render(<Harness compatibleOnly loading defaults={{ ...DEFAULTS, sources: [] }} datasets={[]}
+      initialRequest={linked} />)
+    expect(screen.getByRole('progressbar', { name: 'Loading compatible datasets...' })).toBeInTheDocument()
+    expect(screen.queryByText('Checking dataset details...')).not.toBeInTheDocument()
+    expect(screen.queryByText('Not loaded')).not.toBeInTheDocument()
+    view.rerender(<Harness compatibleOnly defaults={{ ...DEFAULTS, sources: [] }} datasets={[STORED]}
+      initialRequest={linked} />)
+    expect(screen.getByText('Not in the compatible list')).toBeInTheDocument()
+    expect(screen.queryByText('Not stored in memory')).not.toBeInTheDocument()
   })
 
   it('preserves generic default fallback, final-source guard, Reset and metadata refresh', async () => {

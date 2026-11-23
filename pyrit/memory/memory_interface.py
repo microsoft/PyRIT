@@ -6477,39 +6477,32 @@ class MemoryInterface(abc.ABC):
                 case((SeedEntry.prompt_group_id.is_(None), 1), else_=0).label("ungrouped"),
                 SeedEntry.seed_type,
                 SeedEntry.role,
-                case((and_(objective, key_present(AdversarialPrompts.METADATA_KEY)), 1), else_=0).label(
-                    "has_adversarial_prompts"
-                ),
                 *flags,
             )
             .where(SeedEntry.dataset_name.is_not(None), SeedEntry.dataset_name != "")
             .subquery()
         )
+        prompt = seeds.c.seed_type == "prompt"
+
+        def flag(condition: "ColumnElement[bool]") -> "ColumnElement[Any]":
+            return case((condition, 1), else_=0)
+
+        def seed_count(condition: "ColumnElement[bool]") -> "ColumnElement[Any]":
+            return func.sum(flag(condition))
+
+        # Each group's facts are columns here, so the outer query groups by plain columns. SQL Server can't
+        # match bound parameters repeated in SELECT and GROUP BY (see attack_analytics_query.py).
         groups = (
             select(
                 seeds.c.dataset_name,
-                func.count().label("seed_count"),
-                func.sum(case((seeds.c.seed_type == "objective", 1), else_=0)).label("objective_count"),
+                flag(seed_count(seeds.c.seed_type == "objective") == 1).label("single_objective"),
+                flag(func.count() == 1).label("single_seed"),
                 # Unset roles can hydrate as user or inherit their sequence's role; keep them unverified.
-                func.sum(
-                    case(
-                        (
-                            and_(
-                                seeds.c.seed_type == "prompt",
-                                or_(seeds.c.role == "user", seeds.c.role.is_(None)),
-                            ),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label("user_prompt_count"),
-                func.sum(case((and_(seeds.c.seed_type == "prompt", seeds.c.role != "user"), 1), else_=0)).label(
-                    "non_user_prompt_count"
+                flag(seed_count(and_(prompt, or_(seeds.c.role == "user", seeds.c.role.is_(None)))) > 0).label(
+                    "has_user_prompt"
                 ),
-                func.sum(case((seeds.c.seed_type == "simulated_conversation", 1), else_=0)).label(
-                    "simulated_conversation_count"
-                ),
-                func.max(seeds.c.has_adversarial_prompts).label("has_adversarial_prompts"),
+                flag(seed_count(and_(prompt, seeds.c.role != "user")) > 0).label("has_non_user_prompt"),
+                flag(seed_count(seeds.c.seed_type == "simulated_conversation") > 0).label("has_simulated_conversation"),
                 *(func.max(seeds.c[f"metadata_{index}"]).label(f"metadata_{index}") for index in range(len(keys))),
             )
             .group_by(seeds.c.dataset_name, seeds.c.ungrouped, seeds.c.group_id)
@@ -6517,17 +6510,11 @@ class MemoryInterface(abc.ABC):
         )
         columns = [
             groups.c.dataset_name,
-            *(
-                case((condition, 1), else_=0).label(name)
-                for name, condition in (
-                    ("single_objective", groups.c.objective_count == 1),
-                    ("single_seed", groups.c.seed_count == 1),
-                    ("has_user_prompt", groups.c.user_prompt_count > 0),
-                    ("has_non_user_prompt", groups.c.non_user_prompt_count > 0),
-                    ("has_simulated_conversation", groups.c.simulated_conversation_count > 0),
-                )
-            ),
-            groups.c.has_adversarial_prompts,
+            groups.c.single_objective,
+            groups.c.single_seed,
+            groups.c.has_user_prompt,
+            groups.c.has_non_user_prompt,
+            groups.c.has_simulated_conversation,
             *(groups.c[f"metadata_{index}"] for index in range(len(keys))),
         ]
         return select(*columns, func.count().label("group_count")).group_by(*columns)
@@ -6548,7 +6535,6 @@ class MemoryInterface(abc.ABC):
                 has_user_prompt=bool(row["has_user_prompt"]),
                 has_non_user_prompt=bool(row["has_non_user_prompt"]),
                 has_simulated_conversation=bool(row["has_simulated_conversation"]),
-                has_adversarial_prompts=bool(row["has_adversarial_prompts"]),
                 metadata_keys=tuple(key for index, key in enumerate(keys) if row[f"metadata_{index}"]),
             )
             for row in rows

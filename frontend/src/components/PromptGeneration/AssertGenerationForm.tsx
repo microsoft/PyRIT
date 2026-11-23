@@ -507,12 +507,14 @@ function AssertGenerationFormContent({
           onChange={(_, data) => updateSettings({ includeUserPrompt: data.checked === true })}
           label="Include a user prompt in each seed group"
         />
-        <Checkbox
-          checked={settings.includeAdversarialPrompt}
-          disabled={submitting}
-          onChange={(_, data) => updateSettings({ includeAdversarialPrompt: data.checked === true })}
-          label="Include tester instructions (required by the default ASSERT conversation technique)"
-        />
+        <Field hint="Each group then runs as a multi-turn conversation with a tester.">
+          <Checkbox
+            checked={settings.includeAdversarialPrompt}
+            disabled={submitting}
+            onChange={(_, data) => updateSettings({ includeAdversarialPrompt: data.checked === true })}
+            label="Include tester instructions"
+          />
+        </Field>
       </section>
 
       <AssertDimensionsEditor settings={settings} onChange={updateSettings} disabled={submitting} />

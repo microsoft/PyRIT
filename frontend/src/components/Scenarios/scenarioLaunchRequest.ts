@@ -50,9 +50,9 @@ export function acceptsAnyNamedDataset(scenario: RegisteredScenario, options: Sc
   return supportsParameter(scenario, 'dataset_config') && options.supports_overrides && options.mode === 'any'
 }
 
-/** ASSERT's picker offers only the server's compatible choices; other scanners keep the general dataset actions. */
+/** A scenario that checks stored contents offers only the server's compatible choices, without general dataset actions. */
 export function usesCompatibleDatasetPicker(scenario: RegisteredScenario): boolean {
-  return scenario.scenario_name === 'foundry.assert_policy'
+  return scenario.dataset_options?.compatible_only === true
 }
 
 /** Whether the scenario declares that a launch needs datasets selected, such as one without defaults. */

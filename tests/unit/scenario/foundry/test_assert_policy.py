@@ -1144,6 +1144,14 @@ def test_readiness_accepts_assert_package_when_its_prompt_cases_fit_the_target(h
     assert not [issue for issue in scenario.get_readiness().issues if issue.role == "objective_target"]
 
 
+@pytest.mark.parametrize("technique", ["assert_package", "assert_package_spanish", "red_teaming"])
+def test_readiness_reports_a_missing_objective_target(harness: _Harness, technique: str) -> None:
+    scenario = harness.scenario()
+    scenario.set_params_from_args(args={"scenario_techniques": [_technique(technique)], **_datasets("assert_a")})
+    reasons = [issue.reason for issue in scenario.get_readiness().issues if issue.role == "objective_target"]
+    assert reasons == ["objective_target is required; no target selected."]
+
+
 @pytest.mark.parametrize("policy", ["skip", "raise"])
 async def test_incompatible_scoring_config_uses_scenario_policy_async(harness: _Harness, policy: str) -> None:
     AttackTechniqueRegistry.get_registry_singleton().register_from_factories(

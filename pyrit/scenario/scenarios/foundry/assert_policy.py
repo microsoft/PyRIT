@@ -135,7 +135,13 @@ class AssertPolicy(Scenario):
     target replies stay undetermined. Results are grouped by technique.
 
     ``assert_package_spanish`` translates target-bound user requests with the configured adversarial
-    chat, including later conversation turns. It leaves the optional comparison baseline unchanged.
+    chat, including later conversation turns, before that technique's ``technique_converters``. It
+    leaves stored policy context, tester instructions, the judges and the optional comparison
+    baseline unchanged.
+
+    Every selected group must carry valid ASSERT generation metadata and be a valid prompt or
+    conversation case, whatever its provenance and even under the ``skip`` policy; only groups a
+    selected technique can't deliver are skipped.
     """
 
     #: Version 3 passes each group's policy to the scorers as a condition.
@@ -209,19 +215,10 @@ class AssertPolicy(Scenario):
             for name, factory in selected.items()
             if (reason := self._get_scoring_incompatibility(factory, scorer=scorer))
         }
-        packages_fit = {
-            name for name, factory in selected.items() if name in _ASSERT_PACKAGES and self._target_fits(factory)
-        }
-        if packages_fit:
-            # The base check uses a package's conversation-case attack, but its prompt cases fit this target;
-            # each conversation case is checked when it is built.
-            readiness.issues = [
-                issue
-                for issue in readiness.issues
-                if issue.role != "objective_target"
-                or (issue.component not in packages_fit and issue.component != self.name)
-            ]
-        usable = any(name not in incompatible and self._target_fits(factory) for name, factory in selected.items())
+        usable = any(
+            name not in incompatible and not self._get_technique_target_errors(factory)
+            for name, factory in selected.items()
+        )
         if incompatible and (self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE or not usable):
             for name, reason in incompatible.items():
                 readiness.issues.append(
@@ -291,35 +288,6 @@ class AssertPolicy(Scenario):
             note=note,
         )
 
-    async def _resolve_seed_groups_by_dataset_async(
-        self, *, apply_sampling: bool = True
-    ) -> dict[str, list[AttackSeedGroup]]:
-        """
-        Read the selected groups once, validate them, then sample that same population.
-
-        Returns:
-            dict[str, list[AttackSeedGroup]]: Selected groups keyed by dataset.
-
-        Raises:
-            ValueError: If a group lacks ASSERT metadata or conflicts with ``target_system_prompt``,
-                or a stored objective seed appears more than once.
-            DatasetConstraintError: If the selected datasets contain no groups.
-        """
-        selection = await self._dataset_config._resolve_attack_groups_async()
-        population = selection.select(apply_sampling=False)
-        if not any(population.values()):
-            raise DatasetConstraintError("The selected ASSERT datasets contain no seed groups.")
-        # _read_metadata applies the scenario's metadata requirement with an ASSERT-specific message, and the
-        # assessment population check covers the ASSERT case rules, so _validate_dataset_population would repeat both.
-        for dataset_name, dataset_groups in population.items():
-            for group in dataset_groups:
-                self._read_metadata(group=group, dataset_name=dataset_name)
-        self._validate_dataset_assessment_population(population)
-        if not apply_sampling:
-            return population
-        # Assessment runs every technique's checks on every group; keep that work off the event loop.
-        return await asyncio.to_thread(self._sample_dataset_population, population=population, selection=selection)
-
     def get_dataset_requirements(self) -> SeedGroupRequirements:
         """
         Declare the policy context required by every ASSERT judge, regardless of provenance.
@@ -353,13 +321,18 @@ class AssertPolicy(Scenario):
             extra_factories={name: _build_assert_package_factory(name) for name in _ASSERT_PACKAGES},
         )
 
-    def _get_dataset_target_errors(self, factory: AttackTechniqueFactory) -> list[str]:
-        # ASSERT's own packages choose their attack per case, so the target is checked per group below.
-        if factory.name in _ASSERT_PACKAGES or self._objective_target is None:
-            return []
-        return self._get_target_requirements(factory).check_target(
-            target=self._objective_target, attack_class=factory.attack_class
-        )
+    def _get_technique_target_errors(self, factory: AttackTechniqueFactory) -> list[str]:
+        """
+        Check an ASSERT package against the target as its prompt cases, which it sends directly.
+
+        Each conversation case is checked against the package's full requirements per group.
+
+        Returns:
+            list[str]: Unmet target requirements; empty without an objective target.
+        """
+        if factory.name in _ASSERT_PACKAGES:
+            factory = self._get_prompt_case_factory(factory)
+        return super()._get_technique_target_errors(factory)
 
     def _validate_dataset_technique_group(
         self, *, factory: AttackTechniqueFactory, seed_group: AttackSeedGroup
@@ -375,14 +348,15 @@ class AssertPolicy(Scenario):
 
     def _validate_dataset_assessment_population(self, population: dict[str, list[AttackSeedGroup]]) -> None:
         """
-        Check the ASSERT rules that catalog facts can't express; the assessment reports metadata itself.
+        Check the selection as a whole, after each group passed ``_validate_dataset_population``.
 
         Raises:
-            DatasetConstraintError: If a group isn't a valid ASSERT prompt or conversation case.
+            DatasetConstraintError: If the selected datasets contain no seed groups.
             ValueError: If a group conflicts with ``target_system_prompt``, or a stored objective
                 seed appears more than once.
         """
-        self._validate_assert_cases(population)
+        if not any(population.values()):
+            raise DatasetConstraintError("The selected ASSERT datasets contain no seed groups.")
         for dataset_name, dataset_groups in population.items():
             for group in dataset_groups:
                 self._validate_target_system_prompt(group=group, dataset_name=dataset_name)
@@ -441,22 +415,6 @@ class AssertPolicy(Scenario):
             name=factory.name, attack_class=PromptSendingAttack, supports_additional_request_converters=True
         )
 
-    def _target_fits(self, factory: AttackTechniqueFactory) -> bool:
-        """
-        Whether the objective target can run the technique; an ASSERT package only needs its prompt cases to fit.
-
-        A package's conversation cases are checked against the full requirements as each group is built.
-
-        Returns:
-            bool: True without an objective target, or when the target meets the requirements.
-        """
-        if self._objective_target is None:
-            return True
-        delivery = self._get_prompt_case_factory(factory) if factory.name in _ASSERT_PACKAGES else factory
-        return not self._get_target_requirements(delivery).check_target(
-            target=self._objective_target, attack_class=delivery.attack_class
-        )
-
     def _validate_target_system_prompt(self, *, group: AttackSeedGroup, dataset_name: str) -> None:
         """
         Require no stored system prompt when ``target_system_prompt`` is set.
@@ -489,17 +447,6 @@ class AssertPolicy(Scenario):
             target_instructions=self._get_judged_system_prompt(group),
         )
         return ScoringExpectation(conditions=(policy,))
-
-    @staticmethod
-    def _read_metadata(*, group: AttackSeedGroup, dataset_name: str) -> AssertGroupMetadata:
-        try:
-            return AssertGroupMetadata.from_metadata(group.objective.metadata)
-        except ValueError as error:
-            raise ValueError(
-                f"Dataset '{dataset_name}' contains a seed group without valid ASSERT generation metadata "
-                f"('{group.objective.value[:80]}'). Generate or import groups that meet the ASSERT schema. "
-                f"Details: {error}"
-            ) from error
 
     @staticmethod
     def _get_stored_system_prompt(group: AttackSeedGroup) -> str | None:

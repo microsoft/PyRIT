@@ -178,3 +178,28 @@ async def test_eligible_route_is_one_read_only_request_with_encoded_names_async(
     assert response.json() == {"items": []}
     service.list_compatible_datasets_async.assert_awaited_once()
     assert service.list_compatible_datasets_async.call_args.kwargs["scenario_name"] == scenario_name
+
+
+@pytest.mark.parametrize(
+    ("outcome", "status_code", "detail"),
+    [
+        ({"return_value": None}, 404, "Scenario 'test.policy' not found"),
+        (
+            {"side_effect": ValueError("The listing configuration is invalid.")},
+            400,
+            "The listing configuration is invalid.",
+        ),
+    ],
+)
+async def test_eligible_route_maps_unknown_scenarios_and_invalid_listings_async(
+    *, outcome: dict[str, object], status_code: int, detail: str, compatibility_headers: dict[str, str]
+) -> None:
+    service = MagicMock(spec=ScenarioService)
+    service.list_compatible_datasets_async = AsyncMock(**outcome)
+    with patch("pyrit.backend.routes.scenarios.get_scenario_service", return_value=service):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=compatibility_headers
+        ) as client:
+            response = await client.get("/api/scenarios/catalog/test.policy/datasets")
+    assert response.status_code == status_code
+    assert response.json()["detail"] == detail

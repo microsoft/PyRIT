@@ -3340,7 +3340,7 @@ describe('ScenarioDetail', () => {
         dataset_defaults: { sources: [], max_per_dataset: 'all', max_total: 'all', fetch: 'if_missing', filters: {} },
         dataset_options: {
           mode: 'any', allowed_names: [], min_selected: 1, max_selected: null, per_dataset_limit: true, total_limit: true,
-          supports_overrides: true, filters: true, source_settings: true,
+          supports_overrides: true, filters: true, source_settings: true, compatible_only: true,
         },
       })
     }
@@ -3512,6 +3512,10 @@ describe('ScenarioDetail', () => {
         supported_parameters: [
           { name: 'max_turns', type_name: 'int', default: 6, required: false },
         ],
+        dataset_options: {
+          mode: 'any', allowed_names: [], per_dataset_limit: true, total_limit: true, supports_overrides: true,
+          filters: true, compatible_only: true,
+        },
       }))
       renderDetail('/scanner/launch/foundry.assert_policy')
       await screen.findByText('harmbench (Unknown)')

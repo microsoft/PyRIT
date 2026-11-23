@@ -24,16 +24,32 @@ def test_empty_requirements_accept_additional_prompts() -> None:
     assert SeedGroupRequirements().check(seed_group=group) == []
 
 
-@pytest.mark.parametrize(
-    ("requirements", "message"),
-    [
-        (SeedGroupRequirements(required_user_prompt=True), "stored user prompt"),
-        (SeedGroupRequirements(required_adversarial_prompt=True), "Stored adversarial prompts"),
-    ],
-)
-def test_required_inputs_are_checked(*, requirements: SeedGroupRequirements, message: str) -> None:
+def test_required_user_prompt_is_checked() -> None:
     group = AttackSeedGroup(seeds=[SeedObjective(value="objective")])
-    assert message in requirements.check(seed_group=group)[0]
+    assert SeedGroupRequirements(required_user_prompt=True).check(seed_group=group) == [
+        "A stored user prompt is required."
+    ]
+
+
+def test_required_user_prompt_changes_technique_identity() -> None:
+    from pyrit.executor.attack import PromptSendingAttack
+    from pyrit.scenario import AttackTechniqueFactory, TechniqueRequirements
+
+    def factory(requirements: SeedGroupRequirements) -> AttackTechniqueFactory:
+        return AttackTechniqueFactory(
+            name="prompt",
+            attack_class=PromptSendingAttack,
+            requirements=TechniqueRequirements(seed_group=requirements),
+        )
+
+    assert SeedGroupRequirements(required_user_prompt=True).to_identity() == {
+        **SeedGroupRequirements().to_identity(),
+        "required_user_prompt": True,
+    }
+    default = factory(SeedGroupRequirements()).get_configuration_identity()
+    plain = AttackTechniqueFactory(name="prompt", attack_class=PromptSendingAttack)
+    assert plain.get_configuration_identity() == default
+    assert factory(SeedGroupRequirements(required_user_prompt=True)).get_configuration_identity() != default
 
 
 def test_named_metadata_requirement_reuses_owning_parser() -> None:

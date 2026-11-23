@@ -1,7 +1,8 @@
 import { type Ref, useEffect, useId, useState } from 'react'
 
 import {
-  Badge, Button, Combobox, Divider, mergeClasses, MessageBar, MessageBarBody, Option, Radio, RadioGroup, Spinner,
+  Badge, Button, Combobox, Divider, mergeClasses, MessageBar, MessageBarActions, MessageBarBody, Option, Radio, RadioGroup,
+  Spinner,
   Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, ToggleButton, Tooltip,
 } from '@fluentui/react-components'
 import { DismissRegular } from '@fluentui/react-icons'
@@ -30,7 +31,7 @@ interface ScenarioDatasetTableProps {
   loadError?: string | null
   loadEnabled?: boolean
   onLoad?: () => void
-  /** ASSERT choices are already certified; keep generic loading/reset controls unchanged. */
+  /** The choices are stored datasets the scenario already checked, so load, reset and loading rules don't apply. */
   compatibleOnly?: boolean
   /** Marks the picker required until the first dataset is chosen. */
   required?: boolean
@@ -67,6 +68,8 @@ export default function ScenarioDatasetTable({
     .filter((name) => !selected.some((source) => source.name === name) && name.toLowerCase().includes(search.toLowerCase()))
   const noCompatibleDatasets = compatibleOnly && datasets.length === 0 && selected.length === 0
     && !loading && !metadataError
+  // A required picker stays, so Launch can still point at it; the empty state becomes its hint.
+  const showEmptyText = noCompatibleDatasets && !required
   const { loaded, allLoaded } = datasetFacts(datasets, selected.map((source) => source.name))
   const availableMetadata: Record<string, string[]> = {
     harm_categories: [...new Set(loaded.flatMap((dataset) => dataset.harm_categories))],
@@ -151,7 +154,8 @@ export default function ScenarioDatasetTable({
     : policies[0] === 'never' ? 'Only use datasets already in memory'
     : 'Load missing datasets'
   const picker = <Combobox ref={pickerRef} aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
-    placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]} disabled={busy}
+    placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]}
+    disabled={busy || (compatibleOnly && Boolean(metadataError))}
     onOpenChange={(_, data) => { if (data.open && !compatibleOnly) onReload() }}
     onChange={(event) => setSearch(event.target.value)}
     onOptionSelect={(_, data) => {
@@ -170,7 +174,8 @@ export default function ScenarioDatasetTable({
   return (
     <div className={styles.root}>
       {compatibleOnly && loading && <Spinner size="tiny" label="Loading compatible datasets..." />}
-      {selected.length > 0 && (loading || preparing) && <Text role="status" size={200} className={styles.loadingHint}>
+      {selected.length > 0 && (preparing || (loading && !compatibleOnly)) && <Text role="status" size={200}
+        className={styles.loadingHint}>
         {preparing ? 'Loading datasets...' : 'Checking dataset details...'}
       </Text>}
       {!compatibleOnly && !allLoaded && selected.length > 0 && <div className={styles.toolbar}>
@@ -184,12 +189,16 @@ export default function ScenarioDatasetTable({
         </Text>}
         {metadataError && <Button className={styles.button} disabled={busy} onClick={onReload}>Retry checking datasets</Button>}
       </div>}
-      {compatibleOnly && metadataError && <Button className={styles.button} disabled={disabled}
-        onClick={onReload}>Retry loading compatible datasets</Button>}
       {[metadataError, loadError, ...errors].filter((error): error is string => Boolean(error))
-        .map((error) => <MessageBar key={error} intent="error"><MessageBarBody role="alert">{error}</MessageBarBody></MessageBar>)}
+        .map((error) => <MessageBar key={error} intent="error">
+          <MessageBarBody role="alert">{error}</MessageBarBody>
+          {compatibleOnly && error === metadataError && <MessageBarActions>
+            <Button size="small" disabled={disabled} aria-label="Retry loading compatible datasets"
+              onClick={onReload}>Retry</Button>
+          </MessageBarActions>}
+        </MessageBar>)}
       {/* With nothing selected, a selectable scenario shows only its picker. */}
-      {noCompatibleDatasets ? <Text>No compatible datasets available.</Text>
+      {showEmptyText ? <Text>No compatible datasets available.</Text>
         : selected.length === 0 ? !canSelect && <Text>This scenario has no named datasets.</Text>
         : <div className={styles.scroll}>
         <Table className={styles.table} aria-label="Selected datasets">
@@ -206,7 +215,8 @@ export default function ScenarioDatasetTable({
               ? settingsFor(source.name)?.max_size ?? sourceDefault : sourceDefault
             const cap = typeof source.max_size === 'number' || source.max_size === 'all' ? source.max_size : inherited
             const displayedCap = !canLimit || total === 'all' ? cap : cap === 'all' ? total : Math.min(cap, total)
-            const size = datasetSize(metadata, canLimit ? displayedCap : 'all')
+            const size = !metadata && (loading || preparing)
+              ? 'Loading...' : datasetSize(metadata, canLimit ? displayedCap : 'all')
             return <TableRow key={source.name}>
               <TableCell><Text className={styles.datasetName} weight="semibold">
                 {datasetNameWithOrigin(source.name, metadata)}
@@ -238,7 +248,8 @@ export default function ScenarioDatasetTable({
                 </Tooltip>}
                 {metadata.harm_categories.length === 0 && metadata.modalities.length === 0 && <Text size={200}>No metadata labels.</Text>}
               </div> : <Text size={200}>
-                {loading || preparing ? 'Loading...' : metadataError ? 'Details unavailable' : 'Not stored in memory'}
+                {loading || preparing ? 'Loading...' : metadataError ? 'Details unavailable'
+                  : compatibleOnly ? 'Not in the compatible list' : 'Not stored in memory'}
               </Text>}</TableCell>
               <TableCell className={styles.actionsCell}>
                 {canSelect && (compatibleOnly || selected.length > 1) && <Button appearance="subtle" className={styles.button}
@@ -252,9 +263,10 @@ export default function ScenarioDatasetTable({
           })}</TableBody>
         </Table>
       </div>}
-      {!noCompatibleDatasets && canSelect && <div className={styles.controls}>
+      {!showEmptyText && canSelect && <div className={styles.controls}>
         {(canAdd || replaceSingleSource) && (required ? <HelpField
           label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} required={selected.length === 0}
+          hint={noCompatibleDatasets ? 'No compatible datasets available.' : undefined}
           validationMessage={selectionError ?? undefined} validationState={selectionError ? 'error' : 'none'}>
           {picker}
         </HelpField> : picker)}
@@ -273,7 +285,8 @@ export default function ScenarioDatasetTable({
       {(selected.length > 0 || canSelect) && <Divider />}
       {canFilter && emptySelections.length > 0 && <Button className={styles.button} disabled={busy}
         onClick={() => setEmptySelections([])}>Restore metadata selection</Button>}
-      {selected.length > 0 && <Tooltip content={loadingDisabledReason || 'Refresh replaces the full stored dataset for a new scan.'} relationship="description">
+      {/* Compatible choices are stored datasets that were already checked, so there is nothing to load. */}
+      {!compatibleOnly && selected.length > 0 && <Tooltip content={loadingDisabledReason || 'Refresh replaces the full stored dataset for a new scan.'} relationship="description">
         <div className={styles.loadingRule}>
           <Text id={`${loadingId}-label`} className={styles.loadingLabel}>Dataset loading</Text>
           <div className={styles.loadingControl}>

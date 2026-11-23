@@ -507,40 +507,18 @@ shape. Copy updates and field filters accept either name.
 
 ### Scenario dataset compatibility
 
-`GET /api/scenarios/catalog/{scenario_name}/datasets` supplies scenario-compatible named
-choices without fetching providers or calling models. The source options still apply:
-`ANY` retains the general catalog, while `SUBSET` and `FIXED` retain permitted sources
-and mandatory ingredient metadata. Ingredients are not certified as standalone attack
-populations. For structural requirements, bounded stored facts can disprove suitability
-but never prove a schema valid; full population checks certify the stored choices. The
-scenario makes this decision in `Scenario.get_compatible_dataset_names_async`; the route
-only supplies the stored catalog and maps the returned names.
+`GET /api/scenarios/catalog/{scenario_name}/datasets` returns the named catalog datasets the
+scenario can run, as a `DatasetListResponse`. It never fetches providers or calls a model. An
+unknown scenario returns 404, and a listing the scenario can't configure returns 400.
 
-Run-size estimates check the selected stored groups through the same SDK checker, without
-fetching providers. Techniques can have disjoint usable subsets; the selection cap applies
-to their usable union. Launch and resume validate the actual stored contents again using
-existing seed and execution identities.
+- A scenario without dataset requirements gets every named dataset its source options allow:
+  all of them for `ANY`, and only the permitted sources for `SUBSET` and `FIXED`.
+- A scenario with dataset requirements reports `dataset_options.compatible_only`, as
+  `foundry.assert_policy` does. It gets only the stored datasets whose full contents pass its
+  checks, plus any required ingredient datasets. Datasets that aren't stored are left out.
 
-ASSERT requires valid policy metadata and native case inputs independently of selected
-techniques or provenance. Imported valid groups work. Its default `assert_package` sends
-stored prompt cases directly, or uses the existing red-teaming attack with ASSERT tester
-framing and stored tester instructions for conversation cases. The optional baseline
-sends stored user prompts. Malformed policy/case groups are rejected even under `skip`;
-incompatible individual techniques retain shared skip/raise behavior.
-
-`assert_package_spanish` uses the existing `TranslationConverter` with the supplied or
-configured adversarial chat to translate target-bound user requests, including later
-conversation turns, before any `technique_converters` for that technique. Stored
-system/policy context, tester controls, judges and baseline are not translated. The
-original `assert_package` remains the unconverted default.
-The generation GUI recommends including tester instructions; SDK generation defaults
-remain unchanged.
-
-The ASSERT picker loads its compatible snapshot once per scenario/runtime and offers
-Retry after a failed read; form/technique edits do not reload it. Generic scanners keep
-their existing manual missing-only Load action, loading-policy choices, Reset, source
-safeguards and metadata refresh. Preset editing remains read-only. General dataset
-browsing is unfiltered. No automatic provider preparation is introduced here.
+A listed name is not a launch guarantee. The run-size estimate and launch check the selected
+contents again, so data changed after the listing is rejected there with the reason.
 
 ### Manual attack creation
 
