@@ -14,7 +14,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.score import PresidioPiiScorer
+from pyrit.models import Message, MessagePiece
+from pyrit.score import PresidioPiiScorer, TrueFalseScoreAggregator
 
 # Standard Luhn-valid test card number; not a real account.
 SYNTHETIC_CARD = "4111 1111 1111 1111"
@@ -264,3 +265,189 @@ def test_identifier_distinguishes_recognizer_sets(patch_central_database) -> Non
 
     assert first.get_identifier().hash != second.get_identifier().hash
     assert second.get_identifier().hash == same_as_second.get_identifier().hash
+
+
+def _fake_analyzer(*, recognizers: list[Any], models: list[dict[str, str]] | None = None) -> SimpleNamespace:
+    return SimpleNamespace(
+        registry=SimpleNamespace(recognizers=recognizers),
+        nlp_engine=SimpleNamespace(models=models or [{"lang_code": "en", "model_name": "en_core_web_sm"}]),
+        analyze=lambda **_: [],
+    )
+
+
+def test_identifier_differs_for_same_name_recognizers_with_different_patterns(patch_central_database) -> None:
+    presidio = pytest.importorskip("presidio_analyzer")
+
+    def recognizer(regex: str) -> Any:
+        pattern = presidio.Pattern(name="p", regex=regex, score=0.9)
+        return presidio.PatternRecognizer(supported_entity="ORDER_ID", name="Rx", patterns=[pattern])
+
+    digits = PresidioPiiScorer(analyzer=_fake_analyzer(recognizers=[recognizer(r"\d{3}")]))
+    letters = PresidioPiiScorer(analyzer=_fake_analyzer(recognizers=[recognizer(r"[a-z]+")]))
+
+    assert digits.get_identifier().hash != letters.get_identifier().hash
+
+
+def test_identifier_differs_for_different_deny_lists(patch_central_database) -> None:
+    presidio = pytest.importorskip("presidio_analyzer")
+
+    def recognizer(deny_list: list[str]) -> Any:
+        return presidio.PatternRecognizer(supported_entity="CODE_NAME", name="Rx", deny_list=deny_list)
+
+    first = PresidioPiiScorer(analyzer=_fake_analyzer(recognizers=[recognizer(["alpha"])]))
+    second = PresidioPiiScorer(analyzer=_fake_analyzer(recognizers=[recognizer(["beta"])]))
+
+    assert first.get_identifier().hash != second.get_identifier().hash
+
+
+def test_identifier_differs_for_nlp_engine_models(patch_central_database) -> None:
+    small = PresidioPiiScorer(
+        analyzer=_fake_analyzer(recognizers=[], models=[{"lang_code": "en", "model_name": "en_core_web_sm"}])
+    )
+    large = PresidioPiiScorer(
+        analyzer=_fake_analyzer(recognizers=[], models=[{"lang_code": "en", "model_name": "en_core_web_lg"}])
+    )
+
+    assert small.get_identifier().hash != large.get_identifier().hash
+
+
+def test_identifier_uses_analyzer_identifier(patch_central_database) -> None:
+    analyzer = _fake_analyzer(recognizers=[])
+    first = PresidioPiiScorer(analyzer=analyzer, analyzer_identifier="custom-recognizers-v1")
+    second = PresidioPiiScorer(analyzer=analyzer, analyzer_identifier="custom-recognizers-v2")
+
+    assert first.get_identifier().hash != second.get_identifier().hash
+
+
+def test_identifier_stable_for_equivalent_analyzers(patch_central_database) -> None:
+    predefined = pytest.importorskip("presidio_analyzer.predefined_recognizers")
+    first = PresidioPiiScorer(
+        analyzer=_fake_analyzer(recognizers=[predefined.CreditCardRecognizer(), predefined.UsSsnRecognizer()])
+    )
+    second = PresidioPiiScorer(
+        analyzer=_fake_analyzer(recognizers=[predefined.UsSsnRecognizer(), predefined.CreditCardRecognizer()])
+    )
+
+    assert first.get_identifier().hash == second.get_identifier().hash
+
+
+async def test_cancel_during_analyze_does_not_overlap_next_call(patch_central_database) -> None:
+    started, release = threading.Event(), threading.Event()
+    guard = threading.Lock()
+    active = {"now": 0, "max": 0}
+
+    def analyze(**_: Any) -> list[FakeRecognizerResult]:
+        with guard:
+            active["now"] += 1
+            active["max"] = max(active["max"], active["now"])
+        started.set()
+        release.wait(5)
+        with guard:
+            active["now"] -= 1
+        return []
+
+    analyzer = MagicMock(spec=_AnalyzerSpec)
+    analyzer.analyze.side_effect = analyze
+    scorer = PresidioPiiScorer(analyzer=analyzer)
+
+    first = asyncio.create_task(scorer.score_text_async("first"))
+    assert await asyncio.to_thread(started.wait, 5)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+
+    second = asyncio.create_task(scorer.score_text_async("second"))
+    await asyncio.sleep(0.05)
+    release.set()
+    await second
+
+    assert active["max"] == 1
+    assert analyzer.analyze.call_count == 2
+
+
+async def test_cancel_during_default_load_constructs_engine_once(patch_central_database) -> None:
+    loading, release = threading.Event(), threading.Event()
+    analyzer = _make_analyzer([])
+
+    def create() -> MagicMock:
+        loading.set()
+        release.wait(5)
+        return analyzer
+
+    scorer = PresidioPiiScorer()
+    with patch.object(PresidioPiiScorer, "_create_default_analyzer", side_effect=create) as create_mock:
+        first = asyncio.create_task(scorer.score_text_async("first"))
+        assert await asyncio.to_thread(loading.wait, 5)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+
+        retry = asyncio.create_task(scorer.score_text_async("retry"))
+        await asyncio.sleep(0.05)
+        release.set()
+        scores = await retry
+
+    assert create_mock.call_count == 1
+    assert scores[0].get_value() is False
+
+
+def _results_by_text(results: dict[str, list[FakeRecognizerResult]]) -> MagicMock:
+    analyzer = MagicMock(spec=_AnalyzerSpec)
+    analyzer.analyze.side_effect = lambda **kwargs: results[kwargs["text"]]
+    return analyzer
+
+
+async def _score_two_piece_message(
+    scorer: PresidioPiiScorer, sqlite_instance: MemoryInterface, *, first: str, second: str
+) -> Any:
+    conversation_id = "presidio-multi-piece"
+    message = Message(
+        message_pieces=[
+            MessagePiece(role="assistant", original_value=first, conversation_id=conversation_id),
+            MessagePiece(role="assistant", original_value=second, conversation_id=conversation_id),
+        ]
+    )
+    await sqlite_instance.add_message_to_memory_async(request=message)
+    return (await scorer.score_message_async(message=message))[0]
+
+
+async def test_multi_piece_metadata_sums_counts(patch_central_database, sqlite_instance: MemoryInterface) -> None:
+    card = FakeRecognizerResult("CREDIT_CARD", 0, 19, 1.0)
+    scorer = PresidioPiiScorer(analyzer=_results_by_text({"piece one": [card], "piece two": [card]}))
+
+    score = await _score_two_piece_message(scorer, sqlite_instance, first="piece one", second="piece two")
+
+    assert score.get_value() is True
+    assert score.score_metadata["total_detections"] == 2
+    assert score.score_metadata["count_CREDIT_CARD"] == 2
+    assert score.score_metadata["entity_types"] == "CREDIT_CARD"
+
+
+async def test_multi_piece_metadata_unions_entity_types(
+    patch_central_database, sqlite_instance: MemoryInterface
+) -> None:
+    card = FakeRecognizerResult("CREDIT_CARD", 0, 19, 1.0)
+    ssn = FakeRecognizerResult("US_SSN", 0, 11, 0.85)
+    scorer = PresidioPiiScorer(analyzer=_results_by_text({"card": [card], "two ssns": [ssn, ssn]}))
+
+    score = await _score_two_piece_message(scorer, sqlite_instance, first="card", second="two ssns")
+
+    assert score.score_metadata == {
+        "entity_types": "CREDIT_CARD, US_SSN",
+        "total_detections": 3,
+        "count_CREDIT_CARD": 1,
+        "count_US_SSN": 2,
+    }
+
+
+async def test_multi_piece_respects_and_aggregator(patch_central_database, sqlite_instance: MemoryInterface) -> None:
+    card = FakeRecognizerResult("CREDIT_CARD", 0, 19, 1.0)
+    scorer = PresidioPiiScorer(
+        analyzer=_results_by_text({"hit": [card], "miss": []}), score_aggregator=TrueFalseScoreAggregator.AND
+    )
+
+    score = await _score_two_piece_message(scorer, sqlite_instance, first="hit", second="miss")
+
+    assert score.get_value() is False
+    assert score.score_metadata["total_detections"] == 1
+    assert scorer.get_identifier().params["score_aggregator"] == TrueFalseScoreAggregator.AND.__name__
