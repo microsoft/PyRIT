@@ -11,6 +11,7 @@ from types import MappingProxyType
 from typing import Any, ClassVar, NoReturn, cast
 
 from pyrit.auth import ensure_async_token_provider
+from pyrit.common.constructor_capture import capture_constructor_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -226,6 +227,12 @@ class LiteLLMChatTarget(PromptTarget):
     """
 
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
+    # A model name's provider prefix chooses where requests and the key go.
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {"model_name", "endpoint", "api_key", "headers", "extra_body_parameters"}
+    )
+
+    _reconstruction_parameters: dict[str, object] = {}
 
     # Environment variables read when ``api_key`` or ``endpoint`` is omitted. Subclasses that pin a
     # provider override these; None skips the lookup and leaves it to LiteLLM.
@@ -258,6 +265,13 @@ class LiteLLMChatTarget(PromptTarget):
         )
     )
 
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Opt in LiteLLM implementations to server-only reconstruction."""
+        super().__init_subclass__(**kwargs)
+        if "__init__" in cls.__dict__:
+            type.__setattr__(cls, "__init__", capture_constructor_parameters(cls.__init__))
+
+    @capture_constructor_parameters
     def __init__(
         self,
         *,
@@ -473,6 +487,40 @@ class LiteLLMChatTarget(PromptTarget):
         return {
             name: value for name, value in (self._headers or {}).items() if name.lower() not in self._CREDENTIAL_HEADERS
         } or None
+
+    def get_reconstruction_parameters(self) -> dict[str, object]:
+        """
+        Return server-only inputs, including resolved authentication.
+
+        Returns:
+            dict[str, object]: Resolved constructor inputs.
+
+        Raises:
+            ValueError: If ``extra_body_parameters`` sets temperature, which a copy's temperature can't override.
+        """
+        if "temperature" in (self._extra_body_parameters or {}):
+            raise ValueError(
+                "Separate temperature settings are not supported when extra_body_parameters sets temperature"
+            )
+        # Resolved values, so a copy never reads this server's environment for what its source already resolved.
+        return {
+            **self._reconstruction_parameters,
+            "model_name": self._model_name,
+            "endpoint": self._endpoint,
+            "api_key": self._api_key,
+            "underlying_model": self._underlying_model,
+            "custom_configuration": self.configuration,
+        }
+
+    def attach_reconstruction_source(self, source: object) -> None:
+        """
+        Share request pacing and credential status, not behavioral configuration.
+
+        Args:
+            source (object): The registered target this copy was built from.
+        """
+        super().attach_reconstruction_source(source)
+        self._rate_limit_source = getattr(source, "_rate_limit_source", source)
 
     def is_json_response_supported(self) -> bool:
         """
