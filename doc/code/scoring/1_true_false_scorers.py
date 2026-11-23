@@ -263,7 +263,12 @@ print(f"[package] real imports only  -> {clean.get_value()}")
 # `PresidioPiiScorer` uses `presidio-analyzer` to flag PII entity types (credit card, email,
 # phone, US SSN, IBAN, and the other entities Presidio supports) in a response. It returns True
 # when any requested entity is found at or above a configurable confidence threshold. Score
-# metadata carries entity types and counts, never the matched values.
+# metadata carries entity types and counts, never the matched values. For a message with several
+# text pieces, the counts are summed across pieces.
+#
+# If you pass your own `analyzer`, its recognizer and NLP configuration is fingerprinted into the
+# scorer identity when the scorer is created, so configure it first. Pass `analyzer_identifier` to
+# label custom recognizer logic that Presidio's `to_dict()` does not expose.
 #
 # It requires the optional `presidio` extra (`pip install pyrit[presidio]`). Without an `analyzer`
 # argument, the default Presidio engine loads the spaCy model `en_core_web_lg` on first use and
