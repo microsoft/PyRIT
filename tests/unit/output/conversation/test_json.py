@@ -71,7 +71,9 @@ async def test_build_async_includes_scores_when_requested():
     source = _StubSource({str(piece.id): [_score(piece_id=str(piece.id))]})
     structured = await JsonConversationPrinter(source=source).build_async([_message(piece)], include_scores=True)
 
-    scores = structured[0]["pieces"][0]["scores"]
+    result_piece = structured[0]["pieces"][0]
+    assert "scores" in result_piece
+    scores = result_piece["scores"]
     assert scores[0]["scorer"] == "MockScorer"
     assert scores[0]["score_value"] == "true"
     assert scores[0]["objective"] == "make it fail"
@@ -104,6 +106,7 @@ async def test_build_async_extracts_reasoning_summary_when_included():
 
     piece = structured[0]["pieces"][0]
     assert piece["data_type"] == "reasoning"
+    assert "reasoning_summary" in piece
     assert piece["reasoning_summary"] == "thinking"
 
 
@@ -119,7 +122,9 @@ async def test_build_async_reasoning_summary_none_on_bad_payload():
         [_message(reasoning)], include_reasoning_summaries=True
     )
 
-    assert structured[0]["pieces"][0]["reasoning_summary"] is None
+    result_piece = structured[0]["pieces"][0]
+    assert "reasoning_summary" in result_piece
+    assert result_piece["reasoning_summary"] is None
 
 
 async def test_render_async_returns_valid_json():
@@ -154,7 +159,9 @@ async def test_build_async_includes_partial_content_for_blocked_piece():
     )
     structured = await JsonConversationPrinter(source=_StubSource()).build_async([_message(piece)])
 
-    assert structured[0]["pieces"][0]["partial_content"] == "the beginning of the answer"
+    result_piece = structured[0]["pieces"][0]
+    assert "partial_content" in result_piece
+    assert result_piece["partial_content"] == "the beginning of the answer"
 
 
 async def test_build_async_omits_partial_content_when_not_blocked():

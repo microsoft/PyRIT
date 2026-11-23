@@ -5,6 +5,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 from pyrit.models import ComponentIdentifier
+from pyrit.output._json_types import ScorerInfo
 from pyrit.output.scorer.json import JsonScorerMemoryPrinter, format_scorer_type, scorer_metrics_to_dict
 from pyrit.score import ObjectiveScorerMetrics
 
@@ -38,7 +39,7 @@ def _objective_metrics(**overrides) -> ObjectiveScorerMetrics:
     return ObjectiveScorerMetrics(**defaults)
 
 
-def _build(identifier: ComponentIdentifier, *, metrics=None) -> dict:
+def _build(identifier: ComponentIdentifier, *, metrics=None) -> ScorerInfo:
     printer = JsonScorerMemoryPrinter()
     with (
         patch("pyrit.models.ScorerEvaluationIdentifier") as mock_eval_id_cls,
