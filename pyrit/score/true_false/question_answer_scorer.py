@@ -121,7 +121,7 @@ class QuestionAnswerScorer(MessageTrueFalseScorer):
                 "correct_answer_matching_patterns": self._correct_answer_matching_patterns,
                 "answer_condition_version": 1,
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
     async def _score_piece_with_expectation_async(

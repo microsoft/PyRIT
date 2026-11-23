@@ -161,7 +161,7 @@ def _build_jailbreak_technique() -> type[ScenarioTechnique]:
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-explicit-return]
         class_name="JailbreakTechnique",
         factories=list(_extra_default_factories().values()),
         default_names=set(_DEFAULT_TECHNIQUES),
