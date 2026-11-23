@@ -275,6 +275,36 @@ describe('MediaPreview', () => {
     expect(screen.queryByTestId('image-refresh-error')).not.toBeInTheDocument()
   })
 
+  it('should start over when src changes after a finished or failed load', () => {
+    const first = '/api/media?path=%2Fdbdata%2Fseed-prompt-entries%2Ffirst.png'
+    const second = '/api/media?path=%2Fdbdata%2Fseed-prompt-entries%2Fsecond.png'
+    const fresh = 'https://account.blob.core.windows.net/container/pic.png?sig=fresh'
+    const preview = (src: string) => (
+      <FluentProvider theme={webLightTheme}>
+        <MediaPreview type="image" src={src} alt="pic" recovery />
+      </FluentProvider>
+    )
+    const { rerender } = render(preview(first))
+    fireEvent.load(screen.getByAltText('pic'))
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+
+    rerender(preview(second))
+    expect(screen.getByAltText('pic')).toHaveAttribute('src', second)
+    expect(screen.getByRole('progressbar')).toBeInTheDocument()
+
+    fireEvent.error(screen.getByAltText('pic'))
+    expect(screen.getByTestId('image-error')).toBeInTheDocument()
+
+    rerender(preview(fresh))
+    expect(screen.queryByTestId('image-error')).not.toBeInTheDocument()
+    expect(screen.getByAltText('pic')).toHaveAttribute('src', fresh)
+    expect(screen.getByRole('progressbar')).toBeInTheDocument()
+
+    fireEvent.load(screen.getByAltText('pic'))
+    rerender(preview(fresh))
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  })
+
   it('should not retry the current url when the refresh is aborted', async () => {
     const user = userEvent.setup()
     renderPreview({
