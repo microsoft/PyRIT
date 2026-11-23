@@ -460,10 +460,6 @@ export default function TechniqueEditor({
                           {template && template.parameters.length > 0 && <Text size={200}>
                             Template variables: {template.parameters.map((parameter) => `{{ ${parameter} }}`).join(', ')}
                           </Text>}
-                          {field === 'adversarial_system_prompt' && configuration?.system_prompt_prefix
-                            && <Text size={200} className={styles.promptPrefix}>
-                              Additional guidance (read-only; prepended at execution):{'\n'}{configuration.system_prompt_prefix}
-                            </Text>}
                         </HelpField>
                       })}
                       </>}

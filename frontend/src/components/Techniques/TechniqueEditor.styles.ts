@@ -18,6 +18,5 @@ export const useTechniqueEditorStyles = makeStyles({
   section: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
   prompt: { minHeight: '7rem' },
   promptControls: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: tokens.spacingHorizontalS },
-  promptPrefix: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' },
   action: { ...mobileTouchTargetHeight },
 })
