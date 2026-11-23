@@ -316,6 +316,13 @@ if TYPE_CHECKING:
         AssertSampleVotes,
         AssertSkipReason,
     )
+    from pyrit.models.scorer_selection_report import (
+        ScorerCandidateVerdict,
+        ScorerMismatchKind,
+        ScorerSelectionEntry,
+        ScorerSelectionReport,
+        ScorerVerdictStatus,
+    )
     from pyrit.models.seeds import (
         AdversarialPrompts,
         AttackSeedGroup,
@@ -698,6 +705,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioRunPlan": "pyrit.models.scenario_progress",
     "ScenarioRunPlanAtomicGroup": "pyrit.models.scenario_progress",
     "ScenarioRunPlanScorerBinding": "pyrit.models.scenario_progress",
+    "ScorerCandidateVerdict": "pyrit.models.scorer_selection_report",
+    "ScorerMismatchKind": "pyrit.models.scorer_selection_report",
+    "ScorerSelectionEntry": "pyrit.models.scorer_selection_report",
+    "ScorerSelectionReport": "pyrit.models.scorer_selection_report",
+    "ScorerVerdictStatus": "pyrit.models.scorer_selection_report",
     "ScenarioRunPlanGroupKind": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedPrompt": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedGroup": "pyrit.models.scenario_progress",
