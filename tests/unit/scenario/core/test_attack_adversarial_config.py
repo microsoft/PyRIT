@@ -5,15 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pyrit.executor.attack import AttackAdversarialConfig
 from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core._attack_adversarial_config import _AttackAdversarialConfigHelper
-
-
-class _StubAttack:
-    def __init__(self, *, attack_adversarial_config: AttackAdversarialConfig | None = None) -> None:
-        pass
 
 
 class TestTargetPrecedence:
@@ -24,7 +18,6 @@ class TestTargetPrecedence:
         create_time_target = MagicMock(spec=PromptTarget)
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
             adversarial_chat=baked_target,
         )
@@ -36,7 +29,6 @@ class TestTargetPrecedence:
         default_target = MagicMock(spec=PromptTarget)
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
             adversarial_chat=baked_target,
         )
@@ -54,7 +46,6 @@ class TestTargetPrecedence:
 
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
             adversarial_chat=None,
         )
@@ -72,7 +63,6 @@ class TestConflictValidation:
         create_time_target = MagicMock(spec=PromptTarget)
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
             adversarial_chat=baked_target,
         )
@@ -82,7 +72,6 @@ class TestConflictValidation:
     def test_validate_target_conflict_passes_when_no_conflict(self):
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
             adversarial_chat=None,
         )
@@ -93,7 +82,6 @@ class TestConflictValidation:
     def test_validate_prompt_conflict_raises_when_custom_baked_and_create_time_supplied(self):
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
             adversarial_system_prompt="baked system prompt",
         )
@@ -110,7 +98,6 @@ class TestConflictValidation:
     def test_validate_prompt_conflict_passes_without_custom_prompts(self):
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
         )
         assert helper.has_custom_adversarial_prompt is False
@@ -129,7 +116,6 @@ class TestPromptPrecedenceAndAssembly:
         target = MagicMock(spec=PromptTarget)
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
             adversarial_chat=target,
             adversarial_system_prompt="baked system prompt",
@@ -141,7 +127,6 @@ class TestPromptPrecedenceAndAssembly:
         target = MagicMock(spec=PromptTarget)
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
             adversarial_chat=target,
             adversarial_system_prompt=None,
@@ -155,7 +140,6 @@ class TestPromptPrecedenceAndAssembly:
         create_seed = SeedPrompt(value="create seed {{ objective }}", data_type="text")
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
             adversarial_chat=target,
             adversarial_seed_prompt=baked_seed,
@@ -167,7 +151,6 @@ class TestPromptPrecedenceAndAssembly:
         target = MagicMock(spec=PromptTarget)
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
             adversarial_chat=target,
             adversarial_prompt_template="baked template",
@@ -179,7 +162,6 @@ class TestPromptPrecedenceAndAssembly:
         target = MagicMock(spec=PromptTarget)
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
             adversarial_chat=target,
             adversarial_system_prompt_prefix="prefix guidance",
@@ -194,7 +176,6 @@ class TestShouldBuildAdversarialConfig:
     def test_returns_false_when_param_not_accepted(self):
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
         )
         assert (
@@ -208,7 +189,6 @@ class TestShouldBuildAdversarialConfig:
     def test_returns_true_when_uses_adversarial(self):
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=True,
         )
         assert (
@@ -221,7 +201,6 @@ class TestShouldBuildAdversarialConfig:
     def test_returns_true_when_create_time_inputs_supplied(self):
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=False,
         )
         assert (
@@ -242,7 +221,6 @@ class TestShouldBuildAdversarialConfig:
     def test_returns_false_when_no_adversarial_setting_or_input(self):
         helper = _AttackAdversarialConfigHelper(
             factory_name="test_factory",
-            attack_class=_StubAttack,
             uses_adversarial=False,
         )
         assert (

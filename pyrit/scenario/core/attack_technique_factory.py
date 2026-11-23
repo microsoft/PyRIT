@@ -1357,7 +1357,6 @@ class AttackTechniqueFactory(Identifiable):
         """Helper encapsulating adversarial configuration validation and assembly."""
         return _AttackAdversarialConfigHelper(
             factory_name=self._name,
-            attack_class=self._attack_class,
             uses_adversarial=self._uses_adversarial,
             adversarial_chat=self._adversarial_chat,
             adversarial_system_prompt=self._adversarial_system_prompt,

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 from pyrit.executor.attack import AttackAdversarialConfig
@@ -14,8 +13,6 @@ if TYPE_CHECKING:
 
     from pyrit.models import SeedPrompt
     from pyrit.prompt_target import PromptTarget
-
-logger = logging.getLogger(__name__)
 
 
 class _AttackAdversarialConfigHelper:
@@ -30,7 +27,6 @@ class _AttackAdversarialConfigHelper:
         self,
         *,
         factory_name: str,
-        attack_class: type,
         uses_adversarial: bool,
         adversarial_chat: PromptTarget | None = None,
         adversarial_system_prompt: str | SeedPrompt | None = None,
@@ -39,7 +35,6 @@ class _AttackAdversarialConfigHelper:
         adversarial_system_prompt_prefix: str | None = None,
     ) -> None:
         self._factory_name = factory_name
-        self._attack_class = attack_class
         self._uses_adversarial = uses_adversarial
         self._adversarial_chat = adversarial_chat
         self._adversarial_system_prompt = adversarial_system_prompt
