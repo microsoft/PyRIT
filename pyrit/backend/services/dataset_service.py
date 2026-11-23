@@ -54,6 +54,27 @@ if TYPE_CHECKING:
     from pyrit.memory.dataset_mutation import DatasetEditingSnapshot
 
 
+def parse_dataset_selection_key(selection_key: str) -> str | None:
+    """
+    Get the dataset name of a selection key from ``GET /datasets``.
+
+    Args:
+        selection_key (str): ``dataset:named:<name>`` or ``dataset:unnamed``.
+
+    Returns:
+        str | None: The dataset name, or None for the unnamed population.
+
+    Raises:
+        ValueError: If the selection key is not valid.
+    """
+    if selection_key == "dataset:unnamed":
+        return None
+    name = selection_key.removeprefix("dataset:named:")
+    if not name or name == selection_key:
+        raise ValueError(f"Invalid dataset selection key: {selection_key}")
+    return name
+
+
 class DatasetService:
     """Service for listing seed datasets."""
 
@@ -71,7 +92,7 @@ class DatasetService:
         Raises:
             DatasetAPIException: If the selection is unnamed or has no stored seeds.
         """
-        name = self._parse_selection_key(selection_key)
+        name = parse_dataset_selection_key(selection_key)
         if name is None:
             raise DatasetAPIException(status_code=400, message="The unnamed aggregate cannot be deleted.")
         try:
@@ -128,7 +149,8 @@ class DatasetService:
         Returns:
             DatasetListResponse: Available datasets.
         """
-        provider_names = {name for name in await SeedDatasetProvider.get_all_dataset_names_async() if name}
+        descriptors = await SeedDatasetProvider.get_all_dataset_descriptors_async()
+        provider_names = set(descriptors)
         summaries = await self._memory.get_seed_dataset_summaries_async()
         named_summaries = {summary.dataset_name: summary for summary in summaries if summary.dataset_name}
 
@@ -137,12 +159,14 @@ class DatasetService:
         items: list[DatasetInfo] = []
         for dataset_name in sorted(dataset_names):
             summary = named_summaries.get(dataset_name)
+            descriptor = descriptors.get(dataset_name)
             items.append(
                 DatasetInfo(
                     name=dataset_name,
                     selection_key=f"dataset:named:{dataset_name}",
                     loaded=summary is not None,
                     provider_available=dataset_name in provider_names,
+                    provider=descriptor,
                     origins=list(summary.origins) if summary else [],
                     logical_examples=summary.logical_examples if summary else None,
                     seed_pieces=summary.seed_pieces if summary else None,
@@ -211,7 +235,7 @@ class DatasetService:
         Raises:
             ValueError: If the selection key or the cursor is not valid.
         """
-        dataset_name = self._parse_selection_key(selection_key)
+        dataset_name = parse_dataset_selection_key(selection_key)
         validate_text_search(value=search, pattern=value_pattern)
         fingerprint = fingerprint_filters(
             filters={
@@ -291,7 +315,7 @@ class DatasetService:
         Raises:
             ValueError: If the selection key is not valid.
         """
-        name = self._parse_selection_key(selection_key)
+        name = parse_dataset_selection_key(selection_key)
         version = None
         if editable:
             snapshot = await self._editing_snapshot_async(name)
@@ -435,24 +459,6 @@ class DatasetService:
         """
         value_url = await resolve_client_media_url_async(value=seed.value, data_type=seed.data_type)
         return SeedMemberView.model_validate({**seed.model_dump(), "value_url": value_url})
-
-    @staticmethod
-    def _parse_selection_key(selection_key: str) -> str | None:
-        """
-        Get the dataset name of a selection key.
-
-        Returns:
-            str | None: The dataset name, or None for the unnamed population.
-
-        Raises:
-            ValueError: If the selection key is not valid.
-        """
-        if selection_key == "dataset:unnamed":
-            return None
-        name = selection_key.removeprefix("dataset:named:")
-        if not name or name == selection_key:
-            raise ValueError(f"Invalid dataset selection key: {selection_key}")
-        return name
 
     @classmethod
     def _summarize(cls, *, example_id: UUID, seeds: Sequence[SeedRecord]) -> SeedExampleSummary:

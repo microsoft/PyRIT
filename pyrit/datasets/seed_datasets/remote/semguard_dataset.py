@@ -95,6 +95,8 @@ class _SemGuardDataset(_RemoteDatasetLoader):
     size: str = "large"  # 807 validated examples across 7 categories
     tags: frozenset[str] = frozenset({"safety", "multilingual", "arabic", "jailbreak"})
 
+    source_url = "https://huggingface.co/datasets/AG-31625874/SemGuard-Dataset"
+
     def __init__(
         self,
         *,

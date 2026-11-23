@@ -25,7 +25,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration, DatasetSource, ScenarioRequiredData
 from pyrit.scenario.core import DatasetConstraintError, ResolvedDataset
 from pyrit.scenario.core.required_data import _RequiredDatasetConfiguration
-from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import (  # type: ignore[ty:import-not-found]
     ApiKey,
     ApiKeyDatasetConfiguration,
     ApiKeyTechnique,
@@ -72,16 +72,18 @@ async def _initialize_async(
             "technique_converters": technique_converters,
         }
     )
-    with (
-        patch.object(ScenarioRequiredData, "prepare_async", new_callable=AsyncMock),
-        patch.object(
-            _RequiredDatasetConfiguration,
-            "_collect_named_seeds_async",
-            new_callable=AsyncMock,
-            return_value=corpus_seeds,
-        ),
-    ):
+    with patch.object(ScenarioRequiredData, "prepare_async", new_callable=AsyncMock), _read_corpus(corpus_seeds):
         await scenario.initialize_async()
+
+
+def _read_corpus(corpus_seeds: dict[str, list[Seed[Any]]]) -> Any:
+    """Serve each required dataset read, full or by name, from ``corpus_seeds``."""
+    return patch.object(
+        _RequiredDatasetConfiguration,
+        "_collect_seeds_for_dataset_async",
+        new_callable=AsyncMock,
+        side_effect=lambda *, dataset_name: corpus_seeds[dataset_name],
+    )
 
 
 def _objectives(scenario: ApiKey) -> dict[str, list[str]]:
@@ -180,6 +182,99 @@ class TestApiKey:
                 target=mock_objective_target,
                 corpus_seeds={name: list(reversed(seeds)) for name, seeds in corpus_seeds.items()},
                 dataset_config=ApiKeyDatasetConfiguration(max_total=size),
+            )
+
+        assert _objectives(resumed) == _objectives(original)
+
+    async def test_resume_reads_only_the_scorer_exclusions(
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        original = ApiKey()
+        config = ApiKeyDatasetConfiguration(max_total=5)
+        await _initialize_async(
+            scenario=original, target=mock_objective_target, corpus_seeds=corpus_seeds, dataset_config=config
+        )
+        resumed = ApiKey(scenario_result_id=original._scenario_result_id)
+
+        # The stored groups carry the requests, so resume reads only what the default scorer excludes.
+        exclusions = {name: corpus_seeds[name] for name in (DATASET_PARTIAL_KEYS, DATASET_SAFE_PLACEHOLDERS)}
+        await _initialize_async(
+            scenario=resumed,
+            target=mock_objective_target,
+            corpus_seeds=exclusions,
+            dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+        )
+
+        assert _objectives(resumed) == _objectives(original)
+        assert resumed._objective_scorer_identifier == original._objective_scorer_identifier
+
+    async def test_resume_names_the_exclusion_datasets_after_they_change(
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        original = ApiKey()
+        await _initialize_async(
+            scenario=original,
+            target=mock_objective_target,
+            corpus_seeds=corpus_seeds,
+            dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+        )
+        resumed = ApiKey(scenario_result_id=original._scenario_result_id)
+        # The default scorer excludes these values, so an edit to them changes it, and no configuration can match.
+        edited = {**corpus_seeds, DATASET_SAFE_PLACEHOLDERS: corpus_seeds[DATASET_SAFE_PLACEHOLDERS][1:]}
+
+        with pytest.raises(ValueError, match="changed since the run was planned") as error:
+            await _initialize_async(
+                scenario=resumed,
+                target=mock_objective_target,
+                corpus_seeds=edited,
+                dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+            )
+        assert DATASET_PARTIAL_KEYS in str(error.value)
+        assert DATASET_SAFE_PLACEHOLDERS in str(error.value)
+        assert "re-import the dataset content this run used" in str(error.value)
+
+    async def test_resume_from_a_custom_scorer_to_the_default_is_a_configuration_mismatch(
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        original = ApiKey(objective_scorer=CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS))
+        await _initialize_async(
+            scenario=original,
+            target=mock_objective_target,
+            corpus_seeds=corpus_seeds,
+            dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+        )
+        resumed = ApiKey(scenario_result_id=original._scenario_result_id)
+
+        # The planned scorer excluded nothing, so it wasn't the default and the exclusions aren't the cause.
+        with pytest.raises(ValueError, match="does not match the current 'ApiKey' configuration"):
+            await _initialize_async(
+                scenario=resumed,
+                target=mock_objective_target,
+                corpus_seeds=corpus_seeds,
+                dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+            )
+
+    async def test_resume_with_custom_scorer_reads_no_corpus(
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        scorer = MagicMock(spec=TrueFalseScorer)
+        scorer.get_identifier.return_value = ComponentIdentifier(class_name="CustomScorer", class_module="test")
+        original = ApiKey(objective_scorer=scorer)
+        await _initialize_async(
+            scenario=original,
+            target=mock_objective_target,
+            corpus_seeds=corpus_seeds,
+            dataset_config=ApiKeyDatasetConfiguration(max_total=5),
+        )
+        resumed = ApiKey(objective_scorer=scorer, scenario_result_id=original._scenario_result_id)
+
+        # Only the default scorer is built from the corpus, so a custom scorer resumes without it.
+        with patch.object(ScenarioRequiredData, "load_async", side_effect=AssertionError("read corpus")):
+            await _initialize_async(
+                scenario=resumed,
+                target=mock_objective_target,
+                corpus_seeds=corpus_seeds,
+                dataset_config=ApiKeyDatasetConfiguration(max_total=5),
             )
 
         assert _objectives(resumed) == _objectives(original)
@@ -370,12 +465,7 @@ class TestApiKey:
         scenario = ApiKey()
         with (
             patch.object(ScenarioRequiredData, "prepare_async", new_callable=AsyncMock) as prepare,
-            patch.object(
-                _RequiredDatasetConfiguration,
-                "_collect_named_seeds_async",
-                new_callable=AsyncMock,
-                return_value=corpus_seeds,
-            ),
+            _read_corpus(corpus_seeds),
         ):
             scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             await scenario.get_run_size_estimate_async(target_is_configured=True)

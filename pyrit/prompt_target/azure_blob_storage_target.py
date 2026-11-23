@@ -3,6 +3,8 @@
 
 import logging
 import posixpath
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import ClassVar
 from urllib.parse import urlparse
 
@@ -53,6 +55,12 @@ class AzureBlobStorageTarget(PromptTarget):
     # the target authenticates with the server's own credentials, so the create-target API gates
     # it on administrator access.
     server_credential_parameter: ClassVar[str | None] = "sas_token"
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"sas_token": None})
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"container_url": True})
+    environment_backed_parameters: ClassVar[frozenset[str]] = frozenset({"container_url"})
+
+    # The returned blob URL is a delivery receipt, not a reply, so it is never scored as one.
+    _SUPPORTS_RESPONSES: ClassVar[bool] = False
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
@@ -158,6 +166,9 @@ class AzureBlobStorageTarget(PromptTarget):
         falls back to ``DefaultAzureCredential``, which requires the caller to hold a data-plane role
         such as Storage Blob Data Contributor. That fallback is deprecated and is removed in 1.4.0,
         after which a SAS token is required unless ``auth_mode="identity"`` is passed.
+
+        Raises:
+            TypeError: If the resolved SAS token is not a string.
         """
         container_url, _ = self._parse_url()
         if self._auth_mode == "identity":
@@ -165,9 +176,13 @@ class AzureBlobStorageTarget(PromptTarget):
             return
 
         try:
-            sas_token: str = default_values.get_required_value(
-                env_var_name=self.SAS_TOKEN_ENVIRONMENT_VARIABLE, passed_value=self._sas_token
+            sas_token_value = default_values.get_required_value(
+                env_var_name=self.SAS_TOKEN_ENVIRONMENT_VARIABLE,
+                passed_value=self._sas_token,
             )
+            if not isinstance(sas_token_value, str):
+                raise TypeError("Azure Storage SAS token must be a string")
+            sas_token = sas_token_value
         except ValueError:
             print_deprecation_message(
                 old_item=(

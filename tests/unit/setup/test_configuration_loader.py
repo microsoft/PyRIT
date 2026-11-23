@@ -3,11 +3,12 @@
 
 import pathlib
 import tempfile
+from collections.abc import Iterator
 from unittest import mock
 
 import pytest
 
-from pyrit.registry import InitializerRegistry
+from pyrit.registry import InitializerRegistry, Registry
 from pyrit.setup import (
     ConfigurationLoader,
     initialize_from_config_async,
@@ -51,6 +52,15 @@ class TestConfigurationLoader:
         assert config.scenario_suites_source is None
         assert config.silent is False
 
+    @pytest.mark.parametrize("field", ["operator", "operation"])
+    def test_rejects_numeric_label_in_yaml(self, tmp_path: pathlib.Path, field: str) -> None:
+        """Reject numeric operator and operation values during configuration loading."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(f"{field}: 123\n", encoding="utf-8")
+
+        with pytest.raises(TypeError, match=field):
+            ConfigurationLoader.from_yaml_file(config_path)
+
     def test_custom_initializers_source_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
         """Test loading an Azure Blob container URI for custom initializer scripts."""
         config_path = tmp_path / "config.yaml"
@@ -86,6 +96,25 @@ class TestConfigurationLoader:
         """Test rejecting empty or non-string scenario suite sources."""
         with pytest.raises(ValueError, match="scenario_suites_source"):
             ConfigurationLoader(scenario_suites_source=invalid_value)  # type: ignore[arg-type]
+
+    def test_registry_recipes_source_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
+        """Test loading an Azure Blob container URI for saved registry entries."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "registry_recipes_source: https://account.blob.core.windows.net/pyrit-storage/registry-recipes\n",
+            encoding="utf-8",
+        )
+
+        config = ConfigurationLoader.from_yaml_file(config_path)
+
+        assert config.registry_recipes_source == "https://account.blob.core.windows.net/pyrit-storage/registry-recipes"
+        assert ConfigurationLoader().registry_recipes_source is None
+
+    @pytest.mark.parametrize("invalid_value", ["", "   ", 42])
+    def test_registry_recipes_source_rejects_invalid_value(self, invalid_value: object) -> None:
+        """Test rejecting empty or non-string sources for saved registry entries."""
+        with pytest.raises(ValueError, match="registry_recipes_source"):
+            ConfigurationLoader(registry_recipes_source=invalid_value)  # type: ignore[arg-type]
 
     def test_target_upload_directory_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
         config_path = tmp_path / "config.yaml"
@@ -445,7 +474,16 @@ class TestConfigurationLoaderResolvers:
             )
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.fixture
+def isolated_configuration_registries(tmp_path: pathlib.Path) -> Iterator[None]:
+    with (
+        mock.patch.dict(Registry._singletons, {}, clear=True),
+        mock.patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path),
+    ):
+        yield
+
+
+@pytest.mark.usefixtures("patch_central_database", "isolated_configuration_registries")
 class TestConfigurationLoaderInitialization:
     """Tests for ConfigurationLoader.initialize_pyrit_async method."""
 

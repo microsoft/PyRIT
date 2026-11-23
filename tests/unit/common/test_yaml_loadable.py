@@ -51,6 +51,16 @@ def test_from_yaml_file_uses_from_dict_if_available(yaml_file_for_from_dict: Pat
     assert obj.name == "LOWER"
 
 
+def test_from_yaml_file_rejects_from_dict_returning_another_type(yaml_file_for_from_dict: Path):
+    class _BadFromDict(YamlLoadable):
+        @classmethod
+        def from_dict(cls, data: dict) -> dict:
+            return data
+
+    with pytest.raises(TypeError, match="_BadFromDict.from_dict returned dict, not _BadFromDict"):
+        _BadFromDict.from_yaml_file(yaml_file_for_from_dict)
+
+
 def test_from_yaml_file_nonexistent_raises():
     with pytest.raises(FileNotFoundError):
         _SimpleYaml.from_yaml_file(Path("nonexistent_file.yaml"))
@@ -61,3 +71,20 @@ def test_from_yaml_file_invalid_yaml(tmp_path: Path):
     p.write_text(":\n  - :\n    invalid: [unterminated", encoding="utf-8")
     with pytest.raises((ValueError, TypeError)):
         _SimpleYaml.from_yaml_file(p)
+
+
+def test_from_yaml_file_duplicate_keys_report_key_and_location(tmp_path: Path):
+    path = tmp_path / "duplicate.yaml"
+    path.write_text("name: first\nname: second\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate key 'name'") as error:
+        _SimpleYaml.from_yaml_file(path)
+    assert str(path) in str(error.value)
+    assert "line 2" in str(error.value)
+
+
+def test_from_yaml_file_preserves_merge_override(tmp_path: Path):
+    path = tmp_path / "merged.yaml"
+    path.write_text("<<: {name: base, value: 42}\nname: explicit\n", encoding="utf-8")
+    loaded = _SimpleYaml.from_yaml_file(path)
+    assert loaded.name == "explicit"
+    assert loaded.value == 42

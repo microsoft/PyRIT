@@ -158,7 +158,7 @@ class AgentThreatRulesScorer(RegexScorer):
                 "fields": list(self._atr_fields),
                 "categories": self._score_categories,
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
     async def _score_piece_with_expectation_async(
@@ -327,7 +327,7 @@ def _load_digest(*, ref: str, cache: bool) -> dict[str, Any]:
 
     url = _DIGEST_URL_TEMPLATE.format(ref=ref)
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:  # noqa: S310 - fixed https host
+        with urllib.request.urlopen(url, timeout=30) as response:  # fixed https host
             raw = response.read().decode("utf-8")
     except (OSError, UnicodeError) as exc:
         raise ValueError(f"Could not fetch the ATR digest from {url}: {exc}") from exc

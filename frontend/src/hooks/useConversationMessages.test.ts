@@ -55,6 +55,54 @@ describe('useConversationMessages', () => {
     ))
   })
 
+  it('should retain a long live window and split turn through saved paging while rejecting a late live response', async () => {
+    jest.mocked(backendMessagesToFrontend).mockImplementation(
+      jest.requireActual<typeof import('@/utils/messageMapper')>('@/utils/messageMapper').backendMessagesToFrontend,
+    )
+    const full: ConversationMessagesResponse = {
+      conversation_id: 'main', target_response_status: null,
+      messages: [{
+        role: 'assistant', turn_number: 1, created_at: '2026-01-01T00:00:00Z',
+        message_pieces: Array.from({ length: 122 }, (_value: unknown, index: number) => ({
+          id: `piece-${index}`, original_value: `Piece ${index}`, converted_value: `Piece ${index}`,
+          original_value_data_type: 'text', converted_value_data_type: 'text', scores: [], response_error: 'none',
+        })),
+      }],
+    }
+    const lateLive = deferred<ConversationMessagesResponse>()
+    const continuation = deferred<ConversationMessagesResponse>()
+    getMessages.mockResolvedValueOnce(full).mockReturnValueOnce(lateLive.promise).mockResolvedValueOnce({
+      ...full, messages: full.messages.map((message: BackendMessage) => ({ ...message, message_pieces: message.message_pieces.slice(0, 100) })),
+      pagination: { limit: 100, has_more: true, next_cursor: 'saved-next' }, partial_message_sequences: [1],
+    }).mockReturnValueOnce(continuation.promise)
+    const { result, rerender } = renderMessages()
+    await waitFor(() => { expect(result.current.messages[0]?.content).toContain('Piece 121') })
+    let refresh = Promise.resolve()
+    act(() => { refresh = result.current.loadConversation('attack', 'main') })
+    rerender({ messagePageSize: 100 })
+    await waitFor(() => { expect(getMessages).toHaveBeenLastCalledWith('attack', 'main', { limit: 100, cursor: 'saved-next' }) })
+    expect(result.current.messages[0].content).toContain('Piece 121')
+    expect(result.current.isTranscriptIncomplete).toBe(true)
+    await act(async () => {
+      continuation.resolve({
+        ...full, messages: full.messages.map((message: BackendMessage) => ({ ...message, message_pieces: message.message_pieces.slice(100) })),
+        pagination: { limit: 100, has_more: false, next_cursor: null }, partial_message_sequences: [],
+      })
+    })
+    expect(result.current.loadedPieceCount).toBe(122)
+    expect(result.current.isTranscriptIncomplete).toBe(false)
+    expect(result.current.messages[0].content).toContain('Piece 121')
+    expect(result.current.messages[0].isPartial).toBe(false)
+    await act(async () => {
+      lateLive.resolve({ ...full, messages: [{ ...full.messages[0], message_pieces: [{
+        ...full.messages[0].message_pieces[0], original_value: 'Stale live data', converted_value: 'Stale live data',
+      }] }] })
+      await refresh
+    })
+    expect(result.current.loadedPieceCount).toBe(122)
+    expect(result.current.messages[0].content).not.toContain('Stale live data')
+  })
+
   it('polls an injected saved-conversation reader without changing manual send ownership', async () => {
     jest.useFakeTimers()
     const readConversation = jest.fn().mockResolvedValue(transcript('main', [1]))
