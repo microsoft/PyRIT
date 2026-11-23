@@ -6762,8 +6762,8 @@ class MemoryInterface(abc.ABC):
                     .where(SeedEntry.dataset_name.isnot(None), SeedEntry.dataset_name != "")
                     .distinct()
                 )
-                names: Sequence[str | None] = session.scalars(statement).all()
-                return [name for name in names if name is not None]
+                # SeedEntry.dataset_name has no Mapped annotation, so the rows are typed Any.
+                return [name for name in session.scalars(statement).all() if isinstance(name, str)]
         except SQLAlchemyError as e:
             logger.exception(f"Failed to retrieve dataset names with error {e}")
             raise
@@ -8408,7 +8408,11 @@ class MemoryInterface(abc.ABC):
             )
             if not updated_rows:
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
-            new_tries: int = session.query(ScenarioResultEntry.number_tries).filter_by(id=scenario_result_id).scalar()
+            new_tries = session.scalar(
+                select(ScenarioResultEntry.number_tries).where(ScenarioResultEntry.id == scenario_result_id)
+            )
+            if new_tries is None:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
             session.commit()
             return new_tries
 
