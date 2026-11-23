@@ -1995,6 +1995,25 @@ class TestScenarioRoutes:
             assert data["items"] == []
             assert data["pagination"]["has_more"] is False
 
+    def test_list_scenarios_rejects_stale_cursor(self, client: TestClient) -> None:
+        """Test that a stale catalog cursor returns the standard 400 problem detail."""
+        message = "The cursor is not valid for the scenario catalog"
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_scenarios_async = AsyncMock(side_effect=ValueError(message))
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/scenarios/catalog", params={"cursor": "test.removed_scenario"})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {
+            "type": "/errors/bad-request",
+            "title": "Bad Request",
+            "status": 400,
+            "detail": message,
+            "instance": "/api/scenarios/catalog",
+        }
+
     def test_list_scenarios_with_items(self, client: TestClient) -> None:
         """Test that GET /api/scenarios/catalog returns scenario data."""
         summary = RegisteredScenario(
