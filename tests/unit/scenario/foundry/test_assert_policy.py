@@ -999,6 +999,24 @@ async def test_spanish_prompt_case_requires_an_explicitly_configured_translation
         )
 
 
+async def test_spanish_variant_translates_before_user_technique_converters_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    scenario = await harness.initialize_async(
+        harness.scenario(),
+        scenario_techniques=[_technique("assert_package_spanish")],
+        include_baseline=False,
+        technique_converters={"assert_package_spanish": [Base64Converter()]},
+        **_datasets("assert_a"),
+    )
+    (unit,) = scenario._atomic_attacks
+    converters = [
+        converter
+        for configuration in unit.attack_technique.attack._request_converters
+        for converter in configuration.converters
+    ]
+    assert [type(converter) for converter in converters] == [TranslationConverter, Base64Converter]
+
+
 @pytest.mark.parametrize("policy", ["skip", "raise"])
 async def test_assert_package_runs_mixed_prompt_and_conversation_cases_async(harness: _Harness, policy: str) -> None:
     await _store_async(name="assert_a", result=_result(group_count=1))

@@ -261,18 +261,12 @@ async def test_compatible_listing_respects_real_scenario_sources_without_loading
             }
             service = ScenarioService()
             result = await service.list_compatible_datasets_async(scenario_name="test.source_options")
-            assessment = await service.assess_datasets_async(
-                scenario_name="test.source_options", request=ScenarioRunSizeEstimateRequest()
-            )
         assert result is not None
         assert {item.name for item in result.items} == expected_names
         assert {item.name for item in result.items if item.loaded} == expected_names & stored_names
         assert all(item.selection_key != "dataset:unnamed" for item in result.items)
-        assert assessment is not None
-        assert {item.name for item in assessment.items} == expected_names
         if scenario_class is ApiKey:
             assert scenario._default_dataset_config.dataset_names == []
-            assert all(item.selected for item in assessment.items)
 
 
 @pytest.mark.usefixtures("patch_central_database", "block_dataset_provider_lookup")

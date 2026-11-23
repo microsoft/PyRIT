@@ -3,8 +3,10 @@
 
 """Shared preparation, policy validation, and independent delivery coverage."""
 
+import threading
 from collections.abc import Iterator
 from dataclasses import replace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import uuid4
 
@@ -19,6 +21,8 @@ from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackSeedGroup,
     DatasetFetchPolicy,
+    DatasetSelectionMode,
+    ScenarioDatasetOptions,
     SeedDataset,
     SeedDatasetGroupProfile,
     SeedGroupRequirements,
@@ -262,6 +266,21 @@ async def test_sampling_retains_usable_technique_input_instead_of_only_baseline_
     assert not scenario._atomic_attacks[0].seed_groups[0].prompts
 
 
+async def test_launch_assesses_and_samples_off_the_event_loop_async() -> None:
+    scenario = _scenario(groups=_groups(), cap=1)
+    sample = AssertPolicy._sample_dataset_population
+    sampling_threads: list[int] = []
+
+    def record_thread(self: AssertPolicy, **kwargs: Any) -> dict[str, list[AttackSeedGroup]]:
+        sampling_threads.append(threading.get_ident())
+        return sample(self, **kwargs)
+
+    with patch.object(AssertPolicy, "_sample_dataset_population", record_thread):
+        await scenario.initialize_async()
+    assert sampling_threads
+    assert threading.get_ident() not in sampling_threads
+
+
 async def test_sampling_distinguishes_compatibility_when_logical_ids_coincide_async() -> None:
     rejected = _groups()[1]
     accepted = AttackSeedGroup(
@@ -398,3 +417,95 @@ async def test_key_presence_is_not_validated_policy_metadata_async() -> None:
     result = await _scenario(groups=groups).get_dataset_compatibility_async()
     assert result.selection_compatible is False
     assert result.items[0].status is DatasetCompatibilityStatus.INCOMPATIBLE
+
+
+async def _store_listing_async(name: str, *, include_adversarial_prompt: bool = True) -> None:
+    groups = make_assert_result(
+        config=make_assert_config(group_count=2, include_adversarial_prompt=include_adversarial_prompt)
+    ).seed_groups
+    seeds = [seed for group in groups for seed in group.seeds]
+    for seed in seeds:
+        seed.dataset_name = name
+    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(seeds=seeds, added_by="test")
+
+
+def _listing_scenario(scenario_class: type[AssertPolicy] = AssertPolicy, **args: Any) -> AssertPolicy:
+    scenario = scenario_class()
+    scenario.set_params_from_args(args=args)
+    return scenario
+
+
+class _RestrictedPolicy(AssertPolicy):
+    DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.SUBSET, allowed_names=["imported"])
+
+
+async def test_compatible_listing_validates_stored_contents_of_both_case_forms_async() -> None:
+    await _store_listing_async("conversation_cases")
+    await _store_listing_async("prompt_cases", include_adversarial_prompt=False)
+    invalid_case = (
+        make_assert_result(config=make_assert_config(group_count=1, include_adversarial_prompt=False))
+        .seed_groups[0]
+        .objective
+    )
+    invalid_case.dataset_name = "invalid_case"
+    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
+        seeds=[
+            invalid_case,
+            SeedObjective(value="Generic objective", dataset_name="ordinary"),
+            SeedObjective(value="Malformed policy", dataset_name="malformed", metadata={"assert_generation": {}}),
+        ],
+        added_by="test",
+    )
+    stored = ["conversation_cases", "prompt_cases", "invalid_case", "ordinary", "malformed"]
+    hydrate = DatasetAttackConfiguration.get_attack_groups_by_dataset_async
+    hydrated: list[str] = []
+
+    async def record_async(self: DatasetAttackConfiguration, **kwargs: Any) -> dict[str, list[AttackSeedGroup]]:
+        hydrated.extend(self.dataset_names)
+        return await hydrate(self, **kwargs)
+
+    with (
+        patch.object(
+            AssertPolicy,
+            "_get_dataset_technique_factories",
+            side_effect=AssertionError("Dataset eligibility must not depend on delivery techniques."),
+        ),
+        patch.object(DatasetAttackConfiguration, "get_attack_groups_by_dataset_async", record_async),
+    ):
+        names = await _listing_scenario().get_compatible_dataset_names_async(
+            dataset_names=["unloaded", *stored], loaded_dataset_names=stored
+        )
+    assert names == ["conversation_cases", "prompt_cases"]
+    # Stored facts rule out the dataset without ASSERT metadata; unloaded datasets are never read.
+    assert sorted(hydrated) == ["conversation_cases", "invalid_case", "malformed", "prompt_cases"]
+
+
+async def test_compatible_listing_keeps_subset_restrictions_and_observes_changed_data_async() -> None:
+    await _store_listing_async("imported")
+    await _store_listing_async("other")
+    names = ["imported", "other"]
+    listing = _listing_scenario(_RestrictedPolicy)
+    assert await listing.get_compatible_dataset_names_async(dataset_names=names, loaded_dataset_names=names) == [
+        "imported"
+    ]
+    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="Changed after the picker loaded", dataset_name="imported")], added_by="test"
+    )
+    assert await listing.get_compatible_dataset_names_async(dataset_names=names, loaded_dataset_names=names) == []
+
+
+async def test_compatible_listing_validates_filtered_contents_that_raw_hints_would_reject_async() -> None:
+    await _store_listing_async("imported")
+    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="Excluded ordinary objective", dataset_name="imported", harm_categories=["other"])],
+        added_by="test",
+    )
+    names = ["imported"]
+    unfiltered = _listing_scenario()
+    assert await unfiltered.get_compatible_dataset_names_async(dataset_names=names, loaded_dataset_names=names) == []
+    filtered = _listing_scenario(
+        dataset_config=DatasetAttackConfiguration(
+            sources=[DatasetSource(name="imported")], filters={"harm_categories": ["public_policy"]}
+        )
+    )
+    assert await filtered.get_compatible_dataset_names_async(dataset_names=names, loaded_dataset_names=names) == names

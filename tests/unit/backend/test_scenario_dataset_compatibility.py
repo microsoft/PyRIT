@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Scenario-aware listing, explicit validation, and REST bypass regressions."""
+"""Scenario-aware dataset listing, estimate validation, and REST bypass regressions."""
 
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator, Sequence
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import quote
 
@@ -17,18 +17,14 @@ from pyrit.datasets import SeedDatasetDescriptor, SeedDatasetProvider
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
-    AssertGroupMetadata,
     AttackSeedGroup,
-    DatasetSelectionMode,
     DatasetSourceInput,
-    ScenarioDatasetOptions,
     ScenarioDatasetRequest,
     ScenarioRunSizeEstimateRequest,
     SeedObjective,
     SeedOrigin,
     SeedPrompt,
 )
-from pyrit.models.dataset_compatibility import DatasetCompatibilityStatus, ScenarioDatasetCompatibility
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import AttackTechniqueFactory
 from pyrit.scenario.scenarios.foundry import AssertPolicy
@@ -37,10 +33,6 @@ from unit.assert_mocks import make_assert_config, make_assert_result
 from unit.mocks import MockPromptTarget
 
 pytestmark = pytest.mark.usefixtures("patch_central_database", "block_dataset_provider_lookup")
-
-
-class _RestrictedPolicy(AssertPolicy):
-    DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.SUBSET, allowed_names=["imported"])
 
 
 @pytest.fixture
@@ -56,7 +48,6 @@ def compatibility_service() -> Iterator[ScenarioService]:
     with patch.object(ScenarioRegistry, "_discover"):
         registry = ScenarioRegistry()
         registry.register_class(AssertPolicy, name="test.policy")
-        registry.register_class(_RestrictedPolicy, name="test.restricted")
     target_registry = TargetRegistry.get_registry_singleton()
     with (
         patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
@@ -70,10 +61,8 @@ def compatibility_service() -> Iterator[ScenarioService]:
     _build_assert_policy_technique.cache_clear()
 
 
-async def _store_imported_async(*, name: str = "imported", include_adversarial_prompt: bool = True) -> None:
-    groups = make_assert_result(
-        config=make_assert_config(group_count=4, include_adversarial_prompt=include_adversarial_prompt)
-    ).seed_groups
+async def _store_imported_async(*, name: str = "imported") -> None:
+    groups = make_assert_result(config=make_assert_config(group_count=4, include_adversarial_prompt=True)).seed_groups
     for group in groups:
         for seed in group.seeds:
             seed.dataset_name = name
@@ -94,76 +83,8 @@ def _request(*names: str) -> ScenarioRunSizeEstimateRequest:
     )
 
 
-async def test_candidate_listing_never_loads_seeds_or_validates_taxonomies_async(
-    compatibility_service: ScenarioService,
-) -> None:
-    await _store_imported_async()
-    memory = CentralMemory.get_memory_instance()
-    with (
-        patch.object(memory, "get_seeds_async", side_effect=AssertionError("Listing must not hydrate bodies.")),
-        patch.object(
-            AssertGroupMetadata, "from_metadata", side_effect=AssertionError("Listing must not parse policies.")
-        ),
-    ):
-        result = await compatibility_service.assess_datasets_async(
-            scenario_name="test.policy", request=_request(), validate_selected=False
-        )
-    assert result is not None
-    items = {item.name: item for item in result.items}
-    assert items["imported"].status is DatasetCompatibilityStatus.NOT_VERIFIED
-    assert items["imported"].group_count == 4
-    assert items["provider_only"].status is DatasetCompatibilityStatus.NOT_VERIFIED
-    assert items["provider_only"].group_count is None
-    assert "validator" not in result.model_dump_json()
-    assert await memory.get_scenario_results_async() == []
-
-
-async def test_imported_schema_valid_data_passes_regardless_of_provenance_async(
-    compatibility_service: ScenarioService,
-) -> None:
-    await _store_imported_async()
-    result = await compatibility_service.assess_datasets_async(
-        scenario_name="test.policy", request=_request("imported"), validate_selected=True
-    )
-    assert result is not None
-    assert result.selection_compatible is True
-    selected = next(item for item in result.items if item.name == "imported")
-    assert selected.status is DatasetCompatibilityStatus.COMPATIBLE
-    assert {item.technique_name: item.usable_count for item in selected.techniques} == {
-        "red_teaming": 4,
-        "baseline": 4,
-    }
-
-
-async def test_raw_hints_do_not_reject_a_compatible_filtered_population_async(
-    compatibility_service: ScenarioService,
-) -> None:
-    await _store_imported_async()
-    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
-        seeds=[SeedObjective(value="Excluded ordinary objective", dataset_name="imported", harm_categories=["other"])],
-        added_by="test",
-    )
-    request = _request("imported").model_copy(
-        update={
-            "datasets": ScenarioDatasetRequest(
-                sources=[DatasetSourceInput(name="imported")], filters={"harm_categories": ["public_policy"]}
-            )
-        }
-    )
-    hints = await compatibility_service.assess_datasets_async(scenario_name="test.policy", request=request)
-    assert hints is not None
-    assert (
-        next(item for item in hints.items if item.name == "imported").status is DatasetCompatibilityStatus.NOT_VERIFIED
-    )
-    checked = await compatibility_service.assess_datasets_async(
-        scenario_name="test.policy", request=request, validate_selected=True
-    )
-    assert checked is not None
-    assert checked.selection_compatible is True
-
-
 @pytest.mark.parametrize("metadata", [None, {"assert_generation": {}}])
-async def test_missing_and_malformed_policy_data_are_not_compatible_async(
+async def test_missing_and_malformed_policy_data_are_not_listed_or_estimated_async(
     *, compatibility_service: ScenarioService, metadata: dict[str, object] | None
 ) -> None:
     group = AttackSeedGroup(
@@ -172,45 +93,17 @@ async def test_missing_and_malformed_policy_data_are_not_compatible_async(
             SeedPrompt(value="A valid prompt with invalid policy context.", dataset_name="invalid"),
         ]
     )
-    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
-        seeds=group.seeds,
-        added_by="test",
-    )
-    result = await compatibility_service.assess_datasets_async(
-        scenario_name="test.policy", request=_request("invalid"), validate_selected=True
-    )
-    assert result is not None
-    assert result.selection_compatible is False
-    assert next(item for item in result.items if item.selected).status is DatasetCompatibilityStatus.INCOMPATIBLE
+    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(seeds=group.seeds, added_by="test")
+    listed = await compatibility_service.list_compatible_datasets_async(scenario_name="test.policy")
+    assert listed is not None
+    assert "invalid" not in {item.name for item in listed.items}
     with pytest.raises(ValueError, match="ASSERT generation metadata"):
         await compatibility_service.estimate_scenario_run_size_async(
             scenario_name="test.policy", request=_request("invalid")
         )
 
 
-async def test_unloaded_provider_stays_unverified_without_a_fetch_async(compatibility_service: ScenarioService) -> None:
-    result = await compatibility_service.assess_datasets_async(
-        scenario_name="test.policy", request=_request("provider_only"), validate_selected=True
-    )
-    assert result is not None
-    assert result.selection_compatible is None
-    assert result.items[0].status is DatasetCompatibilityStatus.NOT_VERIFIED
-
-
-async def test_candidates_respect_scenario_subset_restrictions_async(compatibility_service: ScenarioService) -> None:
-    await _store_imported_async()
-    result = await compatibility_service.assess_datasets_async(
-        scenario_name="test.restricted", request=_request(), validate_selected=False
-    )
-    assert result is not None
-    assert [item.name for item in result.items] == ["imported"]
-    with pytest.raises(ValueError, match="Select datasets from: imported"):
-        await compatibility_service.assess_datasets_async(
-            scenario_name="test.restricted", request=_request("provider_only")
-        )
-
-
-async def test_rest_launch_revalidates_data_changed_after_preview_async(
+async def test_rest_launch_revalidates_data_changed_after_listing_async(
     *, compatibility_service: ScenarioService, compatibility_headers: dict[str, str]
 ) -> None:
     await _store_imported_async()
@@ -220,12 +113,9 @@ async def test_rest_launch_revalidates_data_changed_after_preview_async(
         patch("pyrit.backend.routes.scenarios.get_scenario_run_service", return_value=ScenarioRunService()),
     ):
         async with AsyncClient(transport=transport, base_url="http://test", headers=compatibility_headers) as client:
-            response = await client.post(
-                "/api/scenarios/catalog/test.policy/datasets/assess?validate_selected=true",
-                json=_request("imported").model_dump(mode="json"),
-            )
+            response = await client.get("/api/scenarios/catalog/test.policy/datasets")
             assert response.status_code == 200
-            assert response.json()["selection_compatible"] is True
+            assert [item["name"] for item in response.json()["items"]] == ["imported"]
             await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
                 seeds=[SeedObjective(value="New malformed group", dataset_name="imported")], added_by="test"
             )
@@ -237,74 +127,40 @@ async def test_rest_launch_revalidates_data_changed_after_preview_async(
     assert "ASSERT generation metadata" in launch.json()["detail"]
 
 
-@pytest.mark.parametrize("scenario_name", ["test.policy", "test/policy"])
-async def test_assessment_route_accepts_encoded_registry_names_async(
-    *, scenario_name: str, compatibility_headers: dict[str, str]
-) -> None:
-    service = MagicMock(spec=ScenarioService)
-    service.assess_datasets_async = AsyncMock(return_value=ScenarioDatasetCompatibility())
-    with patch("pyrit.backend.routes.scenarios.get_scenario_service", return_value=service):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test", headers=compatibility_headers
-        ) as client:
-            response = await client.post(
-                f"/api/scenarios/catalog/{quote(scenario_name, safe='')}/datasets/assess", json={}
-            )
-    assert response.status_code == 200
-    assert service.assess_datasets_async.call_args.kwargs["scenario_name"] == scenario_name
-
-
-async def test_eligible_listing_checks_policy_and_both_case_forms_without_fetch_or_model_calls_async(
-    compatibility_service: ScenarioService,
-) -> None:
-    await _store_imported_async()
-    await _store_imported_async(name="prompt_cases", include_adversarial_prompt=False)
-    invalid_case = (
-        make_assert_result(config=make_assert_config(group_count=1, include_adversarial_prompt=False))
-        .seed_groups[0]
-        .objective
-    )
-    invalid_case.dataset_name = "invalid_case"
-    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
-        seeds=[
-            invalid_case,
-            SeedObjective(value="Generic objective", dataset_name="ordinary"),
-            SeedObjective(value="Malformed policy", dataset_name="malformed", metadata={"assert_generation": {}}),
-        ],
-        added_by="test",
-    )
-    dataset_service = get_dataset_service()
-    with (
-        patch.object(MockPromptTarget, "send_prompt_async", side_effect=AssertionError("No model calls.")),
-        patch.object(
-            AssertPolicy,
-            "_get_dataset_technique_factories",
-            side_effect=AssertionError("Dataset eligibility must not depend on delivery techniques."),
-        ),
-        patch.object(dataset_service, "list_datasets_async", wraps=dataset_service.list_datasets_async) as catalog,
-    ):
-        result = await compatibility_service.list_compatible_datasets_async(scenario_name="test.policy")
-    assert result is not None
-    assert {item.name for item in result.items} == {"imported", "prompt_cases"}
-    assert all(item.loaded for item in result.items)
-    assert catalog.call_count == 1
-    assert await CentralMemory.get_memory_instance().get_scenario_results_async() == []
-
-
-async def test_eligible_listing_keeps_subset_restrictions_and_observes_changed_data_async(
+async def test_listing_maps_the_scenario_decision_onto_named_catalog_entries_async(
     compatibility_service: ScenarioService,
 ) -> None:
     await _store_imported_async()
     await _store_imported_async(name="other")
-    first = await compatibility_service.list_compatible_datasets_async(scenario_name="test.restricted")
-    assert first is not None
-    assert [item.name for item in first.items] == ["imported"]
     await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
-        seeds=[SeedObjective(value="Changed after the picker loaded", dataset_name="imported")], added_by="test"
+        seeds=[SeedObjective(value="Unnamed objective")], added_by="test"
     )
-    changed = await compatibility_service.list_compatible_datasets_async(scenario_name="test.restricted")
-    assert changed is not None
-    assert changed.items == []
+    calls: list[tuple[list[str], set[str]]] = []
+
+    async def decide_async(
+        self: AssertPolicy, *, dataset_names: Sequence[str], loaded_dataset_names: Collection[str]
+    ) -> list[str]:
+        calls.append((list(dataset_names), set(loaded_dataset_names)))
+        return ["provider_only", "other"]
+
+    dataset_service = get_dataset_service()
+    with (
+        patch.object(AssertPolicy, "get_compatible_dataset_names_async", decide_async),
+        patch.object(dataset_service, "list_datasets_async", wraps=dataset_service.list_datasets_async) as catalog,
+    ):
+        result = await compatibility_service.list_compatible_datasets_async(scenario_name="test.policy")
+    assert result is not None
+    ((names, loaded),) = calls
+    assert set(names) == {"imported", "other", "provider_only"}
+    assert loaded == {"imported", "other"}
+    assert [item.name for item in result.items] == [name for name in names if name in {"other", "provider_only"}]
+    assert {item.name: item.loaded for item in result.items} == {"other": True, "provider_only": False}
+    assert catalog.call_count == 1
+    assert await CentralMemory.get_memory_instance().get_scenario_results_async() == []
+
+
+async def test_listing_returns_none_for_an_unknown_scenario_async(compatibility_service: ScenarioService) -> None:
+    assert await compatibility_service.list_compatible_datasets_async(scenario_name="test.missing") is None
 
 
 @pytest.mark.parametrize("scenario_name", ["test.policy", "test/policy"])

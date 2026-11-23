@@ -309,14 +309,16 @@ class AssertPolicy(Scenario):
         population = selection.select(apply_sampling=False)
         if not any(population.values()):
             raise DatasetConstraintError("The selected ASSERT datasets contain no seed groups.")
+        # _read_metadata applies the scenario's metadata requirement with an ASSERT-specific message, and the
+        # assessment population check covers the ASSERT case rules, so _validate_dataset_population would repeat both.
         for dataset_name, dataset_groups in population.items():
             for group in dataset_groups:
                 self._read_metadata(group=group, dataset_name=dataset_name)
-        self._validate_dataset_population(population)
         self._validate_dataset_assessment_population(population)
         if not apply_sampling:
             return population
-        return self._sample_dataset_population(population=population, selection=selection)
+        # Assessment runs every technique's checks on every group; keep that work off the event loop.
+        return await asyncio.to_thread(self._sample_dataset_population, population=population, selection=selection)
 
     def get_dataset_requirements(self) -> SeedGroupRequirements:
         """
@@ -654,10 +656,12 @@ class AssertPolicy(Scenario):
             factory = self._get_assert_case_factory(factory=factory, group=group)
         extra = list(context.technique_converters.get(technique_name) or [])
         if technique_name == _ASSERT_PACKAGE_SPANISH:
-            extra.append(
+            # Translate the natural-language request first, like a technique's own converters, then apply the user's.
+            extra.insert(
+                0,
                 TranslationConverter(
                     converter_target=self._adversarial_chat or get_default_adversarial_target(), language="Spanish"
-                )
+                ),
             )
         adversarial_chat = (
             self._adversarial_chat if factory.uses_adversarial and factory.adversarial_chat is None else None

@@ -14,7 +14,7 @@ import logging
 import threading
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -70,6 +70,7 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     ScenarioRunState,
     ScorerEvaluationIdentifier,
+    SeedDatasetGroupProfile,
     SeedGroupRequirements,
     config_hash,
 )
@@ -96,6 +97,7 @@ from pyrit.scenario.core._technique_resolution import (
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack, compute_atomic_group_id
 from pyrit.scenario.core.dataset_compatibility import (
+    assess_candidate_profiles,
     assess_scenario_groups,
     assess_technique_groups,
     describe_requirements,
@@ -1335,6 +1337,80 @@ class Scenario(ABC):
                 ],
             )
         return result
+
+    async def get_compatible_dataset_names_async(
+        self, *, dataset_names: Sequence[str], loaded_dataset_names: Collection[str]
+    ) -> list[str]:
+        """
+        Return the stored catalog datasets this scenario can run, independently of launch-form settings.
+
+        Providers are never fetched. Names outside a subset or fixed selection are dropped. Without
+        scenario requirements every remaining name qualifies. Otherwise required ingredient datasets
+        are kept without checking each ingredient on its own, stored structure facts rule out
+        datasets that cannot comply, and each remaining loaded dataset's full stored contents are
+        validated: a structural hint never certifies a dataset.
+
+        Args:
+            dataset_names (Sequence[str]): Named catalog datasets, in the order to return them.
+            loaded_dataset_names (Collection[str]): The catalog datasets whose seeds are stored.
+
+        Returns:
+            list[str]: The runnable dataset names, in input order.
+        """
+        await asyncio.to_thread(
+            self._resolve_runtime_configuration, require_objective_target=False, require_minimum_selection=False
+        )
+        allowed = self._get_permitted_dataset_names()
+        names = [name for name in dataset_names if allowed is None or name in allowed]
+        requirements = self.get_dataset_requirements()
+        if requirements == SeedGroupRequirements():
+            return names
+        required = set(self._required_data.dataset_names) if self._required_data is not None else set()
+        profiles: dict[str, list[SeedDatasetGroupProfile]] = {}
+        for profile in await self._memory.get_seed_dataset_group_profiles_async(
+            metadata_keys=[requirement.key for requirement in requirements.metadata]
+        ):
+            profiles.setdefault(profile.dataset_name, []).append(profile)
+        # Stored facts describe raw contents, so they can't rule out data that filters or custom grouping reshape.
+        use_hints = not self._dataset_config.filters and type(self._dataset_config) is DatasetAttackConfiguration
+        compatible = []
+        for name in names:
+            if name in required:
+                compatible.append(name)
+                continue
+            if name not in loaded_dataset_names:
+                continue
+            if (
+                use_hints
+                and assess_candidate_profiles(
+                    name=name, profiles=profiles.get(name, []), requirements=requirements
+                ).status
+                is DatasetCompatibilityStatus.INCOMPATIBLE
+            ):
+                continue
+            configuration = self._dataset_config.with_overrides(
+                sources=[DatasetSource(name=name, max_size="all")], max_per_dataset="all", max_total="all"
+            )
+            try:
+                population = await configuration.get_attack_groups_by_dataset_async(apply_sampling=False)
+                await asyncio.to_thread(self._validate_dataset_population, population)
+            except ValueError as error:
+                logger.debug("Dataset '%s' is ineligible for '%s': %s", name, self.name, error)
+                continue
+            compatible.append(name)
+        return compatible
+
+    def _get_permitted_dataset_names(self) -> set[str] | None:
+        """Return source restrictions including required ingredients, or None for a general catalog."""
+        options = self.get_dataset_options()
+        if options.mode is DatasetSelectionMode.ANY:
+            return None
+        allowed = set(options.allowed_names)
+        if options.mode is DatasetSelectionMode.FIXED:
+            allowed = {source.name for source in self.get_default_dataset_settings().sources}
+        if self._required_data is not None:
+            allowed.update(self._required_data.dataset_names)
+        return allowed
 
     def _assess_dataset_population(
         self, population: dict[str, list[AttackSeedGroup]]
@@ -2606,7 +2682,8 @@ class Scenario(ABC):
         if not apply_sampling:
             return population
         self._validate_dataset_population(population)
-        return self._sample_dataset_population(population=population, selection=selection)
+        # Assessment runs every technique's checks on every group; keep that work off the event loop.
+        return await asyncio.to_thread(self._sample_dataset_population, population=population, selection=selection)
 
     def _build_scenario_context(
         self,

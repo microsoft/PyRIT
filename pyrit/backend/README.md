@@ -512,14 +512,14 @@ choices without fetching providers or calling models. The source options still a
 `ANY` retains the general catalog, while `SUBSET` and `FIXED` retain permitted sources
 and mandatory ingredient metadata. Ingredients are not certified as standalone attack
 populations. For structural requirements, bounded stored facts can disprove suitability
-but never prove a schema valid; full population checks certify the stored choices.
+but never prove a schema valid; full population checks certify the stored choices. The
+scenario makes this decision in `Scenario.get_compatible_dataset_names_async`; the route
+only supplies the stored catalog and maps the returned names.
 
-`POST /api/scenarios/catalog/{scenario_name}/datasets/assess` accepts the scenario estimate
-configuration and returns structured reasons plus separate technique/baseline coverage.
-The default assessment uses stored facts only. `?validate_selected=true` validates the
-selected groups through the shared SDK checker without fetching providers. Techniques can
-have disjoint usable subsets; the selection cap applies to their usable union. Launch and
-resume validate the actual stored contents again using existing seed and execution identities.
+Run-size estimates check the selected stored groups through the same SDK checker, without
+fetching providers. Techniques can have disjoint usable subsets; the selection cap applies
+to their usable union. Launch and resume validate the actual stored contents again using
+existing seed and execution identities.
 
 ASSERT requires valid policy metadata and native case inputs independently of selected
 techniques or provenance. Imported valid groups work. Its default `assert_package` sends
@@ -530,8 +530,9 @@ incompatible individual techniques retain shared skip/raise behavior.
 
 `assert_package_spanish` uses the existing `TranslationConverter` with the supplied or
 configured adversarial chat to translate target-bound user requests, including later
-conversation turns. Stored system/policy context, tester controls, judges and baseline
-are not translated. The original `assert_package` remains the unconverted default.
+conversation turns, before any `technique_converters` for that technique. Stored
+system/policy context, tester controls, judges and baseline are not translated. The
+original `assert_package` remains the unconverted default.
 The generation GUI recommends including tester instructions; SDK generation defaults
 remain unchanged.
 

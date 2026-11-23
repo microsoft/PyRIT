@@ -107,8 +107,8 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   await page.getByRole('button', { name: 'Add dimension', exact: true }).click()
   await page.getByRole('textbox', { name: /^Dimension 1 name/ }).fill('channel')
   await page.getByRole('textbox', { name: /^Dimension 1 description/ }).fill('Where the customer writes from.')
-  // foundry.assert_policy's default technique needs the tester instructions this adds to each group.
-  await page.getByRole('checkbox', { name: /^Include an adversarial prompt/ }).check()
+  // The GUI includes the tester instructions foundry.assert_policy's default conversation cases need.
+  await expect(page.getByRole('checkbox', { name: /^Include tester instructions/ })).toBeChecked()
   await page.getByRole('combobox', { name: /^Generation target/ }).selectOption(TARGET)
   await page.getByRole('checkbox', { name: /^Pause for review after/ }).check()
   const preflight = nextPreflight(page, (body: PromptGenerationCreateRequest) => body.dataset_name === name

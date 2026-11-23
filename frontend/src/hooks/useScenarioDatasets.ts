@@ -93,6 +93,8 @@ export function useScenarioDatasets(scenarioName: string, enabled = true) {
       }
     }
     void load()
+    // Don't abort here: StrictMode reruns this effect with the same key and must reuse the in-flight
+    // listing. A key change or disabling aborts it; after unmount the read completes and is ignored.
     return () => { ignore = true }
   }, [key, ready, scenarioName, runtime.generation])
 
