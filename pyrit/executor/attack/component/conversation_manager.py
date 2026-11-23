@@ -452,7 +452,8 @@ class ConversationManager:
             conversation_id: Conversation ID to assign to all messages.
             request_converters: Optional converters to apply to messages.
             prepended_conversation_config: Optional configuration for converter roles.
-            max_turns: If provided, validates that turn count doesn't exceed this limit.
+            max_turns: If provided, validates that the turn count stays below this limit, so the
+                attack keeps at least one turn of its own.
             target_identifier (ComponentIdentifier | None): The target the conversation is held
                 with, if known. Recorded once per conversation.
             target (PromptTarget | None): Target that will receive the first live request.
@@ -461,7 +462,7 @@ class ConversationManager:
             The number of turns (assistant messages) added.
 
         Raises:
-            ValueError: If max_turns is exceeded by the prepended conversation.
+            ValueError: If the prepended conversation reaches or exceeds max_turns.
         """
         valid_messages = self.get_persistable_prepended_messages(prepended_conversation=prepended_conversation)
         if not valid_messages:
@@ -493,10 +494,11 @@ class ConversationManager:
             # A multi-part response still counts as one turn
             if message_copy.api_role == "assistant":
                 turn_count += 1
-                if max_turns is not None and turn_count > max_turns:
+                # Prepended turns that use up max_turns leave the attack no turn of its own.
+                if max_turns is not None and turn_count >= max_turns:
                     raise ValueError(
-                        f"Prepended conversation has {turn_count} turns, "
-                        f"exceeding max_turns={max_turns}. Reduce prepended turns or increase max_turns."
+                        f"Prepended conversation has {turn_count} turns, which equals or exceeds "
+                        f"max_turns={max_turns}. Reduce prepended turns or increase max_turns."
                     )
 
             # Apply converters if configured

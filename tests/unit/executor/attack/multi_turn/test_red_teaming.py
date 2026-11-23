@@ -591,12 +591,15 @@ class TestContextValidation:
                 max_turns=0,
             )
 
-    async def test_max_turns_validation_with_prepended_conversation(
+    @pytest.mark.parametrize("max_turns", [1, 2], ids=["prepended_exceeds", "prepended_equals"])
+    async def test_max_turns_validation_with_prepended_conversation_async(
         self,
+        *,
         mock_objective_scorer: MagicMock,
         mock_adversarial_chat: MagicMock,
-    ):
-        """Test that prepended conversation turns are validated against max_turns."""
+        max_turns: int,
+    ) -> None:
+        """Prepended turns that reach max_turns leave no turn to attack with, so setup refuses them."""
         # Create a separate chat target for objective since prepended_conversation requires PromptTarget
         mock_chat_objective_target = MagicMock(spec=PromptTarget)
         mock_chat_objective_target.send_prompt_async = AsyncMock()
@@ -612,7 +615,7 @@ class TestContextValidation:
             objective_target=mock_chat_objective_target,
             attack_adversarial_config=adversarial_config,
             attack_scoring_config=scoring_config,
-            max_turns=1,  # Less than prepended turns (2)
+            max_turns=max_turns,
         )
 
         # Create prepended conversation with 2 assistant messages
@@ -623,12 +626,12 @@ class TestContextValidation:
             Message.from_prompt(prompt="I'm fine!", role="assistant"),
         ]
 
-        # Should raise RuntimeError wrapping ValueError because prepended turns (2) exceed max_turns (1)
-        with pytest.raises(RuntimeError, match="exceeding max_turns"):
+        with pytest.raises(RuntimeError, match="equals or exceeds max_turns"):
             await attack.execute_async(
                 objective="Test objective",
                 prepended_conversation=prepended,
             )
+        mock_chat_objective_target.send_prompt_async.assert_not_called()
 
 
 @pytest.mark.usefixtures("patch_central_database")

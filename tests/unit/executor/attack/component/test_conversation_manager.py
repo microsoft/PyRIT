@@ -1587,7 +1587,7 @@ class TestPrependedConversationConfigSettings:
         config = PrependedConversationConfig(apply_converters_to_roles=["user"])
 
         # Should fail because 3 turns exceeds max_turns=2
-        with pytest.raises(ValueError, match="exceeding max_turns"):
+        with pytest.raises(ValueError, match="equals or exceeds max_turns"):
             await manager.initialize_context_async(
                 context=context,
                 target=mock_chat_target,
@@ -1661,7 +1661,7 @@ class TestAddPrependedConversationToMemory:
             Message(message_pieces=[sample_assistant_piece]),
         ]
 
-        with pytest.raises(ValueError, match="exceeding max_turns"):
+        with pytest.raises(ValueError, match="equals or exceeds max_turns"):
             await manager.add_prepended_conversation_to_memory_async(
                 prepended_conversation=conversation,
                 conversation_id=conversation_id,
@@ -1701,7 +1701,7 @@ class TestAddPrependedConversationToMemory:
         turn_count = await manager.add_prepended_conversation_to_memory_async(
             prepended_conversation=conversation,
             conversation_id=conversation_id,
-            max_turns=1,  # Should not raise - only 1 turn despite 2 pieces
+            max_turns=2,  # Counting the two pieces as two turns would reach the limit and raise
         )
 
         assert turn_count == 1
