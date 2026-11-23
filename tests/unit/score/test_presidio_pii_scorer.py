@@ -4,7 +4,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import dataclasses
 import math
+import re
+import sys
 import threading
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -16,6 +20,7 @@ import pytest
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece
 from pyrit.score import PresidioPiiScorer, TrueFalseScoreAggregator
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 # Standard Luhn-valid test card number; not a real account.
 SYNTHETIC_CARD = "4111 1111 1111 1111"
@@ -172,24 +177,6 @@ async def test_score_with_real_pattern_recognizers(patch_central_database) -> No
     assert miss[0].get_value() is False
 
 
-async def test_score_runs_analysis_off_the_event_loop_thread(patch_central_database) -> None:
-    loop_thread = threading.get_ident()
-    analysis_threads: list[int] = []
-
-    def analyze(**_: Any) -> list[FakeRecognizerResult]:
-        analysis_threads.append(threading.get_ident())
-        return []
-
-    analyzer = MagicMock(spec=_AnalyzerSpec)
-    analyzer.analyze.side_effect = analyze
-    scorer = PresidioPiiScorer(analyzer=analyzer)
-
-    await scorer.score_text_async("text")
-
-    assert analysis_threads
-    assert loop_thread not in analysis_threads
-
-
 async def test_default_analyzer_created_once_under_concurrency(patch_central_database) -> None:
     analyzer = _make_analyzer([])
     scorer = PresidioPiiScorer()
@@ -331,66 +318,6 @@ def test_identifier_stable_for_equivalent_analyzers(patch_central_database) -> N
     assert first.get_identifier().hash == second.get_identifier().hash
 
 
-async def test_cancel_during_analyze_does_not_overlap_next_call(patch_central_database) -> None:
-    started, release = threading.Event(), threading.Event()
-    guard = threading.Lock()
-    active = {"now": 0, "max": 0}
-
-    def analyze(**_: Any) -> list[FakeRecognizerResult]:
-        with guard:
-            active["now"] += 1
-            active["max"] = max(active["max"], active["now"])
-        started.set()
-        release.wait(5)
-        with guard:
-            active["now"] -= 1
-        return []
-
-    analyzer = MagicMock(spec=_AnalyzerSpec)
-    analyzer.analyze.side_effect = analyze
-    scorer = PresidioPiiScorer(analyzer=analyzer)
-
-    first = asyncio.create_task(scorer.score_text_async("first"))
-    assert await asyncio.to_thread(started.wait, 5)
-    first.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await first
-
-    second = asyncio.create_task(scorer.score_text_async("second"))
-    await asyncio.sleep(0.05)
-    release.set()
-    await second
-
-    assert active["max"] == 1
-    assert analyzer.analyze.call_count == 2
-
-
-async def test_cancel_during_default_load_constructs_engine_once(patch_central_database) -> None:
-    loading, release = threading.Event(), threading.Event()
-    analyzer = _make_analyzer([])
-
-    def create() -> MagicMock:
-        loading.set()
-        release.wait(5)
-        return analyzer
-
-    scorer = PresidioPiiScorer()
-    with patch.object(PresidioPiiScorer, "_create_default_analyzer", side_effect=create) as create_mock:
-        first = asyncio.create_task(scorer.score_text_async("first"))
-        assert await asyncio.to_thread(loading.wait, 5)
-        first.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await first
-
-        retry = asyncio.create_task(scorer.score_text_async("retry"))
-        await asyncio.sleep(0.05)
-        release.set()
-        scores = await retry
-
-    assert create_mock.call_count == 1
-    assert scores[0].get_value() is False
-
-
 def _results_by_text(results: dict[str, list[FakeRecognizerResult]]) -> MagicMock:
     analyzer = MagicMock(spec=_AnalyzerSpec)
     analyzer.analyze.side_effect = lambda **kwargs: results[kwargs["text"]]
@@ -451,3 +378,213 @@ async def test_multi_piece_respects_and_aggregator(patch_central_database, sqlit
     assert score.get_value() is False
     assert score.score_metadata["total_detections"] == 1
     assert scorer.get_identifier().params["score_aggregator"] == TrueFalseScoreAggregator.AND.__name__
+
+
+def _presidio_executor() -> Any:
+    return sys.modules[PresidioPiiScorer.__module__]._get_executor()
+
+
+@contextlib.contextmanager
+def _signal_on_submit() -> Any:
+    """Yield an event that is set once the scorer has queued work on the Presidio worker."""
+    executor = _presidio_executor()
+    submitted = threading.Event()
+    original_submit = executor.submit
+
+    def submit(*args: Any, **kwargs: Any) -> Any:
+        future = original_submit(*args, **kwargs)
+        submitted.set()
+        return future
+
+    with patch.object(executor, "submit", side_effect=submit):
+        yield submitted
+
+
+async def test_score_runs_analysis_on_dedicated_presidio_worker(patch_central_database) -> None:
+    thread_names: list[str] = []
+
+    def analyze(**_: Any) -> list[FakeRecognizerResult]:
+        thread_names.append(threading.current_thread().name)
+        return []
+
+    analyzer = MagicMock(spec=_AnalyzerSpec)
+    analyzer.analyze.side_effect = analyze
+    scorer = PresidioPiiScorer(analyzer=analyzer)
+
+    await asyncio.gather(*(scorer.score_text_async(f"text {i}") for i in range(3)))
+
+    assert len(thread_names) == 3
+    assert all(name.startswith("pyrit-presidio") for name in thread_names)
+
+
+async def test_waiting_calls_do_not_hold_default_executor_threads(patch_central_database) -> None:
+    release = threading.Event()
+
+    def analyze(**_: Any) -> list[FakeRecognizerResult]:
+        release.wait(TEST_WATCHDOG_SECONDS)
+        return []
+
+    analyzer = MagicMock(spec=_AnalyzerSpec)
+    analyzer.analyze.side_effect = analyze
+    scorer = PresidioPiiScorer(analyzer=analyzer)
+
+    # More waiting calls than the default executor has workers.
+    tasks = [asyncio.create_task(scorer.score_text_async(f"text {i}")) for i in range(40)]
+    try:
+        unrelated = await asyncio.wait_for(asyncio.to_thread(lambda: "done"), TEST_WATCHDOG_SECONDS)
+    finally:
+        release.set()
+    await asyncio.gather(*tasks)
+
+    assert unrelated == "done"
+    assert analyzer.analyze.call_count == 40
+
+
+async def test_cancel_during_analyze_does_not_overlap_next_call(patch_central_database) -> None:
+    started, release = threading.Event(), threading.Event()
+    guard = threading.Lock()
+    active = {"now": 0, "max": 0}
+
+    def analyze(**_: Any) -> list[FakeRecognizerResult]:
+        with guard:
+            active["now"] += 1
+            active["max"] = max(active["max"], active["now"])
+        started.set()
+        release.wait(TEST_WATCHDOG_SECONDS)
+        with guard:
+            active["now"] -= 1
+        return []
+
+    analyzer = MagicMock(spec=_AnalyzerSpec)
+    analyzer.analyze.side_effect = analyze
+    scorer = PresidioPiiScorer(analyzer=analyzer)
+
+    try:
+        first = asyncio.create_task(scorer.score_text_async("first"))
+        assert await asyncio.to_thread(started.wait, TEST_WATCHDOG_SECONDS)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        with _signal_on_submit() as submitted:
+            second = asyncio.create_task(scorer.score_text_async("second"))
+            assert await asyncio.to_thread(submitted.wait, TEST_WATCHDOG_SECONDS)
+    finally:
+        release.set()
+    await second
+
+    assert active["max"] == 1
+    assert analyzer.analyze.call_count == 2
+
+
+async def test_cancel_during_default_load_constructs_engine_once(patch_central_database) -> None:
+    loading, release = threading.Event(), threading.Event()
+    analyzer = _make_analyzer([])
+
+    def create() -> MagicMock:
+        loading.set()
+        release.wait(TEST_WATCHDOG_SECONDS)
+        return analyzer
+
+    scorer = PresidioPiiScorer()
+    with patch.object(PresidioPiiScorer, "_create_default_analyzer", side_effect=create) as create_mock:
+        try:
+            first = asyncio.create_task(scorer.score_text_async("first"))
+            assert await asyncio.to_thread(loading.wait, TEST_WATCHDOG_SECONDS)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            with _signal_on_submit() as submitted:
+                retry = asyncio.create_task(scorer.score_text_async("retry"))
+                assert await asyncio.to_thread(submitted.wait, TEST_WATCHDOG_SECONDS)
+        finally:
+            release.set()
+        scores = await retry
+
+    assert create_mock.call_count == 1
+    assert scores[0].get_value() is False
+
+
+def test_identifier_differs_for_ner_model_configuration(patch_central_database) -> None:
+    nlp_engine = pytest.importorskip("presidio_analyzer.nlp_engine")
+
+    def analyzer_with(default_score: float) -> SimpleNamespace:
+        return SimpleNamespace(
+            registry=SimpleNamespace(recognizers=[]),
+            nlp_engine=SimpleNamespace(
+                models=[{"lang_code": "en", "model_name": "en_core_web_sm"}],
+                ner_model_configuration=nlp_engine.NerModelConfiguration(default_score=default_score),
+            ),
+            analyze=lambda **_: [],
+        )
+
+    first = PresidioPiiScorer(analyzer=analyzer_with(0.85))
+    second = PresidioPiiScorer(analyzer=analyzer_with(0.2))
+
+    assert first.get_identifier().hash != second.get_identifier().hash
+
+
+def test_identifier_differs_for_regex_flags(patch_central_database) -> None:
+    presidio = pytest.importorskip("presidio_analyzer")
+
+    def recognizer(flags: int) -> Any:
+        return presidio.PatternRecognizer(
+            supported_entity="CODE_NAME", name="Rx", deny_list=["alpha"], global_regex_flags=flags
+        )
+
+    case_sensitive = PresidioPiiScorer(analyzer=_fake_analyzer(recognizers=[recognizer(0)]))
+    case_insensitive = PresidioPiiScorer(analyzer=_fake_analyzer(recognizers=[recognizer(re.IGNORECASE)]))
+
+    assert case_sensitive.get_identifier().hash != case_insensitive.get_identifier().hash
+
+
+def test_identifier_ignores_order_of_set_derived_lists(patch_central_database) -> None:
+    def recognizer(entities: list[str]) -> SimpleNamespace:
+        return SimpleNamespace(name="Ner", to_dict=lambda: {"name": "Ner", "supported_entities": entities})
+
+    first = PresidioPiiScorer(analyzer=_fake_analyzer(recognizers=[recognizer(["PERSON", "LOCATION"])]))
+    second = PresidioPiiScorer(analyzer=_fake_analyzer(recognizers=[recognizer(["LOCATION", "PERSON"])]))
+
+    assert first.get_identifier().hash == second.get_identifier().hash
+
+
+def test_identifier_is_fixed_at_construction(patch_central_database) -> None:
+    recognizers: list[Any] = [SimpleNamespace(name="First")]
+    analyzer = _fake_analyzer(recognizers=recognizers)
+    scorer = PresidioPiiScorer(analyzer=analyzer)
+
+    # Changes after construction, even before the identity is first read, are not reflected.
+    recognizers.append(SimpleNamespace(name="Second"))
+
+    assert scorer.get_identifier().hash != PresidioPiiScorer(analyzer=analyzer).get_identifier().hash
+
+
+def test_init_requires_analyzer_identifier_for_unstable_config(patch_central_database) -> None:
+    def hook() -> None:
+        return None
+
+    analyzer = _fake_analyzer(recognizers=[SimpleNamespace(name="Custom", to_dict=lambda: {"hook": hook})])
+
+    with pytest.raises(ValueError, match="analyzer_identifier"):
+        PresidioPiiScorer(analyzer=analyzer)
+
+    first = PresidioPiiScorer(analyzer=analyzer, analyzer_identifier="custom-v1")
+    second = PresidioPiiScorer(analyzer=analyzer, analyzer_identifier="custom-v1")
+    assert first.get_identifier().hash == second.get_identifier().hash
+
+
+async def test_multi_piece_keeps_custom_aggregator_metadata(
+    patch_central_database, sqlite_instance: MemoryInterface
+) -> None:
+    def tagging_or(scores: Any) -> Any:
+        result = TrueFalseScoreAggregator.OR(scores)
+        return dataclasses.replace(result, metadata={**result.metadata, "run": "nightly"})
+
+    tagging_or.__name__ = "TAGGING_OR_"
+    card = FakeRecognizerResult("CREDIT_CARD", 0, 19, 1.0)
+    scorer = PresidioPiiScorer(analyzer=_results_by_text({"a": [card], "b": [card]}), score_aggregator=tagging_or)
+
+    score = await _score_two_piece_message(scorer, sqlite_instance, first="a", second="b")
+
+    assert score.score_metadata["run"] == "nightly"
+    assert score.score_metadata["total_detections"] == 2
+    assert scorer.get_identifier().params["score_aggregator"] == "TAGGING_OR_"
