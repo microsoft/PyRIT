@@ -174,17 +174,20 @@ class PyRITApiClient:
     # Scenarios
     # ------------------------------------------------------------------
 
-    async def list_scenarios_async(self, *, limit: int = 200) -> list[RegisteredScenario]:
+    async def list_scenarios_async(self, *, limit: int | None = None) -> list[RegisteredScenario]:
         """
         List all available scenarios.
 
+        Args:
+            limit (int | None): Maximum number of scenarios to return. None returns all scenarios.
+
         Returns:
-            list[RegisteredScenario]: All scenarios in the catalog.
+            list[RegisteredScenario]: Scenarios in catalog order.
         """
         from pyrit.models.catalog import RegisteredScenario
 
-        payload = await self._get_json_async(path="/api/scenarios/catalog", params={"limit": limit})
-        return [RegisteredScenario.model_validate(item) for item in payload.get("items", [])]
+        items = await self._get_catalog_items_async(path="/api/scenarios/catalog", limit=limit)
+        return [RegisteredScenario.model_validate(item) for item in items]
 
     async def get_scenario_async(self, *, scenario_name: str) -> RegisteredScenario | None:
         """
@@ -212,17 +215,20 @@ class PyRITApiClient:
     # Initializers
     # ------------------------------------------------------------------
 
-    async def list_initializers_async(self, *, limit: int = 200) -> list[RegisteredInitializer]:
+    async def list_initializers_async(self, *, limit: int | None = None) -> list[RegisteredInitializer]:
         """
         List all available initializers.
 
+        Args:
+            limit (int | None): Maximum number of initializers to return. None returns all initializers.
+
         Returns:
-            list[RegisteredInitializer]: All initializers in the catalog.
+            list[RegisteredInitializer]: Initializers in catalog order.
         """
         from pyrit.models.catalog import RegisteredInitializer
 
-        payload = await self._get_json_async(path="/api/initializers", params={"limit": limit})
-        return [RegisteredInitializer.model_validate(item) for item in payload.get("items", [])]
+        items = await self._get_catalog_items_async(path="/api/initializers", limit=limit)
+        return [RegisteredInitializer.model_validate(item) for item in items]
 
     async def register_initializer_async(self, *, name: str, script_content: str) -> RegisteredInitializer:
         """
@@ -255,17 +261,73 @@ class PyRITApiClient:
     # Targets
     # ------------------------------------------------------------------
 
-    async def list_targets_async(self, *, limit: int = 200) -> list[TargetInstance]:
+    async def list_targets_async(self, *, limit: int | None = None) -> list[TargetInstance]:
         """
         List all available targets.
 
+        Args:
+            limit (int | None): Maximum number of targets to return. None returns all targets.
+
         Returns:
-            list[TargetInstance]: All targets registered on the server.
+            list[TargetInstance]: Registered targets in catalog order.
         """
         from pyrit.models.catalog import TargetInstance
 
-        payload = await self._get_json_async(path="/api/targets", params={"limit": limit})
-        return [TargetInstance.model_validate(item) for item in payload.get("items", [])]
+        items = await self._get_catalog_items_async(path="/api/targets", limit=limit)
+        return [TargetInstance.model_validate(item) for item in items]
+
+    async def get_target_async(self, *, target_registry_name: str) -> TargetInstance | None:
+        """
+        Get one registered target.
+
+        Returns:
+            TargetInstance | None: The target as seen by this caller, or ``None`` if it is not registered.
+
+        Raises:
+            httpx.HTTPStatusError: For non-404 HTTP error responses.
+        """
+        from pyrit.models.catalog import TargetInstance
+
+        resp = await self._send_async(method="GET", path=self._target_path(target_registry_name))
+        if resp.status_code == 404:
+            return None
+        self._raise_for_status(resp)
+        return TargetInstance.model_validate(resp.json())
+
+    async def set_target_credential_async(
+        self,
+        *,
+        target_registry_name: str,
+        credential: str,
+        header: str | None = None,
+        expected_private: bool | None = None,
+    ) -> TargetInstance:
+        """
+        Replace the API key, or one request header, of a target that allows credential updates.
+
+        Args:
+            target_registry_name: The registry name of the target.
+            credential: The new API key, access token, or header value. It is sent only in the request body.
+            header: The request header to set, or None to set the API key. Defaults to None.
+            expected_private: Whether the target is expected to be private; the server refuses the update
+                with 409 when it isn't. None skips the check. Defaults to None.
+
+        Returns:
+            TargetInstance: The updated target.
+        """
+        from pyrit.models.catalog import TargetInstance
+
+        self._require_secure_credential_transport()
+        body: dict[str, Any] = {"headers": {header: credential}} if header else {"api_key": credential}
+        if expected_private is not None:
+            body["private"] = expected_private
+        resp = await self._send_async(
+            method="PUT",
+            path=f"{self._target_path(target_registry_name)}/credentials",
+            json=body,
+        )
+        self._raise_for_status(resp)
+        return TargetInstance.model_validate(resp.json())
 
     # ------------------------------------------------------------------
     # Datasets
@@ -567,6 +629,53 @@ class PyRITApiClient:
             return True
         return parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
 
+    def _require_secure_credential_transport(self) -> None:
+        """
+        Refuse to send a target credential where it is not protected in transit.
+
+        Raises:
+            CliAuthenticationError: If the backend is neither HTTPS nor on this machine.
+        """
+        from pyrit.cli._auth import CliAuthenticationError
+
+        if not self._uses_secure_auth_transport():
+            raise CliAuthenticationError(
+                "Refusing to send a target credential over a non-HTTPS connection. Use HTTPS for remote backends."
+            )
+
+    @staticmethod
+    def _target_path(target_registry_name: str) -> str:
+        """
+        Build the URL path of one target.
+
+        Returns:
+            str: The target path with its name URL-encoded.
+        """
+        from urllib.parse import quote
+
+        return f"/api/targets/{quote(target_registry_name, safe='')}"
+
+    async def _send_async(self, *, method: str, path: str, json: dict[str, Any] | None = None) -> Any:
+        """
+        Send a request, mapping connection failures to ``ServerNotAvailableError``.
+
+        Returns:
+            Any: The ``httpx.Response``.
+
+        Raises:
+            ServerNotAvailableError: On connection failure.
+        """
+        import httpx
+
+        try:
+            return await self._get_client().request(method, path, json=json)
+        except httpx.ConnectError as exc:
+            raise ServerNotAvailableError(
+                f"Cannot connect to PyRIT server at {self._base_url}.\n"
+                "Hint: Use '--start-server' to launch a local backend, "
+                "or pass '--server-url <url>'."
+            ) from exc
+
     async def _add_authorization_header_async(self, request: Any) -> None:
         """Attach a current bearer token to protected backend requests."""
         if self._token_provider is None or request.url.path in {"/api/auth/config", "/api/health"}:
@@ -593,6 +702,43 @@ class PyRITApiClient:
                 "Use 'async with PyRITApiClient(...)' or call __aenter__ first."
             )
         return self._client
+
+    async def _get_catalog_items_async(self, *, path: str, limit: int | None) -> list[dict[str, Any]]:
+        """
+        Read a cursor-paginated catalog up to the optional total limit.
+
+        Args:
+            path (str): Catalog endpoint.
+            limit (int | None): Maximum number of items, or None to fetch all pages.
+
+        Returns:
+            list[dict[str, Any]]: Catalog items in page order.
+
+        Raises:
+            ValueError: If the limit is nonpositive or a required cursor is missing or repeated.
+        """
+        if limit is not None and limit < 1:
+            raise ValueError("Catalog limit must be positive.")
+
+        items: list[dict[str, Any]] = []
+        seen_cursors: set[str] = set()
+        cursor: str | None = None
+        while True:
+            page_size = 200 if limit is None else min(200, limit - len(items))
+            params: dict[str, int | str] = {"limit": page_size}
+            if cursor is not None:
+                params["cursor"] = cursor
+            payload = await self._get_json_async(path=path, params=params)
+            items.extend(payload.get("items", []))
+            if limit is not None and len(items) >= limit:
+                return items[:limit]
+            pagination = payload.get("pagination", {})
+            if not pagination.get("has_more"):
+                return items
+            cursor = pagination.get("next_cursor")
+            if not isinstance(cursor, str) or not cursor or cursor in seen_cursors:
+                raise ValueError(f"Catalog response from {path} has a missing or repeated next-page cursor.")
+            seen_cursors.add(cursor)
 
     async def _get_json_async(self, *, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """

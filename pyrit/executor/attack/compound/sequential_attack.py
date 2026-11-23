@@ -43,6 +43,7 @@ from pyrit.models import (
     AttackSeedGroup,
     ScoringExpectation,
 )
+from pyrit.prompt_target import TargetRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -214,7 +215,11 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
     DELEGATES_SCORING: ClassVar[bool] = True
     FIXED_PARAMS_TYPE = AttackParameters.excluding("next_message", "prepended_conversation")
 
+    # Each child attack validates its own target, so the compound adds no requirement.
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
     RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.ORCHESTRATION
+    IS_COMPOUND: ClassVar[bool] = True
 
     CHILD_ATTACK_RESULT_IDS_KEY: str = "child_attack_result_ids"
     """Metadata key under which the per-child-attack result IDs are stored."""

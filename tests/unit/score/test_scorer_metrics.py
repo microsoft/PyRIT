@@ -110,6 +110,11 @@ class TestScorerMetricsSerialization:
             f1_score=0.8,
             precision=0.85,
             recall=0.75,
+            specificity=0.95,
+            true_positive=1,
+            false_positive=0,
+            true_negative=1,
+            false_negative=0,
             num_scorer_trials=3,
             dataset_name="test_dataset",
             dataset_version="1.0",
@@ -123,6 +128,11 @@ class TestScorerMetricsSerialization:
             f.write(json_str)
         loaded = ObjectiveScorerMetrics.from_json_file(str(file_path))
         assert loaded.num_input_responses == 3
+        assert loaded.specificity == 0.95
+        assert loaded.true_positive == 1
+        assert loaded.false_positive == 0
+        assert loaded.true_negative == 1
+        assert loaded.false_negative == 0
 
         expected = dataclasses.asdict(metrics)
         expected.pop("trial_scores")
@@ -130,6 +140,26 @@ class TestScorerMetricsSerialization:
         actual.pop("trial_scores")
         assert actual == expected
         assert loaded.trial_scores.tolist() == [[True, False], [False, False], [True, True]]
+
+    def test_objective_metrics_load_from_legacy_json_without_specificity_or_counts(self, tmp_path):
+        legacy = {
+            "num_responses": 10,
+            "num_human_raters": 3,
+            "accuracy": 0.9,
+            "accuracy_standard_error": 0.05,
+            "f1_score": 0.8,
+            "precision": 0.85,
+            "recall": 0.75,
+        }
+        file_path = tmp_path / "legacy_objective.json"
+        file_path.write_text(json.dumps({"metrics": legacy}), encoding="utf-8")
+        loaded = ObjectiveScorerMetrics.from_json_file(file_path)
+        assert loaded.accuracy == 0.9
+        assert loaded.specificity is None
+        assert loaded.true_positive is None
+        assert loaded.false_positive is None
+        assert loaded.true_negative is None
+        assert loaded.false_negative is None
 
     def test_to_json_rejects_values_that_are_not_numpy_or_json(self):
         metrics = ObjectiveScorerMetrics(
@@ -303,6 +333,29 @@ class TestGetAllObjectiveMetrics:
 
         assert len(results) == 2
         assert all(isinstance(r.metrics, ObjectiveScorerMetrics) for r in results)
+
+    def test_get_all_objective_metrics_shipped_file_loads_every_row(self):
+        """Test that every row in the shipped objective_achieved_metrics.jsonl loads without silent drops."""
+        from pyrit.common.path import SCORER_EVALS_PATH
+
+        shipped_path = SCORER_EVALS_PATH / "objective" / "objective_achieved_metrics.jsonl"
+        raw_rows = [json.loads(line) for line in shipped_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert len(raw_rows) > 0
+
+        results = get_all_objective_metrics()
+        assert len(results) == len(raw_rows)
+
+        for raw_row, loaded in zip(raw_rows, results, strict=True):
+            raw_metrics = raw_row["metrics"]
+            if "specificity" not in raw_metrics:
+                assert loaded.metrics.specificity is None
+            else:
+                assert loaded.metrics.specificity == raw_metrics["specificity"]
+            for count_field in ("true_positive", "false_positive", "true_negative", "false_negative"):
+                if count_field not in raw_metrics:
+                    assert getattr(loaded.metrics, count_field) is None
+                else:
+                    assert getattr(loaded.metrics, count_field) == raw_metrics[count_field]
 
     def test_get_all_objective_metrics_empty_file(self, tmp_path):
         """Test handling of empty JSONL file."""

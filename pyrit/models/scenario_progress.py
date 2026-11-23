@@ -15,7 +15,7 @@ from pyrit.models.catalog.scenario import (
     ScenarioOverloadSummary,
     ScenarioProducerCounts,
     ScenarioTargetSummary,
-)  # noqa: TC001
+)
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 from pyrit.models.results.attack_result import AttackOutcome, AttackResultRole
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -64,6 +64,24 @@ class ScenarioRunPlanSeedPrompt(BaseModel):
     parameters: list[str] = Field(default_factory=list)
 
 
+class ScenarioRunPlanScorerBinding(BaseModel):
+    """
+    The objective scorer a pool selected for one atomic group.
+
+    Recorded only for runs that use a scorer pool. It is part of the group's id, so a
+    resumed run that would select a different scorer cannot match its saved groups.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Position of the selected candidate in the pool.
+    candidate_index: int = Field(ge=0)
+    #: The selected candidate's evaluation key, if it has one.
+    evaluation: str | None = None
+    #: Content hash of the selected scorer's identifier.
+    scorer_hash: str
+
+
 class ScenarioRunPlanAtomicGroup(BaseModel):
     """A planned atomic-attack group and its ordered units of work."""
 
@@ -78,6 +96,10 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
     #: None for plans persisted before kinds were recorded, so those plans round-trip unchanged.
     kind: ScenarioRunPlanGroupKind | None = None
     selected_technique_eval_hashes: list[str] | None = Field(default=None, min_length=1)
+    #: Unknown for legacy plans; saved attempts and result roles cannot establish topology.
+    is_compound: bool | None = None
+    #: The selected objective scorer for pool runs; absent for single-scorer runs.
+    objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None
 
 
 class ScenarioRunPlan(BaseModel):
@@ -87,6 +109,8 @@ class ScenarioRunPlan(BaseModel):
     scenario_registry_name: str | None = None
     atomic_groups: list[ScenarioRunPlanAtomicGroup]
     seed_groups: list[ScenarioRunPlanSeedGroup]
+    #: Absent on plans created before run-owned seed snapshots.
+    stores_seed_groups: Literal[True] | None = None
 
     @model_validator(mode="after")
     def _validate_normalized_plan(self) -> "ScenarioRunPlan":
@@ -156,6 +180,7 @@ class ScenarioProgressScore(BaseModel):
     status: ScoreStatus
     score_value: str | None = None
     score_rationale: str | None = None
+    score_category: list[str] = Field(default_factory=list)
 
 
 class ScenarioComponentIdentity(BaseModel):
@@ -365,7 +390,10 @@ class ScenarioActiveConversation(BaseModel):
     """A saved objective conversation and the scan execution that produced it."""
 
     attack_result_id: str
+    #: The conversation the attack is working on, or the recorded objective conversation.
     conversation_id: str
+    #: Every objective conversation the attack has started so far, in first-use order.
+    conversation_ids: list[str] = Field(default_factory=list)
     atomic_attack_name: str
     seed_group_id: str | None = None
     objective: str

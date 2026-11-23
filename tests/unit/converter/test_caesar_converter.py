@@ -57,6 +57,16 @@ async def test_caesar_converter_with_description():
     assert "ifmmp" in result.output_text
 
 
+async def test_caesar_converter_description_digit_example_matches_encoding_async() -> None:
+    converter = CaesarConverter(caesar_offset=1, append_description=True)
+    result = await converter.convert_async(prompt="hello", input_type="text")
+    assert 'with a shift of three 7 becomes 0 and "2025" becomes "5358"' in result.output_text
+
+    shift_three = CaesarConverter(caesar_offset=3)
+    assert (await shift_three.convert_async(prompt="7", input_type="text")).output_text == "0"
+    assert (await shift_three.convert_async(prompt="2025", input_type="text")).output_text == "5358"
+
+
 def test_caesar_converter_invalid_offset():
     with pytest.raises(ValueError, match="caesar offset value invalid"):
         CaesarConverter(caesar_offset=26)

@@ -67,6 +67,7 @@ print(f"  Identity Hash: {scorer_identity.hash}")
 # - **F1 Score**: Harmonic mean of precision and recall. Balances both concerns.
 # - **Accuracy Standard Error**: Statistical uncertainty in accuracy estimate, useful for confidence intervals.
 # - **Constant-Guess Baselines** (`baseline_accuracy`, `baseline_f1_score`): What a scorer that ignores the response would get on the same labels. The accuracy baseline always returns the more common human label; the F1 baseline always answers true, the best any constant can do on F1. A scorer whose accuracy or F1 is not above its baseline has not beaten a constant guess on that dataset. Results recorded before these fields existed report `None`.
+# - **Trial Consistency** (`single_trial_accuracy`, `num_inconsistent_responses`, `krippendorff_alpha_model`): With `num_scorer_trials` above 1, the metrics above describe the majority vote of the trials. A scorer normally scores a response once, so `single_trial_accuracy` reports the accuracy of the trials taken one at a time, `num_inconsistent_responses` counts the responses whose trials did not all agree, and `krippendorff_alpha_model` measures the scorer's agreement with itself across trials. All three are `None` for a single trial and for results recorded before these fields existed.
 #
 # **Which metric matters most?**
 # - If false positives are costly (e.g., flagging safe content as harmful) → prioritize **precision**
@@ -82,6 +83,7 @@ print(f"  Identity Hash: {scorer_identity.hash}")
 # - **Mean Absolute Error (MAE)**: Average absolute difference between model and human scores. An MAE of 0.15 means the model is off by 0.15 on average.
 # - **MAE Standard Error**: Uncertainty in the MAE estimate.
 # - **Constant-Guess Baseline MAE** (`baseline_mean_absolute_error`): The MAE of a scorer that ignores the response and always returns the dataset's median human score, the best any constant can do on these labels. A scorer whose MAE is not below this has not beaten a constant guess on that dataset. Results recorded before this field existed report `None`.
+# - **Single-Trial MAE** (`single_trial_mean_absolute_error`): With `num_scorer_trials` above 1, MAE is computed from the median model score across the trials. A scorer normally scores a response once, so this reports the MAE of the trials taken one at a time. `None` for a single trial and for results recorded before this field existed.
 #
 # **Statistical Significance:**
 # - **t-statistic**: From a one-sample t-test. Positive = model scores higher than humans; negative = lower.

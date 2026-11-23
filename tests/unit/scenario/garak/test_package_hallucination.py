@@ -12,9 +12,9 @@ from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import MemoryInterface
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario import BaselineAttackPolicy, DatasetConfiguration
+from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration, DatasetConfiguration, DatasetSource
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import (  # type: ignore[ty:import-not-found]
     PackageHallucination,
     PackageHallucinationTechnique,
     WebInjectionTechnique,
@@ -129,7 +129,7 @@ class TestPackageHallucinationTechnique:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPackageHallucinationAtomicAttacks:
-    async def _initialize(self, scenario, target, techniques, memory):
+    async def _initialize(self, scenario, target, techniques, memory, dataset_config=None):
         with patch(
             "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
             return_value=memory,
@@ -138,6 +138,7 @@ class TestPackageHallucinationAtomicAttacks:
                 args={
                     "objective_target": target,
                     "scenario_techniques": techniques,
+                    "dataset_config": dataset_config,
                 }
             )
             await scenario.initialize_async()
@@ -268,6 +269,76 @@ class TestPackageHallucinationAtomicAttacks:
             assert "<language>" not in group.seeds[1].value
             assert "<task>" not in group.seeds[1].value
             assert "Rust" in group.seeds[1].value
+
+    async def test_resume_reads_only_the_registries(self, mock_objective_target, fake_registry_memory):
+        techniques = [PackageHallucinationTechnique.Rust]
+        original = PackageHallucination()
+        await self._initialize(original, mock_objective_target, techniques, fake_registry_memory)
+        # The stored groups carry the rendered prompts, so resume doesn't need the stub and task corpus.
+        for name in (
+            "garak_package_hallucination_stubs",
+            "garak_package_hallucination_real_tasks",
+            "garak_package_hallucination_unreal_tasks",
+        ):
+            del fake_registry_memory.packages_by_dataset[name]
+
+        resumed = PackageHallucination(scenario_result_id=original._scenario_result_id)
+        await self._initialize(resumed, mock_objective_target, techniques, fake_registry_memory)
+
+        def prompts(scenario):
+            return [group.seeds[1].value for group in scenario._atomic_attacks[0].seed_groups]
+
+        def scorer_identifier(scenario):
+            attack = scenario._atomic_attacks[0].attack_technique.attack
+            return attack.get_attack_scoring_config().objective_scorer.get_identifier()
+
+        assert prompts(resumed) == prompts(original)
+        # The scorer identity includes a digest of its registry, so equal identities mean the same packages.
+        assert scorer_identifier(resumed) == scorer_identifier(original)
+
+    async def test_resume_with_an_added_language_reports_a_configuration_mismatch(
+        self, mock_objective_target, fake_registry_memory
+    ):
+        original = PackageHallucination()
+        await self._initialize(
+            original, mock_objective_target, [PackageHallucinationTechnique.Rust], fake_registry_memory
+        )
+        # Dart was never part of the planned run, so its absent registry is not a deletion.
+        del fake_registry_memory.packages_by_dataset["garak_dart_packages"]
+
+        resumed = PackageHallucination(scenario_result_id=original._scenario_result_id)
+        with pytest.raises(
+            ValueError, match="does not match the current 'PackageHallucination' configuration"
+        ) as error:
+            await self._initialize(
+                resumed,
+                mock_objective_target,
+                [PackageHallucinationTechnique.Rust, PackageHallucinationTechnique.Dart],
+                fake_registry_memory,
+            )
+        assert "no longer in memory" not in str(error.value)
+
+    async def test_resume_names_a_deleted_registry_the_configuration_does_not_list(
+        self, mock_objective_target, fake_registry_memory
+    ):
+        corpus = [
+            "garak_package_hallucination_stubs",
+            "garak_package_hallucination_real_tasks",
+            "garak_package_hallucination_unreal_tasks",
+        ]
+
+        def corpus_only():
+            return DatasetAttackConfiguration(max_per_dataset="all", sources=[DatasetSource(name=n) for n in corpus])
+
+        techniques = [PackageHallucinationTechnique.Rust]
+        original = PackageHallucination()
+        await self._initialize(original, mock_objective_target, techniques, fake_registry_memory, corpus_only())
+        # The scorer reads the Rust registry even though the configuration doesn't list it.
+        del fake_registry_memory.packages_by_dataset["garak_crates_packages"]
+
+        resumed = PackageHallucination(scenario_result_id=original._scenario_result_id)
+        with pytest.raises(ValueError, match="dataset 'garak_crates_packages'.* is no longer in memory"):
+            await self._initialize(resumed, mock_objective_target, techniques, fake_registry_memory, corpus_only())
 
     async def test_max_prompts_per_language_caps_output(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination(max_prompts_per_language=3)

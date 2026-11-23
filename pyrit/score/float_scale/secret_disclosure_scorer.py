@@ -121,8 +121,9 @@ class SecretDisclosureScorer(MessageFloatScaleScorer):
     secret is never written in plain text to the score metadata, the rationale or any log.
     A secret read from a ``DisclosesSecret`` condition is stored with the request and with the
     score's expectation, like the value of an ``OutputMatches`` condition.
-    The scorer identifier records a SHA-256 digest of it, as ``CredentialLeakScorer`` does
-    for its patterns, so scorers for different secrets have different identities. A short
+    For a constructor secret, the scorer identifier records a SHA-256 digest of it, as
+    ``CredentialLeakScorer`` does for its patterns, so scorers for different secrets have
+    different identities. A short
     secret can be recovered from its digest by trying every value, so treat stored
     identifiers as sensitive as the secret.
 
