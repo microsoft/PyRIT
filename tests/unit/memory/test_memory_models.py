@@ -969,6 +969,24 @@ class TestScenarioResultEntry:
         # attack_results should be empty after roundtrip (populated by memory_interface)
         assert recovered.attack_results == {}
 
+    def test_roundtrip_display_group_map(self):
+        sr = self._make_scenario_result(display_group_map={"base64": "encoding"})
+        entry = ScenarioResultEntry(entry=sr)
+        assert entry.get_scenario_result().display_group_map == {"base64": "encoding"}
+
+    @pytest.mark.parametrize("stored", [None, "", "null", "{}"])
+    def test_get_scenario_result_empty_display_group_map(self, stored):
+        entry = ScenarioResultEntry(entry=self._make_scenario_result())
+        entry.display_group_map_json = stored
+        assert entry.get_scenario_result().display_group_map == {}
+
+    @pytest.mark.parametrize("stored", ["{not json", '["a"]', '"a"', '{"a": 1}', '{"a": null}'])
+    def test_get_scenario_result_rejects_invalid_display_group_map(self, stored):
+        entry = ScenarioResultEntry(entry=self._make_scenario_result())
+        entry.display_group_map_json = stored
+        with pytest.raises(ValidationError):
+            entry.get_scenario_result()
+
     def test_str(self):
         sr = self._make_scenario_result()
         entry = ScenarioResultEntry(entry=sr)
