@@ -146,7 +146,7 @@ def _find_images(text: str) -> set[str]:
     return found
 
 
-def _has_on_one_line(text: str, opener: str, middle: str, closer: str) -> bool:
+def _has_on_one_line(text: str, *, opener: str, middle: str, closer: str) -> bool:
     """
     Check whether one line holds ``opener``, then ``middle``, then ``closer``, without overlap.
 
@@ -171,8 +171,8 @@ def _has_on_one_line(text: str, opener: str, middle: str, closer: str) -> bool:
 
 # Linear-time checks with the same verdict as the default inline and reference image patterns.
 _IMAGE_PATTERN_CHECKS = {
-    _INLINE: lambda text: _has_on_one_line(text, "![", "](", ")"),
-    _REFERENCE: lambda text: _has_on_one_line(text, "![", "][", "]"),
+    _INLINE: lambda text: _has_on_one_line(text, opener="![", middle="](", closer=")"),
+    _REFERENCE: lambda text: _has_on_one_line(text, opener="![", middle="][", closer="]"),
 }
 
 

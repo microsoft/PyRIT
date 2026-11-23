@@ -48,6 +48,7 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
     AttackTechniqueIdentifier,
     ChatMessageRole,
     ComponentIdentifier,
@@ -60,11 +61,15 @@ from pyrit.models import (
     DecompositionPath,
     EvaluationIdentifier,
     Finding,
+    FindingCreate,
     FindingEvidence,
     MessagePiece,
     Observation,
     Operation,
     PromptDataType,
+    PromptGenerationProgress,
+    PromptGenerationRecord,
+    PromptGenerationStatus,
     ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
@@ -93,6 +98,7 @@ logger = logging.getLogger(__name__)
 
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
+_LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY = "__pyrit_legacy_unsupported_identifier__"
 
 
 def _load_identifier(
@@ -121,6 +127,8 @@ def _load_identifier(
         ComponentIdentifier | None: The reconstructed identifier, or None if ``stored`` is falsy.
     """
     if not stored:
+        return None
+    if set(stored) == {_LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY}:
         return None
     if pyrit_version is not None:
         stored = {**stored, "pyrit_version": pyrit_version}
@@ -291,6 +299,109 @@ class DatasetMediaEntry(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
 
 
+class PromptGenerationEntry(Base):
+    """A prompt generation job: its request, status, resumable checkpoint, and the dataset name it holds."""
+
+    __tablename__ = "PromptGenerationEntries"
+    __table_args__ = (
+        Index("ix_PromptGenerationEntries_created_at_id", "created_at", "id"),
+        Index("ix_PromptGenerationEntries_dataset_name", "dataset_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    generator: Mapped[str] = mapped_column(String(64), nullable=False)
+    dataset_name: Mapped[str] = mapped_column(Unicode(256), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    execution_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True)
+    request: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    targets: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
+    pause_for_review: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    review_completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    group_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True)
+    group_label: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    group_index: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    progress: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    checkpoint: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    pyrit_version: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    def __init__(self, generation: PromptGenerationRecord) -> None:
+        """Store a validated generation and the PyRIT version that created it."""
+        self.id = generation.id
+        self.created_at = generation.created_at
+        self.pyrit_version = pyrit.__version__
+        for column, value in self.column_values(generation).items():
+            setattr(self, column, value)
+
+    @staticmethod
+    def column_values(generation: PromptGenerationRecord) -> dict[str, Any]:
+        """
+        Map a generation's changeable fields to column values.
+
+        Args:
+            generation (PromptGenerationRecord): The generation to store.
+
+        Returns:
+            dict[str, Any]: Values for every column except the ID, creation time, and PyRIT version.
+        """
+        validated = PromptGenerationRecord.model_validate(generation.model_dump())
+        stored = validated.model_dump(mode="json", include={"request", "targets", "progress", "checkpoint", "summary"})
+        return {
+            **stored,
+            "generator": validated.generator,
+            "dataset_name": validated.dataset_name,
+            "status": validated.status.value,
+            "execution_id": validated.execution_id,
+            "pause_for_review": validated.pause_for_review,
+            "review_completed": validated.review_completed,
+            "group_id": validated.group_id,
+            "group_label": validated.group_label,
+            "group_index": validated.group_index,
+            "error": validated.error,
+            "created_by": validated.created_by,
+            "updated_at": validated.updated_at,
+            "started_at": validated.started_at,
+            "completed_at": validated.completed_at,
+        }
+
+    def get_prompt_generation(self) -> PromptGenerationRecord:
+        """
+        Rebuild the generation model.
+
+        Returns:
+            PromptGenerationRecord: The stored generation.
+        """
+        return PromptGenerationRecord(
+            id=self.id,
+            generator=self.generator,
+            dataset_name=self.dataset_name,
+            status=PromptGenerationStatus(self.status),
+            execution_id=self.execution_id,
+            request=self.request,
+            targets=self.targets,
+            pause_for_review=self.pause_for_review,
+            review_completed=self.review_completed,
+            group_id=self.group_id,
+            group_label=self.group_label,
+            group_index=self.group_index,
+            progress=PromptGenerationProgress.model_validate(self.progress),
+            checkpoint=self.checkpoint,
+            summary=self.summary,
+            error=self.error,
+            created_by=self.created_by,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+            started_at=self.started_at,
+            completed_at=self.completed_at,
+        )
+
+
 class OperationEntry(Base):
     """A saved operation that owns findings."""
 
@@ -327,12 +438,19 @@ class OperationEntry(Base):
 
 
 class FindingEntry(Base):
-    """A saved finding, kept separate from scores and attack results."""
+    """
+    A saved finding, kept separate from scores and attack results.
+
+    Sub-findings reference their parent like decomposed seed objectives do, and a parent stores its ordered paths
+    as JSON. Memory checks that a parent is in the same operation, that parents form no cycle, and that path steps
+    are direct sub-findings.
+    """
 
     __tablename__ = "FindingEntries"
     # Harm types are deliberately unconstrained: HarmCategory changes over time, so reads map unknown values instead.
     __table_args__ = (
         Index("ix_FindingEntries_operation_id", "operation_id"),
+        Index("ix_FindingEntries_parent_finding_id", "parent_finding_id"),
         CheckConstraint(
             "severity IN ('critical', 'important', 'moderate', 'low', 'informational', 'other')",
             name="ck_findings_severity",
@@ -361,19 +479,44 @@ class FindingEntry(Base):
     harm_type: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     harm_type_other: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    parent_finding_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey("FindingEntries.id"), nullable=True
+    )
+    demonstrated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
+    paths: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, finding: Finding) -> None:
         """Store a validated finding."""
         validated = Finding.model_validate(finding.model_dump())
         self.id = validated.id
         self.operation_id = validated.operation_id
-        self.title = validated.title
-        self.description = validated.description
-        self.severity = validated.severity.value
-        self.severity_other = validated.severity_other
-        self.harm_type = validated.harm_type.value if validated.harm_type is not None else None
-        self.harm_type_other = validated.harm_type_other
         self.created_at = validated.created_at.astimezone(UTC)
+        self.set_fields(validated)
+        self.set_paths(validated.paths)
+
+    def set_fields(self, fields: FindingCreate) -> None:
+        """Store a finding's editable fields, leaving its identity, creation time, and paths unchanged."""
+        self.title = fields.title
+        self.description = fields.description
+        self.severity = fields.severity.value
+        self.severity_other = fields.severity_other
+        self.harm_type = fields.harm_type.value if fields.harm_type is not None else None
+        self.harm_type_other = fields.harm_type_other
+        self.parent_finding_id = fields.parent_finding_id
+        self.demonstrated = fields.demonstrated
+
+    def set_paths(self, paths: tuple[DecompositionPath, ...]) -> None:
+        """Store a finding's ordered paths, or none."""
+        self.paths = [path.model_dump(mode="json") for path in paths] or None
+
+    def get_paths(self) -> tuple[DecompositionPath, ...]:
+        """
+        Rebuild the stored paths.
+
+        Returns:
+            tuple[DecompositionPath, ...]: The paths, in stored order.
+        """
+        return tuple(DecompositionPath.model_validate(path) for path in self.paths or ())
 
     def get_finding(self) -> Finding:
         """
@@ -400,6 +543,9 @@ class FindingEntry(Base):
             harm_type=harm_type,
             harm_type_other=harm_type_other,
             created_at=self.created_at,
+            parent_finding_id=self.parent_finding_id,
+            demonstrated=self.demonstrated,
+            paths=self.get_paths(),
         )
 
 
@@ -409,6 +555,7 @@ class FindingEvidenceEntry(Base):
     __tablename__ = "FindingEvidenceEntries"
     __table_args__ = (
         Index("ix_FindingEvidenceEntries_finding_id", "finding_id"),
+        Index("ix_FindingEvidenceEntries_attack_result_id", "attack_result_id"),
         UniqueConstraint("finding_id", "attack_result_id", name="uq_finding_evidence_source"),
     )
 
@@ -448,7 +595,7 @@ class PromptMemoryEntry(Base):
 
     Because of the nature of database and sql alchemy, type ignores are abundant :)
 
-    Parameters:
+    Attributes:
         __tablename__ (str): The name of the database table.
         __table_args__ (dict): Additional arguments for the database table.
         id (Uuid): The unique identifier for the memory entry.
@@ -457,12 +604,12 @@ class PromptMemoryEntry(Base):
         sequence (int): The order of the conversation within a conversation_id.
             Can be the same number for multi-part requests or multi-part responses.
         timestamp (DateTime): The timestamp of the memory entry.
-        labels (dict[str, str]): The labels associated with the memory entry. Several can be standardized.
         prompt_metadata (JSON): The metadata associated with the prompt. This can be specific to any scenarios.
             Because memory is how components talk with each other, this can be component specific.
             e.g. the URI from a file uploaded to a blob store, or a document type you want to upload.
-        converters (list[Converter]): The converters for the prompt.
-        prompt_target (PromptTarget): The target for the prompt.
+        converter_identifiers (list[dict[str, str]] | None): The serialized identifiers of the applied converters.
+        converter_identifier_links (list[PromptConverterIdentifierEntry]): The ordered associations
+            to applied converters.
         original_value_data_type (PromptDataType): The data type of the original prompt (text, image)
         original_value (str): The text of the original prompt. If prompt is an image, it's a link.
         original_value_sha256 (str): The SHA256 hash of the original prompt data.
@@ -1300,7 +1447,7 @@ class EmbeddingDataEntry(Base):
     Represents the embedding data associated with conversation entries in the database.
     Each embedding is linked to a specific conversation entry via an id.
 
-    Parameters:
+    Attributes:
         id (Uuid): The primary key, which is a foreign key referencing the UUID in the PromptMemoryEntries table.
         embedding (ARRAY(Float)): An array of floats representing the embedding vector.
         embedding_type_name (String): The name or type of the embedding, indicating the model or method used.
@@ -1686,7 +1833,7 @@ class SeedEntry(Base):
     running through models with corresponding attack strategies, and applying converters.
     PromptMemoryEntry captures the processed prompt data before and after the above steps.
 
-    Parameters:
+    Attributes:
         __tablename__ (str): The name of the database table.
         __table_args__ (dict): Additional arguments for the database table.
         id (Uuid): The unique identifier for the memory entry.
@@ -1745,6 +1892,7 @@ class SeedEntry(Base):
         String(16), nullable=False, default=SeedOrigin.UNKNOWN.value, server_default="unknown", index=True
     )
     conditions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    is_general_technique: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     # Decomposition members are deduplicated as whole trees, so the parent link has no foreign key:
     # bulk inserts and dataset replacement validate complete trees in code instead.
     parent_objective_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True, index=True)
@@ -1782,6 +1930,7 @@ class SeedEntry(Base):
         self.prompt_group_id = entry.prompt_group_id
         self.seed_type = seed_type
         self.origin = entry.origin.value
+        self.is_general_technique = bool(entry.is_general_technique)
         self.conditions = (
             entry.model_dump(mode="json", include={"conditions"})["conditions"] or None
             if isinstance(entry, SeedObjective)
@@ -1914,6 +2063,7 @@ class SeedEntry(Base):
             parameters=self.parameters,
             conditions=self.conditions,
             response_json_schema=response_json_schema,
+            is_general_technique=self.is_general_technique,
             parent_objective_id=self.parent_objective_id,
             paths=self._decode_paths(),
         )
@@ -2003,6 +2153,7 @@ class SeedEntry(Base):
                     num_turns=config.get("num_turns", 3),
                     sequence=config.get("sequence", 0),
                     pyrit_version=config.get("pyrit_version"),
+                    is_general_technique=self.is_general_technique,
                     **prompt_config,
                 )
             except (OSError, ValueError) as exc:
@@ -2034,6 +2185,7 @@ class SeedEntry(Base):
             prompt_group_id=self.prompt_group_id,
             sequence=self.sequence or 0,
             role=self.role,
+            is_general_technique=self.is_general_technique,
         )
 
 
@@ -2041,7 +2193,7 @@ class AttackResultEntry(Base):
     """
     Represents the attack result data in the database.
 
-    Parameters:
+    Attributes:
         __tablename__ (str): The name of the database table.
         __table_args__ (dict): Additional arguments for the database table.
         id (Uuid): The unique identifier for the attack result entry.
@@ -2628,9 +2780,15 @@ class ScenarioResultEntry(Base):
         # Return empty attack_results - will be populated by memory_interface
         attack_results: dict[str, list[AttackResult]] = {}
 
-        base_identifier = ComponentIdentifier.model_validate(
-            {**self.scenario_identifier, "pyrit_version": stored_version}
-        )
+        # Rows from v0.13 and v0.14 kept scenario_init_data, which was always null for built-in
+        # scenarios, and the v1.0 rename carried that null over into scenario_identifier. The
+        # denormalized scenario_version column survives the upgrade, so carry it into the
+        # reconstructed identifier rather than letting the version default to 1.
+        stored_identifier = self.scenario_identifier or {
+            "class_name": self.scenario_name,
+            "version": self.scenario_version,
+        }
+        base_identifier = ComponentIdentifier.model_validate({**stored_identifier, "pyrit_version": stored_version})
         scenario_identifier = ScenarioIdentifier.from_component_identifier(
             base_identifier.with_eval_hash(ScenarioEvaluationIdentifier(base_identifier).eval_hash)
         )
@@ -2665,3 +2823,71 @@ class ScenarioResultEntry(Base):
             str: String representation of the scenario result entry
         """
         return f"ScenarioResultEntry: {self.scenario_name} (version {self.scenario_version})"
+
+
+class ScenarioPlanSeedGroupEntry(Base):
+    """
+    One seed group a scenario run planned, stored when the run is created.
+
+    Resume rebuilds the run's population from these rows instead of reading its datasets, so
+    editing, refreshing, or deleting a dataset doesn't change what a run resumes on. Rows are
+    deleted with their scenario result.
+    """
+
+    __tablename__ = "ScenarioPlanSeedGroupEntries"
+    __table_args__ = (
+        Index("ix_ScenarioPlanSeedGroupEntries_scenario_result_id_position", "scenario_result_id", "position"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    scenario_result_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID, ForeignKey("ScenarioResultEntries.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The population key the group was planned under, usually its dataset name.
+    dataset_name: Mapped[str] = mapped_column(Unicode, nullable=False)
+    #: The group's order in the planned population, across all datasets.
+    position: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    #: The ``AttackSeedGroup`` as JSON.
+    seed_group: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    def __init__(
+        self, *, scenario_result_id: uuid.UUID, dataset_name: str, position: int, seed_group: AttackSeedGroup
+    ) -> None:
+        """
+        Store one planned seed group.
+
+        Args:
+            scenario_result_id (uuid.UUID): The run that planned the group.
+            dataset_name (str): The population key the group was planned under.
+            position (int): The group's order in the planned population.
+            seed_group (AttackSeedGroup): The planned group.
+        """
+        self.id = uuid.uuid4()
+        self.scenario_result_id = scenario_result_id
+        self.dataset_name = dataset_name
+        self.position = position
+        self.seed_group = seed_group.model_dump(mode="json")
+
+    def get_seed_group(self) -> AttackSeedGroup:
+        """
+        Rebuild the planned seed group.
+
+        Returns:
+            AttackSeedGroup: The original planned inputs, without reapplying template preparation.
+        """
+        seeds: list[Any] = []
+        for seed in self.seed_group["seeds"]:
+            if seed["seed_type"] == "simulated_conversation":
+                seed = dict(seed)
+                # The stored prompt values have already had their one-shot template substitution.
+                for field in (
+                    "adversarial_chat_system_prompt",
+                    "simulated_target_system_prompt",
+                    "next_message_system_prompt",
+                ):
+                    if (prompt := seed.get(field)) is not None:
+                        seed[field] = {**prompt, "is_jinja_template": False}
+                # Group validation strips prompt-only keys such as ``sequence`` from dicts, so pass an instance.
+                seed = SeedSimulatedConversation.model_validate(seed)
+            seeds.append(seed)
+        return AttackSeedGroup.model_validate({**self.seed_group, "seeds": seeds})

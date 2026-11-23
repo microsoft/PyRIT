@@ -52,6 +52,7 @@ from pyrit.backend.models.targets import TargetTypeResponse
 from pyrit.backend.routes import version as version_routes
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.routes.scores import _get_user_identifier
+from pyrit.backend.routes.targets import _saved_entry_owner
 from pyrit.backend.services import AttackService
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError
 from pyrit.backend.services.chat_scoring_service import ChatScoringError
@@ -59,7 +60,8 @@ from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
-from pyrit.models.catalog import TargetInstance
+from pyrit.models.catalog import SavedEntryOwner, TargetInstance
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -272,6 +274,85 @@ class TestAttackRoutes:
             response = client.post("/api/attacks", json={"objective": "", "name": "Legacy objective"})
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         service.assert_not_called()
+
+    @pytest.mark.parametrize("legacy_name", ["operator", "operation"])
+    def test_legacy_attribution_alias_accepts_value_at_limit(self, client: TestClient, legacy_name: str) -> None:
+        """A legacy alias accepts the dedicated parameter's maximum value length."""
+        value = "x" * 128
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks", params={"label": f"{legacy_name}:{value}"})
+
+        assert response.status_code == status.HTTP_200_OK
+        assert mock_service.list_attacks_async.call_args.kwargs[legacy_name] == [value]
+
+    @pytest.mark.parametrize("legacy_name", ["operator", "operation"])
+    def test_legacy_attribution_alias_rejects_value_over_limit(self, client: TestClient, legacy_name: str) -> None:
+        """A legacy alias rejects values beyond the dedicated parameter's maximum length."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            response = client.get("/api/attacks", params={"label": f"{legacy_name}:{'x' * 129}"})
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        mock_get_service.assert_not_called()
+
+    def test_legacy_operator_alias_same_set_in_any_order(self, client: TestClient) -> None:
+        """An identical operator set in a different order reaches the service unchanged."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get(
+                "/api/attacks",
+                params=[
+                    ("operator", "alice"),
+                    ("operator", "bob"),
+                    ("label", "operator:bob"),
+                    ("label", "operator:alice"),
+                ],
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert sorted(mock_service.list_attacks_async.call_args.kwargs["operator"]) == ["alice", "bob"]
+
+    def test_legacy_operator_alias_ignores_duplicate_values(self, client: TestClient) -> None:
+        """Duplicates on either side still describe one filter, not a conflict.
+
+        IN (...) and the pagination fingerprint both deduplicate values, so
+        one alice and two alices are the same filter set.
+        """
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get(
+                "/api/attacks",
+                params=[("operator", "alice"), ("label", "operator:alice"), ("label", "operator:alice")],
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        # The legacy alias list is forwarded verbatim; downstream IN filters and
+        # the pagination fingerprint deduplicate it, so the set is the contract.
+        assert set(mock_service.list_attacks_async.call_args.kwargs["operator"]) == {"alice"}
 
     def test_create_attack_half_branch_spec_is_a_bad_request(self, client: TestClient) -> None:
         """A half provided branching spec answers 400 like the conversation endpoint, not 404."""
@@ -1394,6 +1475,164 @@ class TestTargetRoutes:
             assert response.status_code == status.HTTP_403_FORBIDDEN
             assert "administrator access" in response.json()["detail"]
 
+    @pytest.mark.parametrize(
+        ("error", "status_code"),
+        [
+            (SavedEntryConflictError("A saved target named 'contoso' already exists."), status.HTTP_409_CONFLICT),
+            (SavedEntryStorageError("Saved targets can't be written right now."), status.HTTP_503_SERVICE_UNAVAILABLE),
+        ],
+    )
+    def test_create_target_maps_save_errors(self, client: TestClient, error: Exception, status_code: int) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=error)
+
+            response = client.post(
+                "/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}, "persist": True}
+            )
+
+        assert response.status_code == status_code
+        assert response.json()["detail"] == str(error)
+
+    def test_create_target_marks_a_save_refusal_so_the_target_can_be_created_without_saving(
+        self, client: TestClient
+    ) -> None:
+        refusal = NotSaveableError("Saved entries can't hold credentials ('api_key').")
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=refusal)
+
+            response = client.post(
+                "/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}, "persist": True}
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {
+            "type": "/errors/not-saveable",
+            "title": "Can't be saved",
+            "status": 400,
+            "detail": "Saved entries can't hold credentials ('api_key'). It can still be created without saving it.",
+            "instance": "/api/targets",
+            "not_saveable_reason": "Saved entries can't hold credentials ('api_key').",
+        }
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("persist", [False, True])
+    def test_create_target_answers_a_taken_name_with_an_untyped_conflict(
+        self, client: TestClient, persist: bool
+    ) -> None:
+        name = f"taken_{uuid.uuid4().hex[:8]}"
+        body = {"name": name, "type": "TextTarget", "params": {}}
+        assert client.post("/api/targets", json=body).status_code == status.HTTP_201_CREATED
+
+        response = client.post("/api/targets", json={**body, "persist": persist})
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json() == {"detail": f"Instance '{name}' already exists"}
+
+    def test_create_target_leaves_other_bad_requests_unmarked(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("bad endpoint"))
+
+            response = client.post("/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {"detail": "bad endpoint"}
+
+    def test_check_target_saveability_answers_with_the_save_checks(self, client: TestClient) -> None:
+        params = {"endpoint": "https://contoso.openai.azure.com/openai/v1", "model_name": "gpt-4o", "api_key": "sk-1"}
+
+        with_key = client.post("/api/targets/saveability", json={"type": "OpenAIChatTarget", "params": params})
+        with_identity = client.post(
+            "/api/targets/saveability", json={"type": "OpenAIChatTarget", "params": params, "auth_mode": "identity"}
+        )
+
+        assert with_key.status_code == status.HTTP_200_OK
+        assert with_key.json() == {"not_saveable_reason": "Saved entries can't hold credentials ('api_key')."}
+        assert with_identity.json() == {"not_saveable_reason": None}
+
+    @pytest.mark.parametrize(
+        ("error", "status_code"),
+        [
+            (ValueError("bad endpoint"), status.HTTP_400_BAD_REQUEST),
+            (PermissionError("requires administrator access"), status.HTTP_403_FORBIDDEN),
+        ],
+    )
+    def test_check_target_saveability_refuses_what_creating_would(
+        self, client: TestClient, error: Exception, status_code: int
+    ) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.check_saveability_async = AsyncMock(side_effect=error)
+
+            response = client.post("/api/targets/saveability", json={"type": "TextTarget", "params": {}})
+
+        assert response.status_code == status_code
+        assert response.json() == {"detail": str(error)}
+
+    def test_create_target_passes_the_saved_entries_source_and_no_owner_when_sign_in_is_off(
+        self, client: TestClient
+    ) -> None:
+        with (
+            patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
+            patch.object(client.app.state, "registry_recipes_source", "/srv/registry-recipes", create=True),
+        ):
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post("/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}, "persist": True})
+
+        kwargs = mock_get_service.return_value.create_target_async.call_args.kwargs
+        assert (kwargs["recipes_source"], kwargs["owner"], kwargs["request"].persist) == (
+            "/srv/registry-recipes",
+            None,
+            True,
+        )
+
+    def test_create_target_records_the_signed_in_user_as_the_owner(self, client: TestClient) -> None:
+        owner = SavedEntryOwner(oid="user-oid", name="Ada")
+        with (
+            patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
+            patch("pyrit.backend.routes.targets._saved_entry_owner", return_value=owner),
+        ):
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post("/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}, "persist": True})
+
+        assert mock_get_service.return_value.create_target_async.call_args.kwargs["owner"] == owner
+
+    def test_create_target_records_no_owner_when_not_saving(self, client: TestClient) -> None:
+        with (
+            patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
+            patch("pyrit.backend.routes.targets._saved_entry_owner") as saved_entry_owner,
+        ):
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post("/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}})
+
+        assert mock_get_service.return_value.create_target_async.call_args.kwargs["owner"] is None
+        saved_entry_owner.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("fields", "message"),
+        [
+            ({}, "persist requires a name"),
+            ({"name": "Contoso-GPT"}, "Invalid registry name"),
+            ({"name": "contoso", "register": False}, "persist requires register=true"),
+        ],
+    )
+    def test_create_target_checks_what_persist_needs(
+        self, client: TestClient, fields: dict[str, object], message: str
+    ) -> None:
+        response = client.post("/api/targets", json={"type": "TextTarget", "params": {}, "persist": True, **fields})
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert message in json.dumps(response.json())
+
+    @pytest.mark.parametrize(("name", "expected"), [("Ada", "Ada"), ("", "ada@example.invalid")])
+    def test_saved_entry_owner_is_the_signed_in_user(self, name: str, expected: str) -> None:
+        request = Request({"type": "http"})
+        request.state.user = AuthenticatedUser(oid="user-oid", name=name, email="ada@example.invalid", groups=[])
+
+        assert _saved_entry_owner(request) == SavedEntryOwner(oid="user-oid", name=expected)
+        assert _saved_entry_owner(Request({"type": "http"})) is None
+
     def test_create_target_passes_admin_flag_from_request(self, client: TestClient) -> None:
         """The route resolves administrator access and forwards it to the service."""
         with (
@@ -1434,6 +1673,24 @@ class TestTargetRoutes:
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert data["target_registry_name"] == "target-1"
+
+    def test_get_target_named_saveability_reaches_the_lookup(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_target_async = AsyncMock(
+                return_value=TargetInstance(
+                    target_registry_name="saveability",
+                    identifier=TargetIdentifier(class_name="TextTarget"),
+                    capabilities=TargetCapabilities(),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/targets/saveability")
+
+            assert response.status_code == status.HTTP_200_OK
+            assert response.json()["target_registry_name"] == "saveability"
+            assert mock_service.get_target_async.call_args.kwargs["target_registry_name"] == "saveability"
 
     def test_get_target_not_found(self, client: TestClient) -> None:
         """Test getting a non-existent target."""

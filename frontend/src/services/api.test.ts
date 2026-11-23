@@ -43,8 +43,8 @@ import {
 import { compatibility, COMPATIBILITY_HEADER } from "./compatibility";
 import { toApiError } from "./errors";
 import { makeAnalyticsFacets, makeAnalyticsReport, makeAnalyticsResults } from "@/test-utils/analyticsFixtures";
+import type { AttackFindingListResponse, FindingExportRequest } from "@/types";
 import { makeTarget } from "@/test-utils/targetFixtures";
-import type { FindingExportRequest } from "@/types";
 import { DEFAULT_ANALYTICS_VIEW } from "@/utils/attackAnalytics";
 
 describe("api service", () => {
@@ -101,6 +101,23 @@ describe("api service", () => {
       (apiClient.delete as jest.Mock).mockResolvedValueOnce({ data: undefined });
       expect(await operationsApi.deleteFinding("a/b", "c/d")).toBeUndefined();
       expect(apiClient.delete).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd");
+    });
+    it("filters sub-findings and replaces a finding's paths under encoded IDs", async () => {
+      const page = { items: [], has_more: false, next_offset: null };
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: page });
+      await operationsApi.listFindings("a/b", { limit: 100, offset: 0, parent_finding_id: "c/d" });
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings", {
+        params: { limit: 100, offset: 0, parent_finding_id: "c/d" },
+      });
+      await operationsApi.listFindings("a/b", { limit: 20, offset: 0, top_level: true });
+      expect(apiClient.get).toHaveBeenLastCalledWith("/operations/a%2Fb/findings", {
+        params: { limit: 20, offset: 0, top_level: true },
+      });
+      const request = { paths: [{ name: "Credential theft", steps: ["e", "f"] }] };
+      const saved = { id: "c/d", paths: [{ id: "path", name: "Credential theft", steps: ["e", "f"], complete: false }] };
+      (apiClient.put as jest.Mock).mockResolvedValueOnce({ data: saved });
+      expect(await operationsApi.replaceFindingPaths("a/b", "c/d", request)).toEqual(saved);
+      expect(apiClient.put).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd/paths", request);
     });
     it("downloads the explicitly selected findings as a cancellable file", async () => {
       const request: FindingExportRequest = {
@@ -866,6 +883,28 @@ describe("api service", () => {
       expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack/metadata", {
         params: { conversation_id: "selected" },
       });
+    });
+
+    it("should get the findings linked to an attack", async () => {
+      const data: AttackFindingListResponse = {
+        attack_result_id: "attack/id",
+        items: [{
+          id: "finding", operation_id: "operation", operation_name: "Red team", evidence_id: "evidence",
+          title: "Protected system instructions disclosed", description: "", severity: "important",
+          created_at: "2026-11-06T00:00:00Z",
+        }],
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data });
+
+      expect(await attacksApi.getAttackFindings("attack/id")).toEqual(data);
+      expect(apiClient.get).toHaveBeenCalledTimes(1);
+      expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/findings");
+    });
+
+    it("should propagate attack finding errors", async () => {
+      const error = new Error("Findings unavailable");
+      (apiClient.get as jest.Mock).mockRejectedValueOnce(error);
+      await expect(attacksApi.getAttackFindings("attack")).rejects.toBe(error);
     });
 
     it("should get attack messages", async () => {

@@ -182,17 +182,17 @@ class _SignatureVisitor(ast.NodeVisitor):
         self._in_class_body: list[bool] = [False]
         self.violations: list[Violation] = []
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802 (ast.NodeVisitor API)
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # ast.NodeVisitor API
         self._scope.append(node.name)
         self._in_class_body.append(True)
         self.generic_visit(node)
         self._in_class_body.pop()
         self._scope.pop()
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802 (ast.NodeVisitor API)
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # ast.NodeVisitor API
         self._visit_function(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802 (ast.NodeVisitor API)
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # ast.NodeVisitor API
         self._visit_function(node)
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:

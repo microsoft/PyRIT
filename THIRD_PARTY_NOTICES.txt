@@ -9,8 +9,11 @@ PyRIT includes adapted assignment-sampling algorithms, generation schemas,
 policy-scoring rules, and prompt templates from ASSERT v0.3.0, revision
 04b713fe73879208369750b3bd5ad53544f3eecc (2026-09-04). Microsoft Corporation adapted these
 portions to native PyRIT targets, generation strategies, typed seed datasets,
-and true/false conversation scorers. Scoring templates are adaptations, not
-verbatim copies of ASSERT's full judge or its XML citation protocol.
+conversation scorers, and judge presets. Scoring templates are adaptations, not
+verbatim copies of ASSERT's full judge or its XML citation protocol. The tester
+prompt keeps ASSERT's text except for its turn-counter sentence.
+PyRIT also redistributes ASSERT's behavior and scenario library presets, unchanged
+except for added attribution headers, as bundled behavior and suite presets.
 ASSERT is not a runtime dependency.
 
 The provenance inventory in third_party/assert-provenance.json identifies the

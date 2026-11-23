@@ -60,6 +60,7 @@ from pyrit.models import (
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanGroupKind,
+    ScenarioRunPlanScorerBinding,
     ScenarioRunPlanSeedGroup,
     ScenarioRunPlanSeedPrompt,
     ScenarioRunSizeComponent,
@@ -80,11 +81,12 @@ from pyrit.models.scenario_readiness import (
 from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
-from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.atomic_attack import AtomicAttack, compute_atomic_group_id
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetSource,
     DatasetSourceKind,
+    MissingDatasetError,
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
@@ -100,6 +102,8 @@ from pyrit.scenario.core.scenario_target_defaults import (
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, IncompatibleTechniquePolicy
 from pyrit.score import (
+    CompatibleScorers,
+    ScorerRequirements,
     SelfAskRefusalScorer,
     SelfAskTrueFalseScorer,
     TrueFalseCompositeScorer,
@@ -113,9 +117,9 @@ if TYPE_CHECKING:
     from pyrit.converter import Converter
     from pyrit.models import ComponentIdentifier
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+    from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 logger = logging.getLogger(__name__)
-
 
 #: Param names a scenario must not declare via ``supported_parameters()``. These
 #: collide with promoted identity fields on ``ScenarioIdentifier`` and would be
@@ -178,6 +182,16 @@ class Scenario(ABC):
     #: an unavailable verdict is an expected result rather than a scenario error.
     RAISE_IF_DEFAULT_SCORER_BLOCKS: ClassVar[bool] = True
 
+    #: Whether the scenario accepts a ``CompatibleScorers`` pool as its objective scorer, selects
+    #: from it per attack population, and checks ``DatasetSource.scorer_requirements``. Unmigrated
+    #: scenarios reject pools and declared dataset requirements explicitly, so neither is silently ignored.
+    SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = False
+
+    # Whether building gives every selected technique the scenario's objective scoring and, under
+    # SKIP, skips a technique no objective scorer can judge. Readiness then ignores what such a
+    # technique alone needs.
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = False
+
     #: Whether the scenario applies ``technique_converters``. Scenarios that don't set this to
     #: False so the parameter isn't declared, and passing it fails instead of being ignored.
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = True
@@ -226,7 +240,7 @@ class Scenario(ABC):
         version: int,
         technique_class: type[ScenarioTechnique],
         default_dataset_config: DatasetAttackConfiguration,
-        objective_scorer: TrueFalseScorer | None,
+        objective_scorer: TrueFalseScorer | CompatibleScorers | None,
         scenario_result_id: uuid.UUID | str | None = None,
         uses_default_adversarial_target: bool | None = None,
         adversarial_target: PromptTarget | None = None,
@@ -243,7 +257,9 @@ class Scenario(ABC):
                 ``technique_class.default()``.
             default_dataset_config (DatasetAttackConfiguration): The default dataset configuration used
                 when no ``dataset_config`` is passed to ``initialize_async``.
-            objective_scorer (Scorer): The objective scorer used to evaluate attack results.
+            objective_scorer (TrueFalseScorer | CompatibleScorers | None): The objective scorer used
+                to evaluate attack results, or, for scenarios that set
+                ``SUPPORTS_OBJECTIVE_SCORER_POOL``, an ordered pool selected from per attack population.
             adversarial_target: Explicit scenario-owned generation target.
             uses_default_adversarial_target (bool | None): Whether this scenario uses the shared
                 adversarial target. None derives usage from its registered technique factories.
@@ -252,6 +268,9 @@ class Scenario(ABC):
                 Can be either a UUID object or a string representation of a UUID.
                 If provided and found in memory, the scenario will resume from prior progress.
                 All other parameters must still match the stored scenario configuration.
+
+        Raises:
+            TypeError: If a scorer pool is passed to a scenario that does not support one.
 
         Note:
             Attack runs are populated by calling initialize_async(), which invokes the
@@ -294,9 +313,18 @@ class Scenario(ABC):
         # Datasets the scenario reads in full to build its attacks, apart from dataset_config.
         self._required_data: ScenarioRequiredData | None = None
 
+        if isinstance(objective_scorer, CompatibleScorers):
+            if not type(self).SUPPORTS_OBJECTIVE_SCORER_POOL:
+                raise TypeError(
+                    f"{type(self).__name__} does not accept a CompatibleScorers pool. Pass one TrueFalseScorer."
+                )
+            self._objective_scorer_pool: CompatibleScorers | None = objective_scorer
+            objective_scorer = None
+        else:
+            self._objective_scorer_pool = None
         self._configured_objective_scorer = objective_scorer
         self._supplied_objective_scorer = objective_scorer
-        self._objective_scorer_identifier = objective_scorer.get_identifier() if objective_scorer is not None else None
+        self._objective_scorer_identifier = self._get_supplied_objective_scorer_identifier()
 
         self._name = name if name else type(self).__name__
         self._memory = CentralMemory.get_memory_instance()
@@ -331,9 +359,37 @@ class Scenario(ABC):
         self._resolved_adversarial_target: PromptTarget | None = None
         self._resolved_scoring_target: PromptTarget | None = None
 
+    def _get_supplied_objective_scorer_identifier(self) -> "ComponentIdentifier | None":
+        """
+        Identify the caller-supplied scorer, before any default is resolved.
+
+        Returns:
+            ComponentIdentifier | None: The scorer identity, or None when the default will be used
+                or the run selects from a scorer pool.
+        """
+        if self._supplied_objective_scorer is not None:
+            return self._supplied_objective_scorer.get_identifier()
+        return None
+
+    @property
+    def _objective_scorer_input(self) -> TrueFalseScorer | CompatibleScorers:
+        """The supplied scorer pool, or the single scorer (resolving the default when needed)."""
+        if self._objective_scorer_pool is not None:
+            return self._objective_scorer_pool
+        return self._objective_scorer
+
     @property
     def _objective_scorer(self) -> TrueFalseScorer:
-        """The supplied scorer or the resolved scenario-specific default scorer."""
+        """
+        The supplied scorer or the resolved scenario-specific default scorer.
+
+        Raises:
+            TypeError: If this run uses a scorer pool; read ``_objective_scorer_input`` instead.
+        """
+        if self._objective_scorer_pool is not None:
+            raise TypeError(
+                f"{type(self).__name__} uses a scorer pool; each attack population has its own selected scorer."
+            )
         if self._configured_objective_scorer is None:
             self._configured_objective_scorer = self._get_default_objective_scorer()
             self._objective_scorer_identifier = self._configured_objective_scorer.get_identifier()
@@ -676,9 +732,7 @@ class Scenario(ABC):
     def _reset_runtime_bindings(self) -> None:
         """Discard lazily resolved roles when the caller replaces the configuration."""
         self._configured_objective_scorer = self._supplied_objective_scorer
-        self._objective_scorer_identifier = (
-            self._supplied_objective_scorer.get_identifier() if self._supplied_objective_scorer is not None else None
-        )
+        self._objective_scorer_identifier = self._get_supplied_objective_scorer_identifier()
         self._resolved_scoring_target = None
         self._resolved_adversarial_target = None
 
@@ -1009,6 +1063,7 @@ class Scenario(ABC):
         self._dataset_config = (
             dataset_config if dataset_config is not None else self._resolved_default_dataset_config
         ).with_overrides()
+        self._validate_dataset_scorer_requirements()
         self._required_data = self.get_required_data()
         self._move_required_sources_out_of_dataset_config()
         options = self.get_dataset_options()
@@ -1026,6 +1081,24 @@ class Scenario(ABC):
             )
         self._load_required_data_like_dataset_config()
         self._validate_runtime_configuration()
+
+    def _validate_dataset_scorer_requirements(self) -> None:
+        """
+        Reject dataset scorer requirements this scenario would not check.
+
+        Raises:
+            ValueError: If a dataset source declares scorer requirements and the scenario does
+                not enforce them.
+        """
+        if type(self).SUPPORTS_OBJECTIVE_SCORER_POOL:
+            return
+        declared = sorted(self._dataset_config.get_scorer_requirements_by_dataset())
+        if declared:
+            raise ValueError(
+                f"{type(self).__name__} does not check DatasetSource.scorer_requirements, which these "
+                f"datasets declare: {', '.join(declared)}. Remove them, or use a scenario that selects "
+                "its objective scorer per dataset."
+            )
 
     def _load_required_data_like_dataset_config(self) -> None:
         """
@@ -1176,6 +1249,61 @@ class Scenario(ABC):
             self._dataset_config.source_limit(source.name) != "all" for source in self._dataset_config.sources
         ):
             raise ValueError("This scenario uses ingredient datasets and does not support per-dataset limits.")
+        self._validate_required_evaluations()
+
+    def _validate_required_evaluations(self) -> None:
+        """
+        Reject a required evaluation that no objective scorer candidate is bound to.
+
+        A key is configuration: a typo, or a key with a single unbound scorer, can never match.
+        A bound candidate judges only its own evaluation, so a dataset that requires none needs
+        an unbound candidate. Both fail here, before any dataset is read.
+
+        Raises:
+            ValueError: If an evaluation the scenario or a dataset requires has no bound candidate,
+                if a dataset requires no evaluation and every candidate is bound, or if the scenario
+                and a dataset require different evaluations.
+        """
+        if not type(self).SUPPORTS_OBJECTIVE_SCORER_POOL:
+            return
+        scenario_requirements = self._get_objective_scorer_requirements()
+        scenario_evaluation = scenario_requirements.evaluation if scenario_requirements is not None else None
+        dataset_requirements = self._dataset_config.get_scorer_requirements_by_dataset()
+        pool = self._objective_scorer_pool
+        if pool is not None and scenario_evaluation is None and None not in pool.evaluations:
+            undeclared = sorted(
+                name
+                for name in self._dataset_config.dataset_names
+                if name not in dataset_requirements or dataset_requirements[name].evaluation is None
+            )
+            if undeclared:
+                raise ValueError(
+                    "Every objective scorer candidate is bound to an evaluation, but these datasets require none: "
+                    f"{', '.join(repr(name) for name in undeclared)}. Declare scorer_requirements on them, or add "
+                    "a candidate without an evaluation."
+                )
+        owners: dict[str, list[str]] = {}
+        if scenario_evaluation is not None:
+            owners.setdefault(scenario_evaluation, []).append("the scenario")
+        for name, requirements in sorted(dataset_requirements.items()):
+            evaluation = ScorerRequirements.combine(scenario_requirements, requirements).evaluation
+            if evaluation is not None:
+                owners.setdefault(evaluation, []).append(f"dataset '{name}'")
+        available = {key for key in pool.evaluations if key is not None} if pool is not None else set()
+        missing = {key: names for key, names in owners.items() if key not in available}
+        if not missing:
+            return
+        required = "; ".join(f"{key!r} (required by {', '.join(names)})" for key, names in sorted(missing.items()))
+        if pool is None:
+            raise ValueError(
+                f"A single objective scorer is not bound to any evaluation, but these are required: {required}. "
+                "Pass a CompatibleScorers pool with a ScorerCandidate bound to each."
+            )
+        known = ", ".join(repr(key) for key in sorted(available)) or "none"
+        raise ValueError(
+            f"No objective scorer candidate is bound to these required evaluations: {required}. "
+            f"Evaluations in the pool: {known}. Check the key for a typo, or add a candidate bound to it."
+        )
 
     def _get_required_objective_keys(self) -> list[str]:
         """Return population names that must retain at least one objective."""
@@ -1198,6 +1326,19 @@ class Scenario(ABC):
             factories[local_factory.name] = local_factory
         return factories
 
+    @staticmethod
+    def _get_target_requirements(factory: "AttackTechniqueFactory") -> "TechniqueRequirements":
+        """
+        Return the effective technique requirements used by readiness and execution.
+
+        Args:
+            factory (AttackTechniqueFactory): The selected attack technique.
+
+        Returns:
+            TechniqueRequirements: Effective requirements for the selected technique.
+        """
+        return factory.requirements
+
     def _check_adversarial_target(self, *, target: PromptTarget) -> list[str]:
         """
         Check scenario-owned generation consumers in addition to the selected factories.
@@ -1207,6 +1348,35 @@ class Scenario(ABC):
         """
         return []
 
+    def _skips_technique(self, factory: "AttackTechniqueFactory") -> bool:
+        """
+        Whether building would skip this technique, so readiness ignores what it alone needs.
+
+        Args:
+            factory (AttackTechniqueFactory): The selected attack technique.
+
+        Returns:
+            bool: True under SKIP when the objective target, or every objective scorer in a scenario
+                that judges each technique with its own scoring, fails the technique's requirements.
+        """
+        if self._incompatible_technique_policy is not IncompatibleTechniquePolicy.SKIP:
+            return False
+        if self._objective_target is not None and self._get_target_requirements(factory).check_target(
+            target=self._objective_target, attack_class=factory.attack_class
+        ):
+            return True
+        if not type(self)._SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE:
+            return False
+        if self._objective_scorer_pool is not None:
+            scorers: list[TrueFalseScorer] = [candidate.scorer for candidate in self._objective_scorer_pool.candidates]
+        else:
+            try:
+                scorers = [self._objective_scorer]
+            except ValueError:
+                # Readiness reports the unresolved scorer; only the scoring config can be checked.
+                return bool(factory.check_objective_scorer())
+        return all(factory.check_objective_scorer(scorer=scorer) for scorer in scorers)
+
     def _requires_default_adversarial_target(self) -> bool:
         if self._supplied_adversarial_target is not None:
             return True
@@ -1214,22 +1384,55 @@ class Scenario(ABC):
             return self._uses_default_adversarial_target
         factories = self._get_readiness_factories()
         selected = [factories.get(technique.value) for technique in self._scenario_techniques]
-        if (
-            self._incompatible_technique_policy is IncompatibleTechniquePolicy.SKIP
-            and self._objective_target is not None
-        ):
-            selected = [
-                factory
-                for factory in selected
-                if factory is None
-                or not factory.requirements.check_target(
-                    target=self._objective_target,
-                    attack_class=factory.attack_class,
-                )
-            ]
+        selected = [factory for factory in selected if factory is None or not self._skips_technique(factory)]
         return any(factory is not None and factory.uses_default_adversarial_target for factory in selected) or (
             any(factory is None for factory in selected) and self.uses_default_adversarial_target
         )
+
+    def _add_objective_scorer_readiness(self, *, result: ScenarioReadiness) -> None:
+        """
+        Record the objective scorer binding, or every pool candidate, in a readiness result.
+
+        Args:
+            result (ScenarioReadiness): The readiness result to extend.
+        """
+        if self._objective_scorer_pool is not None:
+            for index, candidate in enumerate(self._objective_scorer_pool.candidates):
+                result.bindings.append(
+                    ScenarioRoleBinding(
+                        role=f"objective_scorer_candidate:{index}",
+                        component=candidate.evaluation or self.name,
+                        identifier=candidate.scorer.get_identifier(),
+                    )
+                )
+            return
+        try:
+            scorer = self._objective_scorer
+        except ValueError as exc:
+            result.issues.append(
+                ScenarioConfigurationIssue(
+                    role="scoring_target" if isinstance(exc, TargetRoleConfigurationError) else "objective_scorer",
+                    component=self.name,
+                    reason=str(exc),
+                    remediation="Select a scorer, or configure objective_scorer_chat for the scenario rubric.",
+                )
+            )
+        else:
+            result.bindings.append(
+                ScenarioRoleBinding(
+                    role="objective_scorer",
+                    component=self.name,
+                    identifier=scorer.get_identifier(),
+                )
+            )
+            if self._resolved_scoring_target is not None:
+                result.bindings.append(
+                    ScenarioRoleBinding(
+                        role="scoring_target",
+                        component=self.name,
+                        identifier=self._resolved_scoring_target.get_identifier(),
+                    )
+                )
 
     def get_readiness(self) -> ScenarioReadiness:
         """
@@ -1294,7 +1497,7 @@ class Scenario(ABC):
                 )
             )
             if self._objective_target is not None:
-                errors = factory.requirements.check_target(
+                errors = self._get_target_requirements(factory).check_target(
                     target=self._objective_target, attack_class=factory.attack_class
                 )
                 compatible += not errors
@@ -1307,11 +1510,7 @@ class Scenario(ABC):
                             remediation="Select a compatible target or technique.",
                         )
                     )
-            if factory.adversarial_chat is not None and (
-                self._objective_target is None
-                or not errors
-                or self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE
-            ):
+            if factory.adversarial_chat is not None and not self._skips_technique(factory):
                 try:
                     validate_default_adversarial_target(factory.adversarial_chat)
                     errors = factory.check_adversarial_target(target=factory.adversarial_chat)
@@ -1335,33 +1534,7 @@ class Scenario(ABC):
                     remediation="Select a compatible objective target or techniques.",
                 )
             )
-        try:
-            scorer = self._objective_scorer
-        except ValueError as exc:
-            result.issues.append(
-                ScenarioConfigurationIssue(
-                    role="scoring_target" if isinstance(exc, TargetRoleConfigurationError) else "objective_scorer",
-                    component=self.name,
-                    reason=str(exc),
-                    remediation="Select a scorer, or configure objective_scorer_chat for the scenario rubric.",
-                )
-            )
-        else:
-            result.bindings.append(
-                ScenarioRoleBinding(
-                    role="objective_scorer",
-                    component=self.name,
-                    identifier=scorer.get_identifier(),
-                )
-            )
-            if self._resolved_scoring_target is not None:
-                result.bindings.append(
-                    ScenarioRoleBinding(
-                        role="scoring_target",
-                        component=self.name,
-                        identifier=self._resolved_scoring_target.get_identifier(),
-                    )
-                )
+        self._add_objective_scorer_readiness(result=result)
         if self._requires_default_adversarial_target():
             try:
                 if self._resolved_adversarial_target is None:
@@ -1382,15 +1555,7 @@ class Scenario(ABC):
                 errors = self._check_adversarial_target(target=target)
                 for technique in self._scenario_techniques:
                     factory = factories.get(technique.value)
-                    if factory is None or not factory.uses_default_adversarial_target:
-                        continue
-                    if (
-                        self._objective_target is not None
-                        and self._incompatible_technique_policy is IncompatibleTechniquePolicy.SKIP
-                        and factory.requirements.check_target(
-                            target=self._objective_target, attack_class=factory.attack_class
-                        )
-                    ):
+                    if factory is None or not factory.uses_default_adversarial_target or self._skips_technique(factory):
                         continue
                     errors.extend(factory.check_adversarial_target(target=target))
                 for reason in dict.fromkeys(errors):
@@ -1465,11 +1630,14 @@ class Scenario(ABC):
         ``supported_parameters`` falls back to that input's default here.
 
         Raises:
+            DatasetConstraintError: If the configured datasets can't be resolved for a reason other
+                than a resumed run's missing dataset.
             IncompatibleTechniqueError: If techniques were selected but none can run.
             ValueError: If ``objective_target`` is declared but not resolvable (neither supplied
                 nor registered as a default), if a supplied target name is not registered in
-                ``TargetRegistry``, or if ``include_baseline=True`` is set for a scenario whose
-                ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
+                ``TargetRegistry``, if ``include_baseline=True`` is set for a scenario whose
+                ``BASELINE_ATTACK_POLICY`` is ``Forbidden``, or if a resumed run can't be rebuilt
+                (it was created by an older PyRIT, or a dataset its scenario reads was deleted).
         """
         if not self._params_resolved:
             self.set_params_from_args(args=self.params)
@@ -1541,35 +1709,25 @@ class Scenario(ABC):
         # ``self._include_baseline`` above, which the ScenarioContext carries as
         # ``include_baseline``.
         #
-        # Resolve without sampling on resume, then restore the planned population before
-        # builders check compatibility. Inputs outside the saved run must not affect resume.
-        is_resume = self._scenario_result_id is not None
-        if not is_resume:
+        # A new run resolves and samples its population, then stores it with the result. Resume
+        # rebuilds from that stored population and never reads the population datasets, so
+        # dataset edits, refreshes, and deletes after planning don't affect it.
+        if stored_result is not None:
+            seed_groups_by_dataset = await self._load_planned_population_async(
+                stored_result=stored_result, stored_plan=stored_plan
+            )
+        else:
             await self._prepare_datasets_async()
-        seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
-        if stored_plan is not None:
-            planned_seed_ids = {group_id for group in stored_plan.atomic_groups for group_id in group.seed_group_ids}
-            if seed_groups_by_dataset:
-                resolved_seed_ids = {group.logical_id for groups in seed_groups_by_dataset.values() for group in groups}
-                missing_seed_ids = planned_seed_ids - resolved_seed_ids
-                if missing_seed_ids:
-                    raise ValueError(
-                        f"Scenario result id '{self._scenario_result_id}' cannot resume: "
-                        f"missing {len(missing_seed_ids)} planned seed group(s) in the resolved datasets."
+            seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
+            if self._dataset_config.max_total != "all":
+                count = sum(len(groups) for groups in seed_groups_by_dataset.values())
+                if count > self._dataset_config.max_total:
+                    seed_groups_by_dataset = sample_with_coverage(
+                        groups_by_dataset=seed_groups_by_dataset,
+                        cap=self._dataset_config.max_total,
+                        required_keys=self._get_required_objective_keys(),
+                        key=lambda name, _: name,
                     )
-            seed_groups_by_dataset = {
-                name: [group for group in groups if group.logical_id in planned_seed_ids]
-                for name, groups in seed_groups_by_dataset.items()
-            }
-        if not is_resume and self._dataset_config.max_total != "all":
-            count = sum(len(groups) for groups in seed_groups_by_dataset.values())
-            if count > self._dataset_config.max_total:
-                seed_groups_by_dataset = sample_with_coverage(
-                    groups_by_dataset=seed_groups_by_dataset,
-                    cap=self._dataset_config.max_total,
-                    required_keys=self._get_required_objective_keys(),
-                    key=lambda name, _: name,
-                )
         # A fresh run's result id is chosen now, so attacks built below can already refer to the run.
         new_result_id = uuid.uuid4()
         context = self._build_scenario_context(
@@ -1600,19 +1758,7 @@ class Scenario(ABC):
                 stored_result=stored_result,
                 current_identifier=scenario_identifier,
             )
-            if stored_plan is not None:
-                self._apply_persisted_run_plan(stored_plan=stored_plan)
-            else:
-                self._apply_persisted_objectives(stored_result=stored_result)
-                reconstructed_plan = self._build_run_plan()
-                metadata = dict(stored_result.metadata)
-                metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = reconstructed_plan.model_dump(mode="json", exclude_none=True)
-                (
-                    await self._memory.update_scenario_metadata_async(
-                        scenario_result_id=self._scenario_result_id,
-                        metadata=metadata,
-                    )
-                )
+            self._apply_persisted_run_plan(stored_plan=cast("ScenarioRunPlan", stored_plan))
             return  # Valid resume - skip creating new scenario result
 
         # Build display group mapping from atomic attacks
@@ -1638,7 +1784,9 @@ class Scenario(ABC):
             },
         )
 
-        (await self._memory.add_scenario_results_to_memory_async(scenario_results=[result]))
+        await self._memory.add_planned_scenario_result_async(
+            scenario_result=result, seed_groups_by_dataset=seed_groups_by_dataset
+        )
         self._scenario_result_id = str(result.id)
         logger.info(f"Created new scenario result with ID: {self._scenario_result_id}")
 
@@ -1646,30 +1794,16 @@ class Scenario(ABC):
         """
         Build the metadata dict persisted with a freshly-created ``ScenarioResult``.
 
-        When a source or total limit is in effect, the dataset config draws an
-        unseeded ``random.sample`` and the chosen subset would silently change
-        on the next run (e.g. a resume). To make resume reliable, snapshot the
-        chosen objective hashes here so the next ``_setup_scenario_async`` can
-        replay them via ``keep_seed_groups_with_hashes``.
-
-        The normalized run plan is always stored. When no sampling limits are set,
-        only the run plan is needed because the full dataset is deterministic.
+        The normalized run plan is always stored. The sampled population itself is stored
+        alongside the result (see ``add_planned_scenario_result_async``), so resume never
+        resamples.
 
         Returns:
             dict[str, Any]: Metadata payload for the new ScenarioResult.
         """
-        metadata: dict[str, Any] = {}
-        if self._dataset_config.has_sampling_limits:
-            hashes: list[str] = []
-            seen: set[str] = set()
-            for aa in self._atomic_attacks:
-                for sg in aa.seed_groups:
-                    sha = to_sha256(sg.objective.value)
-                    if sha not in seen:
-                        seen.add(sha)
-                        hashes.append(sha)
-            metadata["objective_hashes"] = hashes
-        metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = self._build_run_plan().model_dump(mode="json", exclude_none=True)
+        metadata: dict[str, Any] = {
+            SCENARIO_RUN_PLAN_METADATA_KEY: self._build_run_plan().model_dump(mode="json", exclude_none=True),
+        }
         metadata["incompatible_technique_policy"] = self._incompatible_technique_policy.value
         adaptations = {
             atomic.logical_group_id: atomic.seed_group_adaptations
@@ -1736,12 +1870,15 @@ class Scenario(ABC):
                     description=technique.description if technique else None,
                     tags=sorted(technique.tags) if technique else [],
                     kind=atomic_attack.group_kind,
+                    is_compound=atomic_attack.attack_technique.attack.IS_COMPOUND,
+                    objective_scorer_binding=self._get_scorer_binding(atomic_attack=atomic_attack),
                 )
             )
         return ScenarioRunPlan(
             scenario_registry_name=self._scenario_registry_name,
             atomic_groups=atomic_groups,
             seed_groups=list(seed_groups.values()),
+            stores_seed_groups=True,
         )
 
     def _get_planned_seed_groups(self, *, atomic_attack: AtomicAttack) -> Sequence[AttackSeedGroup]:
@@ -1758,18 +1895,28 @@ class Scenario(ABC):
         return atomic_attack.seed_groups
 
     @staticmethod
+    def _get_scorer_binding(*, atomic_attack: AtomicAttack) -> ScenarioRunPlanScorerBinding | None:
+        """
+        Return an atomic attack's pool selection, if it has one.
+
+        Returns:
+            ScenarioRunPlanScorerBinding | None: The binding, or None for single-scorer groups.
+        """
+        binding = getattr(atomic_attack, "objective_scorer_binding", None)
+        return binding if isinstance(binding, ScenarioRunPlanScorerBinding) else None
+
+    @staticmethod
     def _get_atomic_group_id(*, atomic_attack: AtomicAttack) -> str:
         """
-        Compute the stable ID of an atomic group from its name and technique.
+        Compute the stable ID of an atomic group, the same value as ``AtomicAttack.logical_group_id``.
 
         Returns:
             str: The atomic-group ID.
         """
-        return config_hash(
-            {
-                "atomic_attack_name": atomic_attack.atomic_attack_name,
-                "technique_eval_hash": str(atomic_attack.technique_eval_hash),
-            }
+        return compute_atomic_group_id(
+            atomic_attack_name=atomic_attack.atomic_attack_name,
+            technique_eval_hash=atomic_attack.technique_eval_hash,
+            objective_scorer_binding=Scenario._get_scorer_binding(atomic_attack=atomic_attack),
         )
 
     @staticmethod
@@ -1784,6 +1931,100 @@ class Scenario(ABC):
         if raw_plan is None:
             return None
         return ScenarioRunPlan.model_validate(raw_plan)
+
+    def _resume_error_message(self, *, reason: str) -> str:
+        """
+        Build the error for a resume refused because its planned seeds can't be found.
+
+        Args:
+            reason (str): What is missing, without a trailing period.
+
+        Returns:
+            str: The message, ending with the two ways to recover.
+        """
+        return (
+            f"Scenario result id '{self._scenario_result_id}' cannot resume: {reason}. "
+            "To resume, re-import the dataset content this run used; "
+            "otherwise drop scenario_result_id to start a new run."
+        )
+
+    def _configuration_mismatch_message(self) -> str:
+        """
+        Build the error for a resume whose configuration differs from the stored run.
+
+        Returns:
+            str: The message, ending with the two ways to recover.
+        """
+        return (
+            f"Scenario result id '{self._scenario_result_id}' does not match the current "
+            f"'{type(self).__name__}' configuration (a different scenario, or its version, "
+            f"techniques, datasets, parameters, or objective target / scorer changed). "
+            f"Drop scenario_result_id to start a new scenario, or pass matching configuration to resume."
+        )
+
+    async def _load_planned_population_async(
+        self, *, stored_result: ScenarioResult, stored_plan: ScenarioRunPlan | None
+    ) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Rebuild a resumed run's population from the seed groups stored when it was created.
+
+        Population datasets are never read, so they may have been edited, refreshed, or deleted.
+        ``_prepare_resume_state_async`` then restores any state the scenario's own resolver sets up.
+
+        Args:
+            stored_result (ScenarioResult): The stored scenario result.
+            stored_plan (ScenarioRunPlan | None): The stored run plan, if any.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: The planned population, by dataset name.
+
+        Raises:
+            ValueError: If the run stored no plan or planned seed groups, if restoring its state
+                needs a dataset the planned run never listed and the configuration changed, or if a
+                dataset restoring its state reads is no longer in memory.
+            DatasetConstraintError: If restoring the scenario's state fails for another reason.
+        """
+        if stored_plan is None or stored_plan.stores_seed_groups is not True:
+            raise ValueError(
+                f"Scenario result id '{self._scenario_result_id}' cannot resume: it was created by an older "
+                "PyRIT version that didn't store the seeds it planned. Drop scenario_result_id to start a new run."
+            )
+        population = await self._memory.get_planned_seed_groups_async(scenario_result_id=str(stored_result.id))
+        try:
+            await self._prepare_resume_state_async(seed_groups_by_dataset=population)
+        except MissingDatasetError as error:
+            # A dataset outside the stored identity's list usually means the selection changed since
+            # planning, but a scenario can also read a dataset its configuration doesn't list. Report a
+            # mismatch only when the configuration differs; otherwise the dataset was removed.
+            if error.dataset_name not in (stored_result.scenario_identifier.datasets or []):
+                try:
+                    self._validate_stored_scenario(
+                        stored_result=stored_result, current_identifier=self._build_scenario_identifier()
+                    )
+                except ValueError as mismatch:
+                    raise mismatch from error
+            raise ValueError(
+                self._resume_error_message(
+                    reason=f"dataset {error.dataset_name!r}, which this run read when it was planned, "
+                    "is no longer in memory"
+                )
+            ) from error
+        return population
+
+    async def _prepare_resume_state_async(  # noqa: B027
+        self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]
+    ) -> None:
+        """
+        Restore state that a new run's seed resolver sets up. The default does nothing.
+
+        Resume doesn't call ``_resolve_seed_groups_by_dataset_async``. Override this hook only when
+        that resolver sets state the atomic attacks need, such as a scorer built from the data.
+        Derive that state from the stored groups when they carry it, because live datasets may have
+        changed since the run was planned.
+
+        Args:
+            seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
+        """
 
     def _apply_persisted_run_plan(self, *, stored_plan: ScenarioRunPlan) -> None:
         """
@@ -1811,58 +2052,29 @@ class Scenario(ABC):
             missing_seed_groups = set(planned_group.seed_group_ids) - current_seed_groups.keys()
             if missing_seed_groups:
                 raise ValueError(
-                    f"Scenario result id '{self._scenario_result_id}' cannot resume: atomic group "
-                    f"'{planned_group.atomic_attack_name}' is missing {len(missing_seed_groups)} planned seed group(s)."
+                    self._resume_error_message(
+                        reason=f"atomic group '{planned_group.atomic_attack_name}' is missing "
+                        f"{len(missing_seed_groups)} planned seed group(s)"
+                    )
                 )
             atomic_attack._seed_groups = [current_seed_groups[group_id] for group_id in planned_group.seed_group_ids]
             retained_attacks.append(atomic_attack)
         self._atomic_attacks = retained_attacks
         self._display_group_map = {group.atomic_attack_name: group.display_group for group in stored_plan.atomic_groups}
 
-    def _apply_persisted_objectives(self, *, stored_result: ScenarioResult) -> None:
+    def _get_identity_params(self) -> dict[str, Any]:
         """
-        On resume, replay the originally-sampled objective subset.
+        Return the scenario's own parameters recorded in its identity.
 
-        When the first run used ``max_dataset_size``, the chosen subset was
-        recorded in ``ScenarioResult.metadata["objective_hashes"]``. Resume resolves
-        the **full, deterministic** dataset (sampling is bypassed on the resume branch of
-        ``initialize_async``), so restricting each atomic attack's seed_groups to the
-        persisted set here reconstructs exactly the objectives the first run committed to.
-        Per-objective atomic attacks outside that subset are removed before scheduling.
-        If any persisted hash is no longer present in the dataset, refuse to resume — that
-        now signals the dataset itself genuinely changed, not a random resample drift.
+        The framework common inputs are excluded: they are captured through the dedicated
+        identity fields and are often live, non-JSON-serializable objects. Saved launches
+        restore these parameters on resume.
 
-        Args:
-            stored_result (ScenarioResult): The scenario result loaded from memory.
-
-        Raises:
-            ValueError: If any persisted objective hash is missing from the
-                currently-resolved dataset.
+        Returns:
+            dict[str, Any]: The custom parameters that identify this run.
         """
-        metadata = stored_result.metadata or {}
-        persisted = metadata.get("objective_hashes")
-        if not persisted:
-            return
-
-        persisted_hashes: set[str] = set(persisted)
-        retained: set[str] = set()
-        retained_attacks: list[AtomicAttack] = []
-        for aa in self._atomic_attacks:
-            retained |= aa.keep_seed_groups_with_hashes(hashes=persisted_hashes)
-            if aa.seed_groups:
-                retained_attacks.append(aa)
-
-        missing = persisted_hashes - retained
-        if missing:
-            sample = sorted(missing)[:3]
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' cannot resume: "
-                f"{len(missing)} persisted objective hash(es) are no longer present in the dataset "
-                f"(missing examples: {', '.join(h[:12] + '...' for h in sample)}). "
-                f"Either restore the missing objectives or drop scenario_result_id to start a new scenario."
-            )
-
-        self._atomic_attacks = retained_attacks
+        common_names = self._common_scenario_parameter_names()
+        return {name: value for name, value in self.params.items() if name not in common_names}
 
     def _build_scenario_identifier(self) -> ScenarioIdentifier:
         """
@@ -1879,21 +2091,34 @@ class Scenario(ABC):
         # Required data first, so moving ingredients out of dataset_config keeps stored identities.
         required = self._required_data.dataset_names if self._required_data is not None else []
         datasets = [*required, *self._dataset_config.dataset_names]
-        # Persist only the scenario's own custom params. The framework common inputs
-        # (objective_target, techniques, dataset config, ...) are captured through the
-        # dedicated identity fields below and are often live, non-JSON-serializable
-        # objects, so they must not leak into the free-form params dict.
-        common_names = self._common_scenario_parameter_names()
-        custom_params = {name: value for name, value in self.params.items() if name not in common_names}
         return ScenarioIdentifier.of(
             self,
-            params=custom_params,
+            params=self._get_identity_params(),
             version=self._version,
             techniques=techniques,
             datasets=datasets,
             objective_target=self._objective_target_identifier,
             objective_scorer=self._objective_scorer_identifier,
+            # A pool is not a scorer, so it is identity of its own rather than the objective_scorer reference.
+            # Requirements stay out: one that changes a selection changes the plan's group ids.
+            children=(
+                {"objective_scorer_pool": self._objective_scorer_pool.get_identifier()}
+                if self._objective_scorer_pool is not None
+                else None
+            ),
         )
+
+    def _get_objective_scorer_requirements(self) -> ScorerRequirements | None:
+        """
+        Return what the scenario and its resolved run configuration require from the objective scorer.
+
+        Dataset sources add their own requirements. Subclasses that promise a specific
+        evaluation override this; the default requires nothing.
+
+        Returns:
+            ScorerRequirements | None: The scenario-level requirements, or None.
+        """
+        return None
 
     def _validate_stored_scenario(
         self, *, stored_result: ScenarioResult, current_identifier: ScenarioIdentifier
@@ -1925,12 +2150,7 @@ class Scenario(ABC):
         current_eval_hash = ScenarioEvaluationIdentifier(current_identifier).eval_hash
 
         if stored_eval_hash != current_eval_hash:
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' does not match the current "
-                f"'{type(self).__name__}' configuration (a different scenario, or its version, "
-                f"techniques, datasets, parameters, or objective target / scorer changed). "
-                f"Drop scenario_result_id to start a new scenario, or pass matching configuration to resume."
-            )
+            raise ValueError(self._configuration_mismatch_message())
 
         logger.info(
             f"Resuming scenario '{self._name}' from existing result "
@@ -2057,10 +2277,9 @@ class Scenario(ABC):
 
         Args:
             apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.
-                On resume the base passes False so the full, deterministic dataset is resolved
-                and the persisted objective subset is reconstructed exactly (see
-                ``_apply_persisted_objectives``) rather than intersected against a fresh,
-                divergent ``random.sample`` draw.
+                Resume rebuilds the population from the seed groups stored with the run and
+                doesn't call this. An override that sets state the atomic attacks need must also
+                restore that state in ``_prepare_resume_state_async``.
 
         Returns:
             dict[str, list[AttackSeedGroup]]: Seed groups keyed by dataset name.

@@ -417,16 +417,22 @@ az deployment group show -g <rg> -n <application-deployment-name> --query proper
 
 > This section documents the repository maintainers' internal pipeline. It depends on Microsoft team-owned ADO service connections, environments, and variable groups. It is not required or expected for community deployments; use direct Bicep or `deploy_instance.py` instead.
 
-`gui-deploy.yml` is an **update-only** workflow for the pre-created test-v2 and prod-v2 stacks. Both parameters default to `false`:
+`gui-deploy.yml` is an **update-only** workflow for the pre-created test-v2 and prod-v2 stacks. `deployInfra` and `deployToProd` default to `false`; `deployToTest` defaults to `true`:
 
-| `deployInfra` | `deployToProd` | Workflow |
-| --- | --- | --- |
-| `false` | `false` | Build, deploy app to test |
-| `true` | `false` | Build, reconcile test infrastructure without changing the app, deploy app to test |
-| `false` | `true` | Build, deploy app to test, production approval, deploy the same image to production |
-| `true` | `true` | Build, test infrastructure, test app, production approval, production infrastructure, production app |
+| `deployInfra` | `deployToTest` | `deployToProd` | Workflow |
+| --- | --- | --- | --- |
+| `false` | `true` | `false` | Build, deploy app to test |
+| `true` | `true` | `false` | Build, reconcile test infrastructure without changing the app, deploy app to test |
+| `false` | `true` | `true` | Build, deploy app to test, production approval, deploy the same image to production |
+| `true` | `true` | `true` | Build, test infrastructure, test app, production approval, production infrastructure, production app |
+| `false` | `false` | `true` | Build, production approval, production app (test is skipped) |
+| `true` | `false` | `true` | Build, production approval, production infrastructure, production app (test is skipped) |
 
-Qualifying merges to `main` automatically deploy **the app to test without infrastructure reconciliation**. Production remains opt-in: manually queue a commit merged to `main` with `deployToProd=true`. Approval rejects on timeout and the requester cannot self-approve. All stages remain in the run graph: infrastructure stages show **Skipped** when `deployInfra=false`, just as production stages do when production is disabled. App deployment accepts that intentional skip, but an infrastructure failure or cancellation blocks it.
+A daily schedule at 15:00 UTC deploys `main` to test as **the app only, without infrastructure reconciliation**, even when nothing changed; merges no longer deploy. Each run restarts test, so targets created in the GUI (Saved ones too, unless the deployment's `.pyrit_conf` sets `registry_recipes_source` to Blob storage), components added only to the live registry, and running scenarios are lost; `.env` edits in Key Vault and results in Azure SQL remain. To deploy to test sooner, queue a run by hand. Production remains opt-in: manually queue a run from `main` or a `releases/v*` branch with `deployToProd=true`. Other branches are rejected before the build. Approval rejects on timeout and the requester cannot self-approve. All stages remain in the run graph: infrastructure stages show **Skipped** when `deployInfra=false`, just as production stages do when production is disabled. App deployment accepts that intentional skip, but an infrastructure failure or cancellation blocks it.
+
+Set `deployToTest=false` only with `deployToProd=true`, for example to deploy a release branch to production. The test database follows `main`, so a release branch that is older than `main` would fail its test schema check. Skipped test stages do not block production approval, but a failed or canceled test stage does. The approver must confirm the release was validated elsewhere.
+
+The pipeline reads `gui-deploy.yml` and the deployment scripts from the queued commit. A release branch cut before this policy existed still enforces the `main`-only rule; cherry-pick the pipeline change into it before deploying it. Branch checks configured on the `copyrit-prod` ADO environment also apply and must allow `releases/v*`.
 
 The Build job logs disk usage and prunes unused local Docker images and build cache before and after building, even on failure, to leave space for Component Governance scanning. Pushed ACR images are unaffected. This cleanup is only for disposable hosted agents, not shared self-hosted agents.
 
@@ -494,13 +500,14 @@ Both `copyrit-gui-test` and `copyrit-gui-prod` supply:
 | `allowedGroupObjectIds` | Backend-authorized Entra security groups |
 | `adminGroupObjectId` | Entra group authorized to manage backend configuration |
 | `pyritConfigFileUri` | Optional credential-free Azure Blob URI for `.pyrit_conf` |
+| `pyritConfigSeedUri` | Optional credential-free Azure Blob folder with a starting configuration for each deployed branch; see [Configuration](#configuration-pyrit_conf-and-env) |
 | `sqlServerFqdn`, `sqlDatabaseName` | Existing SQL database |
 | `keyVaultResourceId`, `envSecretName` | Existing runtime configuration secret |
 | `acrResourceId`, `enableOtel` | Registry resource ID and observability setting |
 
 The container image is not a library variable. The Build stage publishes the exact pushed digest as `immutableImage`, and both app stages consume that output. Infrastructure stages discover the existing image directly from ACA for health verification only. The stage template passes network-prefix variables only to infrastructure, and image, Entra, SQL, Key Vault, and application-config variables only to the app. Common scope, identity, registry, and observability inputs go to both. App configuration changes do not require `deployInfra=true`, but shared infrastructure changes do. Do not add the legacy `image`, `resourceGroup`, `appName`, or `enablePrivateEndpoint` variables; the current workflow does not consume them.
 
-Pipeline definition 139 reads `gui-deploy.yml` from the GitHub commit being queued. Treat YAML and variable-group contract changes as one release: do not remove old keys before the commit that consumes the replacement keys reaches the target branch. Otherwise ADO leaves unresolved `$(name)` text in Bash, where it is interpreted as command substitution.
+Pipeline definition 139 reads `gui-deploy.yml` from the GitHub commit being queued. Treat YAML and variable-group contract changes as one release: do not remove old keys before the commit that consumes the replacement keys reaches the target branch. Otherwise ADO leaves unresolved `$(name)` text in Bash, where it is interpreted as command substitution. Likewise, define a new optional key such as `pyritConfigSeedUri`, even if empty, before deploying a commit that reads it; an undefined key stops the deployment.
 
 `copyrit-gui-prod` must additionally define `prodApprovers` as the users or ADO groups allowed to approve `ManualValidation@1`. Protect the production variable group with ADO permissions; the approver list is authorization configuration, not a secret.
 
@@ -514,12 +521,15 @@ The optional infrastructure stage also creates a `CanNotDelete` lock scoped to t
 
 Each internal app stage (test, and prod after approval) does these steps in sequence:
 
-1. Validate the inputs and preview the app deployment.
+1. Validate the inputs and preview the app deployment. With `pyritConfigSeedUri`, reset the configuration folder from the deployed branch's seed (see [Configuration](#configuration-pyrit_conf-and-env)).
 2. Preview, then create or update the manual ACA job `<deploymentAppName>-migrate` from `infra/migration.bicep`. This does not start the job. The job uses the built image, the app managed identity, and the app configuration sources. If job preparation fails, the running app is not stopped.
-3. Start a check-only execution using the full deployed job template, changing only the migration container's arguments to `--check-only`, and wait up to 30 minutes. This preserves its image, environment, and resources. It validates the database target and checks the schema without applying migrations. If it succeeds, skip steps 4 and 5: deploy without stopping the app. If the execution fails, log the failure and use the stopped-app migration path. A template/start/status API error, interrupted execution, or polling timeout aborts deployment without stopping the app.
-4. Deactivate all active revisions and wait for their replicas, including replicas from inactive revisions, to stop. Each poll reads all revision states in one Azure API call. Missing or invalid replica counts do not count as zero. If shutdown is not confirmed, do not start the migration. The app is offline until step 6. This also supports a rerun when the app is already stopped.
-5. Start the job without check-only arguments and wait up to 30 minutes. Before opening a database connection, it verifies that the connection string identifies the deployment server and database. It then upgrades the schema and checks it. If the migration fails or times out, stop. The app stays offline and is not deployed. Fix the cause and run the stage again.
-6. Deploy the app with `PYRIT_REQUIRE_CURRENT_SCHEMA=true`. The app checks the schema and does not migrate. If the app template did not change (for example, a rerun with the same image), the stage activates the previous revision again, including when a successful check skipped migration on an already-stopped app.
+3. Start a check-only execution using the full deployed job template, changing only the migration container's arguments to `--check-only`, and wait up to about 10 minutes. This preserves its image, environment, and resources. It validates the database target and checks the schema without applying migrations. If it succeeds, skip steps 4–6: deploy without stopping the app, except as step 7 describes for a seeded deployment. If the execution fails, log the failure and continue to step 4. A template/start/status API error, interrupted execution, or polling timeout aborts deployment without stopping the app; a timed-out execution is stopped, and if the stop request fails, deployment reports an unknown execution state that must be confirmed before retrying.
+4. Start a revision-check execution the same way with `--check-upgradable`, and wait up to about 10 minutes. It fails if the database is stamped with a revision that this image's migrations do not contain, which means a newer release already migrated it, or if the database is already at this image's head, so migrating cannot fix the schema mismatch (for example, a migration edited after it was deployed, a model change without a migration, or a manual database change). If it fails, abort deployment **without stopping the app**; deploy the newer release (or a later one), or investigate the schema mismatch.
+5. Deactivate all active revisions and wait for their replicas, including replicas from inactive revisions, to stop. Each poll reads all revision states in one Azure API call. Missing or invalid replica counts do not count as zero. If shutdown is not confirmed, do not start the migration. The app is offline until step 7. This also supports a rerun when the app is already stopped.
+6. Start the job without check arguments and wait up to the job's 2-hour `replicaTimeout`. Before opening a database connection, it verifies that the connection string identifies the deployment server and database. It then upgrades the schema and checks it. The job logs list each applied revision with timestamps and data-backfill progress. If the migration fails or times out, stop. The app stays offline and is not deployed. Fix the cause and run the stage again.
+7. Deploy the app with `PYRIT_REQUIRE_CURRENT_SCHEMA=true`. The app checks the schema and does not migrate. If the app template did not change (for example, a rerun with the same image), the stage activates the previous revision again, including when a successful check skipped migration on an already-stopped app. With `pyritConfigSeedUri`, a revision that kept running is first stopped as in step 5, so it starts with the seeded configuration; the app is briefly offline.
+
+Each deployment stage has a 3-hour timeout to fit the migration budget. Override poll counts with `PYRIT_SCHEMA_CHECK_POLL_ATTEMPTS` (default 30) and `PYRIT_MIGRATION_POLL_ATTEMPTS` (default 375), each `PYRIT_MIGRATION_POLL_SECONDS` (default 20) apart.
 
 Azure SQL initialization checks the schema without migrating by default, including calls to `initialize_pyrit_async`. A migration requires the explicit migration command, or `skip_schema_migration=False` for non-production initialization. The internal backend's `PYRIT_REQUIRE_CURRENT_SCHEMA=true` also blocks that initialization opt-in and fails startup on a schema mismatch. The job can share the backend identity: SQL DDL permission alone does not trigger migrations. SQLite initialization is unchanged.
 
@@ -667,7 +677,9 @@ Open the public URL and verify unauthenticated users are redirected to Entra and
 
 The backend can load `.pyrit_conf` directly from Azure Blob Storage. Set `pyritConfigFileUri` to a credential-free blob HTTPS URI; the backend uses the Container App UAMI to read and update it. Leave it empty to generate configuration from `sqlServerFqdn` and `pyritInitializer`. Grant `Storage Blob Data Contributor` on the storage account or blob container. When using `deploy_instance.py`, pass that resource ID through `--pyrit-config-rbac-scope` so the helper grants access before starting the app.
 
-Write access to the configuration blob, and to any `custom_initializers_source` it names while `allow_custom_initializers` is enabled, lets a principal change code that the backend runs as its UAMI. Limit data-plane write roles on those scopes to the backend identity and principals trusted as configuration administrators.
+To start every pipeline deployment from a known configuration, set `pyritConfigSeedUri` to a credential-free Blob folder with one subfolder per deployed branch, such as `<seed>/main/` and `<seed>/releases/v1.2.3/`. Before the database migration, the pipeline replaces the folder that holds `pyritConfigFileUri` with the deployed branch's subfolder, including any custom initializer scripts in it. Configuration edits saved in the GUI then last until the next deployment, which stops and starts an unchanged app revision so it loads the seed. Everything else in the configuration folder is deleted, so keep other stored data, such as scenario presets, suites, and saved recipes, outside it. If the branch has no subfolder with the configuration file, the deployment stops before changing the configuration or the app. Keep the configuration folder outside the whole seed folder, not just outside the deployed branch's subfolder, and point any `custom_initializers_source` in a seeded `.pyrit_conf` at the configuration folder. Because test and prod use different configuration folders, give each slot its own seed when a seeded `.pyrit_conf` sets `custom_initializers_source`; each stage reads the deployed branch's subfolder of its own slot's `pyritConfigSeedUri`. The pipeline's service connection needs `Storage Blob Data Reader` on the seed's container and `Storage Blob Data Contributor` on the configuration's container.
+
+Write access to the configuration blob, to the seed, and to any `custom_initializers_source` the configuration names while `allow_custom_initializers` is enabled, lets a principal change code that the backend runs as its UAMI. Limit data-plane write roles on those scopes to the backend identity and principals trusted as configuration administrators.
 
 ### .pyrit_conf fields → Bicep params
 

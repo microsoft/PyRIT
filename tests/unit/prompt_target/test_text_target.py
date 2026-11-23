@@ -9,8 +9,9 @@ from collections.abc import MutableSequence
 import pytest
 from unit.mocks import get_sample_conversations
 
-from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
-from pyrit.prompt_target import TextTarget
+from pyrit.models import CapabilityName, Message, MessagePiece, flatten_to_message_pieces
+from pyrit.prompt_normalizer import PromptNormalizer
+from pyrit.prompt_target import TargetCapabilities, TargetConfiguration, TextTarget
 
 
 @pytest.fixture
@@ -32,6 +33,51 @@ def test_init_with_custom_stream():
     stream = io.StringIO()
     target = TextTarget(text_stream=stream)
     assert target._text_stream is stream
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_declares_no_response_support():
+    target = TextTarget(text_stream=io.StringIO())
+
+    assert not target.configuration.includes(capability=CapabilityName.RESPONSES)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_custom_configuration_cannot_declare_response_support():
+    # A custom configuration that only sets multi-turn leaves supports_responses at its default of True.
+    target = TextTarget(
+        text_stream=io.StringIO(),
+        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True)),
+    )
+
+    assert target.capabilities.supports_multi_turn
+    assert not target.capabilities.supports_responses
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_apply_capabilities_cannot_declare_response_support():
+    target = TextTarget(text_stream=io.StringIO())
+
+    target.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=True, supports_responses=True))
+
+    assert target.capabilities.supports_multi_turn
+    assert not target.capabilities.supports_responses
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_saved_capabilities_scope_cannot_declare_response_support():
+    target = TextTarget(text_stream=io.StringIO())
+
+    # A capability snapshot saved before supports_responses existed loads with its default of True.
+    with target.capabilities_scope(TargetCapabilities()):
+        assert not target.capabilities.supports_responses
+        response = await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="hello", role="user"), target=target
+        )
+
+    # The normalizer hands back the request instead of fabricating an empty error response.
+    assert response.api_role == "user"
+    assert response.get_value() == "hello"
 
 
 @pytest.mark.usefixtures("patch_central_database")

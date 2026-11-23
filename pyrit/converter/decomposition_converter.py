@@ -77,7 +77,7 @@ def _tokens(text: str) -> list[str]:
     return tokens
 
 
-def _token_recall(source: list[str], got: list[str]) -> float:
+def _token_recall(source: list[str], *, got: list[str]) -> float:
     """
     Compute the fraction of source tokens (as a multiset) preserved in got.
 
@@ -310,7 +310,7 @@ class DecompositionConverter(Converter):
                     f"but the decomposition produced {noun_count}"
                 )
 
-        recall = _token_recall(_tokens(objective), _tokens(" ".join(words)))
+        recall = _token_recall(_tokens(objective), got=_tokens(" ".join(words)))
         if recall < _MIN_RECALL:
             raise InvalidJsonException(message=f"reconstruction recall {recall:.2f} below {_MIN_RECALL}")
         return words, types

@@ -1130,7 +1130,19 @@ def _copy_seed_group(group: SeedGroup) -> SeedGroup:
 
 @pytest.mark.parametrize(
     "changed_field",
-    ["objective", "system", "user", "metadata", "role", "sequence", "member_count", "subset", "schema", "conditions"],
+    [
+        "objective",
+        "system",
+        "user",
+        "metadata",
+        "role",
+        "sequence",
+        "member_count",
+        "subset",
+        "schema",
+        "conditions",
+        "is_general_technique",
+    ],
 )
 async def test_add_seed_groups_preserves_complete_distinct_groups_async(
     *, sqlite_instance: MemoryInterface, changed_field: str
@@ -1159,6 +1171,8 @@ async def test_add_seed_groups_preserves_complete_distinct_groups_async(
         changed.prompts[1].response_json_schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
     elif changed_field == "conditions":
         changed.objective.conditions = (AnswerMatches(correct_answer="false claim", correct_answer_label="A"),)
+    elif changed_field == "is_general_technique":
+        changed.prompts[0].is_general_technique = True
     changed = SeedGroup(seeds=changed.seeds)
 
     for group in (original, changed):
@@ -1175,6 +1189,7 @@ async def test_add_seed_groups_preserves_complete_distinct_groups_async(
             "role",
             "sequence",
             "response_json_schema",
+            "is_general_technique",
         }
         assert [seed.model_dump(mode="json", include=fields) for seed in stored.seeds] == [
             seed.model_dump(mode="json", include=fields) for seed in expected.seeds

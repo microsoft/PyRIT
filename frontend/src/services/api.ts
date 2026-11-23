@@ -7,6 +7,8 @@ import { getGraphScopes } from '../auth/msalConfig'
 import type {
   ApplyChatScorerRequest,
   ApplyChatScorerResponse,
+  AssertPolicyMetrics,
+  AttackFindingListResponse,
   TargetInstance,
   UnregisteredTarget,
   UnregisteredConverter,
@@ -27,6 +29,8 @@ import type {
   TechniqueOverride,
   TechniqueEditResponse,
   CreateTargetRequest,
+  SaveabilityResponse,
+  TargetSaveabilityRequest,
   InitializerSettingsResponse,
   ListRegisteredInitializersResponse,
   CustomInitializerListResponse,
@@ -92,8 +96,11 @@ import type {
   Finding,
   FindingCreate,
   FindingCreateRequest,
+  FindingListItem,
+  FindingListParams,
   FindingListResponse,
   FindingOptionsResponse,
+  FindingPathsUpdateRequest,
   FindingEvidenceCreateRequest,
   FindingEvidenceAttachResponse,
   FindingEvidenceListResponse,
@@ -140,9 +147,7 @@ export const operationsApi = {
   delete: async (operationId: string): Promise<void> => {
     await apiClient.delete(operationPath(operationId))
   },
-  listFindings: async (
-    operationId: string, params: { limit: number; offset: number; title?: string; title_pattern?: string },
-  ): Promise<FindingListResponse> => {
+  listFindings: async (operationId: string, params: FindingListParams): Promise<FindingListResponse> => {
     return (await apiClient.get(`${operationPath(operationId)}/findings`, { params })).data
   },
   createFinding: async (operationId: string, request: FindingCreateRequest): Promise<Finding> => {
@@ -150,6 +155,13 @@ export const operationsApi = {
   },
   updateFinding: async (operationId: string, findingId: string, request: FindingCreate): Promise<Finding> => {
     return (await apiClient.put(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`, request)).data
+  },
+  replaceFindingPaths: async (
+    operationId: string, findingId: string, request: FindingPathsUpdateRequest,
+  ): Promise<FindingListItem> => {
+    return (await apiClient.put(
+      `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/paths`, request,
+    )).data
   },
   deleteFinding: async (operationId: string, findingId: string): Promise<void> => {
     await apiClient.delete(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`)
@@ -296,6 +308,13 @@ apiClient.interceptors.response.use(
 export { apiClient }
 
 export const analyticsApi = {
+  getAssertPolicyMetrics: async (scenarioResultId: string, signal?: AbortSignal): Promise<AssertPolicyMetrics> => {
+    const response = await apiClient.get<AssertPolicyMetrics>(
+      '/analytics/assert',
+      { params: { scenario_result_id: scenarioResultId }, signal },
+    )
+    return response.data
+  },
   query: async (
     query: AttackAnalyticsQuery,
     signal?: AbortSignal,
@@ -412,6 +431,13 @@ export const targetsApi = {
     const response = await apiClient.post('/targets', request)
     return response.data
   },
+  checkSaveability: async (
+    request: TargetSaveabilityRequest,
+    signal?: AbortSignal,
+  ): Promise<SaveabilityResponse> => {
+    const response = await apiClient.post('/targets/saveability', request, { signal })
+    return response.data
+  },
   buildTarget: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredTarget> => {
     const response = await apiClient.post<UnregisteredTarget>('/targets', { type, source, register: false })
     return response.data
@@ -518,6 +544,12 @@ export const attacksApi = {
     const response = conversationId === undefined
       ? await apiClient.get(url)
       : await apiClient.get(url, { params: { conversation_id: conversationId } })
+    return response.data
+  },
+
+  /** Findings in any Operation that link this attack as evidence; empty for an unsaved running attack. */
+  getAttackFindings: async (attackResultId: string): Promise<AttackFindingListResponse> => {
+    const response = await apiClient.get(`/attacks/${encodeURIComponent(attackResultId)}/findings`)
     return response.data
   },
 
