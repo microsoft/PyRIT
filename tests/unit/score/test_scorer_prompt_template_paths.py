@@ -18,6 +18,7 @@ from pyrit.score import (
     Scorer,
     ShieldGemmaGuideline,
     ShieldGemmaScorer,
+    StrongRejectScorer,
     WildGuardScorer,
 )
 
@@ -27,6 +28,7 @@ SCORER_CASES = [
     pytest.param(LlamaGuardScorer, {}, "{{ message_role }} {{ categories }} {{ conversation }}", id="llamaguard"),
     pytest.param(WildGuardScorer, {}, "{{ user_prompt }} {{ response }}", id="wildguard"),
     pytest.param(HarmBenchScorer, {}, "{{ behavior }} {{ generation }}", id="harmbench"),
+    pytest.param(StrongRejectScorer, {}, "{{ forbidden_prompt }} {{ response }}", id="strongreject"),
     pytest.param(
         ShieldGemmaScorer,
         {"guideline": ShieldGemmaGuideline(name="Custom harm", description="content that is bad.")},
