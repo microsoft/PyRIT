@@ -323,18 +323,10 @@ unsound-assignment = "ignore"
 # deletes this override. Do not add files here: new code is checked by the rule.
 [[tool.ty.overrides]]
 include = [
-    "pyrit/cli/api_client.py",
-    "pyrit/cli/pyrit_scan.py",
-    "pyrit/common/cli_helpers.py",
-    "pyrit/common/yaml_loadable.py",
     "pyrit/executor/promptgen/gcg/attack/base/attack_manager.py",
     "pyrit/executor/promptgen/gcg/attack/gcg/candidate_proposer.py",
     "pyrit/executor/promptgen/gcg/attack/gcg/gcg_attack.py",
     "pyrit/executor/promptgen/gcg/default_implementations.py",
-    "pyrit/memory/alembic/env.py",
-    "pyrit/memory/attack_analytics.py",
-    "pyrit/memory/azure_sql_memory.py",
-    "pyrit/memory/memory_interface.py",
     "pyrit/models/harm_category.py",
     "pyrit/models/messages/conversations.py",
     "pyrit/models/parameter.py",
