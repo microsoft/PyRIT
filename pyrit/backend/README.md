@@ -1000,9 +1000,8 @@ API callers are trusted operators, so these are intentional exceptions:
   only files from the media folders above.
 - Initializers and custom initializer scripts are trusted Python. Uploading scripts requires
   an administrator and `allow_custom_initializers: true`.
-- `GitHubCopilotTarget.working_directory`, `HuggingFaceChatTarget.model_path`, and
-  `LocalRefusalClassifierScorer.model_id` may name local folders; callers set them like any
-  other operator setting.
+- `GitHubCopilotTarget.working_directory` and `HuggingFaceChatTarget.model_path` may name local
+  folders; callers set them like any other operator setting.
 
 ## Strict Lockstep Compatibility
 

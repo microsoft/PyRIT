@@ -309,6 +309,72 @@ def test_scorer_types_list_azure_content_filter_api_key_as_sensitive(compatibili
     assert api_key["sensitive"] is True
 
 
+def test_scorer_types_list_model_id_but_not_model_path(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+
+    response = client.get("/api/scorers/types")
+
+    assert response.status_code == 200
+    entry = next(item for item in response.json()["items"] if item["scorer_type"] == "LocalRefusalClassifierScorer")
+    names = {parameter["name"] for parameter in entry["parameters"]}
+    assert "model_id" in names
+    assert "model_path" not in names
+
+
+@pytest.mark.parametrize("persist", [True, False])
+@pytest.mark.parametrize(
+    ("parameter", "message"),
+    [("model_path", "names a server file or folder"), ("model_id", "must be a Hugging Face Hub repository")],
+)
+def test_create_scorer_refuses_a_local_checkpoint_folder(
+    compatibility_headers: dict[str, str],
+    patch_central_database: None,
+    tmp_path: Path,
+    *,
+    parameter: str,
+    message: str,
+    persist: bool,
+) -> None:
+    folder = tmp_path / "laya"
+    folder.mkdir()
+    client = TestClient(app, headers=compatibility_headers)
+    body = {
+        "name": "local_refusal",
+        "type": "LocalRefusalClassifierScorer",
+        "params": {parameter: str(folder)},
+        "persist": persist,
+    }
+
+    with patch.object(client.app.state, "registry_recipes_source", str(tmp_path / "recipes"), create=True):
+        response = client.post("/api/scorers", json=body)
+
+    assert response.status_code == 400, response.text
+    assert message in response.json()["detail"]
+    assert "not_saveable_reason" not in response.json()
+    assert str(folder) not in response.text
+    assert ScorerRegistry.get_registry_singleton().instances.get("local_refusal") is None
+    assert not (tmp_path / "recipes").exists()
+
+
+def test_create_scorer_saves_a_hub_model_id(
+    compatibility_headers: dict[str, str], patch_central_database: None, tmp_path: Path
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    body = {
+        "name": "local_refusal",
+        "type": "LocalRefusalClassifierScorer",
+        "params": {"model_id": "convaiinnovations/laya"},
+        "persist": True,
+    }
+
+    with patch.object(client.app.state, "registry_recipes_source", str(tmp_path), create=True):
+        response = client.post("/api/scorers", json=body)
+
+    assert response.status_code == 201, response.text
+    saved = json.loads((tmp_path / "scorers" / "local_refusal.json").read_text())
+    assert saved["params"] == {"model_id": "convaiinnovations/laya"}
+
+
 def test_create_scorer_with_persist_saves_it_and_lists_it_as_saved(
     compatibility_headers: dict[str, str], patch_central_database: None, tmp_path: Path
 ) -> None:
