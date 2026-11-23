@@ -271,8 +271,8 @@ class OpenAIResponseTarget(OpenAITarget):
         # https://platform.openai.com/docs/guides/function-calling#context-free-grammars
         self._grammar_name: str | None = None
         if extra_body_parameters:
-            tools = extra_body_parameters.get("tools", [])
-            for tool in tools:
+            extra_tools = extra_body_parameters.get("tools", [])
+            for tool in extra_tools:
                 if tool.get("type") == "custom" and tool.get("format", {}).get("type") == "grammar":
                     if self._grammar_name is not None:
                         raise ValueError("Multiple grammar tools detected; only one is supported.")
