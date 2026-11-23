@@ -1358,6 +1358,7 @@ class AttackTechniqueFactory(Identifiable):
         return _AttackAdversarialConfigHelper(
             factory_name=self._name,
             uses_adversarial=self._uses_adversarial,
+            has_custom_adversarial_prompt=self._has_custom_adversarial_prompt,
             adversarial_chat=self._adversarial_chat,
             adversarial_system_prompt=self._adversarial_system_prompt,
             adversarial_seed_prompt=self._adversarial_seed_prompt,

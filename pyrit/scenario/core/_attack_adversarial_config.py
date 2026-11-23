@@ -6,7 +6,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyrit.executor.attack import AttackAdversarialConfig
-from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,6 +27,7 @@ class _AttackAdversarialConfigHelper:
         *,
         factory_name: str,
         uses_adversarial: bool,
+        has_custom_adversarial_prompt: bool,
         adversarial_chat: PromptTarget | None = None,
         adversarial_system_prompt: str | SeedPrompt | None = None,
         adversarial_seed_prompt: str | SeedPrompt | None = None,
@@ -36,6 +36,7 @@ class _AttackAdversarialConfigHelper:
     ) -> None:
         self._factory_name = factory_name
         self._uses_adversarial = uses_adversarial
+        self._has_custom_adversarial_prompt = has_custom_adversarial_prompt
         self._adversarial_chat = adversarial_chat
         self._adversarial_system_prompt = adversarial_system_prompt
         self._adversarial_seed_prompt = adversarial_seed_prompt
@@ -44,15 +45,8 @@ class _AttackAdversarialConfigHelper:
 
     @property
     def has_custom_adversarial_prompt(self) -> bool:
-        """Whether this technique has any custom adversarial prompt baked in."""
-        return any(
-            p is not None
-            for p in (
-                self._adversarial_system_prompt,
-                self._adversarial_seed_prompt,
-                self._adversarial_prompt_template,
-            )
-        )
+        """Whether this technique has any custom adversarial prompt baked in, as the factory reports it."""
+        return self._has_custom_adversarial_prompt
 
     def validate_target_conflict(self, *, create_time_target: PromptTarget | None) -> None:
         """
@@ -140,7 +134,7 @@ class _AttackAdversarialConfigHelper:
         create_time_system_prompt: str | SeedPrompt | None = None,
         create_time_seed_prompt: SeedPrompt | str | None = None,
         create_time_prompt_template: str | SeedPrompt | None = None,
-        default_target_resolver: Callable[[], PromptTarget] | None = None,
+        default_target_resolver: Callable[[], PromptTarget],
     ) -> AttackAdversarialConfig:
         """
         Build the adversarial config for a created attack, resolving the target lazily.
@@ -157,8 +151,8 @@ class _AttackAdversarialConfigHelper:
             create_time_seed_prompt: An adversarial seed prompt supplied at create() time.
             create_time_prompt_template: An adversarial per-turn feedback template supplied
                 at create() time.
-            default_target_resolver: Optional callable to resolve the default target.
-                Defaults to get_default_adversarial_target.
+            default_target_resolver: Callable that resolves the default target when neither
+                a create-time nor a baked target is available.
 
         Returns:
             AttackAdversarialConfig: Config wrapping the resolved adversarial chat target and prompts.
@@ -168,8 +162,7 @@ class _AttackAdversarialConfigHelper:
         elif self._adversarial_chat is not None:
             target = self._adversarial_chat
         else:
-            resolver = default_target_resolver or get_default_adversarial_target
-            target = resolver()
+            target = default_target_resolver()
 
         system_prompt = self._adversarial_system_prompt or create_time_system_prompt
         seed_prompt = self._adversarial_seed_prompt or create_time_seed_prompt
