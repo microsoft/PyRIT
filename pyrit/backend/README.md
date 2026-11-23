@@ -215,8 +215,9 @@ or keep an uploaded file. A saved converter or scorer can use this server's keys
 the configuration do. A target left out of the
 request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
 converter copy made with `source` can't be saved yet, and a private converter or scorer can't be saved (**422**). A
-taken name receives **409**, and storage that can't
-be written receives **503**. Each listed converter's and scorer's `origin` is `saved`, `configuration`, or
+taken converter name receives **409** with or without `persist`, a taken scorer name receives **409** when saving
+and **400** otherwise, and storage that can't be written receives **503**. Each listed converter's and scorer's
+`origin` is `saved`, `configuration`, or
 `temporary`, as for targets. A saved converter can't be removed through the API yet (**409**): delete its file under
 `registry_recipes_source` and restart the backend.
 
