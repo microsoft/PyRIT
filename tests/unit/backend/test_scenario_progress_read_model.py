@@ -386,6 +386,7 @@ async def test_slow_metrics_read_does_not_block_other_progress_requests(cancel_r
             )
         )
         other_task = None
+        worker_finished = None
         try:
             await wait_for_worker_ready_async(started=started, operation=task)
             other_task = asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id="other-run"))
@@ -393,6 +394,8 @@ async def test_slow_metrics_read_does_not_block_other_progress_requests(cancel_r
             assert other.summary.overall.completed == 0
             assert not task.done()
             if cancel_request:
+                # Cancelling the request detaches its worker thread, so only the worker can report completion.
+                worker_finished = asyncio.create_task(finished.wait())
                 task.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await task
@@ -403,10 +406,7 @@ async def test_slow_metrics_read_does_not_block_other_progress_requests(cancel_r
         finally:
             release.set()
             try:
-                await drain_tasks_async(task)
-                # A cancelled request detaches its worker thread, so only the worker can report completion.
-                if started.is_set():
-                    await wait_for_event_async(event=finished, tasks=[])
+                await drain_tasks_async(task, *get_defined_tasks(worker_finished))
             finally:
                 await settle_tasks_async(*get_defined_tasks(other_task))
 
@@ -811,8 +811,8 @@ async def test_get_snapshot_protects_run_with_waiters_from_lru_eviction() -> Non
     owner = None
     waiter = None
     successor = None
-    try:
-        with patch.object(ScenarioProgressReadModel, "_CACHE_MAX_RUNS", 2):
+    with patch.object(ScenarioProgressReadModel, "_CACHE_MAX_RUNS", 2):
+        try:
             await _get_snapshot_async(read_model=read_model, run_id="idle-a")
             await _get_snapshot_async(read_model=read_model, run_id="idle-b")
             owner = asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id="protected"))
@@ -850,9 +850,9 @@ async def test_get_snapshot_protects_run_with_waiters_from_lru_eviction() -> Non
             assert read_model._cache["protected"] is entry
             assert len(read_model._cache) == 2
             assert not read_model._refresh_states
-    finally:
-        release.set()
-        await settle_tasks_async(*get_defined_tasks(owner, waiter, successor))
+        finally:
+            release.set()
+            await settle_tasks_async(*get_defined_tasks(owner, waiter, successor))
 
 
 @pytest.mark.parametrize("first_exit", ["success", "cancellation", "storage-error"])
@@ -873,11 +873,11 @@ async def test_protected_cache_overflow_is_trimmed_when_callers_exit(first_exit:
 
     memory.get_scenario_attack_result_deltas_async = AsyncMock(side_effect=get_deltas_async)
     read_model = ScenarioProgressReadModel(memory=memory)
-    tasks = {
-        run_id: asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id=run_id)) for run_id in run_ids
-    }
-    try:
-        with patch.object(ScenarioProgressReadModel, "_CACHE_MAX_RUNS", 1):
+    with patch.object(ScenarioProgressReadModel, "_CACHE_MAX_RUNS", 1):
+        tasks = {
+            run_id: asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id=run_id)) for run_id in run_ids
+        }
+        try:
             for run_id in run_ids:
                 await wait_for_event_async(event=entered[run_id], tasks=[tasks[run_id]])
             assert len(read_model._cache) == 3
@@ -906,10 +906,10 @@ async def test_protected_cache_overflow_is_trimmed_when_callers_exit(first_exit:
             await wait_for_completion_async(future=tasks["run-c"])
             assert list(read_model._cache) == ["run-c"]
             assert not read_model._refresh_states
-    finally:
-        for event in release.values():
-            event.set()
-        await settle_tasks_async(*tasks.values())
+        finally:
+            for event in release.values():
+                event.set()
+            await settle_tasks_async(*tasks.values())
 
 
 async def test_get_snapshot_invalidates_cache_when_plan_changes_while_waiting() -> None:
