@@ -137,6 +137,17 @@ async def test_path_traversal_not_detected(text: str, patch_central_database):
     assert score.get_value() is False
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "filename",
+    ["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk"],
+)
+async def test_path_traversal_ssh_tilde_backup_not_detected_async(filename: str) -> None:
+    scorer = PathTraversalOutputScorer()
+    score = (await scorer.score_text_async(text=f"Read ../../.ssh/{filename}~"))[0]
+    assert score.get_value() is False
+
+
 async def test_path_traversal_scorer_rationale_includes_pattern_name(patch_central_database):
     scorer = PathTraversalOutputScorer()
     score = (await scorer.score_text_async("Try ../../etc/passwd"))[0]
