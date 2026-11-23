@@ -41,6 +41,10 @@ class AttackPreparationFailureKind(str, enum.Enum):
     #: reports none, so there is nothing to prime it with.
     OBJECTIVE_TARGET_HAS_NO_TOOLS = "objective_target_has_no_tools"
 
+    #: The simulated target's turn ended in an error, such as a tool loop that stopped early, so
+    #: the simulated conversation could not be used as history.
+    SIMULATED_TARGET_ERROR = "simulated_target_error"
+
     @property
     def default_reason(self) -> str:
         """
@@ -82,6 +86,9 @@ _DEFAULT_REASONS: dict[AttackPreparationFailureKind, str] = {
     ),
     AttackPreparationFailureKind.OBJECTIVE_TARGET_HAS_NO_TOOLS: (
         "The objective target reports no function tools, so no tool-call history could be prepared for it."
+    ),
+    AttackPreparationFailureKind.SIMULATED_TARGET_ERROR: (
+        "The simulated target's turn ended in an error, so the simulated conversation could not be prepended."
     ),
 }
 

@@ -173,8 +173,9 @@ async def generate_simulated_conversation_async(
         tools: Function tools the conversation uses, usually those the objective target reports.
             Required for ``ONE_SHOT``.
         simulated_target: The target that plays the assistant side in ``TURN_BY_TURN`` mode.
-            Defaults to ``adversarial_chat``. With ``tools`` it must be an
-            ``OpenAIResponseTarget``, which runs the tool calls.
+            Defaults to ``adversarial_chat``. It can carry its own tools (real, stubbed, or from an
+            MCP server); their calls and results are kept in the generated history. Cannot be
+            combined with ``tools``.
         max_attempts: ``ONE_SHOT`` only. Writing attempts, including revisions after validation
             feedback. Defaults to 3.
 
@@ -185,10 +186,16 @@ async def generate_simulated_conversation_async(
     Raises:
         ValueError: If num_turns is not a positive integer, if no adversarial chat system prompt
             is supplied, if a prompt and its deprecated path input are both supplied, if
-            ``ONE_SHOT`` mode has no tools or duplicate tool names, if an adversarial chat cannot
+            ``ONE_SHOT`` mode has no tools or duplicate tool names, if both ``tools`` and
+            ``simulated_target`` are given, if an adversarial chat cannot
             hold a multi-turn conversation with a system prompt, if ``TURN_BY_TURN`` mode has no
             objective scorer, or if a simulated target with tools cannot run them.
     """
+    if simulated_target is not None and tools:
+        raise ValueError(
+            "Pass either tools, which give the adversarial chat's stand-in tools whose results it writes, or a "
+            "simulated_target configured with its own tools, not both."
+        )
     # By default the same LLM plays both roles, with different system prompts.
     simulated_target = simulated_target or adversarial_chat
     if num_turns <= 0:
@@ -311,6 +318,23 @@ async def generate_simulated_conversation_async(
         )
 
     preparation_failure = AttackPreparationFailure.from_result(result=result)
+    # A stand-in whose tool loop stopped early (no rounds left, an invalid call, a tool error) leaves
+    # an error piece, which the objective target would reject as history.
+    error = next(
+        (
+            piece
+            for message in conversation_messages
+            for piece in message.message_pieces
+            if piece.converted_value_data_type == "error" or piece.response_error != "none"
+        ),
+        None,
+    )
+    if preparation_failure is None and error is not None:
+        kind = AttackPreparationFailureKind.SIMULATED_TARGET_ERROR
+        preparation_failure = AttackPreparationFailure(
+            kind=kind, reason=f"{kind.default_reason} Details: {error.converted_value[:500]}"
+        )
+        conversation_messages = []
 
     # If a next-message prompt is configured, generate a final user message
     if next_message_system_prompt and preparation_failure is None:

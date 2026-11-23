@@ -30,6 +30,7 @@ from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ChatMessageRole,
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
@@ -37,6 +38,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     NextMessageSystemPromptPaths,
+    PromptDataType,
     Score,
     SeedPrompt,
     SimulatedConversationMode,
@@ -1453,6 +1455,109 @@ class TestSimulatedConversationWithTools:
                 adversarial_chat_system_prompt=adversarial_system_prompt,
                 mode=SimulatedConversationMode.ONE_SHOT,
             )
+
+    async def test_custom_stand_in_runs_its_own_tools_into_the_history_async(
+        self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt
+    ) -> None:
+        stand_in = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key")
+        call = json.dumps({"type": "function_call", "call_id": "c1", "name": "lookup_ticket", "arguments": "{}"})
+        output = json.dumps({"type": "function_call_output", "call_id": "c1", "output": "SEC-1 is approved."})
+        conversation = [
+            _piece_message("user", "Check SEC-1.", "text"),
+            _piece_message("assistant", call, "function_call"),
+            _piece_message("tool", output, "function_call_output"),
+            _piece_message("assistant", "SEC-1 is approved.", "text"),
+        ]
+
+        result, attack_class = await _run_turn_by_turn_async(
+            conversation=conversation,
+            mock_objective_scorer=mock_objective_scorer,
+            adversarial_system_prompt=adversarial_system_prompt,
+            simulated_target=stand_in,
+        )
+
+        assert attack_class.call_args.kwargs["objective_target"] is stand_in
+        assert result.preparation_failure is None
+        assert [(prompt.role, prompt.data_type) for prompt in result.seed_prompts] == [
+            ("user", "text"),
+            ("assistant", "function_call"),
+            ("tool", "function_call_output"),
+            ("assistant", "text"),
+        ]
+
+    async def test_tools_and_a_custom_stand_in_cannot_be_combined_async(
+        self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt
+    ) -> None:
+        with pytest.raises(ValueError, match="not both"):
+            await generate_simulated_conversation_async(
+                objective="objective",
+                adversarial_chat=MockPromptTarget(),
+                objective_scorer=mock_objective_scorer,
+                adversarial_chat_system_prompt=adversarial_system_prompt,
+                simulated_target=MockPromptTarget(),
+                tools=[_LOOKUP],
+            )
+
+    async def test_stand_in_error_is_a_preparation_failure_async(
+        self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt
+    ) -> None:
+        error = MessagePiece(
+            role="assistant",
+            original_value="Tool loop stopped after 10 rounds.",
+            original_value_data_type="error",
+            response_error="unknown",
+        ).to_message()
+
+        result, _ = await _run_turn_by_turn_async(
+            conversation=[_piece_message("user", "Check SEC-1.", "text"), error],
+            mock_objective_scorer=mock_objective_scorer,
+            adversarial_system_prompt=adversarial_system_prompt,
+        )
+
+        assert result.seed_prompts == []
+        assert result.preparation_failure is not None
+        assert result.preparation_failure.kind is AttackPreparationFailureKind.SIMULATED_TARGET_ERROR
+        assert "Tool loop stopped after 10 rounds." in result.preparation_failure.reason
+
+
+def _piece_message(role: ChatMessageRole, value: str, data_type: PromptDataType) -> Message:
+    return MessagePiece(role=role, original_value=value, original_value_data_type=data_type).to_message()
+
+
+async def _run_turn_by_turn_async(
+    *,
+    conversation: list[Message],
+    mock_objective_scorer: MagicMock,
+    adversarial_system_prompt: SeedPrompt,
+    **kwargs: object,
+) -> tuple[SimulatedConversationResult, MagicMock]:
+    identifier = ComponentIdentifier(class_name="RedTeamingAttack", class_module="pyrit.executor.attack")
+    with (
+        patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as attack_class,
+        patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as memory_class,
+    ):
+        attack_class.return_value.execute_async = AsyncMock(
+            return_value=AttackResult(
+                atomic_attack_identifier=identifier,
+                conversation_id="simulated",
+                objective="objective",
+                outcome=AttackOutcome.SUCCESS,
+                executed_turns=1,
+                automated_score=MagicMock(spec=Score, scored_expectation=None, observation_ids=[]),
+            )
+        )
+        memory_class.get_memory_instance.return_value.get_conversation_messages_async = AsyncMock(
+            return_value=conversation
+        )
+        result = await generate_simulated_conversation_async(
+            objective="objective",
+            adversarial_chat=MockPromptTarget(),
+            objective_scorer=mock_objective_scorer,
+            adversarial_chat_system_prompt=adversarial_system_prompt,
+            num_turns=1,
+            **kwargs,
+        )
+    return result, attack_class
 
 
 _CALL = {"type": "function_call", "call_id": "call_1", "name": "lookup_ticket", "arguments": {"ticket_id": "SEC-1"}}
