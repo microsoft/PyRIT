@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+import math
+from typing import TYPE_CHECKING, Any
 
 from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -17,14 +19,35 @@ if TYPE_CHECKING:
     from presidio_analyzer import AnalyzerEngine
 
 
+def _describe_analyzer(analyzer: Any) -> str:
+    """
+    Describe an injected analyzer for the scorer identifier.
+
+    Returns:
+        str: ``"default"`` for the lazily created engine, otherwise the analyzer's class path
+            plus the names of its registered recognizers when it exposes a recognizer registry.
+    """
+    if analyzer is None:
+        return "default"
+    description = f"{type(analyzer).__module__}.{type(analyzer).__qualname__}"
+    recognizers = getattr(getattr(analyzer, "registry", None), "recognizers", None)
+    if isinstance(recognizers, (list, tuple)):
+        names = sorted({str(getattr(recognizer, "name", type(recognizer).__name__)) for recognizer in recognizers})
+        description += f"[{','.join(names)}]"
+    return description
+
+
 class PresidioPiiScorer(MessageTrueFalseScorer):
     """
     Detect PII entity types in text using presidio-analyzer.
 
-    Returns True if any requested entity type is found above the score threshold.
+    Returns True if any requested entity type is found at or above the score threshold.
     Score metadata contains entity types and counts, never the matched values.
 
-    Requires the ``presidio`` optional extra (``pip install pyrit[presidio]``).
+    Requires the ``presidio`` optional extra (``pip install pyrit[presidio]``). Without an injected
+    analyzer, a default ``AnalyzerEngine`` is created on first use. It loads the spaCy model
+    ``en_core_web_lg`` and downloads it if it is not installed, which can take several hundred MB.
+    Pass ``analyzer`` to choose the NLP engine and recognizers.
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
@@ -36,40 +59,56 @@ class PresidioPiiScorer(MessageTrueFalseScorer):
         score_threshold: float = 0.5,
         language: str = "en",
         analyzer: AnalyzerEngine | None = None,
-        aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
+        score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
         validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the PresidioPiiScorer.
 
         Args:
-            entities: Entity types to detect (e.g. ``["US_SSN", "CREDIT_CARD"]``).
-                ``None`` means all supported entities.
-            score_threshold: Minimum presidio confidence score to count a detection.
-            language: Language code for the analyzer.
-            analyzer: Injectable ``AnalyzerEngine`` instance, primarily for testing.
-                If ``None``, a default engine is created on first use.
-            aggregator: Aggregator function for multi-piece messages.
-            validator: Custom validator. Defaults to text-only.
+            entities (list[str] | None): Entity types to detect (e.g. ``["US_SSN", "CREDIT_CARD"]``).
+                ``None`` means all entities the analyzer supports.
+            score_threshold (float): Minimum Presidio confidence, in [0, 1], for a detection to count.
+            language (str): Language code passed to the analyzer.
+            analyzer (AnalyzerEngine | None): Analyzer to use. If ``None``, a default engine is
+                created on first use.
+            score_aggregator (TrueFalseAggregatorFunc): Aggregator for multi-piece messages.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to text-only.
+
+        Raises:
+            ValueError: If ``entities`` is an empty list (Presidio would treat it as "all
+                entities") or ``score_threshold`` is not a finite value in [0, 1].
         """
-        self._entities = entities
+        if entities is not None and not entities:
+            raise ValueError("entities must be None (all supported entities) or a non-empty list.")
+        if not math.isfinite(score_threshold) or not 0.0 <= score_threshold <= 1.0:
+            raise ValueError(f"score_threshold must be finite and between 0.0 and 1.0, got {score_threshold}.")
+
+        self._entities = sorted(set(entities)) if entities is not None else None
         self._score_threshold = score_threshold
         self._language = language
         self._analyzer = analyzer
+        self._analyzer_description = _describe_analyzer(analyzer)
+        self._load_lock = asyncio.Lock()
+        self._analyze_lock = asyncio.Lock()
 
-        super().__init__(score_aggregator=aggregator, validator=validator or self._DEFAULT_VALIDATOR)
+        super().__init__(score_aggregator=score_aggregator, validator=validator or self._DEFAULT_VALIDATOR)
 
-    def _get_analyzer(self) -> AnalyzerEngine:
-        if self._analyzer is not None:
-            return self._analyzer
+    @staticmethod
+    def _create_default_analyzer() -> AnalyzerEngine:
         try:
             from presidio_analyzer import AnalyzerEngine as _AnalyzerEngine
         except ImportError:
             raise ImportError(
                 "presidio-analyzer is required for PresidioPiiScorer. Install it with: pip install pyrit[presidio]"
             ) from None
-        self._analyzer = _AnalyzerEngine()
-        return self._analyzer
+        return _AnalyzerEngine()
+
+    async def _get_analyzer_async(self) -> AnalyzerEngine:
+        async with self._load_lock:
+            if self._analyzer is None:
+                self._analyzer = await asyncio.to_thread(self._create_default_analyzer)
+            return self._analyzer
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
@@ -77,6 +116,7 @@ class PresidioPiiScorer(MessageTrueFalseScorer):
                 "entities": self._entities,
                 "score_threshold": self._score_threshold,
                 "language": self._language,
+                "analyzer": self._analyzer_description,
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
@@ -87,6 +127,9 @@ class PresidioPiiScorer(MessageTrueFalseScorer):
         """
         Score a text piece for PII entity detections.
 
+        Presidio's analysis is synchronous, so it runs in a worker thread. Calls on one scorer
+        are serialized because the analyzer's thread safety is not documented.
+
         Args:
             message_piece (MessagePiece): The message piece to score.
             expectation (ScoringExpectation | None): The scoring criteria. Only its objective is read.
@@ -95,15 +138,16 @@ class PresidioPiiScorer(MessageTrueFalseScorer):
             list[Score]: A single score: True if any entity found, False otherwise.
         """
         objective = expectation.objective if expectation else None
-        text = message_piece.converted_value
-        analyzer = self._get_analyzer()
+        analyzer = await self._get_analyzer_async()
 
-        results = analyzer.analyze(
-            text=text,
-            entities=self._entities,
-            language=self._language,
-            score_threshold=self._score_threshold,
-        )
+        async with self._analyze_lock:
+            results = await asyncio.to_thread(
+                analyzer.analyze,
+                text=message_piece.converted_value,
+                entities=self._entities,
+                language=self._language,
+                score_threshold=self._score_threshold,
+            )
 
         entity_counts: dict[str, int] = {}
         for result in results:
