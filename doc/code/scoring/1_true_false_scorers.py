@@ -260,19 +260,22 @@ print(f"[package] real imports only  -> {clean.get_value()}")
 # %% [markdown]
 # ### PresidioPiiScorer
 #
-# `PresidioPiiScorer` uses `presidio-analyzer` to flag PII entity types (SSN, credit card,
-# email, phone, geographic coordinates, and others) in a response. It returns True when any
-# requested entity is found above a configurable confidence threshold. Score metadata carries
-# entity types and counts, never the matched values. Requires the optional `presidio` extra
-# (`pip install pyrit[presidio]`). The analyzer is injectable for testing.
+# `PresidioPiiScorer` uses `presidio-analyzer` to flag PII entity types (credit card, email,
+# phone, US SSN, IBAN, and the other entities Presidio supports) in a response. It returns True
+# when any requested entity is found at or above a configurable confidence threshold. Score
+# metadata carries entity types and counts, never the matched values.
+#
+# It requires the optional `presidio` extra (`pip install pyrit[presidio]`). Without an `analyzer`
+# argument, the default Presidio engine loads the spaCy model `en_core_web_lg` on first use and
+# downloads it if it is missing, so this example is not executed here.
 #
 # ```python
 # from pyrit.score import PresidioPiiScorer
 #
-# scorer = PresidioPiiScorer(entities=["US_SSN", "CREDIT_CARD"], score_threshold=0.5)
-# scores = await scorer.score_text_async("My SSN is 123-45-6789")
-# print(f"PII detected: {scores[0].get_value()}")
-# print(f"Metadata: {scores[0].score_metadata}")
+# scorer = PresidioPiiScorer(entities=["CREDIT_CARD", "EMAIL_ADDRESS"])
+# scores = await scorer.score_text_async("Card 4111 1111 1111 1111, contact jane@example.com")
+# print(f"PII detected: {scores[0].get_value()}")  # True
+# print(f"Metadata: {scores[0].score_metadata}")  # entity types and counts only
 # ```
 # %% [markdown]
 # ## Slow scorers (LLM self-ask)
