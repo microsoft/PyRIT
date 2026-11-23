@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import MatchesObjective, SeedPrompt
@@ -219,7 +219,7 @@ class HarmBenchScorer(MessageTrueFalseScorer):
             params["max_generation_tokens"] = self.MAX_GENERATION_TOKENS
         return self._create_identifier(
             params=params,
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             prompt_target=self._prompt_target.get_identifier(),
         )
 
@@ -298,8 +298,8 @@ class HarmBenchScorer(MessageTrueFalseScorer):
             if self._tokenizer is None:
                 self._tokenizer = await asyncio.to_thread(self._load_tokenizer)
         token_ids = self._tokenizer.encode(generation, max_length=self.MAX_GENERATION_TOKENS, truncation=True)
-        clipped: str = self._tokenizer.decode(token_ids, skip_special_tokens=True)
-        return clipped
+        # The transformers tokenizer is untyped here; decode() returns the text as a str.
+        return cast("str", self._tokenizer.decode(token_ids, skip_special_tokens=True))
 
     def _load_tokenizer(self) -> Any:
         """
