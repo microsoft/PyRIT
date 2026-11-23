@@ -17,6 +17,24 @@ def test_valid_init():
     assert completion is not None
 
 
+def test_non_string_endpoint_raises():
+    with pytest.raises(TypeError, match="Embedding endpoint must be a string"):
+        OpenAITextEmbedding(
+            api_key="xxxxx",
+            endpoint=lambda: "https://mock.azure.com/",
+            model_name="gpt-4",
+        )
+
+
+def test_non_string_model_name_raises():
+    with pytest.raises(TypeError, match="Embedding model name must be a string"):
+        OpenAITextEmbedding(
+            api_key="xxxxx",
+            endpoint="https://mock.azure.com/",
+            model_name=lambda: "gpt-4",
+        )
+
+
 def test_valid_init_env():
     os.environ[OpenAITextEmbedding.API_KEY_ENVIRONMENT_VARIABLE] = "xxxxx"
     os.environ[OpenAITextEmbedding.ENDPOINT_URI_ENVIRONMENT_VARIABLE] = "https://testcompletionendpoint"

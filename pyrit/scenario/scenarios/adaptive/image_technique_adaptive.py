@@ -60,7 +60,7 @@ def _build_image_technique_adaptive_technique() -> type[ScenarioTechnique]:
     Returns:
         type[ScenarioTechnique]: The dynamically-built technique enum class.
     """
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-explicit-return]
         class_name="ImageTechniqueAdaptiveTechnique",
         factories=_image_technique_factories(),
         default_names={"blank_canvas", "grid_composite", "comic_panel"},

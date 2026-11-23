@@ -33,6 +33,7 @@ from pyrit.registry.resolution import (
     reject_non_external_params,
     resolve_constructor_args,
     resolve_declared_params,
+    resolve_reference_value,
     validate_declared_params,
 )
 
@@ -830,3 +831,11 @@ def test_resolvable_component_type_maps_to_its_registry(component_type: Componen
 @pytest.mark.parametrize("component_type", sorted(_NON_RESOLVABLE_COMPONENT_TYPES))
 def test_non_resolvable_component_type_has_no_registry(component_type: ComponentType) -> None:
     assert _registry_getter_for_component_type(component_type) is None
+
+
+@pytest.mark.parametrize("component_type", sorted(_NON_RESOLVABLE_COMPONENT_TYPES))
+def test_non_resolvable_component_type_error_names_type_by_value(component_type: ComponentType) -> None:
+    with pytest.raises(ValueError) as exc_info:
+        resolve_reference_value(component_type=component_type, value="some_name", owner="Owner", name="param")
+
+    assert str(exc_info.value) == f"Owner.param: no registry is wired for component type '{component_type.value}'."
