@@ -5029,6 +5029,7 @@ class MemoryInterface(abc.ABC):
                 elements (case-insensitive) rather than substrings within decoded list elements. Defaults to False
                 (substring matching).
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                An empty list matches no seeds.
                 If None, all values are returned.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
             dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
@@ -5064,6 +5065,7 @@ class MemoryInterface(abc.ABC):
                 '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+                An empty list matches no seeds.
 
         Returns:
             list[ColumnElement[bool]]: A list of SQLAlchemy filter conditions.
@@ -5076,13 +5078,14 @@ class MemoryInterface(abc.ABC):
             conditions.append(text_match(column=SeedEntry.value, pattern=value_pattern))
         elif value:
             conditions.append(SeedEntry.value == value if exact else text_match(column=SeedEntry.value, value=value))
-        if value_sha256:
+        # None means "no filter"; an empty list matches no seeds, like ``prompt_ids=[]`` in ``get_message_pieces``.
+        if value_sha256 is not None:
             conditions.append(SeedEntry.value_sha256.in_(value_sha256))
         if dataset_name:
             conditions.append(SeedEntry.dataset_name == dataset_name)
         elif dataset_name_pattern is not None:
             conditions.append(text_match(column=SeedEntry.dataset_name, pattern=dataset_name_pattern))
-        if prompt_group_ids:
+        if prompt_group_ids is not None:
             conditions.append(SeedEntry.prompt_group_id.in_(prompt_group_ids))
         if data_types:
             data_type_conditions = SeedEntry.data_type.in_(data_types)
@@ -5233,6 +5236,7 @@ class MemoryInterface(abc.ABC):
             value_pattern (str | None): Full case-insensitive LIKE pattern.
                 '%' and '_' are wildcards; '/' escapes the next character.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                An empty list matches no seeds.
                 If None, all values are returned.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
             dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
@@ -5268,6 +5272,7 @@ class MemoryInterface(abc.ABC):
                 '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+                An empty list matches no seeds.
 
         Returns:
             Sequence[Seed]: A list of seeds (e.g., SeedPrompt, SeedObjective, SeedSimulatedConversation)
@@ -5358,6 +5363,7 @@ class MemoryInterface(abc.ABC):
                 ``"hate_speech"``. Defaults to True for the remove methods (the safer choice for deletion).
                 Note this differs from get_seeds, which always matches these filters by substring.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                An empty list matches no seeds.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
             dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
@@ -5393,6 +5399,7 @@ class MemoryInterface(abc.ABC):
                 '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+                An empty list matches no seeds.
 
         Returns:
             int: The number of seeds removed.
@@ -5509,6 +5516,7 @@ class MemoryInterface(abc.ABC):
                 ``"hate_speech"``. Defaults to True for the remove methods (the safer choice for deletion).
                 Note this differs from get_seeds, which always matches these filters by substring.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                An empty list matches no seeds.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
             dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
@@ -5544,6 +5552,7 @@ class MemoryInterface(abc.ABC):
                 '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+                An empty list matches no seeds.
 
         Returns:
             int: The number of seeds removed across all affected groups.
@@ -11680,6 +11689,7 @@ class MemoryInterface(abc.ABC):
             value_pattern (str | None): Full case-insensitive LIKE pattern.
                 '%' and '_' are wildcards; '/' escapes the next character.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                An empty list matches no seeds.
                 If None, all values are returned.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
             dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
@@ -11715,6 +11725,7 @@ class MemoryInterface(abc.ABC):
                 '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+                An empty list matches no seeds.
 
         Returns:
             Sequence[Seed]: A list of seeds (e.g., SeedPrompt, SeedObjective, SeedSimulatedConversation)
@@ -11884,6 +11895,7 @@ class MemoryInterface(abc.ABC):
                 safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
                 by substring.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                An empty list matches no seeds.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
             dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
@@ -11919,6 +11931,7 @@ class MemoryInterface(abc.ABC):
                 '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+                An empty list matches no seeds.
 
         Returns:
             int: The number of seeds removed.
@@ -12081,6 +12094,7 @@ class MemoryInterface(abc.ABC):
                 safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
                 by substring.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                An empty list matches no seeds.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
             dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
@@ -12116,6 +12130,7 @@ class MemoryInterface(abc.ABC):
                 '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+                An empty list matches no seeds.
 
         Returns:
             int: The number of seeds removed across all affected groups.
