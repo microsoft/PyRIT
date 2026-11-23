@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
@@ -39,12 +39,13 @@ _COMPUTED_IDENTITY_FIELDS = frozenset(
 )
 
 
-class ScenarioRunState(str, Enum):
+class ScenarioRunState(StrEnum):
     """
     Lifecycle state of a scenario run.
 
-    Inherits from ``str`` so values serialize naturally in Pydantic models and
-    REST responses, and compare equal to their string form.
+    A ``StrEnum``, so values serialize naturally in Pydantic models and REST
+    responses, compare equal to their string form, and format as their value
+    (``COMPLETED``, not ``ScenarioRunState.COMPLETED``) in messages and logs.
     """
 
     CREATED = "CREATED"
@@ -98,8 +99,7 @@ class ScenarioResult(BaseModel):
     error_type: str | None = None
     #: IDs of attack results that errored during the scenario run.
     error_attack_result_ids: list[str] = Field(default_factory=list)
-    #: Free-form JSON metadata persisted with the scenario result. Stores the normalized
-    #: run plan and, for sampled runs, ``objective_hashes`` used to replay the original subset.
+    #: Free-form JSON metadata persisted with the scenario result, including the normalized run plan.
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")

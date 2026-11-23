@@ -88,6 +88,9 @@ await output_scenario_async(scenario_result)
 # selected sub-harms' datasets; `--max-total` must cover each selected sub-harm.
 #
 # **Available techniques:** ALL, DEFAULT, tone, language, persuasion, deterministic, crescendo
+#
+# Each sub-harm is judged by its own scorer. To use your own in Python, pass `imminent_crisis_scorer` or
+# `licensed_therapist_scorer` to `Psychosocial(...)`.
 
 # %%
 from pyrit.scenario.airt import Psychosocial, PsychosocialTechnique
@@ -210,7 +213,7 @@ await output_scenario_async(scenario_result)
 # sends each objective without translation and is included by default.
 #
 # ```bash
-# pyrit_scan airt.multilingual \
+# pyrit_scan run airt.multilingual \
 #   --initializers target \
 #   --target openai_chat \
 #   --datasets harmbench \

@@ -492,9 +492,8 @@ class TestScorerOverrideTypeInference:
     """
     Tests verifying scorer compatibility type inference for real attack classes.
 
-    TAP narrows its annotation to TAPAttackScoringConfig — generic AttackScoringConfig
-    should be rejected (per policy). PromptSendingAttack uses the base AttackScoringConfig
-    annotation — any config should pass through.
+    TAP and PromptSendingAttack use the base AttackScoringConfig annotation, so any config
+    passes through. An attack whose annotation narrows the config type gets only that type.
     """
 
     def _make_generic_scoring_config(self):
@@ -508,121 +507,29 @@ class TestScorerOverrideTypeInference:
         """Create a mock chat target for use as an adversarial_chat."""
         return MagicMock(spec=PromptTarget)
 
-    def test_tap_factory_rejects_generic_config_with_raise_policy(self):
-        """TAP factory raises when given a generic AttackScoringConfig and policy is RAISE."""
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("policy", list(ScorerOverridePolicy))
+    def test_tap_factory_forwards_a_generic_config(self, policy, caplog):
+        """TAP takes the base AttackScoringConfig, so no policy drops or rejects it."""
+        import logging
+
         from pyrit.executor.attack import TreeOfAttacksWithPruningAttack
 
         factory = AttackTechniqueFactory(
-            name="tap_raise",
+            name=f"tap_{policy.value}",
             attack_class=TreeOfAttacksWithPruningAttack,
             adversarial_chat=self._make_adversarial_chat(),
-            scorer_override_policy=ScorerOverridePolicy.RAISE,
+            scorer_override_policy=policy,
         )
-
         generic_config = self._make_generic_scoring_config()
-        target = MagicMock(spec=PromptTarget)
 
-        with pytest.raises(ValueError, match="incompatible"):
-            factory.create(
-                objective_target=target,
-                attack_scoring_config=generic_config,
+        with caplog.at_level(logging.WARNING):
+            technique = factory.create(
+                objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=generic_config
             )
 
-    def test_tap_factory_warns_on_generic_config_with_warn_policy(self, caplog):
-        """TAP factory logs warning and skips override when policy is WARN."""
-        import logging
-
-        from pyrit.executor.attack import TreeOfAttacksWithPruningAttack
-
-        factory = AttackTechniqueFactory(
-            name="tap_warn",
-            attack_class=TreeOfAttacksWithPruningAttack,
-            adversarial_chat=self._make_adversarial_chat(),
-            scorer_override_policy=ScorerOverridePolicy.WARN,
-        )
-
-        generic_config = self._make_generic_scoring_config()
-        target = MagicMock(spec=PromptTarget)
-
-        # Under WARN policy, the scorer override should be skipped with a warning
-        # rather than raising. The factory.create() call may succeed or fail for
-        # unrelated downstream reasons — we only assert that no scorer-incompatibility
-        # ValueError was raised and that a warning was emitted.
-        with caplog.at_level(logging.WARNING):
-            try:
-                factory.create(
-                    objective_target=target,
-                    attack_scoring_config=generic_config,
-                )
-            except Exception as exc:
-                assert "incompatible" not in str(exc).lower()
-
-        # A warning about incompatibility should be logged
-        assert any("incompatible" in record.message.lower() for record in caplog.records)
-
-    def test_tap_factory_silently_skips_on_generic_config_with_skip_policy(self, caplog):
-        """TAP factory silently skips override when policy is SKIP."""
-        import logging
-
-        from pyrit.executor.attack import TreeOfAttacksWithPruningAttack
-
-        factory = AttackTechniqueFactory(
-            name="tap_skip",
-            attack_class=TreeOfAttacksWithPruningAttack,
-            adversarial_chat=self._make_adversarial_chat(),
-            scorer_override_policy=ScorerOverridePolicy.SKIP,
-        )
-
-        generic_config = self._make_generic_scoring_config()
-        target = MagicMock(spec=PromptTarget)
-
-        # Under SKIP policy, the scorer override should be skipped silently. The
-        # factory.create() call may succeed or fail for unrelated downstream reasons
-        # — we only assert that no scorer-incompatibility error or warning was emitted.
-        with caplog.at_level(logging.WARNING):
-            try:
-                factory.create(
-                    objective_target=target,
-                    attack_scoring_config=generic_config,
-                )
-            except Exception as exc:
-                assert "incompatible" not in str(exc).lower()
-
-        # No warning about incompatibility should be logged
+        assert technique.attack.get_attack_scoring_config() is generic_config
         assert not any("incompatible" in record.message.lower() for record in caplog.records)
-
-    def test_tap_factory_accepts_tap_scoring_config(self):
-        """TAP factory forwards TAPAttackScoringConfig regardless of policy."""
-        from pyrit.executor.attack import (
-            TreeOfAttacksWithPruningAttack,
-        )
-        from pyrit.executor.attack.multi_turn.tree_of_attacks import (
-            TAPAttackScoringConfig,
-        )
-        from pyrit.score import FloatScaleThresholdScorer
-
-        factory = AttackTechniqueFactory(
-            name="tap_accept",
-            attack_class=TreeOfAttacksWithPruningAttack,
-            adversarial_chat=self._make_adversarial_chat(),
-            scorer_override_policy=ScorerOverridePolicy.RAISE,
-        )
-
-        mock_scorer = MagicMock(spec=FloatScaleThresholdScorer)
-        mock_scorer.threshold = 0.7
-        tap_config = TAPAttackScoringConfig(objective_scorer=mock_scorer)
-        target = MagicMock(spec=PromptTarget)
-
-        # The factory should NOT raise about scorer incompatibility for a TAP-typed
-        # scoring config. Downstream construction may succeed or fail for unrelated
-        # reasons — we only assert no scorer-compatibility error is raised.
-        try:
-            factory.create(
-                objective_target=target,
-                attack_scoring_config=tap_config,
-            )
-        except Exception as exc:
-            assert "incompatible" not in str(exc).lower()
 
     def test_prompt_sending_factory_accepts_any_config(self):
         """PromptSendingAttack accepts base AttackScoringConfig — any config passes through."""
@@ -665,7 +572,8 @@ class TestScorerOverrideTypeInference:
 
         mock_scorer = MagicMock(spec=FloatScaleThresholdScorer)
         mock_scorer.threshold = 0.7
-        tap_config = TAPAttackScoringConfig(objective_scorer=mock_scorer)
+        with pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig is deprecated"):
+            tap_config = TAPAttackScoringConfig(objective_scorer=mock_scorer)
         target = MagicMock(spec=PromptTarget)
 
         mock_memory = MagicMock(spec=MemoryInterface)
