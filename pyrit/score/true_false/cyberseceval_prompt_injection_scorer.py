@@ -169,7 +169,7 @@ class CyberSecEvalPromptInjectionScorer(MessageTrueFalseScorer):
         }
         return self._create_identifier(
             params=params,
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             prompt_target=self._prompt_target.get_identifier(),
         )
 
