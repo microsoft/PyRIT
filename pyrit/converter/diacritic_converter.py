@@ -9,6 +9,13 @@ from pyrit.models import ComponentIdentifier, PromptDataType
 
 logger = logging.getLogger(__name__)
 
+_SUPPORTED_ACCENTS = {
+    "acute": "\u0301",  # Acute accent
+    "grave": "\u0300",  # Grave accent
+    "tilde": "\u0303",  # Tilde
+    "umlaut": "\u0308",  # Umlaut/Diaeresis
+}
+
 
 class DiacriticConverter(Converter):
     """
@@ -40,6 +47,9 @@ class DiacriticConverter(Converter):
         if not target_chars:
             raise ValueError("target_chars cannot be empty.")
 
+        if accent not in _SUPPORTED_ACCENTS:
+            raise ValueError(f"Accent '{accent}' not recognized. Choose from {list(_SUPPORTED_ACCENTS.keys())}.")
+
         self._target_chars = set(target_chars)
         self._accent = accent
 
@@ -63,22 +73,8 @@ class DiacriticConverter(Converter):
 
         Returns:
             str: The Unicode diacritic character.
-
-        Raises:
-            ValueError: If the specified accent is not recognized.
         """
-        diacritics = {
-            "acute": "\u0301",  # Acute accent
-            "grave": "\u0300",  # Grave accent
-            "tilde": "\u0303",  # Tilde
-            "umlaut": "\u0308",  # Umlaut/Diaeresis
-            # Add other accents as needed
-        }
-
-        if self._accent not in diacritics:
-            raise ValueError(f"Accent '{self._accent}' not recognized. Choose from {list(diacritics.keys())}.")
-
-        return diacritics[self._accent]
+        return _SUPPORTED_ACCENTS[self._accent]
 
     def _add_diacritic(self, text: str) -> str:
         """
