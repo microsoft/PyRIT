@@ -50,7 +50,7 @@ EXEC sp_executesql @sql;
 _REJECT_LONG_CONVERSATION_IDS_SQL = """
 IF EXISTS (SELECT 1 FROM [Conversations] WHERE DATALENGTH([conversation_id]) > 36)
     OR EXISTS (SELECT 1 FROM [AttackResultEntries] WHERE DATALENGTH([conversation_id]) > 36)
-    THROW 50000, 'Conversation ids longer than 36 characters are stored; earlier releases cannot hold them.', 1;
+    THROW 50000, 'Conversation ids that do not fit in VARCHAR(36) are stored; earlier releases cannot hold them.', 1;
 """
 
 # SQL Server widens an indexed VARCHAR in place but cannot narrow one, so the
