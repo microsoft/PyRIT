@@ -171,6 +171,18 @@ async def test_create_container_client_uses_sas_token(azure_blob_storage_target:
     assert azure_blob_storage_target._credential is None
 
 
+async def test_create_container_client_rejects_non_string_sas_token(
+    azure_blob_storage_target: AzureBlobStorageTarget,
+):
+    azure_blob_storage_target._sas_token = lambda: "valid_sas_token"
+
+    with patch.object(AsyncContainerClient, "from_container_url", return_value=AsyncMock()) as mock_client:
+        with pytest.raises(TypeError, match="Azure Storage SAS token must be a string"):
+            await azure_blob_storage_target._create_container_client_async()
+
+    mock_client.assert_not_called()
+
+
 def test_parse_url_raises_for_url_without_container(patch_central_database):
     target = AzureBlobStorageTarget(
         container_url="https://test.blob.core.windows.net",
