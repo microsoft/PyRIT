@@ -14,6 +14,7 @@ import logging
 import threading
 import uuid
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from enum import Enum
@@ -2568,7 +2569,15 @@ class Scenario(ABC):
                 eval_hash = attribution.get("parent_eval_hash")
                 is_failure = row.outcome == AttackOutcome.ERROR
                 is_failure = is_failure or AttackPreparationFailure.from_result(result=row) is not None
-                if is_failure and isinstance(name, str) and (eval_hash is None or isinstance(eval_hash, str)):
+                # A persisted child row from a compound attack (e.g. FIRST_SUCCESS) carries its
+                # parent's linkage but its own ERROR only reflects that one attempt, not the
+                # parent. Only a top-level row (no attempt_index) can demote the parent attack.
+                if (
+                    is_failure
+                    and isinstance(name, str)
+                    and (eval_hash is None or isinstance(eval_hash, str))
+                    and AttackResultMetadata.from_metadata(metadata=attribution).attempt_index is None
+                ):
                     started_attack_keys.add((name, eval_hash))
 
             # ERROR rows hit infrastructure problems, and preparation failures never reached the
@@ -2651,10 +2660,17 @@ class Scenario(ABC):
         # hits the same failing objective, and stops admission before the attacks
         # behind it ever start. Put attacks with no failed result first; the sort
         # is stable, so original order is kept within each group.
+        # A legacy failure row with no eval hash matches name-only. Only trust that fallback when
+        # the name is unique among remaining attacks; with two attacks sharing a name but using
+        # different techniques, a legacy row for one must not demote both.
+        attack_name_counts = Counter(attack.atomic_attack_name for attack in remaining_attacks)
         remaining_attacks.sort(
             key=lambda attack: (
                 (attack.atomic_attack_name, attack.technique_eval_hash) in started_attack_keys
-                or (attack.atomic_attack_name, None) in started_attack_keys
+                or (
+                    attack_name_counts[attack.atomic_attack_name] == 1
+                    and (attack.atomic_attack_name, None) in started_attack_keys
+                )
             )
         )
         return remaining_attacks

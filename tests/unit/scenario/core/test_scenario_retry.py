@@ -1156,6 +1156,78 @@ class TestRemainingAttackOrdering:
         # "partial" was only interrupted, so it keeps its place ahead of "failed".
         assert [attack.atomic_attack_name for attack in remaining] == ["partial", "unstarted", "failed"]
 
+    @staticmethod
+    def _failure_row(*, name, eval_hash=None, attempt_index=None):
+        row = MagicMock()
+        row.outcome = AttackOutcome.ERROR
+        attribution = {"parent_collection": name}
+        if eval_hash is not None:
+            attribution["parent_eval_hash"] = eval_hash
+        if attempt_index is not None:
+            attribution["attempt_index"] = attempt_index
+        row.attribution_data = attribution
+        row.objective = "poison"
+        row.metadata = {}
+        row.outcome_reason = None
+        return row
+
+    async def test_compound_child_error_does_not_demote_parent(self):
+        """A persisted ERROR from a compound attack's child (FIRST_SUCCESS) carries its
+        parent's linkage plus an attempt_index. That child failure belongs to one attempt,
+        not the parent atomic attack, so it must not push the parent to the back of the queue."""
+        parent = create_mock_atomic_attack("parent", ["p1", "p2"])
+        clean = create_mock_atomic_attack("clean", ["c1"])
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [parent, clean]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+        scenario._memory.get_attack_results_async.return_value = [
+            self._failure_row(
+                name=parent.atomic_attack_name,
+                eval_hash=parent.technique_eval_hash,
+                attempt_index=1,
+            )
+        ]
+
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+        assert [attack.atomic_attack_name for attack in remaining] == ["parent", "clean"]
+
+        # Control: the same ERROR without attempt_index is a genuine top-level failure and
+        # still demotes the parent.
+        scenario._memory.get_attack_results_async.return_value = [
+            self._failure_row(name=parent.atomic_attack_name, eval_hash=parent.technique_eval_hash)
+        ]
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+        assert [attack.atomic_attack_name for attack in remaining] == ["clean", "parent"]
+
+    async def test_legacy_failure_does_not_demote_ambiguous_duplicate_names(self):
+        """Two attacks share a name but use different techniques. A legacy failure row with
+        no eval hash cannot be attributed to either, so the conservative choice is to demote
+        neither. A row carrying a matching eval hash still demotes only that one attack."""
+        dup_a = create_mock_atomic_attack("dup", ["a1"])
+        unstarted = create_mock_atomic_attack("unstarted", ["u1"])
+        dup_b = create_mock_atomic_attack("dup", ["b1"])
+        assert dup_a.technique_eval_hash != dup_b.technique_eval_hash
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [dup_a, unstarted, dup_b]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+
+        # Legacy name-only failure: ambiguous name, so neither duplicate is demoted.
+        scenario._memory.get_attack_results_async.return_value = [self._failure_row(name="dup")]
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+        assert remaining == [dup_a, unstarted, dup_b]
+
+        # Control: a failure keyed by the exact eval hash demotes only dup_a; the primary
+        # (name, eval_hash) check must keep working.
+        scenario._memory.get_attack_results_async.return_value = [
+            self._failure_row(name="dup", eval_hash=dup_a.technique_eval_hash)
+        ]
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+        assert remaining == [unstarted, dup_b, dup_a]
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestApplyPersistedObjectives:
