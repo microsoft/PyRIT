@@ -6,7 +6,7 @@ Short answers to questions that come up often, each with a link to the page that
 
 ### I am new to AI red teaming. Where do I start?
 
-Read [Learn AI Red Teaming](./red_teaming/0_red_teaming.md). It covers how to approach the work before you pick a tool, and [Learning Resources](./red_teaming/1_resources.md) lists guides, talks, and places to practice.
+Read [Learn AI Red Teaming](./red_teaming/0_red_teaming.md). It covers how to approach the work before you pick a tool, and it ends with a list of guides, talks, and places to practice.
 
 ### What is the fastest way to try PyRIT?
 

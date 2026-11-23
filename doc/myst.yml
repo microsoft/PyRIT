@@ -63,8 +63,6 @@ project:
     - file: index.md
     - file: security.md
     - file: red_teaming/0_red_teaming.md
-      children:
-        - file: red_teaming/1_resources.md
     - file: getting_started/README.md
       children:
         - file: getting_started/install.md
