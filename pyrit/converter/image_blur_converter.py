@@ -75,9 +75,6 @@ class ImageBlurConverter(BaseImageToImageConverter):
             PIL.Image.Image: The blurred image, in RGB or RGBA mode.
         """
         image = self._convert_to_rgb_or_rgba(image)
-        if image.mode == "RGB" and image.has_transparency_data:
-            # An RGB image with a transparent color key stays RGB above; make its transparency an alpha channel.
-            image = image.convert("RGBA")
         blur = ImageFilter.GaussianBlur(self._radius)
         if image.mode == "RGBA":
             # Blur with premultiplied alpha so hidden colors of transparent pixels stay hidden.
