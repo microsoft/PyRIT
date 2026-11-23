@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import logging
 import os
+from enum import StrEnum
 from threading import get_ident
 from unittest.mock import MagicMock, patch
 
@@ -453,7 +455,8 @@ class TestScorerInitializerBestObjective:
 
         for tag in (ScorerInitializerTags.BEST_OBJECTIVE, ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER):
             assert [entry.name for entry in registry.instances.get_by_tag(tag=tag)] == ["higher"]
-        assert "F1=0.9000" in caplog.text
+        assert "Tagged higher as best_objective with F1=0.9000" in caplog.text
+        assert "ScorerInitializerTags." not in caplog.text
         assert "configured fallback" not in caplog.text
 
     @pytest.mark.parametrize(
@@ -521,8 +524,9 @@ class TestScorerInitializerBestObjective:
                 [fallback] if fallback is not None else []
             )
         assert "No complete-coverage metrics qualified" in caplog.text
+        assert "ScorerInitializerTags." not in caplog.text
         if fallback is not None:
-            assert fallback in caplog.text
+            assert f"tagged {fallback} as best_objective using the configured fallback" in caplog.text
             assert "configured fallback, not an F1-backed winner" in caplog.text
         else:
             assert "no composite scorers available" in caplog.text
@@ -844,3 +848,16 @@ class TestScorerInitializerRoundRobin:
         assert len(likert_entries) > 0
         for entry in likert_entries:
             assert entry.instance._prompt_target is rr_mock
+
+
+@pytest.mark.parametrize("tag", list(ScorerInitializerTags))
+def test_scorer_initializer_tag_formats_as_its_value(tag: ScorerInitializerTags) -> None:
+    value = tag.value
+    assert isinstance(tag, StrEnum)
+    assert str(tag) == value
+    assert f"{tag}" == value
+    assert format(tag) == value
+    assert tag == value
+    assert hash(tag) == hash(value)
+    assert ScorerInitializerTags(value) is tag
+    assert json.dumps(tag) == json.dumps(value)

@@ -4,7 +4,7 @@
 """ASGI-level admission that retains server work after a client disconnect."""
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -25,7 +25,8 @@ class RuntimeAdmissionMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        runtime: RuntimeLifecycle | None = getattr(scope["app"].state, "runtime_lifecycle", None)
+        # Only the app lifespan sets runtime_lifecycle, always to a RuntimeLifecycle; it is unset before startup.
+        runtime = cast("RuntimeLifecycle | None", getattr(scope["app"].state, "runtime_lifecycle", None))
         path = scope["path"]
         if (
             runtime is None
