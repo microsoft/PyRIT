@@ -29,6 +29,9 @@
 #
 # ```python
 # from pyrit.converter import AzureSpeechTextToAudioConverter
+# from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+#
+# await initialize_pyrit_async(memory_db_type=IN_MEMORY)
 #
 # converter = AzureSpeechTextToAudioConverter(output_format="mp3")
 # audio = await converter.convert_async(prompt="Hello, this is the supplied text.")
