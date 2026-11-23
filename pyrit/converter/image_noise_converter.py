@@ -76,10 +76,7 @@ class ImageNoiseConverter(BaseImageToImageConverter):
         Returns:
             PIL.Image.Image: The noisy image, in RGB or RGBA mode.
         """
-        image = self._convert_to_rgb_or_rgba(image)
-        if image.mode == "RGB" and image.has_transparency_data:
-            # An RGB image with a transparent color key stays RGB above; make its transparency an alpha channel.
-            image = image.convert("RGBA")
+        image = self._promote_color_key_to_alpha(self._convert_to_rgb_or_rgba(image))
         pixels = np.asarray(image, dtype=np.float64)
         rng = np.random.default_rng(get_random_seed(stream="image-noise"))
         color = pixels[..., :3]
