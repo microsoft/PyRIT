@@ -815,6 +815,20 @@ class DatasetConfiguration:
         total = sum(limit for limit in limits if isinstance(limit, int))
         return BoundedDatasetSize(value=min(total, self.max_total) if self.max_total != "all" else total)
 
+    def _attack_building_scope(
+        self, *, planned_groups: Sequence[AttackSeedGroup] | None = None
+    ) -> AbstractContextManager[None]:
+        """
+        Return the context ``Scenario.initialize_async`` builds atomic attacks in.
+
+        Args:
+            planned_groups: A resumed run's stored groups, or None for a new run.
+
+        Returns:
+            AbstractContextManager[None]: A context with no effect. An exact example selection overrides it.
+        """
+        return nullcontext()
+
     def validate_configuration(self) -> None:
         """
         Check parameter constraints without resolving dataset contents.
@@ -1078,20 +1092,6 @@ class DatasetAttackConfiguration(DatasetConfiguration):
             dataset_names=tuple(seeds_by_dataset),
         )
         return groups_by_dataset, resolved
-
-    def _attack_building_scope(
-        self, *, planned_groups: Sequence[AttackSeedGroup] | None = None
-    ) -> AbstractContextManager[None]:
-        """
-        Return the context ``Scenario.initialize_async`` builds atomic attacks in.
-
-        Args:
-            planned_groups: A resumed run's stored groups, or None for a new run.
-
-        Returns:
-            AbstractContextManager[None]: A context with no effect. An exact example selection overrides it.
-        """
-        return nullcontext()
 
     async def get_attack_seed_groups_async(self, *, apply_sampling: bool = True) -> list[AttackSeedGroup]:
         """
