@@ -648,17 +648,15 @@ class TokenBijectionConverter(BijectionConverter):
                 end = position + size
                 candidate = word[position:end]
                 code_word = candidate.lower()
-                # Only the forms encode() writes, plus title case. A title-cased word must start with
-                # an ASCII letter; otherwise its capital may be passed-through plaintext ("Écat").
+                # ASCII letters may use any case. A non-ASCII capital is only part of the code word
+                # when the whole word is uppercase; otherwise it is passed-through plaintext ("Écat").
                 if (
                     end <= length
                     and rest_decodes[end]
                     and code_word in self._inverse_mapping
-                    and candidate
-                    in (
-                        code_word,
-                        code_word.upper(),
-                        code_word.capitalize() if candidate[0] in string.ascii_letters else code_word,
+                    and (
+                        candidate == code_word.upper()
+                        or all(char == char.lower() for char in candidate if char not in string.ascii_letters)
                     )
                 ):
                     code_word_at[position] = size

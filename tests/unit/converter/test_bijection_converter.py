@@ -698,12 +698,23 @@ def test_token_converter_decode_leaves_long_non_code_word_unchanged():
     assert converter.decode(text) == text
 
 
-def test_token_converter_decode_accepts_title_case_code_words():
+@pytest.mark.parametrize(
+    ("encode_case", "expected"),
+    [
+        (str.capitalize, "Hi"),
+        (lambda word: word[0] + word[1:].upper(), "hi"),
+        (lambda word: word[:-1] + word[-1].upper(), "hi"),
+    ],
+    ids=["title", "lower-initial", "upper-final"],
+)
+def test_token_converter_decode_accepts_mixed_case_code_words(
+    *, encode_case: Callable[[str], str], expected: str
+) -> None:
     mock_tokenizer = _mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)})
     converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=3)
-    encoded = f"{converter.mapping['h'].capitalize()}-{converter.mapping['i']}"
+    encoded = f"{encode_case(converter.mapping['h'])}-{converter.mapping['i']}"
 
-    assert converter.decode(encoded) == "Hi"
+    assert converter.decode(encoded) == expected
 
 
 @pytest.mark.parametrize("invalid_code_word", ["gpt4", "foo_bar", "Cat", "e-mail"])
