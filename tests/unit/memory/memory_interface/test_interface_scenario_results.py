@@ -300,13 +300,15 @@ async def test_attack_order_preserved(sqlite_instance: MemoryInterface):
 
     sid = scenario_result.id
     # Insert in a specific order; hydration must surface them in the same order.
+    # Explicit timestamps keep coarse clocks (Windows before Python 3.13) from tying.
+    started = datetime.now(tz=UTC)
     attack_results = [
         _make_attack_result_for_scenario(
             scenario_result_id=sid,
             atomic_attack_name="Attack1",
             objective_index=i,
             conversation_id=f"conv_{i}",
-        )
+        ).model_copy(update={"timestamp": started + timedelta(seconds=i)})
         for i in range(5)
     ]
     for ar in attack_results:
@@ -847,7 +849,10 @@ async def test_get_scenario_results_loads_attack_results_via_foreign_key(
 
     sid = scenario_result.id
     ar1 = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=0)
-    ar2 = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=1)
+    # Hydration orders by timestamp, which a coarse clock can leave tied.
+    ar2 = _make_attack_result_for_scenario(
+        scenario_result_id=sid, atomic_attack_name="a", objective_index=1
+    ).model_copy(update={"timestamp": ar1.timestamp + timedelta(seconds=1)})
     ar3 = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="b", objective_index=0)
     (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3]))
 
