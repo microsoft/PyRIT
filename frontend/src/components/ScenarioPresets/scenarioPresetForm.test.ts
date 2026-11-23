@@ -106,6 +106,30 @@ describe('uneditableScenarioParams', () => {
 
     expect(uneditableScenarioParams(scenario, preset)).toEqual({ retired_knob: 'x', max_concurrency: 4 })
   })
+
+  it('carries a stored scoring target without a field while the technique policy stays editable', () => {
+    const scoringTarget: Parameter = {
+      name: 'scoring_target',
+      type_name: 'PromptTarget | None',
+      reference_type: 'target',
+      required: false,
+    }
+    const policy: Parameter = {
+      name: 'incompatible_technique_policy',
+      type_name: 'IncompatibleTechniquePolicy | None',
+      choices: ['skip', 'raise'],
+      required: false,
+    }
+    const scenario = makeScenario({ supported_parameters: [scoringTarget, policy] })
+    const preset = makePreset({
+      scenario_params: { scoring_target: 'judge', incompatible_technique_policy: 'raise' },
+    })
+
+    expect(uneditableScenarioParams(scenario, preset)).toEqual({ scoring_target: 'judge' })
+    expect(Object.keys(presetToConfigState(scenario, preset).scenarioParamValues)).toEqual([
+      'incompatible_technique_policy',
+    ])
+  })
 })
 
 describe('presetToConfigState', () => {

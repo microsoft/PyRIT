@@ -3,30 +3,13 @@ import {
   getInitialFormValues,
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
+import { COMMON_SCENARIO_PARAMETER_NAMES } from '@/components/Scenarios/scenarioLaunchRequest'
 import type {
   Parameter,
   RegisteredScenario,
   ScenarioDatasetRequest,
   ScenarioTechniqueSummary,
 } from '@/types'
-
-/**
- * Common/opaque parameters every scenario declares via
- * `Scenario._common_scenario_parameters` — the launch form already exposes a
- * purpose-built control for each of these (target, techniques, datasets,
- * labels, concurrency, retries, baseline), and `technique_converters` has no
- * UI at all. They're hidden from the dynamic scenario-specific parameter list.
- */
-const COMMON_SCENARIO_PARAMETER_NAMES = new Set([
-  'objective_target',
-  'scenario_techniques',
-  'technique_converters',
-  'dataset_config',
-  'memory_labels',
-  'max_concurrency',
-  'max_retries',
-  'include_baseline',
-])
 
 export const BASELINE_TECHNIQUE: ScenarioTechniqueSummary = {
   name: 'baseline',

@@ -12,13 +12,16 @@ import type {
 
 /**
  * Common/opaque parameters the base scenario declares via
- * `Scenario._common_scenario_parameters` — the launch form exposes a
- * purpose-built control for each of these (target, techniques, datasets,
- * labels, concurrency, retries, baseline). `technique_converters` and the
- * configured `scoring_target` have no control. They're hidden from the dynamic
- * scenario-specific parameter list.
+ * `Scenario._common_scenario_parameters` (plus Execute's `local_technique_factory`),
+ * hidden from the dynamic scenario-specific parameter list of both the launch form
+ * and the preset editor. The launch form exposes a purpose-built control for most
+ * (target, techniques, datasets, labels, operation, concurrency, retries, baseline);
+ * `technique_converters` and the configured `scoring_target` have none.
+ *
+ * `incompatible_technique_policy` is deliberately absent: it has no purpose-built
+ * control, so its dynamic field is the only way to set it.
  */
-export const COMMON_SCENARIO_PARAMETER_NAMES = new Set([
+export const COMMON_SCENARIO_PARAMETER_NAMES: ReadonlySet<string> = new Set([
   'objective_target',
   'scoring_target',
   'scenario_techniques',
@@ -27,6 +30,7 @@ export const COMMON_SCENARIO_PARAMETER_NAMES = new Set([
   'dataset_config',
   'dataset_overrides',
   'memory_labels',
+  'operation_id',
   'max_concurrency',
   'max_retries',
   'include_baseline',
