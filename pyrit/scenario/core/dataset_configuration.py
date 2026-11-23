@@ -31,6 +31,7 @@ import copy
 import json
 import random
 from collections import Counter
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
@@ -61,7 +62,8 @@ from pyrit.models import (
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit, normalize_dataset_limit
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping, Sequence
+    import uuid
+    from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 
     from pyrit.datasets import SeedDatasetProvider
     from pyrit.memory import MemoryInterface
@@ -1077,6 +1079,20 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         )
         return groups_by_dataset, resolved
 
+    def _attack_building_scope(
+        self, *, planned_groups: Sequence[AttackSeedGroup] | None = None
+    ) -> AbstractContextManager[None]:
+        """
+        Return the context ``Scenario.initialize_async`` builds atomic attacks in.
+
+        Args:
+            planned_groups: A resumed run's stored groups, or None for a new run.
+
+        Returns:
+            AbstractContextManager[None]: A context with no effect. An exact example selection overrides it.
+        """
+        return nullcontext()
+
     async def get_attack_seed_groups_async(self, *, apply_sampling: bool = True) -> list[AttackSeedGroup]:
         """
         Resolve the configured dataset into a flat ``list[AttackSeedGroup]``.
@@ -1299,6 +1315,44 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
         """
         return BoundedDatasetSize(value=len(self._selected_examples))
 
+    @contextmanager
+    def _attack_building_scope(self, *, planned_groups: Sequence[AttackSeedGroup] | None = None) -> Generator[None]:
+        """
+        Keep this exact population unchanged while a scenario builds its attacks.
+
+        Inside the scope, ``filter_seed_groups`` raises ``DatasetExampleSelectionError`` with code
+        ``unsupported`` instead of skipping or adapting a selected example. A new run identifies each
+        selected seed by its reference. A resumed run identifies the seeds of its stored planned groups:
+        the selection key comes from the seed's dataset name and the example id from a group of several
+        seeds, which share it. A stored single-seed group doesn't record whether its example id was the
+        seed id or a group id, so its error has no example id.
+
+        Args:
+            planned_groups: A resumed run's stored groups, or None for a new run.
+
+        Yields:
+            None: Control while the scenario builds its attacks.
+        """
+        from pyrit.scenario.core.technique_requirements import _exact_examples
+
+        examples: dict[tuple[str | None, uuid.UUID], tuple[str, uuid.UUID | None]] = {
+            (member.dataset_name or None, member.id): (reference.selection_key, reference.example_id)
+            for reference, members in self._selected_examples
+            for member in members
+        }
+        for group in planned_groups or ():
+            example_id = group.seeds[0].prompt_group_id if len(group.seeds) > 1 else None
+            for seed in group.seeds:
+                if seed.id is not None:
+                    examples.setdefault(
+                        (seed.dataset_name or None, seed.id), (_dataset_selection_key(seed.dataset_name), example_id)
+                    )
+        token = _exact_examples.set(examples)
+        try:
+            yield
+        finally:
+            _exact_examples.reset(token)
+
     async def _build_groups_by_dataset_async(self) -> tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]:
         """
         Build exact groups at the shared resolution seam, without reading memory again.
@@ -1447,6 +1501,16 @@ def _public_group_build_reason(exc: BaseException) -> str:
     return "; ".join(cleaned) or "The stored example cannot be built into one attack group."
 
 
+def _dataset_selection_key(dataset_name: str | None) -> str:
+    """
+    Return the browse selection key of a dataset.
+
+    Returns:
+        str: ``dataset:named:<name>``, or ``dataset:unnamed`` for seeds without a dataset name.
+    """
+    return f"dataset:named:{dataset_name}" if dataset_name else "dataset:unnamed"
+
+
 def _seed_from_record(
     *, record: SeedRecord, reference: DatasetExampleReference, inspect_only: bool = False
 ) -> SeedPrompt | SeedObjective | SeedSimulatedConversation:
@@ -1580,7 +1644,10 @@ def _simulated_conversation_for_inspection(
             code="unsupported",
             selection_key=reference.selection_key,
             example_id=reference.example_id,
-            detail="The stored simulated conversation cannot be built.",
+            detail=(
+                "The stored simulated conversation cannot be built: num_turns must be a positive integer "
+                "and sequence a non-negative integer."
+            ),
         )
     stored = {key: value for key, value in common.items() if value is not None}
     stored["value"] = record.value
@@ -1617,7 +1684,7 @@ def _simulated_conversation_from_record(
             code="unsupported",
             selection_key=reference.selection_key,
             example_id=reference.example_id,
-            detail="The stored simulated conversation cannot be built.",
+            detail=f"The stored simulated conversation cannot be built: {_public_group_build_reason(exc)}",
         ) from exc
 
 

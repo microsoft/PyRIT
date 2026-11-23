@@ -40,6 +40,7 @@ from pyrit.models import (
     ScenarioDatasetRequest,
     ScenarioRunSizeEstimateRequest,
     Seed,
+    SeedGroupRequirements,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -55,11 +56,21 @@ from pyrit.scenario import (
     ExactExampleDatasetConfiguration,
     Scenario,
     ScenarioTechnique,
+    TechniqueRequirements,
 )
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario_context import ScenarioContext
+from pyrit.scenario.scenarios.airt import AggregationLeakage
 from pyrit.scenario.scenarios.foundry import AssertPolicy
-from pyrit.scenario.scenarios.garak import ApiKey, Exploitation, LeakReplay, SystemPromptExtraction
+from pyrit.scenario.scenarios.garak import (
+    ApiKey,
+    AudioAchillesHeel,
+    Divergence,
+    Encoding,
+    Exploitation,
+    LeakReplay,
+    SystemPromptExtraction,
+)
 from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
 
@@ -443,7 +454,10 @@ async def test_load_route_rejects_exact_selection_before_memory(sqlite_instance:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("scenario_class", [SystemPromptExtraction, Exploitation, LeakReplay, AssertPolicy])
+@pytest.mark.parametrize(
+    "scenario_class",
+    [SystemPromptExtraction, Exploitation, LeakReplay, AssertPolicy, AudioAchillesHeel, Divergence, Encoding],
+)
 async def test_unsupported_scenarios_reject_exact_selection_before_resolution(scenario_class: type[Scenario]) -> None:
     assert scenario_supports_exact_example_selection(scenario_class) is False
     with (
@@ -812,8 +826,29 @@ async def test_sampling_stays_off_and_legacy_files_wait_until_launch(sqlite_inst
     assert estimate.dataset_size.model_dump()["value"] == 1
     config = scenario._dataset_config
     assert isinstance(config, ExactExampleDatasetConfiguration)
-    with pytest.raises(DatasetExampleSelectionError, match="unsupported"):
+    with pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught:
         await config.get_attack_seed_groups_async(apply_sampling=True)
+    assert "pyrit-2757-template.yaml" in str(caught.value)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_inspection_names_the_invalid_simulated_conversation_field(sqlite_instance: MemoryInterface) -> None:
+    group = uuid4()
+    conversation = SeedSimulatedConversation(
+        num_turns=1,
+        adversarial_chat_system_prompt=SeedPrompt(value="adversary", parameters=["objective"]),
+        simulated_target_system_prompt=SeedPrompt(value="target", parameters=["objective", "num_turns"]),
+        dataset_name=DATASET,
+        prompt_group_id=group,
+        added_by="test",
+    )
+    await _store(sqlite_instance, _objective("goal", prompt_group_id=group), conversation)
+    await _mutate(sqlite_instance, conversation.id, value=json.dumps({"num_turns": 0}))
+    records = await sqlite_instance.get_seed_examples_by_ids_async(dataset_name=DATASET, example_ids=[group])
+    config = ExactExampleDatasetConfiguration(examples=[(_reference(group), records[group])])
+    with pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught:
+        config._build_selected_groups(inspect_only=True)
+    assert "num_turns" in str(caught.value)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -978,6 +1013,108 @@ async def test_resume_runs_the_planned_rows_after_a_selected_row_changes(
     resumed_rows = [group.objective.value for attack in resumed._atomic_attacks for group in attack.seed_groups]
     assert resumed_rows == planned
     assert "EDITED_AFTER_LAUNCH_2757" not in resumed_rows
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_resume_rejects_a_technique_that_would_now_skip_a_planned_example(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    """Resume holds no selected examples, so the planned groups identify the example a technique would drop."""
+    group = uuid4()
+    objective = _objective("planned goal", prompt_group_id=group)
+    prompt = _prompt("planned body", prompt_group_id=group, sequence=1, role="user")
+    other = _objective("second planned goal")
+    await _store(sqlite_instance, objective, prompt, other)
+    selection = await _selection(
+        sqlite_instance, selection_key=NAMED, example_ids=[group, other.id], dataset_name=DATASET
+    )
+    target = MockPromptTarget()
+
+    async def _initialize(*, resume_id: str | None) -> _PlannedRowsScenario:
+        kwargs = await ScenarioConfigurationResolver.resolve_configuration_async(
+            scenario_name="test.planned_rows",
+            scenario_class=_PlannedRowsScenario,
+            objective_target=target,
+            example_selection=selection,
+            memory=sqlite_instance,
+            resume=resume_id is not None,
+        )
+        scenario = _PlannedRowsScenario(scenario_result_id=resume_id)
+        scenario.set_params_from_args(args=kwargs)
+        await scenario.initialize_async()
+        return scenario
+
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    direct = AttackTechniqueFactory(name="direct", attack_class=PromptSendingAttack)
+    with patch.object(registry, "get_factories_or_raise", return_value={"direct": direct}):
+        original = await _initialize(resume_id=None)
+
+    objective_only = AttackTechniqueFactory(
+        name="direct",
+        attack_class=PromptSendingAttack,
+        requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True)),
+    )
+    with (
+        patch.object(registry, "get_factories_or_raise", return_value={"direct": objective_only}),
+        pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught,
+    ):
+        await _initialize(resume_id=original._scenario_result_id)
+    assert caught.value.selection_key == NAMED
+    assert caught.value.example_id == group
+    assert "planned body" not in str(caught.value)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_external_context_resume_runs_the_stored_case(sqlite_instance: MemoryInterface) -> None:
+    """An external-context run validates its one stored case on resume without reading the selected rows."""
+    group = uuid4()
+    seeds = (
+        _objective("objective", prompt_group_id=group),
+        _prompt("documents", prompt_group_id=group, role="system", metadata={"aggregation_context": True}),
+        _prompt("question", prompt_group_id=group, role="user", sequence=1),
+    )
+    await _store(sqlite_instance, *seeds)
+    selection = await _selection(sqlite_instance, selection_key=NAMED, example_ids=[group], dataset_name=DATASET)
+    parameters = {"include_context": False, "external_context_isolated": True}
+    target = MockPromptTarget()
+    scorer = SubStringScorer(substring="expected")
+
+    async def _initialize(*, resume_id: str | None) -> AggregationLeakage:
+        kwargs = await ScenarioConfigurationResolver.resolve_configuration_async(
+            scenario_name="airt.aggregation_leakage",
+            scenario_class=AggregationLeakage,
+            objective_target=target,
+            techniques=["prompt_sending"],
+            example_selection=selection,
+            scenario_params=parameters,
+            memory=sqlite_instance,
+            resume=resume_id is not None,
+        )
+        scenario = AggregationLeakage(objective_scorer=scorer, scenario_result_id=resume_id)
+        scenario.set_params_from_args(args={**parameters, **kwargs})
+        await scenario.initialize_async()
+        return scenario
+
+    original = await _initialize(resume_id=None)
+    async with await sqlite_instance.get_session_async() as session:
+        for seed in seeds:
+            entry = await session.get(SeedEntry, seed.id)
+            assert entry is not None
+            await session.delete(entry)
+        await session.commit()
+
+    with patch.object(
+        sqlite_instance,
+        "get_seed_examples_by_ids_async",
+        side_effect=AssertionError("resume must not read the selected rows"),
+    ):
+        resumed = await _initialize(resume_id=original._scenario_result_id)
+    assert resumed._build_run_plan() == original._build_run_plan()
+    assert [seed.value for seed in resumed._atomic_attacks[0].seed_groups[0].seeds] == [
+        "objective",
+        "documents",
+        "question",
+    ]
 
 
 @pytest.mark.usefixtures("patch_central_database")

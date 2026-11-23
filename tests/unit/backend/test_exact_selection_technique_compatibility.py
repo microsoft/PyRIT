@@ -33,16 +33,23 @@ from pyrit.models import (
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry, ScorerRegistry, TargetRegistry
-from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniquePolicy, Scenario, TechniqueRequirements
+from pyrit.scenario import (
+    AttackTechniqueFactory,
+    ExactExampleDatasetConfiguration,
+    IncompatibleTechniquePolicy,
+    Scenario,
+    TechniqueRequirements,
+)
 from pyrit.scenario.core.technique_requirements import (
     filter_seed_groups,
     prepare_seed_group,
 )
 from pyrit.scenario.scenarios.adaptive import TextAdaptive
-from pyrit.scenario.scenarios.airt import RapidResponse
+from pyrit.scenario.scenarios.airt import RapidResponse, Scam
 from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
 from pyrit.score import SubStringScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
+from unit.mocks import MockPromptTarget
 
 DATASET = "exact-technique"
 NAMED = f"dataset:named:{DATASET}"
@@ -186,6 +193,89 @@ async def test_default_techniques_are_checked_when_none_are_selected(sqlite_inst
             include_baseline=False,
             memory=sqlite_instance,
         )
+    assert caught.value.example_id == group
+
+
+@pytest.mark.parametrize("technique", ["role_play_movie_script", "many_shot"])
+@pytest.mark.usefixtures("patch_central_database")
+async def test_sdk_exact_selection_refuses_a_technique_that_would_skip_or_adapt_an_example(
+    sqlite_instance: MemoryInterface, technique: str
+) -> None:
+    """Without the backend check, the scenario refuses to run fewer or reduced selected examples."""
+    group, lone = await _conversation_and_objective(sqlite_instance)
+    selection = await _selection(sqlite_instance, example_ids=[group, lone])
+    records = await sqlite_instance.get_seed_examples_by_ids_async(dataset_name=DATASET, example_ids=[group, lone])
+    scenario = RapidResponse(objective_scorer=SubStringScorer(substring="expected"))
+    scenario.set_params_from_args(
+        args={
+            "objective_target": MockPromptTarget(),
+            "scenario_techniques": [scenario._technique_class(technique)],
+            "dataset_config": ExactExampleDatasetConfiguration(
+                examples=[(reference, records[reference.example_id]) for reference in selection.examples]
+            ),
+            "include_baseline": False,
+        }
+    )
+    with pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught:
+        await scenario.initialize_async()
+    assert caught.value.selection_key == NAMED
+    assert caught.value.example_id == group
+    assert technique in str(caught.value)
+    assert "first turn" not in str(caught.value)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_scam_private_factories_cannot_skip_an_exact_example(sqlite_instance: MemoryInterface) -> None:
+    """Scam filters with its own factories, which the backend check cannot see without registered ones."""
+    group, lone = await _conversation_and_objective(sqlite_instance)
+    AttackTechniqueRegistry.reset_registry_singleton()
+    resolved = await ScenarioConfigurationResolver.resolve_configuration_async(
+        scenario_name="airt.scam",
+        scenario_class=Scam,
+        example_selection=await _selection(sqlite_instance, example_ids=[group, lone]),
+        include_baseline=False,
+        memory=sqlite_instance,
+    )
+    scenario = Scam(adversarial_chat=MockPromptTarget(), objective_scorer=SubStringScorer(substring="expected"))
+    scenario.set_params_from_args(args={**resolved, "objective_target": MockPromptTarget()})
+    with pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught:
+        await scenario.initialize_async()
+    assert caught.value.example_id == group
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_rejected_example_keeps_its_dataset_when_another_dataset_shares_its_group_id(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    """A group id is unique only within one dataset, so the error names the rejected example's own dataset."""
+    group = uuid4()
+    await _store(
+        sqlite_instance,
+        SeedObjective(value="alpha goal", dataset_name="alpha", added_by="test", prompt_group_id=group),
+        SeedPrompt(
+            value="alpha turn", sequence=0, role="user", dataset_name="alpha", added_by="test", prompt_group_id=group
+        ),
+        SeedObjective(value="beta goal", dataset_name="beta", added_by="test", prompt_group_id=group),
+    )
+    examples = []
+    for dataset_name in ("alpha", "beta"):
+        records = await sqlite_instance.get_seed_examples_by_ids_async(dataset_name=dataset_name, example_ids=[group])
+        reference = DatasetExampleReference(
+            selection_key=f"dataset:named:{dataset_name}", example_id=group, fingerprint="ab" * 32
+        )
+        examples.append((reference, records[group]))
+    scenario = RapidResponse(objective_scorer=SubStringScorer(substring="expected"))
+    scenario.set_params_from_args(
+        args={
+            "objective_target": MockPromptTarget(),
+            "scenario_techniques": [scenario._technique_class("role_play_movie_script")],
+            "dataset_config": ExactExampleDatasetConfiguration(examples=examples),
+            "include_baseline": False,
+        }
+    )
+    with pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught:
+        await scenario.initialize_async()
+    assert caught.value.selection_key == "dataset:named:alpha"
     assert caught.value.example_id == group
 
 

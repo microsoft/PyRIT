@@ -6,22 +6,31 @@
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from pyrit.models import AttackSeedGroup, SeedGroupRequirements
+from pyrit.models import AttackSeedGroup, DatasetExampleSelectionError, SeedGroupRequirements
 from pyrit.prompt_target import TargetRequirements
 from pyrit.score import ScorerRequirements
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    import uuid
+    from collections.abc import Callable, Mapping, Sequence
 
     from pyrit.executor.attack import AttackStrategy
     from pyrit.models import AttackTechniqueSeedGroup
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
+
+#: While a scenario builds attacks for an exact example selection, the selection key and example id
+#: of each selected seed, keyed by its dataset name (None when unnamed) and seed id.
+#: Set by ``ExactExampleDatasetConfiguration._attack_building_scope``.
+_exact_examples: ContextVar[Mapping[tuple[str | None, uuid.UUID], tuple[str, uuid.UUID | None]] | None] = ContextVar(
+    "exact_examples", default=None
+)
 
 
 class IncompatibleTechniquePolicy(str, Enum):
@@ -243,6 +252,10 @@ def filter_seed_groups(
     """
     Retain source groups that can be prepared, with one summary per combination.
 
+    While a scenario builds attacks for an exact example selection, a group that would be
+    skipped or adapted raises ``DatasetExampleSelectionError`` instead, whatever the policy,
+    so the selected population runs unchanged or not at all.
+
     Args:
         seed_groups (Sequence[AttackSeedGroup]): Original groups from one dataset.
         requirements (SeedGroupRequirements): Dataset input constraints.
@@ -256,8 +269,33 @@ def filter_seed_groups(
         list[AttackSeedGroup]: Compatible original groups, not their execution copies.
 
     Raises:
+        DatasetExampleSelectionError: If a selected example of an exact selection would be skipped or adapted.
         IncompatibleTechniqueError: If any group is incompatible under RAISE.
     """
+    exact_examples = _exact_examples.get()
+    if exact_examples is not None:
+        for seed_group in seed_groups:
+            try:
+                require_unchanged_seed_group(
+                    seed_group=seed_group,
+                    requirements=requirements,
+                    seed_technique=seed_technique,
+                    validate_group=validate_group,
+                )
+            except IncompatibleTechniqueError as exc:
+                from pyrit.scenario.core.dataset_configuration import _public_group_build_reason
+
+                selection_key, example_id = _selected_example(seed_group=seed_group, examples=exact_examples)
+                raise DatasetExampleSelectionError(
+                    code="unsupported",
+                    selection_key=selection_key,
+                    example_id=example_id,
+                    detail=(
+                        f"Technique '{technique_name}' cannot run this example unchanged: "
+                        f"{_public_group_build_reason(exc)}"
+                    ),
+                ) from exc
+        return list(seed_groups)
     retained: list[AttackSeedGroup] = []
     failures: dict[str, int] = {}
     adapted_count = 0
@@ -290,3 +328,31 @@ def filter_seed_groups(
             f" Reasons: {failures}" if failures else "",
         )
     return retained
+
+
+def _selected_example(
+    *,
+    seed_group: AttackSeedGroup,
+    examples: Mapping[tuple[str | None, uuid.UUID], tuple[str, uuid.UUID | None]],
+) -> tuple[str | None, uuid.UUID | None]:
+    """
+    Find the selection key and example id of the selected example a group was built from.
+
+    Seed ids are matched within the seed's own dataset, because example ids are unique only within one dataset.
+
+    Args:
+        seed_group (AttackSeedGroup): A group of the exact population.
+        examples (Mapping[tuple[str | None, uuid.UUID], tuple[str, uuid.UUID | None]]): The selected
+            seeds' selection keys and example ids, by dataset name and seed id.
+
+    Returns:
+        tuple[str | None, uuid.UUID | None]: The selection key and example id, or Nones if no seed was selected.
+    """
+    return next(
+        (
+            examples[(seed.dataset_name or None, seed.id)]
+            for seed in seed_group.seeds
+            if seed.id is not None and (seed.dataset_name or None, seed.id) in examples
+        ),
+        (None, None),
+    )

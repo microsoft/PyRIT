@@ -174,6 +174,7 @@ class Encoding(Scenario):
     """
 
     VERSION: int = 3
+    SUPPORTS_EXACT_EXAMPLE_SELECTION = False
     DATASET_OPTIONS = ScenarioDatasetOptions(
         mode=DatasetSelectionMode.FIXED, per_dataset_limit=False, source_settings=False
     )

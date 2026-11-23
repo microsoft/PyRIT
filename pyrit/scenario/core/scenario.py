@@ -1796,7 +1796,14 @@ class Scenario(ABC):
             scenario_result_id=self._scenario_result_id or str(new_result_id),
             stored_run_plan=stored_plan,
         )
-        with override_default_adversarial_target(self._resolved_adversarial_target):
+        with (
+            override_default_adversarial_target(self._resolved_adversarial_target),
+            self._dataset_config._attack_building_scope(
+                planned_groups=[group for groups in seed_groups_by_dataset.values() for group in groups]
+                if stored_result is not None
+                else None
+            ),
+        ):
             self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
         if context.scenario_techniques and not any(
             atomic.group_kind is not ScenarioRunPlanGroupKind.BASELINE for atomic in self._atomic_attacks

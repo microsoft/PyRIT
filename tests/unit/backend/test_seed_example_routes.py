@@ -16,10 +16,13 @@ from httpx import ASGITransport, AsyncClient
 from pyrit.backend.main import app
 from pyrit.backend.models.common import MAX_CURSOR_LENGTH, MAX_LABEL_VALUE_LENGTH
 from pyrit.backend.services import get_dataset_service
+from pyrit.backend.services.dataset_example_selection import resolve_dataset_example_selection_async
 from pyrit.common.utils import to_sha256
 from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import (
     AnswerMatches,
+    DatasetExampleReference,
+    DatasetExampleSelection,
     MatchesObjective,
     PromptDataType,
     Seed,
@@ -301,6 +304,13 @@ async def test_seed_example_fingerprint_matches_on_list_and_detail(client: Async
     assert len(fingerprint) == 64
     assert fingerprint == fingerprint.lower()
     int(fingerprint, 16)
+    browsed = DatasetExampleReference(
+        selection_key=NAMED, example_id=detail.json()["example_id"], fingerprint=fingerprint
+    )
+    resolved = await resolve_dataset_example_selection_async(
+        selection=DatasetExampleSelection(examples=[browsed]), memory=sqlite_instance
+    )
+    assert [member.id for member in resolved[0].members] == [seed.id]
 
 
 async def test_get_seed_example_returns_full_text_of_truncated_preview(client: AsyncClient, sqlite_instance):

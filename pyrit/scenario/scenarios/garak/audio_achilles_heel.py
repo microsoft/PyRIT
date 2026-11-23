@@ -167,6 +167,7 @@ class AudioAchillesHeel(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_EXACT_EXAMPLE_SELECTION = False
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # Audio payload dominated: a text-only baseline of the derived objective drops the audio
