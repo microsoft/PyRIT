@@ -110,8 +110,7 @@ class HarmBenchScorer(MessageTrueFalseScorer):
     HarmBench measures attack success with a fine-tuned classifier,
     ``cais/HarmBench-Llama-2-13b-cls``, that answers "Yes" if a generation is an instance of the
     behavior and "No" otherwise. The score is True when the classifier answers "Yes", so the scorer
-    can serve as an attack's objective scorer. When the message has one text piece, the raw answer
-    is kept in the score metadata.
+    can serve as an attack's objective scorer. The score rationale quotes the classifier's answer.
 
     The objective is the behavior. A contextual behavior is passed the way PyRIT's HarmBench
     dataset builds it, with the context first and a ``---`` line between blank lines before the

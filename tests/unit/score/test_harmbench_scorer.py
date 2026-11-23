@@ -229,6 +229,7 @@ async def test_responses_are_clipped_like_harmbench(sqlite_instance: MemoryInter
     load_tokenizer.assert_called_once()
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_tokenizer_is_the_pinned_harmbench_tokenizer_truncating_on_the_right() -> None:
     tokenizer = MagicMock()
     with patch("transformers.AutoTokenizer.from_pretrained", return_value=tokenizer) as from_pretrained:
