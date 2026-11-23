@@ -342,7 +342,7 @@ async def _send_and_check_async(
 
 def _retry_backoff_seconds(*, attempt: int) -> float:
     """Return the exponential backoff delay for a retry attempt."""
-    backoff_seconds: float = DEFAULT_PROBE_RETRY_BACKOFF_SECONDS * (2**attempt)
+    backoff_seconds: float = DEFAULT_PROBE_RETRY_BACKOFF_SECONDS * (2.0**attempt)
     return min(backoff_seconds, MAX_PROBE_RETRY_BACKOFF_SECONDS)
 
 

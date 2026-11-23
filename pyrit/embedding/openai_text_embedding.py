@@ -62,13 +62,23 @@ class OpenAITextEmbedding(EmbeddingSupport):
                 identity auth is requested for an endpoint that is not a recognized Azure OpenAI / AI
                 Foundry endpoint, or if ``"api_key"`` auth is requested and no key is available via
                 parameter or environment variable.
+            TypeError: If the resolved endpoint or model name is not a string.
         """
-        endpoint = default_values.get_required_value(
-            env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint
+        endpoint_value = default_values.get_required_value(
+            env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE,
+            passed_value=endpoint,
         )
-        model_name = default_values.get_required_value(
-            env_var_name=self.MODEL_ENVIRONMENT_VARIABLE, passed_value=model_name
+        if not isinstance(endpoint_value, str):
+            raise TypeError("Embedding endpoint must be a string")
+        endpoint = endpoint_value
+
+        model_value = default_values.get_required_value(
+            env_var_name=self.MODEL_ENVIRONMENT_VARIABLE,
+            passed_value=model_name,
         )
+        if not isinstance(model_value, str):
+            raise TypeError("Embedding model name must be a string")
+        model_name = model_value
 
         async_api_key = resolve_openai_auth(
             endpoint=endpoint,
