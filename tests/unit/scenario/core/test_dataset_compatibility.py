@@ -398,6 +398,18 @@ async def test_estimate_checks_stored_selections_and_leaves_unstored_ones_to_lau
         await _named(_scenario(groups=_groups()), malformed).get_run_size_estimate_async()
 
 
+async def test_baseline_only_run_without_usable_inputs_says_so_async() -> None:
+    # The first group lacks the user prompt the prompt-case baseline needs.
+    scenario = _scenario(groups=_groups()[:1])
+    expected = "No selected technique or baseline has usable inputs.*'baseline' skips 1 group"
+    # A scenario whose technique hook resolves no techniques runs only its baseline.
+    with patch.object(AssertPolicy, "_resolve_scenario_techniques", return_value=[]):
+        with pytest.raises(ValueError, match=expected):
+            await scenario.get_run_size_estimate_async()
+        with pytest.raises(ValueError, match=expected):
+            await scenario.initialize_async()
+
+
 async def test_estimate_leaves_unregistered_techniques_to_initialization_async() -> None:
     scenario = _scenario(groups=_groups())
     with patch.object(
@@ -646,6 +658,38 @@ async def test_compatible_listing_validates_stored_contents_of_both_case_forms_a
     assert sorted(hydrated) == ["conversation_cases", "invalid_case", "malformed", "prompt_cases"]
 
 
+async def test_compatible_listing_leaves_out_only_a_dataset_whose_groups_cannot_be_built_async(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await _store_listing_async("conversation_cases")
+    objective = (
+        make_assert_result(config=make_assert_config(group_count=1, include_adversarial_prompt=False))
+        .seed_groups[0]
+        .objective
+    )
+    group_id = uuid4()
+    # Valid ASSERT metadata, but a system and a user prompt share one sequence, so no AttackSeedGroup can be built.
+    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
+        seeds=[
+            SeedObjective(
+                value=objective.value, metadata=objective.metadata, dataset_name="broken", prompt_group_id=group_id
+            ),
+            SeedPrompt(value="System", role="system", sequence=1, dataset_name="broken", prompt_group_id=group_id),
+            SeedPrompt(value="User", role="user", sequence=1, dataset_name="broken", prompt_group_id=group_id),
+        ],
+        added_by="test",
+    )
+    names = ["conversation_cases", "broken"]
+    assert await _listing_scenario().get_compatible_dataset_names_async(
+        dataset_names=names, loaded_dataset_names=names
+    ) == ["conversation_cases"]
+    warnings = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
+    assert any("'broken' is not compatible" in message for message in warnings)
+    # Launch and estimate reads name the dataset too.
+    with pytest.raises(DatasetConstraintError, match=r"(?s)Dataset 'broken'.*Inconsistent roles"):
+        await DatasetAttackConfiguration(sources=[DatasetSource(name="broken")]).get_attack_groups_by_dataset_async()
+
+
 async def test_compatible_listing_keeps_subset_restrictions_and_observes_changed_data_async() -> None:
     await _store_listing_async("imported")
     await _store_listing_async("other")
@@ -742,3 +786,12 @@ async def test_base_launch_validates_assesses_and_samples_one_population_async(r
             assert len(sampled) == 2
     # The hook sees the whole selection once, before sampling.
     assert _CheckedScam.checked == [3]
+
+
+async def test_estimate_reads_no_datasets_without_a_selection_async() -> None:
+    scenario = _CheckedScam()
+    scenario.set_params_from_args(args={"dataset_config": DatasetAttackConfiguration(sources=[])})
+    with patch.object(
+        DatasetAttackConfiguration, "get_attack_groups_by_dataset_async", side_effect=AssertionError("Read datasets")
+    ):
+        await scenario.get_run_size_estimate_async()

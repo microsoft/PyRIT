@@ -1073,7 +1073,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
                 dataset name, and the flat resolved seeds with their source kind.
 
         Raises:
-            DatasetConstraintError: If a configured dataset yields no seeds.
+            DatasetConstraintError: If a configured dataset yields no seeds or its seeds can't form attack groups.
         """
         inline = self._inline_attack_groups()
         if inline is not None:
@@ -1082,7 +1082,14 @@ class DatasetAttackConfiguration(DatasetConfiguration):
             return {INLINE_DATASET_NAME: inline}, resolved
 
         seeds_by_dataset = await self._collect_named_seeds_async()
-        groups_by_dataset = {name: self._build_attack_groups(seeds) for name, seeds in seeds_by_dataset.items()}
+        groups_by_dataset = {}
+        for name, seeds in seeds_by_dataset.items():
+            try:
+                groups_by_dataset[name] = self._build_attack_groups(seeds)
+            except ValueError as exc:
+                raise DatasetConstraintError(
+                    f"Dataset '{name}' has seeds that can't form attack groups: {exc}"
+                ) from exc
         all_seeds = [seed for seeds in seeds_by_dataset.values() for seed in seeds]
         resolved = ResolvedDataset(
             seeds=all_seeds,

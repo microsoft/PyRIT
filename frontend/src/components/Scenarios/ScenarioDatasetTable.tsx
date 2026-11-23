@@ -310,7 +310,7 @@ export default function ScenarioDatasetTable({
           </div>
         </div>
       </Tooltip>}
-      {selected.length > 0 && options.supports_overrides && options.total_limit && <Divider />}
+      {!compatibleOnly && selected.length > 0 && options.supports_overrides && options.total_limit && <Divider />}
       {options.supports_overrides && options.total_limit && <DatasetLimitControl label="Maximum objectives"
         value={request.max_total} defaultValue={defaults.max_total} draft={drafts.total} disabled={busy}
         onDraftChange={(text) => updateDraft('total', text)} onChange={updateTotal} />}

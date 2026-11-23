@@ -102,6 +102,8 @@ describe('ScenarioDatasetTable', () => {
     expect(screen.getByRole('button', { name: 'Remove stored' })).toBeInTheDocument()
     // Compatible choices are already stored, so there is no loading rule to pick.
     expect(screen.queryByRole('radiogroup', { name: 'Dataset loading' })).not.toBeInTheDocument()
+    // Without the loading rule, one divider separates the selection from the total limit.
+    expect(screen.getAllByRole('separator')).toHaveLength(1)
     view.rerender(<Harness compatibleOnly defaults={{ ...DEFAULTS, sources: [] }} datasets={[STORED]}
       onReload={reload} onLoad={load} metadataError="Compatible listing unavailable" />)
     // Retry sits in the error it fixes, and the picker waits for a listing.

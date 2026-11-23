@@ -1309,9 +1309,11 @@ class Scenario(ABC):
 
         Providers are never fetched. Names outside a subset or fixed selection are dropped. Without
         scenario requirements every remaining name qualifies. Otherwise required ingredient datasets
-        are kept without checking each ingredient on its own, stored structure facts rule out
-        datasets that cannot comply, and each remaining loaded dataset's full stored contents are
-        validated: a structural hint never certifies a dataset.
+        are kept without checking each ingredient on its own. When the dataset configuration is a
+        plain ``DatasetAttackConfiguration`` without filters, stored structure facts rule out
+        datasets that cannot comply. Each remaining loaded dataset's full stored contents are then
+        validated: a structural hint never certifies a dataset. A dataset that fails validation is
+        left out with a warning that names it.
 
         Args:
             dataset_names (Sequence[str]): Named catalog datasets, in the order to return them.
@@ -1319,6 +1321,9 @@ class Scenario(ABC):
 
         Returns:
             list[str]: The runnable dataset names, in input order.
+
+        Raises:
+            ValueError: If the scenario's parameters are invalid.
         """
         await asyncio.to_thread(
             self._resolve_runtime_configuration, require_objective_target=False, require_minimum_selection=False

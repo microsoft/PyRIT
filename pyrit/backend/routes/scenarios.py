@@ -146,7 +146,14 @@ async def list_scenarios(  # pyrit-async-suffix-exempt
     )
 
 
-@router.get("/catalog/{scenario_name:path}/datasets", response_model=DatasetListResponse)
+@router.get(
+    "/catalog/{scenario_name:path}/datasets",
+    response_model=DatasetListResponse,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid scenario configuration"},
+        404: {"model": ProblemDetail, "description": "Scenario not found"},
+    },
+)
 async def list_compatible_scenario_datasets_async(scenario_name: IdentifierStr) -> DatasetListResponse:
     """
     List verified scenario-compatible choices without fetching providers or starting a scan.

@@ -507,7 +507,10 @@ function AssertGenerationFormContent({
           onChange={(_, data) => updateSettings({ includeUserPrompt: data.checked === true })}
           label="Include a user prompt in each seed group"
         />
-        <Field hint="Each group then runs as a multi-turn conversation with a tester.">
+        <Field hint={{
+          children: 'Each group then runs as a multi-turn conversation with a tester.',
+          className: styles.checkboxHint,
+        }}>
           <Checkbox
             checked={settings.includeAdversarialPrompt}
             disabled={submitting}
