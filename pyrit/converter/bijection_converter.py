@@ -465,9 +465,16 @@ class TokenBijectionConverter(BijectionConverter):
             tokenizer: A HuggingFace tokenizer with get_vocab() method.
             mapping: Optional explicit mapping dict.
             seed: Optional random seed for reproducibility.
+
+        Raises:
+            ValueError: If a code word is not made of lowercase letters only.
         """
         self._tokenizer = tokenizer
         super().__init__(mapping=mapping, seed=seed)
+        # decode() only reads letter chains and lowercases code words before lookup.
+        invalid = sorted(word for word in self._inverse_mapping if not (word.isalpha() and word == word.lower()))
+        if invalid:
+            raise ValueError(f"Token code words must be lowercase letters only; got {invalid}")
         delimiter = re.escape(self._TOKEN_DELIMITER)
         letter = r"[^\W\d_]"
         # `\b` misses encoded runs beside digits, `_`, or non-ASCII letters, so decode() works on
@@ -639,7 +646,21 @@ class TokenBijectionConverter(BijectionConverter):
         for position in range(length - 1, -1, -1):
             for size in self._code_word_lengths:
                 end = position + size
-                if end <= length and rest_decodes[end] and word[position:end].lower() in self._inverse_mapping:
+                candidate = word[position:end]
+                code_word = candidate.lower()
+                # Only the forms encode() writes, plus title case. A title-cased word must start with
+                # an ASCII letter; otherwise its capital may be passed-through plaintext ("Écat").
+                if (
+                    end <= length
+                    and rest_decodes[end]
+                    and code_word in self._inverse_mapping
+                    and candidate
+                    in (
+                        code_word,
+                        code_word.upper(),
+                        code_word.capitalize() if candidate[0] in string.ascii_letters else code_word,
+                    )
+                ):
                     code_word_at[position] = size
                     break
             if is_gap[position]:

@@ -675,7 +675,7 @@ _PREFIX_SHARING_MAPPING = dict(
 )
 
 
-@pytest.mark.parametrize("original", ["b", "bd", "Bd", "aéd", "c", "dc", "café", "naïve"])
+@pytest.mark.parametrize("original", ["b", "bd", "Bd", "aéd", "c", "dc", "café", "naïve", "Éa", "aÉ"])
 async def test_token_converter_round_trips_tokens_that_share_a_unicode_prefix(original: str):
     converter = TokenBijectionConverter(
         tokenizer=_mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)}),
@@ -696,6 +696,23 @@ def test_token_converter_decode_leaves_long_non_code_word_unchanged():
     text = "\u03ba\u03b1\u03b9" * 2000 + "x"
 
     assert converter.decode(text) == text
+
+
+def test_token_converter_decode_accepts_title_case_code_words():
+    mock_tokenizer = _mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)})
+    converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=3)
+    encoded = f"{converter.mapping['h'].capitalize()}-{converter.mapping['i']}"
+
+    assert converter.decode(encoded) == "Hi"
+
+
+@pytest.mark.parametrize("invalid_code_word", ["gpt4", "foo_bar", "Cat", "e-mail"])
+def test_token_converter_rejects_code_words_decode_cannot_read(invalid_code_word: str):
+    with pytest.raises(ValueError, match="lowercase letters only"):
+        TokenBijectionConverter(
+            tokenizer=_mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)}),
+            mapping=dict(zip(string.ascii_lowercase, [invalid_code_word, *_PLAIN_VOCAB_WORDS[:25]], strict=True)),
+        )
 
 
 async def test_token_converter_literal_hyphen_is_distinct_from_delimiter():
