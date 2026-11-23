@@ -246,7 +246,7 @@ class TestVisualLeakBenchDataset:
 
         call_count = {"n": 0}
 
-        async def fail_first_call(url: str, example_id: str) -> str:
+        async def fail_first_call(*, image_url: str, example_id: str) -> str:
             call_count["n"] += 1
             if call_count["n"] == 1:
                 raise Exception("Network error")
@@ -308,19 +308,19 @@ class TestVisualLeakBenchDataset:
     def test_build_harm_categories_ocr(self):
         """Test _build_harm_categories for OCR Injection."""
         loader = _VisualLeakBenchDataset()
-        result = loader._build_harm_categories("OCR Injection", "")
+        result = loader._build_harm_categories("OCR Injection", pii_type_str="")
         assert result == []
 
     def test_build_harm_categories_pii_with_type(self):
         """Test _build_harm_categories for PII Leakage with specific PII type."""
         loader = _VisualLeakBenchDataset()
-        result = loader._build_harm_categories("PII Leakage", "API Key")
+        result = loader._build_harm_categories("PII Leakage", pii_type_str="API Key")
         assert result == ["api_key"]
 
     def test_build_harm_categories_pii_without_type(self):
         """Test _build_harm_categories for PII Leakage without PII type."""
         loader = _VisualLeakBenchDataset()
-        result = loader._build_harm_categories("PII Leakage", "")
+        result = loader._build_harm_categories("PII Leakage", pii_type_str="")
         assert result == ["pii_leakage"]
 
     def test_get_query_prompt_ocr(self):

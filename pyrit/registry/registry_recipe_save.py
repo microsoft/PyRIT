@@ -21,7 +21,7 @@ from pyrit.models import ComponentType
 from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, RestoreFailureReason
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, RegistryNameTakenError, registry_entry_origin
-from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
+from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class, check_saved_entry_params
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.registry.resolution import reject_non_external_params
 
@@ -29,13 +29,24 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from pyrit.models import Parameter
-    from pyrit.registry.registry import InstanceHoldingRegistry
+    from pyrit.registry.registry import InstanceHoldingRegistry, Registry
 
 logger = logging.getLogger(__name__)
 
 
 class NotSaveableError(ValueError):
     """An entry can't be saved as asked, though it can still be created without saving it."""
+
+    def __init__(self, cause: str) -> None:
+        """
+        Initialize the error with why the entry can't be saved.
+
+        Args:
+            cause (str): Why the entry can't be saved, in words safe to show users. The error's message adds that
+                the entry can still be created without saving it.
+        """
+        super().__init__(f"{cause} It can still be created without saving it.")
+        self.cause = cause
 
 
 class SavedEntryConflictError(ValueError):
@@ -44,6 +55,45 @@ class SavedEntryConflictError(ValueError):
 
 class SavedEntryStorageError(RuntimeError):
     """Saved entries can't be written right now."""
+
+
+def get_class_saveability(*, registry: Registry[Any, Any], type_name: str) -> tuple[tuple[str, ...], str | None]:
+    """
+    Return the auth modes a saved entry of a registered class can use, or why none can.
+
+    This is the class-level answer, before any of the entry's values are known; the values are checked when it's
+    saved.
+
+    Args:
+        registry (Registry[Any, Any]): The registry the class is registered in.
+        type_name (str): The name the class is registered under.
+
+    Returns:
+        tuple[tuple[str, ...], str | None]: The saveable auth modes and None, or no modes and why the class can't
+            be saved.
+    """
+    if registry.is_temporary_class(type_name):
+        return (), _launch_script_class_reason(type_name)
+    try:
+        return check_saveable_class(registry.get_class(type_name)), None
+    except SavedEntryRefusedError as error:
+        return (), str(error)
+
+
+def _launch_script_class_reason(type_name: str) -> str:
+    """
+    Explain why an entry of a class that a scan's launch script added can't be saved.
+
+    Args:
+        type_name (str): The name the class is registered under.
+
+    Returns:
+        str: The reason.
+    """
+    return (
+        f"'{type_name}' was added by a scan's launch script, so a saved entry of it couldn't be restored after a "
+        "restart."
+    )
 
 
 async def prepare_saved_params_async(
@@ -70,8 +120,8 @@ async def prepare_saved_params_async(
         dict[str, Any]: The parameters to build and save the entry with.
 
     Raises:
-        NotSaveableError: If the entry would hold or use a credential, leaves a setting to this server's environment,
-            its class was added by a scan's launch script, or it uses a Temporary target.
+        NotSaveableError: If the entry's class can't be saved or was added by a scan's launch script, or the entry
+            would hold or use a credential, leaves a setting to this server's environment, or uses a Temporary target.
         ValueError: If an address the entry would use isn't a full http(s) or ws(s) address, or a parameter is one
             the API can't set, which restore can't pass either.
     """
@@ -80,11 +130,9 @@ async def prepare_saved_params_async(
     for name, turned_off in fallbacks.items():
         if turned_off is not None and saved_params.get(name) in (None, ""):
             saved_params[name] = turned_off
-    if registry.is_temporary_class(type_name):
-        raise NotSaveableError(
-            f"'{type_name}' was added by a scan's launch script, so a saved entry of it couldn't be restored after "
-            "a restart. It can still be created without saving it."
-        )
+    _, class_reason = get_class_saveability(registry=registry, type_name=type_name)
+    if class_reason is not None:
+        raise NotSaveableError(class_reason)
     metadata = await asyncio.to_thread(registry.get_registered_class_metadata, type_name)
     if metadata is None:
         # Restore falls back to the class itself the same way, so saving never checks less than restoring.
@@ -96,7 +144,7 @@ async def prepare_saved_params_async(
         # The address needs fixing; creating the entry without saving it wouldn't make it usable.
         if error.reason is RestoreFailureReason.INVALID_RECIPE:
             raise ValueError(str(error)) from error
-        raise NotSaveableError(f"{error} It can still be created without saving it.") from error
+        raise NotSaveableError(str(error)) from error
     _refuse_values_restore_cant_pass(cls=cls, parameters=parameters, params=saved_params)
     _refuse_environment_values(cls=cls, params=saved_params)
     _refuse_temporary_references(parameters=parameters, params=saved_params)
@@ -134,7 +182,7 @@ def _refuse_environment_values(*, cls: type, params: Mapping[str, Any]) -> None:
         if value is None or (isinstance(value, str) and not value.strip()):
             raise NotSaveableError(
                 f"'{name}' is empty, so '{cls.__name__}' would read it from this server's environment. A saved "
-                "entry sets it. It can still be created without saving it."
+                "entry sets it."
             )
 
 
@@ -155,10 +203,7 @@ def _refuse_temporary_references(*, parameters: Sequence[Parameter], params: Map
         for name in value if isinstance(value, list) else [value]:
             entry = targets.get_entry(name) if isinstance(name, str) else None
             if entry is not None and registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
-                raise NotSaveableError(
-                    f"Uses temporary target '{name}', which won't exist after a restart. "
-                    "It can still be created without saving it."
-                )
+                raise NotSaveableError(f"Uses temporary target '{name}', which won't exist after a restart.")
 
 
 async def save_then_register_async(

@@ -36,7 +36,7 @@ stages:
     jobs:
       - deployment: ${{ parameters.deploymentName }}
         displayName: ${{ parameters.displayName }}
-        timeoutInMinutes: 120
+        timeoutInMinutes: 180
         environment: 'copyrit-${{ parameters.slot }}'
         strategy:
           runOnce:
@@ -67,6 +67,8 @@ stages:
                       PYRIT_ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
                       PYRIT_ADMIN_GROUP_OBJECT_ID: $(adminGroupObjectId)
                       PYRIT_CONFIG_FILE_URI: $(pyritConfigFileUri)
+                      PYRIT_CONFIG_SEED_URI: $(pyritConfigSeedUri)
+                      PYRIT_SOURCE_BRANCH: $(Build.SourceBranch)
                       PYRIT_SQL_SERVER_FQDN: $(sqlServerFqdn)
                       PYRIT_SQL_DATABASE_NAME: $(sqlDatabaseName)
                       PYRIT_KEY_VAULT_RESOURCE_ID: $(keyVaultResourceId)

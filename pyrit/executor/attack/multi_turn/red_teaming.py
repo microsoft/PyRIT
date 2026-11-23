@@ -156,6 +156,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         warn_if_set(config=attack_scoring_config, log=self._logger, unused_fields=["refusal_scorer"])
 
         self._objective_scorer = attack_scoring_config.objective_scorer
+        self._validate_objective_scorer(scorer=self._objective_scorer)
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
         self._use_score_as_feedback = attack_scoring_config.use_score_as_feedback
 
