@@ -176,6 +176,14 @@ class TargetService:
                     try:
                         results.append(await self._probe_capabilities_async(source))
                     except (CapabilityDiscoveryError, ValueError) as exc:
+                        logger.warning(
+                            "Capability detection failed for target %r (child %d, %s): %s",
+                            target_registry_name,
+                            index + 1,
+                            type(source).__name__,
+                            exc,
+                            exc_info=exc,
+                        )
                         if isinstance(target, RoundRobinTarget):
                             error_type = (
                                 CapabilityDiscoveryError if isinstance(exc, CapabilityDiscoveryError) else ValueError
