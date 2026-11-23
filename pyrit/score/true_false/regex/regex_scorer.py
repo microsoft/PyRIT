@@ -99,7 +99,7 @@ class RegexScorer(MessageTrueFalseScorer):
                 "pattern_count": len(self._patterns),
                 "patterns_digest": _patterns_digest(self._patterns),
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
     async def _score_piece_with_expectation_async(

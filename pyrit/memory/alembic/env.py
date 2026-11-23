@@ -12,12 +12,12 @@ from pyrit.memory.memory_models import Base
 from pyrit.memory.migration import PYRIT_MEMORY_ALEMBIC_VERSION_TABLE
 
 config = context.config
-connection: Connection | None = config.attributes.get("connection")
+configured_connection = config.attributes.get("connection")
+if not isinstance(configured_connection, Connection):
+    raise RuntimeError("No connection found for Alembic migration")
+connection: Connection = configured_connection
 target_metadata = Base.metadata
 applied_revisions: set[str] = set()
-
-if connection is None:
-    raise RuntimeError("No connection found for Alembic migration")
 
 
 def _include_object(

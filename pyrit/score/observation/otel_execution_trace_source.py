@@ -9,7 +9,7 @@ import json
 import math
 import re
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.models import (
     Acquisition,
@@ -322,7 +322,8 @@ def _natural_key(key: str) -> tuple[tuple[int, int | str], ...]:
     Returns:
         tuple[tuple[int, int | str], ...]: The sort key.
     """
-    parts: list[str] = re.split(r"(\d+)", key)
+    # The digit capture group always yields str elements; typeshed widens split's return for patterns with groups.
+    parts = cast("list[str]", re.split(r"(\d+)", key))
     return tuple((0, int(part)) if part.isdigit() else (1, part) for part in parts)
 
 

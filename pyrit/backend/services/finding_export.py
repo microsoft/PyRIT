@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from io import BytesIO
+from typing import cast
 from urllib.parse import quote, urlencode
 from uuid import UUID
 
@@ -309,7 +310,8 @@ def _add_word_evidence(*, cell: _Cell, evidence: tuple[FindingReportEvidence, ..
 
 
 def _indented_paragraph(cell: _Cell) -> Paragraph:
-    paragraph: Paragraph = cell.add_paragraph()
+    # python-docx leaves _Cell.add_paragraph unannotated, but it always returns the new Paragraph.
+    paragraph = cast("Paragraph", cell.add_paragraph())
     paragraph.paragraph_format.left_indent = _WORD_BULLET_TEXT_INDENT
     paragraph.paragraph_format.space_after = Pt(2)
     return paragraph
