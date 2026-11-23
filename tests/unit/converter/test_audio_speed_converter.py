@@ -4,6 +4,8 @@
 
 import os
 import tempfile
+from inspect import Parameter, signature
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -12,6 +14,34 @@ from scipy.io import wavfile
 from pyrit.converter import AudioSpeedConverter
 from pyrit.memory import SQLiteMemory
 from pyrit.registry import ConverterRegistry
+
+
+def test_resample_channel_parameters_are_keyword_only() -> None:
+    parameters = signature(AudioSpeedConverter._resample_channel).parameters
+    assert parameters["channel_data"].kind is Parameter.KEYWORD_ONLY
+    assert parameters["new_num_samples"].kind is Parameter.KEYWORD_ONLY
+
+
+@pytest.mark.parametrize("channels", [1, 2])
+@pytest.mark.parametrize("speed_factor", [0.5, 1.0, 2.0])
+async def test_resampling_preserves_samples_async(
+    *, channels: int, speed_factor: float, tmp_path: Path, sqlite_instance: SQLiteMemory
+) -> None:
+    samples = np.array([0, 100, 200, 300], dtype=np.int16)
+    expected = np.linspace(0, 300, int(4 / speed_factor)).astype(np.int16)
+    if channels == 2:
+        samples = np.column_stack((samples, -samples))
+        expected = np.column_stack((expected, -expected))
+    source = tmp_path / "input.wav"
+    wavfile.write(source, 16000, samples)
+
+    result = await AudioSpeedConverter(speed_factor=speed_factor).convert_async(prompt=str(source))
+    sample_rate, converted = wavfile.read(result.output_text)
+
+    assert result.output_type == "audio_path"
+    assert sample_rate == 16000
+    assert converted.dtype == samples.dtype
+    np.testing.assert_array_equal(converted, expected)
 
 
 async def test_speed_up_audio(sqlite_instance):
