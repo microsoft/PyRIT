@@ -218,9 +218,10 @@ the configuration do. A target left out of the
 request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
 converter copy made with `source` is saved as its changes and the name of the converter it copies, which can't be
 Temporary (otherwise **400** as above); it's rebuilt from that converter at every start, so it keeps where that
-converter sends requests and how it signs in. A private converter or scorer can't be saved (**422**). A taken name
-receives **409**, and storage that can't
-be written receives **503**. Each listed converter's and scorer's `origin` is `saved`, `configuration`, or
+converter sends requests and how it signs in. A private converter or scorer can't be saved (**422**). A taken
+converter name receives **409** with or without `persist`, a taken scorer name receives **409** when saving and
+**400** otherwise, and storage that can't be written receives **503**. Each listed converter's and scorer's
+`origin` is `saved`, `configuration`, or
 `temporary`, as for targets. A saved converter can't be removed through the API yet (**409**): delete its file under
 `registry_recipes_source` and restart the backend.
 
@@ -296,11 +297,11 @@ server-generated storage names and are never executed. Blob uploads are opaque
 attachments; local retrieval uses the existing media route's safe inline allowlist.
 
 Names are exact, nonempty, at most 256 UTF-16 code units, and have no surrounding
-whitespace or control characters. An existing stored dataset or in-progress upload
-with a database-collation-equivalent name returns `409`, never append/replace or
-silent deduplication. SQLite keeps its normal case-sensitive identity; SQL Server
-uses the existing seed-name column collation. Exact deletion remains exact even
-when legacy datasets contain collated aliases. Seed and journal names use Unicode
+whitespace or control characters. An existing stored dataset, in-progress upload, or
+unfinished prompt generation with a database-collation-equivalent name returns `409`,
+never append/replace or silent deduplication. SQLite keeps its normal case-sensitive
+identity; SQL Server uses the existing seed-name column collation. Exact deletion
+remains exact even when legacy datasets contain collated aliases. Seed and journal names use Unicode
 storage on SQL Server, including databases with non-UTF-8 collations.
 A provider-only name is allowed; its provider registration remains unchanged.
 Descriptive metadata, response schema, roles, sequence numbers, and grouping are
@@ -771,6 +772,47 @@ supplied arguments. Helper constructors retain their original call form.
 Live components without captured inputs use `...`; this display is not executable
 or lossless source. The GUI displays identity JSON, not the creation statement.
 
+### Prompt Generations
+
+Prompt generations run PyRIT's prompt generators as background jobs and store each
+result as a new named seed dataset. `GET /api/prompt-generators` describes each
+generator's stages, target roles, and, for ASSERT, the scenario that runs its datasets.
+Two generators are registered: `assert` (`AssertGenerator`, with a reviewable
+dimensions stage) and `target_objective` (`TargetObjectiveGenerator`).
+
+| Endpoint | Result |
+| --- | --- |
+| `POST /api/prompt-generations/preflight` | Validation errors, dataset-name availability, and a call/token estimate; no target is called |
+| `POST /api/prompt-generations` | 201 with a queued generation; 409 if the dataset name is taken |
+| `POST /api/prompt-generations/batch` | 201 with several queued generations that share a generator, targets, settings, and a `group_id`, such as an ASSERT suite |
+| `GET /api/prompt-generations` | Generations newest first; the members of one batch in the batch's order |
+| `GET`, `DELETE /api/prompt-generations/{id}` | Read or delete a record; deleting keeps the dataset |
+| `POST /api/prompt-generations/{id}/continue\|retry\|cancel` | Finish a review, resume from the last checkpoint, or cancel |
+| `GET`, `PUT /api/prompt-generations/{id}/review` | Read or save output awaiting review |
+| `GET /api/prompt-generations/{id}/estimate` | Remaining calls from the checkpoint; ASSERT is exact once the taxonomy and dimension levels are known |
+| `GET /api/prompt-generations/from-dataset?selection_key=` | The request recorded in a generated dataset, to edit and regenerate under a new name |
+| `GET /api/prompt-generators/assert/behaviors\|suites` | The bundled ASSERT behavior and suite library |
+
+Each backend runs one generation at a time and queues the rest. Records are stored in
+memory (`PromptGenerationEntries`), so backends that share a database list the same
+generations. `pause_for_review` is rejected for generators without a reviewable stage.
+
+Dataset names are create-only, under one rule shared with dataset uploads: a name is
+taken while stored seeds use it, an upload is staging it, or a generation holds it, and
+the database's collation decides which names match. A generation holds its name until
+it completes or is cancelled. If the name is taken while generating, the save fails
+without adding seeds to the other dataset. If another dataset or generation takes the
+name of a cancelled generation, that generation can't resume: retry returns 409, and a
+new generation under another name starts over and repeats the model calls.
+
+Failed, cancelled, and interrupted generations retry from their last checkpoint.
+Shutdown interrupts running generations but lets a dataset save finish. On first use
+after a restart with SQLite memory, active generations become `interrupted`. Shared
+memory, such as Azure SQL, leaves them active because another backend may own them:
+cancel a generation whose backend stopped, then retry or delete it. A cancel from
+another backend stops a run at its next checkpoint, and a save it was running then
+commits nothing; cancelling a save that this backend is running returns 409.
+
 ### Manual Messages
 
 `POST /api/attacks/{id}/messages` remains synchronous: it waits for the send and returns
@@ -963,9 +1005,8 @@ API callers are trusted operators, so these are intentional exceptions:
   only files from the media folders above.
 - Initializers and custom initializer scripts are trusted Python. Uploading scripts requires
   an administrator and `allow_custom_initializers: true`.
-- `GitHubCopilotTarget.working_directory`, `HuggingFaceChatTarget.model_path`, and
-  `LocalRefusalClassifierScorer.model_id` may name local folders; callers set them like any
-  other operator setting.
+- `GitHubCopilotTarget.working_directory` and `HuggingFaceChatTarget.model_path` may name local
+  folders; callers set them like any other operator setting.
 
 ## Strict Lockstep Compatibility
 

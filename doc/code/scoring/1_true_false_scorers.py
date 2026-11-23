@@ -560,6 +560,8 @@ print(type(wildguard_scorer).__name__)
 # Install the runtime with `pip install laya`. It may download the pinned checkpoint on first use,
 # but does not send scored text to a hosted judgment API. Call `await scorer.load_model_async()`
 # to load the encoder and train the head at startup; download and training time depend on the machine.
+# To load a checkpoint folder you already have, pass it as `model_path` instead of `model_id`, which
+# names a Hugging Face Hub repository.
 #
 # Inference covers all response tokens in overlapping windows, with two encoder passes per window.
 # `max_input_tokens` defaults to 512 including Laya and JSON framing, `chunk_overlap_tokens` to 64,

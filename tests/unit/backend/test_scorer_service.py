@@ -582,20 +582,24 @@ async def test_saves_a_scorer_only_over_a_target_that_comes_back_after_a_restart
     assert _saved_scorer(tmp_path, "decision")["params"] == {"chat_target": "chat"}
 
 
-async def test_saves_a_scorer_that_uses_this_servers_key(tmp_path: Path) -> None:
+@pytest.mark.parametrize("params", [{"endpoint": "https://contoso.cognitiveservices.azure.com/"}, {}, {"endpoint": ""}])
+async def test_saves_a_scorer_that_uses_this_servers_key(tmp_path: Path, params: dict[str, str]) -> None:
     service = ScorerService()
-    endpoint = "https://contoso.cognitiveservices.azure.com/"
+    environment = {
+        "AZURE_CONTENT_SAFETY_API_KEY": "server-safety-key",
+        "AZURE_CONTENT_SAFETY_API_ENDPOINT": "https://server.cognitiveservices.azure.com/",
+    }
 
-    with patch.dict("os.environ", {"AZURE_CONTENT_SAFETY_API_KEY": "server-safety-key"}):
+    with patch.dict("os.environ", environment):
         scorer = await service.create_scorer_async(
-            request=_persist_scorer("content_safety", "AzureContentFilterScorer", {"endpoint": endpoint}),
+            request=_persist_scorer("content_safety", "AzureContentFilterScorer", params),
             recipes_source=str(tmp_path),
         )
         ScorerRegistry.reset_registry_singleton()
         report = await _restore(tmp_path)
 
     assert scorer.origin is RegistryEntryOrigin.SAVED
-    assert _saved_scorer(tmp_path, "content_safety")["params"] == {"endpoint": endpoint}
+    assert _saved_scorer(tmp_path, "content_safety")["params"] == params
     assert "server-safety-key" not in (tmp_path / "scorers" / "content_safety.json").read_text()
     assert report.failures == []
     assert ScorerRegistry.get_registry_singleton().instances.get("content_safety") is not None
