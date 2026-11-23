@@ -686,6 +686,18 @@ async def test_token_converter_round_trips_tokens_that_share_a_unicode_prefix(or
     assert converter.decode(encoded.output_text) == original
 
 
+def test_token_converter_decode_leaves_long_non_code_word_unchanged():
+    # Regression test: a run of non-ASCII code words ending in a non-code word made the decode
+    # regex backtrack exponentially, so decoding this effectively hung.
+    converter = TokenBijectionConverter(
+        tokenizer=_mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)}),
+        mapping=dict(zip(string.ascii_lowercase, ["\u03ba\u03b1\u03b9", *_PLAIN_VOCAB_WORDS[:25]], strict=True)),
+    )
+    text = "\u03ba\u03b1\u03b9" * 2000 + "x"
+
+    assert converter.decode(text) == text
+
+
 async def test_token_converter_literal_hyphen_is_distinct_from_delimiter():
     mock_tokenizer = _mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)})
     converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=3)

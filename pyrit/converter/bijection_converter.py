@@ -468,33 +468,14 @@ class TokenBijectionConverter(BijectionConverter):
         """
         self._tokenizer = tokenizer
         super().__init__(mapping=mapping, seed=seed)
-        # Longest first: a token may be a prefix of another ("cat" and "caté"), and the regex
-        # engine takes the first alternative that lets the rest of the pattern match.
-        token_alternation = "|".join(re.escape(token) for token in sorted(self._inverse_mapping, key=len, reverse=True))
         delimiter = re.escape(self._TOKEN_DELIMITER)
         letter = r"[^\W\d_]"
-        non_ascii_letter = r"[^\W\d_A-Za-z]"
-        # `\b` misses encoded runs beside digits, `_`, or non-ASCII letters. Match the
-        # complete encoded letter stretch instead, preserving partial words.
-        gap = rf"(?:{delimiter}|{non_ascii_letter}+?)"
-        run_tail = (
-            rf"(?:{gap}(?:{token_alternation}))*"
-            rf"(?:{non_ascii_letter}+(?!{delimiter}(?!{delimiter})))?"
-        )
-        # A doubled delimiter is matched first so it is consumed as one literal hyphen
-        # rather than being split between two adjacent code-word runs.
-        self._decode_pattern = re.compile(
-            rf"{delimiter}{delimiter}"
-            rf"|(?<!{letter}){non_ascii_letter}*(?:{token_alternation}){run_tail}(?!{letter})",
-            re.IGNORECASE,
-        )
-        # decode() walks a matched run one code word at a time. Each code word is taken only if
-        # the rest of the run still parses, so the walk splits the run the same way the pattern
-        # above matched it: "catédog" is "cat", "é", "dog", never "caté" followed by "dog".
-        self._first_code_word_pattern = re.compile(
-            rf"({non_ascii_letter}*?)({token_alternation})(?={run_tail}\Z)", re.IGNORECASE
-        )
-        self._next_code_word_pattern = re.compile(rf"({gap})({token_alternation})(?={run_tail}\Z)", re.IGNORECASE)
+        # `\b` misses encoded runs beside digits, `_`, or non-ASCII letters, so decode() works on
+        # whole letter chains instead: a letter stretch plus any stretches joined to it by single
+        # delimiters. "--" is matched first so a literal hyphen is never split between two chains.
+        self._chain_pattern = re.compile(rf"{delimiter}{delimiter}|{letter}+(?:{delimiter}(?!{delimiter}){letter}+)*")
+        # Longest first: a token may be a prefix of another ("cat" and "caté").
+        self._code_word_lengths = sorted({len(code_word) for code_word in self._inverse_mapping}, reverse=True)
 
     def _generate_mapping(self, rng: random.Random) -> dict[str, str]:
         vocab_keys = list(self._tokenizer.get_vocab().keys())
@@ -613,27 +594,82 @@ class TokenBijectionConverter(BijectionConverter):
             str: The decoded plain text.
         """
 
-        def decode_run(run: str) -> str:
-            decoded: list[str] = []
-            position = 0
-            pattern = self._first_code_word_pattern
-            while match := pattern.match(run, position):
-                gap, code_word = match.groups()
-                if gap != self._TOKEN_DELIMITER:
-                    decoded.append(gap)
-                letter = self._inverse_mapping[code_word.lower()]
-                decoded.append(letter.upper() if code_word[0].isupper() else letter)
-                position = match.end()
-                pattern = self._next_code_word_pattern
-            decoded.append(run[position:])
-            return "".join(decoded)
-
         def replace(match: "re.Match[str]") -> str:
             if match.group(0) == self._TOKEN_DELIMITER * 2:
                 return self._TOKEN_DELIMITER
-            return decode_run(match.group(0))
+            # Encoding never puts a lone delimiter after passed-through text, so a trailing gap
+            # is only accepted when the chain is not followed by a single delimiter.
+            end = match.end()
+            lone_delimiter_follows = encoded_text.startswith(self._TOKEN_DELIMITER, end) and not (
+                encoded_text.startswith(self._TOKEN_DELIMITER * 2, end)
+            )
+            return self._decode_chain(match.group(0), allow_trailing_gap=not lone_delimiter_follows)
 
-        return self._decode_pattern.sub(replace, encoded_text)
+        return self._chain_pattern.sub(replace, encoded_text)
+
+    def _decode_chain(self, chain: str, *, allow_trailing_gap: bool) -> str:
+        words = chain.split(self._TOKEN_DELIMITER)
+        decoded_parts: list[str] = []
+        previous_decoded = False
+        for index, word in enumerate(words):
+            allow_suffix = allow_trailing_gap and index == len(words) - 1
+            if previous_decoded:
+                joined = self._decode_word(word, allow_prefix=False, allow_suffix=allow_suffix)
+                if joined is not None:
+                    decoded_parts.append(joined)
+                    continue
+            if index:
+                decoded_parts.append(self._TOKEN_DELIMITER)
+            decoded = self._decode_word(word, allow_prefix=True, allow_suffix=allow_suffix)
+            previous_decoded = decoded is not None
+            decoded_parts.append(word if decoded is None else decoded)
+        return "".join(decoded_parts)
+
+    def _decode_word(self, word: str, *, allow_prefix: bool, allow_suffix: bool) -> str | None:
+        # Code words are separated by non-ASCII letters passed through from the plaintext, and a
+        # non-ASCII letter may also belong to a code word. A backward pass records, for each
+        # position, the longest code word whose remainder still decodes, so the forward walk never
+        # backtracks and each word is decoded in linear time.
+        length = len(word)
+        is_gap = [char not in string.ascii_letters for char in word] + [False]
+        code_word_at = [0] * (length + 1)
+        rest_decodes = [False] * length + [True]
+        gap_then_code_word = [False] * (length + 1)
+        suffix_is_gap = [False] * length + [True]
+        for position in range(length - 1, -1, -1):
+            for size in self._code_word_lengths:
+                end = position + size
+                if end <= length and rest_decodes[end] and word[position:end].lower() in self._inverse_mapping:
+                    code_word_at[position] = size
+                    break
+            if is_gap[position]:
+                suffix_is_gap[position] = suffix_is_gap[position + 1]
+                gap_then_code_word[position] = bool(code_word_at[position + 1]) or gap_then_code_word[position + 1]
+            rest_decodes[position] = gap_then_code_word[position] or (allow_suffix and suffix_is_gap[position])
+
+        position = 0
+        while not code_word_at[position]:
+            if not allow_prefix or not is_gap[position]:
+                return None
+            position += 1
+
+        decoded = [word[:position]]
+        while True:
+            code_word = word[position : position + code_word_at[position]]
+            letter = self._inverse_mapping[code_word.lower()]
+            decoded.append(letter.upper() if code_word[0].isupper() else letter)
+            position += len(code_word)
+            if position == length:
+                break
+            if not gap_then_code_word[position]:
+                decoded.append(word[position:])
+                break
+            gap_start = position
+            position += 1
+            while not code_word_at[position]:
+                position += 1
+            decoded.append(word[gap_start:position])
+        return "".join(decoded)
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
