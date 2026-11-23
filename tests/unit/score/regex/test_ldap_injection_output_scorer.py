@@ -220,7 +220,6 @@ def test_ldap_null_byte_check_matches_default_pattern(text: str) -> None:
     assert _has_null_byte_termination(text) is (re.search(pattern, text) is not None)
 
 
-
 async def test_ldap_null_byte_check_skipped_when_subclass_replaces_default(patch_central_database):
     class NarrowNullByteScorer(LDAPInjectionOutputScorer):
         _DEFAULT_PATTERNS = {
@@ -231,6 +230,7 @@ async def test_ldap_null_byte_check_skipped_when_subclass_replaces_default(patch
     scorer = NarrowNullByteScorer()
     assert (await scorer.score_text_async("user*)%00"))[0].get_value() is False
     assert (await scorer.score_text_async("admin)%00"))[0].get_value() is True
+
 
 async def test_ldap_injection_scorer_custom_patterns(patch_central_database):
     custom = {"Marker": r"DANGER_LDAP_\d+"}

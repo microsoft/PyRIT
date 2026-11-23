@@ -162,7 +162,9 @@ class LDAPInjectionOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
 
         text = message_piece.converted_value
         matched = [
-            name for name, pattern in self._compiled.items() if self._PATTERN_CHECKS.get(pattern.pattern, pattern.search)(text)
+            name
+            for name, pattern in self._compiled.items()
+            if self._PATTERN_CHECKS.get(pattern.pattern, pattern.search)(text)
         ]
         if "LDAP URL Filter Injection" not in matched and self._has_decoded_url_injection(text):
             matched.append("LDAP URL Filter Injection")
