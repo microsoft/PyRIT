@@ -467,16 +467,24 @@ class TokenBijectionConverter(BijectionConverter):
             seed: Optional random seed for reproducibility.
 
         Raises:
-            ValueError: If a code word is not made of lowercase letters only.
+            ValueError: If a code word is empty, contains a hyphen, or has uppercase letters.
         """
         self._tokenizer = tokenizer
         super().__init__(mapping=mapping, seed=seed)
-        # decode() only reads letter chains and lowercases code words before lookup.
-        invalid = sorted(word for word in self._inverse_mapping if not (word.isalpha() and word == word.lower()))
+        # decode() splits on the delimiter and lowercases text before lookup, so these never decoded.
+        invalid = sorted(
+            word for word in self._inverse_mapping if not word or self._TOKEN_DELIMITER in word or word != word.lower()
+        )
         if invalid:
-            raise ValueError(f"Token code words must be lowercase letters only; got {invalid}")
+            raise ValueError(
+                f"Token code words must be non-empty, lowercase, and free of '{self._TOKEN_DELIMITER}'; got {invalid}"
+            )
         delimiter = re.escape(self._TOKEN_DELIMITER)
         letter = r"[^\W\d_]"
+        # Custom code words may also contain digits, "_", or punctuation ("gpt4").
+        extra = sorted({char for word in self._inverse_mapping for char in word if not re.fullmatch(letter, char)})
+        if extra:
+            letter = rf"(?:{letter}|[{re.escape(''.join(extra))}])"
         # `\b` misses encoded runs beside digits, `_`, or non-ASCII letters, so decode() works on
         # whole letter chains instead: a letter stretch plus any stretches joined to it by single
         # delimiters. "--" is matched first so a literal hyphen is never split between two chains.
@@ -633,6 +641,14 @@ class TokenBijectionConverter(BijectionConverter):
         return "".join(decoded_parts)
 
     def _decode_word(self, word: str, *, allow_prefix: bool, allow_suffix: bool) -> str | None:
+        # A non-ASCII capital next to a code word is normally passed-through plaintext ("Écat" is
+        # "É" + "cat"). Only when that reading fails is it taken as part of the code word ("Και").
+        decoded = self._parse_word(word, allow_prefix=allow_prefix, allow_suffix=allow_suffix, any_case=False)
+        if decoded is None and any(char != char.lower() for char in word if char not in string.ascii_letters):
+            decoded = self._parse_word(word, allow_prefix=allow_prefix, allow_suffix=allow_suffix, any_case=True)
+        return decoded
+
+    def _parse_word(self, word: str, *, allow_prefix: bool, allow_suffix: bool, any_case: bool) -> str | None:
         # Code words are separated by non-ASCII letters passed through from the plaintext, and a
         # non-ASCII letter may also belong to a code word. A backward pass records, for each
         # position, the longest code word whose remainder still decodes, so the forward walk never
@@ -655,7 +671,8 @@ class TokenBijectionConverter(BijectionConverter):
                     and rest_decodes[end]
                     and code_word in self._inverse_mapping
                     and (
-                        candidate == code_word.upper()
+                        any_case
+                        or candidate == code_word.upper()
                         or all(char == char.lower() for char in candidate if char not in string.ascii_letters)
                     )
                 ):

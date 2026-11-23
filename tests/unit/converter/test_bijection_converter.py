@@ -717,9 +717,30 @@ def test_token_converter_decode_accepts_mixed_case_code_words(
     assert converter.decode(encoded) == expected
 
 
-@pytest.mark.parametrize("invalid_code_word", ["gpt4", "foo_bar", "Cat", "e-mail"])
+def test_token_converter_decode_accepts_title_case_non_ascii_code_word():
+    converter = TokenBijectionConverter(
+        tokenizer=_mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)}),
+        mapping=dict(zip(string.ascii_lowercase, ["\u03ba\u03b1\u03b9", *_PLAIN_VOCAB_WORDS[:25]], strict=True)),
+    )
+
+    assert converter.decode(f"\u039a\u03b1\u03b9-{converter.mapping['b']}") == "Ab"
+
+
+@pytest.mark.parametrize("code_word", ["gpt4", "foo_bar", "a.b"])
+@pytest.mark.parametrize("original", ["ab", "Ab", "a1", "b4 a_b"])
+async def test_token_converter_round_trips_code_words_with_non_letters(*, code_word: str, original: str) -> None:
+    converter = TokenBijectionConverter(
+        tokenizer=_mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)}),
+        mapping=dict(zip(string.ascii_lowercase, [code_word, *_PLAIN_VOCAB_WORDS[:25]], strict=True)),
+    )
+
+    encoded = await converter.convert_async(prompt=original)
+    assert converter.decode(encoded.output_text) == original
+
+
+@pytest.mark.parametrize("invalid_code_word", ["", "Cat", "e-mail"])
 def test_token_converter_rejects_code_words_decode_cannot_read(invalid_code_word: str):
-    with pytest.raises(ValueError, match="lowercase letters only"):
+    with pytest.raises(ValueError, match="non-empty, lowercase"):
         TokenBijectionConverter(
             tokenizer=_mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)}),
             mapping=dict(zip(string.ascii_lowercase, [invalid_code_word, *_PLAIN_VOCAB_WORDS[:25]], strict=True)),
