@@ -474,16 +474,8 @@ class TokenBijectionConverter(BijectionConverter):
         delimiter = re.escape(self._TOKEN_DELIMITER)
         letter = r"[^\W\d_]"
         non_ascii_letter = r"[^\W\d_A-Za-z]"
-        # encode() writes a run directly next to any unmapped character, including digits,
-        # "_" and non-ASCII letters ("mp3" -> "<m>-<p>3", "naïve" -> "<n>-<a>ï<v>-<e>"), so
-        # a \b boundary misses runs that touch them. Every ASCII letter is mapped, so in
-        # encode() output a stretch of letters is code words separated by delimiters or by
-        # unmapped non-ASCII letters, with no ASCII letter left over. A run is therefore
-        # matched as a whole stretch of letters with no letter on either side, in which every
-        # ASCII letter belongs to a code word. A code word that is only part of a longer word
-        # ("xcat", "catégorie") is left as is. encode() doubles a literal delimiter, so a run
-        # never ends in a non-ASCII letter followed by a single delimiter; that would mean the
-        # run was cut short before "-<code word>".
+        # `\b` misses encoded runs beside digits, `_`, or non-ASCII letters. Match the
+        # complete encoded letter stretch instead, preserving partial words.
         gap = rf"(?:{delimiter}|{non_ascii_letter}+?)"
         run_tail = (
             rf"(?:{gap}(?:{token_alternation}))*"
