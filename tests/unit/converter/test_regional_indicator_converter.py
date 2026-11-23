@@ -79,6 +79,39 @@ async def test_regional_indicator_single_letter_has_no_separator():
     assert ZWNJ not in result.output_text
 
 
+async def test_regional_indicator_separates_converted_tile_from_existing_indicator_after():
+    """A converted letter next to a pre-existing indicator in the input must not form a flag."""
+    converter = RegionalIndicatorConverter()
+
+    # Input: existing indicator U (already a tile) immediately followed by the letter S.
+    result = await converter.convert_async(prompt=_tile("u") + "S", input_type="text")
+
+    # Without the fix this returned the joined pair _tile("u")+_tile("s") -> the "US" flag.
+    assert result.output_text == _tile("u") + ZWNJ + _tile("s")
+
+
+async def test_regional_indicator_separates_converted_tile_from_existing_indicator_before():
+    """Same, with the existing indicator on the other side of the converted letter."""
+    converter = RegionalIndicatorConverter()
+
+    # Input: the letter U followed by an existing indicator S.
+    result = await converter.convert_async(prompt="U" + _tile("s"), input_type="text")
+
+    assert result.output_text == _tile("u") + ZWNJ + _tile("s")
+
+
+async def test_regional_indicator_preserves_existing_flag():
+    """Two indicators that were both already in the input (an existing flag) are left joined."""
+    converter = RegionalIndicatorConverter()
+
+    existing_flag = _tile("u") + _tile("s")
+    result = await converter.convert_async(prompt=existing_flag, input_type="text")
+
+    # Neither tile was produced by the converter, so no separator is inserted.
+    assert result.output_text == existing_flag
+    assert ZWNJ not in result.output_text
+
+
 async def test_regional_indicator_empty_prompt():
     """An empty prompt yields empty output."""
     converter = RegionalIndicatorConverter()
