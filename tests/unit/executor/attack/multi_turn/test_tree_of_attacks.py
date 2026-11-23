@@ -2961,10 +2961,12 @@ def test_tap_scoring_config_threshold_raises_for_a_scorer_without_a_threshold():
         _ = scoring_config.threshold
 
 
-def test_tap_attack_result_tree_visualization_getter_returns_value():
+@pytest.mark.parametrize("has_root", [False, True])
+def test_tap_attack_result_tree_visualization_getter_returns_value(has_root):
     """Test that TAPAttackResult.tree_visualization returns the stored tree."""
     tree = Tree()
-    tree.create_node("root", "root")
+    if has_root:
+        tree.create_node("root", "root")
     result = TAPAttackResult(
         conversation_id="conv1",
         objective="test",
@@ -2980,6 +2982,14 @@ def test_tap_attack_result_tree_visualization_getter_returns_none_when_missing()
         objective="test",
     )
     assert result.tree_visualization is None
+
+
+@pytest.mark.parametrize("value", [0, "invalid"])
+def test_tap_attack_result_tree_visualization_rejects_invalid_metadata(value):
+    result = TAPAttackResult(conversation_id="conv1", objective="test", metadata={"tree_visualization": value})
+
+    with pytest.raises(TypeError, match="tree_visualization must be a Tree or None"):
+        _ = result.tree_visualization
 
 
 # ---------------------------------------------------------------------------
@@ -3400,14 +3410,18 @@ class TestModalityRouterIntegration:
             ]
         )
 
-    async def test_node_send_prompt_to_target_forwards_prev_image(self, node_components):
-        """Objective accepting {text, image_path} gets prev image attached on turn N."""
+    @pytest.mark.parametrize("supports_multi_turn", [True, False])
+    async def test_node_send_prompt_to_target_forwards_prev_image(self, node_components, supports_multi_turn):
+        """Objective accepting {text, image_path} gets prev image attached on turn N, also when it is single-turn."""
         # Override the router to point at an image-capable objective.
         node_components["objective_target"].configuration.capabilities.input_modalities = frozenset(
             {frozenset({"text"}), frozenset({"text", "image_path"})}
         )
         node_components["objective_target"].configuration.capabilities.output_modalities = frozenset(
             {frozenset({"image_path"})}
+        )
+        node_components["objective_target"].configuration.includes.side_effect = lambda capability: (
+            capability == CapabilityName.MULTI_TURN and supports_multi_turn
         )
         node_components["modality_router"] = _ModalityFeedbackRouter(
             adversarial_chat=node_components["adversarial_chat"],

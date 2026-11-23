@@ -50,7 +50,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             ComponentIdentifier: The identifier for this scorer.
         """
         return self._create_identifier(
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             sub_scorers=[self._scorer.get_identifier()],
         )
 

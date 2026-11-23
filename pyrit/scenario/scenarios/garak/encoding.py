@@ -24,6 +24,7 @@ from pyrit.converter import (
     NatoConverter,
     RegionalIndicatorConverter,
     ROT13Converter,
+    SearchReplaceConverter,
     ZalgoConverter,
 )
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
@@ -131,6 +132,7 @@ class EncodingTechnique(ScenarioTechnique):
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
     RegionalIndicator = ("regional_indicator", set[str]())
+    UbbiDubbi = ("ubbi_dubbi", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -320,6 +322,9 @@ class Encoding(Scenario):
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
             ([RegionalIndicatorConverter()], "regional_indicator", "regional_indicator"),
+            # "ubbi_dubbi": a language game that prefixes each vowel run with "ub", popularized by
+            # the PBS children's show Zoom (1972). https://en.wikipedia.org/wiki/Ubbi_dubbi
+            ([SearchReplaceConverter(pattern=r"([aeiouAEIOU]+)", replace=r"ub\1")], "ubbi_dubbi", "ubbi_dubbi"),
         ]
 
     # These are the same as Garak encoding attacks

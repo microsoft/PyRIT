@@ -436,10 +436,34 @@ class LatentInjection(Scenario):
         groups = config.select_assembled_groups(
             groups_by_population=config.assemble_groups(ingredients), apply_sampling=apply_sampling
         )
-        scorers = [self._scorer_for_trigger(family=family, trigger=trigger) for family, trigger in config.coverage_keys]
+        self._set_objective_scorer(coverage_keys=config.coverage_keys)
+        return groups
+
+    async def _prepare_resume_state_async(self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]) -> None:
+        """
+        Rebuild the trigger scorer from the stored groups, so later trigger edits don't change it.
+
+        Coverage sampling keeps every family/trigger pair, so the stored groups hold the same pairs
+        the run was planned with.
+
+        Args:
+            seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
+        """
+        self._set_objective_scorer(
+            coverage_keys=sorted(
+                {
+                    LatentInjectionDatasetConfiguration._coverage_key(group)
+                    for groups in seed_groups_by_dataset.values()
+                    for group in groups
+                }
+            )
+        )
+
+    def _set_objective_scorer(self, *, coverage_keys: list[tuple[str, str]]) -> None:
+        """Score a response as a success when any planned family/trigger pair succeeds."""
+        scorers = [self._scorer_for_trigger(family=family, trigger=trigger) for family, trigger in coverage_keys]
         self._objective_scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=scorers)
         self._objective_scorer_identifier = self._objective_scorer.get_identifier()
-        return groups
 
     def _scorer_for_trigger(self, *, family: str, trigger: str) -> TrueFalseScorer:
         if family == LatentInjectionDatasetConfiguration.HARM_SCORED_FAMILY:

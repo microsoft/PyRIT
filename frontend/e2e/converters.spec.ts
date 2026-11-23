@@ -294,7 +294,6 @@ async function mockBackendAPIs(page: Page) {
         convertedText = textPiece?.converted_value ?? null;
         converterIds = textPiece?.applied_converter_ids ?? body?.request_converter_configurations
           ?.flatMap((configuration: { converter_ids?: string[] }) => configuration.converter_ids ?? [])
-          ?? body?.converter_ids
           ?? [];
       } catch {
         // ignore
