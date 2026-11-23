@@ -52,6 +52,15 @@ class TestConfigurationLoader:
         assert config.scenario_suites_source is None
         assert config.silent is False
 
+    @pytest.mark.parametrize("field", ["operator", "operation"])
+    def test_rejects_numeric_label_in_yaml(self, tmp_path: pathlib.Path, field: str) -> None:
+        """Reject numeric operator and operation values during configuration loading."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(f"{field}: 123\n", encoding="utf-8")
+
+        with pytest.raises(TypeError, match=field):
+            ConfigurationLoader.from_yaml_file(config_path)
+
     def test_custom_initializers_source_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
         """Test loading an Azure Blob container URI for custom initializer scripts."""
         config_path = tmp_path / "config.yaml"

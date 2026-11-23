@@ -12,13 +12,13 @@ import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NotRequired, get_type_hints
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
 
 import pytest
 from fastapi import Request, status
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import AuthenticatedUser
@@ -635,10 +635,6 @@ class TestAttackRoutes:
     @pytest.mark.parametrize(
         "converter_fields",
         [
-            {
-                "converter_ids": ["legacy-converter"],
-                "request_converter_configurations": [{"converter_ids": ["request-converter"]}],
-            },
             {"request_converter_configurations": []},
             {"request_converter_configurations": [{"converter_ids": []}]},
             {"response_converter_configurations": []},
@@ -678,11 +674,29 @@ class TestAttackRoutes:
                     "pieces": [{"original_value": "Hello"}],
                     "target_conversation_id": "attack-1",
                     "send": False,
-                    "converter_ids": ["legacy-converter"],
+                    "request_converter_configurations": [{"converter_ids": ["request-converter"]}],
                 },
             )
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
             mock_get_service.return_value.add_message_async.assert_not_called()
+
+    @pytest.mark.parametrize("converter_ids", [["legacy-converter"], [], None])
+    def test_add_message_rejects_removed_top_level_converter_ids(
+        self, client: TestClient, converter_ids: list[str] | None
+    ) -> None:
+        """Test that a client still sending converter_ids is rejected instead of sent without converters."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            response = client.post(
+                "/api/attacks/attack-1/messages",
+                json={
+                    "pieces": [{"original_value": "Hello"}],
+                    "target_conversation_id": "attack-1",
+                    "target_registry_name": "test-target",
+                    "converter_ids": converter_ids,
+                },
+            )
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+            assert "request_converter_configurations" in response.text
             mock_get_service.return_value.add_message_async.assert_not_called()
 
     def test_update_attack_not_found(self, client: TestClient) -> None:
@@ -2077,7 +2091,7 @@ class TestVersionRoutes:
     @pytest.mark.parametrize("commit", ["abc123", None])
     def test_get_version_with_build_info(self, *, client: TestClient, commit: str | None) -> None:
         """Test getting version with build info from Docker."""
-        build_info: version_routes.BuildInfo = {
+        build_info: dict[str, str | bool | None] = {
             "source": "git" if commit is not None else "pypi",
             "commit": commit,
             "modified": False,
@@ -2130,16 +2144,10 @@ class TestVersionRoutes:
         assert data["commit"] is None
 
     def test_build_info_keys_are_not_required(self) -> None:
-        """The BuildInfo contract keeps absent keys distinguishable from nullable values."""
-        assert get_type_hints(version_routes.BuildInfo, include_extras=True) == {
-            "source": NotRequired[str],
-            "commit": NotRequired[str | None],
-            "modified": NotRequired[bool],
-            "display": NotRequired[str],
-        }
-        assert version_routes.BuildInfo.__required_keys__ == frozenset()
-        assert version_routes.BuildInfo.__optional_keys__ == {"source", "commit", "modified", "display"}
-        assert version_routes.BuildInfo() == {}
+        """Every build-info key may be absent and defaults to None."""
+        assert version_routes.BuildInfo() == version_routes.BuildInfo(
+            source=None, commit=None, modified=None, display=None
+        )
 
     def test_get_version_build_info_absent_display_falls_back(self, client: TestClient) -> None:
         """A build-info file without `display` falls back to the package version."""
@@ -2147,7 +2155,7 @@ class TestVersionRoutes:
         with (
             patch("pyrit.backend.routes.version.Path") as mock_path_class,
             patch("pyrit.backend.routes.version.asyncio.to_thread", new=to_thread_mock),
-            patch.object(version_routes, "_load_build_info", return_value={"source": "git"}),
+            patch.object(version_routes, "_load_build_info", return_value=version_routes.BuildInfo(source="git")),
         ):
             mock_path_instance = MagicMock()
             mock_path_instance.exists.return_value = True
@@ -2160,6 +2168,59 @@ class TestVersionRoutes:
         assert data["source"] == "git"
         assert data["commit"] is None
         assert data["modified"] is None
+        assert data["display"] == data["version"]
+
+    def test_load_build_info_reads_known_keys(self, tmp_path: Path) -> None:
+        """Known keys are returned as written and extra keys from the Docker build are dropped."""
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(
+            json.dumps(
+                {"source": "git", "version": "1.0.0", "commit": None, "modified": True, "display": "abc + local"}
+            )
+        )
+
+        assert version_routes._load_build_info(build_info_path) == version_routes.BuildInfo(
+            source="git",
+            commit=None,
+            modified=True,
+            display="abc + local",
+        )
+
+    def test_load_build_info_rejects_non_object(self, tmp_path: Path) -> None:
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(json.dumps(["git"]))
+
+        with pytest.raises(ValidationError, match="Input should be an object"):
+            version_routes._load_build_info(build_info_path)
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("source", 1),
+            ("commit", 123),
+            ("modified", "true"),
+            ("display", 5),
+        ],
+    )
+    def test_load_build_info_rejects_wrong_value_type(self, *, tmp_path: Path, key: str, value: object) -> None:
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(json.dumps({key: value}))
+
+        with pytest.raises(ValidationError, match=key):
+            version_routes._load_build_info(build_info_path)
+
+    def test_get_version_ignores_malformed_build_info(self, *, client: TestClient, tmp_path: Path) -> None:
+        """A wrongly typed build-info value falls back to defaults instead of failing the response."""
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(json.dumps({"source": "git", "commit": 123, "display": "abc"}))
+
+        with patch("pyrit.backend.routes.version.Path", return_value=build_info_path):
+            response = client.get("/api/version")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["source"] is None
+        assert data["commit"] is None
         assert data["display"] == data["version"]
 
 

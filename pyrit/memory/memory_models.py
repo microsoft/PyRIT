@@ -34,6 +34,7 @@ from sqlalchemy.orm import (
     Mapped,
     mapped_column,
     relationship,
+    validates,
 )
 from sqlalchemy.types import Uuid
 
@@ -48,6 +49,7 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
     AttackTechniqueIdentifier,
     ChatMessageRole,
     ComponentIdentifier,
@@ -66,6 +68,9 @@ from pyrit.models import (
     Observation,
     Operation,
     PromptDataType,
+    PromptGenerationProgress,
+    PromptGenerationRecord,
+    PromptGenerationStatus,
     ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
@@ -94,7 +99,33 @@ logger = logging.getLogger(__name__)
 
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
+
+#: Longest conversation_id any table stores. Conversation ids are free-form
+#: caller-supplied strings, not necessarily UUIDs, so every table that stores one
+#: uses this bound. SQL Server enforces it; SQLite does not, so each entry's
+#: ``conversation_id`` validator checks it on every assignment, including updates.
+CONVERSATION_ID_MAX_LENGTH = 128
 _LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY = "__pyrit_legacy_unsupported_identifier__"
+
+
+def _bounded_conversation_id(  # pyrit-keyword-only-exempt SQLAlchemy @validates callback
+    _entry: object, _key: str, conversation_id: str | None
+) -> str | None:
+    """
+    Reject a conversation_id that no database column can store.
+
+    Returns:
+        str | None: The unchanged id.
+
+    Raises:
+        ValueError: If the id is longer than ``CONVERSATION_ID_MAX_LENGTH``.
+    """
+    if conversation_id is not None and len(conversation_id) > CONVERSATION_ID_MAX_LENGTH:
+        raise ValueError(
+            f"conversation_id is {len(conversation_id)} characters; the most memory stores is "
+            f"{CONVERSATION_ID_MAX_LENGTH}: {conversation_id[:CONVERSATION_ID_MAX_LENGTH]}..."
+        )
+    return conversation_id
 
 
 def _load_identifier(
@@ -293,6 +324,109 @@ class DatasetMediaEntry(Base):
         CustomUUID, ForeignKey("DatasetLifecycleEntries.id"), nullable=True, index=True
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class PromptGenerationEntry(Base):
+    """A prompt generation job: its request, status, resumable checkpoint, and the dataset name it holds."""
+
+    __tablename__ = "PromptGenerationEntries"
+    __table_args__ = (
+        Index("ix_PromptGenerationEntries_created_at_id", "created_at", "id"),
+        Index("ix_PromptGenerationEntries_dataset_name", "dataset_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    generator: Mapped[str] = mapped_column(String(64), nullable=False)
+    dataset_name: Mapped[str] = mapped_column(Unicode(256), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    execution_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True)
+    request: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    targets: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
+    pause_for_review: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    review_completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    group_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True)
+    group_label: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    group_index: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    progress: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    checkpoint: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    pyrit_version: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    def __init__(self, generation: PromptGenerationRecord) -> None:
+        """Store a validated generation and the PyRIT version that created it."""
+        self.id = generation.id
+        self.created_at = generation.created_at
+        self.pyrit_version = pyrit.__version__
+        for column, value in self.column_values(generation).items():
+            setattr(self, column, value)
+
+    @staticmethod
+    def column_values(generation: PromptGenerationRecord) -> dict[str, Any]:
+        """
+        Map a generation's changeable fields to column values.
+
+        Args:
+            generation (PromptGenerationRecord): The generation to store.
+
+        Returns:
+            dict[str, Any]: Values for every column except the ID, creation time, and PyRIT version.
+        """
+        validated = PromptGenerationRecord.model_validate(generation.model_dump())
+        stored = validated.model_dump(mode="json", include={"request", "targets", "progress", "checkpoint", "summary"})
+        return {
+            **stored,
+            "generator": validated.generator,
+            "dataset_name": validated.dataset_name,
+            "status": validated.status.value,
+            "execution_id": validated.execution_id,
+            "pause_for_review": validated.pause_for_review,
+            "review_completed": validated.review_completed,
+            "group_id": validated.group_id,
+            "group_label": validated.group_label,
+            "group_index": validated.group_index,
+            "error": validated.error,
+            "created_by": validated.created_by,
+            "updated_at": validated.updated_at,
+            "started_at": validated.started_at,
+            "completed_at": validated.completed_at,
+        }
+
+    def get_prompt_generation(self) -> PromptGenerationRecord:
+        """
+        Rebuild the generation model.
+
+        Returns:
+            PromptGenerationRecord: The stored generation.
+        """
+        return PromptGenerationRecord(
+            id=self.id,
+            generator=self.generator,
+            dataset_name=self.dataset_name,
+            status=PromptGenerationStatus(self.status),
+            execution_id=self.execution_id,
+            request=self.request,
+            targets=self.targets,
+            pause_for_review=self.pause_for_review,
+            review_completed=self.review_completed,
+            group_id=self.group_id,
+            group_label=self.group_label,
+            group_index=self.group_index,
+            progress=PromptGenerationProgress.model_validate(self.progress),
+            checkpoint=self.checkpoint,
+            summary=self.summary,
+            error=self.error,
+            created_by=self.created_by,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+            started_at=self.started_at,
+            completed_at=self.completed_at,
+        )
 
 
 class OperationEntry(Base):
@@ -530,9 +664,9 @@ class PromptMemoryEntry(Base):
     )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
     role: Mapped[ChatMessageRole] = mapped_column(String, nullable=False)
-    # Bounded so SQL Server accepts it as an index key. 128 rather than 36 because
-    # conversation_id is a free-form caller-supplied string, not necessarily a UUID.
-    conversation_id = mapped_column(String(128), nullable=False)
+    # Bounded so SQL Server accepts it as an index key.
+    conversation_id = mapped_column(String(CONVERSATION_ID_MAX_LENGTH), nullable=False)
+    _validate_conversation_id = validates("conversation_id")(_bounded_conversation_id)
     sequence = mapped_column(INTEGER, nullable=False)
     timestamp = mapped_column(UTCDateTime, nullable=False)
     prompt_metadata: Mapped[dict[str, str | int]] = mapped_column(JSON)
@@ -1282,7 +1416,8 @@ class ConversationEntry(Base):
     __tablename__ = "Conversations"
     __table_args__ = {"extend_existing": True}
 
-    conversation_id = mapped_column(String(36), primary_key=True, nullable=False)
+    conversation_id = mapped_column(String(CONVERSATION_ID_MAX_LENGTH), primary_key=True, nullable=False)
+    _validate_conversation_id = validates("conversation_id")(_bounded_conversation_id)
     target_identifier: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     #: Foreign key to the content-addressed ``TargetIdentifiers`` row. Nullable:
     #: a conversation may be registered without a known target.
@@ -2186,7 +2321,8 @@ class AttackResultEntry(Base):
         {"extend_existing": True},
     )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    conversation_id = mapped_column(String(36), nullable=False)
+    conversation_id = mapped_column(String(CONVERSATION_ID_MAX_LENGTH), nullable=False)
+    _validate_conversation_id = validates("conversation_id")(_bounded_conversation_id)
     objective = mapped_column(Unicode, nullable=False)
     atomic_attack_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
@@ -2716,3 +2852,71 @@ class ScenarioResultEntry(Base):
             str: String representation of the scenario result entry
         """
         return f"ScenarioResultEntry: {self.scenario_name} (version {self.scenario_version})"
+
+
+class ScenarioPlanSeedGroupEntry(Base):
+    """
+    One seed group a scenario run planned, stored when the run is created.
+
+    Resume rebuilds the run's population from these rows instead of reading its datasets, so
+    editing, refreshing, or deleting a dataset doesn't change what a run resumes on. Rows are
+    deleted with their scenario result.
+    """
+
+    __tablename__ = "ScenarioPlanSeedGroupEntries"
+    __table_args__ = (
+        Index("ix_ScenarioPlanSeedGroupEntries_scenario_result_id_position", "scenario_result_id", "position"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    scenario_result_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID, ForeignKey("ScenarioResultEntries.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The population key the group was planned under, usually its dataset name.
+    dataset_name: Mapped[str] = mapped_column(Unicode, nullable=False)
+    #: The group's order in the planned population, across all datasets.
+    position: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    #: The ``AttackSeedGroup`` as JSON.
+    seed_group: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    def __init__(
+        self, *, scenario_result_id: uuid.UUID, dataset_name: str, position: int, seed_group: AttackSeedGroup
+    ) -> None:
+        """
+        Store one planned seed group.
+
+        Args:
+            scenario_result_id (uuid.UUID): The run that planned the group.
+            dataset_name (str): The population key the group was planned under.
+            position (int): The group's order in the planned population.
+            seed_group (AttackSeedGroup): The planned group.
+        """
+        self.id = uuid.uuid4()
+        self.scenario_result_id = scenario_result_id
+        self.dataset_name = dataset_name
+        self.position = position
+        self.seed_group = seed_group.model_dump(mode="json")
+
+    def get_seed_group(self) -> AttackSeedGroup:
+        """
+        Rebuild the planned seed group.
+
+        Returns:
+            AttackSeedGroup: The original planned inputs, without reapplying template preparation.
+        """
+        seeds: list[Any] = []
+        for seed in self.seed_group["seeds"]:
+            if seed["seed_type"] == "simulated_conversation":
+                seed = dict(seed)
+                # The stored prompt values have already had their one-shot template substitution.
+                for field in (
+                    "adversarial_chat_system_prompt",
+                    "simulated_target_system_prompt",
+                    "next_message_system_prompt",
+                ):
+                    if (prompt := seed.get(field)) is not None:
+                        seed[field] = {**prompt, "is_jinja_template": False}
+                # Group validation strips prompt-only keys such as ``sequence`` from dicts, so pass an instance.
+                seed = SeedSimulatedConversation.model_validate(seed)
+            seeds.append(seed)
+        return AttackSeedGroup.model_validate({**self.seed_group, "seeds": seeds})

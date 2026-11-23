@@ -19,3 +19,5 @@ jobs:
     newDir: e2e_test_directory
     testsFolder: end_to_end
     makeTarget: end-to-end-test
+    # PromptIntel limits dataset access for CI; keep the live test available locally.
+    pytestDeselect: 'tests/end_to_end/test_all_datasets.py::TestAllDatasets::test_fetch_dataset[_PromptIntelDataset-_PromptIntelDataset]'
