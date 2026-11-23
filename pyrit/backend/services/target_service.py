@@ -306,7 +306,7 @@ class TargetService:
             return None
         return self._build_instance_from_entry(entry)
 
-    def get_target_object(self, *, target_registry_name: str) -> Any | None:
+    def get_target_object(self, *, target_registry_name: str) -> PromptTarget | None:
         """
         Get the actual target object for use in attacks.
 

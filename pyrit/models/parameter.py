@@ -10,7 +10,7 @@ import types
 from abc import ABC, abstractmethod
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin
 
@@ -39,7 +39,7 @@ _SCALAR_NAME_TO_TYPE: dict[str, type | types.UnionType] = {
 }
 
 
-class ComponentType(str, Enum):
+class ComponentType(StrEnum):
     """
     The component family a registry reference resolves to.
 
