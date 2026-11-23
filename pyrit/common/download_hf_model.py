@@ -15,7 +15,7 @@ async def download_specific_files_async(
 
     If file_patterns is None, downloads all files.
     """
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(cache_dir.mkdir, parents=True, exist_ok=True)
     await asyncio.to_thread(
         snapshot_download,
         repo_id=model_id,
