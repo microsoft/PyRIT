@@ -212,7 +212,15 @@ export function mapMediaUrl({ dataType, value, valueUrl }: MapMediaUrlInput): Ma
   if (isBinary) return { status: 'unsupported', url: supportedDownloadUrl(url) }
 
   const classified = dataUriKind(url) ?? kindForExtension(extensionOf(url))
-  if (classified === 'unsupported' || !previewKind) return { status: 'unsupported', url: supportedDownloadUrl(url) }
+  // The media route only renders allowlisted extensions inline, so an
+  // extensionless /api/media URL is served as an attachment and must not
+  // preview. Remote and blob URLs keep the unknown-kind preview: their
+  // server supplies the content type.
+  if (
+    classified === 'unsupported'
+    || !previewKind
+    || (classified === 'unknown' && url.startsWith('/api/media'))
+  ) return { status: 'unsupported', url: supportedDownloadUrl(url) }
   if (classified !== 'unknown' && classified !== previewKind) {
     return { status: 'unsupported', url: supportedDownloadUrl(url) }
   }
