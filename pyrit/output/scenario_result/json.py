@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import json
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 
 from pydantic import TypeAdapter
 
@@ -14,6 +14,16 @@ from pyrit.output._derivation import (
     scenario_overview,
     select_attacks,
 )
+from pyrit.output._json_types import (
+    AttackInfo,
+    ConversationInfo,
+    GroupInfo,
+    MessageInfo,
+    ScenarioAttacks,
+    ScenarioConversations,
+    ScenarioFull,
+    ScenarioOverview,
+)
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase, ScenarioView
 from pyrit.output.sink import Sink
 
@@ -22,7 +32,7 @@ if TYPE_CHECKING:
 
 # A per-attack conversation the scenario layer stitches into the conversations/full
 # document: the atomic-attack name, its result, and its already-structured messages.
-ConversationEntry = tuple[str, AttackResult, list[dict[str, Any]]]
+ConversationEntry = tuple[str, AttackResult, list[MessageInfo]]
 
 
 class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
@@ -90,6 +100,28 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         payload = self.build(result, view=view, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome)
         return self._dumps(payload)
 
+    @overload
+    def build(
+        self,
+        result: ScenarioResult,
+        *,
+        view: Literal["overview"] = "overview",
+        attack_result_ids: list[str] | None = None,
+        limit: int | None = None,
+        outcome: AttackOutcome | None = None,
+    ) -> ScenarioOverview: ...
+
+    @overload
+    def build(
+        self,
+        result: ScenarioResult,
+        *,
+        view: Literal["attacks"],
+        attack_result_ids: list[str] | None = None,
+        limit: int | None = None,
+        outcome: AttackOutcome | None = None,
+    ) -> ScenarioAttacks: ...
+
     def build(
         self,
         result: ScenarioResult,
@@ -98,7 +130,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
         outcome: AttackOutcome | None = None,
-    ) -> dict[str, Any]:
+    ) -> ScenarioOverview | ScenarioAttacks:
         """
         Build the structured (dict) payload for a scenario ``view``.
 
@@ -113,13 +145,13 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
                 before applying ``limit``. Ignored by the overview. Defaults to None.
 
         Returns:
-            dict[str, Any]: The view-shaped payload.
+            ScenarioOverview | ScenarioAttacks: The view-shaped payload.
         """
         if view == "attacks":
             return self._build_attacks(result, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome)
         return self._build_overview(result)
 
-    def _build_overview(self, result: ScenarioResult) -> dict[str, Any]:
+    def _build_overview(self, result: ScenarioResult) -> ScenarioOverview:
         """
         Build the ``overview`` payload from the scenario result and scorer metrics.
 
@@ -127,7 +159,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
             result (ScenarioResult): The scenario result.
 
         Returns:
-            dict[str, Any]: The overview envelope.
+            ScenarioOverview: The overview envelope.
 
         Raises:
             ValueError: If the result has an objective scorer but no scorer printer is configured.
@@ -135,7 +167,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         target = resolve_target_info(result.objective_target_identifier)
 
         overview = scenario_overview(result)
-        groups = [
+        groups: list[GroupInfo] = [
             {
                 "name": group.name,
                 "num_objective_executions": group.objective_executions,
@@ -189,7 +221,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
         outcome: AttackOutcome | None = None,
-    ) -> dict[str, Any]:
+    ) -> ScenarioAttacks:
         """
         Build the ``attacks`` payload, honoring the id and outcome filters before the limit.
 
@@ -200,7 +232,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
             outcome (AttackOutcome | None): Keep only attacks with this outcome. Defaults to None.
 
         Returns:
-            dict[str, Any]: The attacks envelope with ``shown`` / ``total`` counts.
+            ScenarioAttacks: The attacks envelope with ``shown`` / ``total`` counts.
         """
         selected = select_attacks(result, attack_result_ids=attack_result_ids, outcome=outcome)
         total = len(selected)
@@ -242,7 +274,7 @@ class JsonScenarioResultMemoryPrinter(JsonScenarioResultPrinter):
         super().__init__(sink=sink, indent=indent, scorer_printer=JsonScorerMemoryPrinter(indent=indent))
 
 
-def _attack_entry(*, atomic_attack_name: str, attack: AttackResult) -> dict[str, Any]:
+def _attack_entry(*, atomic_attack_name: str, attack: AttackResult) -> AttackInfo:
     """
     Build the per-attack summary shared by the attacks and conversations views.
 
@@ -252,7 +284,7 @@ def _attack_entry(*, atomic_attack_name: str, attack: AttackResult) -> dict[str,
         attack (AttackResult): The attack result to summarize.
 
     Returns:
-        dict[str, Any]: The attack's id, technique, objective, outcome, turns, and score.
+        AttackInfo: The attack's id, technique, objective, outcome, turns, and score.
     """
     return {
         "id": attack.attack_result_id,
@@ -289,7 +321,7 @@ def build_scenario_conversations_document(
     Returns:
         str: The rendered JSON document.
     """
-    payload = {
+    payload: ScenarioConversations = {
         "view": "conversations",
         "scenario_result_id": str(result.id),
         "conversations": _build_conversations_list(entries),
@@ -300,7 +332,7 @@ def build_scenario_conversations_document(
 def build_scenario_full_document(
     *,
     result: ScenarioResult,
-    overview: dict[str, Any],
+    overview: ScenarioOverview,
     entries: list[ConversationEntry],
     indent: int = 2,
 ) -> str:
@@ -313,7 +345,7 @@ def build_scenario_full_document(
 
     Args:
         result (ScenarioResult): The scenario result (for its id).
-        overview (dict[str, Any]): The overview payload from ``JsonScenarioResultPrinter.build``.
+        overview (ScenarioOverview): The overview payload from ``JsonScenarioResultPrinter.build``.
         entries (list[ConversationEntry]): Per-attack ``(name, result, messages)`` triples,
             whose messages are already rendered by ``JsonConversationPrinter``.
         indent (int): JSON indentation width. Defaults to 2.
@@ -328,9 +360,9 @@ def build_scenario_full_document(
 def build_scenario_full_payload(
     *,
     result: ScenarioResult,
-    overview: dict[str, Any],
+    overview: ScenarioOverview,
     entries: list[ConversationEntry],
-) -> dict[str, Any]:
+) -> ScenarioFull:
     """
     Build the format-agnostic ``full`` report structure (overview + conversations).
 
@@ -339,11 +371,11 @@ def build_scenario_full_payload(
 
     Args:
         result (ScenarioResult): The scenario result (for its id).
-        overview (dict[str, Any]): The overview payload from ``JsonScenarioResultPrinter.build``.
+        overview (ScenarioOverview): The overview payload from ``JsonScenarioResultPrinter.build``.
         entries (list[ConversationEntry]): Per-attack ``(name, result, messages)`` triples.
 
     Returns:
-        dict[str, Any]: The ``{view, scenario_result_id, overview, conversations}`` structure.
+        ScenarioFull: The ``{view, scenario_result_id, overview, conversations}`` structure.
     """
     return {
         "view": "full",
@@ -353,7 +385,7 @@ def build_scenario_full_payload(
     }
 
 
-def _build_conversations_list(entries: list[ConversationEntry]) -> list[dict[str, Any]]:
+def _build_conversations_list(entries: list[ConversationEntry]) -> list[ConversationInfo]:
     """
     Stitch per-attack summaries and transcripts into the conversations list.
 
@@ -361,13 +393,15 @@ def _build_conversations_list(entries: list[ConversationEntry]) -> list[dict[str
         entries (list[ConversationEntry]): Per-attack ``(name, result, messages)`` triples.
 
     Returns:
-        list[dict[str, Any]]: One entry per attack: its summary, conversation id, and messages.
+        list[ConversationInfo]: One entry per attack: its summary, conversation id, and messages.
     """
-    conversations: list[dict[str, Any]] = []
+    conversations: list[ConversationInfo] = []
     for atomic_attack_name, attack, messages in entries:
-        entry = _attack_entry(atomic_attack_name=atomic_attack_name, attack=attack)
-        entry["conversation_id"] = attack.conversation_id
-        entry["messages"] = messages
+        entry: ConversationInfo = {
+            **_attack_entry(atomic_attack_name=atomic_attack_name, attack=attack),
+            "conversation_id": attack.conversation_id,
+            "messages": messages,
+        }
         conversations.append(entry)
     return conversations
 

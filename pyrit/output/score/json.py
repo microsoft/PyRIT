@@ -2,10 +2,10 @@
 # Licensed under the MIT license.
 
 import json
-from typing import Any
 
 from pyrit.models import Score
 from pyrit.output._derivation import resolve_scorer_name
+from pyrit.output._json_types import ScoreInfo
 from pyrit.output.base import PrinterBase
 from pyrit.output.sink import Sink
 
@@ -31,7 +31,7 @@ class JsonScorePrinter(PrinterBase):
         super().__init__(sink=sink)
         self._indent = indent
 
-    def build(self, score: Score) -> dict[str, Any]:
+    def build(self, score: Score) -> ScoreInfo:
         """
         Build the curated JSON representation of a single score.
 
@@ -39,7 +39,7 @@ class JsonScorePrinter(PrinterBase):
             score (Score): The score to serialize.
 
         Returns:
-            dict[str, Any]: The score's scorer, type, value, category, rationale, and objective.
+            ScoreInfo: The score's scorer, type, value, category, rationale, and objective.
         """
         scorer = resolve_scorer_name(score)
         return {

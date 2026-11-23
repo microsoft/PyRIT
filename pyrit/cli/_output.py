@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         TargetInstance,
     )
     from pyrit.output import OutputFormat, Sink
+    from pyrit.output.scenario_result.json import ConversationEntry
 
 try:
     import termcolor
@@ -490,7 +491,7 @@ async def _collect_conversation_entries_async(
     client: PyRITApiClient,
     attack_result_ids: list[str] | None,
     limit: int | None,
-) -> list[tuple[str, Any, list[dict[str, Any]]]]:
+) -> list[ConversationEntry]:
     """
     Fetch and JSON-build each selected attack's conversation.
 
@@ -505,7 +506,7 @@ async def _collect_conversation_entries_async(
         limit (int | None): Maximum number of attacks to fetch.
 
     Returns:
-        list[tuple[str, Any, list[dict[str, Any]]]]: ``(name, attack, structured_messages)`` triples.
+        list[ConversationEntry]: ``(name, attack, structured_messages)`` triples.
     """
     from pyrit.cli._sources import RestApiConversationSource
     from pyrit.output._derivation import attack_objective_scorer_identifier, select_attacks
@@ -515,7 +516,7 @@ async def _collect_conversation_entries_async(
     if limit is not None:
         selected = selected[:limit]
 
-    entries: list[tuple[str, Any, list[dict[str, Any]]]] = []
+    entries: list[ConversationEntry] = []
     for atomic_attack_name, attack_result in selected:
         source = RestApiConversationSource(client=client, attack_result_id=attack_result.attack_result_id)
         # Orchestration envelopes have no conversation of their own.

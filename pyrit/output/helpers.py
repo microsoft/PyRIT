@@ -283,7 +283,8 @@ async def output_scenario_full_async(
         result=result, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome
     )
     # The overview's scorer metrics are read from a JSONL file, so build it off the event loop.
-    overview = await asyncio.to_thread(JsonScenarioResultMemoryPrinter().build, result, view="overview")
+    printer = JsonScenarioResultMemoryPrinter()
+    overview = await asyncio.to_thread(lambda: printer.build(result, view="overview"))
     if format == "html":
         payload = build_scenario_full_payload(result=result, overview=overview, entries=entries)
         await HtmlScenarioReportPrinter(sink=sink).write_async(payload)
