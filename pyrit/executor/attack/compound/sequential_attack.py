@@ -26,7 +26,7 @@ import uuid
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, assert_never
 
 from pydantic import Field
 
@@ -475,6 +475,12 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         if self._completion_policy is SequenceCompletionPolicy.STRICT_ALL:
             return result.outcome is not AttackOutcome.SUCCESS
         # EXHAUSTIVE and LAST_RESULT run every child attack to completion.
+        if (
+            TYPE_CHECKING
+            and self._completion_policy is not SequenceCompletionPolicy.EXHAUSTIVE
+            and self._completion_policy is not SequenceCompletionPolicy.LAST_RESULT
+        ):
+            assert_never(self._completion_policy)
         return False
 
     def _compute_outcome(self, *, results: list[AttackResult]) -> AttackOutcome:
@@ -489,6 +495,13 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 return AttackOutcome.FAILURE
             return AttackOutcome.UNDETERMINED
         # FIRST_SUCCESS, FIRST_DECISIVE, EXHAUSTIVE all share any-success semantics.
+        if (
+            TYPE_CHECKING
+            and self._completion_policy is not SequenceCompletionPolicy.FIRST_SUCCESS
+            and self._completion_policy is not SequenceCompletionPolicy.FIRST_DECISIVE
+            and self._completion_policy is not SequenceCompletionPolicy.EXHAUSTIVE
+        ):
+            assert_never(self._completion_policy)
         if any(r.outcome is AttackOutcome.SUCCESS for r in results):
             return AttackOutcome.SUCCESS
         if all(r.outcome is AttackOutcome.ERROR for r in results):

@@ -14,6 +14,7 @@ from typing import (
     Any,
     ClassVar,
     Literal,
+    assert_never,
     cast,
 )
 
@@ -593,6 +594,8 @@ class OpenAIResponseTarget(OpenAITarget):
             search_tool = next(tool for tool in tools if tool.get("type") in self._WEB_SEARCH_TOOL_TYPES)
             body["tool_choice"] = {"type": search_tool["type"]}
             return
+        if TYPE_CHECKING and config.mode != WebSearchMode.DISABLED:
+            assert_never(config.mode)
         body["tools"] = [tool for tool in tools if tool.get("type") not in self._WEB_SEARCH_TOOL_TYPES]
         choice = body.get("tool_choice")
         if isinstance(choice, dict) and choice.get("type") in self._WEB_SEARCH_TOOL_TYPES:
