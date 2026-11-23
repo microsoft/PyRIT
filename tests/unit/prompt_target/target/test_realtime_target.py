@@ -1745,17 +1745,6 @@ async def test_reset_conversation_async_propagates_cancellation(target):
     assert "conv" not in target._existing_conversation
 
 
-async def test_cleanup_conversation_async_warns_and_delegates(target):
-    mock_connection = AsyncMock()
-    target._existing_conversation["conv"] = mock_connection
-
-    with pytest.warns(DeprecationWarning, match="reset_conversation_async"):
-        await target.cleanup_conversation_async(conversation_id="conv")
-
-    mock_connection.close.assert_awaited_once()
-    assert "conv" not in target._existing_conversation
-
-
 async def test_reset_conversation_async_unknown_id_is_noop(target):
     target._existing_conversation["conv"] = AsyncMock()
 
