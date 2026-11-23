@@ -420,6 +420,36 @@ def test_create_scorer_marks_a_save_refusal_so_it_can_be_created_without_saving(
 
 
 @pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://user:secret@contoso.cognitiveservices.azure.com/",
+        "https://contoso.cognitiveservices.azure.com/?subscription-key=secret",
+        "https://contoso.cognitiveservices.azure.com/?sig=secret",
+    ],
+)
+def test_create_scorer_refuses_to_save_an_endpoint_that_carries_a_credential(
+    compatibility_headers: dict[str, str], patch_central_database: None, tmp_path: Path, *, endpoint: str
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    body = {
+        "name": "content_safety",
+        "type": "AzureContentFilterScorer",
+        "params": {"endpoint": endpoint},
+        "persist": True,
+    }
+
+    with patch.object(client.app.state, "registry_recipes_source", str(tmp_path), create=True):
+        response = client.post("/api/scorers", json=body)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["type"] == "/errors/not-saveable"
+    assert response.json()["not_saveable_reason"].startswith("'endpoint' can carry a credential in a URL")
+    assert "secret" not in response.text
+    assert ScorerRegistry.get_registry_singleton().instances.get("content_safety") is None
+    assert not (tmp_path / "scorers").exists()
+
+
+@pytest.mark.parametrize(
     ("fields", "message"),
     [
         ({}, "name is required when register=true"),
