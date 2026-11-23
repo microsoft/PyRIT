@@ -51,6 +51,16 @@ def test_from_yaml_file_uses_from_dict_if_available(yaml_file_for_from_dict: Pat
     assert obj.name == "LOWER"
 
 
+def test_from_yaml_file_rejects_from_dict_returning_another_type(yaml_file_for_from_dict: Path):
+    class _BadFromDict(YamlLoadable):
+        @classmethod
+        def from_dict(cls, data: dict) -> dict:
+            return data
+
+    with pytest.raises(TypeError, match="_BadFromDict.from_dict returned dict, not _BadFromDict"):
+        _BadFromDict.from_yaml_file(yaml_file_for_from_dict)
+
+
 def test_from_yaml_file_nonexistent_raises():
     with pytest.raises(FileNotFoundError):
         _SimpleYaml.from_yaml_file(Path("nonexistent_file.yaml"))

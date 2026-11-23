@@ -10,4 +10,5 @@ export const useDatasetActionsStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     '& > a': { ...mobileTouchTarget },
   },
+  pending: { ...mobileTouchTarget },
 })

@@ -9,7 +9,7 @@ import asyncio
 import logging
 from collections import Counter
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
@@ -350,7 +350,8 @@ class AssertPolicy(Scenario):
 
     def _get_judged_system_prompt(self, group: AttackSeedGroup) -> str | None:
         stored = self._get_stored_system_prompt(group)
-        shared: str | None = self.params.get("target_system_prompt")
+        # Parameter resolution coerces this declared parameter to str or None.
+        shared = cast("str | None", self.params.get("target_system_prompt"))
         return stored if stored is not None else shared
 
     @staticmethod

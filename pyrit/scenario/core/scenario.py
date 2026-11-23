@@ -588,7 +588,7 @@ class Scenario(ABC):
         common case). Override *this* method only to **remove or replace** a common input,
         composing against ``super().supported_parameters()``.
 
-        Implemented as a classmethod so ``--list-scenarios`` can introspect without
+        Implemented as a classmethod so ``list-scenarios`` can introspect without
         instantiating.
 
         Returns:
