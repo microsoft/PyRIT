@@ -69,7 +69,7 @@ def make_technique_class(*, techniques: Sequence[str], aggregates: Sequence[str]
     members += [(name.upper(), (name, set())) for name in techniques]
     # The functional Enum API builds a new enum class, but the overload ty selects is the
     # member-lookup form, so it infers an instance rather than the class this returns.
-    return ScenarioTechnique("MockTechnique", members)  # ty: ignore[invalid-return-type]
+    return ScenarioTechnique("MockTechnique", members)  # ty: ignore[invalid-explicit-return]
 
 
 def make_scenario_identifier(
@@ -368,6 +368,32 @@ def get_mock_target(name: str = "MockTarget") -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = get_mock_target_identifier(name)
     return target
+
+
+def accept_scenario_scoring(factory: MagicMock) -> MagicMock:
+    """
+    Make a mocked ``AttackTechniqueFactory`` accept the scenario's scoring config.
+
+    Its ``check_objective_scorer`` still applies the mock's ``requirements`` and ``attack_class``
+    to any scorer passed in.
+
+    Args:
+        factory: A ``MagicMock(spec=AttackTechniqueFactory)`` with ``requirements`` and ``attack_class`` set.
+
+    Returns:
+        The same mock, for chaining.
+    """
+
+    def check_objective_scorer(*, scorer: Any = None) -> list[str]:
+        if scorer is None:
+            return []
+        problems: list[str] = factory.requirements.objective_scorer_for(attack_class=factory.attack_class).check(
+            scorer=scorer
+        )
+        return problems
+
+    factory.check_objective_scorer.side_effect = check_objective_scorer
+    return factory
 
 
 class MockHttpPostAsync(AbstractAsyncContextManager):

@@ -35,6 +35,12 @@ export function targetModelName(target: TargetInstance): string | null {
   return hoistFromInner(target, (t) => t.identifier.model_name)
 }
 
+/** A target's picker label: its registry name, with the model when known. */
+export function targetOptionLabel(target: TargetInstance): string {
+  const model = targetModelName(target)
+  return model ? `${target.target_registry_name} (${model})` : target.target_registry_name
+}
+
 /** The underlying model name, hoisted from inner targets for composite targets. */
 export function targetUnderlyingModelName(target: TargetInstance): string | null {
   return hoistFromInner(target, (t) => t.identifier.underlying_model_name)
