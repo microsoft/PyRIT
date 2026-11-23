@@ -28,6 +28,7 @@ from pyrit.backend.routes import configuration, health, targets
 from pyrit.backend.services import ScenarioRunService, get_converter_service, get_target_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
+from pyrit.backend.services.prompt_generation_service import PromptGenerationService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.scenario_run_service import _PreparedRun
 from pyrit.backend.services.scorer_service import get_scorer_service
@@ -422,6 +423,17 @@ async def test_active_suite_submission_rejects_apply_without_mutating(runtime: R
     service = MagicMock()
     service.has_active_work.return_value = True
     with patch.object(lifecycle_module, "peek_scenario_suite_execution_service", return_value=service):
+        await apply_async(runtime)
+
+    assert runtime.outcome == "busy"
+    assert runtime.state == "ready"
+    lifecycle_module.close_services_async.assert_not_awaited()
+
+
+async def test_active_prompt_generation_rejects_apply_without_mutating(runtime: RuntimeLifecycle) -> None:
+    service = MagicMock(spec=PromptGenerationService)
+    service.has_active_work.return_value = True
+    with patch.object(lifecycle_module, "peek_prompt_generation_service", return_value=service):
         await apply_async(runtime)
 
     assert runtime.outcome == "busy"

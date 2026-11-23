@@ -686,7 +686,7 @@ class AttackService:
         target_identifier = await self._get_save_target_async(
             registry_name=request.target_registry_name, binding=request.target_binding
         )
-        copied: Sequence[MessagePiece] = []
+        copied: Sequence[MessagePiece] = list[MessagePiece]()
         # The two branching fields form one spec; the conversation endpoint
         # rejects a half provided pair, and a silent fallthrough here would
         # create an unbranched attack while the caller believes it branched.
@@ -1484,7 +1484,7 @@ class AttackService:
         attack_identifier = ar.get_attack_strategy_identifier()
         objective_target = attack_identifier.get_child("objective_target") if attack_identifier else None
         source_metadata: Conversation | None = None
-        all_pieces: Sequence[MessagePiece] = []
+        all_pieces: Sequence[MessagePiece] = list[MessagePiece]()
         if request.source_conversation_id is not None and request.cutoff_index is not None:
             source_metadata = await self._memory.get_conversation_metadata_async(
                 conversation_id=request.source_conversation_id
