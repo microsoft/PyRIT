@@ -4,6 +4,7 @@
 """Opt-in techniques for testing tool-using agents."""
 
 import asyncio
+import logging
 
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
@@ -11,6 +12,8 @@ from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, TargetReg
 from pyrit.registry.instance_registry import refuse_saved_entry
 from pyrit.scenario import AttackTechniqueFactory
 from pyrit.setup.pyrit_initializer import PyRITInitializer
+
+logger = logging.getLogger(__name__)
 
 
 class ToolsInitializer(PyRITInitializer):
@@ -28,11 +31,13 @@ class ToolsInitializer(PyRITInitializer):
         refuse_saved_entry(registry.instances.get_entry("role_play_tool_calls"))
         refuse_saved_entry(registry.instances.get_entry("tool_priming_simulated"))
         adversarial_chat = TargetRegistry.get_registry_singleton().instances.get("adversarial_chat")
-        if (
-            "tool_priming_simulated" not in registry.instances
-            and adversarial_chat is not None
-            and adversarial_chat.RUNS_TOOLS_LOCALLY
-        ):
+        runs_tools = adversarial_chat is not None and adversarial_chat.RUNS_TOOLS_LOCALLY
+        if not runs_tools:
+            logger.info(
+                "Skipping tool_priming_simulated: the adversarial_chat target does not run tool calls locally "
+                "(RUNS_TOOLS_LOCALLY)."
+            )
+        if "tool_priming_simulated" not in registry.instances and runs_tools:
             registry.register_from_factories(
                 [
                     AttackTechniqueFactory.with_simulated_conversation(
