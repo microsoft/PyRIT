@@ -20,12 +20,12 @@ class TargetTraceConfig:
     Configure propagation and optional capture with a caller-owned tracer.
 
     ``enabled`` sends a fresh W3C ``traceparent`` with each request and records it.
-    ``provider_identity`` records the identifiers the provider returns for each request, such as
-    a response id or a run id, as a ``ProviderTraceReference``. The two are independent, so a
-    provider that does not accept W3C context can still be linked to its trace by a backend that
-    resolves its own identifiers. A request with a W3C link is resolved through that link, so for a
-    provider that does not continue W3C context, set ``enabled=False`` and rely on
-    ``provider_identity``. Targets that do not report provider identifiers ignore it.
+    ``provider_identity`` records the response id the provider returns for each request as a
+    ``ProviderTraceReference``. The two are independent, so a provider that does not accept W3C
+    context can still be linked to its trace by a backend that resolves its own identifiers. A
+    request with a W3C link is resolved through that link, so for a provider that does not
+    continue W3C context, set ``enabled=False`` and rely on ``provider_identity``. Targets that
+    do not report provider identifiers ignore it.
     """
 
     enabled: bool = True

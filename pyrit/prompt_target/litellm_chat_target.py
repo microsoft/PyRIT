@@ -163,14 +163,14 @@ def _provider_specific_headers(provider_specific_header: Any) -> dict[str, str]:
 
 def _provider_trace_reference(response: Any) -> ProviderTraceReference | None:
     """
-    Read the identifiers LiteLLM returned for a completion.
+    Read the response id LiteLLM returned for a completion.
 
     The response id is the provider's id for the completion, the value OpenTelemetry's GenAI
-    conventions record as ``gen_ai.response.id``. LiteLLM also assigns its own call id. An
-    identifier that is missing or not a usable string is left out rather than failing the send.
+    conventions record as ``gen_ai.response.id``. A response id that is missing or not a usable
+    string records nothing rather than failing the send.
 
     Returns:
-        ProviderTraceReference | None: The identifiers, or None when the response carries none.
+        ProviderTraceReference | None: The identifier, or None when the response carries none.
     """
     hidden = getattr(response, "_hidden_params", None)
     hidden = hidden if isinstance(hidden, dict) else {}
@@ -178,12 +178,11 @@ def _provider_trace_reference(response: Any) -> ProviderTraceReference | None:
     def usable(value: Any) -> str | None:
         return value if isinstance(value, str) and 0 < len(value) <= 256 else None
 
-    provider = usable(hidden.get("custom_llm_provider")) or "litellm"
     request_id = usable(getattr(response, "id", None))
-    run_id = usable(hidden.get("litellm_call_id"))
-    if request_id is None and run_id is None:
+    if request_id is None:
         return None
-    return ProviderTraceReference(provider=provider[:128], request_id=request_id, run_id=run_id)
+    provider = usable(hidden.get("custom_llm_provider")) or "litellm"
+    return ProviderTraceReference(provider=provider[:128], request_id=request_id)
 
 
 class LiteLLMChatTarget(PromptTarget):
@@ -248,7 +247,7 @@ class LiteLLMChatTarget(PromptTarget):
             provider or gateway is not known to accept W3C trace context. Pass
             ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint; each request then
             sends a fresh ``traceparent`` in ``extra_headers``. Pass ``provider_identity=True`` to
-            record the provider's response id, LiteLLM's call id, and the provider name with each
+            record the provider's response id and the provider name with each
             request instead of, or as well as, sending W3C context.
         tools: Executable tools advertised to the model.
         tool_providers: Providers discovered within each send's resource scope.

@@ -1668,7 +1668,7 @@ async def test_provider_specific_trace_header_is_rejected_before_litellm_async(
 def _identified_response(*, response_id: object = "chatcmpl-1", hidden: object = None, content: str = "hello"):
     resp = _mock_response(content)
     resp.id = response_id
-    resp._hidden_params = {"custom_llm_provider": "openai", "litellm_call_id": "call-1"} if hidden is None else hidden
+    resp._hidden_params = {"custom_llm_provider": "openai"} if hidden is None else hidden
     return resp
 
 
@@ -1685,7 +1685,7 @@ async def test_provider_identity_records_returned_ids_on_the_request_async(
     responses = await target.send_prompt_async(message=request)
 
     assert ProviderTraceReference.from_metadata(request.get_piece().prompt_metadata) == ProviderTraceReference(
-        provider="openai", request_id="chatcmpl-1", run_id="call-1"
+        provider="openai", request_id="chatcmpl-1"
     )
     assert (RequestTraceContext.from_metadata(request.get_piece().prompt_metadata) is not None) is enabled
     assert all(
@@ -1714,13 +1714,13 @@ async def test_provider_identity_is_off_by_default_and_clears_stale_ids_async(
     ("response_id", "hidden", "expected"),
     [
         ("chatcmpl-1", {}, ProviderTraceReference(provider="litellm", request_id="chatcmpl-1")),
-        (None, {"litellm_call_id": "call-1"}, ProviderTraceReference(provider="litellm", run_id="call-1")),
-        (None, {"custom_llm_provider": "bedrock"}, None),
-        ("x" * 257, {"litellm_call_id": 7}, None),
+        (None, {"custom_llm_provider": "bedrock", "litellm_call_id": "call-1"}, None),
+        ("x" * 257, {"custom_llm_provider": "openai"}, None),
         ("", "not a dict", None),
+        ("chatcmpl-1", "not a dict", ProviderTraceReference(provider="litellm", request_id="chatcmpl-1")),
         (
             "chatcmpl-1",
-            {"custom_llm_provider": "", "litellm_call_id": "x" * 257},
+            {"custom_llm_provider": ""},
             ProviderTraceReference(provider="litellm", request_id="chatcmpl-1"),
         ),
     ],
@@ -1755,7 +1755,7 @@ async def test_provider_ids_reach_the_stored_request_when_normalization_copies_i
 
     assert sent[0] is not request
     assert ProviderTraceReference.from_metadata(request.get_piece().prompt_metadata) == ProviderTraceReference(
-        provider="openai", request_id="chatcmpl-1", run_id="call-1"
+        provider="openai", request_id="chatcmpl-1"
     )
 
 
@@ -1868,7 +1868,7 @@ async def test_attack_scores_tool_call_through_provider_identity_async(
     request = (await sqlite_instance.get_message_pieces_async(conversation_id=result.conversation_id, role="user"))[0]
     assert RequestTraceContext.from_metadata(request.prompt_metadata) is None
     reference = ProviderTraceReference.from_metadata(request.prompt_metadata)
-    assert reference == ProviderTraceReference(provider="openai", request_id=f"chatcmpl-{tool}", run_id="call-1")
+    assert reference == ProviderTraceReference(provider="openai", request_id=f"chatcmpl-{tool}")
     observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     assert len(observation.scorable.trace_ids) == 1
 

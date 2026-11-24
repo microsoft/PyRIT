@@ -351,14 +351,14 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # ## Link a provider that ignores trace context
 #
 # Some providers and gateways do not continue W3C context, but they return their
-# own identifiers: a response id, and through LiteLLM a call id. Set
-# `TargetTraceConfig(provider_identity=True)` and PyRIT stores them on the request
-# as a `ProviderTraceReference`, apart from any propagation format. At scoring time
-# a `ProviderTraceResolver` maps them to the trace that recorded them.
+# own id for each response. Set `TargetTraceConfig(provider_identity=True)` and
+# PyRIT stores it on the request as a `ProviderTraceReference`, apart from any
+# propagation format. At scoring time a `ProviderTraceResolver` maps it to the
+# trace that recorded it.
 #
 # `SpanAttributeTraceResolver` finds the captured span that carries the response id
 # as `gen_ai.response.id`, the attribute OpenTelemetry's GenAI conventions use for
-# a model response. Name other attributes for run ids your framework records.
+# a model response. Name other attributes if your framework records it elsewhere.
 # `MappingProviderTraceResolver` takes the mapping from your own logs instead.
 #
 # A request with a W3C link resolves through that link, so set `enabled=False` for
@@ -456,7 +456,7 @@ for resolver, outcomes in (
 
 request = (await memory.get_message_pieces_async(conversation_id=result.conversation_id, role="user"))[0]  # type: ignore
 reference = ProviderTraceReference.from_metadata(request.prompt_metadata)
-print(f"Stored identifiers: {sorted(reference.model_dump(exclude_none=True))}")
+print(f"Stored identifiers: {sorted(reference.model_dump())}")
 gateway.shutdown()
 await asyncio.to_thread(provider.shutdown)  # type: ignore
 client.close()

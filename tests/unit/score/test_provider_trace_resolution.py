@@ -111,12 +111,11 @@ class _FixedResolver:
 
 
 def test_reference_round_trips_through_metadata() -> None:
-    reference = ProviderTraceReference(provider="openai", request_id="chatcmpl-1", run_id="call-1")
+    reference = ProviderTraceReference(provider="openai", request_id="chatcmpl-1")
     metadata = reference.to_metadata()
     assert json.loads(metadata[ProviderTraceReference.METADATA_KEY]) == {
         "provider": "openai",
         "request_id": "chatcmpl-1",
-        "run_id": "call-1",
     }
     assert ProviderTraceReference.from_metadata(metadata) == reference
     assert ProviderTraceReference.from_metadata({}) is None
@@ -128,9 +127,9 @@ def test_reference_round_trips_through_metadata() -> None:
         {"provider": "openai"},
         {"provider": "", "request_id": "x"},
         {"provider": "openai", "request_id": ""},
-        {"provider": "openai", "trace_id": "0" * 32},
-        {"provider": "openai", "trace_id": "A" * 32},
-        {"provider": "openai", "trace_id": "a" * 31},
+        {"provider": "openai", "request_id": "x" * 257},
+        {"provider": "openai", "request_id": "x", "run_id": "call-1"},
+        {"provider": "openai", "request_id": "x", "trace_id": _TRACE_A},
         {"provider": "openai", "request_id": "x", "traceparent": "00-x"},
     ],
 )
@@ -139,14 +138,12 @@ def test_reference_rejects_unusable_identifiers(fields: dict) -> None:
         ProviderTraceReference(**fields)
 
 
-@pytest.mark.parametrize("raw", [1, {"provider": "openai"}, "not json", '{"provider":"openai"}'])
+@pytest.mark.parametrize(
+    "raw", [1, {"provider": "openai"}, "not json", '{"provider":"openai"}', '{"provider":"openai","run_id":"r"}']
+)
 def test_malformed_stored_reference_is_rejected(raw: object) -> None:
     with pytest.raises(ValueError):
         ProviderTraceReference.from_metadata({ProviderTraceReference.METADATA_KEY: raw})
-
-
-def test_reference_with_only_a_trace_id_is_valid() -> None:
-    assert ProviderTraceReference(provider="gateway", trace_id=_TRACE_A).trace_id == _TRACE_A
 
 
 # ---------------------------------------------------------------------------
@@ -154,37 +151,30 @@ def test_reference_with_only_a_trace_id_is_valid() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_mapping_resolves_request_and_run_ids() -> None:
+async def test_mapping_resolves_recorded_response_ids() -> None:
     resolver = MappingProviderTraceResolver()
     resolver.record(trace_id=_TRACE_A, request_id="chatcmpl-1")
-    resolver.record(trace_id=_TRACE_B, run_id="run-2", provider="anthropic")
+    resolver.record(trace_id=_TRACE_B, request_id="msg-2", provider="anthropic")
     references = [
         ProviderTraceReference(provider="openai", request_id="chatcmpl-1"),
-        ProviderTraceReference(provider="anthropic", run_id="run-2"),
-        ProviderTraceReference(provider="openai", run_id="run-2"),
+        ProviderTraceReference(provider="anthropic", request_id="msg-2"),
+        ProviderTraceReference(provider="openai", request_id="msg-2"),
         ProviderTraceReference(provider="openai", request_id="unknown"),
-        ProviderTraceReference(provider="openai", request_id="unknown", trace_id=_TRACE_W3C),
     ]
-    assert await resolver.resolve_trace_ids_async(references=references) == (
-        _TRACE_A,
-        _TRACE_B,
-        None,
-        None,
-        _TRACE_W3C,
-    )
+    assert await resolver.resolve_trace_ids_async(references=references) == (_TRACE_A, _TRACE_B, None, None)
 
 
 async def test_mapping_treats_an_identifier_in_two_traces_as_ambiguous() -> None:
     resolver = MappingProviderTraceResolver()
     resolver.record(trace_id=_TRACE_A, request_id="chatcmpl-1")
     resolver.record(trace_id=_TRACE_B, request_id="chatcmpl-1", provider="openai")
-    resolver.record(trace_id=_TRACE_A, run_id="run-1")
+    resolver.record(trace_id=_TRACE_A, request_id="chatcmpl-2")
     resolver.record(trace_id=_TRACE_B, request_id="chatcmpl-2")
     assert await resolver.resolve_trace_ids_async(
         references=[
             ProviderTraceReference(provider="openai", request_id="chatcmpl-1"),
             ProviderTraceReference(provider="anthropic", request_id="chatcmpl-1"),
-            ProviderTraceReference(provider="openai", request_id="chatcmpl-2", run_id="run-1"),
+            ProviderTraceReference(provider="openai", request_id="chatcmpl-2"),
         ]
     ) == (None, _TRACE_A, None)
 
@@ -192,7 +182,7 @@ async def test_mapping_treats_an_identifier_in_two_traces_as_ambiguous() -> None
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"trace_id": _TRACE_A},
+        {"trace_id": _TRACE_A, "request_id": ""},
         {"trace_id": "0" * 32, "request_id": "x"},
         {"trace_id": "A" * 32, "request_id": "x"},
         {"trace_id": "a" * 33, "request_id": "x"},
@@ -233,44 +223,32 @@ async def test_span_resolver_finds_the_trace_that_recorded_the_response() -> Non
     client.add_span(_model_span(trace_id=_TRACE_A, response_id="chatcmpl-1"))
     client.add_span(_model_span(trace_id=_TRACE_B, response_id="chatcmpl-2"))
     client.add_span(_model_span(trace_id=_TRACE_W3C, response_id="chatcmpl-2"))
-    client.add_span(_span(trace_id=_TRACE_B, span_id="4" * 16, attributes={"agent.run_id": "run-1"}))
-    resolver = SpanAttributeTraceResolver(trace_client=client, run_id_attributes=("agent.run_id",))
-    assert await resolver.resolve_trace_ids_async(
-        references=[
-            ProviderTraceReference(provider="openai", request_id="chatcmpl-1"),
-            ProviderTraceReference(provider="openai", request_id="chatcmpl-2"),
-            ProviderTraceReference(provider="openai", run_id="run-1"),
-            ProviderTraceReference(provider="openai", request_id="chatcmpl-1", run_id="run-1"),
-            ProviderTraceReference(provider="openai", request_id="missing"),
-            ProviderTraceReference(provider="openai", request_id="missing", trace_id=_TRACE_W3C),
-        ]
-    ) == (_TRACE_A, None, _TRACE_B, None, None, _TRACE_W3C)
+    client.add_span(_span(trace_id=_TRACE_B, span_id="4" * 16, attributes={"agent.response_id": "msg-3"}))
+    default = SpanAttributeTraceResolver(trace_client=client)
+    named = SpanAttributeTraceResolver(trace_client=client, request_id_attributes=("agent.response_id",))
+    references = [
+        ProviderTraceReference(provider="openai", request_id="chatcmpl-1"),
+        ProviderTraceReference(provider="openai", request_id="chatcmpl-2"),
+        ProviderTraceReference(provider="openai", request_id="msg-3"),
+        ProviderTraceReference(provider="openai", request_id="missing"),
+    ]
+    assert await default.resolve_trace_ids_async(references=references) == (_TRACE_A, None, None, None)
+    assert await named.resolve_trace_ids_async(references=references) == (None, None, _TRACE_B, None)
 
 
-async def test_span_resolver_ignores_run_ids_unless_attributes_are_named() -> None:
-    client = InMemoryTraceClient()
-    client.add_span(_span(trace_id=_TRACE_A, span_id="4" * 16, attributes={"gen_ai.response.id": "run-1"}))
-    resolver = SpanAttributeTraceResolver(trace_client=client)
-    assert await resolver.resolve_trace_ids_async(
-        references=[ProviderTraceReference(provider="openai", run_id="run-1")]
-    ) == (None,)
-
-
-@pytest.mark.parametrize(
-    "kwargs", [{"request_id_attributes": ()}, {"request_id_attributes": (" ",)}, {"run_id_attributes": ("",)}]
-)
-def test_span_resolver_requires_named_attributes(kwargs: dict) -> None:
+@pytest.mark.parametrize("attributes", [(), (" ",), ("gen_ai.response.id", "")])
+def test_span_resolver_requires_named_attributes(attributes: tuple[str, ...]) -> None:
     with pytest.raises(ValueError):
-        SpanAttributeTraceResolver(trace_client=InMemoryTraceClient(), **kwargs)
+        SpanAttributeTraceResolver(trace_client=InMemoryTraceClient(), request_id_attributes=attributes)
 
 
 def test_span_resolver_identity_includes_attributes_and_capture() -> None:
     client = InMemoryTraceClient(source_id="capture-1")
     default = SpanAttributeTraceResolver(trace_client=client).get_identifier()
-    with_runs = SpanAttributeTraceResolver(trace_client=client, run_id_attributes=("run.id",)).get_identifier()
+    named = SpanAttributeTraceResolver(trace_client=client, request_id_attributes=("response.id",)).get_identifier()
     other_capture = SpanAttributeTraceResolver(trace_client=InMemoryTraceClient(source_id="capture-2")).get_identifier()
-    assert default.params == {"request_id_attributes": ["gen_ai.response.id"], "run_id_attributes": []}
-    assert len({default.hash, with_runs.hash, other_capture.hash}) == 3
+    assert default.params == {"request_id_attributes": ["gen_ai.response.id"]}
+    assert len({default.hash, named.hash, other_capture.hash}) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -278,21 +256,37 @@ def test_span_resolver_identity_includes_attributes_and_capture() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_provider_reported_trace_links_without_a_resolver(sqlite_instance: SQLiteMemory) -> None:
+async def test_provider_references_link_nothing_without_a_resolver(sqlite_instance: SQLiteMemory) -> None:
     conversation = str(uuid.uuid4())
     await _store_async(
         memory=sqlite_instance,
         conversation=conversation,
-        reference=ProviderTraceReference(provider="gateway", request_id="r-1", trace_id=_TRACE_A),
-    )
-    await _store_async(
-        memory=sqlite_instance,
-        conversation=conversation,
-        reference=ProviderTraceReference(provider="gateway", request_id="r-2"),
+        reference=ProviderTraceReference(provider="gateway", request_id="r-1"),
     )
     links = await resolve_conversation_trace_links_async(conversation_id=conversation, memory=sqlite_instance)
-    assert [(link.trace_id, link.linked) for link in links] == [(_TRACE_A, True), (None, False)]
-    assert links[1].provider_reference == ProviderTraceReference(provider="gateway", request_id="r-2")
+    assert [(link.trace_id, link.linked) for link in links] == [(None, False)]
+    assert links[0].provider_reference == ProviderTraceReference(provider="gateway", request_id="r-1")
+
+
+async def test_an_unresolved_reference_stays_unlinked(sqlite_instance: SQLiteMemory) -> None:
+    conversation = str(uuid.uuid4())
+    for request_id in ("r-1", "r-2"):
+        await _store_async(
+            memory=sqlite_instance,
+            conversation=conversation,
+            reference=ProviderTraceReference(provider="gateway", request_id=request_id),
+        )
+    resolver = _FixedResolver([None, _TRACE_B])
+    links = await resolve_conversation_trace_links_async(
+        conversation_id=conversation, memory=sqlite_instance, provider_resolver=resolver
+    )
+    assert [(link.trace_id, link.linked) for link in links] == [(None, False), (_TRACE_B, True)]
+    assert resolver.calls == [
+        (
+            ProviderTraceReference(provider="gateway", request_id="r-1"),
+            ProviderTraceReference(provider="gateway", request_id="r-2"),
+        )
+    ]
 
 
 async def test_w3c_link_wins_and_resolver_sees_only_unlinked_requests(sqlite_instance: SQLiteMemory) -> None:
@@ -325,34 +319,6 @@ async def test_no_provider_references_skips_the_resolver(sqlite_instance: SQLite
         conversation_id=conversation, memory=sqlite_instance, provider_resolver=resolver
     )
     assert resolver.calls == []
-
-
-@pytest.mark.parametrize("answer", [None, _TRACE_B])
-async def test_a_resolver_cannot_drop_or_replace_a_trace_the_provider_reported(
-    sqlite_instance: SQLiteMemory, answer: str | None
-) -> None:
-    conversation = str(uuid.uuid4())
-    await _store_async(
-        memory=sqlite_instance,
-        conversation=conversation,
-        reference=ProviderTraceReference(provider="gateway", request_id="r-1", trace_id=_TRACE_A),
-    )
-    await _store_async(
-        memory=sqlite_instance,
-        conversation=conversation,
-        reference=ProviderTraceReference(provider="gateway", request_id="r-2"),
-    )
-    resolver = _FixedResolver([answer])
-
-    links = await resolve_conversation_trace_links_async(
-        conversation_id=conversation, memory=sqlite_instance, provider_resolver=resolver
-    )
-
-    assert links[0].trace_id == _TRACE_A
-    assert links[0].linked
-    assert (links[1].trace_id, links[1].linked) == (answer, answer is not None)
-    # Only the request without a reported trace is put to the resolver.
-    assert resolver.calls == [(ProviderTraceReference(provider="gateway", request_id="r-2"),)]
 
 
 async def test_a_backend_that_cannot_be_read_leaves_requests_unlinked(sqlite_instance: SQLiteMemory) -> None:

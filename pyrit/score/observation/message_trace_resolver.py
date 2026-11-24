@@ -26,9 +26,9 @@ class RequestTraceLink:
     One outbound request in a conversation and the trace recorded when it was sent.
 
     ``linked`` is true when every piece of the request carries a W3C trace link, or when the
-    identifiers the provider returned resolved to one trace. ``trace_id`` is the first recorded
+    response id the provider returned resolved to one trace. ``trace_id`` is the first recorded
     W3C link, otherwise the resolved trace, if any. ``provider_reference`` is the provider's own
-    identifiers, kept so an unresolved request can be explained.
+    identifier, kept so an unresolved request can be explained.
     """
 
     sequence: int
@@ -49,15 +49,14 @@ async def resolve_conversation_trace_links_async(
 
     Requests are pieces marked as sent to a target, pieces carrying a trace link, or live
     user turns. Prepended history is not an outbound request. A request without a W3C link is
-    linked through the identifiers its provider returned: directly when the provider reported
-    its trace id, otherwise through ``provider_resolver``.
+    linked through the identifier its provider returned, by ``provider_resolver``.
 
     Args:
         conversation_id (str): The stored conversation.
         memory (MemoryInterface): The memory holding the conversation.
         through_sequence (int | None): Ignore requests after this sequence. Defaults to None.
         provider_resolver (ProviderTraceResolver | None): Maps provider identifiers to traces.
-            Defaults to None, in which case only provider-reported trace ids link a request.
+            Defaults to None, in which case provider identifiers link no request.
 
     Returns:
         tuple[RequestTraceLink, ...]: One link per request sequence, in order.
@@ -101,14 +100,8 @@ async def _link_through_providers_async(
     """
     pending: dict[int, ProviderTraceReference] = {}
     for index, link in enumerate(links):
-        reference = link.provider_reference
-        if link.trace_id is not None or reference is None:
-            continue
-        if reference.trace_id is not None:
-            # The provider named its trace, so no resolver can drop or replace the link.
-            links[index] = replace(link, trace_id=reference.trace_id, linked=True)
-        else:
-            pending[index] = reference
+        if link.trace_id is None and link.provider_reference is not None:
+            pending[index] = link.provider_reference
     if not pending or provider_resolver is None:
         return tuple(links)
     try:

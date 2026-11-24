@@ -243,7 +243,7 @@ class _OtelToolEvidenceScorer(TrueFalseScorer):
             source (ObservationSource[TraceScorable]): Acquires the trace evidence.
             provider_trace_resolver (ProviderTraceResolver | None): Links requests that carry the
                 provider's own identifiers instead of a W3C trace link. Defaults to None, in which
-                case such a request links only when its provider reported the trace id.
+                case such a request stays unlinked.
         """
         super().__init__()
         self._source = source
