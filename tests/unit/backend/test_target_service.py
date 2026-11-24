@@ -21,6 +21,7 @@ from pyrit.backend.models import CreateTargetRequest
 from pyrit.backend.models.targets import TargetSaveabilityRequest
 from pyrit.backend.services import TargetService, get_target_service
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
+from pyrit.backend.services.target_service import StaleTargetCursorError
 from pyrit.models import ComponentIdentifier
 from pyrit.models.catalog import (
     ComponentRecipe,
@@ -168,6 +169,23 @@ class TestListTargets:
         assert len(last_page.items) == 1
         assert last_page.pagination.has_more is False
         assert last_page.pagination.next_cursor is None
+
+    async def test_list_targets_rejects_a_cursor_that_names_no_target(self) -> None:
+        """A stale cursor must raise, not silently restart at the first page."""
+        service = TargetService()
+
+        for i in range(5):
+            service._registry.instances.register(_mock_prompt_target(), name=f"target-{i}")
+
+        first_page = await service.list_targets_async(limit=2)
+        cursor = first_page.pagination.next_cursor
+        second_page = await service.list_targets_async(limit=2, cursor=cursor)
+        assert [item.target_registry_name for item in second_page.items] == ["target-2", "target-3"]
+
+        service._registry.instances.unregister(cursor)
+
+        with pytest.raises(StaleTargetCursorError, match="cursor is not valid for the target registry"):
+            await service.list_targets_async(limit=2, cursor=cursor)
 
 
 class TestGetTarget:

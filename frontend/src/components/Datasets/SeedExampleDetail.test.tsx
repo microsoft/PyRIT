@@ -8,7 +8,15 @@ import { datasetsApi } from '@/services/api'
 import type { SeedExampleDetailResponse, SeedRecord } from '@/types'
 import { useSeedExampleDetail } from '@/hooks/useSeedExamples'
 
+import { mapMediaUrl } from '@/utils/media'
+
 import SeedExampleDetail from './SeedExampleDetail'
+
+// Every MemberView render maps its media URL once, so these calls show which members rendered.
+jest.mock('@/utils/media', () => {
+  const actual = jest.requireActual<typeof import('@/utils/media')>('@/utils/media')
+  return { ...actual, mapMediaUrl: jest.fn(actual.mapMediaUrl) }
+})
 
 function member(overrides: Partial<SeedRecord> = {}): SeedRecord {
   return {
@@ -149,6 +157,42 @@ describe('SeedExampleDetail', () => {
     await user.click(screen.getAllByRole('button', { name: 'Copy ID' })[0])
     expect(writeText).toHaveBeenCalledWith('prompt-1')
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not copy to the clipboard.')
+  })
+
+  it('should re-render only the members whose copy feedback changed', async () => {
+    const user = userEvent.setup()
+    const writeText = jest.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const mappedMediaUrl = jest.mocked(mapMediaUrl)
+    mappedMediaUrl.mockClear()
+    renderDetail()
+    const renderedMembers = (): string[] => mappedMediaUrl.mock.calls.map(([media]) => media.value)
+    expect(renderedMembers()).toHaveLength(3)
+
+    mappedMediaUrl.mockClear()
+    await user.click(screen.getAllByRole('button', { name: 'Copy full text' })[0])
+    expect(await screen.findByRole('button', { name: 'Copied full text' })).toBeInTheDocument()
+    expect(renderedMembers()).toEqual([EXACT_VALUE])
+
+    mappedMediaUrl.mockClear()
+    await user.click(screen.getAllByRole('button', { name: 'Copy ID' })[1])
+    expect(await screen.findByRole('button', { name: 'Copied ID' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Copied full text' })).not.toBeInTheDocument()
+    expect(renderedMembers()).toEqual([EXACT_VALUE, CONFIG_VALUE])
+
+    mappedMediaUrl.mockClear()
+    writeText.mockRejectedValueOnce(new Error('denied'))
+    await user.click(screen.getByRole('button', { name: 'Copy example ID' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not copy to the clipboard.')
+    expect(screen.queryByRole('button', { name: 'Copied ID' })).not.toBeInTheDocument()
+    expect(renderedMembers()).toEqual([CONFIG_VALUE])
+
+    mappedMediaUrl.mockClear()
+    writeText.mockRejectedValueOnce(new Error('denied'))
+    await user.click(screen.getAllByRole('button', { name: 'Copy full text' })[2])
+    const alert = await screen.findByRole('alert')
+    expect(within(screen.getAllByRole('article')[2]).getByRole('alert')).toBe(alert)
+    expect(renderedMembers()).toEqual(['<img src=x onerror=alert(1)> /tmp/secret.png'])
   })
 
   it('previews a signed blob URL on demand and keeps the stored reference', async () => {
