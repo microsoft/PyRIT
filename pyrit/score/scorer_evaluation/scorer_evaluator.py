@@ -46,6 +46,20 @@ logger = logging.getLogger(__name__)
 _CONTESTED_THRESHOLD = 0.5
 
 
+def _validate_num_scorer_trials(num_scorer_trials: int) -> None:
+    """
+    Check that the requested number of scorer trials is at least 1.
+
+    Args:
+        num_scorer_trials (int): The requested number of scoring trials.
+
+    Raises:
+        ValueError: If num_scorer_trials is less than 1.
+    """
+    if num_scorer_trials < 1:
+        raise ValueError(f"num_scorer_trials must be at least 1, got {num_scorer_trials}.")
+
+
 @dataclass
 class ScorerEvalDatasetFiles:
     """
@@ -55,7 +69,7 @@ class ScorerEvalDatasetFiles:
     Multiple files matching the patterns will be concatenated before evaluation.
     Each matched path is loaded once, even when patterns overlap or repeat.
 
-    Args:
+    Attributes:
         human_labeled_datasets_files (list[str]): List of glob patterns to match CSV files.
             Examples: ``["objective/*.csv"]``, ``["objective/hate_speech.csv", "objective/violence.csv"]``
         result_file (str): Name of the result file (stem used as dict key in results).
@@ -143,7 +157,7 @@ class ScorerEvaluator(abc.ABC):
         Args:
             dataset_files: ScorerEvalDatasetFiles configuration specifying glob patterns
                 for input files and a result file name.
-            num_scorer_trials: Number of scoring trials per response. Defaults to 3.
+            num_scorer_trials: Number of scoring trials per response. Must be at least 1. Defaults to 3.
             update_registry_behavior: Controls how existing registry entries are handled.
                 Defaults to RegistryUpdateBehavior.SKIP_IF_EXISTS.
             max_concurrency: Maximum number of concurrent scoring requests. Defaults to 10.
@@ -152,8 +166,11 @@ class ScorerEvaluator(abc.ABC):
             ScorerMetrics if evaluation completed, None if no files found.
 
         Raises:
-            ValueError: If harm_category is not specified for harm scorer evaluations.
+            ValueError: If num_scorer_trials is less than 1, or if harm_category is not
+                specified for harm scorer evaluations.
         """
+        _validate_num_scorer_trials(num_scorer_trials)
+
         metrics_type = MetricsType.OBJECTIVE if isinstance(self.scorer, TrueFalseScorer) else MetricsType.HARM
 
         # Validate harm_category for harm scorers
@@ -394,7 +411,7 @@ class ScorerEvaluator(abc.ABC):
 
         Args:
             labeled_dataset (HumanLabeledDataset): The HumanLabeledDataset to evaluate the scorer against.
-            num_scorer_trials (int): The number of trials to run the scorer on all responses.
+            num_scorer_trials (int): The number of trials to run the scorer on all responses. Must be at least 1.
             max_concurrency (int): Maximum number of concurrent scoring requests. Defaults to 10.
 
         Returns:
@@ -402,8 +419,10 @@ class ScorerEvaluator(abc.ABC):
                 depending on the type of the HumanLabeledDataset (HARM or OBJECTIVE).
 
         Raises:
-            ValueError: If the labeled_dataset is invalid.
+            ValueError: If num_scorer_trials is less than 1, or if the labeled_dataset is invalid.
         """
+        _validate_num_scorer_trials(num_scorer_trials)
+
         # Validate dataset and extract data
         assistant_responses, human_scores_list, objectives = await self._validate_and_extract_data_async(
             labeled_dataset
@@ -807,6 +826,12 @@ class HarmScorerEvaluator(ScorerEvaluator):
         # A scorer that ignored the response would do best by always returning the median gold score.
         baseline_mean_absolute_error = float(np.mean(np.abs(gold_scores - np.median(gold_scores))))
 
+        # The error above is that of the median score across the trials. A scorer normally scores a
+        # response once, so also report the error of the trials taken one at a time.
+        single_trial_mean_absolute_error: float | None = None
+        if len(all_model_scores) > 1:
+            single_trial_mean_absolute_error = float(np.mean(np.abs(all_model_scores - gold_scores)))
+
         return HarmScorerMetrics(
             num_responses=num_responses,
             num_human_raters=num_human_raters,
@@ -826,6 +851,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
             num_contested_responses=num_contested_responses,
             mean_absolute_error_unanimous=mean_absolute_error_unanimous,
             mean_absolute_error_contested=mean_absolute_error_contested,
+            single_trial_mean_absolute_error=single_trial_mean_absolute_error,
             num_scorer_trials=num_scorer_trials,
             dataset_name=dataset_name,
             dataset_version=dataset_version,
@@ -907,13 +933,16 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
         gold_scores = np.round(np.median(all_human_scores, axis=0))
         majority_model_scores = np.round(np.median(all_model_scores, axis=0))
 
-        true_positive = np.sum((gold_scores == 1) & (majority_model_scores == 1))
-        false_positive = np.sum((gold_scores == 0) & (majority_model_scores == 1))
-        true_negative = np.sum((gold_scores == 0) & (majority_model_scores == 0))
-        false_negative = np.sum((gold_scores == 1) & (majority_model_scores == 0))
+        true_positive = int(np.sum((gold_scores == 1) & (majority_model_scores == 1)))
+        false_positive = int(np.sum((gold_scores == 0) & (majority_model_scores == 1)))
+        true_negative = int(np.sum((gold_scores == 0) & (majority_model_scores == 0)))
+        false_negative = int(np.sum((gold_scores == 1) & (majority_model_scores == 0)))
         accuracy = (true_positive + true_negative) / gold_scores.size
         precision = true_positive / (true_positive + false_positive) if (true_positive + false_positive) > 0 else 0.0
         recall = true_positive / (true_positive + false_negative) if (true_positive + false_negative) > 0 else 0.0
+        specificity = (
+            float(true_negative / (true_negative + false_positive)) if (true_negative + false_positive) > 0 else None
+        )
         f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
         num_responses = all_human_scores.shape[1]
@@ -928,6 +957,17 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
             baseline_accuracy = max(num_gold_true, gold_scores.size - num_gold_true) / gold_scores.size
             baseline_f1_score = 2 * num_gold_true / (gold_scores.size + num_gold_true)
 
+        # The accuracy above is that of the majority vote across the trials. A scorer normally scores
+        # a response once, so also report how the trials do one at a time and how often they disagree.
+        single_trial_accuracy: float | None = None
+        num_inconsistent_responses: int | None = None
+        krippendorff_alpha_model: float | None = None
+        if len(all_model_scores) > 1:
+            trial_scores = np.asarray(all_model_scores, dtype=np.float64)
+            single_trial_accuracy = float(np.mean(trial_scores == gold_scores))
+            num_inconsistent_responses = int(np.count_nonzero(np.any(trial_scores != trial_scores[0], axis=0)))
+            krippendorff_alpha_model = krippendorff_alpha(reliability_data=trial_scores, level_of_measurement="ordinal")
+
         return ObjectiveScorerMetrics(
             num_responses=num_responses,
             num_human_raters=num_human_raters,
@@ -937,8 +977,16 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
             accuracy_standard_error=np.sqrt(accuracy * (1 - accuracy) / gold_scores.size),
             precision=precision,
             recall=recall,
+            specificity=specificity,
             f1_score=f1_score,
+            true_positive=true_positive,
+            false_positive=false_positive,
+            true_negative=true_negative,
+            false_negative=false_negative,
             num_scorer_trials=num_scorer_trials,
+            single_trial_accuracy=single_trial_accuracy,
+            num_inconsistent_responses=num_inconsistent_responses,
+            krippendorff_alpha_model=krippendorff_alpha_model,
             dataset_name=dataset_name,
             dataset_version=dataset_version,
         )

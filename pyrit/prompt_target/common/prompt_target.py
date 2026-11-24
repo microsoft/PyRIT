@@ -21,6 +21,7 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    PromptDataType,
     RequestGenerationConfig,
     RequestGenerationInfo,
     RequestTraceContext,
@@ -40,6 +41,38 @@ from pyrit.prompt_target.common.target_send_context import TargetSendContext
 from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, target_trace_context
 
 logger = logging.getLogger(__name__)
+
+# Provider status codes that mean the target's credentials were rejected.
+_CREDENTIAL_REJECTION_STATUS_CODES = frozenset({401, 403})
+
+
+def _is_credential_rejection(error: BaseException) -> bool:
+    """
+    Check whether a send failed because the provider rejected the target's credentials.
+
+    OpenAI SDK errors (``AuthenticationError``, ``PermissionDeniedError``), LiteLLM's errors, and
+    PyRIT exceptions carry the provider's ``status_code``; ``httpx.HTTPStatusError`` keeps it on its
+    ``response``. Targets that translate an error keep the original as its cause, so the whole chain
+    is checked.
+
+    Args:
+        error (BaseException): The error a send raised.
+
+    Returns:
+        bool: True if the error, or one it was raised from, has status 401 or 403.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        status_code = getattr(current, "status_code", None) or getattr(
+            getattr(current, "response", None), "status_code", None
+        )
+        if status_code in _CREDENTIAL_REJECTION_STATUS_CODES:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
 
 # ``AuthMode`` is imported above (and re-exported from this module for backward
 # compatibility); it is canonically defined in ``pyrit.common.auth_mode`` so
@@ -62,6 +95,13 @@ class PromptTarget(Identifiable):
 
     _identifier: ComponentIdentifier | None = None
 
+    # Whether the provider rejected the credentials on the last request through this target, or None
+    # until a request through it completes or fails authentication.
+    _credentials_rejected: bool | None = None
+    # The target a copy reports credential rejections into, so its registered source reflects the copy's requests.
+    _credential_status_source: "PromptTarget | None" = None
+    _credential_generation: int = 0
+
     # Class-level default configuration for this target type.
     #
     # Subclasses **should** override this when their capabilities differ from the base
@@ -75,6 +115,9 @@ class PromptTarget(Identifiable):
     _DEFAULT_TRACE_ENABLED: ClassVar[bool] = False
     _SUPPORTS_TOOL_CALL_HISTORY: ClassVar[bool] = False
     _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset()
+    # Adapters that only deliver content (e.g. to a stream or a blob) and never reply set this to
+    # False. ``supports_responses`` is then False under every configuration, including saved ones.
+    _SUPPORTS_RESPONSES: ClassVar[bool] = True
     _DISPATCH_CAPABILITIES: ClassVar[ContextVar[tuple["PromptTarget", TargetCapabilities] | None]] = ContextVar(
         "target_dispatch_capabilities", default=None
     )
@@ -139,6 +182,11 @@ class PromptTarget(Identifiable):
     # Environment variables the target's client reads extra headers from, whatever the target's own
     # settings say. A server can put a credential there, so a saved target isn't built while one is set.
     server_header_variables: ClassVar[tuple[str, ...]] = ()
+
+    # Required settings the constructor reads from this server's environment when they're left empty, such
+    # as an endpoint or a model name. Targets built from API input set each one, and so do saved targets,
+    # which restore builds the same way.
+    environment_backed_parameters: ClassVar[frozenset[str]] = frozenset()
 
     # Why this target type can't be saved even without a credential, or None when it can.
     not_saveable_reason: ClassVar[str | None] = None
@@ -257,7 +305,7 @@ class PromptTarget(Identifiable):
             if custom_configuration is not None
             else type(self).get_default_configuration(self._underlying_model)
         )
-        capabilities = self._mask_generation_capabilities(capabilities=self.capabilities)
+        capabilities = self._mask_unimplemented_capabilities(capabilities=self.capabilities)
         if capabilities is not self.capabilities:
             self.apply_capabilities(capabilities=capabilities)
         if custom_configuration is None and underlying_model is None and self._SUPPORTS_TOOL_CALL_HISTORY:
@@ -371,6 +419,7 @@ class PromptTarget(Identifiable):
         3. Validates the normalized conversation against the target's capabilities.
         4. Delegates to ``_send_prompt_to_target_async`` with the normalized conversation.
 
+        System-prompt support is checked here even when a target overrides ``_validate_request``.
         Subclasses MUST NOT override this method. Override
         ``_send_prompt_to_target_async`` instead.
 
@@ -384,7 +433,7 @@ class PromptTarget(Identifiable):
             list[Message]: Response messages from the target.
 
         Raises:
-            ValueError: If the message or normalized conversation are empty.
+            ValueError: If the message or normalized conversation are empty, or unsupported system messages remain.
         """
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
@@ -422,6 +471,13 @@ class PromptTarget(Identifiable):
             normalized_request.get_piece().prompt_metadata.update(generation_config.to_metadata())
             if self._get_web_search_config(normalized_request) != web_search_config:
                 raise ValueError("Normalization changed the request's web search policy.")
+            if not self.configuration.includes(capability=CapabilityName.SYSTEM_PROMPT) and any(
+                piece.api_role == "system" for turn in normalized_conversation for piece in turn.message_pieces
+            ):
+                raise ValueError(
+                    "This target does not support system prompts and no normalizer adapted the system message. "
+                    "If your target does support this, set the custom_configuration parameter accordingly."
+                )
             self._validate_request(normalized_conversation=normalized_conversation)
             self.validate_request_generation_config(normalized_request)
             with target_trace_context(
@@ -430,7 +486,9 @@ class PromptTarget(Identifiable):
                 if send_context:
                     send_context.mark_target_invoked()
                 try:
-                    response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+                    response = await self._send_and_track_credentials_async(
+                        normalized_conversation=normalized_conversation
+                    )
                 finally:
                     generation_info = RequestGenerationInfo.from_metadata(
                         metadata=normalized_request.get_piece().prompt_metadata
@@ -549,17 +607,94 @@ class PromptTarget(Identifiable):
         """
         token = self._DISPATCH_CAPABILITIES.set((self, capabilities))
         try:
-            return await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+            return await self._send_and_track_credentials_async(normalized_conversation=normalized_conversation)
         finally:
             self._DISPATCH_CAPABILITIES.reset(token)
+
+    async def _send_and_track_credentials_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        """
+        Send, and record whether the provider accepted the target's credentials.
+
+        A provider authentication failure (401 or 403) marks them rejected; a completed request marks
+        them accepted. Other failures and requests for older credentials leave the state unchanged.
+
+        Args:
+            normalized_conversation (list[Message]): The normalized conversation to send.
+
+        Returns:
+            list[Message]: Response messages from the target.
+        """
+        owner = self._credential_status_owner()
+        generation = self._credential_generation
+        try:
+            response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+        except Exception as error:
+            if generation == owner._credential_generation and _is_credential_rejection(error):
+                owner._credentials_rejected = True
+            raise
+        if generation == owner._credential_generation:
+            owner._credentials_rejected = False
+        return response
+
+    def _credential_status_owner(self) -> "PromptTarget":
+        return self._credential_status_source or self
+
+    @property
+    def credentials_rejected(self) -> bool | None:
+        """
+        Whether the provider rejected the current credentials on the last request that used them.
+
+        Requests through copies built from this target, such as a chat's temperature override, count too.
+        None until a request using the current credentials completes or fails authentication.
+        """
+        return self._credential_status_owner()._credentials_rejected
+
+    @property
+    def supports_credential_updates(self) -> bool:
+        """Whether ``update_credentials`` can replace this target's API key or request headers in place."""
+        return False
+
+    def update_credentials(self, *, api_key: str | None = None, headers: Mapping[str, str] | None = None) -> None:
+        """
+        Replace this target's API key or request headers in place, without changing anything else about it.
+
+        Everything holding this target, such as a round robin or a scorer, sends the new values with its next
+        request. Targets that can do this override this method and ``supports_credential_updates``.
+
+        Args:
+            api_key (str | None): The new API key or access token, or None to keep the current one.
+            headers (Mapping[str, str] | None): Request headers to set, replacing any of the same name.
+
+        Raises:
+            ValueError: Always, because this target type can't update its credentials in place.
+        """
+        raise ValueError(f"{type(self).__name__} can't update its credentials. Create a new target instead.")
+
+    def _reset_credential_status(self) -> None:
+        """Forget whether the provider accepted the credentials, because they just changed."""
+        # A copy whose credentials were changed no longer speaks for the source.
+        self._credential_status_source = None
+        self._credential_generation += 1
+        self._credentials_rejected = None
+
+    def attach_reconstruction_source(self, source: object) -> None:
+        """
+        Report credential rejections into the target this copy was built from.
+
+        Args:
+            source (object): The registered target this copy was built from.
+        """
+        if isinstance(source, PromptTarget):
+            self._credential_status_source = source._credential_status_owner()
+            self._credential_generation = source._credential_generation
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """
         Validate the normalized conversation before sending to the target.
 
         Called after the normalization pipeline has run. Validates the last
-        message (the current request) for piece count, data types, and checks
-        whether the full conversation violates multi-turn constraints.
+        message (the current request) for piece count, every normalized turn for
+        supported data types, and the full conversation for multi-turn constraints.
 
         Args:
             normalized_conversation: The normalized conversation to validate.
@@ -593,17 +728,39 @@ class PromptTarget(Identifiable):
                 f"{custom_configuration_message}"
             )
 
-        for piece in message.message_pieces:
-            piece_type = piece.converted_value_data_type
-            if piece_type not in supported_types_flat:
-                supported_types = ", ".join(sorted(supported_types_flat))
-                raise ValueError(
-                    f"This target supports only the following data types: {supported_types}. Received: {piece_type}. "
-                    f"{custom_configuration_message}"
-                )
+        for turn in normalized_conversation:
+            has_text_piece = any(piece.converted_value_data_type == "text" for piece in turn.message_pieces)
+            for piece in turn.message_pieces:
+                piece_type = piece.converted_value_data_type
+                if turn is not message:
+                    piece_type = self._get_history_piece_data_type(message_piece=piece, has_text_piece=has_text_piece)
+                    if piece_type is None:
+                        continue
+                if piece_type not in supported_types_flat:
+                    supported_types = ", ".join(sorted(supported_types_flat))
+                    raise ValueError(
+                        f"This target supports only the following data types: {supported_types}. "
+                        f"Received: {piece_type}. "
+                        f"{custom_configuration_message}"
+                    )
 
         if not self.configuration.includes(capability=CapabilityName.MULTI_TURN) and len(normalized_conversation) > 1:
             raise ValueError(f"This target only supports a single turn conversation. {custom_configuration_message}")
+
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
+        """
+        Return the historical piece's wire modality, or None when the adapter omits it.
+
+        Args:
+            message_piece: Historical message piece to check.
+            has_text_piece: Whether its message contains a text piece.
+
+        Returns:
+            PromptDataType | None: The modality to validate against supported input types.
+        """
+        return message_piece.converted_value_data_type
 
     @staticmethod
     def _get_web_search_config(message: Message) -> WebSearchConfig:
@@ -909,7 +1066,7 @@ class PromptTarget(Identifiable):
         """
         configuration = self.configuration
         scoped = TargetConfiguration(
-            capabilities=capabilities,
+            capabilities=self._mask_unimplemented_capabilities(capabilities=capabilities),
             policy=configuration.policy,
             normalizer_overrides=configuration.normalizer_overrides,
         )
@@ -957,6 +1114,16 @@ class PromptTarget(Identifiable):
         """
         return None
 
+    @property
+    def trace_config(self) -> TargetTraceConfig:
+        """
+        The request tracing configuration of this target instance.
+
+        Returns:
+            TargetTraceConfig: Whether and how each send records a trace context.
+        """
+        return self._trace_config
+
     def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
         """
         Replace this target's capabilities, preserving the existing handling policy.
@@ -976,24 +1143,29 @@ class PromptTarget(Identifiable):
                 this instance.
         """
         self._configuration = TargetConfiguration(
-            capabilities=self._mask_generation_capabilities(capabilities=capabilities),
+            capabilities=self._mask_unimplemented_capabilities(capabilities=capabilities),
             policy=self._configuration.policy,
             normalizer_overrides=self._configuration.normalizer_overrides,
         )
 
     @classmethod
-    def _mask_generation_capabilities(cls, *, capabilities: TargetCapabilities) -> TargetCapabilities:
+    def _mask_unimplemented_capabilities(cls, *, capabilities: TargetCapabilities) -> TargetCapabilities:
         """
-        Disable generation options that this adapter does not implement.
+        Disable capabilities that this adapter does not implement.
+
+        These are generation options outside ``_SUPPORTED_GENERATION_CAPABILITIES`` and, for an
+        adapter with ``_SUPPORTS_RESPONSES = False``, responses.
 
         Returns:
-            TargetCapabilities: Capabilities restricted to the adapter's implemented generation options.
+            TargetCapabilities: Capabilities restricted to what the adapter implements.
         """
         unsupported = {
             capability.value: False
             for capability in RequestGenerationConfig.FIELD_CAPABILITIES.values()
             if capability not in cls._SUPPORTED_GENERATION_CAPABILITIES and capabilities.includes(capability=capability)
         }
+        if not cls._SUPPORTS_RESPONSES and capabilities.supports_responses:
+            unsupported[CapabilityName.RESPONSES.value] = False
         return capabilities.model_copy(update=unsupported) if unsupported else capabilities
 
     @classmethod
@@ -1001,6 +1173,7 @@ class PromptTarget(Identifiable):
         """
         Return the configuration for the given underlying model, falling back to
         the class-level ``_DEFAULT_CONFIGURATION`` when the model is not recognized.
+        Prefill request support always follows the adapter's class default.
 
         Args:
             underlying_model (str | None): The underlying model name (e.g., "gpt-4o"),
@@ -1014,9 +1187,10 @@ class PromptTarget(Identifiable):
             known = get_known_capabilities(underlying_model)
             if known is not None:
                 return TargetConfiguration(
-                    capabilities=cls._mask_generation_capabilities(
+                    capabilities=cls._mask_unimplemented_capabilities(
                         capabilities=known.model_copy(
                             update={
+                                "supports_prefill": cls._DEFAULT_CONFIGURATION.capabilities.supports_prefill,
                                 "input_modalities": frozenset(
                                     combo
                                     for combo in known.input_modalities
@@ -1033,7 +1207,7 @@ class PromptTarget(Identifiable):
                 cls.__name__,
             )
         configuration = cls._DEFAULT_CONFIGURATION
-        capabilities = cls._mask_generation_capabilities(capabilities=configuration.capabilities)
+        capabilities = cls._mask_unimplemented_capabilities(capabilities=configuration.capabilities)
         if capabilities is configuration.capabilities:
             return configuration
         return TargetConfiguration(

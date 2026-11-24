@@ -53,7 +53,7 @@ from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
 from pyrit.models import ConverterIdentifier, MessagePiece, Parameter, PromptDataType
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.registry import ConverterRegistry
+from pyrit.registry import ConverterRegistry, creator_metadata, record_private_references
 from pyrit.registry.registry import Reconstructable
 
 _OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
@@ -121,11 +121,12 @@ class ConverterService:
         """Remove this backend's temporary inputs after requests have stopped."""
         owned_entries = [
             entry
-            for entry in self._registry.instances.get_all_instances()
+            for entry in self._registry.instances.get_all_instances_of_every_owner()
             if any(path.is_relative_to(self._upload_path) for path in self._get_owned_artifact_paths(entry.metadata))
         ]
         await asyncio.to_thread(self._upload_directory.cleanup)
         for entry in owned_entries:
+            # Holding the entry removes it whoever owns it.
             self._registry.instances.unregister(entry.name, expected_entry=entry)
 
     async def list_converters_async(self) -> ConverterInstanceListResponse:
@@ -205,9 +206,10 @@ class ConverterService:
                 return False
 
             owned_paths = self._get_owned_artifact_paths(entry.metadata)
+            # Other callers' private converters can share these files too.
             shared_paths = {
                 path
-                for other in self._registry.instances.get_all_instances()
+                for other in self._registry.instances.get_all_instances_of_every_owner()
                 if other is not entry
                 for path in self._get_owned_artifact_paths(other.metadata)
             }
@@ -223,7 +225,8 @@ class ConverterService:
 
         Instantiates the converter with the given type and params and builds the
         response before registering it, so a request that fails at any step leaves
-        no registered converter and removes its uploaded files.
+        no registered converter and removes its uploaded files. A converter built from
+        the caller's private target or converter is private to the caller too.
 
         Args:
             request: The create converter request with type and params.
@@ -235,9 +238,28 @@ class ConverterService:
             ValueError: If the converter type is not found or the registry name is
                 unavailable.
         """
+        if request.private and not request.register_instance:
+            raise ValueError("A private converter must be registered; set register=true.")
+        with record_private_references() as private_references:
+            return await self._create_converter_recording_private_references_async(
+                request=request, private_references=private_references
+            )
+
+    async def _create_converter_recording_private_references_async(
+        self, *, request: CreateConverterRequest, private_references: dict[str, str]
+    ) -> ConverterInstance | UnregisteredConverter:
+        """
+        Create a converter while the private entries it uses are recorded in ``private_references``.
+
+        Returns:
+            ConverterInstance | UnregisteredConverter: The new converter's details.
+
+        Raises:
+            ValueError: If the converter type is not found or the registry name is unavailable.
+        """
         if request.type not in self._registry:
             raise ValueError(f"Converter type '{request.type}' not found")
-        if request.register:
+        if request.register_instance:
             if request.name is None:
                 raise ValueError("name is required when register=true")
             self._registry.instances.validate_name_available(request.name)
@@ -256,7 +278,7 @@ class ConverterService:
         upload_names = frozenset(self._upload_params(converter_type=request.type))
         try:
             # Uploads may have yielded to another request that took the name.
-            if request.register:
+            if request.register_instance:
                 if request.name is None:
                     raise ValueError("name is required when register=true")
                 self._registry.instances.validate_name_available(request.name)
@@ -282,7 +304,7 @@ class ConverterService:
                 and (converter_obj.get_identifier().hash != request.source.effective_hash)
             ):
                 raise ValueError("Temporary converter configuration has changed")
-            if not request.register:
+            if not request.register_instance:
                 return UnregisteredConverter(
                     identifier=ConverterIdentifier.from_component_identifier(converter_obj.get_identifier())
                 )
@@ -302,19 +324,23 @@ class ConverterService:
                         if entry.instance is source
                         for path in self._get_owned_artifact_paths(entry.metadata)
                     ]
+                creator = creator_metadata(
+                    name=request.name, requested_private=request.private, private_references=private_references
+                )
                 self._registry.instances.register(
                     converter_obj,
                     name=request.name,
                     metadata={
-                        _OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in dict.fromkeys(owned_paths + inherited_paths)]
+                        _OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in dict.fromkeys(owned_paths + inherited_paths)],
+                        **creator,
                     },
                 )
         except (Exception, asyncio.CancelledError):
-            if request.register:
+            if request.register_instance:
                 await self._remove_owned_artifacts_async(paths=owned_paths)
             raise
         finally:
-            if not request.register:
+            if not request.register_instance:
                 await self._remove_owned_artifacts_async(paths=owned_paths)
 
         return converter

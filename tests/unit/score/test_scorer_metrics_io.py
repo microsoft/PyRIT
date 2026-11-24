@@ -166,6 +166,22 @@ def test_metrics_to_registry_dict_includes_values():
     assert result["num_responses"] == 100
 
 
+def test_metrics_to_registry_dict_omits_none_specificity_and_keeps_zero_counts():
+    metrics = _make_objective_metrics(
+        specificity=None,
+        true_positive=10,
+        false_positive=0,
+        true_negative=0,
+        false_negative=0,
+    )
+    result = _metrics_to_registry_dict(metrics)
+    assert "specificity" not in result
+    assert result["true_positive"] == 10
+    assert result["false_positive"] == 0
+    assert result["true_negative"] == 0
+    assert result["false_negative"] == 0
+
+
 # --- find_objective_metrics_by_eval_hash tests ---
 
 
@@ -207,6 +223,48 @@ def test_objective_metrics_baselines_round_trip_through_json(tmp_path):
 
     assert loaded.baseline_accuracy == 0.52
     assert loaded.baseline_f1_score == 0.65
+
+
+def test_find_objective_metrics_reads_entries_recorded_before_the_trial_consistency_fields(tmp_path):
+    identifier = _make_identifier()
+    entry = identifier.model_dump()
+    entry["eval_hash"] = "hash_abc"
+    metrics = _metrics_to_registry_dict(_make_objective_metrics(accuracy=0.88))
+    for name in ("single_trial_accuracy", "num_inconsistent_responses", "krippendorff_alpha_model"):
+        metrics.pop(name, None)
+    entry["metrics"] = metrics
+    path = tmp_path / "objective_achieved_metrics.jsonl"
+    _write_jsonl(path, [entry])
+
+    result = find_objective_metrics_by_eval_hash(eval_hash="hash_abc", file_path=path)
+    assert result is not None
+    assert result.single_trial_accuracy is None
+    assert result.num_inconsistent_responses is None
+    assert result.krippendorff_alpha_model is None
+
+
+def test_objective_metrics_trial_consistency_round_trips_through_json(tmp_path):
+    path = tmp_path / "metrics.json"
+    path.write_text(
+        _make_objective_metrics(
+            num_scorer_trials=3, single_trial_accuracy=0.84, num_inconsistent_responses=7, krippendorff_alpha_model=0.71
+        ).to_json()
+    )
+
+    loaded = ObjectiveScorerMetrics.from_json_file(path)
+
+    assert loaded.single_trial_accuracy == 0.84
+    assert loaded.num_inconsistent_responses == 7
+    assert loaded.krippendorff_alpha_model == 0.71
+
+
+def test_harm_metrics_single_trial_error_round_trips_through_json(tmp_path):
+    path = tmp_path / "metrics.json"
+    path.write_text(_make_harm_metrics(num_scorer_trials=3, single_trial_mean_absolute_error=0.21).to_json())
+
+    loaded = HarmScorerMetrics.from_json_file(path)
+
+    assert loaded.single_trial_mean_absolute_error == 0.21
 
 
 def test_find_objective_metrics_by_eval_hash_not_found(tmp_path):
@@ -659,7 +717,7 @@ def test_existing_registry_permissions_are_applied_before_staging_write(tmp_path
     real_fdopen = os.fdopen
     staging_paths = []
 
-    def record_staging_file(file_path, mode=0o666):
+    def record_staging_file(file_path, *, mode=0o666):
         staging_path, fd = real_create_staging_file(file_path, mode=mode)
         staging_paths.append(staging_path)
         return staging_path, fd
@@ -687,7 +745,7 @@ def test_existing_registry_permissions_are_applied_before_staging_write(tmp_path
             side_effect=lambda *args, **kwargs: PermissionCheckingWriter(real_fdopen(*args, **kwargs)),
         ),
     ):
-        _rewrite_jsonl_atomically(path, ['{"value": 2}\n'])
+        _rewrite_jsonl_atomically(path, lines=['{"value": 2}\n'])
 
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
@@ -710,7 +768,7 @@ def test_existing_registry_staging_file_is_private_at_creation(tmp_path):
 
     try:
         with patch.object(os, "open", side_effect=record_creation_mode):
-            _rewrite_jsonl_atomically(path, ['{"value": 2}\n'])
+            _rewrite_jsonl_atomically(path, lines=['{"value": 2}\n'])
     finally:
         os.umask(original_umask)
 
@@ -722,7 +780,7 @@ def test_new_registry_uses_umask_permissions(tmp_path):
     path = tmp_path / "test_metrics.jsonl"
     original_umask = os.umask(0o022)
     try:
-        _rewrite_jsonl_atomically(path, [json.dumps({"value": 1}) + "\n"])
+        _rewrite_jsonl_atomically(path, lines=[json.dumps({"value": 1}) + "\n"])
         assert stat.S_IMODE(path.stat().st_mode) == 0o644
     finally:
         os.umask(original_umask)
@@ -749,7 +807,7 @@ def test_cleanup_preserves_replace_error_and_removes_read_only_staging_file(tmp_
         patch.object(Path, "unlink", new=fail_once_for_staging_file),
     ):
         with pytest.raises(PermissionError, match="replace failed"):
-            _rewrite_jsonl_atomically(path, [json.dumps({"value": 2}) + "\n"])
+            _rewrite_jsonl_atomically(path, lines=[json.dumps({"value": 2}) + "\n"])
 
     assert cleanup_attempts
     assert path.read_bytes() == original
@@ -766,8 +824,8 @@ def test_rewrite_jsonl_atomically_uses_distinct_staging_files(tmp_path):
         real_replace(source, destination)
 
     with patch("pyrit.score.scorer_evaluation.scorer_metrics_io.os.replace", side_effect=record_replace):
-        _rewrite_jsonl_atomically(path, [json.dumps({"value": 1}) + "\n"])
-        _rewrite_jsonl_atomically(path, [json.dumps({"value": 2}) + "\n"])
+        _rewrite_jsonl_atomically(path, lines=[json.dumps({"value": 1}) + "\n"])
+        _rewrite_jsonl_atomically(path, lines=[json.dumps({"value": 2}) + "\n"])
 
     assert len(names) == 2
     assert len(set(names)) == 2
@@ -784,7 +842,7 @@ def test_rewrite_jsonl_atomically_retries_staging_collisions(tmp_path: Path) -> 
         "pyrit.score.scorer_evaluation.scorer_metrics_io.secrets.token_hex",
         side_effect=["occupied", "available"],
     ) as token_hex:
-        _rewrite_jsonl_atomically(path, ['{"value": 2}\n'])
+        _rewrite_jsonl_atomically(path, lines=['{"value": 2}\n'])
 
     assert token_hex.call_count == 2
     assert path.read_bytes() == b'{"value": 2}\n'
@@ -804,7 +862,7 @@ def test_rewrite_jsonl_atomically_preserves_files_when_staging_collisions_exhaus
         "pyrit.score.scorer_evaluation.scorer_metrics_io.secrets.token_hex", return_value="occupied"
     ) as token_hex:
         with pytest.raises(FileExistsError, match="Could not create a unique staging file"):
-            _rewrite_jsonl_atomically(path, ['{"value": 2}\n'])
+            _rewrite_jsonl_atomically(path, lines=['{"value": 2}\n'])
 
     assert token_hex.call_count == 100
     assert path.read_bytes() == original
@@ -818,7 +876,7 @@ def test_rewrite_jsonl_atomically_closes_descriptor_after_fdopen_failure(tmp_pat
     path.write_bytes(original)
     with patch.object(os, "fdopen", side_effect=OSError("fdopen failed")) as fdopen:
         with pytest.raises(OSError, match="fdopen failed"):
-            _rewrite_jsonl_atomically(path, ['{"value": 2}\n'])
+            _rewrite_jsonl_atomically(path, lines=['{"value": 2}\n'])
 
     with pytest.raises(OSError) as error:
         os.fstat(fdopen.call_args.args[0])
@@ -848,7 +906,7 @@ def test_cleanup_failure_is_logged_without_masking_replace_error(
         patch.object(Path, "unlink", autospec=True, side_effect=unlink_errors) as unlink,
     ):
         with pytest.raises(PermissionError, match="replace failed") as error:
-            _rewrite_jsonl_atomically(path, ['{"value": 2}\n'])
+            _rewrite_jsonl_atomically(path, lines=['{"value": 2}\n'])
 
     assert error.value is replace_error
     assert path.read_bytes() == original

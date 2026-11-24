@@ -19,6 +19,7 @@ import { useBeforeUnload, useBlocker, useNavigate, useParams } from 'react-route
 import ConfirmDialog from '@/components/ConfirmDialog'
 import ParameterField from '@/components/Parameters/ParameterField'
 import type { ParameterFormValue } from '@/components/Parameters/parameterForm'
+import DatasetActions from '@/components/Scenarios/DatasetActions'
 import ScenarioDatasetTable from '@/components/Scenarios/ScenarioDatasetTable'
 import ScenarioTechniqueSelector from '@/components/Scenarios/ScenarioTechniqueSelector'
 import { scenarioDatasetDefaults, scenarioDatasetOptions } from '@/components/Scenarios/datasetPresentation'
@@ -28,6 +29,7 @@ import {
   uniqueTechniqueOptions,
   type ScenarioConfigFormState,
 } from '@/components/Scenarios/scenarioConfigForm'
+import { acceptsAnyNamedDataset } from '@/components/Scenarios/scenarioLaunchRequest'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -607,7 +609,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                     </MessageBarBody>
                   </MessageBar>
                 )}
-                {datasetBaseline && (
+                {datasetBaseline && <>
                   <ScenarioDatasetTable
                     request={config.datasets}
                     defaults={datasetBaseline.defaults}
@@ -621,7 +623,11 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                     onChange={(datasets) => updateConfig({ datasets })}
                     onValidationChange={setDatasetError}
                   />
-                )}
+                  <DatasetActions
+                    scenarioName={scenario.scenario_name}
+                    canGenerate={acceptsAnyNamedDataset(scenario, datasetBaseline.options)}
+                  />
+                </>}
               </div>
             </section>
           </>

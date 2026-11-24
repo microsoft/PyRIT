@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from pyrit.converter.base64_converter import Base64Converter
     from pyrit.converter.base2048_converter import Base2048Converter
     from pyrit.converter.bidi_converter import BidiConverter
+    from pyrit.converter.bifid_converter import BifidConverter
     from pyrit.converter.bijection_converter import (
         DigitBijectionConverter,
         LetterBijectionConverter,
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
     from pyrit.converter.code_attack_converter import CodeAttackConverter
     from pyrit.converter.codechameleon_converter import CodeChameleonConverter
     from pyrit.converter.colloquial_wordswap_converter import ColloquialWordswapConverter
+    from pyrit.converter.columnar_transposition_converter import ColumnarTranspositionConverter
     from pyrit.converter.converter import Converter, ConverterResult, get_converter_modalities
     from pyrit.converter.decomposition_converter import DecompositionConverter
     from pyrit.converter.denylist_converter import DenylistConverter
@@ -62,6 +64,7 @@ if TYPE_CHECKING:
     from pyrit.converter.flip_converter import FlipConverter
     from pyrit.converter.fullwidth_converter import FullwidthConverter
     from pyrit.converter.grid_composite_converter import GridCompositeConverter
+    from pyrit.converter.image_blur_converter import ImageBlurConverter
     from pyrit.converter.image_color_saturation_converter import ImageColorSaturationConverter
     from pyrit.converter.image_compression_converter import ImageCompressionConverter
     from pyrit.converter.image_overlay_converter import ImageOverlayConverter
@@ -169,6 +172,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "Base2048Converter": "pyrit.converter.base2048_converter",
     "Base64Converter": "pyrit.converter.base64_converter",
     "BidiConverter": "pyrit.converter.bidi_converter",
+    "BifidConverter": "pyrit.converter.bifid_converter",
     "DigitBijectionConverter": "pyrit.converter.bijection_converter",
     "LetterBijectionConverter": "pyrit.converter.bijection_converter",
     "TokenBijectionConverter": "pyrit.converter.bijection_converter",
@@ -182,6 +186,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "CodeAttackConverter": "pyrit.converter.code_attack_converter",
     "CodeChameleonConverter": "pyrit.converter.codechameleon_converter",
     "ColloquialWordswapConverter": "pyrit.converter.colloquial_wordswap_converter",
+    "ColumnarTranspositionConverter": "pyrit.converter.columnar_transposition_converter",
     "ContentWordSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "ConverterResult": "pyrit.converter.converter",
     "DecompositionConverter": "pyrit.converter.decomposition_converter",
@@ -193,6 +198,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FlipConverter": "pyrit.converter.flip_converter",
     "FullwidthConverter": "pyrit.converter.fullwidth_converter",
     "GridCompositeConverter": "pyrit.converter.grid_composite_converter",
+    "ImageBlurConverter": "pyrit.converter.image_blur_converter",
     "ImageColorSaturationConverter": "pyrit.converter.image_color_saturation_converter",
     "ImageCompressionConverter": "pyrit.converter.image_compression_converter",
     "ImageOverlayConverter": "pyrit.converter.image_overlay_converter",

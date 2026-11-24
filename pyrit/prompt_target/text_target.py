@@ -22,6 +22,9 @@ class TextTarget(PromptTarget):
     # Writes to a local stream and never contacts a service, so it takes no credentials.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ()
 
+    # Writing to a stream never produces a reply.
+    _SUPPORTS_RESPONSES: ClassVar[bool] = False
+
     def __init__(
         self,
         *,
