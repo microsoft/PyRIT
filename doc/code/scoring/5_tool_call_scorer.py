@@ -14,8 +14,9 @@
 # `OtelToolCallScorer` answers "Did these tools run?" It matches exact,
 # case-sensitive names in execution spans, not claims in a response or
 # model-proposed calls. A failed execution attempt counts; the scorer does not
-# check tool success, arguments, order, or call count. For argument matching, use
-# `MessageToolCallScorer` (see "Require arguments" below).
+# check tool success, arguments, or call count. `OtelToolCallOrderScorer`, shown
+# below, checks the order of tool calls from the same evidence. For argument
+# matching, use `MessageToolCallScorer` (see "Require arguments" below).
 #
 # The example tool is named **`my_tool_call`**, implemented by the `my_tool_call()` function
 # below. Its span records `"gen_ai.tool.name": "my_tool_call"`.
@@ -140,13 +141,88 @@ assert (await memory.get_observations_async(observation_ids=negative.observation
 print(f"my_tool_call in saved evidence after capture is closed: {replayed.get_value()}")
 
 # %% [markdown]
+# ## Check the order of tool calls
+#
+# `OtelToolCallOrderScorer` matches a `ToolsCalledInOrder` condition against the
+# same trace evidence. Each listed tool needs an execution span that ended before
+# a span of the next listed tool started. Other tools may run in between.
+#
+# Order comes from span timestamps. Overlapping or unfinished spans give no order,
+# so they produce an undetermined score rather than false. A negative still needs
+# complete capture. When spans come from different clocks, pass
+# `clock_skew_tolerance` to treat spans that are closer than that as unordered.
+#
+# This example records spans with explicit timestamps so the result does not depend
+# on clock resolution.
+
+# %%
+import time
+
+from pyrit.models import ToolsCalledInOrder
+from pyrit.score import OtelToolCallOrderScorer
+
+client = InMemoryTraceClient()
+provider = TracerProvider(sampler=ALWAYS_ON, span_limits=SpanLimits(max_span_attribute_length=SpanLimits.UNSET))
+provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_client=client)))
+tracer = provider.get_tracer("pyrit-tool-order-example")
+order_scorer = OtelToolCallOrderScorer(source=OtelTraceSource(trace_client=client))
+
+
+def expects_order(*names: str) -> ScoringExpectation:
+    """Build an ordering condition over exact tool names."""
+    return ScoringExpectation(
+        conditions=(ToolsCalledInOrder(tools=tuple(ToolCallRequirement(name=name) for name in names)),)
+    )
+
+
+def record_agent_run(*spans: tuple[str, int, int]) -> TraceScorable:
+    """Record one agent trace whose tool spans have explicit start and end offsets in milliseconds."""
+    base = time.time_ns()
+    with tracer.start_as_current_span("agent", context=Context()) as root:
+        for name, start_ms, end_ms in spans:
+            span = tracer.start_span(
+                name,
+                start_time=base + start_ms * 1_000_000,
+                attributes={"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": name},
+            )
+            span.end(end_time=base + end_ms * 1_000_000)
+        trace_id = f"{root.get_span_context().trace_id:032x}"
+    return TraceScorable(trace_ids=(trace_id,))
+
+
+sequential = record_agent_run(("read_file", 0, 1), ("send_email", 2, 3))
+concurrent = record_agent_run(("read_file", 0, 2), ("send_email", 1, 3))
+assert await asyncio.to_thread(provider.force_flush)  # type: ignore
+client.mark_complete(trace_ids=(*sequential.trace_ids, *concurrent.trace_ids))
+
+in_order = (
+    await order_scorer.score_async(scorable=sequential, expectation=expects_order("read_file", "send_email"))  # type: ignore
+)[0]
+reversed_order = (
+    await order_scorer.score_async(scorable=sequential, expectation=expects_order("send_email", "read_file"))  # type: ignore
+)[0]
+overlapping = (
+    await order_scorer.score_async(scorable=concurrent, expectation=expects_order("read_file", "send_email"))  # type: ignore
+)[0]
+assert in_order.get_value() is True
+assert reversed_order.get_value() is False
+assert overlapping.status is ScoreStatus.UNDETERMINED
+print(f"read_file before send_email: {in_order.get_value()}")
+print(f"send_email before read_file: {reversed_order.get_value()}")
+print(f"Overlapping spans: {overlapping.status.value}")
+await asyncio.to_thread(provider.shutdown)  # type: ignore
+client.close()
+
+# %% [markdown]
 # ## Score a tool call through an attack
 #
-# This local agent uses a real SDK provider and an in-process HTTP transport.
-# No server, model, credentials, or global instrumentation is needed.
-# `HTTPTarget` sends a fresh `traceparent` per request when you enable tracing, and
-# PyRIT saves the same context on the request. The agent extracts that context
-# before it runs a tool.
+# This local agent runs in the same process as PyRIT and uses a real SDK provider.
+# No server, model, credentials, or global instrumentation is needed. A small custom
+# target calls the agent. `PromptTarget` runs each call inside a fresh trace context
+# when tracing is enabled and saves the same context on the request, so the agent's
+# spans join the request's trace without any header handling. See
+# [Example: an in-process agent](../targets/6_custom_targets.ipynb#example-an-in-process-agent)
+# for a multi-turn version of this target.
 #
 # Here, the prompt `"my_tool_call"` tells the local agent to call the `my_tool_call()` tool.
 # The prompt and tool name are the same only to keep the example simple.
@@ -154,16 +230,15 @@ print(f"my_tool_call in saved evidence after capture is closed: {replayed.get_va
 #
 # The caller owns capture completeness. This controlled agent has no background
 # work, sampling is disabled, and it checks export after its spans end. Only
-# then does it mark a request trace complete. An HTTP response alone would not
-# prove this for an arbitrary remote agent.
+# then does it mark a request trace complete. A response alone would not
+# prove this for an arbitrary agent.
 
 # %%
-import httpx
-from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+from collections.abc import Awaitable, Callable
 
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.models import AttackOutcome, MessageScorable
-from pyrit.prompt_target import HTTPTarget, TargetTraceConfig
+from pyrit.models import AttackOutcome, Message, MessageScorable, construct_response_from_request
+from pyrit.prompt_target import PromptTarget, TargetTraceConfig
 from pyrit.score import SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
 
 client = InMemoryTraceClient()
@@ -172,25 +247,32 @@ provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_clie
 tracer = provider.get_tracer("local-attack-agent")
 
 
-async def local_agent_async(request: httpx.Request) -> httpx.Response:
-    """Execute the local agent under the received request context."""
-    context = TraceContextTextMapPropagator().extract(dict(request.headers))
-    prompt = request.content.decode()
-    with tracer.start_as_current_span("agent", context=context) as root:
+async def local_agent_async(*, prompt: str) -> str:
+    """Execute the local agent in the current request context."""
+    with tracer.start_as_current_span("agent") as root:
         if prompt == "my_tool_call":
             my_tool_call()
     if prompt != "pending":
         if not await asyncio.to_thread(provider.force_flush):
             raise RuntimeError("Local trace export did not finish.")
         client.mark_complete(trace_ids=(f"{root.get_span_context().trace_id:032x}",))
-    return httpx.Response(200, text="done")
+    return "done"
 
 
-target = HTTPTarget(
-    http_request="POST / HTTP/1.1\nHost: local-agent.test\n\n{PROMPT}",
-    transport=httpx.MockTransport(local_agent_async),
-    trace_config=TargetTraceConfig(enabled=True),
-)
+class LocalAgentTarget(PromptTarget):
+    """Send each prompt to an agent function in this process."""
+
+    def __init__(self, *, agent: Callable[..., Awaitable[str]], trace_config: TargetTraceConfig) -> None:
+        super().__init__(trace_config=trace_config)
+        self._agent = agent
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        request = normalized_conversation[-1].get_piece()
+        reply = await self._agent(prompt=request.converted_value)
+        return [construct_response_from_request(request=request, response_text_pieces=[reply])]
+
+
+target = LocalAgentTarget(agent=local_agent_async, trace_config=TargetTraceConfig(enabled=True))
 tool_scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
 attack = PromptSendingAttack(
     objective_target=target,
@@ -241,18 +323,21 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # %% [markdown]
 # ## Configure tracing
 #
-# `HTTPTarget` and `HTTPXAPITarget` disable tracing by default, because an arbitrary
-# HTTP endpoint is not known to accept W3C trace context. Set
-# `trace_config=TargetTraceConfig(enabled=True)` for an instrumented endpoint. Keep
-# tracing disabled if you supply manual `traceparent` or `tracestate` headers.
+# Custom targets disable tracing by default. For an agent in the same process, pass
+# `trace_config=TargetTraceConfig(enabled=True)` to its `PromptTarget` constructor, as
+# above. Pass `TargetTraceConfig(tracer=provider.get_tracer(...))` instead to also
+# record the target invocation as a span with a caller-owned provider. PyRIT does not
+# install a global provider or exporter. `LocalTraceCapture` bundles such a provider,
+# without span limits, with a span store and its `trace_config()`; see
+# [Judging with execution traces](./8_trace_evidence_scoring.ipynb).
 #
-# A custom local target can pass `TargetTraceConfig(tracer=provider.get_tracer(...))`
-# to its `PromptTarget` constructor. This captures the target invocation with a
-# caller-owned provider. PyRIT does not install a global provider or exporter.
-#
-# For a remote agent, use the normal HTTP transport. The agent must accept W3C
-# trace context and export its tool spans. Supply a `TraceClient` that can read
-# those spans; sending a header does not create a trace-store connection.
+# For a remote agent, use `HTTPTarget` or `HTTPXAPITarget`. They also disable tracing
+# by default, because an arbitrary HTTP endpoint is not known to accept W3C trace
+# context. Set `trace_config=TargetTraceConfig(enabled=True)` for an instrumented
+# endpoint, and each request sends a fresh `traceparent` header. Keep tracing
+# disabled if you supply manual `traceparent` or `tracestate` headers. The agent
+# must accept W3C trace context and export its tool spans. Supply a `TraceClient`
+# that can read those spans; sending a header does not create a trace-store connection.
 #
 # `LiteLLMChatTarget` accepts the same `trace_config` and also disables tracing by
 # default. When enabled, each request sends a fresh `traceparent` through LiteLLM's
@@ -261,6 +346,122 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # trace headers in `headers`, `extra_headers` or `provider_specific_header` are
 # rejected. A model-call span is not tool evidence; the scorer still needs execution
 # spans for the named tool.
+
+# %% [markdown]
+# ## Link a provider that ignores trace context
+#
+# Some providers and gateways do not continue W3C context, but they return their
+# own id for each response. `LiteLLMChatTarget` stores that id on the request as a
+# `ProviderTraceReference`, apart from any propagation format, with LiteLLM's
+# provider route (here `openai`). At scoring time a `ProviderTraceResolver` maps it
+# to the trace that recorded it.
+#
+# `SpanAttributeTraceResolver` finds the captured span that carries the response id
+# as `gen_ai.response.id`, the attribute OpenTelemetry's GenAI conventions use for
+# a model response. Name other attributes if your framework records it elsewhere.
+# `MappingProviderTraceResolver` takes the mapping from your own logs instead.
+#
+# A request with a W3C link resolves through that link, so set `enabled=False` for
+# a provider that does not continue it. An id the resolver cannot find, or finds in
+# more than one trace, leaves the request unlinked, and a verdict that rests on
+# absence stays undetermined. So does a send whose tool loop runs a local tool,
+# since one response id cannot name the tool's run or later completions' traces.
+#
+# This cell stands a loopback gateway in for the provider. It ignores
+# `traceparent`, runs the tool under its own trace, records its response id on
+# the model span, and answers LiteLLM in the OpenAI format. It needs no model or
+# credentials.
+
+# %%
+import json
+import threading
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from pyrit.models import ProviderTraceReference
+from pyrit.prompt_target import LiteLLMChatTarget
+from pyrit.score import SpanAttributeTraceResolver
+
+await initialize_pyrit_async(  # type: ignore
+    memory_db_type=IN_MEMORY,
+    load_defaults=False,
+    env_files=[],
+    silent=True,
+)
+memory = CentralMemory.get_memory_instance()
+client = InMemoryTraceClient()
+provider = TracerProvider(sampler=ALWAYS_ON, span_limits=SpanLimits(max_span_attribute_length=SpanLimits.UNSET))
+provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_client=client)))
+tracer = provider.get_tracer("local-gateway")
+
+
+class LocalGateway(BaseHTTPRequestHandler):
+    """Answer chat completions under the gateway's own trace, ignoring any received context."""
+
+    def do_POST(self) -> None:
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        prompt = body["messages"][-1]["content"]
+        response_id = f"chatcmpl-{uuid.uuid4().hex}"
+        with tracer.start_as_current_span(
+            "chat", context=Context(), attributes={"gen_ai.response.id": response_id}
+        ) as root:
+            if prompt == "my_tool_call":
+                my_tool_call()
+        if not provider.force_flush():
+            raise RuntimeError("Local trace export did not finish.")
+        client.mark_complete(trace_ids=(f"{root.get_span_context().trace_id:032x}",))
+        reply = json.dumps(
+            {
+                "id": response_id,
+                "object": "chat.completion",
+                "created": 0,
+                "model": "gpt-4o",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "done"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(reply)))
+        self.end_headers()
+        self.wfile.write(reply)
+
+    def log_message(self, format: str, *args: object) -> None:
+        """Keep the notebook output quiet."""
+
+
+gateway = ThreadingHTTPServer(("127.0.0.1", 0), LocalGateway)
+threading.Thread(target=gateway.serve_forever, daemon=True).start()
+litellm_target = LiteLLMChatTarget(
+    model_name="openai/gpt-4o",
+    endpoint=f"http://127.0.0.1:{gateway.server_port}/v1",
+    api_key="local",
+    trace_config=TargetTraceConfig(enabled=False),
+)
+source = OtelTraceSource(trace_client=client)
+for resolver, outcomes in (
+    (SpanAttributeTraceResolver(trace_client=client), (AttackOutcome.SUCCESS, AttackOutcome.FAILURE)),
+    (None, (AttackOutcome.UNDETERMINED, AttackOutcome.UNDETERMINED)),
+):
+    provider_attack = PromptSendingAttack(
+        objective_target=litellm_target,
+        attack_scoring_config=AttackScoringConfig(
+            objective_scorer=OtelToolCallScorer(source=source, provider_trace_resolver=resolver)
+        ),
+        max_attempts_on_failure=0,
+    )
+    for prompt, expected in zip(("my_tool_call", "no tool"), outcomes, strict=True):
+        result = await provider_attack.execute_async(objective=prompt, expectation=expects("my_tool_call"))  # type: ignore
+        assert result.outcome is expected
+        print(f"{'With' if resolver else 'Without'} a resolver, {prompt}: {result.outcome.value}")
+
+request = (await memory.get_message_pieces_async(conversation_id=result.conversation_id, role="user"))[0]  # type: ignore
+reference = ProviderTraceReference.from_metadata(request.prompt_metadata)
+print(f"Stored identifiers: {sorted(reference.model_dump())}")
+gateway.shutdown()
+await asyncio.to_thread(provider.shutdown)  # type: ignore
+client.close()
+(await memory.dispose_engine_async())
 
 # %% [markdown]
 # ## Use another trace source
@@ -278,6 +479,60 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # Other sources can use the same protocol with their own scorable types.
 # The caller owns instrumentation and trace retrieval. Automatic request
 # correlation does not install a remote collector or a backend adapter.
+
+# %% [markdown]
+# ## Read traces from a remote backend
+#
+# `OtlpJsonTraceClient` fetches each trace by ID from an HTTP endpoint that returns
+# OTLP/JSON, such as Grafana Tempo's `/api/traces/{trace_id}`. Pass credentials in
+# `headers`; the source identity records the endpoint without them, or its query.
+# Pass your own `httpx.AsyncClient` to control proxies and certificates.
+#
+# A remote backend cannot report when every span of a trace has arrived, so its
+# coverage is never complete. A tool call it returns counts, and a missing one is
+# undetermined, never false. A trace the backend does not have is unavailable. A
+# failed request, an error status, or an unreadable response is an acquisition
+# error, unless another requested trace was retrieved; then coverage is partial.
+#
+# This cell stands an in-process transport in for the backend.
+
+# %%
+import httpx
+
+from pyrit.models import ToolEventsObservationPayload
+from pyrit.score.observation import OtlpJsonTraceClient
+
+remote_trace_id = "4bf92f3577b34da6a3ce929d0e0e4736"
+tool_span = {
+    "traceId": remote_trace_id,
+    "spanId": "00f067aa0ba902b7",
+    "startTimeUnixNano": "1767225600000000000",
+    "endTimeUnixNano": "1767225600002000000",
+    "attributes": [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+        {"key": "gen_ai.tool.name", "value": {"stringValue": "my_tool_call"}},
+    ],
+}
+
+
+def trace_backend(request: httpx.Request) -> httpx.Response:
+    """Answer trace-by-ID requests the way an OTLP/JSON trace backend does."""
+    if request.url.path.endswith(remote_trace_id):
+        return httpx.Response(200, json={"resourceSpans": [{"scopeSpans": [{"spans": [tool_span]}]}]})
+    return httpx.Response(404)
+
+
+remote_source = OtelTraceSource(
+    trace_client=OtlpJsonTraceClient(
+        url_template="http://tempo.test:3200/api/traces/{trace_id}",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(trace_backend)),
+    )
+)
+found = await remote_source.acquire_async(scorable=TraceScorable(trace_ids=(remote_trace_id,)))  # type: ignore
+missing = await remote_source.acquire_async(scorable=TraceScorable(trace_ids=("5" * 32,)))  # type: ignore
+assert isinstance(found.payload, ToolEventsObservationPayload)
+print(f"Remote tools: {[event.name for event in found.payload.events]}, acquisition {found.acquisition.value}")
+print(f"Trace the backend does not have: {missing.acquisition.value}")
 
 # %% [markdown]
 # ## Score tool calls without traces
@@ -345,3 +600,23 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # `OtelToolCallScorer` cannot confirm an argument requirement and leaves it
 # undetermined. Complete trace evidence with no execution of the tool still makes
 # it false, because no call means no matching call.
+#
+# ## Let a scenario choose the tool-call scorer
+#
+# A scenario that takes a `CompatibleScorers` pool, such as `RapidResponse`, picks a scorer for
+# each technique and dataset before it sends anything. A text judge does not evaluate
+# `ToolsCalled`, so a dataset whose objectives carry that condition goes to the tool-call scorer,
+# and a dataset of ordinary objectives keeps the text judge:
+#
+# ```python
+# from pyrit.scenario.airt import RapidResponse
+# from pyrit.score import CompatibleScorers, MessageToolCallScorer
+#
+# scorers = CompatibleScorers(candidates=[text_judge, MessageToolCallScorer()])
+# scenario = RapidResponse(objective_scorer=scorers)
+# ```
+#
+# One scorer must judge every objective in a dataset, so keep `ToolsCalled` objectives in their
+# own dataset: a dataset that mixes them with ordinary objectives stops initialization.
+# [Judging Each Dataset With Its Own Scorer](../scenarios/1_common_scenario_parameters.ipynb#judging-each-dataset-with-its-own-scorer)
+# shows how selection works and when it fails.

@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from pyrit.models import (
     Condition,
     Contains,
+    DisclosesSecret,
     DivergesFromRepetition,
     Equals,
     MatchesObjective,
@@ -17,6 +18,7 @@ from pyrit.models import (
     ToolCall,
     ToolCallRequirement,
     ToolsCalled,
+    ToolsCalledInOrder,
     scoring_expectation_fingerprint,
 )
 from pyrit.models import ToolCall as MessageToolCall
@@ -334,3 +336,76 @@ def test_diverges_from_repetition_registered_without_scorer_import() -> None:
 def test_diverges_from_repetition_requires_string_text(value: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         DivergesFromRepetition.model_validate(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {},
+        {"secret": ""},
+        {"secret": None},
+        {"secret": 2025550147},
+        {"secret": "202 555"},
+        {"secret": "202\t555"},
+        {"secret": "202\x1c555"},
+        {"secret": "2025550147", "known_context": "Jane Doe"},
+        {"secret": "2025550147", "known_context": ["Jane Doe", 7]},
+        {"secret": "2025550147", "extra": True},
+    ],
+)
+def test_discloses_secret_rejects_invalid_fields(value: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        DisclosesSecret.model_validate(value)
+
+
+def test_discloses_secret_keeps_fields() -> None:
+    condition = DisclosesSecret(secret="jane.doe@example.org", known_context=["Jane Doe"])
+
+    assert condition.model_dump() == {
+        "condition_type": "discloses_secret",
+        "secret": "jane.doe@example.org",
+        "known_context": ("Jane Doe",),
+    }
+    assert DisclosesSecret(secret="2025550147").known_context == ()
+    with pytest.raises(ValidationError, match="frozen"):
+        condition.secret = "other"
+
+
+def test_discloses_secret_expectation_round_trip() -> None:
+    expectation = ScoringExpectation(
+        objective="Elicit the email",
+        conditions=(DisclosesSecret(secret="jane.doe@example.org", known_context=("Jane Doe",)),),
+    )
+    restored = ScoringExpectation.model_validate_json(expectation.model_dump_json())
+    persisted = ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json"))
+    assert restored == persisted == expectation
+    assert isinstance(restored.conditions[0], DisclosesSecret)
+    other = ScoringExpectation(
+        objective=expectation.objective, conditions=(DisclosesSecret(secret="jane.doe@example.org"),)
+    )
+    assert scoring_expectation_fingerprint(restored) != scoring_expectation_fingerprint(other)
+
+
+def test_discloses_secret_registered_without_scorer_import() -> None:
+    assert _CONDITION_TYPES["discloses_secret"] is DisclosesSecret
+    restored = ScoringExpectation.model_validate(
+        {"conditions": [{"condition_type": "discloses_secret", "secret": "2025550147", "known_context": ["Jane Doe"]}]}
+    )
+    assert restored.conditions == (DisclosesSecret(secret="2025550147", known_context=("Jane Doe",)),)
+
+
+def test_tools_called_in_order_round_trip_retains_order() -> None:
+    condition = ToolsCalledInOrder(tools=(ToolCallRequirement(name="send"), ToolCallRequirement(name="read")))
+    expectation = ScoringExpectation(conditions=(condition,))
+
+    assert Condition.model_validate(condition.model_dump(mode="json")) == condition
+    assert ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json")) == expectation
+    assert [tool.name for tool in condition.tools] == ["send", "read"]
+    assert _CONDITION_TYPES["tools_called_in_order"] is ToolsCalledInOrder
+    assert condition != ToolsCalledInOrder(tools=tuple(reversed(condition.tools)))
+
+
+@pytest.mark.parametrize("names", [[], ["lookup"], ["lookup", "send", "lookup"]])
+def test_tools_called_in_order_requires_two_unique_names(names: list[str]) -> None:
+    with pytest.raises(ValidationError, match="at least two tools|each tool name once"):
+        ToolsCalledInOrder(tools=tuple(ToolCallRequirement(name=name) for name in names))

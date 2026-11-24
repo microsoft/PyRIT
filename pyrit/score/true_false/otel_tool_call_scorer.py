@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 import logging
+import math
+from abc import abstractmethod
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from pyrit.models import (
@@ -16,6 +19,7 @@ from pyrit.models import (
     ScoreStatus,
     ToolEventsObservationPayload,
     ToolsCalled,
+    ToolsCalledInOrder,
     TraceScorable,
 )
 from pyrit.score.observation.execution import NonReplayableObservationError, _collect_observation
@@ -24,15 +28,20 @@ from pyrit.score.tool_argument_matching import describe_tool_requirement, match_
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
+    from datetime import datetime
 
     from pydantic import JsonValue
 
-    from pyrit.models import ComponentIdentifier, Scorable, ScoringExpectation
+    from pyrit.models import ComponentIdentifier, Scorable, ScoringExpectation, ToolExecution
     from pyrit.score.observation.execution import _ObservationEvidence
     from pyrit.score.observation.observation_source import ObservationSource
+    from pyrit.score.observation.provider_trace_resolver import ProviderTraceResolver
 
 logger = logging.getLogger(__name__)
+
+# Versions the shared message-to-trace scope resolution; both trace scorers stamp it on their identifiers.
+_MESSAGE_SCOPE_VERSION = 2
 
 _NO_TRACE_ARGUMENTS_REASON = (
     "Trace evidence does not retain tool arguments, so it cannot confirm an argument requirement; "
@@ -113,28 +122,182 @@ def _rationale(*, condition: ToolsCalled, payload: ToolEventsObservationPayload,
     return f"Trace evidence cannot establish {expected}."
 
 
-class OtelToolCallScorer(TrueFalseScorer):
-    """Score actual tool invocations, not requested calls or response claims."""
+def _definitely_precedes(*, first: ToolExecution, second: ToolExecution, tolerance: timedelta) -> bool:
+    """
+    Check whether ``first`` finished before ``second`` started, by more than the clock tolerance.
+
+    Returns:
+        bool: True only for a finished attempt that ends strictly before the other starts.
+    """
+    return first.end_time is not None and first.end_time + tolerance < second.start_time
+
+
+def _ordered_chain_exists(*, runs: Sequence[Sequence[ToolExecution]], tolerance: timedelta, definite: bool) -> bool:
+    """
+    Search for one attempt per tool that respects the required order.
+
+    With ``definite``, every adjacent pair must be ordered beyond doubt, which orders the whole
+    chain. Otherwise no pair in the chain, adjacent or not, may be ordered the wrong way beyond
+    doubt, so overlapping attempts remain possible.
+
+    Returns:
+        bool: Whether such a chain of attempts exists.
+    """
+    previous: ToolExecution | None = None
+    # The latest start among the attempts chosen so far. Overlap is not transitive: an attempt can
+    # overlap both its neighbours while the first ends before the last starts, so a later attempt
+    # is checked against every earlier tool, not only the one just before it.
+    latest_start: datetime | None = None
+    for index, attempts in enumerate(runs):
+        if previous is None:
+            candidates = list(attempts)
+        elif definite:
+            candidates = [
+                run for run in attempts if _definitely_precedes(first=previous, second=run, tolerance=tolerance)
+            ]
+        else:
+            candidates = [
+                run
+                for run in attempts
+                if latest_start is None or run.end_time is None or run.end_time + tolerance >= latest_start
+            ]
+        if definite and index < len(runs) - 1:
+            # The next tool must start after this attempt ends, so the earliest finished end is best.
+            candidates = [run for run in candidates if run.end_time is not None]
+            if not candidates:
+                return False
+            previous = min(candidates, key=lambda run: run.end_time or run.start_time)
+        else:
+            # The next tool must not end before this attempt starts, so the earliest start is best.
+            if not candidates:
+                return False
+            previous = min(candidates, key=lambda run: run.start_time)
+            latest_start = previous.start_time if latest_start is None else max(latest_start, previous.start_time)
+    return True
+
+
+def _check_clock_skew_tolerance(tolerance: timedelta) -> None:
+    seconds = tolerance.total_seconds()
+    if seconds < 0 or not math.isfinite(seconds):
+        raise ValueError("clock_skew_tolerance must not be negative.")
+
+
+def match_tools_called_in_order(
+    *,
+    condition: ToolsCalledInOrder,
+    payload: ToolEventsObservationPayload,
+    acquisition: Acquisition,
+    clock_skew_tolerance: timedelta = timedelta(0),
+) -> bool | None:
+    """
+    Match the relative order of execution attempts without I/O, preserving unknown order.
+
+    An order is observed only when one attempt ends before the next tool's attempt starts, by
+    more than ``clock_skew_tolerance``. Overlapping, unfinished, or near-simultaneous attempts
+    establish no order. An observed order stands with partial evidence. A negative needs
+    complete evidence in which every candidate order is contradicted or a tool never ran.
+
+    Trace events do not retain arguments, so a requirement with argument constraints cannot be
+    confirmed: an observed order is undetermined, because the ordered attempts may not be the
+    matching calls. A contradiction still stands, because it rules out every choice of attempts,
+    matching ones included.
+
+    Returns:
+        bool | None: True for an observed order, false for a complete contradiction, otherwise None.
+
+    Raises:
+        ValueError: If the tolerance is negative or not finite.
+    """
+    _check_clock_skew_tolerance(clock_skew_tolerance)
+    if acquisition in (Acquisition.ERROR, Acquisition.UNAVAILABLE):
+        return None
+    runs = [[event for event in payload.events if event.name == tool.name] for tool in condition.tools]
+    if _ordered_chain_exists(runs=runs, tolerance=clock_skew_tolerance, definite=True):
+        return None if any(tool.arguments for tool in condition.tools) else True
+    if acquisition is not Acquisition.COMPLETE or not payload.coverage.complete:
+        return None
+    # A tool that never ran leaves no possible order, so complete evidence of its absence is false.
+    return None if _ordered_chain_exists(runs=runs, tolerance=clock_skew_tolerance, definite=False) else False
+
+
+class _OtelToolEvidenceScorer(TrueFalseScorer):
+    """
+    Shared trace-evidence pipeline for the tool scorers; each concrete leaf declares its own condition.
+
+    The leaves are siblings rather than one subclassing the other, so an ``isinstance`` check on
+    one never matches the other.
+    """
 
     SUPPORTED_SCORABLE_TYPES = (MessageScorable, TraceScorable)
-    CONDITION_TYPE = ToolsCalled
 
-    def __init__(self, *, source: ObservationSource[TraceScorable]) -> None:
-        """Initialize with a condition-independent, caller-configured trace source."""
+    def __init__(
+        self,
+        *,
+        source: ObservationSource[TraceScorable],
+        provider_trace_resolver: ProviderTraceResolver | None = None,
+    ) -> None:
+        """
+        Initialize with a condition-independent, caller-configured trace source.
+
+        Args:
+            source (ObservationSource[TraceScorable]): Acquires the trace evidence.
+            provider_trace_resolver (ProviderTraceResolver | None): Links requests that carry the
+                provider's own identifiers instead of a W3C trace link. Defaults to None, in which
+                case such a request stays unlinked.
+        """
         super().__init__()
         self._source = source
+        self._provider_trace_resolver = provider_trace_resolver
 
-    def _build_identifier(self) -> ComponentIdentifier:
-        return self._create_identifier(
-            params={"matching_version": 1, "message_scope_version": 2},
-            children={"source": self._source.get_identifier()},
-        )
+    def _evidence_children(self) -> dict[str, ComponentIdentifier]:
+        """
+        Identify the evidence path: the source, and the provider resolver when one is set.
+
+        Returns:
+            dict[str, ComponentIdentifier]: The child identities.
+        """
+        children = {"source": self._source.get_identifier()}
+        if self._provider_trace_resolver is not None:
+            children["provider_trace_resolver"] = self._provider_trace_resolver.get_identifier()
+        return children
+
+    @abstractmethod
+    def _build_identifier(self) -> ComponentIdentifier: ...
+
+    @abstractmethod
+    def _score_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]: ...
+
+    @abstractmethod
+    def _verdict_rests_on_absence(
+        self,
+        *,
+        evidence: ToolEventsObservationPayload,
+        expectation: ScoringExpectation | None,
+        acquisition: Acquisition,
+    ) -> bool:
+        """
+        Report whether this leaf's verdict depends on the absence of further evidence.
+
+        A verdict that rests on absence is only as good as the correlation is complete, so it is
+        downgraded when requests in the conversation carry no trace link.
+
+        Returns:
+            bool: Whether the verdict rests on absence.
+        """
 
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
         if not isinstance(scorable, (MessageScorable, TraceScorable)):
-            raise TypeError("OtelToolCallScorer requires a MessageScorable or an explicit TraceScorable.")
+            raise TypeError(f"{type(self).__name__} requires a MessageScorable or an explicit TraceScorable.")
         scope, correlation_complete = (
-            await resolve_message_trace_scope_async(scorable=scorable, memory=self._memory)
+            await resolve_message_trace_scope_async(
+                scorable=scorable, memory=self._memory, provider_resolver=self._provider_trace_resolver
+            )
             if isinstance(scorable, MessageScorable)
             else (scorable, True)
         )
@@ -153,9 +316,8 @@ class OtelToolCallScorer(TrueFalseScorer):
             raise ValueError("Trace source returned incompatible evidence or scope.")
         _collect_observation(observation)
         scores = self._score_observation(observation=observation, evidence=observation.payload, expectation=expectation)
-        condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalled)
-        _, rests_on_absence = _match_tools_called(
-            condition=condition, payload=observation.payload, acquisition=observation.acquisition
+        rests_on_absence = self._verdict_rests_on_absence(
+            evidence=observation.payload, expectation=expectation, acquisition=observation.acquisition
         )
         for score in scores:
             score.scorable = scorable
@@ -164,6 +326,28 @@ class OtelToolCallScorer(TrueFalseScorer):
                 score.set_value(None)
                 score.score_rationale = f"{score.score_rationale} {_UNLINKED_REQUESTS_REASON}"
         return scores
+
+
+class OtelToolCallScorer(_OtelToolEvidenceScorer):
+    """Score actual tool invocations, not requested calls or response claims."""
+
+    CONDITION_TYPE = ToolsCalled
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier(
+            params={"matching_version": 1, "message_scope_version": _MESSAGE_SCOPE_VERSION},
+            children=self._evidence_children(),
+        )
+
+    def _verdict_rests_on_absence(
+        self,
+        *,
+        evidence: ToolEventsObservationPayload,
+        expectation: ScoringExpectation | None,
+        acquisition: Acquisition,
+    ) -> bool:
+        condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalled)
+        return _match_tools_called(condition=condition, payload=evidence, acquisition=acquisition)[1]
 
     def _score_observation(
         self,
@@ -202,6 +386,110 @@ class OtelToolCallScorer(TrueFalseScorer):
                 score_type="true_false",
                 score_rationale=rationale,
                 score_value_description="Tool invocation; successful completion is not required.",
+                scorer_class_identifier=self.get_identifier(),
+                scorable=observation.scorable,
+                message_piece_id=self._piece_id_from_scorable(observation.scorable),
+                observation_ids=[observation.id],
+            )
+        ]
+
+
+class OtelToolCallOrderScorer(_OtelToolEvidenceScorer):
+    """
+    Score the relative order of actual tool invocations from the same evidence as ``OtelToolCallScorer``.
+
+    The order comes from span timestamps. ``clock_skew_tolerance`` widens the band in which two
+    attempts are treated as unordered, for traces whose spans come from different clocks.
+    """
+
+    CONDITION_TYPE = ToolsCalledInOrder
+
+    def __init__(
+        self,
+        *,
+        source: ObservationSource[TraceScorable],
+        clock_skew_tolerance: timedelta = timedelta(0),
+        provider_trace_resolver: ProviderTraceResolver | None = None,
+    ) -> None:
+        """
+        Initialize with a caller-configured trace source and a clock tolerance.
+
+        Raises:
+            ValueError: If the tolerance is negative or not finite.
+        """
+        _check_clock_skew_tolerance(clock_skew_tolerance)
+        self._clock_skew_tolerance = clock_skew_tolerance
+        super().__init__(source=source, provider_trace_resolver=provider_trace_resolver)
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier(
+            params={
+                "matching_version": 1,
+                "message_scope_version": _MESSAGE_SCOPE_VERSION,
+                "clock_skew_tolerance_seconds": self._clock_skew_tolerance.total_seconds(),
+            },
+            children=self._evidence_children(),
+        )
+
+    def _verdict_rests_on_absence(
+        self,
+        *,
+        evidence: ToolEventsObservationPayload,
+        expectation: ScoringExpectation | None,
+        acquisition: Acquisition,
+    ) -> bool:
+        # A False order verdict rests on complete coverage: an uncorrelated request could hold an
+        # attempt that rescues the order. An observed order stands on the spans themselves.
+        condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalledInOrder)
+        return (
+            match_tools_called_in_order(
+                condition=condition,
+                payload=evidence,
+                acquisition=acquisition,
+                clock_skew_tolerance=self._clock_skew_tolerance,
+            )
+            is False
+        )
+
+    def _score_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        if not isinstance(evidence, ToolEventsObservationPayload):
+            raise NonReplayableObservationError("Tool-order scoring requires a stored tool-event observation.")
+        condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalledInOrder)
+        value = match_tools_called_in_order(
+            condition=condition,
+            payload=evidence,
+            acquisition=observation.acquisition,
+            clock_skew_tolerance=self._clock_skew_tolerance,
+        )
+        constrains_arguments = any(tool.arguments for tool in condition.tools)
+        if constrains_arguments:
+            logger.warning(
+                "OtelToolCallOrderScorer received a requirement with argument constraints, which trace evidence "
+                "cannot confirm. Use MessageToolCallScorer to match arguments."
+            )
+        names = " -> ".join(describe_tool_requirement(tool) for tool in condition.tools)
+        rationale = (
+            f"Observed execution of the required tools in order: {names}."
+            if value is True
+            else f"Complete trace evidence contradicts the required tool order: {names}."
+            if value is False
+            else f"Trace evidence cannot establish the required tool order: {names}."
+        )
+        if value is None and constrains_arguments:
+            rationale = f"{rationale} {_NO_TRACE_ARGUMENTS_REASON}"
+        return [
+            Score(
+                score_value=None if value is None else str(value).lower(),
+                status=ScoreStatus.UNDETERMINED if value is None else ScoreStatus.COMPLETE,
+                score_type="true_false",
+                score_rationale=rationale,
+                score_value_description="Tool invocation order; successful completion is not required.",
                 scorer_class_identifier=self.get_identifier(),
                 scorable=observation.scorable,
                 message_piece_id=self._piece_id_from_scorable(observation.scorable),

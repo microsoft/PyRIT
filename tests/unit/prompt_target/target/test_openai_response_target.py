@@ -46,7 +46,8 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
-from pyrit.prompt_target.openai.openai_response_target import _ToolDispatchResult, token_usage_from_responses
+from pyrit.prompt_target.common.tool_loop import ToolDispatchResult
+from pyrit.prompt_target.openai.openai_response_target import token_usage_from_responses
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 
 
@@ -1328,7 +1329,7 @@ def test_make_tool_piece_serializes_output_and_sets_call_id(target: OpenAIRespon
         conversation_id="test-conv-123",
     )
     piece = target._make_tool_piece(
-        result=_ToolDispatchResult(output=out, invoked=invoked), call_id="tool-1", reference_piece=reference_piece
+        result=ToolDispatchResult(output=out, invoked=invoked), call_id="tool-1", reference_piece=reference_piece
     )
     assert ToolExecutionMetadata.from_metadata(metadata=piece.prompt_metadata) == ToolExecutionMetadata(invoked=invoked)
     assert piece.original_value_data_type == "function_call_output"
