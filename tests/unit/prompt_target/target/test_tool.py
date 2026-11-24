@@ -708,3 +708,10 @@ def test_function_tool_rejects_unresolvable_local_annotation() -> None:
 
     with pytest.raises(TypeError, match="Move locally defined annotation types to module scope"):
         FunctionTool(function=local_tool)
+
+
+def test_decision_target_does_not_run_tools_locally() -> None:
+    from pyrit.prompt_target.litellm_decision_target import LiteLLMDecisionTarget
+
+    assert LiteLLMChatTarget.RUNS_TOOLS_LOCALLY
+    assert not LiteLLMDecisionTarget.RUNS_TOOLS_LOCALLY
