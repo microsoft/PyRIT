@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -144,3 +145,16 @@ def test_persuasion_converter_identifier_includes_technique(sqlite_instance):
     prompt_persuasion = PersuasionConverter(converter_target=prompt_target, persuasion_technique="logical_appeal")
     identifier = prompt_persuasion.get_identifier()
     assert identifier.params["persuasion_technique"] == "logical_appeal"
+
+
+@pytest.mark.parametrize("technique", ["unknown_technique", "../persuasion/logical_appeal"])
+def test_persuasion_converter_accepts_only_shipped_techniques(sqlite_instance, technique: str):
+    with pytest.raises(ValueError, match="does not exist or is not supported"):
+        PersuasionConverter(converter_target=MockPromptTarget(), persuasion_technique=technique)
+
+
+def test_persuasion_converter_does_not_read_a_file_named_by_its_path(sqlite_instance, tmp_path: Path):
+    (tmp_path / "other.yaml").write_text('value: "Another file on this machine"\n')
+
+    with pytest.raises(ValueError, match="does not exist or is not supported"):
+        PersuasionConverter(converter_target=MockPromptTarget(), persuasion_technique=str(tmp_path / "other"))

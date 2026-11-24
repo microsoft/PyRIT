@@ -800,7 +800,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                             SELECT p2.id
                             FROM "PromptMemoryEntries" p2
                             WHERE p2.conversation_id = aggregate_rows.conversation_id
-                            ORDER BY p2.sequence DESC, p2.id DESC
+                            ORDER BY p2.sequence DESC, p2.timestamp DESC, p2.id DESC
                             LIMIT 1
                         )
                     """
