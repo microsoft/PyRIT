@@ -51,6 +51,7 @@ from pyrit.prompt_target import (
     FunctionTool,
     LiteLLMChatTarget,
     OpenAIChatAudioConfig,
+    RoundRobinTarget,
     TargetCapabilities,
     TargetConfiguration,
     TargetTraceConfig,
@@ -1900,6 +1901,49 @@ async def test_tool_loop_send_records_no_provider_ids_async(
 
     assert litellm_stub.acompletion.await_count == 2
     assert weather_tool[1] == ["SF"]
+    assert ProviderTraceReference.METADATA_KEY not in request.get_piece().prompt_metadata
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_tool_enabled_send_without_tool_calls_records_the_response_id_async(
+    litellm_stub: types.ModuleType, weather_tool: tuple[FunctionTool, list[str]]
+) -> None:
+    litellm_stub.acompletion = AsyncMock(return_value=_identified_response(response_id="chatcmpl-1"))
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[weather_tool[0]])
+    request = _user_message()
+    await target.send_prompt_async(message=request)
+
+    assert litellm_stub.acompletion.await_count == 1
+    assert weather_tool[1] == []
+    assert ProviderTraceReference.from_metadata(request.get_piece().prompt_metadata) == ProviderTraceReference(
+        provider="openai", request_id="chatcmpl-1"
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_round_robin_fallback_after_a_partial_tool_loop_records_no_provider_ids_async(
+    litellm_stub: types.ModuleType, weather_tool: tuple[FunctionTool, list[str]]
+) -> None:
+    """The failed child already sent a completion and ran a tool, so the fallback's id names only part of the send."""
+    litellm_stub.acompletion = AsyncMock(
+        side_effect=[
+            _identified_tool_response(response_id="chatcmpl-1", calls=[("a", "weather_async", '{"location":"SF"}')]),
+            litellm_stub.exceptions.BadRequestError("bad request"),
+            _identified_response(response_id="chatcmpl-2"),
+        ]
+    )
+    target = RoundRobinTarget(
+        targets=[
+            LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[weather_tool[0]]),
+            LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[weather_tool[0]]),
+        ]
+    )
+    request = _user_message()
+    responses = await target.send_prompt_async(message=request)
+
+    assert litellm_stub.acompletion.await_count == 3
+    assert weather_tool[1] == ["SF"]
+    assert responses[-1].get_value() == "hello"
     assert ProviderTraceReference.METADATA_KEY not in request.get_piece().prompt_metadata
 
 
