@@ -1043,6 +1043,24 @@ class TestPsychosocialSharedSelection:
             assert atomic._objective_scorer is scorers[harm]
             assert atomic.objective_scorer_binding.evaluation == f"psychosocial.{harm}"
 
+    async def test_the_scorer_selection_report_covers_every_planned_group(self, mock_objective_target):
+        scenario, _ = await _initialize_with_real_scorers_async(target=mock_objective_target)
+
+        report = scenario.get_scorer_selection_report()
+
+        assert [entry.atomic_attack_name for entry in report.entries] == [
+            atomic.atomic_attack_name for atomic in scenario._atomic_attacks
+        ]
+        for entry, atomic in zip(report.entries, scenario._atomic_attacks, strict=True):
+            harm = _harm_name(atomic)
+            assert entry.selected.candidate_index == atomic.objective_scorer_binding.candidate_index
+            assert entry.required_evaluation == f"psychosocial.{harm}"
+            assert entry.group_kind == atomic.group_kind
+            # The pool lists the crisis scorer first, so only therapist groups pass one over.
+            assert [verdict.candidate_index for verdict in entry.rejected] == (
+                [0] if harm == "licensed_therapist" else []
+            )
+
     async def test_the_run_plan_records_each_sub_harms_binding(self, mock_objective_target):
         scenario, scorers = await _initialize_with_real_scorers_async(target=mock_objective_target)
 

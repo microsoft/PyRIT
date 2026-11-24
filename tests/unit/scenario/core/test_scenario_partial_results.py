@@ -301,9 +301,8 @@ class TestScenarioPartialAttackCompletion:
         assert scenario_results[0].error_type == "ScenarioPartialFailureException"
         assert scenario_results[0].error_message.endswith("Caused by RuntimeError: Failed obj3")
         saved_results = scenario_results[0].attack_results["partial_save_attack"]
-        assert len(saved_results) == 2
-        assert saved_results[0].objective == "obj1"
-        assert saved_results[1].objective == "obj2"
+        # Results are ordered by timestamp, which a coarse clock can leave tied.
+        assert sorted(result.objective for result in saved_results) == ["obj1", "obj2"]
 
     async def test_failure_before_worker_retries_before_marking_failed(self, mock_objective_target):
         atomic_attack = create_mock_atomic_attack("never_started", ["obj1"])
