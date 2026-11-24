@@ -43,12 +43,6 @@ export interface SelectableTechnique extends ScenarioTechniqueSummary {
   disabled: boolean
 }
 
-export const BASELINE_TECHNIQUE: ScenarioTechniqueSummary = {
-  name: 'baseline',
-  description: 'Sends each objective directly to the target for comparison.',
-  tags: ['baseline', 'single_turn'],
-}
-
 /** The related launch-form fields that change together through explicit actions. */
 export interface ScenarioLaunchFormState {
   targetName: string

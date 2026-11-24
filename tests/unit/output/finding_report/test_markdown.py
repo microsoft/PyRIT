@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from pyrit.models import DecompositionPath, Finding, FindingSeverity
+from pyrit.models import DEFAULT_FINDING_FIELDS, DecompositionPath, Finding
 from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
 from pyrit.output.finding_report.report import (
     EVIDENCE_NOTE,
@@ -73,14 +73,15 @@ async def test_builds_a_report_from_library_findings_without_a_backend() -> None
         operation_id=operation_id,
         parent_finding_id=parent_id,
         title="Selected child",
-        severity=FindingSeverity.MODERATE,
+        severity="moderate",
+        field_values={"description": "Reached through the parent."},
         created_at=stamp,
     )
     earlier = Finding(
         operation_id=operation_id,
         parent_finding_id=root.id,
         title="Earlier",
-        severity=FindingSeverity.MODERATE,
+        severity="moderate",
         created_at=stamp,
         demonstrated=False,
     )
@@ -88,7 +89,7 @@ async def test_builds_a_report_from_library_findings_without_a_backend() -> None
         operation_id=operation_id,
         parent_finding_id=root.id,
         title="Later",
-        severity=FindingSeverity.MODERATE,
+        severity="moderate",
         created_at=stamp + timedelta(microseconds=1),
     )
     root = root.model_copy(
@@ -98,12 +99,17 @@ async def test_builds_a_report_from_library_findings_without_a_backend() -> None
     report = build_finding_report(
         operation_name="Selected operation",
         findings=[root, later, earlier],
+        fields=DEFAULT_FINDING_FIELDS,
         evidence={finding.id: () for finding in (root, earlier, later)},
         part_of={parent_id: "Unselected parent"},
     )
 
     entry = report.findings[0]
-    assert entry.fields == (FindingReportField(label="Part of", value="Unselected parent"),)
+    # "Part of" leads the Finding column, ahead of the configured fields.
+    assert entry.fields == (
+        FindingReportField(label="Part of", value="Unselected parent"),
+        FindingReportField(label="Description", value="Reached through the parent."),
+    )
     assert [(child.number, child.title) for child in entry.children] == [("1.1", "Earlier"), ("1.2", "Later")]
     assert entry.paths[0].description == "Saved prerequisite"
     assert entry.paths[0].status == "partial"

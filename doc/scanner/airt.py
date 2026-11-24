@@ -213,7 +213,7 @@ await output_scenario_async(scenario_result)
 # sends each objective without translation and is included by default.
 #
 # ```bash
-# pyrit_scan airt.multilingual \
+# pyrit_scan run airt.multilingual \
 #   --initializers target \
 #   --target openai_chat \
 #   --datasets harmbench \

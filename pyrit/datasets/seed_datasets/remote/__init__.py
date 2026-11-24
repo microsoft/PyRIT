@@ -31,6 +31,10 @@ if TYPE_CHECKING:
         AnthropicModelWrittenEvalCategory,
         _AnthropicModelWrittenEvalsDataset,
     )
+    from pyrit.datasets.seed_datasets.remote.attaq_dataset import (
+        AttaQCategory,
+        _AttaQDataset,
+    )
     from pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset import _AyaRedteamingDataset
     from pyrit.datasets.seed_datasets.remote.babelscape_alert_dataset import _BabelscapeAlertDataset
     from pyrit.datasets.seed_datasets.remote.beaver_tails_dataset import _BeaverTailsDataset
@@ -47,6 +51,10 @@ if TYPE_CHECKING:
         COMIC_JAILBREAK_TEMPLATES,
         ComicJailbreakTemplateConfig,
         _ComicJailbreakDataset,
+    )
+    from pyrit.datasets.seed_datasets.remote.cosafe_dataset import (
+        CoSafeCategory,
+        _CoSafeDataset,
     )
     from pyrit.datasets.seed_datasets.remote.cyberseceval_mitre_dataset import (
         CyberSecEvalMitreCategory,
@@ -184,8 +192,10 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AegisHarmCategory": "pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset",
     "AIRBenchRegion": "pyrit.datasets.seed_datasets.remote.air_bench_dataset",
     "AnthropicModelWrittenEvalCategory": "pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset",
+    "AttaQCategory": "pyrit.datasets.seed_datasets.remote.attaq_dataset",
     "CoCoNotCategory": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
     "CoCoNotSplit": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
+    "CoSafeCategory": "pyrit.datasets.seed_datasets.remote.cosafe_dataset",
     "CyberSecEvalInjectionType": "pyrit.datasets.seed_datasets.remote.cyberseceval_prompt_injection_dataset",
     "CyberSecEvalMitreCategory": "pyrit.datasets.seed_datasets.remote.cyberseceval_mitre_dataset",
     "CyberSecEvalRiskCategory": "pyrit.datasets.seed_datasets.remote.cyberseceval_prompt_injection_dataset",
@@ -222,6 +232,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ATRVariationType": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
     "_AgentThreatRulesDataset": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
     "_AIRBenchDataset": "pyrit.datasets.seed_datasets.remote.air_bench_dataset",
+    "_AttaQDataset": "pyrit.datasets.seed_datasets.remote.attaq_dataset",
     "_AyaRedteamingDataset": "pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset",
     "_BabelscapeAlertDataset": "pyrit.datasets.seed_datasets.remote.babelscape_alert_dataset",
     "_BeaverTailsDataset": "pyrit.datasets.seed_datasets.remote.beaver_tails_dataset",
@@ -230,6 +241,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "_CategoricalHarmfulQADataset": "pyrit.datasets.seed_datasets.remote.categorical_harmful_qa_dataset",
     "_CoCoNotContrastDataset": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
     "_CoCoNotRefusalDataset": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
+    "_CoSafeDataset": "pyrit.datasets.seed_datasets.remote.cosafe_dataset",
     "_ComicJailbreakDataset": "pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset",
     "COMIC_JAILBREAK_TEMPLATES": "pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset",
     "ComicJailbreakTemplateConfig": "pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset",

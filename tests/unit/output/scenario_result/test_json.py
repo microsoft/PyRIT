@@ -6,7 +6,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
-from unit.mocks import make_scenario_result, make_sequential_attack_results
+from unit.mocks import make_judged_scenario_result, make_scenario_result, make_sequential_attack_results
 
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioResult
 from pyrit.output.scenario_result.json import (
@@ -268,3 +268,41 @@ async def test_overview_separates_units_from_attempts(printer):
     assert payload["stats"]["outcomes"]["success_rate"] == 1.0
     assert payload["stats"]["outcomes"]["success_rate_all"] == 1.0
     assert payload["stats"]["outcomes"]["errors"] == 0
+
+
+# --- objective_scorers ---
+
+
+async def test_overview_reports_each_judge_and_the_judge_scope():
+    judge_a = ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers")
+    judge_b = ComponentIdentifier(class_name="JudgeB", class_module="tests.scorers")
+    result = make_judged_scenario_result(
+        groups=[
+            ("attack_a", judge_a, judge_a, [AttackOutcome.SUCCESS]),
+            ("attack_b", judge_b, judge_b, [AttackOutcome.UNDETERMINED]),
+        ],
+        objective_scorer_identifier=judge_a,
+    )
+    printer = JsonScenarioResultPrinter(scorer_printer=_StubScorerPrinter())
+
+    document = json.loads(await printer.render_async(result))
+
+    assert document["stats"]["objective_scorer_scope"] == "mixed_scorers"
+    assert document["scorer"] == {"class_name": "JudgeA", "metrics": {"accuracy": 0.9}}
+    assert [
+        (
+            objective_scorer["label"],
+            objective_scorer["attribution"],
+            objective_scorer["candidate_index"],
+            objective_scorer["atomic_attacks"],
+        )
+        for objective_scorer in document["objective_scorers"]
+    ] == [
+        (f"JudgeA ({judge_a.hash[:12]})", "recorded", 0, ["attack_a"]),
+        (f"JudgeB ({judge_b.hash[:12]})", "recorded", 1, ["attack_b"]),
+    ]
+    assert document["objective_scorers"][1]["scorer"] == {"class_name": "JudgeB", "metrics": {"accuracy": 0.9}}
+    assert (
+        document["objective_scorers"][1]["success_rate_decided"],
+        document["objective_scorers"][1]["success_rate_all"],
+    ) == (None, 0.0)
