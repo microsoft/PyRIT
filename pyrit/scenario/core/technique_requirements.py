@@ -8,10 +8,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.models import AttackSeedGroup, SeedGroupRequirements
-from pyrit.prompt_target import TargetRequirements
+from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.score import ScorerRequirements
 
 if TYPE_CHECKING:
@@ -44,10 +44,17 @@ class TechniqueRequirements:
     Reusable techniques never declare a scenario-specific evaluation.
     """
 
+    #: What ``requires_target_tools`` adds: a target that replays tool-call history natively.
+    TOOL_HISTORY_TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements(
+        native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY}),
+        required_input_modalities=frozenset({frozenset({"function_call"}), frozenset({"function_call_output"})}),
+    )
+
     objective_target: TargetRequirements = field(default_factory=TargetRequirements)
     seed_group: SeedGroupRequirements = field(default_factory=SeedGroupRequirements)
     objective_scorer: ScorerRequirements = field(default_factory=ScorerRequirements)
-    #: The technique uses the objective target's own function tools.
+    #: The technique uses the objective target's own function tools, so the target must advertise
+    #: tools and replay tool-call history natively.
     requires_target_tools: bool = False
 
     def __post_init__(self) -> None:
@@ -98,8 +105,12 @@ class TechniqueRequirements:
             *attack_class.TARGET_REQUIREMENTS.check(target=target),
             *self.objective_target.check(target=target),
         ]
-        if self.requires_target_tools and not target.may_advertise_tools():
-            errors.append(f"{type(target).__name__} advertises no function tools for this technique to use.")
+        if self.requires_target_tools:
+            errors.extend(
+                error for error in self.TOOL_HISTORY_TARGET_REQUIREMENTS.check(target=target) if error not in errors
+            )
+            if not target.may_advertise_tools():
+                errors.append(f"{type(target).__name__} advertises no function tools for this technique to use.")
         return errors
 
     def validate_target(self, *, target: PromptTarget, attack_class: type[AttackStrategy[Any, Any]]) -> None:

@@ -29,6 +29,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Identifiable,
     Message,
+    SeedGroupRequirements,
     SeedObjective,
     SeedPrompt,
     SimulatedConversationMode,
@@ -36,6 +37,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import (
+    OpenAIChatTarget,
     OpenAIResponseTarget,
     PromptTarget,
     TargetCapabilities,
@@ -1691,15 +1693,32 @@ class TestSimulatedConversationWithTargetTools:
             for error in factory.requirements.check_target(target=with_tools, attack_class=PromptSendingAttack)
         )
 
-    def test_custom_requirements_keep_the_target_tools_check(self) -> None:
+    @pytest.mark.parametrize(
+        "requirements",
+        [None, TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True))],
+        ids=["default", "override"],
+    )
+    def test_targets_that_cannot_replay_tool_history_are_incompatible(
+        self, requirements: TechniqueRequirements | None
+    ) -> None:
         factory = AttackTechniqueFactory.with_simulated_conversation(
             name="tool_priming_one_shot",
             mode=SimulatedConversationMode.ONE_SHOT,
             use_target_tools=True,
-            requirements=TechniqueRequirements(),
+            requirements=requirements,
+        )
+        declared = {"type": "function", "function": {"name": "read_ticket", "parameters": {"type": "object"}}}
+        unknown_deployment = OpenAIChatTarget(
+            model_name="my-deployment",
+            endpoint="https://mock.azure.com",
+            api_key="key",
+            extra_body_parameters={"tools": [declared]},
         )
 
-        assert factory.requirements.requires_target_tools
+        errors = factory.requirements.check_target(target=unknown_deployment, attack_class=PromptSendingAttack)
+
+        assert any("function_call" in error for error in errors)
+        assert not any("advertises no function tools" in error for error in errors)
 
     def test_turn_by_turn_uses_tool_prompts_and_needs_a_tool_running_adversarial_chat(self) -> None:
         factory = AttackTechniqueFactory.with_simulated_conversation(

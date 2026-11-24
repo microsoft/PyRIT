@@ -25,7 +25,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel
 
@@ -58,7 +58,6 @@ from pyrit.models import (
     load_simulated_target_prompt,
     resolve_prompt_source,
 )
-from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.scenario.core._attack_adversarial_config import _AttackAdversarialConfigHelper
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -157,12 +156,6 @@ class AttackTechniqueFactory(Identifiable):
 
     _creation_calls: list[tuple[str, dict[str, Any]]]
     _OPAQUE_IDENTITY_SCOPE = uuid.uuid4().hex
-    #: A technique that writes calls to the objective target's tools needs a target that replays
-    #: tool-call history natively.
-    TOOL_HISTORY_TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements(
-        native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY}),
-        required_input_modalities=frozenset({frozenset({"function_call"}), frozenset({"function_call_output"})}),
-    )
 
     @_capture_creation
     def __init__(
@@ -382,7 +375,8 @@ class AttackTechniqueFactory(Identifiable):
                 constructor.
             requirements: Optional requirements override. Defaults to strict
                 objective-only dataset input; technique-owned seeds are not restricted. With
-                ``use_target_tools``, an override still requires a target that advertises tools.
+                ``use_target_tools``, an override still requires a target that advertises tools and
+                replays tool-call history natively.
 
         Returns:
             AttackTechniqueFactory: A new factory whose ``seed_technique`` is the
@@ -459,6 +453,9 @@ class AttackTechniqueFactory(Identifiable):
             )
 
         seed_technique = AttackTechniqueSeedGroup(seeds=seeds)
+        requirements = requirements or TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True))
+        if use_target_tools:
+            requirements = replace(requirements, requires_target_tools=True)
         return cls(
             name=name,
             attack_class=attack_class,
@@ -470,14 +467,7 @@ class AttackTechniqueFactory(Identifiable):
             uses_adversarial=uses_adversarial,
             supports_additional_request_converters=supports_additional_request_converters,
             scorer_override_policy=scorer_override_policy,
-            requirements=replace(requirements, requires_target_tools=True)
-            if requirements is not None and use_target_tools
-            else requirements
-            or TechniqueRequirements(
-                objective_target=cls.TOOL_HISTORY_TARGET_REQUIREMENTS if use_target_tools else TargetRequirements(),
-                requires_target_tools=use_target_tools,
-                seed_group=SeedGroupRequirements(objective_only=True),
-            ),
+            requirements=requirements,
         )
 
     def check_adversarial_target(self, *, target: PromptTarget) -> list[str]:
