@@ -141,10 +141,8 @@ await output_scenario_async(baseline_result)  # type: ignore [top-level-await]
 # run above produces a row for every default technique, which makes it hard to spot the most
 # successful ones at a glance. Pass `sort_groups_by_success_rate=True` to `output_scenario_async` to
 # re-render the same result with the highest success rates at the top (groups with equal rates keep
-# their original relative order). Success rates are only comparable within one objective scorer, so when
-# different scorers judged the groups, the summary labels the aggregate rate as descriptive, adds a
-# **Results by Objective Scorer**, and leaves the groups unsorted. Each scorer's row contains only
-# the executions attributed to it, not every execution rescored by every scorer:
+# their original relative order). Groups that different objective scorers judged (see **Judging Each
+# Dataset With Its Own Scorer** below) stay unsorted, because their success rates are not comparable:
 
 # %%
 await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)

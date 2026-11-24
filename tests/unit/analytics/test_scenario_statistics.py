@@ -580,3 +580,24 @@ def test_compound_with_an_unidentified_child_scorer_is_not_credited_to_a_recorde
     assert scorer_statistics.scorer_hash is None
     assert scorer_statistics.scorer_identifier is None
     assert statistics.objective_scorer_scope == ScenarioObjectiveScorerScope.UNKNOWN_SCORER
+
+
+@pytest.mark.parametrize("loaded_children", [False, True])
+def test_bound_compound_without_child_scorer_evidence_is_unknown_not_planned(loaded_children: bool) -> None:
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="attack",
+        objective="objective-0",
+        envelope_outcome=AttackOutcome.SUCCESS,
+        child_outcomes=[AttackOutcome.SUCCESS],
+    )
+    attacks = [*children, envelope] if loaded_children else [envelope]
+    for attack in attacks:
+        attack.attribution_data.update(parent_eval_hash="eval-attack", seed_group_id="seed-0")
+    result = make_judged_scenario_result(groups=[("attack", _JUDGE_A, None, [AttackOutcome.SUCCESS])])
+    result.attack_results["attack"] = attacks
+
+    [scorer_statistics] = compute_scenario_statistics(result).objective_scorers
+
+    assert scorer_statistics.attribution == ScenarioObjectiveScorerAttribution.UNKNOWN
+    assert scorer_statistics.scorer_hash is None
+    assert scorer_statistics.scorer_identifier is None

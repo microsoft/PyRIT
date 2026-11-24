@@ -81,7 +81,8 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
                 information. Defaults to None; leaf classes should provide a default.
             sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted
                 so that the group with the highest success rate appears first. Groups that tie
-                on success rate retain their original relative order. Defaults to False, which
+                on success rate retain their original relative order. Groups that different
+                objective scorers judged stay unsorted with a notice. Defaults to False, which
                 preserves insertion order.
         """
         super().__init__(sink=sink)
@@ -410,7 +411,8 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
             sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted
-                so that the group with the highest success rate appears first. Defaults to False.
+                so that the group with the highest success rate appears first. Groups that different
+                objective scorers judged stay unsorted with a notice. Defaults to False.
         """
         super().__init__(
             sink=sink,
