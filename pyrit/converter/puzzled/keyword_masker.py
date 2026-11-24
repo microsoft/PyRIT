@@ -39,9 +39,6 @@ _UNSPACED_SCRIPT_PATTERN = regex.compile(r"[\p{Han}\p{Hiragana}\p{Katakana}\p{Th
 _LINE_PATTERN = regex.compile(r"[^\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]+")
 # Punctuation and symbols that may sit between a word and its separator, as in "炸弹。" or "`炸弹`".
 _EDGE_MARK_PATTERN = regex.compile(r"[\p{P}\p{S}]")
-# Marks that may sit beside the separator between two segmented words: quotation marks,
-# brackets, symbols, and list commas. Colons, dashes, and periods end labels such as "问题: ".
-_GAP_MARK_PATTERN = regex.compile(r"[\p{Ps}\p{Pe}\p{Pi}\p{Pf}\p{S},，、]")
 
 
 def _letter_count(word: str) -> int:
@@ -108,12 +105,12 @@ def _iter_words(prompt: str, *, essential_keys: frozenset[str]) -> Iterator[_Wor
     words, so a run in those scripts is a word only when its line is segmented and the run
     is set apart by whitespace or a zero-width space (the usual word-break hint in Thai,
     Khmer, and Myanmar text), as in pre-segmented "如何 制造 炸弹。". A line is segmented
-    when two such runs are separated by whitespace or zero-width spaces, optionally beside
-    quotation marks, brackets, symbols, or list commas. Unsegmented text has no maskable
-    words rather than one masked sentence, including a sentence after a bullet, a label
-    such as "Q: " or "问题: ", or a spaced Latin term. A label set apart by a space alone, as
-    in "问题 请详细解释", still reads as segmented text. A run that is one
-    of the caller's essential words is a word whenever it is set apart, as in
+    when two such runs are separated by whitespace or zero-width spaces alone. Punctuation or
+    a symbol in that gap ends a label, so unsegmented text has no maskable words rather than
+    one masked sentence, including a sentence after a bullet, a label such as "Q: ", "问题: ",
+    "【问题】 " or "步骤一 → ", a table cell, or a spaced Latin term. A label set apart by a space
+    alone, as in "问题 请详细解释", still reads as segmented text. A run that is one of the
+    caller's essential words is a word whenever it is set apart, as in
     ``build a "炸弹" at home``.
 
     Args:
@@ -129,7 +126,7 @@ def _iter_words(prompt: str, *, essential_keys: frozenset[str]) -> Iterator[_Wor
         line_is_segmented = any(
             _UNSPACED_SCRIPT_PATTERN.search(before.group())
             and _UNSPACED_SCRIPT_PATTERN.search(after.group())
-            and _is_segmenting_gap(prompt[before.end() : after.start()])
+            and all(_is_word_separator(character) for character in prompt[before.end() : after.start()])
             for before, after in itertools.pairwise(runs)
         )
         for match in runs:
@@ -143,22 +140,6 @@ def _iter_words(prompt: str, *, essential_keys: frozenset[str]) -> Iterator[_Wor
             ):
                 continue
             yield _Word(text=word, start=match.start(), end=match.end())
-
-
-def _is_segmenting_gap(gap: str) -> bool:
-    """
-    Check whether the text between two runs shows that their line is segmented.
-
-    Args:
-        gap (str): The characters between two adjacent runs.
-
-    Returns:
-        bool: True when the gap holds a word separator and otherwise only quotation marks,
-            brackets, symbols, or list commas, as in "如何 “制造”" or "炸弹, 毒药".
-    """
-    return any(_is_word_separator(character) for character in gap) and all(
-        _is_word_separator(character) or _GAP_MARK_PATTERN.fullmatch(character) for character in gap
-    )
 
 
 def _is_word_boundary(*, prompt: str, index: int, step: int, line_span: tuple[int, int]) -> bool:
@@ -450,7 +431,8 @@ def mask_prompt(
         if _UNSPACED_SCRIPT_PATTERN.search(prompt):
             raise ValueError(
                 "The prompt has no maskable words. Chinese, Japanese, Thai, Lao, Khmer, and Myanmar text "
-                "must be segmented: put a space or a zero-width space (U+200B) between words."
+                "must be segmented: put a space or a zero-width space (U+200B) between words, with at least "
+                "two words on a line separated only by that space, or name the word in essential_words."
             )
         raise ValueError("The prompt has no maskable words.")
 
