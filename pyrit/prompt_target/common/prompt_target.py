@@ -720,7 +720,8 @@ class PromptTarget(Identifiable):
         custom_configuration_message = (
             "If your target does support this, set the custom_configuration parameter accordingly."
         )
-        supported_types_flat = {t for combo in self.capabilities.input_modalities for t in combo}
+        accepted_modalities = self.capabilities.input_modalities | self._implied_input_modalities()
+        supported_types_flat = {t for combo in accepted_modalities for t in combo}
         for turn in normalized_conversation:
             for piece in turn.message_pieces:
                 piece_type = piece.converted_value_data_type
@@ -756,6 +757,15 @@ class PromptTarget(Identifiable):
 
         if not self.configuration.includes(capability=CapabilityName.MULTI_TURN) and len(normalized_conversation) > 1:
             raise ValueError(f"This target only supports a single turn conversation. {custom_configuration_message}")
+
+    def _implied_input_modalities(self) -> frozenset[frozenset[PromptDataType]]:
+        """
+        Return input modalities a request may use without the target declaring them as capabilities.
+
+        Returns:
+            frozenset[frozenset[PromptDataType]]: Accepted modality combinations. Defaults to none.
+        """
+        return frozenset()
 
     def _get_history_piece_data_type(
         self, *, message_piece: MessagePiece, has_text_piece: bool
