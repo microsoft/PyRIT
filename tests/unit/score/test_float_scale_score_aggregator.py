@@ -456,6 +456,35 @@ def test_all_categories_extrema_resolve_conflicting_metadata_from_selected_score
     assert min_result.metadata == {"severity": 2, "low_only": 1, "high_only": 1}
 
 
+def test_all_categories_average_omits_conflicting_metadata() -> None:
+    # AVERAGE goes through the same winner-selection path as MAX/MIN. A
+    # conflicting key must not be reintroduced from one constituent.
+    scores = [
+        _mk_score(0.3, category=["Hate"], metadata={"severity": 1}),
+        _mk_score(0.5, category=["Violence"], metadata={"severity": 3}),
+        _mk_score(0.7, category=["Sexual"], metadata={"severity": 5}),
+    ]
+
+    result = FloatScaleScorerAllCategories.AVERAGE(scores)[0]
+
+    assert result.value == 0.5
+    assert "severity" not in result.metadata
+
+
+@pytest.mark.parametrize(
+    "aggregator",
+    [FloatScaleScorerAllCategories.MAX, FloatScaleScorerByCategory.MAX],
+)
+def test_no_matching_constituent_raises_in_both_branches(aggregator) -> None:
+    # A NaN assigned after construction makes the aggregate unattributable.
+    # Silently dropping the winner's metadata used to hide that.
+    score = _mk_score(0.5, metadata={"source": "winner"})
+    score.score_value = "nan"
+
+    with pytest.raises(ValueError, match="No constituent score matches"):
+        aggregator([score])
+
+
 def test_all_categories_max_uses_first_winner_metadata_for_ties() -> None:
     scores = [
         _mk_score(0.7, category=["Hate"], metadata={"source": "first"}),
