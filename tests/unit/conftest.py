@@ -23,6 +23,7 @@ from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, SQLiteMemory, migration
 from pyrit.models import SeedDataset
 from pyrit.setup.finding_fields import reset_active_finding_fields
+from test_support.async_fixture_errors import pytest_fixture_setup  # noqa: F401
 from test_support.fixtures import use_sqlite_memory
 
 # This limits retries and speeds up execution
