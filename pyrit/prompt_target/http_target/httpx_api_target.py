@@ -211,6 +211,7 @@ class HTTPXAPITarget(HTTPTarget):
 
         Raises:
             ValueError: If no `http_url` is provided.
+            ValueError: If a file upload is attempted without ``allowed_upload_directory``.
             httpx.TimeoutException: If the request times out.
             httpx.RequestError: If the request fails.
             FileNotFoundError: If the specified file to upload is not found.
