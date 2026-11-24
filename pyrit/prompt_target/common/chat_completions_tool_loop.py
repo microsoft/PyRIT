@@ -9,12 +9,13 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from typing import Any
 
-from pyrit.models import Message, PromptDataType
+from pyrit.models import Message, PromptDataType, ProviderTraceReference
 from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES, parse_function_call
 from pyrit.prompt_target.common.tool_loop import (
     InvalidToolCallsError,
     PendingToolCall,
+    ToolDispatchResult,
     ToolFunction,
     dispatch_tool_call_async,
     run_tool_loop_async,
@@ -154,6 +155,7 @@ class _ChatCompletionsToolLoopMixin(ABC):
 
     async def _run_tool_loop_async(self, *, conversation: list[Message], tools: Sequence[Tool]) -> list[Message]:
         request = conversation[-1]
+        tool_dispatched = False
 
         async def send_async(working: Sequence[Message]) -> Message:
             return await self._send_completion_async(conversation=list(working), request=request, tools=tools)
@@ -161,14 +163,26 @@ class _ChatCompletionsToolLoopMixin(ABC):
         async def resolve_tools_async() -> tuple[Sequence[Tool], Mapping[str, ToolFunction]]:
             return tools, {}
 
-        return await run_tool_loop_async(
-            conversation=conversation,
-            request_piece=request.message_pieces[0],
-            send_async=send_async,
-            find_calls=_chat_tool_call_finder(conversation),
-            dispatch_async=lambda call: dispatch_tool_call_async(call=call, resolve_tools_async=resolve_tools_async),
-            max_tool_rounds=self._max_tool_rounds,
-        )
+        async def dispatch_async(call: PendingToolCall) -> ToolDispatchResult:
+            nonlocal tool_dispatched
+            tool_dispatched = True
+            return await dispatch_tool_call_async(call=call, resolve_tools_async=resolve_tools_async)
+
+        try:
+            return await run_tool_loop_async(
+                conversation=conversation,
+                request_piece=request.message_pieces[0],
+                send_async=send_async,
+                find_calls=_chat_tool_call_finder(conversation),
+                dispatch_async=dispatch_async,
+                max_tool_rounds=self._max_tool_rounds,
+            )
+        finally:
+            if tool_dispatched:
+                # A local tool runs outside the provider's trace, and each completion gets a trace of its own,
+                # so no one provider response id can name this send. It stays unlinked.
+                for piece in request.message_pieces:
+                    ProviderTraceReference.clear_metadata(piece.prompt_metadata)
 
     @abstractmethod
     async def _send_completion_async(
