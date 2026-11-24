@@ -460,7 +460,7 @@ export default function TechniqueEditor({
   return (
     <Dialog open onOpenChange={(_, data) => { if (!data.open) onClose?.() }}>
       <DialogSurface className={styles.surface}>
-        <DialogBody>
+        <DialogBody className={styles.body}>
           <DialogTitle>{editing ? 'Edit technique' : 'New technique'}</DialogTitle>
           <DialogContent className={styles.content}>
             {content}

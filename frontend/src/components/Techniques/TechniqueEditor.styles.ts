@@ -9,7 +9,9 @@ export const useTechniqueEditorStyles = makeStyles({
       maxWidth: `calc(100vw - ${tokens.spacingHorizontalXXL} - ${tokens.spacingHorizontalXXL})`,
     },
   },
-  content: { minWidth: 0, overflowY: 'auto', maxHeight: '65vh' },
+  // The surface's height less its padding and border, so the form scrolls instead of pushing the actions out.
+  body: { minHeight: 0, maxHeight: 'calc(90vh - 50px)' },
+  content: { minWidth: 0, minHeight: 0, overflowY: 'auto', maxHeight: '65vh' },
   // DialogBody is a grid with the actions in its third row; while the warning shows, it takes that row and the
   // actions move below it.
   temporaryWarning: { gridRowStart: 3, gridRowEnd: 3, gridColumnStart: 1, gridColumnEnd: 4 },

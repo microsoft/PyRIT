@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "./_fixtures";
 import { compatibilityHeaders, mockVersion } from "./_compatibility";
+import { READY_RUNTIME } from "./_runtime";
 
 test("creates and selects a runtime technique with the real backend @seeded", async ({ page, request }) => {
   test.setTimeout(120_000);
@@ -718,8 +719,123 @@ test.describe("Converter Registry", () => {
         const badgeLefts: number[] = [];
         for (const converterId of names) {
           const row = page.getByRole("row", { name: new RegExp(converterId) });
-          const name = await row.getByRole("button", { name: `Identity for ${converterId}` }).boundingBox();
-          const badge = await row.getByText("Saved", { exact: true }).boundingBox();
+          const nameButton = row.getByRole("button", { name: `Identity for ${converterId}` });
+          const badgeText = row.getByText("Saved", { exact: true });
+          await expect(nameButton).toBeVisible();
+          await expect(badgeText).toBeVisible();
+          const name = await nameButton.boundingBox();
+          const badge = await badgeText.boundingBox();
+          expect(name).not.toBeNull();
+          expect(badge).not.toBeNull();
+          expect(badge!.y).toBeGreaterThanOrEqual(name!.y + name!.height - 1);
+          badgeLefts.push(badge!.x);
+        }
+        expect(Math.abs(badgeLefts[0] - badgeLefts[1])).toBeLessThan(1);
+      });
+    });
+  }
+});
+
+function mockTechnique(name: string) {
+  return {
+    name,
+    attack_type: "PromptSendingAttack",
+    tags: [],
+    description: `${name} description`,
+    uses_adversarial: false,
+    uses_default_adversarial_target: false,
+    identifier: { class_name: "AttackTechniqueFactory", class_module: "pyrit.scenario", hash: name, name },
+    creation_statement: `AttackTechniqueFactory(name="${name}")`,
+    origin: "saved",
+  };
+}
+
+async function installTechniqueMocks(page: Page, names: string[]): Promise<void> {
+  await installRegistryMocks(page);
+  // New technique waits for a ready runtime.
+  await page.route("**/api/runtime", async (route) => {
+    await route.fulfill({ json: READY_RUNTIME });
+  });
+  await page.route(/\/api\/techniques(?:\?.*)?$/, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: names.map(mockTechnique), pagination: { limit: 200, has_more: false } }),
+    });
+  });
+  await page.route(/\/api\/techniques\/types$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [
+          {
+            attack_type: "RedTeamingAttack",
+            description: "Uses an adversarial target.",
+            parameters: [],
+            supports_converters: true,
+            supports_adversarial: true,
+          },
+        ],
+      }),
+    });
+  });
+  await page.route(/\/api\/techniques\/saveability$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        not_saveable_reason: "Uses temporary converter 'rot13', which won't exist after a restart.",
+      }),
+    });
+  });
+}
+
+test.describe("Technique Registry", () => {
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 390, height: 700 },
+    { width: 1440, height: 700 },
+    { width: 1280, height: 720 },
+  ]) {
+    test.describe(`${viewport.width}x${viewport.height}`, () => {
+      test.use({ viewport });
+
+      test("keeps Create as Temporary inside the New technique dialog", async ({ page }) => {
+        await installTechniqueMocks(page, ["first"]);
+        await page.goto("/registry/techniques");
+        await page.getByRole("button", { name: "New technique" }).click();
+        const dialog = page.getByRole("dialog");
+        await dialog.getByRole("combobox", { name: "Attack type", exact: true }).selectOption("RedTeamingAttack");
+
+        await expect(dialog.getByRole("status")).toContainText("This technique can't be saved");
+        const create = dialog.getByRole("button", { name: "Create as Temporary" });
+        await expect(create).toBeInViewport({ ratio: 1 });
+        const surface = await dialog.boundingBox();
+        const button = await create.boundingBox();
+        expect(surface).not.toBeNull();
+        expect(button).not.toBeNull();
+        expect(button!.y + button!.height).toBeLessThanOrEqual(surface!.y + surface!.height);
+      });
+
+      test("lines up origin badges under technique names of any length", async ({ page }) => {
+        const names = ["formal", "role_play_for_the_quarterly_red_team_operation"];
+        await installTechniqueMocks(page, names);
+        await page.goto("/registry/techniques");
+
+        const badgeLefts: number[] = [];
+        for (const techniqueName of names) {
+          const row = page.getByRole("row", { name: new RegExp(techniqueName) });
+          const nameButton = row.getByRole("button", { name: `Identity for ${techniqueName}` });
+          const badgeText = row.getByText("Saved", { exact: true });
+          await expect(nameButton).toBeVisible();
+          await expect(badgeText).toBeVisible();
+          const name = await nameButton.boundingBox();
+          const badge = await badgeText.boundingBox();
           expect(name).not.toBeNull();
           expect(badge).not.toBeNull();
           expect(badge!.y).toBeGreaterThanOrEqual(name!.y + name!.height - 1);
