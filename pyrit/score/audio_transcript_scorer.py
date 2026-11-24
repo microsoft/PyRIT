@@ -180,7 +180,7 @@ class AudioTranscriptHelper:
         """
         audio_path = message_piece.converted_value
 
-        if not Path(audio_path).exists():
+        if not await asyncio.to_thread(Path(audio_path).exists):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         # Transcribe audio to text
@@ -219,10 +219,10 @@ class AudioTranscriptHelper:
         logger.info(f"Audio transcription: WAV file path = {wav_path}")
 
         # Check if WAV file exists and has content
-        if not Path(wav_path).exists():
+        if not await asyncio.to_thread(Path(wav_path).exists):
             raise FileNotFoundError(f"WAV file does not exist at {wav_path}")
 
-        file_size = Path(wav_path).stat().st_size
+        file_size = (await asyncio.to_thread(Path(wav_path).stat)).st_size
         logger.info(f"Audio transcription: WAV file size = {file_size} bytes")
 
         try:
@@ -237,7 +237,7 @@ class AudioTranscriptHelper:
         finally:
             # Clean up temporary WAV file if it exists (ie for scoring audio from videos)
             if wav_path != audio_path:
-                Path(wav_path).unlink(missing_ok=True)
+                await asyncio.to_thread(Path(wav_path).unlink, missing_ok=True)
 
     def _ensure_wav_format(self, audio_path: str) -> str:
         """

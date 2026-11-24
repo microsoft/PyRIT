@@ -680,8 +680,7 @@ async def add_message(  # pyrit-async-suffix-exempt
 
     Request and response converters can be supplied as ordered, registry-backed
     configurations. Each configuration can target message piece indexes, prompt
-    data types, or both. The global ``converter_ids`` request pipeline remains
-    available for compatibility but is deprecated.
+    data types, or both.
 
     Returns:
         AddMessageResponse: Updated attack with new message(s).

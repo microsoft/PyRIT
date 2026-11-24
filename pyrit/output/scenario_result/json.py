@@ -10,6 +10,7 @@ from pyrit.models import AttackOutcome, AttackResult, OutcomeStatistics, Scenari
 from pyrit.output._derivation import (
     attack_score_display,
     attack_technique_label,
+    objective_scorer_label,
     resolve_target_info,
     scenario_overview,
     select_attacks,
@@ -155,6 +156,36 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         else:
             scorer = None
 
+        objective_scorers = [
+            {
+                "label": objective_scorer_label(objective_scorer),
+                "attribution": objective_scorer.attribution.value,
+                "scorer_hash": objective_scorer.scorer_hash,
+                "candidate_index": objective_scorer.candidate_index,
+                "evaluation": objective_scorer.evaluation,
+                "scorer": (
+                    self._scorer_printer.build(scorer_identifier=objective_scorer.scorer_identifier)
+                    if objective_scorer.scorer_identifier is not None and self._scorer_printer is not None
+                    else None
+                ),
+                "planned": objective_scorer.overall.planned,
+                "num_objective_executions": objective_scorer.overall.completed,
+                "outcomes": self._OUTCOME_ADAPTER.dump_python(objective_scorer.overall.outcomes, mode="json"),
+                "success_rate_decided": (
+                    objective_scorer.overall.outcomes.success_rate_decided
+                    if objective_scorer.overall.outcomes is not None
+                    else None
+                ),
+                "success_rate_all": (
+                    objective_scorer.overall.outcomes.success_rate_all
+                    if objective_scorer.overall.outcomes is not None
+                    else None
+                ),
+                "atomic_attacks": list(objective_scorer.atomic_attacks),
+            }
+            for objective_scorer in overview.objective_scorers
+        ]
+
         return {
             "view": "overview",
             "scenario": {
@@ -178,7 +209,11 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
                 "outcomes": self._OUTCOME_ADAPTER.dump_python(overview.outcomes, mode="json"),
                 "producer_counts": self._PRODUCER_ADAPTER.dump_python(overview.producer_counts, mode="json"),
                 "unique_objectives": len(result.get_objectives()),
+                "objective_scorer_scope": overview.objective_scorer_scope.value
+                if overview.objective_scorer_scope is not None
+                else None,
             },
+            "objective_scorers": objective_scorers,
             "groups": groups,
         }
 
