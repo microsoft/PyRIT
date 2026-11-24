@@ -54,6 +54,11 @@ print(f"Direct execution: {run.events[0].stdout.strip()}")
 # Every `score_async` call starts a fresh execution, identified by its saved observation ID.
 # Wrong output, unexpected exits, and enforced resource/time limits fail a case. Infrastructure
 # failures or insufficient evidence leave the verdict undetermined.
+#
+# Program text runs verbatim. To score a model response that mixes prose and code, give the
+# source `program_selector=FencedCodeBlockSelector(languages=("python",))`. It runs only the one
+# fenced block tagged with an accepted language. Text with no such block, several, or an
+# unclosed fence runs nothing, and the verdict is undetermined rather than false.
 
 # %%
 from pyrit.memory import CentralMemory
