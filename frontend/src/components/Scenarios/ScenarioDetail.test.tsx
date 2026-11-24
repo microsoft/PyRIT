@@ -3603,6 +3603,8 @@ describe('ScenarioDetail', () => {
         renderDetail(`${ASSERT_PATH}?dataset=ds_a&dataset=ds_b`)
 
         expect(await screen.findByRole('button', { name: 'Remove ds_b' })).toBeInTheDocument()
+        // The Add picker is enabled only once the compatible listing has loaded, so the check below is final.
+        await waitFor(() => expect(screen.getByRole('combobox', { name: 'Add dataset' })).toBeEnabled())
         await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
         expect(screen.queryByTestId('omitted-linked-datasets')).not.toBeInTheDocument()
         await confirmRunPreview(user)

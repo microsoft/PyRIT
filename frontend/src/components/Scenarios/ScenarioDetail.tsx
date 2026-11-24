@@ -606,7 +606,7 @@ function ScenarioLaunchForm({
     supportsDatasets || scenarioDatasetDefaults(scenario).sources.length > 0)
   // A compatible-only listing names every stored dataset this scenario can use, so a linked name it omits
   // can't run. Once the first listing succeeds, leave those names out and say why, rather than keep a row
-  // that only fails at launch. While the listing loads or has failed, the Add picker is disabled but rows can
+  // that only fails at launch. While the listing has failed, the Add picker is disabled but rows can
   // still be removed or limited; this filters the current selection, so those edits are kept and a row
   // already removed isn't named. Adjusted during render (React's "adjust state when props change" pattern)
   // rather than in an effect.
