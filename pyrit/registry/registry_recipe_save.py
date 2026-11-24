@@ -64,14 +64,15 @@ class NotSaveableError(ValueError):
 class SavedEntryConflictError(ValueError):
     """An entry can't be saved under a name, or a technique with a tag, that a registered or saved entry has."""
 
-    def __init__(self, message: str, *, field: Literal["name", "tags"] = "name") -> None:
+    def __init__(self, message: str, *, field: Literal["name", "tags"] | None = "name") -> None:
         """
         Initialize the error with what conflicts.
 
         Args:
             message (str): What conflicts, in words safe to show users.
-            field (Literal["name", "tags"]): Whether the entry's name or, for a technique, one of its tags
-                conflicts. Defaults to "name".
+            field (Literal["name", "tags"] | None): Whether the entry's name or, for a technique, one of its tags
+                conflicts, or None when it's neither, such as an entry the recipe names that was deleted while it
+                was being saved. Defaults to "name".
         """
         super().__init__(message)
         self.field = field
@@ -469,7 +470,8 @@ def _refuse_missing_references(
         if entry is None or registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
             raise SavedEntryConflictError(
                 f"{ref.kind.value.removesuffix('s').capitalize()} '{ref.name}' was deleted while this was being "
-                "saved, so it can't be saved now."
+                "saved, so it can't be saved now.",
+                field=None,
             )
 
 

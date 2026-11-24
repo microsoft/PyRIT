@@ -163,10 +163,10 @@ async def create_technique_async(*, body: CreateTechniqueRequest, request: Reque
         return not_saveable_response(error=exc, request=request)
     except SavedEntryConflictError as exc:
         # Says whether the name or a tag conflicts, so the editor can show it on that field.
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content={"detail": str(exc), "errors": [{"field": f"body.{exc.field}", "message": str(exc)}]},
-        )
+        content: dict[str, object] = {"detail": str(exc)}
+        if exc.field is not None:
+            content["errors"] = [{"field": f"body.{exc.field}", "message": str(exc)}]
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=content)
     except SavedEntryStorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except PermissionError as exc:

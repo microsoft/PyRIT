@@ -409,6 +409,7 @@ async def test_save_then_register_async_refuses_a_recipe_naming_an_entry_deleted
         )
 
     assert str(refusal.value) == "Target 'saved_chat' was deleted while this was being saved, so it can't be saved now."
+    assert refusal.value.field is None
     register.assert_not_called()
     assert not (tmp_path / "converters" / "formal_tone.json").exists()
 

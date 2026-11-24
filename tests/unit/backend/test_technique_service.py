@@ -1258,6 +1258,19 @@ def test_rest_create_passes_the_owner_and_maps_save_errors(
     )
 
 
+def test_rest_create_gives_no_field_for_a_conflict_over_a_deleted_entry(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    deleted = "Target 'attacker' was deleted while this was being saved, so it can't be saved now."
+    with patch("pyrit.backend.routes.techniques.get_technique_service") as get_service:
+        get_service.return_value.create_async = AsyncMock(side_effect=SavedEntryConflictError(deleted, field=None))
+
+        response = client.post(
+            "/api/techniques", json={"name": "red_team", "type": "RedTeamingAttack", "persist": True}
+        )
+
+    assert (response.status_code, response.json()) == (409, {"detail": deleted})
+
+
 def test_rest_create_records_no_owner_when_not_saving(compatibility_headers: dict[str, str]) -> None:
     client = TestClient(app, headers=compatibility_headers)
     with (
