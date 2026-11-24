@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from openai import AsyncOpenAI
 
-from pyrit.common import forward_init_parameters, print_deprecation_message
+from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
@@ -587,22 +587,6 @@ class RealtimeTarget(OpenAITarget):
         else:
             logger.info(f"Disconnected from {self._endpoint} with conversation ID: {conversation_id}")
 
-    async def cleanup_conversation_async(self, conversation_id: str) -> None:
-        """
-        Disconnect from the Realtime API for a specific conversation.
-
-        Deprecated. Use ``reset_conversation_async`` instead.
-
-        Args:
-            conversation_id (str): The conversation ID to disconnect from.
-        """
-        print_deprecation_message(
-            old_item="RealtimeTarget.cleanup_conversation_async",
-            new_item="RealtimeTarget.reset_conversation_async",
-            removed_in="1.3.0",
-        )
-        await self.reset_conversation_async(conversation_id=conversation_id)
-
     async def _connect_async(self, *, conversation_id: str) -> Any:
         """
         Open a fresh Realtime API websocket connection and return the connection handle.
@@ -617,7 +601,7 @@ class RealtimeTarget(OpenAITarget):
         logger.info(f"Connecting to Realtime API: {self._endpoint} (conversation_id={conversation_id})")
 
         client = self._get_openai_client()
-        connection = await client.realtime.connect(model=self._model_name).__aenter__()
+        connection = await client.realtime.connect(model=self._model_name, extra_headers=self._headers).__aenter__()
 
         logger.info("Successfully connected to AzureOpenAI Realtime API")
         return connection

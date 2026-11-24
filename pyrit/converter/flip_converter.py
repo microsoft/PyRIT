@@ -8,7 +8,17 @@ from pyrit.models import PromptDataType
 
 class FlipConverter(Converter):
     """
-    Flips the input text prompt. For example, "hello me" would be converted to "em olleh".
+    Flips the input text prompt by reversing its extended grapheme clusters.
+
+    For example, "hello me" would be converted to "em olleh". Multi-code-point
+    sequences like emoji ZWJ sequences, skin-tone modifiers, combining marks,
+    and Indic conjuncts stay together in their perceived clusters.
+
+    Note:
+        Reversal is generally self-inverse (i.e. flipping twice returns the original
+        string), except for inputs where reversing clusters causes them to re-segment
+        upon concatenation (such as unpaired regional indicator symbols or leading
+        combining marks).
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
