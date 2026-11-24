@@ -330,12 +330,16 @@ async def generate_simulated_conversation_async(
     preparation_failure = AttackPreparationFailure.from_result(result=result)
     # A stand-in whose tool loop stopped early (no rounds left, an invalid call, a tool error) or whose
     # turn was filtered leaves an error piece, which the objective target would reject as history.
-    # Empty turns carry nothing, so they are dropped instead.
-    conversation_messages = [
-        message
-        for message in conversation_messages
-        if not all(piece.response_error == "empty" for piece in message.message_pieces)
-    ]
+    # Empty turns carry nothing, so they are dropped together with the user turn they answer;
+    # otherwise an unanswered user turn would be extracted as the message sent instead of the objective.
+    kept: list[Message] = []
+    for message in conversation_messages:
+        if all(piece.response_error == "empty" for piece in message.message_pieces):
+            if kept and kept[-1].api_role == "user":
+                kept.pop()
+            continue
+        kept.append(message)
+    conversation_messages = kept
     error = next(
         (
             piece

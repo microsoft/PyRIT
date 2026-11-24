@@ -45,7 +45,7 @@ class ToolsInitializer(PyRITInitializer):
                         ),
                         use_target_tools=True,
                         num_turns=3,
-                        technique_tags=["multi_turn", "tools"],
+                        technique_tags=["single_turn", "tools"],
                     )
                 ]
             )

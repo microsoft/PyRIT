@@ -1569,24 +1569,27 @@ class TestSimulatedConversationWithTools:
                 tools=[_LOOKUP],
             )
 
-    async def test_empty_stand_in_turn_is_dropped_from_the_history_async(
+    async def test_empty_stand_in_turns_are_dropped_with_the_user_turns_they_answer_async(
         self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt
     ) -> None:
-        empty = MessagePiece(role="assistant", original_value="", response_error="empty").to_message()
+        def empty() -> Message:
+            return MessagePiece(role="assistant", original_value="", response_error="empty").to_message()
 
         result, _ = await _run_turn_by_turn_async(
             conversation=[
                 _piece_message("user", "Check SEC-1.", "text"),
-                empty,
+                empty(),
                 _piece_message("user", "And SEC-2?", "text"),
                 _piece_message("assistant", "SEC-2 is approved.", "text"),
+                _piece_message("user", "Who approved it?", "text"),
+                empty(),
             ],
             mock_objective_scorer=mock_objective_scorer,
             adversarial_system_prompt=adversarial_system_prompt,
         )
 
         assert result.preparation_failure is None
-        assert [prompt.value for prompt in result.seed_prompts] == ["Check SEC-1.", "And SEC-2?", "SEC-2 is approved."]
+        assert [prompt.value for prompt in result.seed_prompts] == ["And SEC-2?", "SEC-2 is approved."]
 
     async def test_tool_result_conversation_is_linked_async(
         self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt
