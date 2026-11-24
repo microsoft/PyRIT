@@ -18,7 +18,7 @@ interface LoadedDatasetsState {
  * Loads the memory-backed dataset catalog. The selection key is not a parameter:
  * cards and the selection route look up keys in this response.
  */
-export function useLoadedDatasets(): LoadedDatasetsState {
+export function useLoadedDatasets(includeAvailable = false): LoadedDatasetsState {
   const { generation } = useRuntime()
   const [datasets, setDatasets] = useState<DatasetInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -41,7 +41,7 @@ export function useLoadedDatasets(): LoadedDatasetsState {
 
     const load = async (): Promise<void> => {
       try {
-        const response = await datasetsApi.listDatasets({ loaded_only: true }, controller.signal)
+        const response = await datasetsApi.listDatasets({ loaded_only: !includeAvailable }, controller.signal)
         if (controller.signal.aborted) return
         setDatasets(response.items)
         setError(null)
@@ -61,7 +61,7 @@ export function useLoadedDatasets(): LoadedDatasetsState {
       controller.abort()
       pending.current = false
     }
-  }, [generation, refetchCount])
+  }, [generation, refetchCount, includeAvailable])
 
   const refresh = useCallback(() => {
     if (pending.current) return

@@ -18,7 +18,7 @@ scorers reference core scorers via these best tags.
 
 import logging
 from collections.abc import Callable, Sequence
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar, TypeVar, cast
 
 from azure.ai.contentsafety.models import TextCategory
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 RequiredDependencyT = TypeVar("RequiredDependencyT")
 
 
-class ScorerInitializerTags(str, Enum):
+class ScorerInitializerTags(StrEnum):
     """Tags applied to scorer registry entries by ScorerInitializer."""
 
     # Category tags — every scorer in the category gets this tag
@@ -146,7 +146,6 @@ class ScorerInitializer(PyRITInitializer):
     ACS_SELF_HARM: ClassVar[str] = "acs_self_harm"
     ACS_SEXUAL: ClassVar[str] = "acs_sexual"
     ACS_VIOLENCE: ClassVar[str] = "acs_violence"
-    TASK_ACHIEVED_GPT4O_TEMP9: ClassVar[str] = "task_achieved_gpt4o_temp9"
 
     # Preferred name for each BEST_* category tag. If the preferred name
     # is not registered, the first available scorer in that category is used.
@@ -446,23 +445,10 @@ class ScorerInitializer(PyRITInitializer):
                 )
 
     def _register_task_achieved_scorers(self) -> None:
-        """
-        Register task-achieved true/false scorer variants.
-
-        All are tagged ``TASK_ACHIEVED``.
-        """
+        """Register the refined task-achieved scorer, tagged ``TASK_ACHIEVED``."""
         gpt4o_temp9 = self._get_chat_target_prefer_rr(GPT4O_TEMP9_TARGET)
         task_tag = [ScorerInitializerTags.TASK_ACHIEVED]
 
-        self._try_register(
-            name=self.TASK_ACHIEVED_GPT4O_TEMP9,
-            factory=lambda: SelfAskTrueFalseScorer.from_question(
-                chat_target=self._require_dependency(gpt4o_temp9, name=GPT4O_TEMP9_TARGET),
-                question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.TASK_ACHIEVED.value),
-            ),
-            required_targets=[gpt4o_temp9],
-            tags=task_tag,
-        )
         self._try_register(
             name=TASK_ACHIEVED_REFINED_GPT4O_TEMP9,
             factory=lambda: SelfAskTrueFalseScorer.from_question(

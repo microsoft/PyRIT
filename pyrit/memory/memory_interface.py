@@ -18,7 +18,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, NoReturn, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse
 
 from sqlalchemy import (
@@ -28,6 +28,7 @@ from sqlalchemy import (
     String,
     Unicode,
     and_,
+    bindparam,
     case,
     column,
     delete,
@@ -52,7 +53,7 @@ from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql import visitors
-from sqlalchemy.sql.elements import ClauseElement
+from sqlalchemy.sql.elements import BindParameter, ClauseElement
 from sqlalchemy.sql.operators import asc_op, desc_op
 
 from pyrit.analytics import compute_outcome_statistics
@@ -61,6 +62,16 @@ from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.pagination import DecodedKeysetCursor
+from pyrit.memory._finding_decomposition import (
+    FindingHierarchyError,
+    delete_subtree_async,
+    get_subtree_levels_async,
+    lock_finding_tree_async,
+    reject_path_step_async,
+    require_parent_async,
+    validate_move_async,
+    validate_path_steps_async,
+)
 from pyrit.memory._seed_decomposition import (
     DecompositionIdentity,
     DecompositionUnit,
@@ -102,8 +113,10 @@ from pyrit.memory.memory_models import (
     ObservationMessagePieceEntry,
     OperationEntry,
     PromptConverterIdentifierEntry,
+    PromptGenerationEntry,
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
+    ScenarioPlanSeedGroupEntry,
     ScenarioResultEntry,
     ScorableContentEntry,
     ScoreEntry,
@@ -121,6 +134,8 @@ from pyrit.memory.storage import (
     set_seed_sha256_async,
 )
 from pyrit.models import (
+    DATASET_NAME_RELEASING_STATUSES,
+    DEFAULT_FINDING_FIELDS,
     MEDIA_PATH_DATA_TYPES,
     AdversarialPrompts,
     AtomicAttackEvaluationIdentifier,
@@ -130,6 +145,7 @@ from pyrit.models import (
     AttackResult,
     AttackResultRole,
     AttackResultSelection,
+    AttackSeedGroup,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     ContentEntryScorable,
@@ -140,10 +156,10 @@ from pyrit.models import (
     ConversationStats,
     ConversationType,
     ConverterIdentifier,
+    DecompositionPath,
     Finding,
     FindingCreate,
     FindingEvidence,
-    FindingSeverity,
     IdentifierFilter,
     IdentifierType,
     Message,
@@ -153,6 +169,8 @@ from pyrit.models import (
     Operation,
     OperationUsage,
     PromptDataType,
+    PromptGenerationRecord,
+    PromptGenerationStatus,
     RequestTraceContext,
     RetryEvent,
     ScenarioAttackResultDelta,
@@ -190,6 +208,9 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
+
+# Callers that don't pass the active fields' severity order get PyRIT 1.2's, which the default fields keep.
+_DEFAULT_SEVERITY_ORDER: tuple[str, ...] = tuple(DEFAULT_FINDING_FIELDS.severity_order)
 
 
 @dataclass(frozen=True)
@@ -335,6 +356,39 @@ def _operation_ids(items: Sequence[object]) -> set[uuid.UUID]:
         for item in items
         if isinstance(item, (AttackResult, AttackResultEntry, ScenarioResultEntry)) and item.operation_id is not None
     }
+
+
+def _prompt_generation_filters(
+    *,
+    generation_id: uuid.UUID,
+    expected_statuses: Collection[PromptGenerationStatus],
+    expected_execution_id: uuid.UUID | None,
+) -> "list[ColumnElement[bool]]":
+    """
+    Match a generation that is still in an expected status and, optionally, owned by a run attempt.
+
+    Returns:
+        list[ColumnElement[bool]]: Conditions for a compare-and-set statement.
+    """
+    filters = [
+        PromptGenerationEntry.id == generation_id,
+        PromptGenerationEntry.status.in_([status.value for status in expected_statuses]),
+    ]
+    if expected_execution_id is not None:
+        filters.append(PromptGenerationEntry.execution_id == expected_execution_id)
+    return filters
+
+
+def _raise_dataset_name_taken(dataset_name: str) -> NoReturn:
+    """
+    Reject a dataset name that the shared create-only name rule reports as taken.
+
+    Raises:
+        DatasetNameConflictError: Always.
+    """
+    from pyrit.memory.dataset_lifecycle import DatasetNameConflictError
+
+    raise DatasetNameConflictError(f"A dataset or generation named '{dataset_name}' already exists.")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1034,6 +1088,258 @@ class MemoryInterface(abc.ABC):
         usage = await self.get_operation_usage_async(operation_id=operation_id)
         raise OperationInUseError(operation_id=operation_id, usage=usage)
 
+    async def add_prompt_generations_async(self, *, generations: Sequence[PromptGenerationRecord]) -> None:
+        """
+        Save new prompt generations together, holding each one's dataset name.
+
+        Each generation is checked after the ones before it are written, so the database's own name
+        comparison also rejects two members of one batch that it treats as the same name.
+
+        Args:
+            generations (Sequence[PromptGenerationRecord]): The generations to save.
+
+        Raises:
+            DatasetNameConflictError: If a dataset name is used by stored seeds, a staging upload, another
+                unfinished generation, or an earlier member of the batch. Nothing is saved.
+        """
+        from pyrit.memory.dataset_lifecycle import is_dataset_name_taken_async, lock_dataset_lifecycle
+
+        entries = [PromptGenerationEntry(generation) for generation in generations]
+        async with await self.get_session_async() as session:
+            await session.run_sync(lock_dataset_lifecycle)
+            for generation, entry in zip(generations, entries, strict=True):
+                if generation.status not in DATASET_NAME_RELEASING_STATUSES and await is_dataset_name_taken_async(
+                    session, dataset_name=generation.dataset_name
+                ):
+                    await session.rollback()
+                    _raise_dataset_name_taken(generation.dataset_name)
+                session.add(entry)
+                await session.flush()
+            await session.commit()
+
+    async def get_prompt_generations_async(self) -> list[PromptGenerationRecord]:
+        """
+        Read every prompt generation, newest first.
+
+        Generations created at the same time, such as the members of one batch, keep their batch order:
+        by batch position, first member first, and then by ID.
+
+        Returns:
+            list[PromptGenerationRecord]: The generations.
+        """
+        statement = select(PromptGenerationEntry).order_by(
+            PromptGenerationEntry.created_at.desc(), PromptGenerationEntry.group_index, PromptGenerationEntry.id
+        )
+        async with await self.get_session_async() as session:
+            return [entry.get_prompt_generation() for entry in (await session.scalars(statement)).all()]
+
+    async def get_prompt_generation_async(self, *, generation_id: uuid.UUID) -> PromptGenerationRecord | None:
+        """
+        Read one prompt generation.
+
+        Args:
+            generation_id (uuid.UUID): The generation to read.
+
+        Returns:
+            PromptGenerationRecord | None: The generation, or None if it doesn't exist.
+        """
+        async with await self.get_session_async() as session:
+            entry = await session.get(PromptGenerationEntry, generation_id)
+            return entry.get_prompt_generation() if entry is not None else None
+
+    async def is_dataset_name_available_async(self, *, dataset_name: str) -> bool:
+        """
+        Report whether a new dataset can use a name, without reserving it.
+
+        A name is taken when stored seeds use it, a staging upload reserved it, or an unfinished prompt
+        generation holds it. Uploads and generations enforce the same rule when they reserve a name.
+
+        Args:
+            dataset_name (str): The name to check.
+
+        Returns:
+            bool: True if no stored dataset, staging upload, or unfinished generation uses the name.
+        """
+        from pyrit.memory.dataset_lifecycle import is_dataset_name_taken_async
+
+        async with await self.get_session_async() as session:
+            return not await is_dataset_name_taken_async(session, dataset_name=dataset_name)
+
+    async def try_update_prompt_generation_async(
+        self,
+        *,
+        generation: PromptGenerationRecord,
+        expected_statuses: Collection[PromptGenerationStatus],
+        expected_execution_id: uuid.UUID | None = None,
+        fields: Collection[str],
+        reserve_dataset_name: bool = False,
+    ) -> bool:
+        """
+        Update a stored generation only while it is in one of ``expected_statuses``.
+
+        The compare and the write are one UPDATE, so a generation that another task or process moved
+        on is never overwritten.
+
+        Args:
+            generation (PromptGenerationRecord): The new state of the generation.
+            expected_statuses (Collection[PromptGenerationStatus]): Statuses the stored generation may be in.
+            expected_execution_id (uuid.UUID | None): When set, the run attempt that must still own the
+                generation.
+            fields (Collection[str]): The record fields to write. Other fields keep their stored values, so a
+                write built from an older read can't revert a concurrent change to them.
+            reserve_dataset_name (bool): Whether to recheck, under the dataset lifecycle lock, that no
+                stored dataset, staging upload, or other generation took the name. Use it when a
+                generation that released its name is queued again.
+
+        Returns:
+            bool: True if the generation was updated, False if it is missing or moved on.
+
+        Raises:
+            ValueError: If ``expected_statuses`` or ``fields`` is empty, or a field can't be changed.
+            DatasetNameConflictError: If ``reserve_dataset_name`` is set and the name is taken. Nothing changes.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        from pyrit.memory.dataset_lifecycle import is_dataset_name_taken_async, lock_dataset_lifecycle
+
+        if not expected_statuses:
+            raise ValueError("expected_statuses must not be empty")
+        if not fields:
+            raise ValueError("fields must not be empty")
+        values = PromptGenerationEntry.column_values(generation)
+        unknown = sorted(set(fields) - set(values))
+        if unknown:
+            raise ValueError(f"Prompt generation fields {unknown} can't be changed.")
+        values = {field: values[field] for field in fields}
+        statement = (
+            update(PromptGenerationEntry)
+            .where(
+                *_prompt_generation_filters(
+                    generation_id=generation.id,
+                    expected_statuses=expected_statuses,
+                    expected_execution_id=expected_execution_id,
+                )
+            )
+            .values(values)
+            .execution_options(synchronize_session=False)
+        )
+        async with await self.get_session_async() as session:
+            if reserve_dataset_name:
+                await session.run_sync(lock_dataset_lifecycle)
+            result = await session.execute(statement)
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("Prompt generation update did not return a database cursor result.")
+            if (
+                result.rowcount
+                and reserve_dataset_name
+                and await is_dataset_name_taken_async(
+                    session, dataset_name=generation.dataset_name, exclude_generation_id=generation.id
+                )
+            ):
+                await session.rollback()
+                _raise_dataset_name_taken(generation.dataset_name)
+            await session.commit()
+        return bool(result.rowcount)
+
+    async def commit_prompt_generation_dataset_async(
+        self,
+        *,
+        generation: PromptGenerationRecord,
+        expected_execution_id: uuid.UUID,
+        dataset: SeedDataset,
+        added_by: str,
+    ) -> bool:
+        """
+        Create a generation's dataset and record its completion in one transaction.
+
+        The dataset is created only: seeds are inserted as they are, never deduplicated or added to
+        an existing dataset. A generation therefore never has a saved dataset with an unfinished record.
+
+        Args:
+            generation (PromptGenerationRecord): The completed generation to store.
+            expected_execution_id (uuid.UUID): The run attempt that must still own the running generation.
+            dataset (SeedDataset): The dataset to create, named ``generation.dataset_name``.
+            added_by (str): Who the seeds are attributed to.
+
+        Returns:
+            bool: True if the dataset and the generation were saved, False if the generation is missing,
+                isn't running, or another run attempt owns it. Nothing is saved then.
+
+        Raises:
+            ValueError: If the dataset is empty or a seed belongs to another dataset.
+            DatasetNameConflictError: If stored seeds, a staging upload, or another generation use the
+                dataset name. Nothing is saved.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        from pyrit.memory.dataset_lifecycle import is_dataset_name_taken_async, lock_dataset_lifecycle
+
+        seeds = (await self.prepare_seed_batch_async(seeds=dataset.seeds, added_by=added_by)).seeds
+        if not seeds or any(seed.dataset_name != generation.dataset_name or not seed.value_sha256 for seed in seeds):
+            raise ValueError(
+                "A generated dataset needs storage-ready seeds that all belong to the generation's dataset."
+            )
+        filters = _prompt_generation_filters(
+            generation_id=generation.id,
+            expected_statuses=[PromptGenerationStatus.RUNNING],
+            expected_execution_id=expected_execution_id,
+        )
+        completion = (
+            update(PromptGenerationEntry)
+            .where(*filters)
+            .values(PromptGenerationEntry.column_values(generation))
+            .execution_options(synchronize_session=False)
+        )
+        async with await self.get_session_async() as session:
+            await session.run_sync(lock_dataset_lifecycle)
+            # The conditional update holds the generation row until commit, so a cancel can't land in between.
+            result = await session.execute(completion)
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("Prompt generation completion did not return a database cursor result.")
+            if not result.rowcount:
+                await session.rollback()
+                return False
+            if await is_dataset_name_taken_async(
+                session, dataset_name=generation.dataset_name, exclude_generation_id=generation.id
+            ):
+                await session.rollback()
+                _raise_dataset_name_taken(generation.dataset_name)
+            session.add_all(SeedEntry(entry=seed) for seed in seeds)
+            await session.commit()
+        return True
+
+    async def delete_prompt_generation_async(
+        self, *, generation_id: uuid.UUID, expected_statuses: Collection[PromptGenerationStatus]
+    ) -> bool:
+        """
+        Delete a generation only while it is in one of ``expected_statuses``. Its dataset is kept.
+
+        Args:
+            generation_id (uuid.UUID): The generation to delete.
+            expected_statuses (Collection[PromptGenerationStatus]): Statuses the generation may be in.
+
+        Returns:
+            bool: True if the generation was deleted, False if it is missing or in another status.
+
+        Raises:
+            ValueError: If ``expected_statuses`` is empty.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        if not expected_statuses:
+            raise ValueError("expected_statuses must not be empty")
+        statement = (
+            delete(PromptGenerationEntry)
+            .where(
+                *_prompt_generation_filters(
+                    generation_id=generation_id, expected_statuses=expected_statuses, expected_execution_id=None
+                )
+            )
+            .execution_options(synchronize_session=False)
+        )
+        async with await self.get_session_async() as session, session.begin():
+            result = await session.execute(statement)
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("Prompt generation deletion did not return a database cursor result.")
+            return bool(result.rowcount)
+
     async def resolve_operation_id_async(
         self, *, operation_id: uuid.UUID | str | None, operation_name: str | None = None
     ) -> uuid.UUID | None:
@@ -1069,21 +1375,30 @@ class MemoryInterface(abc.ABC):
         """
         Save a finding, and optionally its evidence, in one transaction.
 
+        A sub-finding's parent must be in the same operation. A new finding has no sub-findings yet, so its paths
+        are set afterwards with ``replace_finding_paths_async``.
+
         Returns:
             Finding: The saved finding, or the finding already saved with this ID.
 
         Raises:
             LookupError: If the finding's Operation does not exist.
+            FindingHierarchyError: If the finding has paths, or its parent is not in its Operation.
             IntegrityError: If the insert fails for a reason other than a taken ID.
         """
+        if finding.paths:
+            raise FindingHierarchyError("A new finding has no sub-findings, so it cannot have paths yet.")
         entry = FindingEntry(finding)
         try:
             async with await self.get_session_async() as session, session.begin():
+                if not await lock_finding_tree_async(session, operation_id=finding.operation_id):
+                    raise LookupError(f"Operation {finding.operation_id} not found")
+                if finding.parent_finding_id is not None:
+                    await require_parent_async(
+                        session, operation_id=finding.operation_id, parent_id=finding.parent_finding_id
+                    )
                 session.add(entry)
                 await session.flush()
-                # Checked after the insert so the write lock is held; SQLite does not enforce the foreign key.
-                if await session.get(OperationEntry, finding.operation_id) is None:
-                    raise LookupError(f"Operation {finding.operation_id} not found")
                 if evidence is not None:
                     session.add(FindingEvidenceEntry(evidence))
                     await session.flush()
@@ -1102,53 +1417,93 @@ class MemoryInterface(abc.ABC):
         self, *, operation_id: uuid.UUID, finding_id: uuid.UUID, request: FindingCreate
     ) -> Finding:
         """
-        Replace a finding's editable fields without changing identity or creation time.
+        Replace a finding's editable fields, including its parent, without changing identity, creation time, or paths.
+
+        A finding moves to another parent, or to the top level, with its sub-findings.
 
         Returns:
             Finding: The updated finding.
 
         Raises:
             LookupError: If the finding does not belong to the operation.
-            RuntimeError: If the database does not return a cursor result.
+            FindingHierarchyError: If the finding would move while it is a step of its parent's paths, or under a
+                parent that is outside the operation, the finding itself, or one of its sub-findings.
         """
         validated = FindingCreate.model_validate(request.model_dump())
         async with await self.get_session_async() as session, session.begin():
-            result = await session.execute(
-                update(FindingEntry)
-                .where(FindingEntry.id == finding_id, FindingEntry.operation_id == operation_id)
-                .values(**validated.model_dump(mode="json"))
+            await lock_finding_tree_async(session, operation_id=operation_id)
+            entry = await self._get_finding_entry_async(
+                session=session, operation_id=operation_id, finding_id=finding_id
             )
-            if not isinstance(result, CursorResult):
-                raise RuntimeError("Finding update did not return a database cursor result.")
-            if result.rowcount == 0:
-                raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
-            entry = await session.get(FindingEntry, finding_id)
-            if entry is None:
-                raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
+            if validated.parent_finding_id != entry.parent_finding_id:
+                await validate_move_async(session, entry=entry, parent_id=validated.parent_finding_id)
+            entry.set_fields(validated)
+            await session.flush()
+            return entry.get_finding()
+
+    async def replace_finding_paths_async(
+        self, *, operation_id: uuid.UUID, finding_id: uuid.UUID, paths: Sequence[DecompositionPath]
+    ) -> Finding:
+        """
+        Replace a finding's ordered paths, each an ordered chain of its direct sub-findings, in one transaction.
+
+        Returns:
+            Finding: The updated finding.
+
+        Raises:
+            LookupError: If the finding does not belong to the operation.
+            FindingHierarchyError: If path IDs repeat, or a step is not a direct sub-finding of the finding.
+        """
+        validated = tuple(DecompositionPath.model_validate(path.model_dump()) for path in paths)
+        async with await self.get_session_async() as session, session.begin():
+            await lock_finding_tree_async(session, operation_id=operation_id)
+            entry = await self._get_finding_entry_async(
+                session=session, operation_id=operation_id, finding_id=finding_id
+            )
+            await validate_path_steps_async(session, entry=entry, paths=validated)
+            entry.set_paths(validated)
+            await session.flush()
             return entry.get_finding()
 
     async def delete_finding_async(self, *, operation_id: uuid.UUID, finding_id: uuid.UUID) -> None:
         """
-        Permanently remove a finding within its operation.
+        Permanently remove a finding within its operation, with all of its sub-findings, their paths, and evidence.
 
         Raises:
             LookupError: If the finding does not belong to the operation.
-            RuntimeError: If the database does not return a cursor result.
+            FindingHierarchyError: If the finding is a step of its parent's paths.
         """
         async with await self.get_session_async() as session, session.begin():
-            owner = await session.scalar(
-                select(FindingEntry.id).where(FindingEntry.id == finding_id, FindingEntry.operation_id == operation_id)
+            await lock_finding_tree_async(session, operation_id=operation_id)
+            entry = await self._get_finding_entry_async(
+                session=session, operation_id=operation_id, finding_id=finding_id
             )
-            if owner is None:
-                raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
-            await session.execute(delete(FindingEvidenceEntry).where(FindingEvidenceEntry.finding_id == finding_id))
-            result = await session.execute(
-                delete(FindingEntry).where(FindingEntry.id == finding_id, FindingEntry.operation_id == operation_id)
-            )
-            if not isinstance(result, CursorResult):
-                raise RuntimeError("Finding deletion did not return a database cursor result.")
-            if result.rowcount == 0:
-                raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
+            if entry.parent_finding_id is not None:
+                await reject_path_step_async(
+                    session, finding_id=finding_id, parent_id=entry.parent_finding_id, change="deleted"
+                )
+            levels = await get_subtree_levels_async(session, operation_id=operation_id, root_ids=[finding_id])
+            await delete_subtree_async(session, levels=levels)
+
+    @staticmethod
+    async def _get_finding_entry_async(
+        *, session: AsyncSession, operation_id: uuid.UUID, finding_id: uuid.UUID
+    ) -> FindingEntry:
+        """
+        Read a finding's row only within its owning operation.
+
+        Returns:
+            FindingEntry: The row.
+
+        Raises:
+            LookupError: If the finding does not belong to the operation.
+        """
+        entry = await session.scalar(
+            select(FindingEntry).where(FindingEntry.id == finding_id, FindingEntry.operation_id == operation_id)
+        )
+        if entry is None:
+            raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
+        return entry
 
     async def get_findings_async(
         self,
@@ -1157,30 +1512,51 @@ class MemoryInterface(abc.ABC):
         limit: int = 20,
         offset: int = 0,
         title_query: str | None = None,
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
         title_pattern: str | None = None,
+        parent_finding_id: uuid.UUID | None = None,
+        top_level_only: bool = False,
     ) -> list[Finding]:
         """
-        Read one page of findings, highest severity first, then newest first.
+        Read one page of findings in ``severity_order``, then newest first.
+
+        Without a parent or top-level filter, every finding is listed, including sub-findings. A parent's direct
+        sub-findings are listed oldest first instead, the order a decomposition is usually written in.
 
         Args:
-            operation_id (uuid.UUID | None): Restrict to one operation.
-            limit (int): Maximum findings to return.
-            offset (int): Number of ordered findings to skip.
-            title_query (str | None): Case-insensitive literal title substring.
-            title_pattern (str | None): Full LIKE pattern instead of title_query.
+            operation_id (uuid.UUID | None): The operation whose findings to read. Defaults to None, which reads
+                findings from every operation.
+            limit (int): Maximum number of findings to return. Defaults to 20.
+            offset (int): Number of findings to skip. Defaults to 0.
+            title_query (str | None): Case-insensitive text the title must contain. Wildcard characters match
+                literally. Defaults to None.
+            severity_order (Sequence[str]): Severity keys from highest to lowest. Stored values that aren't listed
+                sort after them. Defaults to the default finding fields' order, as in PyRIT 1.2. An empty order
+                sorts newest first.
+            title_pattern (str | None): Full LIKE pattern instead of title_query. Defaults to None.
+            parent_finding_id (uuid.UUID | None): Only the direct sub-findings of this finding, oldest first.
+                Defaults to None.
+            top_level_only (bool): Only findings without a parent. Defaults to False.
 
         Returns:
             list[Finding]: The findings on the page.
 
         Raises:
-            ValueError: If the page bounds or pattern are invalid, or both title filters are supplied.
+            ValueError: If the page bounds or pattern are invalid, both title filters are supplied, or both a parent
+                and the top level are requested.
         """
         if limit < 1 or offset < 0:
             raise ValueError("Finding limit must be positive and offset must be nonnegative.")
         validate_text_search(value=title_query, pattern=title_pattern)
+        if top_level_only and parent_finding_id is not None:
+            raise ValueError("Filter findings by a parent or by the top level, not both.")
         statement = select(FindingEntry)
         if operation_id is not None:
             statement = statement.where(FindingEntry.operation_id == operation_id)
+        if parent_finding_id is not None:
+            statement = statement.where(FindingEntry.parent_finding_id == parent_finding_id)
+        if top_level_only:
+            statement = statement.where(FindingEntry.parent_finding_id.is_(None))
         if title_query or title_pattern is not None:
             statement = statement.where(
                 text_match(
@@ -1190,40 +1566,127 @@ class MemoryInterface(abc.ABC):
                     casefold=title_pattern is None,
                 )
             )
-        statement = statement.order_by(*self._finding_order()).limit(limit).offset(offset)
+        order = self._sub_finding_order() if parent_finding_id is not None else self._finding_order(severity_order)
+        statement = statement.order_by(*order).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
 
-    async def get_findings_by_ids_async(
-        self, *, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+    async def get_finding_subtrees_async(
+        self,
+        *,
+        operation_id: uuid.UUID,
+        finding_ids: Sequence[uuid.UUID],
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
     ) -> list[Finding]:
         """
-        Read selected findings of one operation, highest severity first, then newest first.
+        Read findings of one operation together with all of their sub-findings, at any depth.
+
+        Membership, parents, and paths come from one transaction that holds the operation's finding lock,
+        which every finding change takes, so a concurrent change lands wholly before or after this read and
+        every path step is in the result.
 
         IDs that are not in the operation are omitted.
+
+        Args:
+            operation_id (uuid.UUID): The operation whose findings to read.
+            finding_ids (Sequence[uuid.UUID]): The findings whose subtrees to read.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to the default finding fields' order.
+
+        Returns:
+            list[Finding]: Each finding once, in the same order as ``get_findings_async``.
+        """
+        if not finding_ids:
+            return []
+        async with await self.get_session_async() as session, session.begin():
+            if not await lock_finding_tree_async(session, operation_id=operation_id):
+                return []
+            levels = await get_subtree_levels_async(session, operation_id=operation_id, root_ids=finding_ids)
+            return await self._read_findings_by_ids_async(
+                session=session,
+                operation_id=operation_id,
+                finding_ids=[finding_id for level in levels for finding_id in level],
+                severity_order=severity_order,
+            )
+
+    async def get_finding_child_counts_async(self, *, finding_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """
+        Count the direct sub-findings of several findings.
+
+        Returns:
+            dict[uuid.UUID, int]: Counts for findings that have sub-findings.
+        """
+        unique_ids = list(dict.fromkeys(finding_ids))
+        counts: dict[uuid.UUID, int] = {}
+        async with await self.get_session_async() as session:
+            for start in range(0, len(unique_ids), self._MAX_BIND_VARS):
+                statement = (
+                    select(FindingEntry.parent_finding_id, func.count())
+                    .where(FindingEntry.parent_finding_id.in_(unique_ids[start : start + self._MAX_BIND_VARS]))
+                    .group_by(FindingEntry.parent_finding_id)
+                )
+                rows = (await session.execute(statement)).all()
+                counts.update({parent_id: count for parent_id, count in rows if parent_id is not None})
+        return counts
+
+    async def get_findings_by_ids_async(
+        self,
+        *,
+        operation_id: uuid.UUID,
+        finding_ids: Sequence[uuid.UUID],
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
+    ) -> list[Finding]:
+        """
+        Read selected findings of one operation in ``severity_order``, then newest first.
+
+        IDs that are not in the operation are omitted.
+
+        Args:
+            operation_id (uuid.UUID): The operation whose findings to read.
+            finding_ids (Sequence[uuid.UUID]): The findings to read.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to the default finding fields' order.
 
         Returns:
             list[Finding]: The selected findings, in the same order as ``get_findings_async``.
         """
         if not finding_ids:
             return []
+        async with await self.get_session_async() as session:
+            return await self._read_findings_by_ids_async(
+                session=session, operation_id=operation_id, finding_ids=finding_ids, severity_order=severity_order
+            )
+
+    async def _read_findings_by_ids_async(
+        self,
+        *,
+        session: AsyncSession,
+        operation_id: uuid.UUID,
+        finding_ids: Sequence[uuid.UUID],
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
+    ) -> list[Finding]:
+        """
+        Read selected findings of one operation within the caller's session, in dashboard order.
+
+        Returns:
+            list[Finding]: The selected findings that are in the operation.
+        """
         requested = set(finding_ids)
         # The operation filter takes one of the statement's binds.
         chunk_size = max(1, self._MAX_BIND_VARS - 1)
-        async with await self.get_session_async() as session:
-            ordered_ids = await session.scalars(
-                select(FindingEntry.id)
-                .where(FindingEntry.operation_id == operation_id)
-                .order_by(*self._finding_order())
+        ordered_ids = await session.scalars(
+            select(FindingEntry.id)
+            .where(FindingEntry.operation_id == operation_id)
+            .order_by(*self._finding_order(severity_order))
+        )
+        selected_ids = [finding_id for finding_id in ordered_ids if finding_id in requested]
+        findings: dict[uuid.UUID, Finding] = {}
+        for start in range(0, len(selected_ids), chunk_size):
+            statement = select(FindingEntry).where(
+                FindingEntry.id.in_(selected_ids[start : start + chunk_size]),
+                FindingEntry.operation_id == operation_id,
             )
-            selected_ids = [finding_id for finding_id in ordered_ids if finding_id in requested]
-            findings: dict[uuid.UUID, Finding] = {}
-            for start in range(0, len(selected_ids), chunk_size):
-                statement = select(FindingEntry).where(
-                    FindingEntry.id.in_(selected_ids[start : start + chunk_size]),
-                    FindingEntry.operation_id == operation_id,
-                )
-                findings.update({entry.id: entry.get_finding() for entry in await session.scalars(statement)})
+            findings.update({entry.id: entry.get_finding() for entry in await session.scalars(statement)})
         return [findings[finding_id] for finding_id in selected_ids if finding_id in findings]
 
     async def get_finding_async(self, *, operation_id: uuid.UUID, finding_id: uuid.UUID) -> Finding | None:
@@ -1343,10 +1806,15 @@ class MemoryInterface(abc.ABC):
             return entry.get_evidence() if entry else None
 
     async def get_findings_for_attack_result_async(
-        self, *, attack_result_id: uuid.UUID
+        self, *, attack_result_id: uuid.UUID, severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER
     ) -> list[tuple[Finding, FindingEvidence]]:
         """
-        Read every finding that links an attack result as evidence, highest severity first, then newest first.
+        Read every finding that links an attack result as evidence, in ``severity_order``, then newest first.
+
+        Args:
+            attack_result_id (uuid.UUID): The attack result the findings link as evidence.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to the default finding fields' order.
 
         Returns:
             list[tuple[Finding, FindingEvidence]]: Each linked finding with the evidence that links it.
@@ -1355,7 +1823,7 @@ class MemoryInterface(abc.ABC):
             select(FindingEntry, FindingEvidenceEntry)
             .join(FindingEvidenceEntry, FindingEvidenceEntry.finding_id == FindingEntry.id)
             .where(FindingEvidenceEntry.attack_result_id == attack_result_id)
-            .order_by(*self._finding_order())
+            .order_by(*self._finding_order(severity_order))
         )
         async with await self.get_session_async() as session:
             rows = (await session.execute(statement)).all()
@@ -1397,29 +1865,39 @@ class MemoryInterface(abc.ABC):
         async with await self.get_session_async() as session:
             return dict((await session.execute(statement)).all())
 
-    async def get_finding_severity_counts_async(self) -> dict[uuid.UUID, dict[FindingSeverity, int]]:
+    async def get_finding_severity_counts_async(self) -> dict[uuid.UUID, dict[str, int]]:
         """
         Count every operation's findings by severity in one query.
 
         Returns:
-            dict[uuid.UUID, dict[FindingSeverity, int]]: Counts for operations with findings.
+            dict[uuid.UUID, dict[str, int]]: Counts for operations with findings.
         """
         statement = select(FindingEntry.operation_id, FindingEntry.severity, func.count()).group_by(
             FindingEntry.operation_id, FindingEntry.severity
         )
-        counts: dict[uuid.UUID, dict[FindingSeverity, int]] = {}
+        counts: dict[uuid.UUID, dict[str, int]] = {}
         async with await self.get_session_async() as session:
             for operation_id, severity, count in (await session.execute(statement)).all():
-                counts.setdefault(operation_id, {})[FindingSeverity(severity)] = count
+                counts.setdefault(operation_id, {})[severity] = count
         return counts
 
     @staticmethod
-    def _finding_order() -> "tuple[ColumnElement[Any], ...]":
-        severity_order = case(
-            {severity.value: position for position, severity in enumerate(FindingSeverity)},
+    def _finding_order(severity_order: Sequence[str]) -> "tuple[ColumnElement[Any], ...]":
+        newest_first = (FindingEntry.created_at.desc(), FindingEntry.id.desc())
+        if not severity_order:
+            # case() with no branches compiles to SQL that both dialects reject.
+            return newest_first
+        rank = case(
+            {key: position for position, key in enumerate(severity_order)},
             value=FindingEntry.severity,
+            else_=len(severity_order),
         )
-        return severity_order, FindingEntry.created_at.desc(), FindingEntry.id.desc()
+        return rank, *newest_first
+
+    @staticmethod
+    def _sub_finding_order() -> "tuple[ColumnElement[Any], ...]":
+        # A decomposition is usually written step by step, so a parent's sub-findings read oldest first.
+        return FindingEntry.created_at.asc(), FindingEntry.id.asc()
 
     def _uses_legacy_memory_override(self) -> bool:
         return any(
@@ -1514,7 +1992,7 @@ class MemoryInterface(abc.ABC):
 
         Raises:
             ValueError: If no embedding model is provided and required environment
-            variables are not set.
+                variables are not set.
         """
         from pyrit.memory.memory_embedding import default_memory_embedding_factory
 
@@ -2559,7 +3037,7 @@ class MemoryInterface(abc.ABC):
                     query = query.limit(limit)
                 return query.all()
             except SQLAlchemyError as e:
-                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:unresolved-attribute]
+                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:missing-attribute]
                 raise
 
     def _execute_batched_query(
@@ -2862,7 +3340,7 @@ class MemoryInterface(abc.ABC):
                 ):
                     raise ValueError("Prompt entries used by scorer observations are immutable.")
                 for entry in entries:
-                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
+                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:missing-attribute]
                     if isinstance(entry, (AttackResultEntry, ScenarioResultEntry)):
                         assert entry_in_session is None or isinstance(
                             entry_in_session, (AttackResultEntry, ScenarioResultEntry)
@@ -3047,6 +3525,22 @@ class MemoryInterface(abc.ABC):
         Returns:
             Any: OR-within-key and AND-across-key SQLAlchemy condition.
         """
+
+        def unique_bind(element: ClauseElement, **kw: Any) -> ClauseElement | None:
+            if not isinstance(element, BindParameter):
+                return None
+            return bindparam(
+                element.key,
+                value=element.value,
+                type_=element.type,
+                unique=True,
+                required=element.required,
+                callable_=element.callable,
+                expanding=element.expanding,
+                isoutparam=element.isoutparam,
+                literal_execute=element.literal_execute,
+            )
+
         conditions = []
         for key, raw_value in labels.items():
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
@@ -3054,7 +3548,11 @@ class MemoryInterface(abc.ABC):
                 conditions.append(
                     or_(
                         *(
-                            self._get_scenario_result_label_condition(labels={key: str(value)}).unique_params()
+                            visitors.replacement_traverse(
+                                self._get_scenario_result_label_condition(labels={key: str(value)}),
+                                {},
+                                unique_bind,
+                            )
                             for value in values
                         )
                     )
@@ -4372,10 +4870,13 @@ class MemoryInterface(abc.ABC):
 
         Raises:
             ValueError: If update_fields is empty or not provided.
+            ValueError: If prompt_metadata is provided and is not a dictionary.
             ValueError: If an entry is immutable observation evidence.
         """
         if not update_fields:
             raise ValueError("update_fields must be provided to update prompt entries.")
+        if "prompt_metadata" in update_fields and not isinstance(update_fields["prompt_metadata"], dict):
+            raise ValueError("prompt_metadata must be a dictionary")
         # Fetch the relevant entries using query_entries
         entries_to_update: MutableSequence[Base] = self._query_entries(
             PromptMemoryEntry, conditions=PromptMemoryEntry.conversation_id == conversation_id
@@ -4457,7 +4958,12 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             bool: True if the update was successful, False otherwise.
+
+        Raises:
+            ValueError: If prompt_metadata is not a dictionary.
         """
+        if not isinstance(prompt_metadata, dict):
+            raise ValueError("prompt_metadata must be a dictionary")
         return self._dispatch_memory_operation(
             "update_prompt_entries_by_conversation_id",
             self._execute_update_prompt_entries_by_conversation_id,
@@ -4622,7 +5128,7 @@ class MemoryInterface(abc.ABC):
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
-            all harm categories are considered.
+                all harm categories are considered.
                 Specifying multiple harm categories returns only prompts that are marked with all harm categories.
             harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
                 All must match decoded list elements.
@@ -4826,7 +5332,7 @@ class MemoryInterface(abc.ABC):
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
-            all harm categories are considered.
+                all harm categories are considered.
                 Specifying multiple harm categories returns only prompts that are marked with all harm categories.
             harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
                 All must match decoded list elements.
@@ -4951,7 +5457,7 @@ class MemoryInterface(abc.ABC):
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
-            all harm categories are considered.
+                all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
             harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
                 All must match decoded list elements.
@@ -5102,7 +5608,7 @@ class MemoryInterface(abc.ABC):
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
-            all harm categories are considered.
+                all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
             harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
                 All must match decoded list elements.
@@ -6346,8 +6852,8 @@ class MemoryInterface(abc.ABC):
                     .where(SeedEntry.dataset_name.isnot(None), SeedEntry.dataset_name != "")
                     .distinct()
                 )
-                names: Sequence[str | None] = session.scalars(statement).all()
-                return [name for name in names if name is not None]
+                # SeedEntry.dataset_name has no Mapped annotation, so the rows are typed Any.
+                return [name for name in session.scalars(statement).all() if isinstance(name, str)]
         except SQLAlchemyError as e:
             logger.exception(f"Failed to retrieve dataset names with error {e}")
             raise
@@ -6544,7 +7050,7 @@ class MemoryInterface(abc.ABC):
                 '/' escapes the next character; brackets, '*' and backslashes are literal.
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
             data_types (Sequence[str] | None, Optional): List of data types to filter seed prompts by
-            (e.g., text, image_path).
+                (e.g., text, image_path).
             harm_categories (Sequence[str] | None, Optional): List of harm categories to filter seed prompts by.
             harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
                 All must match decoded list elements.
@@ -7568,8 +8074,7 @@ class MemoryInterface(abc.ABC):
         )
         return [entry.get_attack_result() for entry in entries]
 
-    @staticmethod
-    def _attack_results_not_superseded_condition(*, conditions: list[Any]) -> Any:
+    def _attack_results_not_superseded_condition(self, *, conditions: list[Any]) -> Any:
         """
         Build the anti-join predicate keeping only the newest matching row per conversation.
 
@@ -7590,6 +8095,12 @@ class MemoryInterface(abc.ABC):
         # correlate(None) stops SQLAlchemy from hoisting the inner FROM onto the outer row,
         # which would make every candidate trivially supersede itself.
         newer = candidates.correlate(None).subquery("newer")
+        # Both id operands go through the backend-specific UUID ordering
+        # expression: SQL Server's native uniqueidentifier order differs from
+        # the SDK's string comparison, and the tiebreak must pick the same row
+        # the post-fetch Python dedup picks on every backend.
+        newer_id_order = self._get_scenario_attempt_id_order_expression(attempt_id=newer.c.id)
+        row_id_order = self._get_scenario_attempt_id_order_expression(attempt_id=AttackResultEntry.id)
 
         return not_(
             exists(
@@ -7602,7 +8113,7 @@ class MemoryInterface(abc.ABC):
                             newer.c.timestamp > AttackResultEntry.timestamp,
                             and_(
                                 newer.c.timestamp == AttackResultEntry.timestamp,
-                                newer.c.id > AttackResultEntry.id,
+                                newer_id_order > row_id_order,
                             ),
                         ),
                     )
@@ -7651,7 +8162,9 @@ class MemoryInterface(abc.ABC):
         seen: dict[str, AttackResultEntry] = {}
         for entry in entries:
             prev = seen.get(entry.conversation_id)
-            if prev is None or entry.timestamp > prev.timestamp:
+            # Timestamp ties break by the greater id, the same rule the
+            # paginated SQL anti-join applies, so both paths keep one row.
+            if prev is None or (entry.timestamp, str(entry.id)) > (prev.timestamp, str(prev.id)):
                 seen[entry.conversation_id] = entry
         return [entry.get_attack_result() for entry in seen.values()]
 
@@ -7721,17 +8234,33 @@ class MemoryInterface(abc.ABC):
             ]
         return {"operators": sorted(operators), "operations": sorted(operations)}
 
-    def _execute_add_scenario_results_to_memory(self, *, scenario_results: Sequence[ScenarioResult]) -> None:
+    def _execute_add_scenario_results_to_memory(
+        self,
+        *,
+        scenario_results: Sequence[ScenarioResult],
+        planned_seed_groups: Mapping[uuid.UUID, Mapping[str, Sequence[AttackSeedGroup]]] | None = None,
+    ) -> None:
         """
         Insert a list of scenario results into the memory storage.
 
         Args:
             scenario_results: Sequence of ScenarioResult objects to store in the database.
+            planned_seed_groups: The population each result's run planned, keyed by result ID and
+                then by dataset name, stored in the same transaction.
 
         Raises:
             SQLAlchemyError: If a scenario result or identifier graph cannot be persisted.
         """
         entries = [ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
+        plan_entries = [
+            ScenarioPlanSeedGroupEntry(
+                scenario_result_id=result_id, dataset_name=dataset_name, position=position, seed_group=seed_group
+            )
+            for result_id, population in (planned_seed_groups or {}).items()
+            for position, (dataset_name, seed_group) in enumerate(
+                (name, group) for name, groups in population.items() for group in groups
+            )
+        ]
         with closing(self._get_session()) as session:
             try:
                 for scenario_result in scenario_results:
@@ -7742,6 +8271,8 @@ class MemoryInterface(abc.ABC):
                 for entry in entries:
                     self._validate_activity_operation(session=session, entry=entry)
                 session.add_all(entries)
+                session.flush()
+                session.add_all(plan_entries)
                 self._recheck_activity_operations(session=session, entries=entries)
                 session.commit()
             except SQLAlchemyError as error:
@@ -7836,6 +8367,7 @@ class MemoryInterface(abc.ABC):
         scenario_run_state: ScenarioRunState,
         error_message: str | None = None,
         error_type: str | None = None,
+        expected_metadata_fields: Mapping[str, str] | None = None,
     ) -> bool:
         """
         Update the run state only when the stored state is one of ``expected_states``.
@@ -7851,6 +8383,7 @@ class MemoryInterface(abc.ABC):
             scenario_run_state (ScenarioRunState): The new state for the scenario.
             error_message (str | None): Optional scenario-level error message.
             error_type (str | None): Optional exception class name.
+            expected_metadata_fields (Mapping[str, str] | None): Optional metadata fields that must match.
 
         Returns:
             bool: True if the row was updated, False if it was missing or in another state.
@@ -7874,14 +8407,15 @@ class MemoryInterface(abc.ABC):
             values["completion_time"] = datetime.now(tz=UTC)
 
         with closing(self._get_session()) as session:
-            updated_rows = (
-                session.query(ScenarioResultEntry)
-                .filter(
-                    ScenarioResultEntry.id == scenario_result_id,
-                    ScenarioResultEntry.scenario_run_state.in_([state.value for state in expected_states]),
-                )
-                .update(values, synchronize_session=False)
+            filters = [
+                ScenarioResultEntry.id == scenario_result_id,
+                ScenarioResultEntry.scenario_run_state.in_([state.value for state in expected_states]),
+            ]
+            filters.extend(
+                ScenarioResultEntry.scenario_metadata[key].as_string() == value
+                for key, value in (expected_metadata_fields or {}).items()
             )
+            updated_rows = session.query(ScenarioResultEntry).filter(*filters).update(values, synchronize_session=False)
             session.commit()
 
         if updated_rows:
@@ -7898,7 +8432,7 @@ class MemoryInterface(abc.ABC):
         Replace the ``scenario_metadata`` JSON blob on an existing scenario result.
 
         Used by the scenario layer to persist first-run state (e.g.
-        ``objective_hashes``) that resume needs to replay. Performs a
+        an adaptive run's choices) that resume needs to replay. Performs a
         targeted UPDATE so it doesn't clobber other columns.
 
         Args:
@@ -7964,9 +8498,31 @@ class MemoryInterface(abc.ABC):
             )
             if not updated_rows:
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
-            new_tries: int = session.query(ScenarioResultEntry.number_tries).filter_by(id=scenario_result_id).scalar()
+            new_tries = session.scalar(
+                select(ScenarioResultEntry.number_tries).where(ScenarioResultEntry.id == scenario_result_id)
+            )
+            if new_tries is None:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
             session.commit()
             return new_tries
+
+    def _execute_get_planned_seed_groups(self, *, scenario_result_id: str) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Read a run's stored planned seed groups.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: The population by dataset name, in planned order.
+        """
+        with closing(self._get_session()) as session:
+            entries = session.scalars(
+                select(ScenarioPlanSeedGroupEntry)
+                .where(ScenarioPlanSeedGroupEntry.scenario_result_id == uuid.UUID(scenario_result_id))
+                .order_by(ScenarioPlanSeedGroupEntry.position)
+            ).all()
+            population: dict[str, list[AttackSeedGroup]] = {}
+            for entry in entries:
+                population.setdefault(entry.dataset_name, []).append(entry.get_seed_group())
+            return population
 
     def _execute_get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """Return one ScenarioResult header without hydrating linked attack results."""
@@ -8793,7 +9349,7 @@ class MemoryInterface(abc.ABC):
         )
 
     @staticmethod
-    def _scenario_attack_result_delta_statement() -> Select:
+    def _scenario_attack_result_delta_statement() -> Select[*tuple[Any, ...]]:
         """Return the shared lightweight result/score projection, without filters or pagination."""
         return select(
             AttackResultEntry.id,
@@ -8833,7 +9389,7 @@ class MemoryInterface(abc.ABC):
         scenario_result_id: str,
         cursor: AttackResultKeysetCursor | None = None,
         limit: int = 100,
-    ) -> Select:
+    ) -> Select[*tuple[Any, ...]]:
         """
         Page saved roots directly instead of hydrating a chronological prefix and searching for its ancestors.
 
@@ -8972,7 +9528,7 @@ class MemoryInterface(abc.ABC):
         if isinstance(metadata, str):
             try:
                 metadata = json.loads(metadata)
-            except Exception:
+            except json.JSONDecodeError:
                 metadata = {}
         metadata = metadata or {}
         attr_data = dict(row.get("attribution_data") or {})
@@ -9079,7 +9635,7 @@ class MemoryInterface(abc.ABC):
         *,
         scenario_result_id: str,
         attack_result_ids: Sequence[str],
-    ) -> Select:
+    ) -> Select[*tuple[Any, ...]]:
         """
         Build the batched SELECT statement for scenario result deltas by ID.
 
@@ -9166,7 +9722,7 @@ class MemoryInterface(abc.ABC):
         conversation_id: str,
         cursor: MessagePieceKeysetCursor | None = None,
         limit: int = 100,
-    ) -> Select:
+    ) -> Select[PromptMemoryEntry]:
         """
         Build a canonical message-piece page, including continuation within a multimodal turn.
 
@@ -11064,6 +11620,7 @@ class MemoryInterface(abc.ABC):
 
         Raises:
             ValueError: If update_fields is empty or not provided.
+            ValueError: If prompt_metadata is provided and is not a dictionary.
             ValueError: If an entry is immutable observation evidence.
         """
         return await self._run_database_operation_async(
@@ -11222,7 +11779,7 @@ class MemoryInterface(abc.ABC):
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
-            all harm categories are considered.
+                all harm categories are considered.
                 Specifying multiple harm categories returns only prompts that are marked with all harm categories.
             harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
                 All must match decoded list elements.
@@ -11426,7 +11983,7 @@ class MemoryInterface(abc.ABC):
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
-            all harm categories are considered.
+                all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
             harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
                 All must match decoded list elements.
@@ -11623,7 +12180,7 @@ class MemoryInterface(abc.ABC):
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
-            all harm categories are considered.
+                all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
             harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
                 All must match decoded list elements.
@@ -11922,7 +12479,7 @@ class MemoryInterface(abc.ABC):
                 '/' escapes the next character; brackets, '*' and backslashes are literal.
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
             data_types (Sequence[str] | None, Optional): List of data types to filter seed prompts by
-            (e.g., text, image_path).
+                (e.g., text, image_path).
             harm_categories (Sequence[str] | None, Optional): List of harm categories to filter seed prompts by.
             harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
                 All must match decoded list elements.
@@ -12530,6 +13087,43 @@ class MemoryInterface(abc.ABC):
             self._execute_add_scenario_results_to_memory, scenario_results=scenario_results
         )
 
+    async def add_planned_scenario_result_async(
+        self, *, scenario_result: ScenarioResult, seed_groups_by_dataset: Mapping[str, Sequence[AttackSeedGroup]]
+    ) -> None:
+        """
+        Insert a new scenario result together with the seed groups its run planned.
+
+        Resume rebuilds the run from these groups, so later dataset changes don't affect it.
+
+        Args:
+            scenario_result (ScenarioResult): The new scenario result.
+            seed_groups_by_dataset (Mapping[str, Sequence[AttackSeedGroup]]): The planned population,
+                by dataset name, in the order the run was built from.
+
+        Raises:
+            SQLAlchemyError: If the result, its identifier graph, or its seed groups cannot be persisted.
+        """
+        return await self._run_database_operation_async(
+            self._execute_add_scenario_results_to_memory,
+            scenario_results=[scenario_result],
+            planned_seed_groups={scenario_result.id: seed_groups_by_dataset},
+        )
+
+    async def get_planned_seed_groups_async(self, *, scenario_result_id: str) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Return the seed groups a scenario run planned, as stored when the run was created.
+
+        Args:
+            scenario_result_id (str): The scenario result ID.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: The planned population by dataset name, in planned
+                order. Empty when the run planned no groups or was created before they were stored.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_planned_seed_groups, scenario_result_id=scenario_result_id
+        )
+
     def update_scenario_run_state(
         self,
         *,
@@ -12647,6 +13241,7 @@ class MemoryInterface(abc.ABC):
         scenario_run_state: ScenarioRunState,
         error_message: str | None = None,
         error_type: str | None = None,
+        expected_metadata_fields: Mapping[str, str] | None = None,
     ) -> bool:
         """
         Use ``try_update_scenario_run_state_async``.
@@ -12667,6 +13262,7 @@ class MemoryInterface(abc.ABC):
             scenario_run_state=scenario_run_state,
             error_message=error_message,
             error_type=error_type,
+            expected_metadata_fields=expected_metadata_fields,
         )
 
     @legacy_sync_override(lambda: MemoryInterface.try_update_scenario_run_state)
@@ -12678,6 +13274,7 @@ class MemoryInterface(abc.ABC):
         scenario_run_state: ScenarioRunState,
         error_message: str | None = None,
         error_type: str | None = None,
+        expected_metadata_fields: Mapping[str, str] | None = None,
     ) -> bool:
         """
         Update the run state only when the stored state is one of ``expected_states``.
@@ -12693,6 +13290,7 @@ class MemoryInterface(abc.ABC):
             scenario_run_state (ScenarioRunState): The new state for the scenario.
             error_message (str | None): Optional scenario-level error message.
             error_type (str | None): Optional exception class name.
+            expected_metadata_fields (Mapping[str, str] | None): Optional metadata fields that must match.
 
         Returns:
             bool: True if the row was updated, False if it was missing or in another state.
@@ -12707,6 +13305,7 @@ class MemoryInterface(abc.ABC):
             scenario_run_state=scenario_run_state,
             error_message=error_message,
             error_type=error_type,
+            expected_metadata_fields=expected_metadata_fields,
         )
 
     def update_scenario_metadata(self, *, scenario_result_id: str, metadata: dict[str, Any]) -> None:
@@ -12728,7 +13327,7 @@ class MemoryInterface(abc.ABC):
         Replace the ``scenario_metadata`` JSON blob on an existing scenario result.
 
         Used by the scenario layer to persist first-run state (e.g.
-        ``objective_hashes``) that resume needs to replay. Performs a
+        an adaptive run's choices) that resume needs to replay. Performs a
         targeted UPDATE so it doesn't clobber other columns.
 
         Args:

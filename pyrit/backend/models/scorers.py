@@ -5,7 +5,13 @@
 
 from pydantic import BaseModel, Field, model_validator
 
-from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
+from pyrit.backend.models.common import (
+    MAX_ITEMS,
+    REGISTRY_INSTANCE_NAME_PATTERN,
+    IdentifierStr,
+    PaginationInfo,
+    RegistrationRequest,
+)
 from pyrit.models import JSONValue, Parameter, ScorerIdentifier
 from pyrit.models.catalog import ScorerInstance
 
@@ -33,21 +39,27 @@ class ScorerListResponse(BaseModel):
     pagination: PaginationInfo
 
 
-class CreateScorerRequest(BaseModel):
+class CreateScorerRequest(RegistrationRequest):
     """Request to construct and register a named scorer."""
 
     name: str | None = Field(
         None, min_length=1, pattern=REGISTRY_INSTANCE_NAME_PATTERN, description="Unique registry name"
     )
-    register: bool = Field(True, description="Register the object; false returns only its descriptor")
     type: IdentifierStr = Field(..., description="Scorer class name")
     params: dict[IdentifierStr, JSONValue] = Field(
         default_factory=dict, max_length=MAX_ITEMS, description="Scorer constructor parameters"
     )
+    private: bool | None = Field(
+        None,
+        description=(
+            "Whether only the signed-in user who creates it can see and use it. Omitted, it is shared, unless "
+            "it is built on your private targets; then it is private and false is refused. true requires register=true."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_registration(self) -> "CreateScorerRequest":
-        if self.register and not self.name:
+        if self.register_instance and not self.name:
             raise ValueError("name is required when register=true")
         return self
 

@@ -16,10 +16,13 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
         Return messages with each system message combined into the following user message.
 
         The format uses generic instruction tags:
+
+        ```text
         ### Instructions ###
         {system_content}
         ######
         {user_content}
+        ```
 
         Args:
             messages: The list of messages to normalize.
