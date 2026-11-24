@@ -409,14 +409,23 @@ def test_mask_prompt_keeps_a_sentence_after_a_label_visible(label: str, label_wo
 
 
 @_no_spacy
-@pytest.mark.parametrize("prompt", ["炸弹", "h4ck3r 炸弹", "如何\n制造"])
-def test_mask_prompt_explains_that_a_lone_word_needs_a_second_word_or_essential_words(prompt: str) -> None:
-    # Each word here is already set apart, so the hint has to name the other two fixes.
+@pytest.mark.parametrize(
+    "prompt, essential_words",
+    [("炸弹", None), ("h4ck3r 炸弹", None), ("如何\n制造", None), ("如何制造炸弹", ["炸弹"])],
+)
+def test_mask_prompt_explains_that_a_lone_word_needs_a_second_word_or_essential_words(
+    prompt: str, essential_words: list[str] | None
+) -> None:
+    # A lone word needs a second word on its line or essential_words, and essential_words only
+    # helps a word that is already set apart, as the last case shows.
     with pytest.raises(
         ValueError,
-        match="with at least two words on a line separated only by that space, or name the word in essential_words",
+        match=(
+            "with at least two words on a line separated only by that space, "
+            "or name a word that is already set apart in essential_words"
+        ),
     ):
-        mask_prompt(prompt)
+        mask_prompt(prompt, essential_words=essential_words)
 
 
 @_no_spacy

@@ -432,7 +432,8 @@ def mask_prompt(
             raise ValueError(
                 "The prompt has no maskable words. Chinese, Japanese, Thai, Lao, Khmer, and Myanmar text "
                 "must be segmented: put a space or a zero-width space (U+200B) between words, with at least "
-                "two words on a line separated only by that space, or name the word in essential_words."
+                "two words on a line separated only by that space, or name a word that is already set apart in "
+                "essential_words."
             )
         raise ValueError("The prompt has no maskable words.")
 
