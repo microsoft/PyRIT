@@ -768,7 +768,10 @@ class TestSeedEntry:
             separators=(",", ":"),
         )
 
-        with pytest.raises(ValueError, match="stale-technique"):
+        with (
+            pytest.warns(DeprecationWarning, match="adversarial_chat_system_prompt_path"),
+            pytest.raises(ValueError, match="stale-technique"),
+        ):
             entry.get_seed()
 
     def test_roundtrip_seed_simulated_conversation_strips_reserved_key(self):

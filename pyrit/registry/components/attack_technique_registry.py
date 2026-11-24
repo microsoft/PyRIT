@@ -31,7 +31,12 @@ from pydantic import ValidationError
 
 from pyrit.models import AttackIdentifier, ComponentType
 from pyrit.models.component_spec import SourceInstanceSpec
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, RegistryNameTakenError
+from pyrit.registry.instance_registry import (
+    DefaultInstanceRegistry,
+    RegistryNameTakenError,
+    _record_saved_entry_refusal,
+    refuse_saved_entry,
+)
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
@@ -143,9 +148,13 @@ class TechniqueAdmissionError(ValueError):
 class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"]):
     """Factory storage with an atomic runtime-admission path."""
 
-    def register_runtime(self, factory: AttackTechniqueFactory) -> None:
+    def register_runtime(self, factory: AttackTechniqueFactory, *, metadata: dict[str, Any] | None = None) -> None:
         """
         Check selector collisions while holding the same lock as registration.
+
+        Args:
+            factory (AttackTechniqueFactory): The technique to register.
+            metadata (dict[str, Any] | None): Optional per-entry metadata. Defaults to None.
 
         Raises:
             TechniqueSelectorConflictError: If the name or a tag conflicts with another technique's name or tag.
@@ -158,10 +167,26 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         ScenarioRegistry.get_registry_singleton().get_class_names()
         with self._lock:
             entries = self.get_all_instances()
-            names = {entry.name.casefold(): entry.name for entry in entries}
-            tags = {tag.casefold(): tag for entry in entries for tag in entry.instance.technique_tags}
+            # Names are global, so a technique can't take a name, or a tag spelled like one, that another caller's
+            # private technique uses. A tag groups techniques, so the exact same tag can be used by every caller.
+            every_entry = self.get_all_instances_of_every_owner()
+            names = {entry.name.casefold(): entry.name for entry in every_entry}
+            tags = {tag.casefold(): tag for entry in every_entry for tag in entry.instance.technique_tags}
+            visible_names = {entry.name.casefold() for entry in entries}
+            visible_tags = {tag.casefold() for entry in entries for tag in entry.instance.technique_tags}
+            hidden_names = names.keys() - visible_names
+            hidden_tags = {folded: tag for folded, tag in tags.items() if folded not in visible_tags}
+            # A clash with a technique the caller can't see says only that the selector is taken.
             folded_name = factory.name.casefold()
+            if folded_name in hidden_names or folded_name in hidden_tags:
+                raise TechniqueSelectorConflictError(f"The technique name or tag '{factory.name}' is taken.")
+            for tag in factory.technique_tags:
+                folded = tag.casefold()
+                if folded in hidden_names or hidden_tags.get(folded, tag) != tag:
+                    raise TechniqueSelectorConflictError(f"The technique name or tag '{tag}' is taken.")
             if folded_name in names:
+                # Code that catches this error would leave a saved technique standing in, so the clash is recorded.
+                _record_saved_entry_refusal(self._registry_items.get(names[folded_name]))
                 raise TechniqueSelectorConflictError(
                     f"Technique '{factory.name}' already exists (names are case-insensitive)"
                 )
@@ -186,7 +211,7 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
                 )
             except ValueError as error:
                 raise TechniqueAdmissionError(str(error)) from error
-            self.register(factory, name=factory.name, tags=factory.technique_tags)
+            self.register(factory, name=factory.name, tags=factory.technique_tags, metadata=metadata)
 
 
 class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechniqueMetadata]):
@@ -505,9 +530,14 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         return converters
 
     @property
-    def catalog_revision(self) -> tuple[object, int]:
-        """Cache key for scenario selections, metadata, and estimates derived from registered factories."""
-        return self.instances, self.instances.revision
+    def catalog_revision(self) -> tuple[object, int, str | None]:
+        """
+        Cache key for scenario selections, metadata, and estimates derived from registered factories.
+
+        It includes whose private techniques the caller in scope sees, so a result derived from one
+        caller's private techniques is never reused for another.
+        """
+        return self.instances, self.instances.revision, self.instances.visibility_key
 
     def _discover(self) -> None:
         """Register no classes: attack class discovery belongs to ``AttackRegistry``."""
@@ -620,7 +650,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         """
 
         @lru_cache(maxsize=1)
-        def cached(revision: tuple[object, int]) -> type[ScenarioTechnique]:
+        def cached(revision: tuple[object, int, str | None]) -> type[ScenarioTechnique]:
             technique_class = builder()
             technique_class._selection_catalog = (builder, revision[0])
             return technique_class
@@ -752,7 +782,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         # When it wasn't, the attribute is left unset and ScenarioTechnique.default() owns
         # the single ALL fallback — so the "no default -> ALL" rule lives in one place.
         if default_member_names:
-            technique_cls._default_technique_value = "default"  # type: ignore[ty:unresolved-attribute]
+            technique_cls._default_technique_value = "default"  # type: ignore[ty:missing-attribute]
 
         return technique_cls
 
@@ -769,8 +799,13 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             factories (list[AttackTechniqueFactory]): Self-describing factories to
                 register. Each factory's ``name`` and ``technique_tags`` properties are
                 used directly.
+
+        Raises:
+            SavedEntryReplacementError: If a factory's name belongs to a technique rebuilt
+                from a saved recipe, which skipping would quietly use in its place.
         """
         for factory in factories:
+            refuse_saved_entry(self.instances.get_entry(factory.name))
             if factory.name not in self.instances:
                 tags: dict[str, str] = dict.fromkeys(factory.technique_tags, "")
                 self.register_technique(

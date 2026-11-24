@@ -1,16 +1,23 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
+import os
+import subprocess
+import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, get_mock_target_identifier
 
 from pyrit.converter import (
+    DenylistConverter,
     LLMGenericTextConverter,
     MaliciousQuestionGeneratorConverter,
     MathPromptConverter,
@@ -402,17 +409,6 @@ def _empty_dict() -> dict[str, str]:
     return {}
 
 
-def _colliding_sets() -> tuple[set[int], set[int]]:
-    first: set[int] = set()
-    second: set[int] = set()
-    for value in (0, 8):
-        first.add(value)
-    for value in (8, 0):
-        second.add(value)
-    assert list(first) != list(second)
-    return first, second
-
-
 @pytest.mark.parametrize(
     "template_value, first_words, second_words",
     [
@@ -425,7 +421,7 @@ def _colliding_sets() -> tuple[set[int], set[int]]:
             PureWindowsPath("styles", "noir.yaml"),
             PurePosixPath("styles", "noir.yaml"),
         ),
-        ("{{ objective }}{% for word in words %} {{ word }}{% endfor %}", *_colliding_sets()),
+        ("{{ objective }}{% for word in words %} {{ word }}{% endfor %}", ["beta", "alpha"], ["alpha", "beta"]),
         ("{{ objective }} {{ words.missing }}", defaultdict(list), defaultdict(dict)),
         ("{{ objective }} {{ words.missing }}", defaultdict(_empty_list), defaultdict(_empty_dict)),
         ("{{ objective }} {{ words }}", _TemplateText("French"), _TemplateText("Spanish")),
@@ -466,7 +462,7 @@ async def test_generic_llm_converter_identifier_distinguishes_values_that_render
 
 def test_generic_llm_converter_identifier_is_stable_for_equal_template_parameters(mock_target) -> None:
     template = _custom_template("{{ objective }} {{ words }} {{ path }} {{ tags }}", "objective")
-    tags = {"x", "y", "z"}
+    tags = ["x", "y", "z"]
 
     first = LLMGenericTextConverter(
         converter_target=mock_target,
@@ -523,7 +519,7 @@ class _UnrepresentableValue:
     [
         {1: "first", "two": "second"},
         {("a", "b"): "pair", None: "none"},
-        {frozenset({1, "x"}), 2.5, b"bytes"},
+        (1, "x", 2.5, b"bytes"),
         _UnrepresentableValue(),
     ],
 )
@@ -543,6 +539,141 @@ async def test_generic_llm_converter_converts_with_any_renderable_template_param
     request = mock_target.send_prompt_async.call_args.kwargs["message"]
     assert request.message_pieces[0].converter_identifiers[0].hash == converter.get_identifier().hash
     assert len(converter.get_identifier().params["template_parameters_hash"]) == 16
+
+
+class _TagSet(set[str]):
+    pass
+
+
+@dataclass
+class _TemplateWords:
+    words: object
+
+
+@pytest.mark.parametrize(
+    "words, kind",
+    [
+        ({"alpha", "beta"}, "set"),
+        (frozenset({"alpha", "beta"}), "frozenset"),
+        (set(), "set"),
+        (frozenset(), "frozenset"),
+        (_TagSet({"alpha"}), "_TagSet"),
+        (["alpha", {"beta"}], "set"),
+        (("alpha", frozenset({"beta"})), "frozenset"),
+        ({"tones": {"calm"}}, "set"),
+        ({frozenset({"calm"}): "tone"}, "frozenset"),
+        (defaultdict(set, {"tones": {"calm"}}), "set"),
+        (_TemplateWords({"calm"}), "set"),
+        (SimpleNamespace(tones=frozenset({"calm"})), "frozenset"),
+    ],
+)
+def test_generic_llm_converter_rejects_unordered_template_parameters(mock_target, words, kind) -> None:
+    with pytest.raises(ValueError, match=rf"^Template parameter 'words' contains a {kind}, whose iteration order"):
+        LLMGenericTextConverter(converter_target=mock_target, words=words)
+
+
+def test_generic_llm_converter_unordered_parameter_error_explains_how_to_prepare_values(mock_target) -> None:
+    with pytest.raises(ValueError) as error:
+        LLMGenericTextConverter(converter_target=mock_target, language="French", tones=[{"calm", "warm"}])
+
+    message = str(error.value)
+    assert "'tones'" in message
+    assert "can change between Python processes" in message
+    assert "sorted(values)" in message
+    assert "sorted(values.difference(exclusions))" in message
+
+
+def test_denylist_converter_rejects_set_denylist(mock_target) -> None:
+    with pytest.raises(ValueError, match="Template parameter 'denylist' contains a set"):
+        DenylistConverter(converter_target=mock_target, denylist={"bomb"})
+
+
+async def test_generic_llm_converter_renders_caller_prepared_ordered_values(mock_target) -> None:
+    source_words = {"gamma", "alpha", "beta"}
+    exclusions = {"beta"}
+    template = _custom_template("{{ objective }} {{ words|join(', ') }} | {{ allowed }}", "objective")
+    converter = LLMGenericTextConverter(
+        converter_target=mock_target,
+        user_prompt_template_with_objective=template,
+        words=sorted(source_words),
+        allowed=sorted(source_words.difference(exclusions)),
+    )
+
+    assert await _sent_prompt_async(converter, mock_target) == "hello alpha, beta, gamma | ['alpha', 'gamma']"
+
+
+async def test_generic_llm_converter_keeps_caller_list_order(mock_target) -> None:
+    template = _custom_template("{{ objective }}{% for word in words %} {{ word }}{% endfor %}", "objective")
+    chosen = LLMGenericTextConverter(
+        converter_target=mock_target, user_prompt_template_with_objective=template, words=["gamma", "alpha", "beta"]
+    )
+    alphabetical = LLMGenericTextConverter(
+        converter_target=mock_target, user_prompt_template_with_objective=template, words=["alpha", "beta", "gamma"]
+    )
+
+    assert await _sent_prompt_async(chosen, mock_target) == "hello gamma alpha beta"
+    assert await _sent_prompt_async(alphabetical, mock_target) == "hello alpha beta gamma"
+    assert chosen.get_identifier().hash != alphabetical.get_identifier().hash
+
+
+_PREPARED_VALUES_SCRIPT = """
+import asyncio
+import json
+from unittest.mock import AsyncMock, MagicMock
+
+from unit.mocks import get_mock_target_identifier
+
+from pyrit.converter import LLMGenericTextConverter
+from pyrit.models import Message, MessagePiece, SeedPrompt
+from pyrit.prompt_target import PromptTarget
+
+source_words = {"alpha", "beta", "gamma", "delta", "epsilon", "zeta"}
+exclusions = {"delta"}
+target = MagicMock(spec=PromptTarget)
+response = Message(message_pieces=[MessagePiece(role="assistant", original_value="prompt value")])
+target.send_prompt_async = AsyncMock(return_value=[response])
+target.get_identifier.return_value = get_mock_target_identifier("MockLLMTarget")
+converter = LLMGenericTextConverter(
+    converter_target=target,
+    system_prompt_template=SeedPrompt(value="Use one of these tones: {{ tones }}", parameters=["tones"]),
+    user_prompt_template_with_objective=SeedPrompt(
+        value="{{ objective }}{% for word in allowed %} {{ word }}{% endfor %}", parameters=["objective"]
+    ),
+    tones=sorted(source_words),
+    allowed=sorted(source_words.difference(exclusions)),
+)
+asyncio.run(converter.convert_async(prompt="hello"))
+prompt = target.send_prompt_async.call_args.kwargs["message"].message_pieces[0].converted_value
+print(json.dumps({"prompt": prompt, "identifier": converter.get_identifier().hash}))
+"""
+
+
+def test_generic_llm_converter_prepared_values_match_across_processes() -> None:
+    results = []
+    for hash_seed in ("1", "2"):
+        environment = {**os.environ, "PYTHONHASHSEED": hash_seed, "PYTHONPATH": os.pathsep.join(sys.path)}
+        process = subprocess.run(
+            [sys.executable, "-c", _PREPARED_VALUES_SCRIPT],
+            env=environment,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+            timeout=TEST_WATCHDOG_SECONDS,
+        )
+        assert process.returncode == 0, process.stderr[-2000:]
+        results.append(json.loads(process.stdout.splitlines()[-1]))
+
+    first, second = results
+    assert (
+        first["prompt"]
+        == second["prompt"]
+        == (
+            "Use one of these tones: ['alpha', 'beta', 'delta', 'epsilon', 'gamma', 'zeta']\n\n"
+            "hello alpha beta epsilon gamma zeta"
+        )
+    )
+    assert first["identifier"] == second["identifier"]
 
 
 @pytest.mark.usefixtures("patch_central_database")

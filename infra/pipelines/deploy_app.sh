@@ -12,7 +12,7 @@ validate_app_inputs() {
   require_values PYRIT_CONTAINER_IMAGE PYRIT_ENTRA_TENANT_ID PYRIT_ENTRA_CLIENT_ID \
     PYRIT_ALLOWED_GROUP_OBJECT_IDS PYRIT_ADMIN_GROUP_OBJECT_ID PYRIT_SQL_SERVER_FQDN \
     PYRIT_SQL_DATABASE_NAME PYRIT_KEY_VAULT_RESOURCE_ID PYRIT_ENV_SECRET_NAME
-  validate_optional_values PYRIT_ALLOWED_CLIENT_CIDR PYRIT_CONFIG_FILE_URI
+  validate_optional_values PYRIT_ALLOWED_CLIENT_CIDR PYRIT_CONFIG_FILE_URI PYRIT_CONFIG_SEED_URI
   if [[ -n "${PYRIT_ALLOWED_CLIENT_CIDR:-}" ]]; then
     deployment_error "Front Door cannot use an ACA client CIDR restriction because ACA sees Front Door backend IPs, not client IPs; leave PYRIT_ALLOWED_CLIENT_CIDR empty"
   fi
@@ -26,47 +26,47 @@ validate_app_inputs() {
     ! "$PYRIT_ENV_SECRET_NAME" =~ ^[a-zA-Z0-9-]{1,127}$ ]]; then
     deployment_error "Invalid SQL FQDN or Key Vault secret name"
   fi
-  if ! python3 - "$PYRIT_ENTRA_TENANT_ID" "$PYRIT_ENTRA_CLIENT_ID" \
-    "$PYRIT_ALLOWED_GROUP_OBJECT_IDS" "$PYRIT_ADMIN_GROUP_OBJECT_ID" "${PYRIT_CONFIG_FILE_URI:-}" << 'PY'; then
-import sys
-import uuid
-from urllib.parse import urlparse
-
-try:
-    uuid.UUID(sys.argv[1])
-    uuid.UUID(sys.argv[2])
-    groups = [value.strip() for value in sys.argv[3].split(",") if value.strip()]
-    if not groups:
-        raise ValueError
-    for group in groups:
-        uuid.UUID(group)
-    uuid.UUID(sys.argv[4])
-    if sys.argv[5]:
-        parsed = urlparse(sys.argv[5])
-        hostname = parsed.hostname or ""
-        suffixes = (
-            ".blob.core.windows.net",
-            ".blob.core.chinacloudapi.cn",
-            ".blob.core.usgovcloudapi.net",
-            ".blob.core.cloudapi.de",
-        )
-        if (
-            parsed.scheme != "https"
-            or not any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in suffixes)
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.port is not None
-            or parsed.query
-            or parsed.fragment
-            or len(parsed.path.strip("/").split("/")) < 2
-        ):
-            raise ValueError
-except (ValueError, IndexError):
-    raise SystemExit(1)
-PY
-    deployment_error "Invalid Entra ID, group ID, or config URI"
+  # The seed location is empty unless pyritConfigSeedUri is set; see app_inputs.py.
+  local seed_location
+  if ! seed_location=$(python3 "$PYRIT_SOURCE_DIRECTORY/infra/pipelines/app_inputs.py" \
+    --tenant-id="$PYRIT_ENTRA_TENANT_ID" --client-id="$PYRIT_ENTRA_CLIENT_ID" \
+    --allowed-group-ids="$PYRIT_ALLOWED_GROUP_OBJECT_IDS" --admin-group-id="$PYRIT_ADMIN_GROUP_OBJECT_ID" \
+    --config-uri="${PYRIT_CONFIG_FILE_URI:-}" --seed-uri="${PYRIT_CONFIG_SEED_URI:-}" \
+    --source-branch="${PYRIT_SOURCE_BRANCH:-}"); then
+    deployment_error "$seed_location"
   fi
+  config_seed=()
+  [[ -z "$seed_location" ]] || IFS=$'\t' read -r -a config_seed <<< "$seed_location"
   validate_immutable_image "$PYRIT_CONTAINER_IMAGE"
+}
+
+# Copy the deployed branch's seed over the folder that holds pyritConfigFileUri, so configuration edits
+# saved in the GUI last only until the next deployment.
+reset_configuration_from_seed() {
+  [[ -n "${PYRIT_CONFIG_SEED_URI:-}" ]] || return 0
+  local seed_account=${config_seed[0]} seed_container=${config_seed[1]} seed_folder=${config_seed[2]}
+  local config_account=${config_seed[3]} config_container=${config_seed[4]} config_folder=${config_seed[5]}
+  local config_name=${config_seed[6]} seed_directory
+  seed_directory=$(mktemp -d "$PYRIT_AGENT_TEMP_DIRECTORY/pyrit-config-seed.XXXXXX")
+  az storage blob download-batch --auth-mode login --account-name "$seed_account" --source "$seed_container" \
+    --pattern "$seed_folder/*" --destination "$seed_directory" --only-show-errors -o none
+  if [[ ! -f "$seed_directory/$seed_folder/$config_name" ]]; then
+    rm -rf -- "$seed_directory"
+    deployment_error "The config seed has no $config_name for this branch at $seed_container/$seed_folder"
+  fi
+  # Overwrite first and then delete only what the seed lacks, so a failed upload never leaves the folder empty.
+  az storage blob upload-batch --auth-mode login --account-name "$config_account" --destination "$config_container" \
+    --destination-path "$config_folder" --source "$seed_directory/$seed_folder" --overwrite --only-show-errors -o none
+  local config_blobs blob_name
+  config_blobs=$(az storage blob list --auth-mode login --account-name "$config_account" \
+    --container-name "$config_container" --prefix "$config_folder/" --num-results '*' --query '[].name' -o tsv)
+  while IFS= read -r blob_name; do
+    [[ -z "$blob_name" || -e "$seed_directory/$seed_folder/${blob_name#"$config_folder"/}" ]] && continue
+    az storage blob delete --auth-mode login --account-name "$config_account" --container-name "$config_container" \
+      --name "$blob_name" --only-show-errors -o none
+  done <<< "$config_blobs"
+  rm -rf -- "$seed_directory"
+  echo "Reset $config_container/$config_folder from the $seed_container/$seed_folder seed"
 }
 
 read_app_access_mode() {
@@ -120,7 +120,7 @@ stop_app() {
   fi
   while IFS= read -r revision; do
     if jq -e --arg name "$revision" '.[] | select(.name == $name and .properties.active == true)' <<< "$revisions" > /dev/null; then
-      echo "Stopping revision $revision for the database migration"
+      echo "Stopping revision $revision"
       az containerapp revision deactivate \
         --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" --revision "$revision" -o none
     fi
@@ -145,7 +145,7 @@ stop_app() {
     echo "Waiting for app shutdown: $active_count active revisions, $replica_count replicas"
     sleep "${PYRIT_STOP_POLL_SECONDS:-5}"
   done
-  deployment_error "App shutdown was not confirmed; the database migration was not started"
+  deployment_error "App shutdown was not confirmed; the deployment was not continued"
 }
 
 start_unchanged_revision() {
@@ -154,6 +154,12 @@ start_unchanged_revision() {
     --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" \
     --query properties.latestRevisionName -o tsv)
   if [[ "$latest_revision" == "$current_revision" ]]; then
+    # A revision that kept running loaded its configuration before the seed reset. Stop it fully, so readiness
+    # can only come from a replica started afterwards.
+    if [[ -n "${PYRIT_CONFIG_SEED_URI:-}" && "${app_stopped:-false}" != true ]]; then
+      echo "Stopping revision $current_revision so it starts with the seeded configuration"
+      stop_app
+    fi
     echo "App template is unchanged; starting revision $current_revision"
     az containerapp revision activate \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" --revision "$current_revision" -o none
@@ -183,18 +189,24 @@ prepare_database_migration() {
 
 start_database_job_execution() (
   set -euo pipefail
-  local mode="$1" job_name="$PYRIT_APP_NAME-migrate" template_file
+  local mode="$1" job_name="$PYRIT_APP_NAME-migrate" template_file check_argument
   local job_args=(--resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" --query name -o tsv)
-  if [[ "$mode" == check ]]; then
+  case "$mode" in
+    check) check_argument=--check-only ;;
+    upgradable) check_argument=--check-upgradable ;;
+    migrate) check_argument="" ;;
+    *) deployment_error "Unknown database job mode $mode" >&2 ;;
+  esac
+  if [[ -n "$check_argument" ]]; then
     template_file=$(mktemp "$PYRIT_AGENT_TEMP_DIRECTORY/pyrit-schema-check.XXXXXX") \
       || deployment_error "Could not create database schema check template" >&2
     trap 'rm -f -- "$template_file"' EXIT
     if ! az containerapp job show \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" \
-      --query properties.template -o json | jq -e '
+      --query properties.template -o json | jq -e --arg check_argument "$check_argument" '
         if ([.containers[] | select(.name == "pyrit-migrate" and (.image | type == "string" and length > 0))] | length) != 1
         then error("Expected one pyrit-migrate container with an image")
-        else .containers |= map(if .name == "pyrit-migrate" then .args = ["--check-only"] else . end)
+        else .containers |= map(if .name == "pyrit-migrate" then .args = [$check_argument] else . end)
         end' > "$template_file"; then
       deployment_error "Could not prepare database schema check template" >&2
     fi
@@ -204,15 +216,20 @@ start_database_job_execution() (
 )
 
 run_database_job() {
-  local mode="$1" action="migration"
-  [[ "$mode" == check ]] && action="schema check"
+  local mode="$1" action poll_attempts
+  case "$mode" in
+    check) action="schema check" poll_attempts=${PYRIT_SCHEMA_CHECK_POLL_ATTEMPTS:-30} ;;
+    upgradable) action="revision check" poll_attempts=${PYRIT_SCHEMA_CHECK_POLL_ATTEMPTS:-30} ;;
+    migrate) action="migration" poll_attempts=${PYRIT_MIGRATION_POLL_ATTEMPTS:-375} ;;
+    *) deployment_error "Unknown database job mode $mode" ;;
+  esac
   local job_name="$PYRIT_APP_NAME-migrate"
   local execution status="" attempt
   if ! execution=$(start_database_job_execution "$mode"); then
     deployment_error "Database $action job did not start"
   fi
   [[ -n "$execution" ]] || deployment_error "Database $action job did not start"
-  for ((attempt = 1; attempt <= ${PYRIT_MIGRATION_POLL_ATTEMPTS:-90}; attempt++)); do
+  for ((attempt = 1; attempt <= poll_attempts; attempt++)); do
     if ! status=$(az containerapp job execution show \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" \
       --job-execution-name "$execution" --query properties.status -o tsv); then
@@ -222,10 +239,15 @@ run_database_job() {
     case "$status" in
       Succeeded) return 0 ;;
       Failed)
-        if [[ "$mode" == check ]]; then
-          echo "Schema check failed; migrating with the app stopped"
-          return 1
-        fi
+        case "$mode" in
+          check)
+            echo "Schema check failed; checking that this image can upgrade the database"
+            return 1
+            ;;
+          upgradable)
+            deployment_error "Database revision check $execution failed; migrating with this image cannot fix the schema (see the job logs). The app was not stopped or deployed"
+            ;;
+        esac
         deployment_error "Database migration $execution ended with status $status; the app is stopped and was not deployed"
         ;;
       Stopped | Degraded)
@@ -234,11 +256,22 @@ run_database_job() {
     esac
     sleep "${PYRIT_MIGRATION_POLL_SECONDS:-20}"
   done
-  deployment_error "Database $action $execution did not finish in time; deployment was not continued"
+  local outcome="the app is stopped and was not deployed"
+  [[ "$mode" == migrate ]] || outcome="deployment was not continued"
+  if ! az containerapp job stop \
+    --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" \
+    --job-execution-name "$execution" -o none; then
+    deployment_error "Database $action $execution did not finish in time and could not be stopped; its state is unknown and it may still be running. Confirm it has stopped before retrying; $outcome"
+  fi
+  deployment_error "Database $action $execution did not finish in time and was stopped; $outcome"
 }
 
 schema_is_current() {
   run_database_job check
+}
+
+ensure_schema_upgradable() {
+  run_database_job upgradable
 }
 
 run_database_migration() {
@@ -262,10 +295,16 @@ main() {
   read_app_access_mode
   build_app_parameters
   preview_deployment app "$template_file" "${parameters[@]}"
+  # Before the migration, so it loads the new configuration and a missing seed stops nothing.
+  reset_configuration_from_seed
   prepare_database_migration
+  app_stopped=false
   if schema_is_current; then
     echo "Schema is current; deploying without stopping the app"
   else
+    ensure_schema_upgradable
+    echo "This image can upgrade the database; migrating with the app stopped"
+    app_stopped=true
     stop_app
     run_database_migration
   fi

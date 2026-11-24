@@ -14,7 +14,7 @@ import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common.csv_helper import strip_leading_comment_block
 from pyrit.common.path import SCORER_EVALS_HARM_PATH
@@ -216,8 +216,8 @@ class _BgeSmallEmbedder:
         ).to(self._device)
         with torch.no_grad():
             hidden = self._model(**encoded).last_hidden_state[:, 0]
-            embeddings: list[list[float]] = torch.nn.functional.normalize(hidden, dim=-1).cpu().tolist()
-            return embeddings
+            # tolist() is untyped in torch stubs; normalize() on a float tensor always yields nested float lists.
+            return cast("list[list[float]]", torch.nn.functional.normalize(hidden, dim=-1).cpu().tolist())
 
     @property
     def _is_loaded(self) -> bool:

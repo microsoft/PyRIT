@@ -54,9 +54,10 @@ dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="harmben
 # For more control, use `SeedDatasetProvider` to fetch datasets and pass explicit `seed_groups`.
 # This is useful when you need to filter, combine, or inspect the prompts before running.
 #
-# The default techniques below include `AsciiSmugglerConverter`, which only accepts printable
-# ASCII (0x20-0x7E). Filter out seed groups containing newlines, other control characters, or
-# non-ASCII text before sampling. This preserves the original text of the selected objectives.
+# The default techniques below include `AsciiSmugglerConverter`. It replaces newlines and common
+# punctuation such as curly quotes and dashes with ASCII equivalents, and rejects text that has no
+# ASCII equivalent, such as CJK or emoji. Filtering to printable-ASCII seed groups before sampling
+# avoids rejected objectives and sends the selected objectives unchanged.
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
@@ -140,7 +141,8 @@ await output_scenario_async(baseline_result)  # type: ignore [top-level-await]
 # run above produces a row for every default technique, which makes it hard to spot the most
 # successful ones at a glance. Pass `sort_groups_by_success_rate=True` to `output_scenario_async` to
 # re-render the same result with the highest success rates at the top (groups with equal rates keep
-# their original relative order):
+# their original relative order). Groups that different objective scorers judged (see **Judging Each
+# Dataset With Its Own Scorer** below) stay unsorted, because their success rates are not comparable:
 
 # %%
 await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
@@ -179,7 +181,8 @@ await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
 # `incompatible_technique_policy: raise` in YAML. `None` uses the scenario class default.
 #
 # This policy does not enable adaptation. Initialization fails if no selected technique can run,
-# even with a baseline. Other construction errors are not skipped.
+# even with a baseline. Other construction errors are not skipped. The policy covers selected
+# techniques only: an optional baseline skips groups it can't use under either policy.
 
 # %% [markdown]
 # ## Custom Scorers
@@ -214,6 +217,67 @@ custom_result = await custom_scenario.run_async()  # type: ignore
 await output_scenario_async(custom_result)
 
 # %% [markdown]
+# ## Judging Each Dataset With Its Own Scorer
+#
+# Some runs need a different judge per dataset, such as a hate-speech scorer for one harm category
+# and a violence scorer for another. `RapidResponse`, `Cyber`, and `Leakage` accept a
+# `CompatibleScorers` pool in place of one scorer. Bind each candidate to an evaluation key, then
+# name the key a dataset needs on its `DatasetSource`:
+
+# %%
+from azure.ai.contentsafety.models import TextCategory
+
+from pyrit.scenario.airt import RapidResponse
+from pyrit.score import (
+    AzureContentFilterScorer,
+    CompatibleScorers,
+    FloatScaleThresholdScorer,
+    ScorerCandidate,
+    ScorerRequirements,
+)
+
+hate_scorer = FloatScaleThresholdScorer(
+    scorer=AzureContentFilterScorer(harm_categories=[TextCategory.HATE]), threshold=0.5
+)
+violence_scorer = FloatScaleThresholdScorer(
+    scorer=AzureContentFilterScorer(harm_categories=[TextCategory.VIOLENCE]), threshold=0.5
+)
+scorers = CompatibleScorers(
+    candidates=[
+        ScorerCandidate(scorer=hate_scorer, evaluation="harm.hate"),
+        ScorerCandidate(scorer=violence_scorer, evaluation="harm.violence"),
+    ]
+)
+harm_dataset_config = DatasetAttackConfiguration(
+    sources=[
+        DatasetSource(name="airt_hate", scorer_requirements=ScorerRequirements(evaluation="harm.hate")),
+        DatasetSource(name="airt_violence", scorer_requirements=ScorerRequirements(evaluation="harm.violence")),
+    ]
+)
+
+pool_scenario = RapidResponse(objective_scorer=scorers)
+pool_scenario.set_params_from_args(args={"objective_target": objective_target, "dataset_config": harm_dataset_config})
+
+# %% [markdown]
+# To check a pool against the datasets before a run, read the selection report after initializing. It
+# lists each planned atomic group with the scorer it will use and, for every candidate passed over,
+# the reason. Building it sends nothing to the target and calls no judge model:
+#
+# ```python
+# from pyrit.output import output_scorer_selection_report_async
+#
+# await pool_scenario.initialize_async()
+# await output_scorer_selection_report_async(pool_scenario.get_scorer_selection_report())
+# ```
+
+# %% [markdown]
+# Each dataset is judged by the candidate bound to the evaluation it names, and a dataset without
+# `scorer_requirements` uses a candidate without one. If no candidate can judge a dataset's
+# objectives, initialization fails and gives each candidate's reason. A technique that needs a
+# particular kind of scorer, such as TAP, follows `incompatible_technique_policy`.
+
+# %% [markdown]
+# (reporting-every-conversation)=
 # ## Reporting Every Conversation
 #
 # `output_scenario_async` gives a high-level overview of a run. To see granular details within each attack, use

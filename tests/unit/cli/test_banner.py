@@ -24,16 +24,16 @@ class TestColorRole:
     """Tests for color role resolution."""
 
     def test_get_color_returns_ansi_code(self) -> None:
-        color = _get_color(ColorRole.PYRIT_TEXT, DARK_THEME)
+        color = _get_color(role=ColorRole.PYRIT_TEXT, theme=DARK_THEME)
         assert color == ANSI_COLORS["bright_cyan"]
 
     def test_get_color_reset(self) -> None:
-        color = _get_color(ColorRole.RESET, DARK_THEME)
+        color = _get_color(role=ColorRole.RESET, theme=DARK_THEME)
         assert color == ANSI_COLORS["reset"]
 
     def test_light_theme_differs_from_dark(self) -> None:
-        dark = _get_color(ColorRole.PYRIT_TEXT, DARK_THEME)
-        light = _get_color(ColorRole.PYRIT_TEXT, LIGHT_THEME)
+        dark = _get_color(role=ColorRole.PYRIT_TEXT, theme=DARK_THEME)
+        light = _get_color(role=ColorRole.PYRIT_TEXT, theme=LIGHT_THEME)
         assert dark != light
 
     def test_all_roles_have_mappings(self) -> None:

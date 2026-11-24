@@ -13,6 +13,7 @@ from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, OpenAITarget
 from pyrit.prompt_target.openai.openai_error_handling import (
     SAFETY_MESSAGE_MARKERS,
+    _as_string_keyed_dict,
     _extract_error_payload,
     _is_content_filter_error,
 )
@@ -111,7 +112,10 @@ def test_is_content_filter_error_string_moderation_blocked():
 
 
 def test_is_content_filter_error_invalid_prompt_safety_block():
-    """invalid_prompt + 'safety' / 'limited access' message is detected (CBRN block)."""
+    """
+    Verify that the safety / limited-access message is detected
+    as a content-filtering error (CBRN block).
+    """
     data = {
         "error": {
             "code": "invalid_prompt",
@@ -161,6 +165,10 @@ def test_is_content_filter_error_string_no_filter():
 
 
 # Tests for _extract_error_payload helper
+def test_as_string_keyed_dict_rejects_non_string_keys() -> None:
+    assert _as_string_keyed_dict({"error": "invalid"}) == {"error": "invalid"}
+    assert _as_string_keyed_dict({1: "invalid"}) is None
+    assert _as_string_keyed_dict({"error": "invalid", 1: "unexpected"}) is None
 
 
 def test_extract_error_payload_body_dict():

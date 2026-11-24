@@ -37,6 +37,7 @@ from pyrit.prompt_target import (
     RoundRobinTarget,
 )
 from pyrit.registry import TargetRegistry
+from pyrit.registry.instance_registry import refuse_saved_entry
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
@@ -827,6 +828,8 @@ class TargetInitializer(PyRITInitializer):
             rr_name = generate_rr_name(key)
 
             if rr_name in registry.instances:
+                # Skipping would leave a saved target standing in for this group.
+                refuse_saved_entry(registry.instances.get_entry(rr_name))
                 logger.debug(f"Skipping auto-group {rr_name}: name already exists in registry")
                 continue
 

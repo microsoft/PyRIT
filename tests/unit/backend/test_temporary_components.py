@@ -4,10 +4,14 @@
 """Private construction, reconstruction, lifetime, and provenance regressions."""
 
 import asyncio
+import importlib.abc
+import importlib.util
+import sys
 import threading
 import uuid
-from collections.abc import Iterator
-from types import ModuleType
+from collections.abc import Iterator, Sequence
+from importlib.machinery import ModuleSpec
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -68,7 +72,9 @@ from pyrit.models import (
 )
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import (
+    ClaudeChatTarget,
     HuggingFaceChatTarget,
+    LiteLLMChatTarget,
     OpenAIChatTarget,
     OpenAICompletionTarget,
     OpenAIResponseTarget,
@@ -80,6 +86,7 @@ from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 from unit.async_utils import TEST_WATCHDOG_SECONDS, drain_tasks_async, wait_for_event_async
 from unit.backend.mocks import _settle_send_async
 from unit.mocks import openai_chat_response_json_dict
+from unit.prompt_target.target.test_litellm_chat_target import _make_litellm_stub
 
 
 @pytest.fixture(autouse=True)
@@ -93,6 +100,13 @@ def isolated_registries() -> Iterator[None]:
         factory.cache_clear()
     for registry in (TargetRegistry, ConverterRegistry, ScorerRegistry):
         registry.reset_registry_singleton()
+
+
+@pytest.fixture
+def litellm_sdk() -> Iterator[None]:
+    sdk, exceptions = _make_litellm_stub()
+    with patch.dict(sys.modules, {"litellm": sdk, "litellm.exceptions": exceptions}):
+        yield
 
 
 def source_target() -> OpenAIChatTarget:
@@ -125,6 +139,26 @@ class _ForwardedConverter(LLMGenericTextConverter):
         super().__init__(**kwargs)
 
 
+class _TorchStandIn(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Stand in for torch, noting the thread that first imports it and the one that first checks for CUDA."""
+
+    def __init__(self) -> None:
+        self.first_threads: dict[str, threading.Thread] = {}
+
+    def find_spec(
+        self, fullname: str, path: Sequence[str] | None, target: ModuleType | None = None
+    ) -> ModuleSpec | None:
+        return importlib.util.spec_from_loader(fullname, self) if fullname == "torch" else None
+
+    def exec_module(self, module: ModuleType) -> None:
+        self.first_threads.setdefault("import", threading.current_thread())
+        module.cuda = SimpleNamespace(is_available=self._is_available)  # type: ignore[attr-defined]
+
+    def _is_available(self) -> bool:
+        self.first_threads.setdefault("cuda", threading.current_thread())
+        return True
+
+
 @pytest.mark.usefixtures("patch_central_database")
 class TestTemporaryComponents:
     @pytest.mark.parametrize("register", [True, False])
@@ -132,10 +166,10 @@ class TestTemporaryComponents:
         request_loop = asyncio.get_running_loop()
         constructed: list[HuggingFaceChatTarget] = []
         registry = TargetRegistry.get_registry_singleton()
-        factory = registry.create_instance_from_external_input
+        factory = registry.create_instance_async
 
-        def create(name: str, *, params: Any, allowed_path_params: Any) -> HuggingFaceChatTarget:
-            target = factory(name, params=params, allowed_path_params=allowed_path_params)
+        async def create(**kwargs: Any) -> HuggingFaceChatTarget:
+            target = await factory(**kwargs)
             assert isinstance(target, HuggingFaceChatTarget)
             constructed.append(target)
             return target
@@ -143,7 +177,7 @@ class TestTemporaryComponents:
         with (
             patch.dict("sys.modules", {"torch": ModuleType("torch")}),
             patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock) as load,
-            patch.object(registry, "create_instance_from_external_input", side_effect=create),
+            patch.object(registry, "create_instance_async", side_effect=create),
         ):
             response = await TargetService().create_target_async(
                 request=CreateTargetRequest(
@@ -161,6 +195,65 @@ class TestTemporaryComponents:
             assert registry.instances.get_names() == (["local-model"] if register else [])
 
     @pytest.mark.parametrize(
+        ("use_cuda", "steps"), [(False, ["import"]), ("false", ["import"]), (True, ["cuda", "import"])]
+    )
+    async def test_hugging_face_imports_torch_off_the_request_loop_async(
+        self, use_cuda: bool | str, steps: list[str]
+    ) -> None:
+        torch = _TorchStandIn()
+        with (
+            patch.dict("sys.modules"),
+            patch.object(sys, "meta_path", [torch, *sys.meta_path]),
+            patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock),
+        ):
+            sys.modules.pop("torch", None)
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model",
+                    type="HuggingFaceChatTarget",
+                    params={"model_path": "test-model", "use_cuda": use_cuda, "hf_access_token": "test-only-token"},
+                )
+            )
+            target = TargetRegistry.get_registry_singleton().instances.get("local-model")
+            assert isinstance(target, HuggingFaceChatTarget)
+            await target.load_model_and_tokenizer_task
+
+        assert sorted(torch.first_threads) == steps
+        assert threading.current_thread() not in torch.first_threads.values()
+        assert target.load_model_and_tokenizer_task.get_loop() is asyncio.get_running_loop()
+
+    async def test_hugging_face_without_torch_reports_the_constructor_error_async(self) -> None:
+        with patch.dict("sys.modules", {"torch": None}), pytest.raises(RuntimeError, match="Could not import torch"):
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model",
+                    type="HuggingFaceChatTarget",
+                    params={"model_path": "test-model", "use_cuda": True, "hf_access_token": "test-only-token"},
+                )
+            )
+
+        assert TargetRegistry.get_registry_singleton().instances.get_names() == []
+
+    async def test_hugging_face_use_cuda_that_is_not_a_boolean_is_refused_without_a_cuda_check_async(self) -> None:
+        torch = _TorchStandIn()
+        with (
+            patch.dict("sys.modules"),
+            patch.object(sys, "meta_path", [torch, *sys.meta_path]),
+            pytest.raises(ValueError, match="expects bool"),
+        ):
+            sys.modules.pop("torch", None)
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model",
+                    type="HuggingFaceChatTarget",
+                    params={"model_path": "test-model", "use_cuda": "maybe", "hf_access_token": "test-only-token"},
+                )
+            )
+
+        assert "cuda" not in torch.first_threads
+
+    @pytest.mark.parametrize("register", [None, True, False])
+    @pytest.mark.parametrize(
         ("router", "path", "payload", "registry"),
         [
             (
@@ -168,7 +261,6 @@ class TestTemporaryComponents:
                 "/api/targets",
                 {
                     "type": "OpenAIChatTarget",
-                    "register": False,
                     "params": {"endpoint": "https://example.test/v1", "model_name": "test", "api_key": "test-only-key"},
                 },
                 TargetRegistry,
@@ -178,7 +270,6 @@ class TestTemporaryComponents:
                 "/api/converters",
                 {
                     "type": "CaesarConverter",
-                    "register": False,
                     "params": {"caesar_offset": 3},
                 },
                 ConverterRegistry,
@@ -188,31 +279,46 @@ class TestTemporaryComponents:
                 "/api/scorers",
                 {
                     "type": "SubStringScorer",
-                    "register": False,
                     "params": {"substring": "example"},
                 },
                 ScorerRegistry,
             ),
         ],
     )
-    def test_rest_unregistered_build_has_no_handle(
+    def test_rest_build_registration_contract(
         self,
         *,
         router: APIRouter,
         path: str,
         payload: dict[str, JSONValue],
         registry: type[TargetRegistry] | type[ConverterRegistry] | type[ScorerRegistry],
+        register: bool | None,
     ) -> None:
         app = FastAPI()
         app.state.authentication_policy = AuthenticationPolicy(mode="local")
         app.include_router(router, prefix="/api")
+        payload = dict(payload)
+        if register is not None:
+            payload["register"] = register
+        if register is not False:
+            payload["name"] = "created"
         with TestClient(app) as client:
             response = client.post(path, json=payload)
+            schema = client.get("/openapi.json").json()
         assert response.status_code == 201, response.text
         assert "identifier" in response.json()
-        assert not {"converter_id", "target_registry_name", "scorer_registry_name"} & response.json().keys()
+        handles = {"converter_id", "target_registry_name", "scorer_registry_name"} & response.json().keys()
+        if register is False:
+            assert not handles
+        else:
+            assert len(handles) == 1
+            assert response.json()[handles.pop()] == "created"
         assert "test-only-key" not in response.text
-        assert registry.get_registry_singleton().instances.get_names() == []
+        assert registry.get_registry_singleton().instances.get_names() == ([] if register is False else ["created"])
+        request_schema = schema["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        properties = schema["components"]["schemas"][request_schema.rsplit("/", 1)[-1]]["properties"]
+        assert properties["register"]["default"] is True
+        assert "register_instance" not in properties
 
     async def test_temperature_reconstruction_is_private_and_preserves_auth_async(self) -> None:
         source = source_target()
@@ -294,22 +400,28 @@ class TestTemporaryComponents:
             await source.cleanup_target_async()
 
     @pytest.mark.parametrize("auth_mode", ["none", "identity", "api_key"])
-    def test_source_takes_its_auth_mode_only_from_source_params(self, auth_mode: str) -> None:
+    def test_a_copy_uses_its_sources_auth_mode(self, auth_mode: str) -> None:
         source = SourceInstanceSpec(source_name="source", source_hash="hash", params={})
 
-        with pytest.raises(ValidationError, match="including auth_mode"):
+        with pytest.raises(ValidationError, match="a copy uses its source's auth mode"):
             CreateTargetRequest(type="OpenAIChatTarget", source=source, register=False, auth_mode=auth_mode)
 
     @pytest.mark.parametrize(
-        "overrides",
+        ("fields", "message"),
         [
-            {"temperature": 0.8},
-            {"temperature": 0.8, "api_key": None},
-            {"temperature": 0.8, "headers": None},
-            {"temperature": 0.8, "headers": ""},
+            ({}, "source requires register=false"),
+            ({"register": False, "params": {"temperature": 0.8}}, "a copy takes its overrides in source.params"),
         ],
     )
-    async def test_no_key_source_stays_no_key_async(self, overrides: dict[str, Any]) -> None:
+    def test_a_copy_is_unregistered_and_takes_overrides_in_its_source(
+        self, fields: dict[str, object], message: str
+    ) -> None:
+        source = SourceInstanceSpec(source_name="source", source_hash="hash", params={})
+
+        with pytest.raises(ValidationError, match=message):
+            CreateTargetRequest(type="OpenAIChatTarget", source=source, **fields)
+
+    async def test_no_key_source_stays_no_key_async(self) -> None:
         source = OpenAIChatTarget(endpoint="http://localhost:11434/v1", model_name="llama3", auth_mode="none")
         registry = TargetRegistry.get_registry_singleton()
         registry.instances.register(source, name="source")
@@ -319,7 +431,9 @@ class TestTemporaryComponents:
                 {"OPENAI_CHAT_KEY": "server-key", "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"X-Server-Secret": "s"}'},
             ):
                 private = await TargetService().build_from_source_async(
-                    SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params=overrides)
+                    SourceInstanceSpec(
+                        source_name="source", source_hash=source.get_identifier().hash, params={"temperature": 0.8}
+                    )
                 )
             try:
                 assert private._api_key == "not-needed"
@@ -327,6 +441,22 @@ class TestTemporaryComponents:
                 assert private.get_identifier().temperature == 0.8
             finally:
                 await private.cleanup_target_async()
+        finally:
+            await source.cleanup_target_async()
+
+    @pytest.mark.parametrize("overrides", [{"api_key": None}, {"headers": None}, {"headers": ""}])
+    async def test_no_key_source_copy_cannot_clear_its_key_or_headers_async(self, overrides: dict[str, Any]) -> None:
+        source = OpenAIChatTarget(endpoint="http://localhost:11434/v1", model_name="llama3", auth_mode="none")
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        try:
+            with pytest.raises(ValueError, match=f"can't set {next(iter(overrides))}"):
+                await TargetService().build_from_source_async(
+                    SourceInstanceSpec(
+                        source_name="source",
+                        source_hash=source.get_identifier().hash,
+                        params={"temperature": 0.8, **overrides},
+                    )
+                )
         finally:
             await source.cleanup_target_async()
 
@@ -899,6 +1029,57 @@ class TestTemporaryComponents:
                 )
         finally:
             await source.cleanup_target_async()
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"endpoint": "https://other.test/v1"},
+            {"endpoint": "https://example.test/v1"},
+            {"api_key": "other-key"},
+            {"auth_mode": "identity"},
+            {"headers": '{"X-Extra": "1"}'},
+        ],
+    )
+    async def test_source_copy_keeps_connection_settings_async(self, params: dict[str, str]) -> None:
+        source = source_target()
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        try:
+            with pytest.raises(ValueError, match=f"can't set {next(iter(params))}"):
+                await TargetService().build_from_source_async(
+                    SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params=params)
+                )
+        finally:
+            await source.cleanup_target_async()
+
+    @pytest.mark.usefixtures("litellm_sdk")
+    async def test_litellm_source_copy_is_private_and_shares_pacing_async(self) -> None:
+        source = ClaudeChatTarget(
+            model_name="claude-sonnet-4-6", api_key="test-only-key", temperature=0.2, max_requests_per_minute=30
+        )
+        registry = TargetRegistry.get_registry_singleton()
+        registry.instances.register(source, name="source")
+        private = await TargetService().build_from_source_async(
+            SourceInstanceSpec(
+                source_name="source", source_hash=source.get_identifier().hash, params={"temperature": 0.8}
+            )
+        )
+        assert private.get_identifier().temperature == 0.8
+        assert private._api_key == "test-only-key"
+        assert _get_rate_limit_lock(private) is _get_rate_limit_lock(source)
+        assert source._temperature == 0.2
+        assert registry.instances.get_names() == ["source"]
+
+    @pytest.mark.usefixtures("litellm_sdk")
+    @pytest.mark.parametrize(
+        "params", [{"model_name": "openai/gpt-4o"}, {"endpoint": "https://other.test"}, {"api_key": "other-key"}]
+    )
+    async def test_litellm_source_copy_keeps_connection_settings_async(self, params: dict[str, str]) -> None:
+        source = LiteLLMChatTarget(model_name="anthropic/claude-sonnet-4-6", api_key="test-only-key")
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        with pytest.raises(ValueError, match=f"can't set {next(iter(params))}"):
+            await TargetService().build_from_source_async(
+                SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params=params)
+            )
 
     async def test_runtime_temperature_preserves_saved_variant_binding_async(
         self, sqlite_instance: SQLiteMemory

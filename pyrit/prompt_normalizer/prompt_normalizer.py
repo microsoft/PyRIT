@@ -14,7 +14,7 @@ from contextlib import AbstractAsyncContextManager, nullcontext
 from contextvars import copy_context
 from functools import partial
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from uuid import uuid4
 
 from pyrit.common.attack_result_scope import get_current_attack_result_id
@@ -32,6 +32,7 @@ from pyrit.models import (
     Conversation,
     Message,
     MessagePiece,
+    ProviderTraceReference,
     RequestGenerationConfig,
     RequestTraceContext,
     construct_response_from_request,
@@ -44,16 +45,6 @@ from pyrit.prompt_target.common.target_send_context import TargetSendContext
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
-
-
-def _is_write_only_response(responses: object) -> bool:
-    """
-    Distinguish a write-only target's empty list from a malformed None response.
-
-    Returns:
-        bool: Whether the target returned an empty list.
-    """
-    return isinstance(responses, list) and len(responses) == 0
 
 
 class _TargetInvocationContext:
@@ -146,7 +137,8 @@ class PromptNormalizer:
                 history selection and send lifecycle state.
 
         Returns:
-            Message: The response received from the target.
+            Message: The response received from the target. A target without
+                ``supports_responses`` may return nothing, and then this is the sent request.
 
         Raises:
             Exception: If an error occurs during the request processing.
@@ -233,6 +225,7 @@ class PromptNormalizer:
             )
             error_response.get_piece().prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
             error_response.get_piece().prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+            ProviderTraceReference.clear_metadata(error_response.get_piece().prompt_metadata)
             RequestGenerationConfig.clear_metadata(error_response.get_piece().prompt_metadata)
 
             await self._calc_hash_async(request=error_response)
@@ -242,9 +235,9 @@ class PromptNormalizer:
 
         # handling empty responses message list and None responses
         if not responses or not any(responses):
-            # An empty list is valid for write-only targets (e.g., TextTarget)
-            # that don't produce responses. Return the request as-is.
-            if _is_write_only_response(responses):
+            # A target that declares it never replies (e.g., TextTarget) delivered the request, so
+            # return it as-is. Any other target returning nothing gets an empty error response.
+            if not target.configuration.includes(capability=CapabilityName.RESPONSES):
                 return request
             empty_response = construct_response_from_request(
                 request=request.message_pieces[0],
@@ -254,6 +247,7 @@ class PromptNormalizer:
             )
             empty_response.get_piece().prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
             empty_response.get_piece().prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+            ProviderTraceReference.clear_metadata(empty_response.get_piece().prompt_metadata)
             RequestGenerationConfig.clear_metadata(empty_response.get_piece().prompt_metadata)
             await self._calc_hash_async(request=empty_response)
             (await self.memory.add_message_to_memory_async(request=empty_response))
@@ -270,6 +264,7 @@ class PromptNormalizer:
                 piece.conversation_id = conversation_id
                 piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
                 piece.prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+                ProviderTraceReference.clear_metadata(piece.prompt_metadata)
                 RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
             is_last = i == len(responses) - 1
             if is_last:
@@ -340,7 +335,7 @@ class PromptNormalizer:
             "send_context",
         ]
 
-        responses: list[Message] = await batch_task_async(
+        responses = await batch_task_async(
             prompt_target=target,
             batch_size=batch_size,
             items_to_batch=batch_items,
@@ -348,7 +343,8 @@ class PromptNormalizer:
             task_arguments=batch_item_keys,
             target=target,
         )
-        return responses
+        # Each batch result is the Message returned by send_prompt_async.
+        return cast("list[Message]", responses)
 
     async def convert_values_async(
         self,

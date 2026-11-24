@@ -18,6 +18,7 @@ import numpy as np
 
 def _validate_and_prepare_data(
     reliability_data: np.ndarray,
+    *,
     level_of_measurement: str,
     missing: float | None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -61,6 +62,7 @@ def _validate_and_prepare_data(
 
 def _build_value_counts_matrix(
     data: np.ndarray,
+    *,
     valid_mask: np.ndarray,
     categories: np.ndarray,
 ) -> np.ndarray:
@@ -157,6 +159,7 @@ def _build_expected_matrix(
 
 def _build_ordinal_distance_matrix(
     num_categories: int,
+    *,
     n_v: np.ndarray,
 ) -> np.ndarray:
     """
@@ -184,6 +187,7 @@ def _build_ordinal_distance_matrix(
 
 def _compute_alpha_from_disagreements(
     observed_disagreement: float,
+    *,
     expected_disagreement: float,
 ) -> float:
     """
@@ -248,7 +252,9 @@ def krippendorff_alpha(
         ValueError: If ``level_of_measurement`` is not ``"ordinal"``.
     """
     # Validate and prepare data
-    data, valid_mask, categories = _validate_and_prepare_data(reliability_data, level_of_measurement, missing)
+    data, valid_mask, categories = _validate_and_prepare_data(
+        reliability_data, level_of_measurement=level_of_measurement, missing=missing
+    )
 
     # Check if we have enough data
     valid_ratings = data[valid_mask]
@@ -256,7 +262,7 @@ def krippendorff_alpha(
         return np.nan
 
     # Build value counts matrix
-    value_counts = _build_value_counts_matrix(data, valid_mask, categories)
+    value_counts = _build_value_counts_matrix(data, valid_mask=valid_mask, categories=categories)
 
     # Build coincidence matrix
     coincidence_matrix = _build_coincidence_matrix(value_counts)
@@ -278,11 +284,11 @@ def krippendorff_alpha(
         return 1.0
 
     # Build ordinal distance matrix
-    distance_matrix = _build_ordinal_distance_matrix(num_categories, n_v)
+    distance_matrix = _build_ordinal_distance_matrix(num_categories, n_v=n_v)
 
     # Compute observed and expected disagreements
     observed_disagreement = float(np.sum(coincidence_matrix * distance_matrix))
     expected_disagreement = float(np.sum(expected_matrix * distance_matrix))
 
     # Compute and return alpha
-    return _compute_alpha_from_disagreements(observed_disagreement, expected_disagreement)
+    return _compute_alpha_from_disagreements(observed_disagreement, expected_disagreement=expected_disagreement)

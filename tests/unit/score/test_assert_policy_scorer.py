@@ -651,6 +651,70 @@ async def test_invalid_category_response_retries_before_success_async(
     assert len(await sqlite_instance.get_scores_async(score_type="true_false")) == 1
 
 
+def _taxonomy_with_category_names(taxonomy: AssertTaxonomy, *names: str) -> AssertTaxonomy:
+    data = taxonomy.model_dump()
+    template = data["behavior_categories"][1]
+    data["behavior_categories"] = [data["behavior_categories"][0]] + [{**template, "name": name} for name in names]
+    return AssertTaxonomy.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    "returned_name",
+    [
+        "Another Customer\u0019s Order Details",
+        "Another Customer's Order Details",
+        "another customer\u2019s order details",
+    ],
+    ids=["control-character", "straight-apostrophe", "case"],
+)
+async def test_category_names_with_mangled_punctuation_match_the_taxonomy_async(
+    *, sqlite_instance: MemoryInterface, taxonomy: AssertTaxonomy, returned_name: str
+) -> None:
+    canonical = "Another Customer\u2019s Order Details"
+    target = MockPromptTarget()
+    scorer = build_assert_policy_scorer(
+        target=target,
+        taxonomy=_taxonomy_with_category_names(taxonomy, canonical),
+        judgment_mode=AssertJudgmentMode.CATEGORY_VALIDATED,
+    )
+    pieces = await _store_conversation_async(request="Explain the return period.", replies=("The period is 30 days.",))
+    assert pieces[0].conversation_id
+    response = MessagePiece(
+        role="assistant",
+        original_value=_category_response(verdict=True, nodes=[_category_node(name=returned_name, violated=True)]),
+    ).to_message()
+    with patch.object(
+        target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=[response]
+    ) as transport:
+        (score,) = await scorer.score_async(scorable=ConversationScorable(conversation_id=pieces[0].conversation_id))
+    assert transport.await_count == 1
+    (saved,) = await sqlite_instance.get_scores_async(score_ids=[score.id])
+    assert saved.get_value() is True
+    assert json.loads(saved.score_metadata["assert_node_judgments"]) == [_category_node(name=canonical, violated=True)]
+    assert json.loads(saved.score_metadata["assert_judgment_warnings"]) == [f"normalized_node_name:{canonical}"]
+
+
+async def test_category_names_matching_several_taxonomy_entries_stay_invalid_async(
+    *, sqlite_instance: MemoryInterface, taxonomy: AssertTaxonomy
+) -> None:
+    target = MockPromptTarget()
+    scorer = build_assert_policy_scorer(
+        target=target,
+        taxonomy=_taxonomy_with_category_names(taxonomy, "Customer\u2019s Data", "Customers Data"),
+        judgment_mode=AssertJudgmentMode.CATEGORY_VALIDATED,
+    )
+    pieces = await _store_conversation_async(request="Explain the return period.", replies=("The period is 30 days.",))
+    assert pieces[0].conversation_id
+    response = MessagePiece(
+        role="assistant",
+        original_value=_category_response(verdict=True, nodes=[_category_node(name="Customer\u0019s Data")]),
+    ).to_message()
+    with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=[response]):
+        with pytest.raises(InvalidJsonException, match="Invalid ASSERT category judgment"):
+            await scorer.score_async(scorable=ConversationScorable(conversation_id=pieces[0].conversation_id))
+    assert await sqlite_instance.get_scores_async(score_type="true_false", include_intermediate=True) == []
+
+
 async def test_duplicate_category_names_keep_first_judgment_with_warning_async(
     *, sqlite_instance: MemoryInterface, taxonomy: AssertTaxonomy
 ) -> None:

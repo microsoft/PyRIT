@@ -17,6 +17,7 @@ from pyrit.backend.models import (
 )
 from pyrit.backend.models.common import IdentifierStr
 from pyrit.backend.services import get_scenario_suite_execution_service, get_scenario_suite_service
+from pyrit.backend.services.scenario_run_service import SavedEntryLaunchConflictError
 from pyrit.backend.services.scenario_suite_execution_service import ScenarioSuiteExecutionCapacityError
 from pyrit.models import (
     LaunchScenarioSuiteRequest,
@@ -152,7 +153,10 @@ async def cancel_scenario_suite_execution(  # pyrit-async-suffix-exempt
     responses={
         400: {"model": ProblemDetail, "description": "The suite has unresolved or invalid entries"},
         404: {"model": ProblemDetail, "description": "Scenario suite not found"},
-        409: {"model": ProblemDetail, "description": "The suite or a referenced preset changed"},
+        409: {
+            "model": ProblemDetail,
+            "description": "The suite or a referenced preset changed, or a launch script would replace a saved entry",
+        },
         429: {"model": ProblemDetail, "description": "Active suite execution capacity is full"},
         503: {"model": ProblemDetail, "description": "Runtime or definition storage unavailable"},
     },
@@ -179,7 +183,7 @@ async def launch_scenario_suite(  # pyrit-async-suffix-exempt
         return await get_scenario_suite_execution_service().launch_async(name=name, request=body)
     except ScenarioSuiteExecutionNotFoundError as exc:
         raise _not_found(name) from exc
-    except ScenarioSuiteLaunchConflictError as exc:
+    except (ScenarioSuiteLaunchConflictError, SavedEntryLaunchConflictError) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from None
     except ScenarioSuiteConflictError as exc:
         raise HTTPException(

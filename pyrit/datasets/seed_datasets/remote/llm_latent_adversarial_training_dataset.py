@@ -58,6 +58,8 @@ class _LLMLatentAdversarialTrainingDataset(_RemoteDatasetLoader):
     size: str = "large"  # 4948 harmful prompts
     tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
 
+    source_url = "https://huggingface.co/datasets/LLM-LAT/harmful-dataset"
+
     def __init__(
         self,
         *,
