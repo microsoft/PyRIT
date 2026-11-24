@@ -3,9 +3,12 @@ import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { convertersApi, targetsApi } from '@/services/api'
+import { SAVEABILITY_DEBOUNCE_MS } from '@/hooks/useSaveability'
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import { makeTarget } from '@/test-utils/targetFixtures'
-import type { Parameter, RegistryEntryOrigin, TargetInstance, TargetReference } from '@/types'
+import type {
+  ConverterSaveabilityRequest, Parameter, RegistryEntryOrigin, SaveabilityResponse, TargetInstance, TargetReference,
+} from '@/types'
 import { DEFAULT_USER_PREFERENCES, writeUserPreferences } from '@/utils/userPreferences'
 import { targetReference } from '@/utils/targetIdentity'
 
@@ -17,6 +20,7 @@ jest.mock('@/services/api', () => ({
     listConverters: jest.fn(),
     createConverter: jest.fn(),
     buildConverter: jest.fn(),
+    checkSaveability: jest.fn(),
   },
   targetsApi: {
     listTargets: jest.fn(),
@@ -25,6 +29,22 @@ jest.mock('@/services/api', () => ({
 
 const mockedConvertersApi = convertersApi as jest.Mocked<typeof convertersApi>
 const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>
+
+// The file parameters these tests use. The backend refuses to save a converter given a value for one of them.
+const FILE_PARAMETERS = ['source', 'img_to_add', 'font_name', 'base_image', 'video_path']
+
+/** Answers as the backend does for the converters in these tests. */
+async function backendSaveability(request: ConverterSaveabilityRequest): Promise<SaveabilityResponse> {
+  const file = FILE_PARAMETERS.find((name) => typeof request.params[name] === 'string' && request.params[name] !== '')
+  return { not_saveable_reason: file ? `Saved converters can't keep uploaded files yet ('${file}').` : null }
+}
+
+/** Waits past the saveability debounce, so any check the dialog would make has been made. */
+async function waitPastSaveabilityDebounce() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, SAVEABILITY_DEBOUNCE_MS + 50))
+  })
+}
 
 const converterTypes = {
   items: [
@@ -131,6 +151,7 @@ describe('CreateConverterDialog', () => {
     window.localStorage.clear()
     mockedConvertersApi.listConverterTypes.mockResolvedValue(converterTypes)
     mockedConvertersApi.listConverters.mockResolvedValue({ items: [] })
+    mockedConvertersApi.checkSaveability.mockImplementation(backendSaveability)
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: [],
       pagination: { limit: 200, has_more: false },
@@ -170,6 +191,8 @@ describe('CreateConverterDialog', () => {
     expect(screen.queryByLabelText(/registry name/i)).not.toBeInTheDocument()
     await user.clear(offset)
     await user.type(offset, '3')
+    await waitPastSaveabilityDebounce()
+    expect(mockedConvertersApi.checkSaveability).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
     await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
     expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('CaesarConverter', {
@@ -669,7 +692,7 @@ describe('CreateConverterDialog', () => {
     expect(path).toHaveValue('/sample/new.png')
     fireEvent.drop(path, { dataTransfer: { types: ['Files'], files: [file] } })
     await screen.findByAltText('Preview for source')
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(await screen.findByRole('button', { name: 'Create as Temporary' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'path_converter', type: 'PathConverter', persist: false, params: { source: 'data:image/png;base64,aW1hZ2U=' },
     })
@@ -736,7 +759,7 @@ describe('CreateConverterDialog', () => {
     expect(await screen.findByText('single.txt')).toBeVisible()
     expect(screen.getByText('11 B')).toBeVisible()
     expect(screen.queryByText(/extra file/)).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(await screen.findByRole('button', { name: 'Create as Temporary' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'path_converter', type: 'PathConverter', persist: false, params: { source: 'data:text/plain;base64,cmVwbGFjZW1lbnQ=' },
     })
@@ -761,7 +784,7 @@ describe('CreateConverterDialog', () => {
     expect(screen.queryByRole('textbox', { name: 'source *' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Replace' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Remove file for source' })).toBeEnabled()
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(await screen.findByRole('button', { name: 'Create as Temporary' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'path_converter', type: 'PathConverter', persist: false, params: { source: `data:${mimeType};base64,YXNzZXQ=` },
     })
@@ -842,7 +865,7 @@ describe('CreateConverterDialog', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Could not read "unreadable.txt".')
     expect(screen.getByText('replacement.bin')).toBeVisible()
     expect(screen.getByText('4 B')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(await screen.findByRole('button', { name: 'Create as Temporary' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'path_converter', type: 'PathConverter', persist: false, params: { source: 'data:application/octet-stream;base64,bmV4dA==' },
     })
@@ -864,7 +887,7 @@ describe('CreateConverterDialog', () => {
       dataTransfer: { types: ['Files'], files: [new File(['replacement'], 'replacement.pdf', { type: 'application/pdf' })] },
     })
 
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(await screen.findByRole('button', { name: 'Create as Temporary' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/already exists/i)
 
     finishFileRead(read.mock.contexts[1], 'data:application/pdf;base64,cmVwbGFjZW1lbnQ=')
@@ -908,7 +931,7 @@ describe('CreateConverterDialog', () => {
     expect(screen.getByText('current.pdf')).toBeVisible()
     expect(screen.getByText('7 B')).toBeVisible()
     expect(screen.queryByText('old.pdf')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(await screen.findByRole('button', { name: 'Create as Temporary' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'path_converter', type: 'PathConverter', persist: false, params: { source: 'data:application/pdf;base64,Y3VycmVudA==' },
     })
@@ -931,7 +954,7 @@ describe('CreateConverterDialog', () => {
     expect(input).toHaveValue('data:application/pdf;base64,bWFudWFs')
     expect(screen.queryByText('old.pdf')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Replace' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(await screen.findByRole('button', { name: 'Create as Temporary' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'path_converter', type: 'PathConverter', persist: false, params: { source: 'data:application/pdf;base64,bWFudWFs' },
     })
@@ -956,7 +979,7 @@ describe('CreateConverterDialog', () => {
     expect(screen.queryByText('two.pdf')).not.toBeInTheDocument()
     await user.type(restored, '/server/manual.txt')
     fireEvent.drop(restored, { dataTransfer: { types: ['Files'], files: [new File(['pending'], 'pending.pdf', { type: 'application/pdf' })] } })
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(await screen.findByRole('button', { name: 'Create as Temporary' }))
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
     const pending = read.mock.contexts[2]
     if (!(pending instanceof FileReader)) throw new Error('File read did not start')
@@ -1053,7 +1076,7 @@ describe('CreateConverterDialog', () => {
     expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled()
     const url = 'https://example.blob.core.windows.net/assets/input'
     await user.type(input, url)
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(await screen.findByRole('button', { name: 'Create as Temporary' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: registryName, type: converterType, persist: false, params: { [parameterName]: url },
     })
@@ -1456,13 +1479,13 @@ describe('CreateConverterDialog', () => {
     expect(fontSize).toHaveValue('15')
     await user.clear(fontSize)
     await user.type(fontSize, 'large')
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(screen.getByRole('button', { name: 'Save Converter' }))
     expect(screen.getByText('font_size must be a number.')).toBeInTheDocument()
     expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
 
     await user.clear(fontSize)
     await user.type(fontSize, '24')
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(await screen.findByRole('button', { name: 'Create as Temporary' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'add_image_text_converter',
       persist: false,
@@ -1954,6 +1977,7 @@ describe('CreateConverterDialog saving', () => {
     window.localStorage.clear()
     mockedConvertersApi.listConverterTypes.mockResolvedValue(converterTypes)
     mockedConvertersApi.listConverters.mockResolvedValue({ items: [] })
+    mockedConvertersApi.checkSaveability.mockImplementation(backendSaveability)
     mockedTargetsApi.listTargets.mockResolvedValue({ items: [], pagination: { limit: 200, has_more: false } })
     mockedConvertersApi.createConverter.mockResolvedValue({
       converter_id: 'caesar_converter',
@@ -1994,6 +2018,31 @@ describe('CreateConverterDialog saving', () => {
     expect(screen.queryByText("This converter can't be saved")).not.toBeInTheDocument()
   })
 
+  it('should ask the backend whether the values can be saved', async () => {
+    const user = userEvent.setup()
+    renderDialog()
+    await selectConverterType('CaesarConverter')
+    await user.type(screen.getByRole('textbox', { name: /caesar_offset/i }), '5')
+
+    await waitFor(() => expect(mockedConvertersApi.checkSaveability).toHaveBeenCalledWith(
+      { type: 'CaesarConverter', params: { caesar_offset: 5 } }, expect.anything(),
+    ))
+    expect(screen.getByRole('button', { name: 'Save Converter' })).toBeInTheDocument()
+  })
+
+  it('should keep offering Save when the saveability check fails', async () => {
+    const user = userEvent.setup()
+    mockedConvertersApi.checkSaveability.mockRejectedValue(new Error('Network Error'))
+    renderDialog()
+    await selectConverterType('CaesarConverter')
+    await user.type(screen.getByRole('textbox', { name: /caesar_offset/i }), '5')
+    await waitFor(() => expect(mockedConvertersApi.checkSaveability).toHaveBeenCalled())
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Save Converter' }))
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith(expect.objectContaining({ persist: true }))
+  })
+
   it('should offer a Temporary converter with the reason a type cannot be saved', async () => {
     const user = userEvent.setup()
     mockedConvertersApi.listConverterTypes.mockResolvedValue({
@@ -2003,7 +2052,9 @@ describe('CreateConverterDialog saving', () => {
     await selectConverterType('CaesarConverter')
     jest.mocked(Element.prototype.scrollIntoView).mockClear()
     await user.type(screen.getByRole('textbox', { name: /caesar_offset/i }), '5')
+    await waitPastSaveabilityDebounce()
 
+    expect(mockedConvertersApi.checkSaveability).not.toHaveBeenCalled()
     expect(screen.getByRole('status')).toHaveTextContent(
       "This converter can't be savedIt needs an uploaded file, which saved converters can't keep yet. "
       + 'A Temporary converter is gone after the backend restarts or is reinitialized.',
@@ -2011,7 +2062,7 @@ describe('CreateConverterDialog saving', () => {
     // Outside the scrolling form, so the field the user is filling in stays where it was.
     expect(screen.getByRole('status').closest('form')).toBeNull()
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(await screen.findByRole('button', { name: 'Create as Temporary' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'caesar_converter', type: 'CaesarConverter', params: { caesar_offset: 5 }, persist: false,
     })
@@ -2024,16 +2075,21 @@ describe('CreateConverterDialog saving', () => {
       items: [chatTarget('startup_chat', 'configuration'), chatTarget('launch_chat', 'temporary')],
       pagination: { limit: 200, has_more: false },
     })
+    mockedConvertersApi.checkSaveability.mockImplementation(async (request) => ({
+      not_saveable_reason: request.params.converter_target === 'launch_chat'
+        ? "Uses temporary target 'launch_chat', which won't exist after a restart."
+        : null,
+    }))
     renderDialog()
     await selectConverterType('PersuasionConverter')
     const targetSelect = screen.getByRole('combobox', { name: /converter_target/i })
 
     expect(screen.getByRole('option', { name: 'launch_chat (OpenAIChatTarget) · Temporary' })).toBeInTheDocument()
     await user.selectOptions(targetSelect, 'launch_chat')
+    expect(await screen.findByRole('button', { name: 'Create as Temporary' })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(
       "Uses temporary target 'launch_chat', which won't exist after a restart.",
     )
-    expect(screen.getByRole('button', { name: 'Create as Temporary' })).toBeInTheDocument()
     await user.selectOptions(targetSelect, 'startup_chat')
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Save Converter' }))
@@ -2059,7 +2115,7 @@ describe('CreateConverterDialog saving', () => {
     )
     expect(screen.queryByText(/It can still be created without saving it/)).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
+    await user.click(await screen.findByRole('button', { name: 'Create as Temporary' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenLastCalledWith({
       name: 'caesar_converter', type: 'CaesarConverter', params: { caesar_offset: 5 }, persist: false,
     })
@@ -2184,11 +2240,13 @@ describe('CreateConverterDialog saving', () => {
     expect(nameInput).toHaveFocus()
   })
 
-  it('should leave out a file that was removed, so the converter can still be saved', async () => {
+  it.each(['Path', 'Path | None', 'Path | str | None'])(
+    'should leave out a %s file that was removed, so the converter can still be saved',
+    async (typeName: string) => {
     const user = userEvent.setup()
     mockConverterParameters([
       { name: 'text_to_add', type_name: 'str', required: true },
-      { name: 'font_name', type_name: 'Path', required: false, default: null },
+      { name: 'font_name', type_name: typeName, required: false, default: null },
     ], 'AddTextImageConverter')
     renderDialog()
     await selectConverterType('AddTextImageConverter')
@@ -2196,6 +2254,7 @@ describe('CreateConverterDialog saving', () => {
     const font = screen.getByRole('textbox', { name: 'font_name' })
     fireEvent.drop(font, { dataTransfer: { types: ['Files'], files: [new File(['font'], 'font.ttf')] } })
     expect(await screen.findByText('font.ttf')).toBeVisible()
+    expect(await screen.findByRole('button', { name: 'Create as Temporary' })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(
       "Saved converters can't keep uploaded files yet ('font_name'). "
         + 'A Temporary converter is gone after the backend restarts or is reinitialized.',
@@ -2209,18 +2268,20 @@ describe('CreateConverterDialog saving', () => {
     })
   })
 
-  it("should still send a file cleared in settings, so the source converter's file isn't kept", async () => {
+  it.each(['Path', 'Path | None'])(
+    "should still send a %s file cleared in settings, so the source converter's file isn't kept",
+    async (typeName: string) => {
     const user = userEvent.setup()
     mockConverterParameters([
       { name: 'text_to_add', type_name: 'str', required: true },
-      { name: 'font_name', type_name: 'Path', required: false, default: null },
+      { name: 'font_name', type_name: typeName, required: false, default: null },
     ], 'AddTextImageConverter')
     const converter = {
       converter_id: 'with_font',
       identifier: { class_name: 'AddTextImageConverter', class_module: 'pyrit.converter', hash: 'source-hash', pyrit_version: '0' },
       parameters: [
         { name: 'text_to_add', type_name: 'str', required: true, default: 'hello' },
-        { name: 'font_name', type_name: 'Path', required: false, default: '/fonts/source.ttf' },
+        { name: 'font_name', type_name: typeName, required: false, default: '/fonts/source.ttf' },
       ],
     }
     mockedConvertersApi.buildConverter.mockResolvedValue({ identifier: converter.identifier })

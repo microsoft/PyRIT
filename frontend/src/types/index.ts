@@ -665,6 +665,12 @@ export type CreateConverterRequest = {
   persist?: boolean
 })
 
+/** A converter to check before saving it, as a create request would give it. */
+export interface ConverterSaveabilityRequest {
+  type: string
+  params: Record<string, unknown>
+}
+
 export interface SourceInstanceSpec {
   source_name: string
   source_hash: string
@@ -2634,7 +2640,6 @@ export interface RuntimeStatus {
   /** The saved entries that couldn't be restored; only administrators can read the runtime status. */
   restore_failures?: RestoreFailure[]
 }
-export type FindingSeverity = 'critical' | 'important' | 'moderate' | 'low' | 'informational' | 'other'
 
 export interface OperationCreate {
   name: string
@@ -2664,7 +2669,8 @@ export interface OperationDetail extends Operation {
 }
 
 export interface OperationListItem extends Operation {
-  finding_counts: Partial<Record<FindingSeverity, number>>
+  /** Finding counts by stored severity, including severities that match no current option. */
+  finding_counts: Record<string, number>
 }
 
 export interface OperationListResponse {
@@ -2673,11 +2679,10 @@ export interface OperationListResponse {
 
 export interface FindingCreate {
   title: string
-  description: string
-  severity: FindingSeverity
-  severity_other?: string | null
-  harm_type?: string | null
-  harm_type_other?: string | null
+  /** A severity option key, or Other text. */
+  severity: string
+  /** Values of the other fields and of every level, by key. Severity isn't one of them. */
+  field_values: Record<string, string>
   /** The finding this one is a sub-finding of, in the same Operation. Null or omitted for a top-level finding. */
   parent_finding_id?: string | null
   /** Whether the operator demonstrated it. A path is complete only when every step was. Defaults to true. */
@@ -2691,8 +2696,50 @@ export interface FindingCreateRequest extends FindingCreate {
   attack_result_id?: string
 }
 
-export interface FindingOptionsResponse {
-  harm_types: string[]
+/**
+ * A finding edit. A key in `keep_retired_keys` keeps that stored value, even if a live apply configured its field
+ * again, and a key in `remove_retired_keys` drops that retired value.
+ */
+export interface FindingUpdateRequest extends FindingCreate {
+  keep_retired_keys: string[]
+  remove_retired_keys: string[]
+}
+
+export type FindingFieldType = 'text' | 'multiline' | 'choice' | 'number'
+
+export type FindingSeverityColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'gray' | 'dark' | 'neutral'
+
+export interface FindingFieldOption {
+  key: string
+  label: string
+  /** The options of the next dropdown when this option is chosen. */
+  children: FindingFieldOption[]
+}
+
+/** One field of the finding dialog, as the deployment defines it. */
+export interface FindingField {
+  key: string
+  label: string
+  type: FindingFieldType
+  required: boolean
+  options: FindingFieldOption[]
+  /** The `[key, label]` of each dropdown under a cascade's first one. */
+  levels: Array<[string, string]>
+  default: string | null
+  /** Whether a single-level choice also accepts typed text. */
+  allow_other: boolean
+  /** The severity slot's badge color for each top-level option. */
+  colors: Record<string, FindingSeverityColor>
+  hint: string | null
+  /** A heading, such as "Reproduction", shown above this field when the field before it has a different section. */
+  section: string | null
+}
+
+/** The active finding fields: the severity slot and the fields shown after it. */
+export interface FindingFields {
+  /** Its options run from highest to lowest severity; findings sort in that order. */
+  severity: FindingField
+  fields: FindingField[]
 }
 
 /** One ordered chain of a finding's direct sub-findings that together demonstrate it. */
@@ -2734,11 +2781,24 @@ export interface FindingListResponse {
   next_offset: number | null
 }
 
+/** One filled value of a finding, labelled by the active finding fields. */
+export interface FindingValueRow {
+  key: string
+  label: string
+  /** The option label of a matching choice value, otherwise the stored text. */
+  value: string
+  multiline: boolean
+}
+
 export interface FindingListItem extends Finding {
   evidence_count: number
   /** The number of direct sub-findings. */
   child_count: number
   paths: FindingPathItem[]
+  /** The filled values in configured order, labelled by the active finding fields. */
+  rows: FindingValueRow[]
+  /** The `[key, value]` of each stored value that no active field or level uses, in stored order. */
+  retired: Array<[string, string]>
 }
 
 /** Optional filters for listing findings. Without one, findings at every depth are listed. */

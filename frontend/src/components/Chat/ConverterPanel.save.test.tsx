@@ -54,7 +54,7 @@ describe('ConverterPanel registry save', () => {
 
   async function openSave(user: ReturnType<typeof userEvent.setup>): Promise<void> {
     await user.click(await screen.findByRole('button', { name: 'Settings for converter caesar, stage 2 of 2' }))
-    await user.click(screen.getByRole('menuitem', { name: 'Save to registry' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Add to registry' }))
     await user.type(screen.getByRole('textbox', { name: /Registry name/ }), 'saved')
     await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
   }

@@ -83,13 +83,13 @@ export default function SaveConverterDialog({
   return <Dialog open onOpenChange={(_, data) => { if (!data.open) close() }}>
     <DialogSurface>
       <DialogBody>
-        <DialogTitle>Save to registry</DialogTitle>
+        <DialogTitle>Add to registry</DialogTitle>
         <DialogContent>
           <form id={formId} noValidate className={styles.content} onSubmit={(event) => {
             event.preventDefault()
             void save()
           }}>
-            <Text>Save these settings under a new name. The original converter stays unchanged. The new converter
+            <Text>Add these settings under a new name. The original converter stays unchanged. The new converter
               comes back after the backend restarts or is reinitialized, rebuilt from the original with these changes.</Text>
             {refusal !== null && <MessageBar intent="warning" role="status">
               <MessageBarBody>
