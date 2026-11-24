@@ -19,7 +19,10 @@ from pyrit.analytics import (
     compute_scenario_statistics,
 )
 from pyrit.analytics.scenario_statistics import (
+    ScenarioPlanLookup,
     combine_execution_counts,
+    load_scenario_run_plan,
+    resolve_attack_result_attempt,
     select_execution_attack_result_ids,
 )
 
@@ -89,6 +92,47 @@ class ScenarioOverview(NamedTuple):
     groups: list[GroupStatistics]
     outcomes: OutcomeStatistics | None = None
     producer_counts: ScenarioProducerCounts | None = None
+    baseline: SuiteEntryStatistics | None = None
+
+
+def reporting_population(result: ScenarioResult, *, baseline: bool = False) -> ScenarioResult:
+    """
+    Select recorded baseline or attack groups for reporting, preserving legacy unknown groups.
+
+    Only explicit saved plan kinds establish a baseline; display names are not evidence.
+    Selection uses group identity so shared atomic names do not mix configurations.
+    This read-only projection changes neither execution nor persisted results.
+
+    Args:
+        result (ScenarioResult): Result carrying its saved run plan and attempts.
+        baseline (bool): Select explicit baseline groups instead of other groups. Defaults to False.
+
+    Returns:
+        ScenarioResult: A shallow reporting projection with filtered attempts and plan groups.
+    """
+    from pyrit.models import SCENARIO_RUN_PLAN_METADATA_KEY, ScenarioRunPlanGroupKind
+
+    plan = load_scenario_run_plan(result)
+    if plan is None:
+        return result.model_copy(update={"attack_results": {}}) if baseline else result
+    selected = {g.id for g in plan.atomic_groups if (g.kind == ScenarioRunPlanGroupKind.BASELINE) == baseline}
+    lookup = ScenarioPlanLookup.from_plan(plan=plan)
+    attacks: dict[str, list[AttackResult]] = {}
+    known = {g.id for g in plan.atomic_groups}
+    for name, rows in result.attack_results.items():
+        kept = []
+        for row in rows:
+            group_id = resolve_attack_result_attempt(
+                atomic_attack_name=name, attack_result=row, plan_lookup=lookup
+            ).unit.atomic_group_id
+            # Unknown attempts stay on the attack side, in their original order.
+            if group_id in selected or (not baseline and group_id not in known):
+                kept.append(row)
+        if kept or any(g.atomic_attack_name == name and g.id in selected for g in plan.atomic_groups):
+            attacks[name] = kept
+    filtered_plan = plan.model_copy(update={"atomic_groups": [g for g in plan.atomic_groups if g.id in selected]})
+    metadata = {**result.metadata, SCENARIO_RUN_PLAN_METADATA_KEY: filtered_plan.model_dump(mode="json")}
+    return result.model_copy(update={"attack_results": attacks, "metadata": metadata})
 
 
 def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
@@ -124,13 +168,24 @@ def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
                 producer_counts=counts.producer_counts,
             )
         )
+    attack_statistics = compute_scenario_statistics(
+        reporting_population(result), resolution_plan=load_scenario_run_plan(result)
+    )
+    baseline_result = reporting_population(result, baseline=True)
+    baseline_plan = load_scenario_run_plan(baseline_result)
+    baseline = (
+        suite_entry_statistics(result, baseline=True)
+        if baseline_plan is not None and baseline_plan.atomic_groups
+        else None
+    )
     return ScenarioOverview(
-        objective_executions=statistics.overall.completed,
-        attempts=statistics.attempts,
-        success_rate=statistics.overall.success_percentage or 0,
+        objective_executions=attack_statistics.overall.completed,
+        attempts=attack_statistics.attempts,
+        success_rate=attack_statistics.overall.success_percentage or 0,
         groups=groups,
-        outcomes=statistics.overall.outcomes,
-        producer_counts=statistics.overall.producer_counts,
+        outcomes=attack_statistics.overall.outcomes,
+        producer_counts=attack_statistics.overall.producer_counts,
+        baseline=baseline,
     )
 
 
@@ -147,17 +202,20 @@ class SuiteEntryStatistics(NamedTuple):
     success_percentage: int | None
 
 
-def suite_entry_statistics(result: ScenarioResult) -> SuiteEntryStatistics:
+def suite_entry_statistics(result: ScenarioResult, *, baseline: bool = False) -> SuiteEntryStatistics:
     """
     Summarize one suite entry's result with the scenario report's counting policy.
 
     Args:
         result (ScenarioResult): The entry's scenario result.
+        baseline (bool): Summarize recorded baseline groups instead of attack groups. Defaults to False.
 
     Returns:
         SuiteEntryStatistics: Latest-unit counts and the all-outcome success rate.
     """
-    counts = compute_scenario_statistics(result).overall
+    counts = compute_scenario_statistics(
+        reporting_population(result, baseline=baseline), resolution_plan=load_scenario_run_plan(result)
+    ).overall
     outcomes = counts.outcomes
     return SuiteEntryStatistics(
         completed=counts.completed,

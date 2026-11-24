@@ -58,6 +58,9 @@ class JsonScenarioSuiteResultPrinter(ScenarioSuiteResultPrinterBase):
                     "error": row.error,
                     "results_available": row.statistics is not None,
                     "statistics": row.statistics._asdict() if row.statistics is not None else None,
+                    "baseline_statistics": row.baseline_statistics._asdict()
+                    if row.baseline_statistics is not None
+                    else None,
                 }
                 for row in rows
             ],
