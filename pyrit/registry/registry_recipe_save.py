@@ -151,7 +151,7 @@ async def prepare_saved_params_async(
     _name_default_references(cls=cls, parameters=parameters, params=saved_params)
     _refuse_values_restore_cant_pass(cls=cls, parameters=parameters, params=saved_params)
     _refuse_environment_values(cls=cls, params=saved_params)
-    refuse_temporary_references(parameters=parameters, params=saved_params)
+    _refuse_temporary_references(parameters=parameters, params=saved_params)
     return saved_params
 
 
@@ -291,7 +291,7 @@ def _referenced_registry(component_type: ComponentType) -> InstanceHoldingRegist
     return registry.get_registry_singleton() if registry is not None else None
 
 
-def refuse_temporary_references(*, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
+def _refuse_temporary_references(*, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
     """
     Refuse an entry to save that uses a Temporary entry, which won't exist after a restart.
 
