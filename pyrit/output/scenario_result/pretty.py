@@ -5,10 +5,13 @@ import textwrap
 
 from colorama import Fore, Style
 
-from pyrit.models import AttackOutcome, ScenarioResult
+from pyrit.models import AttackOutcome, ScenarioObjectiveScorerScope, ScenarioObjectiveScorerStatistics, ScenarioResult
 from pyrit.output._derivation import (
+    ScenarioOverview,
     attack_score_display,
     attack_technique_label,
+    format_rate,
+    objective_scorer_label,
     resolve_target_info,
     scenario_overview,
     select_attacks,
@@ -24,6 +27,28 @@ _ATTACK_OUTCOME_COLORS = {
     AttackOutcome.FAILURE: Fore.GREEN,
     AttackOutcome.UNDETERMINED: Fore.YELLOW,
 }
+
+
+def _single_objective_scorer_line(overview: ScenarioOverview, *, run_scorer_hash: str | None) -> str | None:
+    """
+    Describe the objective scorer behind an unmixed headline, unless its scorer section already shows it.
+
+    Returns:
+        str | None: The objective scorer description, or None when no extra line is needed.
+    """
+    if overview.objective_scorer_scope not in (
+        ScenarioObjectiveScorerScope.SINGLE_SCORER,
+        ScenarioObjectiveScorerScope.UNKNOWN_SCORER,
+    ):
+        return None
+    objective_scorer = next(
+        objective_scorer for objective_scorer in overview.objective_scorers if objective_scorer.overall.completed
+    )
+    if objective_scorer.scorer_hash is not None and objective_scorer.scorer_hash == run_scorer_hash:
+        return None
+    if objective_scorer.scorer_hash is None:
+        return objective_scorer_label(objective_scorer)
+    return f"{objective_scorer_label(objective_scorer)}, {objective_scorer.attribution.value}"
 
 
 class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase):
@@ -56,7 +81,8 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
                 information. Defaults to None; leaf classes should provide a default.
             sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted
                 so that the group with the highest success rate appears first. Groups that tie
-                on success rate retain their original relative order. Defaults to False, which
+                on success rate retain their original relative order. Groups that different
+                objective scorers judged stay unsorted with a notice. Defaults to False, which
                 preserves insertion order.
         """
         super().__init__(sink=sink)
@@ -150,11 +176,23 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
                 raise ValueError("scorer_printer is required when result has objective_scorer_identifier")
             parts.append(await self._scorer_printer.render_async(scorer_identifier=scorer_identifier))
 
+        overview = scenario_overview(result)
+        run_scorer_hash = scorer_identifier.hash if scorer_identifier else None
+        if self._scorer_printer is not None:
+            parts.extend(
+                [
+                    await self._scorer_printer.render_async(scorer_identifier=objective_scorer.scorer_identifier)
+                    for objective_scorer in overview.objective_scorers
+                    if objective_scorer.scorer_identifier is not None
+                    and objective_scorer.scorer_hash != run_scorer_hash
+                ]
+            )
+
         lines = []
         lines.append(self._render_section_header("Overall Statistics"))
         total_techniques = len(result.get_techniques_used())
-        overview = scenario_overview(result)
         overall_rate = overview.success_rate
+        mixed = overview.objective_scorer_scope == ScenarioObjectiveScorerScope.MIXED_SCORERS
 
         lines.append(self._format_colored(f"{self._indent}📈 Summary", Style.BRIGHT))
         lines.append(self._format_colored(f"{self._indent * 2}• Total Techniques: {total_techniques}", Fore.GREEN))
@@ -164,19 +202,62 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
             )
         )
         lines.append(self._format_colored(f"{self._indent * 2}• Total Attempts: {overview.attempts}", Fore.GREEN))
-        lines.append(
-            self._format_colored(
-                f"{self._indent * 2}• Overall Success Rate: {overall_rate}%", self._get_rate_color(overall_rate)
+        if mixed:
+            active_scorers = sum(
+                1 for objective_scorer in overview.objective_scorers if objective_scorer.overall.completed
             )
-        )
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 2}• Aggregate Success Rate "
+                    f"(descriptive, across {active_scorers} objective scorers): "
+                    f"{overall_rate}%",
+                    self._get_rate_color(overall_rate),
+                )
+            )
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}Scorers apply different rubrics; "
+                    "compare rates only within one objective scorer.",
+                    Fore.YELLOW,
+                )
+            )
+        else:
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 2}• Overall Success Rate: {overall_rate}%", self._get_rate_color(overall_rate)
+                )
+            )
+            scorer_line = _single_objective_scorer_line(overview, run_scorer_hash=run_scorer_hash)
+            if scorer_line:
+                lines.append(self._format_colored(f"{self._indent * 2}• Objective Scorer: {scorer_line}", Fore.GREEN))
 
         objectives = result.get_objectives()
         lines.append(self._format_colored(f"{self._indent * 2}• Unique Objectives: {len(objectives)}", Fore.GREEN))
 
+        if len(overview.objective_scorers) > 1:
+            lines.append(self._render_section_header("Results by Objective Scorer"))
+            lines.append(
+                self._format_colored(
+                    f"{self._indent}Each row contains only executions attributed to that scorer, "
+                    "not every execution rescored by every scorer.",
+                    Fore.YELLOW,
+                )
+            )
+            for objective_scorer in overview.objective_scorers:
+                lines.extend(self._render_objective_scorer(objective_scorer))
+
         lines.append(self._render_section_header("Per-Group Breakdown"))
         group_summaries = list(overview.groups)
 
-        if self._sort_groups_by_success_rate:
+        if self._sort_groups_by_success_rate and mixed:
+            lines.append(
+                self._format_colored(
+                    f"{self._indent}Groups are not ranked by success rate "
+                    "because different objective scorers scored them.",
+                    Fore.YELLOW,
+                )
+            )
+        elif self._sort_groups_by_success_rate:
             # Stable sort so groups with equal rates retain their original relative order.
             group_summaries.sort(key=lambda group: group.success_rate, reverse=True)
 
@@ -199,6 +280,52 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         parts.append("".join(lines))
 
         return "".join(parts)
+
+    def _render_objective_scorer(self, objective_scorer: ScenarioObjectiveScorerStatistics) -> list[str]:
+        """
+        Render the results attributed to one objective scorer.
+
+        Returns:
+            list[str]: The rendered lines.
+        """
+        counts = objective_scorer.overall
+        executions = f"{counts.completed}/{counts.planned}" if counts.planned is not None else str(counts.completed)
+        lines = [
+            "\n",
+            self._format_colored(
+                f"{self._indent}🔹 Objective Scorer: {objective_scorer_label(objective_scorer)}", Style.BRIGHT
+            ),
+            self._format_colored(f"{self._indent * 2}• Attribution: {objective_scorer.attribution.value}", Fore.YELLOW),
+        ]
+        if objective_scorer.candidate_index is not None:
+            candidate = f"#{objective_scorer.candidate_index}"
+            if objective_scorer.evaluation:
+                candidate += f" ({objective_scorer.evaluation})"
+            lines.append(self._format_colored(f"{self._indent * 2}• Pool Candidate: {candidate}", Fore.YELLOW))
+        lines.append(self._format_colored(f"{self._indent * 2}• Objective Executions: {executions}", Fore.YELLOW))
+        outcomes = counts.outcomes
+        if outcomes is not None:
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 2}• Outcomes: {outcomes.successes} succeeded, {outcomes.failures} failed, "
+                    f"{outcomes.undetermined} undetermined, {outcomes.errors} errors",
+                    Fore.YELLOW,
+                )
+            )
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 2}• Success Rate: {format_rate(outcomes.success_rate_decided)} of decided, "
+                    f"{format_rate(outcomes.success_rate_all)} of all completed",
+                    Fore.YELLOW,
+                )
+            )
+        lines.append(
+            self._format_colored(
+                f"{self._indent * 2}• Atomic Attacks: {', '.join(objective_scorer.atomic_attacks) or 'none'}",
+                Fore.YELLOW,
+            )
+        )
+        return lines
 
     def _render_attacks(
         self,
@@ -284,7 +411,8 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
             sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted
-                so that the group with the highest success rate appears first. Defaults to False.
+                so that the group with the highest success rate appears first. Groups that different
+                objective scorers judged stay unsorted with a notice. Defaults to False.
         """
         super().__init__(
             sink=sink,

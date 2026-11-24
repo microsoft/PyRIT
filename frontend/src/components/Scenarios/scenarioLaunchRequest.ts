@@ -4,6 +4,7 @@ import type {
   RegisteredComponentReference,
   RegisteredScenario,
   RunScenarioRequest,
+  ScenarioDatasetOptions,
   ScenarioDatasetRequest,
   ScenarioRunSizeEstimateRequest,
   TechniqueOverride,
@@ -44,6 +45,16 @@ export function supportsParameter(scenario: RegisteredScenario, name: string): b
   return scenario.supported_parameter_names.includes(name)
 }
 
+/** Whether a newly generated dataset can be selected: the scenario takes datasets and accepts any dataset name. */
+export function acceptsAnyNamedDataset(scenario: RegisteredScenario, options: ScenarioDatasetOptions): boolean {
+  return supportsParameter(scenario, 'dataset_config') && options.supports_overrides && options.mode === 'any'
+}
+
+/** A scenario that checks stored contents offers only the server's compatible choices, without general dataset actions. */
+export function usesCompatibleDatasetPicker(scenario: RegisteredScenario): boolean {
+  return scenario.dataset_options?.compatible_only === true
+}
+
 /** Whether the scenario declares that a launch needs datasets selected, such as one without defaults. */
 export function requiresDatasetSelection(scenario: RegisteredScenario): boolean {
   return (scenario.dataset_options?.min_selected ?? 0) > 0
@@ -72,6 +83,14 @@ export function linkedDatasetProblem(names: readonly string[], takesLinkedDatase
     return `This scenario can't take the linked datasets: ${names.map(linkedDatasetLabel).join(', ')}.`
   }
   return null
+}
+
+/** Why the form left out linked names that a compatible-only scenario's listing omits. */
+export function omittedLinkedDatasetsMessage(names: readonly string[]): string {
+  const labels = names.map(linkedDatasetLabel).join(', ')
+  return names.length === 1
+    ? `The linked dataset ${labels} isn't a stored dataset this scenario can use, so it wasn't selected.`
+    : `The linked datasets ${labels} aren't stored datasets this scenario can use, so they weren't selected.`
 }
 
 /** The scenario-specific parameters the launch form renders, without the common ones. */

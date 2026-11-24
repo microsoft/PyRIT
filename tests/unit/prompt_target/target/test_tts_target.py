@@ -249,3 +249,25 @@ async def test_tts_send_prompt_with_speed_parameter(
         assert file_path
         assert os.path.exists(file_path)
         os.remove(file_path)
+
+
+async def test_tts_send_prompt_omits_unset_speed_async(
+    tts_target: OpenAITTSTarget,
+    sample_conversations: MutableSequence[MessagePiece],
+) -> None:
+    # The SDK serializes an explicit speed=None as JSON null, which gpt-4o-mini-tts rejects.
+    message_piece = sample_conversations[0]
+    message_piece.conversation_id = str(uuid.uuid4())
+    request = Message(message_pieces=[message_piece])
+
+    mock_audio_response = MagicMock()
+    mock_audio_response.content = b"audio data"
+
+    with patch.object(tts_target._async_client.audio.speech, "create", new_callable=AsyncMock) as mock_create:
+        mock_create.return_value = mock_audio_response
+        response = await tts_target.send_prompt_async(message=request)
+
+        mock_create.assert_called_once()
+        assert "speed" not in mock_create.call_args.kwargs
+
+        os.remove(response[0].get_value())

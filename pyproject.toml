@@ -76,9 +76,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.22",
     "reportlab>=4.4.4",
-    # 2026.11.x breaks \X on Indic conjuncts (GB9c never applies, mrab-regex#636), which graphemes() relies on.
-    # Remove the upper bound once that is fixed upstream (#4308).
-    "regex>=2024.11.6,<2026.11",
+    "regex>=2024.11.6",
     "segno>=1.6.6",
     "scipy>=1.15.3",
     "SQLAlchemy[asyncio]>=2.0.41",
@@ -215,6 +213,10 @@ filterwarnings = [
     "error:MessageScorableResolver\\.resolve:DeprecationWarning",
     # True/false verdicts are set through Score.set_value; compatibility tests capture the warning.
     "error:Assigning Score\\.score_value:DeprecationWarning",
+    # Findings use configurable fields; tests of the PyRIT 1.2 finding compatibility capture the warnings.
+    "error:pyrit\\.models\\.(finding\\.)?FindingSeverity:DeprecationWarning",
+    "error:Finding\\w*[.(](description|severity|harm_type):DeprecationWarning",
+    "error:GET /operations/finding-options:DeprecationWarning",
     # TAP and PAIR take a plain AttackScoringConfig; compatibility tests capture the warning.
     "error:TAPAttackScoringConfig:DeprecationWarning",
 ]
@@ -228,7 +230,6 @@ all = "error"
 # Most rules under `all = "error"` are already clean for pyrit/. A few remain
 # suppressed below; the remaining finding counts are noted so they can be
 # re-enabled as the code is cleaned up.
-unsound-assignment = "ignore"
 # unused-type-ignore-comment is environment-dependent: a `# type: ignore`
 # on an optional-dependency import (torch, playwright, etc.) is "used" when the
 # extra is not installed but "unused" once it is. CI installs `--extra all`, so
@@ -281,7 +282,7 @@ redundant-condition-strict = "ignore"
 [[tool.ty.overrides]]
 include = ["tests/unit/**"]
 [tool.ty.overrides.rules]
-call-non-callable = "ignore"
+not-callable = "ignore"
 invalid-assignment = "ignore"
 invalid-await = "ignore"
 invalid-parameter-default = "ignore"
@@ -295,12 +296,53 @@ unsupported-operator = "ignore"
 # relaxed here: tests read private/mock attributes and subclass library types
 # with loosened signatures / runtime-validation-failure arguments.
 invalid-argument-type = "ignore"
-invalid-method-override = "ignore"
+incompatible-method-override = "ignore"
 no-matching-overload = "ignore"
-unresolved-attribute = "ignore"
+missing-attribute = "ignore"
+# ty 0.0.105 split these out of missing-attribute (unions) and not-callable
+# (abstract classes); keep them relaxed here for the same reasons as their parents.
+missing-union-attribute = "ignore"
+abstract-class-instantiation = "ignore"
 # Enabled for pyrit/ (clean) but still relaxed here: tests/unit has 318 bare
 # generics (mostly `dict` and the attack context/strategy classes) across ~70 files.
 missing-type-argument = "ignore"
+# Tests read fixtures through `request.getfixturevalue(...)` and other Any-typed helpers into
+# annotated locals. #4402 covers pyrit/ only, so the rule stays off for tests.
+unsound-assignment = "ignore"
+
+# SQLAlchemy 2.0 declarative models are written as `col: Mapped[T] = mapped_column(...)`
+# and `rel: Mapped[T] = relationship(...)`. Those calls return `MappedColumn[Any]` and
+# `_RelationshipDeclared[Any]`, so unsound-assignment flags every column and relationship.
+# This is the documented idiom, not an unchecked boundary, and the migrations depend on
+# this file, so the rule stays off here permanently. The override is file-wide: other
+# assignments in this file are not checked by the rule either.
+[[tool.ty.overrides]]
+include = ["pyrit/memory/memory_models.py"]
+[tool.ty.overrides.rules]
+unsound-assignment = "ignore"
+
+# TEMPORARY: files with unsound-assignment findings still to fix, tracked in
+# https://github.com/microsoft/PyRIT/issues/4402 (chunks UA-1 to UA-7). Each chunk's PR
+# fixes its findings and removes its files from this list; the PR that empties the list
+# deletes this override. Do not add files here: new code is checked by the rule.
+[[tool.ty.overrides]]
+include = [
+    "pyrit/executor/promptgen/gcg/attack/base/attack_manager.py",
+    "pyrit/executor/promptgen/gcg/attack/gcg/candidate_proposer.py",
+    "pyrit/executor/promptgen/gcg/attack/gcg/gcg_attack.py",
+    "pyrit/executor/promptgen/gcg/default_implementations.py",
+    "pyrit/models/harm_category.py",
+    "pyrit/models/messages/conversations.py",
+    "pyrit/models/parameter.py",
+    "pyrit/models/score/observation.py",
+    "pyrit/models/score/scorable.py",
+    "pyrit/registry/components/target_registry.py",
+    "pyrit/registry/registry_recipe_restore.py",
+    "pyrit/registry/registry_recipe_rules.py",
+    "pyrit/registry/registry_recipe_save.py",
+]
+[tool.ty.overrides.rules]
+unsound-assignment = "ignore"
 
 [tool.uv]
 constraint-dependencies = [
@@ -400,6 +442,8 @@ fixable = [
 ]
 select = [
     "A",  # https://docs.astral.sh/ruff/rules/#flake8-builtins-a
+    "ASYNC240",  # blocking-path-method-in-async-function
+    "ASYNC250",  # blocking-input-in-async-function
     "B",  # https://docs.astral.sh/ruff/rules/#flake8-bugbear-b
     "C4",  # https://docs.astral.sh/ruff/rules/#flake8-comprehensions-c4
     "CPY001",  # missing-copyright-notice
@@ -494,12 +538,14 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 # ERA001: jupytext markdown cells look like commented-out code
 # LOG: notebooks use root logger for convenience
 # PLE1142: top-level await is valid in Jupyter notebooks
-"doc/**" = ["ANN", "CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142"]
+# ASYNC240: example code favors readability over off-loop path calls
+"doc/**" = ["ANN", "CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142", "ASYNC240"]
 # Backend API routes raise HTTPException handled by FastAPI, not true exceptions
 "pyrit/backend/**/*.py" = ["DOC501", "B008"]
 "pyrit/__init__.py" = ["D104"]
 # Allow broad pytest.raises(Exception) in tests
-"tests/**/*.py" = ["ANN", "B017"]
+# ASYNC240: blocking path calls in test setup do not affect library users
+"tests/**/*.py" = ["ANN", "B017", "ASYNC240"]
 # Migration revisions are immutable once added. Keep RUF100 enabled for new
 # revisions while exempting only existing files with stale noqa directives.
 "pyrit/memory/alembic/versions/1b3d5f7a9c2e_persist_scored_expectation.py" = ["RUF100"]
@@ -520,6 +566,8 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 "build_scripts/**/*.py" = ["ANN"]
 "docker/**/*.py" = ["ANN"]
 "frontend/dev.py" = ["ANN"]
+# ASYNC240: e2e fixture backends are test code, like tests/
+"frontend/e2e/**/*.py" = ["ASYNC240"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
