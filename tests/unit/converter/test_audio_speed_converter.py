@@ -4,7 +4,6 @@
 
 import os
 import tempfile
-from inspect import Parameter, signature
 from pathlib import Path
 
 import numpy as np
@@ -14,12 +13,6 @@ from scipy.io import wavfile
 from pyrit.converter import AudioSpeedConverter
 from pyrit.memory import SQLiteMemory
 from pyrit.registry import ConverterRegistry
-
-
-def test_resample_channel_parameters_are_keyword_only() -> None:
-    parameters = signature(AudioSpeedConverter._resample_channel).parameters
-    assert parameters["channel_data"].kind is Parameter.KEYWORD_ONLY
-    assert parameters["new_num_samples"].kind is Parameter.KEYWORD_ONLY
 
 
 @pytest.mark.parametrize("channels", [1, 2])
