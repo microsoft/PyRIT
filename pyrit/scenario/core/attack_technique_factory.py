@@ -638,6 +638,9 @@ class AttackTechniqueFactory(Identifiable):
 
         Returns:
             bool: ``True`` when the converter can be appended safely.
+
+        Raises:
+            TypeError: If the baked ``attack_converter_config`` is not an ``AttackConverterConfig``.
         """
         if "attack_converter_config" not in self._compatibility_helper.accepted_params:
             return False
@@ -646,6 +649,8 @@ class AttackTechniqueFactory(Identifiable):
         converter_config = self._attack_kwargs.get("attack_converter_config")
         if converter_config is None:
             return "text" in converter_type.SUPPORTED_INPUT_TYPES
+        if not isinstance(converter_config, AttackConverterConfig):
+            raise TypeError("attack_converter_config must be an AttackConverterConfig")
 
         for configuration in converter_config.request_converters:
             next_output_types: set[PromptDataType] = set()
@@ -1344,12 +1349,17 @@ class AttackTechniqueFactory(Identifiable):
         Returns:
             AttackConverterConfig | None: The selected config with any extra request converters appended,
                 or None when neither a config nor extra converters are present.
+
+        Raises:
+            TypeError: If the selected non-None converter config is not an ``AttackConverterConfig``.
         """
-        base: AttackConverterConfig | None = (
+        base = (
             attack_converter_config_override
             if attack_converter_config_override is not None
             else self._attack_kwargs.get("attack_converter_config")
         )
+        if base is not None and not isinstance(base, AttackConverterConfig):
+            raise TypeError("attack_converter_config must be an AttackConverterConfig")
 
         if not extra_request_converters:
             return base
