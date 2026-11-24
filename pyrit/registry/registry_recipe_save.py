@@ -7,7 +7,8 @@ Save registry entries, so ``RegistryRecipeRestorer`` rebuilds them at every star
 Saving takes three steps: ``prepare_saved_params_async`` turns off the values the entry would take from this
 server and refuses what a saved entry can't hold, the caller builds the entry from the parameters it returns, and
 ``save_then_register_async`` writes the entry's recipe and registers the entry as saved. Targets, converters, and
-scorers are saved the same way.
+scorers are saved the same way. A technique is checked with ``check_saved_technique_async`` instead of the first step,
+since it builds its attack when it runs.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from pyrit.models.catalog import (
 )
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, RegistryNameTakenError, registry_entry_origin
+from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class, check_saved_entry_params
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.registry.resolution import reject_non_external_params
@@ -159,6 +161,65 @@ async def prepare_saved_params_async(
     _refuse_environment_values(cls=cls, params=saved_params)
     _refuse_temporary_references(parameters=parameters, params=saved_params)
     return saved_params
+
+
+async def check_saved_technique_async(*, recipe: TechniqueRecipe) -> None:
+    """
+    Refuse a technique to save that restore couldn't bring back as it is.
+
+    Restore checks the same things when it rebuilds the technique, and lists the entries it names with the same
+    helper. A technique builds its attack when it runs, from the configuration at that time, so nothing it would
+    take from the defaults then is named in its recipe.
+
+    Args:
+        recipe (TechniqueRecipe): The technique's recipe, as it would be saved.
+
+    Raises:
+        NotSaveableError: If the attack type can't be saved or was added by a scan's launch script, an attack
+            parameter holds or would use a credential or leaves a setting to this server's environment, or the
+            technique uses a Temporary entry.
+        ValueError: If the attack type isn't registered, or an address an attack parameter gives isn't a full
+            http(s) or ws(s) address.
+    """
+    # Finding the attack class can run the registry's first, slow class discovery, so it stays off the event loop.
+    await asyncio.to_thread(_check_saved_technique, recipe=recipe)
+
+
+def _check_saved_technique(*, recipe: TechniqueRecipe) -> None:
+    """
+    Run ``check_saved_technique_async``'s checks.
+
+    Raises:
+        NotSaveableError: If restore couldn't bring the technique back as it is.
+        ValueError: If the attack type isn't registered, or an attack parameter gives an invalid address.
+    """
+    from pyrit.registry.components.attack_registry import AttackRegistry
+
+    attack_registry = AttackRegistry.get_registry_singleton()
+    try:
+        attack_class = attack_registry.get_class(recipe.type)
+    except KeyError as error:
+        raise ValueError(f"'{recipe.type}' is not a registered attack type.") from error
+    _, class_reason = get_class_saveability(registry=attack_registry, type_name=recipe.type)
+    if class_reason is not None:
+        raise NotSaveableError(class_reason)
+    metadata = attack_registry.get_registered_class_metadata(recipe.type) or attack_registry.get_class_metadata(
+        attack_class
+    )
+    try:
+        check_saved_entry_params(cls=attack_class, parameters=metadata.parameters, params=recipe.params)
+    except SavedEntryRefusedError as error:
+        # The address needs fixing; creating the technique without saving it wouldn't make it usable.
+        if error.reason is RestoreFailureReason.INVALID_RECIPE:
+            raise ValueError(str(error)) from error
+        raise NotSaveableError(str(error)) from error
+    _refuse_environment_values(cls=attack_class, params=recipe.params)
+    for ref in RegistryRecipeRestorer().recipe_references(kind=RegistryRecipeKind.TECHNIQUES, recipe=recipe):
+        entry = _registry_for_kind(ref.kind).instances.get_entry(ref.name)
+        if entry is not None and registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
+            raise NotSaveableError(
+                f"Uses temporary {ref.kind.value.removesuffix('s')} '{ref.name}', which won't exist after a restart."
+            )
 
 
 def _refuse_values_restore_cant_pass(*, cls: type, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
@@ -312,13 +373,13 @@ def _refuse_temporary_references(*, parameters: Sequence[Parameter], params: Map
         if parameter.reference is None:
             continue
         value = params.get(parameter.name)
-        refuse_temporary_entries(
+        _refuse_temporary_entries(
             component_type=parameter.reference.component_type,
             names=value if isinstance(value, list) else [value],
         )
 
 
-def refuse_temporary_entries(*, component_type: ComponentType, names: Sequence[Any]) -> None:
+def _refuse_temporary_entries(*, component_type: ComponentType, names: Sequence[Any]) -> None:
     """
     Refuse an entry to save that names a Temporary entry, which won't exist after a restart.
 
@@ -374,6 +435,27 @@ async def save_then_register_async(
             _save_then_register_async(kind=kind, name=name, recipe=recipe, register=register, source=source)
         )
     )
+
+
+def _registry_for_kind(kind: RegistryRecipeKind) -> InstanceHoldingRegistry[Any, Any]:
+    """
+    Return the registry that holds saved entries of a kind.
+
+    Returns:
+        InstanceHoldingRegistry[Any, Any]: The registry.
+    """
+    from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+    from pyrit.registry.components.converter_registry import ConverterRegistry
+    from pyrit.registry.components.scorer_registry import ScorerRegistry
+    from pyrit.registry.components.target_registry import TargetRegistry
+
+    registries: dict[RegistryRecipeKind, Any] = {
+        RegistryRecipeKind.TARGETS: TargetRegistry,
+        RegistryRecipeKind.CONVERTERS: ConverterRegistry,
+        RegistryRecipeKind.SCORERS: ScorerRegistry,
+        RegistryRecipeKind.TECHNIQUES: AttackTechniqueRegistry,
+    }
+    return registries[kind].get_registry_singleton()
 
 
 async def _settle_async(transaction: asyncio.Task[None]) -> None:
