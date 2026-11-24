@@ -16,7 +16,6 @@ from sqlalchemy import (
     INTEGER,
     JSON,
     Boolean,
-    CheckConstraint,
     Computed,
     DateTime,
     Float,
@@ -91,7 +90,6 @@ from pyrit.models import (
     TargetIdentifier,
     scorable_from_dict,
 )
-from pyrit.models.harm_category import HarmCategory
 from pyrit.models.operation import operation_name_key
 from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
 
@@ -474,25 +472,9 @@ class FindingEntry(Base):
     """
 
     __tablename__ = "FindingEntries"
-    # Harm types are deliberately unconstrained: HarmCategory changes over time, so reads map unknown values instead.
     __table_args__ = (
         Index("ix_FindingEntries_operation_id", "operation_id"),
         Index("ix_FindingEntries_parent_finding_id", "parent_finding_id"),
-        CheckConstraint(
-            "severity IN ('critical', 'important', 'moderate', 'low', 'informational', 'other')",
-            name="ck_findings_severity",
-        ),
-        CheckConstraint(
-            "(severity = 'other' AND severity_other IS NOT NULL AND LTRIM(RTRIM(severity_other)) <> '') "
-            "OR (severity <> 'other' AND severity_other IS NULL)",
-            name="ck_findings_severity_other",
-        ),
-        CheckConstraint(
-            "(harm_type IS NOT NULL AND harm_type = 'Other' AND harm_type_other IS NOT NULL "
-            "AND LTRIM(RTRIM(harm_type_other)) <> '') "
-            "OR ((harm_type IS NULL OR harm_type <> 'Other') AND harm_type_other IS NULL)",
-            name="ck_findings_harm_type_other",
-        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
@@ -500,11 +482,11 @@ class FindingEntry(Base):
         CustomUUID, ForeignKey(f"{OperationEntry.__tablename__}.id"), nullable=False
     )
     title: Mapped[str] = mapped_column(Unicode, nullable=False)
-    description: Mapped[str] = mapped_column(Unicode, nullable=False)
-    severity: Mapped[str] = mapped_column(String(32), nullable=False)
-    severity_other: Mapped[str | None] = mapped_column(Unicode, nullable=True)
-    harm_type: Mapped[str | None] = mapped_column(Unicode, nullable=True)
-    harm_type_other: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    # Binary collation keeps SQL Server from merging severities that differ only in case or accents, as SQLite does.
+    severity: Mapped[str] = mapped_column(
+        Unicode().with_variant(Unicode(collation="Latin1_General_100_BIN2"), "mssql"), nullable=False
+    )
+    field_values: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     parent_finding_id: Mapped[uuid.UUID | None] = mapped_column(
         CustomUUID, ForeignKey("FindingEntries.id"), nullable=True
@@ -524,11 +506,8 @@ class FindingEntry(Base):
     def set_fields(self, fields: FindingCreate) -> None:
         """Store a finding's editable fields, leaving its identity, creation time, and paths unchanged."""
         self.title = fields.title
-        self.description = fields.description
-        self.severity = fields.severity.value
-        self.severity_other = fields.severity_other
-        self.harm_type = fields.harm_type.value if fields.harm_type is not None else None
-        self.harm_type_other = fields.harm_type_other
+        self.severity = fields.severity
+        self.field_values = dict(fields.field_values)
         self.parent_finding_id = fields.parent_finding_id
         self.demonstrated = fields.demonstrated
 
@@ -549,26 +528,15 @@ class FindingEntry(Base):
         """
         Rebuild the finding model.
 
-        A stored harm type that is no longer a ``HarmCategory`` maps through its aliases, or to
-        Other with the stored text, rather than making the finding unreadable.
-
         Returns:
             Finding: The stored finding.
         """
-        harm_type, harm_type_other = self.harm_type, self.harm_type_other
-        if harm_type is not None and harm_type not in set(HarmCategory):
-            # parse() logs a warning when it falls back to Other.
-            parsed = HarmCategory.parse(harm_type)
-            harm_type, harm_type_other = parsed, harm_type if parsed == HarmCategory.OTHER else None
         return Finding(
             id=self.id,
             operation_id=self.operation_id,
             title=self.title,
-            description=self.description,
             severity=self.severity,
-            severity_other=self.severity_other,
-            harm_type=harm_type,
-            harm_type_other=harm_type_other,
+            field_values=self.field_values,
             created_at=self.created_at,
             parent_finding_id=self.parent_finding_id,
             demonstrated=self.demonstrated,

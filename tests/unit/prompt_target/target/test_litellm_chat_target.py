@@ -4,6 +4,7 @@
 import asyncio
 import base64
 import json
+import os
 import sys
 import types
 from collections.abc import AsyncGenerator, Callable
@@ -48,6 +49,7 @@ from pyrit.prompt_target import (
     ClaudeChatTarget,
     FunctionTool,
     LiteLLMChatTarget,
+    LiteLLMDecisionTarget,
     OpenAIChatAudioConfig,
     TargetCapabilities,
     TargetConfiguration,
@@ -57,6 +59,7 @@ from pyrit.prompt_target import (
     tool,
 )
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
+from pyrit.registry import TargetRegistry
 from pyrit.score import InMemoryTraceClient, InMemoryTraceExporter, OtelToolCallScorer, OtelTraceSource
 
 # ---------------------------------------------------------------------------
@@ -592,6 +595,145 @@ async def test_tool_history_discovery_preserves_litellm_wire_fields(target: Lite
 
 
 # ---------------------------------------------------------------------------
+# Reconstruction
+# ---------------------------------------------------------------------------
+
+_SECRET_HEADERS = {"Authorization": "Bearer test-only", "X-Route": "blue"}
+
+
+@pytest.mark.usefixtures("patch_central_database", "litellm_stub")
+class TestLiteLLMReconstruction:
+    @pytest.mark.parametrize(
+        "build",
+        [
+            lambda: LiteLLMChatTarget(
+                model_name="openai/gpt-4o",
+                api_key="test-only-key",
+                endpoint="https://gateway.test",
+                headers=dict(_SECRET_HEADERS),
+                temperature=0.3,
+                max_tokens=64,
+                stop=["END"],
+                extra_body_parameters={"metadata": {"run": "1"}},
+                max_requests_per_minute=30,
+            ),
+            lambda: LiteLLMChatTarget(
+                model_name="openai/gpt-4o-audio-preview",
+                audio_response_config=OpenAIChatAudioConfig(voice="alloy", audio_format="wav"),
+            ),
+            lambda: ClaudeChatTarget(
+                model_name="claude-sonnet-4-6", api_key="test-only-key", headers=dict(_SECRET_HEADERS), max_tokens=256
+            ),
+            lambda: LiteLLMDecisionTarget(
+                model_name="openai/gpt-4o", api_key="test-only-key", headers=dict(_SECRET_HEADERS)
+            ),
+        ],
+        ids=["chat", "chat-audio", "claude", "decision"],
+    )
+    def test_copy_without_overrides_matches_source(self, build: Callable[[], LiteLLMChatTarget]) -> None:
+        source = build()
+        copy = TargetRegistry().recreate_instance(source=source, params={})
+        assert copy is not source
+        assert type(copy) is type(source)
+        assert copy.get_identifier().hash == source.get_identifier().hash
+        assert copy._api_key == source._api_key
+        assert copy._headers == source._headers
+        assert copy._extra_body_parameters == source._extra_body_parameters
+        assert copy._rate_limit_source is source
+
+    @pytest.mark.parametrize(
+        ("target_class", "kwargs", "environment", "expected"),
+        [
+            (
+                LiteLLMChatTarget,
+                {},
+                {
+                    "LITELLM_MODEL": "openai/gpt-4o",
+                    "LITELLM_API_KEY": "source-key",
+                    "LITELLM_ENDPOINT": "https://source.test",
+                },
+                ("openai/gpt-4o", "source-key", "https://source.test"),
+            ),
+            (
+                ClaudeChatTarget,
+                {"model_name": "claude-sonnet-4-6"},
+                {"ANTHROPIC_API_KEY": "source-key"},
+                ("anthropic/claude-sonnet-4-6", "source-key", None),
+            ),
+        ],
+    )
+    def test_copy_keeps_values_resolved_from_the_environment(
+        self,
+        *,
+        target_class: type[LiteLLMChatTarget],
+        kwargs: dict[str, Any],
+        environment: dict[str, str],
+        expected: tuple[str, str, str | None],
+    ) -> None:
+        with patch.dict("os.environ", environment):
+            source = target_class(**kwargs)
+        with patch.dict("os.environ", dict.fromkeys(environment, "changed")):
+            copy = TargetRegistry().recreate_instance(source=source, params={})
+        assert (copy._model_name, copy._api_key, copy._endpoint) == expected
+
+    @pytest.mark.parametrize(
+        ("target_class", "model_name", "variables"),
+        [
+            (LiteLLMChatTarget, "openai/gpt-4o", ("LITELLM_API_KEY", "LITELLM_ENDPOINT")),
+            (ClaudeChatTarget, "claude-sonnet-4-6", ("ANTHROPIC_API_KEY",)),
+            (LiteLLMDecisionTarget, "openai/gpt-4o", ("LITELLM_API_KEY", "LITELLM_ENDPOINT")),
+        ],
+    )
+    def test_copy_keeps_unset_values_unset_when_the_environment_sets_them(
+        self, *, target_class: type[LiteLLMChatTarget], model_name: str, variables: tuple[str, ...]
+    ) -> None:
+        with patch.dict("os.environ"):
+            for variable in variables:
+                os.environ.pop(variable, None)
+            source = target_class(model_name=model_name)
+        with patch.dict("os.environ", dict.fromkeys(variables, "environment-value")):
+            copy = TargetRegistry().recreate_instance(source=source, params={})
+        assert (copy._api_key, copy._endpoint) == (None, None)
+        assert copy.get_identifier().hash == source.get_identifier().hash
+
+    async def test_copy_reuses_the_resolved_token_provider_async(self) -> None:
+        source = LiteLLMChatTarget(model_name="azure/gpt-4o", api_key=lambda: "test-token")
+        copy = TargetRegistry().recreate_instance(source=source, params={})
+        assert copy._api_key is source._api_key
+        assert await copy._resolve_api_key_async() == "test-token"
+
+    def test_copy_keeps_tool_settings(self, weather_tool: tuple[FunctionTool, list[str]]) -> None:
+        weather, _ = weather_tool
+        source = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[weather], execute_tools=False, max_tool_rounds=3)
+        copy = TargetRegistry().recreate_instance(source=source, params={})
+        assert copy._direct_tools == [weather]
+        assert copy._execute_tools is False
+        assert copy._max_tool_rounds == 3
+        assert copy.get_identifier().hash == source.get_identifier().hash
+
+    def test_copy_adds_tools_without_changing_the_source(self, weather_tool: tuple[FunctionTool, list[str]]) -> None:
+        weather, _ = weather_tool
+        source = ClaudeChatTarget(model_name="claude-sonnet-4-6")
+        copy = TargetRegistry().recreate_instance(source=source, params={"tools": [weather], "max_tool_rounds": 2})
+        assert copy._direct_tools == [weather]
+        assert copy._max_tool_rounds == 2
+        assert source._direct_tools == []
+        assert copy.get_identifier().hash != source.get_identifier().hash
+
+    def test_copy_keeps_the_source_configuration(self) -> None:
+        source = LiteLLMChatTarget(model_name="openai/gpt-4o")
+        assert source.capabilities.supports_json_schema is False
+        source.apply_capabilities(capabilities=source.capabilities.model_copy(update={"supports_json_schema": True}))
+        copy = TargetRegistry().recreate_instance(source=source, params={})
+        assert copy.capabilities == source.capabilities
+
+    def test_copy_refuses_a_separate_temperature_in_extra_body_parameters(self) -> None:
+        source = LiteLLMChatTarget(model_name="openai/gpt-4o", extra_body_parameters={"temperature": 0.5})
+        with pytest.raises(ValueError, match="extra_body_parameters sets temperature"):
+            TargetRegistry().get_reconstruction_parameters(source)
+
+
+# ---------------------------------------------------------------------------
 # Constructor
 # ---------------------------------------------------------------------------
 
@@ -623,6 +765,12 @@ def test_init_endpoint_from_env(patch_central_database, litellm_stub):
     with patch.dict("os.environ", {"LITELLM_ENDPOINT": "http://localhost:4000"}):
         t = LiteLLMChatTarget(model_name="openai/gpt-4o")
     assert t._endpoint == "http://localhost:4000"
+
+
+def test_init_empty_api_key_and_endpoint_skip_the_environment(patch_central_database, litellm_stub):
+    with patch.dict("os.environ", {"LITELLM_API_KEY": "sk-env", "LITELLM_ENDPOINT": "http://localhost:4000"}):
+        t = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key="", endpoint="")
+    assert (t._api_key, t._endpoint) == (None, None)
 
 
 def test_drop_params_defaults_to_true_in_body(target):
