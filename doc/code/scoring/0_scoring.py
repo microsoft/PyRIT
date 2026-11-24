@@ -41,7 +41,11 @@
 # ## Scorer reference table
 #
 # Every concrete scorer, grouped by return type. The table is generated from
-# `get_scorer_info()`, which inspects each scorer class without instantiating it.
+# `get_scorer_info()`, which reads each scorer class's declared contracts without instantiating it.
+# Evidence names the accepted `Scorable` types (`Message` is `MessageScorable`), and float feedback
+# says whether every complete true/false result keeps a `[0, 1]` value, which TAP requires.
+# Where a contract depends on configuration, such as a wrapper's scorers or whether a message
+# scorer judges an objective, a configured scorer's `scorer.capabilities` is the authority.
 # %%
 import pandas as pd
 
@@ -50,11 +54,15 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=True)  # type: ignore
 
+llm_labels = {True: "yes", False: "no", None: "same as wrapped"}
 rows = [
     {
         "Scorer": info.name,
         "Return type": info.score_type,
-        "Uses LLM?": "yes" if info.uses_llm else "no",
+        "Uses LLM?": llm_labels[info.uses_llm],
+        "Evidence": info.evidence,
+        "Conditions": info.conditions,
+        "Float feedback": info.float_feedback,
     }
     for info in get_scorer_info()
 ]
