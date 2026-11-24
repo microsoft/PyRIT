@@ -127,6 +127,8 @@ app.add_middleware(CompatibilityMiddleware)
 # Configure CORS
 _default_origins = "http://localhost:3000,http://localhost:5173"
 _cors_origins = [o.strip() for o in os.getenv("PYRIT_CORS_ORIGINS", _default_origins).split(",") if o.strip()]
+# The public origins also tell MCP sign-in metadata which forwarded host names to trust.
+app.state.cors_origins = frozenset(_cors_origins)
 
 app.add_middleware(
     CORSMiddleware,
@@ -164,6 +166,7 @@ app.include_router(initializers.router, prefix="/api", tags=["initializers"])
 app.include_router(labels.router, prefix="/api", tags=["labels"])
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(auth.router, prefix="/api", tags=["auth"])
+app.include_router(auth.well_known_router)
 app.include_router(media.router, prefix="/api", tags=["media"])
 app.include_router(scores.router, prefix="/api", tags=["scores"])
 app.include_router(version.router, tags=["version"])

@@ -26,12 +26,17 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from pyrit.auth import caller_principal_scope
-from pyrit.backend.authentication_policy import AuthenticationPolicy
+from pyrit.backend.authentication_policy import GRAPH_SCOPES, AuthenticationPolicy
 
 logger = logging.getLogger(__name__)
 
 # Local mode serves one loopback user, so every request acts for the same caller.
 _LOCAL_CALLER_PRINCIPAL = "local"
+
+# MCPEndpoint.PATH, repeated so that importing this middleware doesn't load the MCP SDK.
+_MCP_PATH = "/api/mcp"
+# RFC 9728: a resource's metadata is at this well-known path followed by the resource's own path.
+MCP_RESOURCE_METADATA_PATH = f"/.well-known/oauth-protected-resource{_MCP_PATH}"
 
 
 class AuthenticationError(Exception):
@@ -62,6 +67,54 @@ def get_authentication_policy(request: Request) -> AuthenticationPolicy:
     if not isinstance(policy, AuthenticationPolicy):
         raise RuntimeError("Authentication policy was not initialized during application startup.")
     return policy
+
+
+def _public_origin(request: Request) -> str:
+    """
+    Return the origin the caller connected to.
+
+    MCP clients use sign-in metadata only when it names exactly the URL they connected to. Behind
+    Azure Container Apps or Front Door, requests arrive over HTTP with an internal host, so the
+    forwarded scheme and host are used when they form an origin listed in ``PYRIT_CORS_ORIGINS``.
+
+    Returns:
+        str: The scheme and host, such as ``https://pyrit.example.com``.
+    """
+    base_url = request.base_url
+    scheme = request.headers.get("X-Forwarded-Proto", base_url.scheme).split(",")[0].strip()
+    host = request.headers.get("X-Forwarded-Host", base_url.netloc).split(",")[0].strip()
+    forwarded_origin = f"{scheme}://{host}"
+    if forwarded_origin in getattr(request.app.state, "cors_origins", ()):
+        return forwarded_origin
+    return f"{base_url.scheme}://{base_url.netloc}"
+
+
+def get_mcp_resource_url(request: Request) -> str:
+    """
+    Return the MCP endpoint's URL as the caller reached it.
+
+    Args:
+        request (Request): A request to the MCP endpoint or to its sign-in metadata.
+
+    Returns:
+        str: The MCP endpoint's URL.
+    """
+    return _public_origin(request) + _MCP_PATH
+
+
+def _mcp_challenge(request: Request) -> str:
+    """
+    Return the ``WWW-Authenticate`` value that tells an MCP client where to sign in.
+
+    Returns:
+        str: A Bearer challenge naming the MCP endpoint's metadata and the scopes to request.
+    """
+    metadata_url = _public_origin(request) + MCP_RESOURCE_METADATA_PATH
+    challenge = f'Bearer resource_metadata="{metadata_url}", scope="{" ".join(GRAPH_SCOPES)}"'
+    auth_parts = request.headers.get("Authorization", "").split()
+    if len(auth_parts) == 2 and auth_parts[0].casefold() == "bearer":
+        challenge += ', error="invalid_token"'
+    return challenge
 
 
 def has_admin_access(request: Request) -> bool:
@@ -177,7 +230,10 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         try:
             user = await self._authenticate_request_async(request, policy=policy)
         except AuthenticationError as error:
-            return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
+            headers = None
+            if error.status_code == 401 and path == _MCP_PATH:
+                headers = {"WWW-Authenticate": _mcp_challenge(request)}
+            return JSONResponse(status_code=error.status_code, content={"detail": error.detail}, headers=headers)
 
         request.state.user = user
         # Work admitted by this request, including background tasks it starts, acts for this caller.

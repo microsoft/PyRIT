@@ -16,6 +16,7 @@ from mcp.client.streamable_http import streamable_http_client
 from starlette.applications import Starlette
 from starlette.routing import Route
 
+from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.main import app as backend_app
 from pyrit.backend.mcp_server import MCPEndpoint
 from pyrit.backend.rest_tools import RestToolset
@@ -138,3 +139,23 @@ def test_backend_cors_lets_browser_mcp_clients_send_the_protocol_version_header(
 
     assert response.status_code == 200
     assert "mcp-protocol-version" in response.headers["access-control-allow-headers"].lower()
+
+
+def test_backend_mcp_401_leads_to_sign_in_metadata_outside_the_api_schema() -> None:
+    # The backend's own routes and middleware with an Entra policy, without starting its lifespan.
+    app = FastAPI(routes=list(backend_app.router.routes), middleware=backend_app.user_middleware)
+    app.state.authentication_policy = AuthenticationPolicy(
+        mode="entra", tenant_id="tenant-id", client_id="client-id", allowed_group_ids=("group-1",)
+    )
+    app.state.cors_origins = backend_app.state.cors_origins
+    client = TestClient(app)
+
+    challenge = client.post(MCPEndpoint.PATH, json=INITIALIZE_REQUEST, headers=MCP_HEADERS)
+    metadata_url = challenge.headers["www-authenticate"].split('"')[1]
+    metadata = client.get(metadata_url)
+
+    assert challenge.status_code == 401
+    assert metadata_url == "http://testserver/.well-known/oauth-protected-resource/api/mcp"
+    assert metadata.status_code == 200
+    assert metadata.json()["resource"] == "http://testserver/api/mcp"
+    assert not any(path.startswith("/.well-known") for path in backend_app.openapi()["paths"])
