@@ -16,7 +16,7 @@ import { Link } from 'react-router'
 
 import type { ScenarioDatasetSizeEstimate, ScenarioDatasetSummary } from '@/types'
 
-import { SCANNER_CELL_PADDING_CLASS, useScenarioCatalogStyles } from './ScenarioCatalog.styles'
+import { SCANNER_CELL_PADDING_CLASS, useScenarioCatalogTableStyles } from './ScenarioCatalogTable.styles'
 
 const DESCRIPTION_OVERFLOW_TOLERANCE_PX = 2
 
@@ -52,7 +52,7 @@ interface DatasetSummaryProps {
 }
 
 export function DatasetSummary({ datasets, declaredDatasets, datasetSize }: DatasetSummaryProps) {
-  const styles = useScenarioCatalogStyles()
+  const styles = useScenarioCatalogTableStyles()
 
   if (datasets.length === 0 && declaredDatasets.length === 0) {
     return <Text weight="semibold">No default datasets</Text>
@@ -145,7 +145,7 @@ export function ScannerRow({
   techniques,
   runSize,
 }: ScannerRowProps) {
-  const styles = useScenarioCatalogStyles()
+  const styles = useScenarioCatalogTableStyles()
   const descriptionId = useId()
   const techniquesId = useId()
   const [expanded, setExpanded] = useState(false)
@@ -259,7 +259,7 @@ interface ScenarioCatalogTableProps {
 
 /** The Scanner's scenario table; it stacks each row into a labelled card on narrow screens. */
 export default function ScenarioCatalogTable({ label, columns, children }: ScenarioCatalogTableProps) {
-  const styles = useScenarioCatalogStyles()
+  const styles = useScenarioCatalogTableStyles()
   const headerCellClassName = (columnClassName: string): string => mergeClasses(
     columnClassName,
     styles.tableHeaderCell,

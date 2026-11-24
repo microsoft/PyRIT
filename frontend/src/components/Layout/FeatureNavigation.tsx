@@ -5,7 +5,7 @@ import { AddRegular } from '@fluentui/react-icons'
 import { useFeatureNavigationStyles } from './FeatureNavigation.styles'
 
 type AttackTab = 'chat' | 'history'
-export type ScannerTab = 'launch' | 'presets' | 'history'
+type ScannerTab = 'launch' | 'presets' | 'history'
 type FeatureTab = AttackTab | ScannerTab
 
 interface FeatureTabOption {

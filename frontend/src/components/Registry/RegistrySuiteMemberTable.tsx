@@ -36,14 +36,25 @@ interface RegistrySuiteMemberTableProps {
   onRemove: (member: SuiteMember) => void
 }
 
-function fixHint(member: SuiteMember): string {
-  return member.preset === undefined
-    ? 'Remove it from this preset.'
-    : 'Remove it, or edit it to use a registered scenario.'
-}
-
 function canEdit(member: SuiteMember): boolean {
   return member.preset?.origin === 'stored'
+}
+
+/**
+ * What the user can do about a scenario's issues, or null when the server's message is
+ * all there is to say. A missing scenario may only be unreadable for now (storage down),
+ * so it gets no advice to remove it; an unregistered scenario can't be changed in the
+ * editor, so removing it is the only fix here.
+ */
+function fixHint(member: SuiteMember): string | null {
+  const { issues } = member.status
+  if (member.preset === undefined || issues.length === 0) {
+    return null
+  }
+  if (issues.some((issue) => issue.field === 'scenario_name') || !canEdit(member)) {
+    return 'Remove it from this preset.'
+  }
+  return 'Edit it to fix this, or remove it from this preset.'
 }
 
 /** The scenarios in one Registry preset, each with its own Edit and Remove. */
@@ -71,7 +82,7 @@ export default function RegistrySuiteMemberTable({
             <TableHeaderCell className={styles.scenarioColumn}>Scenario</TableHeaderCell>
             <TableHeaderCell>Techniques</TableHeaderCell>
             <TableHeaderCell>Run size</TableHeaderCell>
-            {editable && <TableHeaderCell>Actions</TableHeaderCell>}
+            {editable && <TableHeaderCell className={styles.actionsColumn}>Actions</TableHeaderCell>}
           </TableRow>
         </TableHeader>
         <TableBody className={styles.body}>
@@ -81,6 +92,7 @@ export default function RegistrySuiteMemberTable({
             const others = sharedWith(member.presetName)
             const techniques = memberTechniqueNames(member)
             const runSize = member.preset?.run_size ?? null
+            const hint = fixHint(member)
             return (
               <TableRow
                 key={member.entryId}
@@ -102,7 +114,7 @@ export default function RegistrySuiteMemberTable({
                         {issue.message}
                       </Text>
                     ))}
-                    {issues.length > 0 && <Text size={200} className={styles.issue}>{fixHint(member)}</Text>}
+                    {hint && <Text size={200} className={styles.issue}>{hint}</Text>}
                   </div>
                 </TableCell>
                 <TableCell className={styles.cell}>
@@ -130,7 +142,7 @@ export default function RegistrySuiteMemberTable({
                           className={styles.touchTarget}
                           appearance="subtle"
                           icon={<EditRegular />}
-                          disabled={busy}
+                          disabledFocusable={busy}
                           aria-label={`Edit ${member.presetName}`}
                           onClick={() => onEdit(member)}
                         >
@@ -141,7 +153,7 @@ export default function RegistrySuiteMemberTable({
                         className={styles.touchTarget}
                         appearance="subtle"
                         icon={<SubtractCircleRegular />}
-                        disabled={busy}
+                        disabledFocusable={busy}
                         aria-label={`Remove ${member.presetName} from ${suiteName}`}
                         onClick={() => onRemove(member)}
                       >

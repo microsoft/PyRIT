@@ -1,3 +1,5 @@
+import type { Ref } from 'react'
+
 import { Badge, Button, Tooltip } from '@fluentui/react-components'
 import { AddRegular, DeleteRegular, EditRegular, WarningRegular } from '@fluentui/react-icons'
 
@@ -21,6 +23,8 @@ interface RegistrySuiteCardProps {
   onDelete: (item: ScenarioSuiteResponse) => void
   onEditMember: (item: ScenarioSuiteResponse, member: SuiteMember) => void
   onRemoveMember: (item: ScenarioSuiteResponse, member: SuiteMember) => void
+  /** Receives the Add scenario button, where focus goes after a scenario is removed. */
+  addScenarioRef?: Ref<HTMLButtonElement>
 }
 
 /** A preset in the Registry, with its scenarios and the actions that change it. */
@@ -37,6 +41,7 @@ export default function RegistrySuiteCard({
   onDelete,
   onEditMember,
   onRemoveMember,
+  addScenarioRef,
 }: RegistrySuiteCardProps) {
   const styles = useRegistrySuiteCardStyles()
   const { suite } = item
@@ -52,6 +57,7 @@ export default function RegistrySuiteCard({
       attention={attention}
       open={open}
       onOpenChange={onOpenChange}
+      headingLevel="h2"
       testId={`registry-suite-${suite.name}`}
       badges={(attention || !editable) && (
         <>
@@ -64,10 +70,11 @@ export default function RegistrySuiteCard({
       actions={editable && (
         <>
           <Button
+            ref={addScenarioRef}
             className={styles.touchTarget}
             appearance="subtle"
             icon={<AddRegular />}
-            disabled={busy}
+            disabledFocusable={busy}
             aria-label={`Add scenario to ${suite.name}`}
             onClick={() => onAddScenario(item)}
           >
@@ -78,7 +85,7 @@ export default function RegistrySuiteCard({
               className={styles.touchTarget}
               appearance="subtle"
               icon={<EditRegular />}
-              disabled={busy}
+              disabledFocusable={busy}
               onClick={() => onEdit(item)}
             />
           </Tooltip>
@@ -87,7 +94,7 @@ export default function RegistrySuiteCard({
               className={styles.touchTarget}
               appearance="subtle"
               icon={<DeleteRegular />}
-              disabled={busy}
+              disabledFocusable={busy}
               onClick={() => onDelete(item)}
             />
           </Tooltip>

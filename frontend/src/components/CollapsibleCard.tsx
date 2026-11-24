@@ -28,6 +28,8 @@ interface CollapsibleCardProps {
   /** Controls the card when set; otherwise the card keeps its own open state. */
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /** The heading level under the page's own headings. */
+  headingLevel?: 'h2' | 'h3'
   testId?: string
   children: ReactNode
 }
@@ -42,6 +44,7 @@ export default function CollapsibleCard({
   attention = false,
   open,
   onOpenChange,
+  headingLevel = 'h3',
   testId,
   children,
 }: CollapsibleCardProps) {
@@ -66,7 +69,7 @@ export default function CollapsibleCard({
         <AccordionItem value={CARD_ITEM}>
           <div className={styles.headerRow}>
             <AccordionHeader
-              as="h3"
+              as={headingLevel}
               className={styles.header}
               button={{ className: styles.headerButton }}
               expandIconPosition="start"

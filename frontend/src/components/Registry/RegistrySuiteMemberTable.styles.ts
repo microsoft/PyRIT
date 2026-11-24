@@ -46,6 +46,10 @@ export const useRegistrySuiteMemberTableStyles = makeStyles({
   scenarioColumn: {
     width: '50%',
   },
+  // Wide enough for Edit and Remove side by side, as the actions read as one group.
+  actionsColumn: {
+    width: '14rem',
+  },
   stack: {
     display: 'flex',
     flexDirection: 'column',
@@ -60,8 +64,11 @@ export const useRegistrySuiteMemberTableStyles = makeStyles({
   },
   actions: {
     display: 'flex',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
     gap: tokens.spacingHorizontalXS,
+    [NARROW_VIEWPORT_QUERY]: {
+      flexWrap: 'wrap',
+    },
   },
   touchTarget: {
     ...mobileTouchTarget,

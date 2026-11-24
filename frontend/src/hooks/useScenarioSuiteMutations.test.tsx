@@ -8,11 +8,12 @@ import { type SuiteMutationOutcome, useScenarioSuiteMutations } from './useScena
 
 jest.mock('@/services/api', () => ({
   scenarioPresetsApi: { create: jest.fn() },
-  scenarioSuitesApi: { create: jest.fn(), update: jest.fn(), remove: jest.fn() },
+  scenarioSuitesApi: { get: jest.fn(), create: jest.fn(), update: jest.fn(), remove: jest.fn() },
 }))
 
 const mockCreatePreset = scenarioPresetsApi.create as jest.Mock
 const mockCreateSuite = scenarioSuitesApi.create as jest.Mock
+const mockGetSuite = scenarioSuitesApi.get as jest.Mock
 const mockUpdateSuite = scenarioSuitesApi.update as jest.Mock
 const mockRemoveSuite = scenarioSuitesApi.remove as jest.Mock
 
@@ -117,9 +118,22 @@ describe('useScenarioSuiteMutations', () => {
       savedPresetName: 'release_gate_airt_jailbreak_2',
     })
     expect(onChanged).toHaveBeenCalledTimes(1)
-    await run(() => result.current.addScenario(SUITE, 'airt.jailbreak', 'release_gate_airt_jailbreak_2'))
-    expect(mockCreatePreset).toHaveBeenCalledTimes(1)
-    expect(mockUpdateSuite).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries adding to the preset as it is now, with its reloaded version and scenarios', async () => {
+    const { result } = renderMutations()
+    const reloaded = { ...makeSuite('release_gate', ['smoke', 'added_elsewhere']), version: 'release_gate-v2' }
+    mockGetSuite.mockResolvedValueOnce(reloaded)
+
+    // The stale snapshot the dialog opened with is what a retry is handed.
+    const outcome = await run(() => result.current.addScenario(SUITE, 'airt.jailbreak', 'release_gate_airt_jailbreak_2'))
+
+    expect(outcome).toEqual({ status: 'done' })
+    expect(mockCreatePreset).not.toHaveBeenCalled()
+    expect(mockGetSuite).toHaveBeenCalledWith('release_gate')
+    expect(mockUpdateSuite).toHaveBeenCalledWith('release_gate', expect.anything(), 'release_gate-v2')
+    expect(savedSuite(mockUpdateSuite, 0, 1).entries.map((entry) => entry.preset_name))
+      .toEqual(['smoke', 'added_elsewhere', 'release_gate_airt_jailbreak_2'])
   })
 
   it('refuses to change a preset defined in code', async () => {

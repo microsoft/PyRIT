@@ -463,7 +463,7 @@ for (const view of VIEWPORTS) {
       await chooseScenario(create)
       await create.getByRole('button', { name: 'Create', exact: true }).click()
       await expect(create).toHaveCount(0)
-      await expect(card.getByRole('heading', { level: 3 })).toHaveText(`${name} 1 scenario`)
+      await expect(card.getByRole('heading', { level: 2 })).toHaveText(`${name} 1 scenario`)
       await expect(card.getByText(`Saved as ${firstScenario}`)).toBeVisible()
 
       await page.getByRole('button', { name: `Add scenario to ${name}`, exact: true }).click()
@@ -491,7 +491,7 @@ for (const view of VIEWPORTS) {
 
       await toggle.click()
       await card.getByRole('button', { name: `Remove ${secondScenario} from ${name}`, exact: true }).click()
-      await expect(card.getByRole('heading', { level: 3 })).toHaveText(`${name} 1 scenario`)
+      await expect(card.getByRole('heading', { level: 2 })).toHaveText(`${name} 1 scenario`)
       const removed = await (await readSuite(name)).json()
       expect(removed.suite.entries.map((entry: { preset_name: string }) => entry.preset_name)).toEqual([firstScenario])
       expect((await readPreset(page, secondScenario)).preset.scenario_name).toBe(SCENARIO)

@@ -2,7 +2,6 @@ import { Button, Spinner, Text, Tooltip } from '@fluentui/react-components'
 import { PlayRegular } from '@fluentui/react-icons'
 
 import CollapsibleCard from '@/components/CollapsibleCard'
-import { useScenarioCatalogStyles } from '@/components/Scenarios/ScenarioCatalog.styles'
 import ScenarioCatalogTable, {
   DatasetSummary,
   ScannerRow,
@@ -38,7 +37,7 @@ interface MemberRowProps {
 }
 
 function MemberRow({ member, estimatesLoading }: MemberRowProps) {
-  const styles = useScenarioCatalogStyles()
+  const styles = useSuiteCardStyles()
   const runSize = member.preset?.run_size ?? null
   const description = memberDescription(member)
 
@@ -52,7 +51,7 @@ function MemberRow({ member, estimatesLoading }: MemberRowProps) {
         <Text size={200} className={styles.secondaryText}>Saved as {member.presetName}</Text>
       )}
       description={description === null ? null : (
-        <Text size={200} className={styles.purposePreview}>{description}</Text>
+        <Text size={200} className={styles.purpose}>{description}</Text>
       )}
       descriptionKey={description ?? ''}
       datasets={(

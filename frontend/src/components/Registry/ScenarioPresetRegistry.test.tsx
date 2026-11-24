@@ -14,13 +14,14 @@ import ScenarioPresetRegistry from './ScenarioPresetRegistry'
 
 jest.mock('@/services/api', () => ({
   scenarioPresetsApi: { list: jest.fn(), create: jest.fn() },
-  scenarioSuitesApi: { list: jest.fn(), create: jest.fn(), update: jest.fn(), remove: jest.fn() },
+  scenarioSuitesApi: { list: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn(), remove: jest.fn() },
   scenariosApi: { listCatalog: jest.fn(), estimateRun: jest.fn() },
 }))
 
 const mockListPresets = scenarioPresetsApi.list as jest.Mock
 const mockCreatePreset = scenarioPresetsApi.create as jest.Mock
 const mockListSuites = scenarioSuitesApi.list as jest.Mock
+const mockGetSuite = scenarioSuitesApi.get as jest.Mock
 const mockCreateSuite = scenarioSuitesApi.create as jest.Mock
 const mockUpdateSuite = scenarioSuitesApi.update as jest.Mock
 const mockRemoveSuite = scenarioSuitesApi.remove as jest.Mock
@@ -115,7 +116,7 @@ describe('ScenarioPresetRegistry', () => {
     expect(screen.getByText('A scenario preset is a saved set of scenarios that the Scanner launches together.'))
       .toBeInTheDocument()
     await screen.findByTestId('registry-suite-release_gate')
-    expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual([
+    expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
       'quarterly_comparison 2 scenarios',
       'builtin_smoke 1 scenario',
       'release_gate 2 scenarios · ateam',
@@ -134,8 +135,10 @@ describe('ScenarioPresetRegistry', () => {
 
     const broken = screen.getByTestId('suite-member-quarterly_comparison-entry-2')
     expect(within(broken).getByText("Preset 'retired' is not available.")).toBeInTheDocument()
-    expect(within(broken).getByText('Remove it from this preset.')).toBeInTheDocument()
+    // A missing scenario may only be unreadable for now, so the row adds no advice to remove it.
+    expect(within(broken).queryByText(/Remove it|Edit it/)).not.toBeInTheDocument()
     expect(within(broken).queryByRole('button', { name: /^Edit/ })).not.toBeInTheDocument()
+    expect(within(broken).getByRole('button', { name: 'Remove retired from quarterly_comparison' })).toBeInTheDocument()
     expect(screen.queryByTestId('suite-member-release_gate-entry-1')).not.toBeInTheDocument()
   })
 
@@ -285,11 +288,56 @@ describe('ScenarioPresetRegistry', () => {
     expect(await within(dialog).findByTestId('partial-save-notice')).toHaveTextContent(
       'The scenario was saved but not added to release_gate.',
     )
+    const reloaded = { ...makeSuite('release_gate', ['weekly_smoke', 'leak_check', 'added_elsewhere']), version: 'release_gate-v2' }
+    mockGetSuite.mockResolvedValueOnce(reloaded)
     await user.click(within(dialog).getByRole('button', { name: 'Retry' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(mockCreatePreset).toHaveBeenCalledTimes(1)
     expect(mockUpdateSuite).toHaveBeenCalledTimes(2)
+    expect(mockUpdateSuite).toHaveBeenLastCalledWith('release_gate', expect.anything(), 'release_gate-v2')
+    expect(updatedSuite(1).entries.map((entry) => entry.preset_name)).toEqual([
+      'weekly_smoke', 'leak_check', 'added_elsewhere', 'release_gate_airt_jailbreak',
+    ])
+  })
+
+  it("saves a description again with the version reloaded after a conflict", async () => {
+    const user = userEvent.setup()
+    const reloaded = { ...RELEASE, version: 'release_gate-v2' }
+    mockListSuites
+      .mockResolvedValueOnce({ source: 'suites', items: [RELEASE] })
+      .mockResolvedValue({ source: 'suites', items: [reloaded] })
+    mockUpdateSuite.mockRejectedValueOnce(apiError(409, 'Version mismatch.'))
+    renderRegistry()
+
+    await user.click(await screen.findByRole('button', { name: 'Edit release_gate' }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit release_gate' })
+    await user.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'Before a model ships.')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await within(dialog).findByText("'release_gate' changed since it was loaded. Review it and try again."))
+      .toBeInTheDocument()
+    await waitFor(() => expect(mockListSuites).toHaveBeenCalledTimes(2))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(mockUpdateSuite).toHaveBeenLastCalledWith('release_gate', expect.anything(), 'release_gate-v2')
+  })
+
+  it.each([
+    ['techniques', 'Edit it to fix this, or remove it from this preset.'],
+    ['scenario_name', 'Remove it from this preset.'],
+  ])('says how to fix a %s issue on a saved scenario', async (field, hint) => {
+    const user = userEvent.setup()
+    const broken = makeSuite('release_gate', ['weekly_smoke'], {
+      entryIssues: [[{ field, message: 'The server explains the problem.' }]],
+    })
+    mockListSuites.mockResolvedValue({ source: 'suites', items: [broken] })
+    renderRegistry()
+
+    const release = await openCard(user, 'release_gate')
+    const row = within(release).getByTestId('suite-member-release_gate-entry-1')
+    expect(within(row).getByText('The server explains the problem.')).toBeInTheDocument()
+    expect(within(row).getByText(hint)).toBeInTheDocument()
   })
 
   it("edits a preset's description", async () => {
@@ -329,6 +377,9 @@ describe('ScenarioPresetRegistry', () => {
 
     await waitFor(() => expect(mockUpdateSuite).toHaveBeenCalledTimes(1))
     expect(updatedSuite().entries.map((entry) => entry.preset_name)).toEqual(['weekly_smoke'])
+    // The removed row took the focused button with it, so focus stays on the same card.
+    await waitFor(() => expect(within(release).getByRole('button', { name: 'Add scenario to release_gate', hidden: true }))
+      .toHaveFocus())
   })
 
   it('edits a scenario used only here directly', async () => {

@@ -23,7 +23,6 @@ import {
 import { useScenarioSuiteLibrary } from '@/hooks/useScenarioSuiteLibrary'
 import type { ScenarioSuiteResponse, TargetInstance } from '@/types'
 
-import { useScenarioCatalogStyles } from './ScenarioCatalog.styles'
 import { useScannerPresetsPageStyles } from './ScannerPresetsPage.styles'
 
 const DEFAULTS_LOADING_REASON = 'Launch is available once default labels and the Operation finish loading.'
@@ -56,7 +55,6 @@ export default function ScannerPresetsPage({
   operationId,
   defaultsReady,
 }: ScannerPresetsPageProps) {
-  const catalogStyles = useScenarioCatalogStyles()
   const styles = useScannerPresetsPageStyles()
   const navigate = useNavigate()
   const library = useScenarioSuiteLibrary()
@@ -88,18 +86,18 @@ export default function ScannerPresetsPage({
   const hasPresets = launchable.length > 0
 
   return (
-    <section className={catalogStyles.root} data-testid="scanner-presets" aria-labelledby="scanner-presets-title">
-      <div className={catalogStyles.header}>
-        <div className={catalogStyles.headerText}>
+    <section className={styles.root} data-testid="scanner-presets" aria-labelledby="scanner-presets-title">
+      <div className={styles.header}>
+        <div className={styles.headerText}>
           <Text id="scanner-presets-title" as="h2" size={600} weight="semibold">Presets</Text>
-          <Text size={300} className={catalogStyles.subtitle}>
+          <Text size={300} className={styles.subtitle}>
             Saved sets of scenarios you can launch together.
           </Text>
         </div>
         {hasPresets && (
-          <div className={catalogStyles.headerActions}>
+          <div className={styles.headerActions}>
             <Input
-              className={catalogStyles.search}
+              className={styles.search}
               contentBefore={<SearchRegular />}
               placeholder="Search presets..."
               value={query}
@@ -119,7 +117,7 @@ export default function ScannerPresetsPage({
       </div>
 
       {(changedNotice || library.estimateError) && (
-        <div className={catalogStyles.messages}>
+        <div className={styles.messages}>
           {changedNotice && (
             <MessageBar intent="warning" data-testid="suite-changed-notice">
               <MessageBarBody>{changedNotice}</MessageBarBody>
@@ -151,12 +149,12 @@ export default function ScannerPresetsPage({
         </MessageBar>
       )}
       {library.loading ? (
-        <div className={catalogStyles.centeredState}>
+        <div className={styles.centeredState}>
           <Spinner label="Loading presets..." />
         </div>
       ) : library.error && !hasPresets ? null
       : !hasPresets ? (
-        <div className={catalogStyles.centeredState} data-testid="presets-empty-state">
+        <div className={styles.centeredState} data-testid="presets-empty-state">
           <Text as="h3" size={400} weight="semibold">No presets yet</Text>
           <Text size={300}>
             A preset saves scenarios with their techniques, datasets, and limits so you can launch them again in one
@@ -173,7 +171,7 @@ export default function ScannerPresetsPage({
           <Text size={200} className={styles.emptyHint}>Presets are managed in the Registry.</Text>
         </div>
       ) : visible.length === 0 ? (
-        <div className={catalogStyles.centeredState} data-testid="no-results-state">
+        <div className={styles.centeredState} data-testid="no-results-state">
           <Text size={400}>No presets match &quot;{query}&quot;</Text>
           <Text size={200}>Try a different search term.</Text>
         </div>

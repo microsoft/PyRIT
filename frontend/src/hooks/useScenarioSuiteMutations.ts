@@ -126,23 +126,28 @@ export function useScenarioSuiteMutations(
     scenarioName: string,
     savedPresetName?: string,
   ): Promise<SuiteMutationOutcome> => run(async () => {
-    const { suite, version } = item
-    if (version === null) {
-      return { status: 'failed', error: `'${suite.name}' is defined in code and cannot be changed here.` }
+    const { name } = item.suite
+    if (item.version === null) {
+      return { status: 'failed', error: `'${name}' is defined in code and cannot be changed here.` }
     }
     let presetName = savedPresetName
     if (presetName === undefined) {
       try {
-        presetName = await saveScenario(suite.name, scenarioName)
+        presetName = await saveScenario(name, scenarioName)
       } catch (err: unknown) {
-        return failure(err, suite.name)
+        return failure(err, name)
       }
     }
     try {
-      await scenarioSuitesApi.update(suite.name, appendEntry(suite, presetName), version)
+      // A retry follows a failed write, often a 409, so it appends to the preset as it is now.
+      const current = savedPresetName === undefined ? item : await scenarioSuitesApi.get(name)
+      if (current.version === null) {
+        return { status: 'failed', error: `'${name}' is defined in code and cannot be changed here.` }
+      }
+      await scenarioSuitesApi.update(name, appendEntry(current.suite, presetName), current.version)
       return { status: 'done' }
     } catch (err: unknown) {
-      return { status: 'partial', error: errorMessage(err, suite.name), savedPresetName: presetName }
+      return { status: 'partial', error: errorMessage(err, name), savedPresetName: presetName }
     }
   }), [run, saveScenario])
 

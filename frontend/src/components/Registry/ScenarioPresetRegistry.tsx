@@ -62,10 +62,13 @@ export default function ScenarioPresetRegistry() {
   const library = useScenarioSuiteLibrary()
   const mutations = useScenarioSuiteMutations(library.presets, library.reload)
   const newPresetButton = useRef<HTMLButtonElement>(null)
+  const addScenarioButtons = useRef(new Map<string, HTMLButtonElement>())
   const [openNames, setOpenNames] = useState<ReadonlySet<string>>(new Set())
   const [newOpen, setNewOpen] = useState(false)
-  const [adding, setAdding] = useState<ScenarioSuiteResponse | null>(null)
-  const [editing, setEditing] = useState<ScenarioSuiteResponse | null>(null)
+  // Dialogs keep only the preset's name and read it from the latest load, so a retry
+  // after a conflict sends the version and scenarios the reload brought in.
+  const [addingName, setAddingName] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<ScenarioSuiteResponse | null>(null)
   const [sharedEdit, setSharedEdit] = useState<SharedEdit | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -74,6 +77,11 @@ export default function ScenarioPresetRegistry() {
   const suites = useMemo(() => [...library.suites].sort(compareForReview), [library.suites])
   const scenarioOptions = useMemo(() => [...library.scenarios.values()], [library.scenarios])
   const attentionNames = suites.filter(suiteNeedsAttention).map((item) => item.suite.name)
+  const currentSuite = (name: string | null): ScenarioSuiteResponse | undefined => (
+    name === null ? undefined : library.suites.find((item) => item.suite.name === name)
+  )
+  const adding = currentSuite(addingName)
+  const editing = currentSuite(editingName)
   const showNewPreset = newOpen || creating
 
   const setCardOpen = (name: string, open: boolean): void => {
@@ -195,12 +203,20 @@ export default function ScenarioPresetRegistry() {
               open={openNames.has(item.suite.name)}
               busy={mutations.busy}
               onOpenChange={(open) => setCardOpen(item.suite.name, open)}
-              onAddScenario={setAdding}
-              onEdit={setEditing}
+              addScenarioRef={(node) => {
+                if (node) addScenarioButtons.current.set(item.suite.name, node)
+                else addScenarioButtons.current.delete(item.suite.name)
+              }}
+              onAddScenario={(item) => setAddingName(item.suite.name)}
+              onEdit={(item) => setEditingName(item.suite.name)}
               onDelete={setDeleting}
               onEditMember={handleEditMember}
               onRemoveMember={(suite, member) => {
-                void mutations.removeEntry(suite, member.entryId).then(reportOutcome)
+                void mutations.removeEntry(suite, member.entryId).then((outcome) => {
+                  reportOutcome(outcome)
+                  // The removed row takes the focused button with it; keep focus on the same card.
+                  if (outcome.status === 'done') addScenarioButtons.current.get(suite.suite.name)?.focus()
+                })
               }}
             />
           ))}
@@ -227,7 +243,7 @@ export default function ScenarioPresetRegistry() {
             if (outcome.status === 'done') setCardOpen(adding.suite.name, true)
             return outcome
           }}
-          onDismiss={() => setAdding(null)}
+          onDismiss={() => setAddingName(null)}
         />
       )}
       {editing && (
@@ -235,7 +251,7 @@ export default function ScenarioPresetRegistry() {
           suiteName={editing.suite.name}
           description={editing.suite.description ?? ''}
           onSave={(description) => mutations.updateDescription(editing, description)}
-          onDismiss={() => setEditing(null)}
+          onDismiss={() => setEditingName(null)}
         />
       )}
       <ConfirmDialog
