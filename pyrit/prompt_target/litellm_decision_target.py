@@ -4,7 +4,7 @@
 import json
 import math
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 
 from pyrit.exceptions import pyrit_target_retry
 from pyrit.models import (
@@ -43,6 +43,20 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
 
     _SUPPORTS_TOOL_CALL_HISTORY = False
     _DEFAULT_CONFIGURATION = TargetConfiguration(capabilities=TargetCapabilities())
+
+    # Capability detection's text probe must be a valid decision request, like DecisionScorer's.
+    capability_probe_text: ClassVar[str] = json.dumps(
+        {
+            "state": "test",
+            "questions": {
+                "probe": {
+                    "type": "noul",
+                    "instructions": "Is the state the word test?",
+                    "criteria": {"true": "It is.", "false": "It is not."},
+                }
+            },
+        }
+    )
 
     def __init__(
         self,

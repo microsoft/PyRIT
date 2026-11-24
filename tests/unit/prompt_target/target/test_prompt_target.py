@@ -114,6 +114,42 @@ def test_capabilities_scope_restores_configuration_and_preserves_policy(error: t
 
 
 @pytest.mark.usefixtures("patch_central_database")
+async def test_probe_scope_changes_settings_only_for_its_own_task() -> None:
+    target = MockPromptTarget()
+    target._execute_tools = True
+    original = target.configuration
+    probe_configuration = TargetConfiguration(capabilities=TargetCapabilities(supports_json_output=True))
+    probing = asyncio.Event()
+    probed = asyncio.Event()
+    seen_by_other_task: list[object] = []
+
+    async def concurrent_send_async() -> None:
+        await probing.wait()
+        seen_by_other_task.extend([target.configuration, target._execute_tools])
+        probed.set()
+
+    other_task = asyncio.create_task(concurrent_send_async())
+    with target._probe_scope(configuration=probe_configuration, attributes={"_execute_tools": False}):
+        assert target.configuration is probe_configuration
+        assert target._execute_tools is False
+        probing.set()
+        await asyncio.wait_for(probed.wait(), timeout=TEST_WATCHDOG_SECONDS)
+    await other_task
+
+    assert seen_by_other_task == [original, True]
+    assert target.configuration is original
+    assert target._execute_tools is True
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_probe_scope_rejects_attributes_that_would_change_every_task() -> None:
+    target = MockPromptTarget()
+    with pytest.raises(ValueError, match="MockPromptTarget._endpoint cannot be overridden for one task"):
+        with target._probe_scope(configuration=target.configuration, attributes={"_endpoint": "elsewhere"}):
+            pass
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_capabilities_scope_does_not_change_concurrent_target_reads_async() -> None:
     target = MockPromptTarget()
     original = target.configuration
