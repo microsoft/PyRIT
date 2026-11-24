@@ -691,8 +691,12 @@ test.describe("Converter Registry", () => {
         const badgeLefts: number[] = [];
         for (const converterId of names) {
           const row = page.getByRole("row", { name: new RegExp(converterId) });
-          const name = await row.getByRole("button", { name: `Identity for ${converterId}` }).boundingBox();
-          const badge = await row.getByText("Saved", { exact: true }).boundingBox();
+          const nameButton = row.getByRole("button", { name: `Identity for ${converterId}` });
+          const badgeText = row.getByText("Saved", { exact: true });
+          await expect(nameButton).toBeVisible();
+          await expect(badgeText).toBeVisible();
+          const name = await nameButton.boundingBox();
+          const badge = await badgeText.boundingBox();
           expect(name).not.toBeNull();
           expect(badge).not.toBeNull();
           expect(badge!.y).toBeGreaterThanOrEqual(name!.y + name!.height - 1);
