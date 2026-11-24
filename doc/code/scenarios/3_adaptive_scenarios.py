@@ -322,15 +322,15 @@ for technique, n in total_picks.most_common():
 #
 # ```bash
 # # Basic run with defaults
-# pyrit_scan --scenario TextAdaptive --target openai_chat
+# pyrit_scan run adaptive.text_adaptive --target openai_chat
 #
 # # Tune max attempts and restrict techniques
-# pyrit_scan --scenario TextAdaptive --target openai_chat \
+# pyrit_scan run adaptive.text_adaptive --target openai_chat \
 #     --params max_attempts_per_objective=5 \
 #     --techniques single_turn
 #
 # # Use specific datasets and limit size
-# pyrit_scan --scenario TextAdaptive --target openai_chat \
+# pyrit_scan run adaptive.text_adaptive --target openai_chat \
 #     --datasets airt_hate airt_violence \
 #     --max-total 10
 # ```

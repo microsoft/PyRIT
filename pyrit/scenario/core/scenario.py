@@ -45,6 +45,7 @@ from pyrit.models import (
     DatasetFetchPolicy,
     DatasetLimitInput,
     DatasetLimitState,
+    DatasetSelectionMode,
     IndeterminateDatasetSize,
     Parameter,
     RegistryReference,
@@ -69,6 +70,7 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     ScenarioRunState,
     ScorerEvaluationIdentifier,
+    ScorerSelectionReport,
     config_hash,
 )
 from pyrit.models.scenario_readiness import (
@@ -84,10 +86,16 @@ from pyrit.registry.resolution import resolve_declared_params, resolve_reference
 from pyrit.scenario.core.atomic_attack import AtomicAttack, compute_atomic_group_id
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
+    DatasetConstraintError,
     DatasetSource,
     DatasetSourceKind,
+    MissingDatasetError,
 )
-from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
+from pyrit.scenario.core.dataset_overrides import (
+    apply_dataset_overrides,
+    project_dataset_settings,
+    validate_minimum_selection,
+)
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.required_data import ScenarioRequiredData
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -119,7 +127,6 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 logger = logging.getLogger(__name__)
-
 
 #: Param names a scenario must not declare via ``supported_parameters()``. These
 #: collide with promoted identity fields on ``ScenarioIdentifier`` and would be
@@ -581,7 +588,7 @@ class Scenario(ABC):
         common case). Override *this* method only to **remove or replace** a common input,
         composing against ``super().supported_parameters()``.
 
-        Implemented as a classmethod so ``--list-scenarios`` can introspect without
+        Implemented as a classmethod so ``list-scenarios`` can introspect without
         instantiating.
 
         Returns:
@@ -814,6 +821,13 @@ class Scenario(ABC):
             allow_missing_required=True,
         )
         self._params_resolved = True
+        # Options depend on the current configuration, so drop any left by an earlier call on this instance.
+        self._dataset_config = self._resolve_default_dataset_config()
+        try:
+            validate_minimum_selection(config=self._dataset_config, options=self.get_dataset_options())
+        except DatasetConstraintError as error:
+            # A scenario that needs a dataset and has no default has no default run to size.
+            return ScenarioRunSizeEstimate.unavailable(note=str(error))
         return await self.get_run_size_estimate_async(target_is_configured=False)
 
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = True
@@ -1081,6 +1095,7 @@ class Scenario(ABC):
             )
         self._load_required_data_like_dataset_config()
         self._validate_runtime_configuration()
+        validate_minimum_selection(config=self._dataset_config, options=options)
 
     def _validate_dataset_scorer_requirements(self) -> None:
         """
@@ -1190,7 +1205,19 @@ class Scenario(ABC):
     DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions()
 
     def get_dataset_options(self) -> ScenarioDatasetOptions:
-        """Return the scenario's named-dataset capabilities for the current parameters."""
+        """
+        Return the scenario's named-dataset capabilities for the current parameters.
+
+        Named sources can't replace inline seeds, so an inline configuration reports its sources as
+        fixed, with no required selection. Limits and filters keep their declared capabilities.
+
+        Returns:
+            ScenarioDatasetOptions: The permitted dataset overrides.
+        """
+        if self._dataset_config.source_kind is DatasetSourceKind.INLINE:
+            return self.DATASET_OPTIONS.model_copy(
+                update={"mode": DatasetSelectionMode.FIXED, "allowed_names": [], "min_selected": None}
+            )
         return self.DATASET_OPTIONS
 
     def get_default_dataset_settings(self) -> ScenarioDatasetSettings:
@@ -1434,6 +1461,36 @@ class Scenario(ABC):
                     )
                 )
 
+    def get_scorer_selection_report(self) -> ScorerSelectionReport:
+        """
+        Report which objective scorer each planned atomic group will use, and why earlier candidates were passed over.
+
+        The report is built from the planned atomic groups, so it covers every scenario that selects
+        from a ``CompatibleScorers`` pool, and after a resume only the groups still planned. Call it
+        after ``initialize_async`` and before ``run_async``: building it sends no prompt and calls no
+        judge model. Groups whose scorer was not selected from a pool have no entry.
+
+        Returns:
+            ScorerSelectionReport: One entry per pool-selected group, in plan order.
+
+        Raises:
+            ValueError: If the scenario has not been initialized.
+        """
+        if not self._atomic_attacks:
+            raise ValueError("The scorer selection report reads the planned groups. Call initialize_async first.")
+        return ScorerSelectionReport(
+            entries=[
+                atomic.objective_scorer_selection.to_report_entry(
+                    atomic_attack_name=atomic.atomic_attack_name,
+                    display_group=atomic.display_group,
+                    technique=atomic.technique_name,
+                    group_kind=atomic.group_kind,
+                )
+                for atomic in self._atomic_attacks
+                if atomic.objective_scorer_selection is not None
+            ]
+        )
+
     def get_readiness(self) -> ScenarioReadiness:
         """
         Resolve execution roles without datasets, prompt generation, or model traffic.
@@ -1630,11 +1687,14 @@ class Scenario(ABC):
         ``supported_parameters`` falls back to that input's default here.
 
         Raises:
+            DatasetConstraintError: If the configured datasets can't be resolved for a reason other
+                than a resumed run's missing dataset.
             IncompatibleTechniqueError: If techniques were selected but none can run.
             ValueError: If ``objective_target`` is declared but not resolvable (neither supplied
                 nor registered as a default), if a supplied target name is not registered in
-                ``TargetRegistry``, or if ``include_baseline=True`` is set for a scenario whose
-                ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
+                ``TargetRegistry``, if ``include_baseline=True`` is set for a scenario whose
+                ``BASELINE_ATTACK_POLICY`` is ``Forbidden``, or if a resumed run can't be rebuilt
+                (it was created by an older PyRIT, or a dataset its scenario reads was deleted).
         """
         if not self._params_resolved:
             self.set_params_from_args(args=self.params)
@@ -1706,35 +1766,25 @@ class Scenario(ABC):
         # ``self._include_baseline`` above, which the ScenarioContext carries as
         # ``include_baseline``.
         #
-        # Resolve without sampling on resume, then restore the planned population before
-        # builders check compatibility. Inputs outside the saved run must not affect resume.
-        is_resume = self._scenario_result_id is not None
-        if not is_resume:
+        # A new run resolves and samples its population, then stores it with the result. Resume
+        # rebuilds from that stored population and never reads the population datasets, so
+        # dataset edits, refreshes, and deletes after planning don't affect it.
+        if stored_result is not None:
+            seed_groups_by_dataset = await self._load_planned_population_async(
+                stored_result=stored_result, stored_plan=stored_plan
+            )
+        else:
             await self._prepare_datasets_async()
-        seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
-        if stored_plan is not None:
-            planned_seed_ids = {group_id for group in stored_plan.atomic_groups for group_id in group.seed_group_ids}
-            if seed_groups_by_dataset:
-                resolved_seed_ids = {group.logical_id for groups in seed_groups_by_dataset.values() for group in groups}
-                missing_seed_ids = planned_seed_ids - resolved_seed_ids
-                if missing_seed_ids:
-                    raise ValueError(
-                        f"Scenario result id '{self._scenario_result_id}' cannot resume: "
-                        f"missing {len(missing_seed_ids)} planned seed group(s) in the resolved datasets."
+            seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
+            if self._dataset_config.max_total != "all":
+                count = sum(len(groups) for groups in seed_groups_by_dataset.values())
+                if count > self._dataset_config.max_total:
+                    seed_groups_by_dataset = sample_with_coverage(
+                        groups_by_dataset=seed_groups_by_dataset,
+                        cap=self._dataset_config.max_total,
+                        required_keys=self._get_required_objective_keys(),
+                        key=lambda name, _: name,
                     )
-            seed_groups_by_dataset = {
-                name: [group for group in groups if group.logical_id in planned_seed_ids]
-                for name, groups in seed_groups_by_dataset.items()
-            }
-        if not is_resume and self._dataset_config.max_total != "all":
-            count = sum(len(groups) for groups in seed_groups_by_dataset.values())
-            if count > self._dataset_config.max_total:
-                seed_groups_by_dataset = sample_with_coverage(
-                    groups_by_dataset=seed_groups_by_dataset,
-                    cap=self._dataset_config.max_total,
-                    required_keys=self._get_required_objective_keys(),
-                    key=lambda name, _: name,
-                )
         # A fresh run's result id is chosen now, so attacks built below can already refer to the run.
         new_result_id = uuid.uuid4()
         context = self._build_scenario_context(
@@ -1765,19 +1815,7 @@ class Scenario(ABC):
                 stored_result=stored_result,
                 current_identifier=scenario_identifier,
             )
-            if stored_plan is not None:
-                self._apply_persisted_run_plan(stored_plan=stored_plan)
-            else:
-                self._apply_persisted_objectives(stored_result=stored_result)
-                reconstructed_plan = self._build_run_plan()
-                metadata = dict(stored_result.metadata)
-                metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = reconstructed_plan.model_dump(mode="json", exclude_none=True)
-                (
-                    await self._memory.update_scenario_metadata_async(
-                        scenario_result_id=self._scenario_result_id,
-                        metadata=metadata,
-                    )
-                )
+            self._apply_persisted_run_plan(stored_plan=cast("ScenarioRunPlan", stored_plan))
             return  # Valid resume - skip creating new scenario result
 
         # Build display group mapping from atomic attacks
@@ -1803,7 +1841,9 @@ class Scenario(ABC):
             },
         )
 
-        (await self._memory.add_scenario_results_to_memory_async(scenario_results=[result]))
+        await self._memory.add_planned_scenario_result_async(
+            scenario_result=result, seed_groups_by_dataset=seed_groups_by_dataset
+        )
         self._scenario_result_id = str(result.id)
         logger.info(f"Created new scenario result with ID: {self._scenario_result_id}")
 
@@ -1811,30 +1851,16 @@ class Scenario(ABC):
         """
         Build the metadata dict persisted with a freshly-created ``ScenarioResult``.
 
-        When a source or total limit is in effect, the dataset config draws an
-        unseeded ``random.sample`` and the chosen subset would silently change
-        on the next run (e.g. a resume). To make resume reliable, snapshot the
-        chosen objective hashes here so the next ``_setup_scenario_async`` can
-        replay them via ``keep_seed_groups_with_hashes``.
-
-        The normalized run plan is always stored. When no sampling limits are set,
-        only the run plan is needed because the full dataset is deterministic.
+        The normalized run plan is always stored. The sampled population itself is stored
+        alongside the result (see ``add_planned_scenario_result_async``), so resume never
+        resamples.
 
         Returns:
             dict[str, Any]: Metadata payload for the new ScenarioResult.
         """
-        metadata: dict[str, Any] = {}
-        if self._dataset_config.has_sampling_limits:
-            hashes: list[str] = []
-            seen: set[str] = set()
-            for aa in self._atomic_attacks:
-                for sg in aa.seed_groups:
-                    sha = to_sha256(sg.objective.value)
-                    if sha not in seen:
-                        seen.add(sha)
-                        hashes.append(sha)
-            metadata["objective_hashes"] = hashes
-        metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = self._build_run_plan().model_dump(mode="json", exclude_none=True)
+        metadata: dict[str, Any] = {
+            SCENARIO_RUN_PLAN_METADATA_KEY: self._build_run_plan().model_dump(mode="json", exclude_none=True),
+        }
         metadata["incompatible_technique_policy"] = self._incompatible_technique_policy.value
         adaptations = {
             atomic.logical_group_id: atomic.seed_group_adaptations
@@ -1909,6 +1935,7 @@ class Scenario(ABC):
             scenario_registry_name=self._scenario_registry_name,
             atomic_groups=atomic_groups,
             seed_groups=list(seed_groups.values()),
+            stores_seed_groups=True,
         )
 
     def _get_planned_seed_groups(self, *, atomic_attack: AtomicAttack) -> Sequence[AttackSeedGroup]:
@@ -1962,6 +1989,100 @@ class Scenario(ABC):
             return None
         return ScenarioRunPlan.model_validate(raw_plan)
 
+    def _resume_error_message(self, *, reason: str) -> str:
+        """
+        Build the error for a resume refused because its planned seeds can't be found.
+
+        Args:
+            reason (str): What is missing, without a trailing period.
+
+        Returns:
+            str: The message, ending with the two ways to recover.
+        """
+        return (
+            f"Scenario result id '{self._scenario_result_id}' cannot resume: {reason}. "
+            "To resume, re-import the dataset content this run used; "
+            "otherwise drop scenario_result_id to start a new run."
+        )
+
+    def _configuration_mismatch_message(self) -> str:
+        """
+        Build the error for a resume whose configuration differs from the stored run.
+
+        Returns:
+            str: The message, ending with the two ways to recover.
+        """
+        return (
+            f"Scenario result id '{self._scenario_result_id}' does not match the current "
+            f"'{type(self).__name__}' configuration (a different scenario, or its version, "
+            f"techniques, datasets, parameters, or objective target / scorer changed). "
+            f"Drop scenario_result_id to start a new scenario, or pass matching configuration to resume."
+        )
+
+    async def _load_planned_population_async(
+        self, *, stored_result: ScenarioResult, stored_plan: ScenarioRunPlan | None
+    ) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Rebuild a resumed run's population from the seed groups stored when it was created.
+
+        Population datasets are never read, so they may have been edited, refreshed, or deleted.
+        ``_prepare_resume_state_async`` then restores any state the scenario's own resolver sets up.
+
+        Args:
+            stored_result (ScenarioResult): The stored scenario result.
+            stored_plan (ScenarioRunPlan | None): The stored run plan, if any.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: The planned population, by dataset name.
+
+        Raises:
+            ValueError: If the run stored no plan or planned seed groups, if restoring its state
+                needs a dataset the planned run never listed and the configuration changed, or if a
+                dataset restoring its state reads is no longer in memory.
+            DatasetConstraintError: If restoring the scenario's state fails for another reason.
+        """
+        if stored_plan is None or stored_plan.stores_seed_groups is not True:
+            raise ValueError(
+                f"Scenario result id '{self._scenario_result_id}' cannot resume: it was created by an older "
+                "PyRIT version that didn't store the seeds it planned. Drop scenario_result_id to start a new run."
+            )
+        population = await self._memory.get_planned_seed_groups_async(scenario_result_id=str(stored_result.id))
+        try:
+            await self._prepare_resume_state_async(seed_groups_by_dataset=population)
+        except MissingDatasetError as error:
+            # A dataset outside the stored identity's list usually means the selection changed since
+            # planning, but a scenario can also read a dataset its configuration doesn't list. Report a
+            # mismatch only when the configuration differs; otherwise the dataset was removed.
+            if error.dataset_name not in (stored_result.scenario_identifier.datasets or []):
+                try:
+                    self._validate_stored_scenario(
+                        stored_result=stored_result, current_identifier=self._build_scenario_identifier()
+                    )
+                except ValueError as mismatch:
+                    raise mismatch from error
+            raise ValueError(
+                self._resume_error_message(
+                    reason=f"dataset {error.dataset_name!r}, which this run read when it was planned, "
+                    "is no longer in memory"
+                )
+            ) from error
+        return population
+
+    async def _prepare_resume_state_async(  # noqa: B027
+        self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]
+    ) -> None:
+        """
+        Restore state that a new run's seed resolver sets up. The default does nothing.
+
+        Resume doesn't call ``_resolve_seed_groups_by_dataset_async``. Override this hook only when
+        that resolver sets state the atomic attacks need, such as a scorer built from the data.
+        Derive that state from the stored groups when they carry it, because live datasets may have
+        changed since the run was planned.
+
+        Args:
+            seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
+        """
+
     def _apply_persisted_run_plan(self, *, stored_plan: ScenarioRunPlan) -> None:
         """
         Validate and replay the exact logical units captured by a stored plan.
@@ -1988,58 +2109,15 @@ class Scenario(ABC):
             missing_seed_groups = set(planned_group.seed_group_ids) - current_seed_groups.keys()
             if missing_seed_groups:
                 raise ValueError(
-                    f"Scenario result id '{self._scenario_result_id}' cannot resume: atomic group "
-                    f"'{planned_group.atomic_attack_name}' is missing {len(missing_seed_groups)} planned seed group(s)."
+                    self._resume_error_message(
+                        reason=f"atomic group '{planned_group.atomic_attack_name}' is missing "
+                        f"{len(missing_seed_groups)} planned seed group(s)"
+                    )
                 )
             atomic_attack._seed_groups = [current_seed_groups[group_id] for group_id in planned_group.seed_group_ids]
             retained_attacks.append(atomic_attack)
         self._atomic_attacks = retained_attacks
         self._display_group_map = {group.atomic_attack_name: group.display_group for group in stored_plan.atomic_groups}
-
-    def _apply_persisted_objectives(self, *, stored_result: ScenarioResult) -> None:
-        """
-        On resume, replay the originally-sampled objective subset.
-
-        When the first run used ``max_dataset_size``, the chosen subset was
-        recorded in ``ScenarioResult.metadata["objective_hashes"]``. Resume resolves
-        the **full, deterministic** dataset (sampling is bypassed on the resume branch of
-        ``initialize_async``), so restricting each atomic attack's seed_groups to the
-        persisted set here reconstructs exactly the objectives the first run committed to.
-        Per-objective atomic attacks outside that subset are removed before scheduling.
-        If any persisted hash is no longer present in the dataset, refuse to resume — that
-        now signals the dataset itself genuinely changed, not a random resample drift.
-
-        Args:
-            stored_result (ScenarioResult): The scenario result loaded from memory.
-
-        Raises:
-            ValueError: If any persisted objective hash is missing from the
-                currently-resolved dataset.
-        """
-        metadata = stored_result.metadata or {}
-        persisted = metadata.get("objective_hashes")
-        if not persisted:
-            return
-
-        persisted_hashes: set[str] = set(persisted)
-        retained: set[str] = set()
-        retained_attacks: list[AtomicAttack] = []
-        for aa in self._atomic_attacks:
-            retained |= aa.keep_seed_groups_with_hashes(hashes=persisted_hashes)
-            if aa.seed_groups:
-                retained_attacks.append(aa)
-
-        missing = persisted_hashes - retained
-        if missing:
-            sample = sorted(missing)[:3]
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' cannot resume: "
-                f"{len(missing)} persisted objective hash(es) are no longer present in the dataset "
-                f"(missing examples: {', '.join(h[:12] + '...' for h in sample)}). "
-                f"Either restore the missing objectives or drop scenario_result_id to start a new scenario."
-            )
-
-        self._atomic_attacks = retained_attacks
 
     def _get_identity_params(self) -> dict[str, Any]:
         """
@@ -2129,12 +2207,7 @@ class Scenario(ABC):
         current_eval_hash = ScenarioEvaluationIdentifier(current_identifier).eval_hash
 
         if stored_eval_hash != current_eval_hash:
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' does not match the current "
-                f"'{type(self).__name__}' configuration (a different scenario, or its version, "
-                f"techniques, datasets, parameters, or objective target / scorer changed). "
-                f"Drop scenario_result_id to start a new scenario, or pass matching configuration to resume."
-            )
+            raise ValueError(self._configuration_mismatch_message())
 
         logger.info(
             f"Resuming scenario '{self._name}' from existing result "
@@ -2261,10 +2334,9 @@ class Scenario(ABC):
 
         Args:
             apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.
-                On resume the base passes False so the full, deterministic dataset is resolved
-                and the persisted objective subset is reconstructed exactly (see
-                ``_apply_persisted_objectives``) rather than intersected against a fresh,
-                divergent ``random.sample`` draw.
+                Resume rebuilds the population from the seed groups stored with the run and
+                doesn't call this. An override that sets state the atomic attacks need must also
+                restore that state in ``_prepare_resume_state_async``.
 
         Returns:
             dict[str, list[AttackSeedGroup]]: Seed groups keyed by dataset name.

@@ -115,6 +115,7 @@ from pyrit.memory.memory_models import (
     PromptGenerationEntry,
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
+    ScenarioPlanSeedGroupEntry,
     ScenarioResultEntry,
     ScorableContentEntry,
     ScoreEntry,
@@ -133,6 +134,7 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     DATASET_NAME_RELEASING_STATUSES,
+    DEFAULT_FINDING_FIELDS,
     MEDIA_PATH_DATA_TYPES,
     AdversarialPrompts,
     AtomicAttackEvaluationIdentifier,
@@ -142,6 +144,7 @@ from pyrit.models import (
     AttackResult,
     AttackResultRole,
     AttackResultSelection,
+    AttackSeedGroup,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     ContentEntryScorable,
@@ -156,7 +159,6 @@ from pyrit.models import (
     Finding,
     FindingCreate,
     FindingEvidence,
-    FindingSeverity,
     IdentifierFilter,
     IdentifierType,
     Message,
@@ -205,6 +207,9 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
+
+# Callers that don't pass the active fields' severity order get PyRIT 1.2's, which the default fields keep.
+_DEFAULT_SEVERITY_ORDER: tuple[str, ...] = tuple(DEFAULT_FINDING_FIELDS.severity_order)
 
 
 @dataclass(frozen=True)
@@ -1479,21 +1484,27 @@ class MemoryInterface(abc.ABC):
         limit: int = 20,
         offset: int = 0,
         title_query: str | None = None,
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
         title_pattern: str | None = None,
         parent_finding_id: uuid.UUID | None = None,
         top_level_only: bool = False,
     ) -> list[Finding]:
         """
-        Read one page of findings, highest severity first, then newest first.
+        Read one page of findings in ``severity_order``, then newest first.
 
         Without a parent or top-level filter, every finding is listed, including sub-findings. A parent's direct
         sub-findings are listed oldest first instead, the order a decomposition is usually written in.
 
         Args:
-            operation_id (uuid.UUID | None): Only findings of this operation. Defaults to None.
-            limit (int): The page size. Defaults to 20.
-            offset (int): The number of findings to skip. Defaults to 0.
-            title_query (str | None): Case-insensitive literal title substring. Defaults to None.
+            operation_id (uuid.UUID | None): The operation whose findings to read. Defaults to None, which reads
+                findings from every operation.
+            limit (int): Maximum number of findings to return. Defaults to 20.
+            offset (int): Number of findings to skip. Defaults to 0.
+            title_query (str | None): Case-insensitive text the title must contain. Wildcard characters match
+                literally. Defaults to None.
+            severity_order (Sequence[str]): Severity keys from highest to lowest. Stored values that aren't listed
+                sort after them. Defaults to the default finding fields' order, as in PyRIT 1.2. An empty order
+                sorts newest first.
             title_pattern (str | None): Full LIKE pattern instead of title_query. Defaults to None.
             parent_finding_id (uuid.UUID | None): Only the direct sub-findings of this finding, oldest first.
                 Defaults to None.
@@ -1527,13 +1538,17 @@ class MemoryInterface(abc.ABC):
                     casefold=title_pattern is None,
                 )
             )
-        order = self._sub_finding_order() if parent_finding_id is not None else self._finding_order()
+        order = self._sub_finding_order() if parent_finding_id is not None else self._finding_order(severity_order)
         statement = statement.order_by(*order).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
 
     async def get_finding_subtrees_async(
-        self, *, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+        self,
+        *,
+        operation_id: uuid.UUID,
+        finding_ids: Sequence[uuid.UUID],
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
     ) -> list[Finding]:
         """
         Read findings of one operation together with all of their sub-findings, at any depth.
@@ -1543,6 +1558,12 @@ class MemoryInterface(abc.ABC):
         every path step is in the result.
 
         IDs that are not in the operation are omitted.
+
+        Args:
+            operation_id (uuid.UUID): The operation whose findings to read.
+            finding_ids (Sequence[uuid.UUID]): The findings whose subtrees to read.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to the default finding fields' order.
 
         Returns:
             list[Finding]: Each finding once, in the same order as ``get_findings_async``.
@@ -1557,6 +1578,7 @@ class MemoryInterface(abc.ABC):
                 session=session,
                 operation_id=operation_id,
                 finding_ids=[finding_id for level in levels for finding_id in level],
+                severity_order=severity_order,
             )
 
     async def get_finding_child_counts_async(self, *, finding_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
@@ -1580,12 +1602,22 @@ class MemoryInterface(abc.ABC):
         return counts
 
     async def get_findings_by_ids_async(
-        self, *, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+        self,
+        *,
+        operation_id: uuid.UUID,
+        finding_ids: Sequence[uuid.UUID],
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
     ) -> list[Finding]:
         """
-        Read selected findings of one operation, highest severity first, then newest first.
+        Read selected findings of one operation in ``severity_order``, then newest first.
 
         IDs that are not in the operation are omitted.
+
+        Args:
+            operation_id (uuid.UUID): The operation whose findings to read.
+            finding_ids (Sequence[uuid.UUID]): The findings to read.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to the default finding fields' order.
 
         Returns:
             list[Finding]: The selected findings, in the same order as ``get_findings_async``.
@@ -1594,11 +1626,16 @@ class MemoryInterface(abc.ABC):
             return []
         async with await self.get_session_async() as session:
             return await self._read_findings_by_ids_async(
-                session=session, operation_id=operation_id, finding_ids=finding_ids
+                session=session, operation_id=operation_id, finding_ids=finding_ids, severity_order=severity_order
             )
 
     async def _read_findings_by_ids_async(
-        self, *, session: AsyncSession, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+        self,
+        *,
+        session: AsyncSession,
+        operation_id: uuid.UUID,
+        finding_ids: Sequence[uuid.UUID],
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
     ) -> list[Finding]:
         """
         Read selected findings of one operation within the caller's session, in dashboard order.
@@ -1610,7 +1647,9 @@ class MemoryInterface(abc.ABC):
         # The operation filter takes one of the statement's binds.
         chunk_size = max(1, self._MAX_BIND_VARS - 1)
         ordered_ids = await session.scalars(
-            select(FindingEntry.id).where(FindingEntry.operation_id == operation_id).order_by(*self._finding_order())
+            select(FindingEntry.id)
+            .where(FindingEntry.operation_id == operation_id)
+            .order_by(*self._finding_order(severity_order))
         )
         selected_ids = [finding_id for finding_id in ordered_ids if finding_id in requested]
         findings: dict[uuid.UUID, Finding] = {}
@@ -1739,10 +1778,15 @@ class MemoryInterface(abc.ABC):
             return entry.get_evidence() if entry else None
 
     async def get_findings_for_attack_result_async(
-        self, *, attack_result_id: uuid.UUID
+        self, *, attack_result_id: uuid.UUID, severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER
     ) -> list[tuple[Finding, FindingEvidence]]:
         """
-        Read every finding that links an attack result as evidence, highest severity first, then newest first.
+        Read every finding that links an attack result as evidence, in ``severity_order``, then newest first.
+
+        Args:
+            attack_result_id (uuid.UUID): The attack result the findings link as evidence.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to the default finding fields' order.
 
         Returns:
             list[tuple[Finding, FindingEvidence]]: Each linked finding with the evidence that links it.
@@ -1751,7 +1795,7 @@ class MemoryInterface(abc.ABC):
             select(FindingEntry, FindingEvidenceEntry)
             .join(FindingEvidenceEntry, FindingEvidenceEntry.finding_id == FindingEntry.id)
             .where(FindingEvidenceEntry.attack_result_id == attack_result_id)
-            .order_by(*self._finding_order())
+            .order_by(*self._finding_order(severity_order))
         )
         async with await self.get_session_async() as session:
             rows = (await session.execute(statement)).all()
@@ -1793,29 +1837,34 @@ class MemoryInterface(abc.ABC):
         async with await self.get_session_async() as session:
             return dict((await session.execute(statement)).all())
 
-    async def get_finding_severity_counts_async(self) -> dict[uuid.UUID, dict[FindingSeverity, int]]:
+    async def get_finding_severity_counts_async(self) -> dict[uuid.UUID, dict[str, int]]:
         """
         Count every operation's findings by severity in one query.
 
         Returns:
-            dict[uuid.UUID, dict[FindingSeverity, int]]: Counts for operations with findings.
+            dict[uuid.UUID, dict[str, int]]: Counts for operations with findings.
         """
         statement = select(FindingEntry.operation_id, FindingEntry.severity, func.count()).group_by(
             FindingEntry.operation_id, FindingEntry.severity
         )
-        counts: dict[uuid.UUID, dict[FindingSeverity, int]] = {}
+        counts: dict[uuid.UUID, dict[str, int]] = {}
         async with await self.get_session_async() as session:
             for operation_id, severity, count in (await session.execute(statement)).all():
-                counts.setdefault(operation_id, {})[FindingSeverity(severity)] = count
+                counts.setdefault(operation_id, {})[severity] = count
         return counts
 
     @staticmethod
-    def _finding_order() -> "tuple[ColumnElement[Any], ...]":
-        severity_order = case(
-            {severity.value: position for position, severity in enumerate(FindingSeverity)},
+    def _finding_order(severity_order: Sequence[str]) -> "tuple[ColumnElement[Any], ...]":
+        newest_first = (FindingEntry.created_at.desc(), FindingEntry.id.desc())
+        if not severity_order:
+            # case() with no branches compiles to SQL that both dialects reject.
+            return newest_first
+        rank = case(
+            {key: position for position, key in enumerate(severity_order)},
             value=FindingEntry.severity,
+            else_=len(severity_order),
         )
-        return severity_order, FindingEntry.created_at.desc(), FindingEntry.id.desc()
+        return rank, *newest_first
 
     @staticmethod
     def _sub_finding_order() -> "tuple[ColumnElement[Any], ...]":
@@ -2960,7 +3009,7 @@ class MemoryInterface(abc.ABC):
                     query = query.limit(limit)
                 return query.all()
             except SQLAlchemyError as e:
-                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:unresolved-attribute]
+                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:missing-attribute]
                 raise
 
     def _execute_batched_query(
@@ -3248,7 +3297,7 @@ class MemoryInterface(abc.ABC):
                 ):
                     raise ValueError("Prompt entries used by scorer observations are immutable.")
                 for entry in entries:
-                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
+                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:missing-attribute]
                     if isinstance(entry, (AttackResultEntry, ScenarioResultEntry)):
                         assert entry_in_session is None or isinstance(
                             entry_in_session, (AttackResultEntry, ScenarioResultEntry)
@@ -6760,8 +6809,8 @@ class MemoryInterface(abc.ABC):
                     .where(SeedEntry.dataset_name.isnot(None), SeedEntry.dataset_name != "")
                     .distinct()
                 )
-                names: Sequence[str | None] = session.scalars(statement).all()
-                return [name for name in names if name is not None]
+                # SeedEntry.dataset_name has no Mapped annotation, so the rows are typed Any.
+                return [name for name in session.scalars(statement).all() if isinstance(name, str)]
         except SQLAlchemyError as e:
             logger.exception(f"Failed to retrieve dataset names with error {e}")
             raise
@@ -8142,17 +8191,33 @@ class MemoryInterface(abc.ABC):
             ]
         return {"operators": sorted(operators), "operations": sorted(operations)}
 
-    def _execute_add_scenario_results_to_memory(self, *, scenario_results: Sequence[ScenarioResult]) -> None:
+    def _execute_add_scenario_results_to_memory(
+        self,
+        *,
+        scenario_results: Sequence[ScenarioResult],
+        planned_seed_groups: Mapping[uuid.UUID, Mapping[str, Sequence[AttackSeedGroup]]] | None = None,
+    ) -> None:
         """
         Insert a list of scenario results into the memory storage.
 
         Args:
             scenario_results: Sequence of ScenarioResult objects to store in the database.
+            planned_seed_groups: The population each result's run planned, keyed by result ID and
+                then by dataset name, stored in the same transaction.
 
         Raises:
             SQLAlchemyError: If a scenario result or identifier graph cannot be persisted.
         """
         entries = [ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
+        plan_entries = [
+            ScenarioPlanSeedGroupEntry(
+                scenario_result_id=result_id, dataset_name=dataset_name, position=position, seed_group=seed_group
+            )
+            for result_id, population in (planned_seed_groups or {}).items()
+            for position, (dataset_name, seed_group) in enumerate(
+                (name, group) for name, groups in population.items() for group in groups
+            )
+        ]
         with closing(self._get_session()) as session:
             try:
                 for scenario_result in scenario_results:
@@ -8163,6 +8228,8 @@ class MemoryInterface(abc.ABC):
                 for entry in entries:
                     self._validate_activity_operation(session=session, entry=entry)
                 session.add_all(entries)
+                session.flush()
+                session.add_all(plan_entries)
                 self._recheck_activity_operations(session=session, entries=entries)
                 session.commit()
             except SQLAlchemyError as error:
@@ -8322,7 +8389,7 @@ class MemoryInterface(abc.ABC):
         Replace the ``scenario_metadata`` JSON blob on an existing scenario result.
 
         Used by the scenario layer to persist first-run state (e.g.
-        ``objective_hashes``) that resume needs to replay. Performs a
+        an adaptive run's choices) that resume needs to replay. Performs a
         targeted UPDATE so it doesn't clobber other columns.
 
         Args:
@@ -8388,9 +8455,31 @@ class MemoryInterface(abc.ABC):
             )
             if not updated_rows:
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
-            new_tries: int = session.query(ScenarioResultEntry.number_tries).filter_by(id=scenario_result_id).scalar()
+            new_tries = session.scalar(
+                select(ScenarioResultEntry.number_tries).where(ScenarioResultEntry.id == scenario_result_id)
+            )
+            if new_tries is None:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
             session.commit()
             return new_tries
+
+    def _execute_get_planned_seed_groups(self, *, scenario_result_id: str) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Read a run's stored planned seed groups.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: The population by dataset name, in planned order.
+        """
+        with closing(self._get_session()) as session:
+            entries = session.scalars(
+                select(ScenarioPlanSeedGroupEntry)
+                .where(ScenarioPlanSeedGroupEntry.scenario_result_id == uuid.UUID(scenario_result_id))
+                .order_by(ScenarioPlanSeedGroupEntry.position)
+            ).all()
+            population: dict[str, list[AttackSeedGroup]] = {}
+            for entry in entries:
+                population.setdefault(entry.dataset_name, []).append(entry.get_seed_group())
+            return population
 
     def _execute_get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """Return one ScenarioResult header without hydrating linked attack results."""
@@ -12955,6 +13044,43 @@ class MemoryInterface(abc.ABC):
             self._execute_add_scenario_results_to_memory, scenario_results=scenario_results
         )
 
+    async def add_planned_scenario_result_async(
+        self, *, scenario_result: ScenarioResult, seed_groups_by_dataset: Mapping[str, Sequence[AttackSeedGroup]]
+    ) -> None:
+        """
+        Insert a new scenario result together with the seed groups its run planned.
+
+        Resume rebuilds the run from these groups, so later dataset changes don't affect it.
+
+        Args:
+            scenario_result (ScenarioResult): The new scenario result.
+            seed_groups_by_dataset (Mapping[str, Sequence[AttackSeedGroup]]): The planned population,
+                by dataset name, in the order the run was built from.
+
+        Raises:
+            SQLAlchemyError: If the result, its identifier graph, or its seed groups cannot be persisted.
+        """
+        return await self._run_database_operation_async(
+            self._execute_add_scenario_results_to_memory,
+            scenario_results=[scenario_result],
+            planned_seed_groups={scenario_result.id: seed_groups_by_dataset},
+        )
+
+    async def get_planned_seed_groups_async(self, *, scenario_result_id: str) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Return the seed groups a scenario run planned, as stored when the run was created.
+
+        Args:
+            scenario_result_id (str): The scenario result ID.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: The planned population by dataset name, in planned
+                order. Empty when the run planned no groups or was created before they were stored.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_planned_seed_groups, scenario_result_id=scenario_result_id
+        )
+
     def update_scenario_run_state(
         self,
         *,
@@ -13158,7 +13284,7 @@ class MemoryInterface(abc.ABC):
         Replace the ``scenario_metadata`` JSON blob on an existing scenario result.
 
         Used by the scenario layer to persist first-run state (e.g.
-        ``objective_hashes``) that resume needs to replay. Performs a
+        an adaptive run's choices) that resume needs to replay. Performs a
         targeted UPDATE so it doesn't clobber other columns.
 
         Args:

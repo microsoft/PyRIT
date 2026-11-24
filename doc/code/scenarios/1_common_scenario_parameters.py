@@ -257,6 +257,18 @@ pool_scenario = RapidResponse(objective_scorer=scorers)
 pool_scenario.set_params_from_args(args={"objective_target": objective_target, "dataset_config": harm_dataset_config})
 
 # %% [markdown]
+# To check a pool against the datasets before a run, read the selection report after initializing. It
+# lists each planned atomic group with the scorer it will use and, for every candidate passed over,
+# the reason. Building it sends nothing to the target and calls no judge model:
+#
+# ```python
+# from pyrit.output import output_scorer_selection_report_async
+#
+# await pool_scenario.initialize_async()
+# await output_scorer_selection_report_async(pool_scenario.get_scorer_selection_report())
+# ```
+
+# %% [markdown]
 # Each dataset is judged by the candidate bound to the evaluation it names, and a dataset without
 # `scorer_requirements` uses a candidate without one. If no candidate can judge a dataset's
 # objectives, initialization fails and gives each candidate's reason. A technique that needs a
