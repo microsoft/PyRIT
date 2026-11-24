@@ -17,6 +17,7 @@ from pyrit.models import (
     MessagePiece,
     ScenarioResult,
     Score,
+    ScorerSelectionReport,
 )
 from pyrit.output import (
     FileSink,
@@ -31,13 +32,16 @@ from pyrit.output import (
     output_scenario_attacks_async,
     output_scenario_conversations_async,
     output_scenario_full_async,
+    output_scenario_suite_async,
     output_score_async,
     output_scorer_async,
+    output_scorer_selection_report_async,
 )
 from pyrit.output.conversation.source import MemoryConversationSource
 from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
 from pyrit.output.finding_report.report import FindingReport, FindingReportEntry, FindingReportField
 from pyrit.output.scenario_result.json import JsonScenarioResultMemoryPrinter
+from pyrit.output.scorer_selection.pretty import PrettyScorerSelectionReportPrinter
 
 # --- get_default_sink tests ---
 
@@ -174,6 +178,35 @@ async def test_output_scenario_async_unsupported_format():
         await output_scenario_async(AsyncMock(), format="markdown")
 
 
+# --- output_scenario_suite_async tests ---
+
+
+@patch("pyrit.output.helpers.PrettyScenarioSuiteResultMemoryPrinter")
+async def test_output_scenario_suite_async_pretty(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+    execution = MagicMock()
+
+    await output_scenario_suite_async(execution)
+
+    mock_cls.assert_called_once()
+    mock_printer.write_async.assert_called_once_with(execution)
+
+
+@pytest.mark.parametrize("fmt", ["markdown", "html"])
+async def test_output_scenario_suite_async_rejects_unsupported_format(fmt):
+    with (
+        patch("pyrit.output.helpers.PrettyScenarioSuiteResultMemoryPrinter") as pretty_cls,
+        patch("pyrit.output.helpers.JsonScenarioSuiteResultMemoryPrinter") as json_cls,
+        pytest.raises(ValueError, match="Unsupported format for scenario suites"),
+    ):
+        await output_scenario_suite_async(MagicMock(), format=fmt)
+
+    pretty_cls.assert_not_called()
+    json_cls.assert_not_called()
+
+
 # --- output_scorer_async tests ---
 
 
@@ -301,6 +334,19 @@ async def test_output_finding_report_async_rejects_other_formats():
         await output_finding_report_async(FINDING_REPORT, format="json")
 
 
+async def test_output_scorer_selection_report_async_writes_pretty_to_the_sink():
+    sink = _RecordingSink()
+
+    await output_scorer_selection_report_async(ScorerSelectionReport(), format="pretty", sink=sink)
+
+    assert sink.written == [await PrettyScorerSelectionReportPrinter().render_async(ScorerSelectionReport())]
+
+
+async def test_output_scorer_selection_report_async_rejects_other_formats():
+    with pytest.raises(ValueError, match="Unsupported format for scorer selection reports: 'json'"):
+        await output_scorer_selection_report_async(ScorerSelectionReport(), format="json")
+
+
 # --- json-branch tests (each routes to the Json* memory printer) ---
 
 
@@ -330,6 +376,19 @@ async def test_output_scenario_attacks_async_json(mock_cls):
     mock_printer.write_async.assert_awaited_once()
 
 
+@patch("pyrit.output.helpers.JsonScenarioSuiteResultMemoryPrinter")
+async def test_output_scenario_suite_async_json(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+
+    await output_scenario_suite_async(MagicMock(), format="json")
+
+    mock_cls.assert_called_once()
+    assert isinstance(mock_cls.call_args[1]["sink"], StdoutSink)
+    mock_printer.write_async.assert_awaited_once()
+
+
 @pytest.mark.parametrize("fmt", ["markdown", "html", "jsno"])
 async def test_output_scenario_attacks_async_rejects_unsupported_format_before_writing_async(fmt, tmp_path) -> None:
     path = tmp_path / "attacks.txt"
@@ -345,6 +404,49 @@ async def test_output_scenario_attacks_async_rejects_unsupported_format_before_w
     pretty_cls.assert_not_called()
     json_cls.assert_not_called()
     assert path.read_text() == "existing report"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("fmt", ["pretty", "json"])
+@pytest.mark.parametrize("outcome", [None, *AttackOutcome])
+async def test_output_scenario_attacks_async_filters_outcome_and_ids_before_limit(fmt, outcome, capsys):
+    attacks = [
+        AttackResult(conversation_id=str(uuid.uuid4()), objective=f"objective {index}", outcome=value)
+        for index, value in enumerate(
+            [
+                AttackOutcome.SUCCESS,
+                AttackOutcome.FAILURE,
+                AttackOutcome.SUCCESS,
+                AttackOutcome.ERROR,
+                AttackOutcome.SUCCESS,
+            ]
+        )
+    ]
+    result = make_scenario_result(attack_results={"tech_a": attacks})
+    matching = [attack for attack in attacks[1:] if outcome is None or attack.outcome == outcome]
+
+    await output_scenario_attacks_async(
+        result,
+        attack_result_ids=[attack.attack_result_id for attack in reversed(attacks[1:])],
+        limit=1,
+        outcome=outcome,
+        format=fmt,
+    )
+
+    output = capsys.readouterr().out
+    expected = matching[:1]
+    if fmt == "json":
+        document = json.loads(output)
+        assert [entry["id"] for entry in document["attacks"]] == [attack.attack_result_id for attack in expected]
+        assert document["total"] == len(matching)
+        assert document["shown"] == len(expected)
+    else:
+        for attack in attacks:
+            assert (attack.attack_result_id in output) == (attack in expected)
+        if not matching:
+            assert "No attack results." in output
+        elif len(matching) > 1:
+            assert f"Showing 1 of {len(matching)} attacks." in output
 
 
 @patch("pyrit.output.scorer.json.JsonScorerMemoryPrinter")
@@ -519,6 +621,52 @@ async def test_output_scenario_conversations_async_filters_ids_before_limit(scen
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("helper", "fmt"),
+    [
+        (output_scenario_conversations_async, "json"),
+        (output_scenario_full_async, "json"),
+        (output_scenario_full_async, "html"),
+    ],
+)
+@pytest.mark.parametrize("outcome", [None, *AttackOutcome])
+async def test_scenario_report_helpers_filter_outcome_before_reading_conversations(
+    helper, fmt, outcome, scenario_result, tmp_path
+):
+    first, second, third = _all_attacks(scenario_result)
+    first.outcome = third.outcome = AttackOutcome.SUCCESS
+    expected = [attack for attack in (second, third) if outcome is None or attack.outcome == outcome][:1]
+    overview = JsonScenarioResultMemoryPrinter().build(scenario_result)
+    path = tmp_path / f"report.{fmt}"
+
+    with patch.object(
+        MemoryConversationSource, "get_messages_async", autospec=True, return_value=[]
+    ) as get_messages_async:
+        await helper(
+            scenario_result,
+            attack_result_ids=[third.attack_result_id, second.attack_result_id],
+            limit=1,
+            outcome=outcome,
+            format=fmt,
+            sink=FileSink(path=path),
+        )
+
+    output = path.read_text(encoding="utf-8")
+    if fmt == "json":
+        document = json.loads(output)
+        assert [entry["id"] for entry in document["conversations"]] == [attack.attack_result_id for attack in expected]
+        if helper is output_scenario_full_async:
+            assert document["overview"] == overview
+    else:
+        for attack in (first, second, third):
+            assert (attack.attack_result_id in output) == (attack in expected)
+        assert f"Conversations ({len(expected)})" in output
+    assert [call.kwargs["conversation_id"] for call in get_messages_async.call_args_list] == [
+        attack.conversation_id for attack in expected
+    ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_output_scenario_conversations_async_includes_every_attack_by_default(capsys):
     attacks = [AttackResult(conversation_id=str(uuid.uuid4()), objective=f"objective {i}") for i in range(6)]
 
@@ -574,6 +722,23 @@ async def test_output_scenario_conversations_async_scores_duplicated_conversatio
 
     conversation = json.loads(capsys.readouterr().out)["conversations"][0]
     assert _piece_scores(conversation) == [[], [("ObjectiveScorer", "false")]]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_output_scenario_conversations_async_keeps_the_score_of_each_attacks_recorded_judge(
+    seeded_attacks, capsys
+):
+    # A scorer-pool run has no single objective scorer; each attack records the judge it used.
+    result = make_scenario_result(attack_results=seeded_attacks, objective_scorer_identifier=None)
+    attack_identity = ComponentIdentifier(
+        class_name="PromptSendingAttack", class_module="tests", children={"objective_scorer": REFUSAL_SCORER}
+    )
+
+    with patch.object(AttackResult, "get_attack_strategy_identifier", return_value=attack_identity):
+        await output_scenario_conversations_async(result)
+
+    for entry in json.loads(capsys.readouterr().out)["conversations"]:
+        assert _piece_scores(entry) == [[], [("RefusalScorer", "true")]]
 
 
 @pytest.mark.usefixtures("patch_central_database")

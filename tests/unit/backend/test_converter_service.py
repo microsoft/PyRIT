@@ -847,6 +847,32 @@ class TestCreateConverter:
         with pytest.raises(ValueError, match="reserved"):
             await service.create_converter_async(request=request)
 
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize(
+        ("converter_type", "name_parameter", "file_text", "message"),
+        [
+            ("PersuasionConverter", "persuasion_technique", 'value: "A file"\n', "does not exist or is not supported"),
+            ("ImagePromptStyleConverter", "filter_name", "style_instructions: x\nvariations:\n  v1: d\n", "not found"),
+        ],
+    )
+    async def test_create_converter_refuses_a_template_name_that_names_a_file(
+        self, tmp_path: Path, converter_type: str, name_parameter: str, file_text: str, message: str
+    ) -> None:
+        (tmp_path / "other.yaml").write_text(file_text)
+        service = ConverterService()
+        request = CreateConverterRequest(
+            name="named_file",
+            type=converter_type,
+            params={"converter_target": "chat", name_parameter: str(tmp_path / "other")},
+        )
+
+        with patch.object(TargetRegistry, "get_registry_singleton", return_value=TargetRegistry()):
+            TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="chat")
+            with pytest.raises(ValueError, match=message):
+                await service.create_converter_async(request=request)
+
+        assert service.get_converter_object(converter_id="named_file") is None
+
 
 class TestDeleteConverter:
     """Tests for ConverterService.delete_converter_async."""
@@ -2195,6 +2221,7 @@ def _try_instantiate_converter(converter_name: str):
         "ImagePromptStyleConverter": {"filter_name": "gritty_documentary"},
         "JsonFieldConverter": {"json_pointer": "/state"},
         "VigenereConverter": {"key": "testvalue"},
+        "ColumnarTranspositionConverter": {"key": "testvalue"},
         "GridCompositeConverter": {"innocuous_images": ["a.png", "b.png", "c.png"]},
     }
 

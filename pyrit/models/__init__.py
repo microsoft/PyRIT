@@ -80,7 +80,15 @@ if TYPE_CHECKING:
         validate_own_decomposition,
     )
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
-    from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, FindingSeverity, is_finding_path_complete
+    from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, is_finding_path_complete
+    from pyrit.models.finding_fields import (
+        DEFAULT_FINDING_FIELDS,
+        FindingField,
+        FindingFields,
+        FindingFieldType,
+        FindingSeverityColor,
+        FindingValuesError,
+    )
     from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
     from pyrit.models.identifiers import (
         REGISTRY_NAME_PATTERN,
@@ -150,6 +158,16 @@ if TYPE_CHECKING:
         StructuredParameterValue,
         display_choices,
     )
+    from pyrit.models.prompt_generation import (
+        ACTIVE_GENERATION_STATUSES,
+        DATASET_NAME_RELEASING_STATUSES,
+        RETRYABLE_GENERATION_STATUSES,
+        PromptGenerationProgress,
+        PromptGenerationRecord,
+        PromptGenerationStatus,
+        TargetObjectiveGenerationRequest,
+    )
+    from pyrit.models.prompt_generation_estimate import PromptGenerationEstimate, PromptGenerationStageEstimate
     from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
     from pyrit.models.results.assert_policy_metrics import AssertBinaryRate, AssertPolicyMetrics
     from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultRole, AttackResultT
@@ -208,6 +226,7 @@ if TYPE_CHECKING:
         ScenarioRunPlan,
         ScenarioRunPlanAtomicGroup,
         ScenarioRunPlanGroupKind,
+        ScenarioRunPlanScorerBinding,
         ScenarioRunPlanSeedGroup,
         ScenarioRunPlanSeedPrompt,
         ScenarioRunProgress,
@@ -239,11 +258,15 @@ if TYPE_CHECKING:
         ContentWritten,
         ConversationObservationPayload,
         ConversationScorable,
+        DisclosesSecret,
         DivergesFromRepetition,
         Equals,
         ExecutionStep,
         ExecutionStepKind,
         ExecutionTraceObservationPayload,
+        FloatFeedback,
+        InvalidFloatFeedbackError,
+        InvalidStrongRejectAnswersError,
         MatchesObjective,
         MessageScorable,
         Observation,
@@ -258,11 +281,14 @@ if TYPE_CHECKING:
         Scorable,
         ScorableUnion,
         Score,
+        ScorerCapabilities,
+        ScorerCapabilityName,
         ScorerTargetResponsePayload,
         ScoreStatus,
         ScoreType,
         ScoringExpectation,
         StartsWith,
+        StrongRejectAnswers,
         SurfaceBaseline,
         SurfaceCoverage,
         SurfaceEntry,
@@ -301,6 +327,13 @@ if TYPE_CHECKING:
         AssertSampleVotes,
         AssertSkipReason,
     )
+    from pyrit.models.scorer_selection_report import (
+        ScorerCandidateVerdict,
+        ScorerMismatchKind,
+        ScorerSelectionEntry,
+        ScorerSelectionReport,
+        ScorerVerdictStatus,
+    )
     from pyrit.models.seeds import (
         AdversarialPrompts,
         AttackSeedGroup,
@@ -328,13 +361,17 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.assert_generation import (
         AssertBehaviorCategory,
         AssertBehaviorDefinition,
+        AssertBehaviorPreset,
         AssertConceptPattern,
         AssertConceptSpecification,
         AssertCoverage,
         AssertDimension,
         AssertDimensionLevel,
+        AssertGeneratedGroupContent,
+        AssertGenerationCheckpoint,
         AssertGenerationConfig,
         AssertGenerationProvenance,
+        AssertGenerationStage,
         AssertGroupMetadata,
         AssertPatternRole,
         AssertReplication,
@@ -343,10 +380,12 @@ if TYPE_CHECKING:
         AssertSlot,
         AssertSlotValue,
         AssertStakeholder,
+        AssertSuitePreset,
         AssertSystematization,
         AssertTaxonomy,
         AssertTerm,
     )
+    from pyrit.models.seeds.gcg_seed_metadata import GCGSeedMetadata
     from pyrit.models.target import (
         COMMON_JSON_SCHEMAS,
         JSON_SCHEMA_METADATA_KEY,
@@ -374,16 +413,21 @@ if TYPE_CHECKING:
     from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "GCGSeedMetadata": "pyrit.models.seeds",
     "AdversarialPrompts": "pyrit.models.seeds.adversarial_prompts",
     "AssertBehaviorCategory": "pyrit.models.seeds.assert_generation",
     "AssertBehaviorDefinition": "pyrit.models.seeds.assert_generation",
+    "AssertBehaviorPreset": "pyrit.models.seeds.assert_generation",
     "AssertConceptPattern": "pyrit.models.seeds.assert_generation",
     "AssertConceptSpecification": "pyrit.models.seeds.assert_generation",
     "AssertCoverage": "pyrit.models.seeds.assert_generation",
     "AssertDimension": "pyrit.models.seeds.assert_generation",
     "AssertDimensionLevel": "pyrit.models.seeds.assert_generation",
+    "AssertGeneratedGroupContent": "pyrit.models.seeds.assert_generation",
+    "AssertGenerationCheckpoint": "pyrit.models.seeds.assert_generation",
     "AssertGenerationConfig": "pyrit.models.seeds.assert_generation",
     "AssertGenerationProvenance": "pyrit.models.seeds.assert_generation",
+    "AssertGenerationStage": "pyrit.models.seeds.assert_generation",
     "AssertGroupMetadata": "pyrit.models.seeds.assert_generation",
     "AssertJudgeDimension": "pyrit.models.score.assert_judge",
     "AssertJudgePreset": "pyrit.models.score.assert_judge",
@@ -400,9 +444,19 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AssertSlot": "pyrit.models.seeds.assert_generation",
     "AssertSlotValue": "pyrit.models.seeds.assert_generation",
     "AssertStakeholder": "pyrit.models.seeds.assert_generation",
+    "AssertSuitePreset": "pyrit.models.seeds.assert_generation",
     "AssertSystematization": "pyrit.models.seeds.assert_generation",
     "AssertTaxonomy": "pyrit.models.seeds.assert_generation",
     "AssertTerm": "pyrit.models.seeds.assert_generation",
+    "ACTIVE_GENERATION_STATUSES": "pyrit.models.prompt_generation",
+    "DATASET_NAME_RELEASING_STATUSES": "pyrit.models.prompt_generation",
+    "RETRYABLE_GENERATION_STATUSES": "pyrit.models.prompt_generation",
+    "PromptGenerationProgress": "pyrit.models.prompt_generation",
+    "PromptGenerationRecord": "pyrit.models.prompt_generation",
+    "PromptGenerationStatus": "pyrit.models.prompt_generation",
+    "TargetObjectiveGenerationRequest": "pyrit.models.prompt_generation",
+    "PromptGenerationEstimate": "pyrit.models.prompt_generation_estimate",
+    "PromptGenerationStageEstimate": "pyrit.models.prompt_generation_estimate",
     "WebSearchConfig": "pyrit.models.target.web_search_config",
     "WebSearchMode": "pyrit.models.target.web_search_config",
     "Contains": "pyrit.models.score",
@@ -502,13 +556,19 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Finding": "pyrit.models.finding",
     "FindingCreate": "pyrit.models.finding",
     "FindingEvidence": "pyrit.models.finding",
-    "FindingSeverity": "pyrit.models.finding",
     "is_finding_path_complete": "pyrit.models.finding",
+    "DEFAULT_FINDING_FIELDS": "pyrit.models.finding_fields",
+    "FindingField": "pyrit.models.finding_fields",
+    "FindingFields": "pyrit.models.finding_fields",
+    "FindingFieldType": "pyrit.models.finding_fields",
+    "FindingSeverityColor": "pyrit.models.finding_fields",
+    "FindingValuesError": "pyrit.models.finding_fields",
     "ConversationType": "pyrit.models.messages.conversation_reference",
     "ContentEntryScorable": "pyrit.models.score",
     "ContentScorable": "pyrit.models.score",
     "ContentWritten": "pyrit.models.score",
     "construct_response_from_request": "pyrit.models.messages.conversations",
+    "DisclosesSecret": "pyrit.models.score",
     "display_choices": "pyrit.models.parameter",
     "DivergesFromRepetition": "pyrit.models.score",
     "EmbeddingData": "pyrit.models.embeddings",
@@ -573,6 +633,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Score": "pyrit.models.score",
     "ScoreStatus": "pyrit.models.score",
     "ScoreType": "pyrit.models.score",
+    "ScorerCapabilities": "pyrit.models.score",
+    "ScorerCapabilityName": "pyrit.models.score",
+    "FloatFeedback": "pyrit.models.score",
+    "InvalidFloatFeedbackError": "pyrit.models.score",
+    "InvalidStrongRejectAnswersError": "pyrit.models.score",
+    "StrongRejectAnswers": "pyrit.models.score",
     "ScoringExpectation": "pyrit.models.score",
     "SurfaceBaseline": "pyrit.models.score",
     "SurfaceCoverage": "pyrit.models.score",
@@ -657,6 +723,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioQueueSnapshot": "pyrit.models.scenario_progress",
     "ScenarioRunPlan": "pyrit.models.scenario_progress",
     "ScenarioRunPlanAtomicGroup": "pyrit.models.scenario_progress",
+    "ScenarioRunPlanScorerBinding": "pyrit.models.scenario_progress",
+    "ScorerCandidateVerdict": "pyrit.models.scorer_selection_report",
+    "ScorerMismatchKind": "pyrit.models.scorer_selection_report",
+    "ScorerSelectionEntry": "pyrit.models.scorer_selection_report",
+    "ScorerSelectionReport": "pyrit.models.scorer_selection_report",
+    "ScorerVerdictStatus": "pyrit.models.scorer_selection_report",
     "ScenarioRunPlanGroupKind": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedPrompt": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedGroup": "pyrit.models.scenario_progress",
@@ -724,6 +796,17 @@ def __getattr__(name: str) -> object:
     Returns:
         object: The resolved export.
     """
+    # TODO(PyRIT 1.5): Remove FindingSeverity.
+    if name == "FindingSeverity":
+        from pyrit.common import print_deprecation_message
+        from pyrit.models.finding import _FindingSeverity
+
+        print_deprecation_message(
+            old_item=f"{__name__}.FindingSeverity",
+            new_item="the option keys of FindingFields.severity",
+            removed_in="1.5.0",
+        )
+        return _FindingSeverity
     return resolve_lazy_export(
         name=name,
         module_name=__name__,

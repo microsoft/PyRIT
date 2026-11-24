@@ -18,6 +18,9 @@ MEEM = chr(0x0645)
 ALEF_MADDA = chr(0x0622)  # -> 2a
 FATHA = chr(0x064E)  # short-vowel diacritic, dropped
 TATWEEL = chr(0x0640)  # connector, dropped
+ARABIC_COMMA = chr(0x060C)
+ARABIC_SEMICOLON = chr(0x061B)
+ARABIC_QUESTION_MARK = chr(0x061F)
 
 
 def test_input_supported():
@@ -48,6 +51,26 @@ async def test_diacritics_and_tatweel_are_dropped():
     # BEH + FATHA -> "b" (diacritic dropped); BEH + TATWEEL + BEH -> "bb"
     assert (await ArabiziConverter().convert_async(prompt=BEH + FATHA)).output_text == "b"
     assert (await ArabiziConverter().convert_async(prompt=BEH + TATWEEL + BEH)).output_text == "bb"
+
+
+@pytest.mark.parametrize(
+    ("arabic_punctuation", "latin_punctuation"),
+    [(ARABIC_COMMA, ","), (ARABIC_SEMICOLON, ";"), (ARABIC_QUESTION_MARK, "?")],
+)
+async def test_arabic_punctuation_becomes_latin(arabic_punctuation, latin_punctuation):
+    result = await ArabiziConverter().convert_async(prompt=BEH + arabic_punctuation)
+    assert result.output_text == "b" + latin_punctuation
+
+
+async def test_output_has_no_arabic_punctuation_left():
+    # "kayf halak? ana bikhayr, shukran; marhaba" written with Arabic punctuation
+    prompt = (
+        "\u0643\u064a\u0641 \u062d\u0627\u0644\u0643\u061f "
+        "\u0623\u0646\u0627 \u0628\u062e\u064a\u0631\u060c "
+        "\u0634\u0643\u0631\u0627\u061b \u0645\u0631\u062d\u0628\u0627"
+    )
+    result = await ArabiziConverter().convert_async(prompt=prompt)
+    assert result.output_text == "kyf 7alk? ana b5yr, shkra; mr7ba"
 
 
 async def test_leaves_non_arabic_unchanged():
