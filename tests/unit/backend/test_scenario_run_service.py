@@ -38,6 +38,7 @@ from pyrit.memory import (
 )
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
+    DEFAULT_FINDING_FIELDS,
     SCENARIO_RUN_PLAN_METADATA_KEY,
     SCENARIO_SUITE_EXECUTION_METADATA_KEY,
     AtomicAttackIdentifier,
@@ -46,6 +47,8 @@ from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
+    FindingField,
+    FindingFields,
     Operation,
     RetryEvent,
     ScenarioAttackResultDelta,
@@ -76,7 +79,11 @@ from pyrit.registry import (
     TargetRegistry,
     owner_metadata,
 )
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, registry_entry_origin
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SavedEntryReplacementError,
+    registry_entry_origin,
+)
 from pyrit.scenario import (
     AttackTechniqueFactory,
     DatasetSource,
@@ -91,7 +98,9 @@ from pyrit.scenario.core import (
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.scenarios.airt import Jailbreak, Scam
-from pyrit.setup.initializers import ConverterInitializer, ToolsInitializer
+from pyrit.setup.finding_fields import get_active_finding_fields
+from pyrit.setup.initializers import ConverterInitializer, FindingsInitializer, ToolsInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import (
     MockPromptTarget,
@@ -390,6 +399,41 @@ async def test_tools_launch_script_cannot_use_a_saved_technique_in_its_place_asy
             await _run_launch_scripts_async({"tools": ToolsInitializer()})
 
         assert registry.instances.get("role_play_tool_calls") is saved
+    finally:
+        AttackTechniqueRegistry.reset_registry_singleton()
+
+
+class _TechniqueLaunchScript:
+    """A launch script that registers a technique the way the Techniques initializer does."""
+
+    def __init__(self, *, name: str, swallow: bool = False) -> None:
+        self._name = name
+        self._swallow = swallow
+
+    async def initialize_async(self) -> None:
+        factory = AttackTechniqueFactory(name=self._name, attack_class=PromptSendingAttack)
+        try:
+            AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        except SavedEntryReplacementError:
+            if not self._swallow:
+                raise
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("swallow", [False, True])
+async def test_launch_scripts_cannot_take_a_saved_techniques_tag_async(swallow: bool) -> None:
+    AttackTechniqueRegistry.reset_registry_singleton()
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    saved = AttackTechniqueFactory(name="formal", attack_class=PromptSendingAttack, technique_tags=["custom"])
+    registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+    try:
+        with pytest.raises(
+            SavedEntryLaunchConflictError, match="'techniques' would replace the saved technique 'formal'"
+        ):
+            await _run_launch_scripts_async({"techniques": _TechniqueLaunchScript(name="custom", swallow=swallow)})
+
+        assert registry.instances.get("custom") is None
+        assert registry.instances.get("formal") is saved
     finally:
         AttackTechniqueRegistry.reset_registry_singleton()
 
@@ -2069,6 +2113,29 @@ class TestScenarioRunServiceStartRun:
 
         assert response.status == ScenarioRunState.IN_PROGRESS
         assert mock_init_instance.initialize_async.await_count == 2
+
+    @pytest.mark.usefixtures("reset_finding_fields")
+    async def test_start_run_rejects_a_findings_initializer_before_running_any(self, mock_all_registries) -> None:
+        """A run that names a FindingsInitializer runs no initializers and leaves the finding fields alone."""
+
+        class ContosoFindingFields(FindingsInitializer):
+            def get_finding_fields(self) -> FindingFields:
+                return FindingFields(
+                    severity=FindingField(key="severity", label="Severity", type="choice", options=[("high", "High")])
+                )
+
+        service = ScenarioRunService()
+        target_initializer = MagicMock(spec=PyRITInitializer)
+        mock_all_registries["initializer_registry"].create_and_configure.side_effect = [
+            target_initializer,
+            ContosoFindingFields(),
+        ]
+
+        with pytest.raises(ValueError, match="'contoso_findings' sets the deployment's finding fields"):
+            await service.start_run_async(request=_make_request(initializers=["target", "contoso_findings"]))
+
+        target_initializer.initialize_async.assert_not_awaited()
+        assert get_active_finding_fields() is DEFAULT_FINDING_FIELDS
 
     async def test_start_run_passes_scenario_result_id_for_resume(self, mock_all_registries) -> None:
         """Test that scenario_result_id is passed to the registry for resumption."""

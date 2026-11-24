@@ -265,14 +265,14 @@ technique editor. The dialog suggests a name such as `base64_converter`. A
 converter type that needs an uploaded file, a converter with an uploaded file, or
 one that uses a Temporary target is created as **Temporary** instead, and the
 dialog says why.
-**Save to registry** on a converter's changed settings, in chat or in a technique
-edit, makes a Temporary copy. The Converters and Scorers tables use the same three
+**Add to registry** on a converter's changed settings, in chat or in a technique
+edit, adds a Temporary copy under a new name. The Converters and Scorers tables use the same three
 labels; scorers can be saved through the API.
 
 **New technique** saves the technique the same way. Give it a registry name of
 lowercase letters, digits, and underscores that starts with a letter. A technique
-that uses a Temporary converter or a Temporary adversarial target is created as
-**Temporary** instead, and the dialog says why. Settings changed for a single run
+the backend can't save, such as one that uses a Temporary converter or adversarial
+target, is created as **Temporary** instead, and the dialog says why. Settings changed for a single run
 in Scanner stay with that run. The Techniques table uses the same three labels. To
 remove a saved technique, select **Delete** next to its name. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
@@ -393,8 +393,10 @@ This is a cross-result report, not the progress dashboard for one scanner run.
 ## Operations
 
 Operations organize human findings for an engagement. Create an operation,
-record findings with severity and description, and attach saved attacks as
-evidence. A model score does not create a finding automatically.
+record findings, and attach saved attacks as evidence. Findings use the
+deployment's [finding fields](../code/setup/finding_fields.md), which by default
+are severity, harm type, and description. A model score does not create a
+finding automatically.
 
 Select an operation in the labels bar to associate new chats and scans with it.
 The operation page brings its findings, linked evidence, and execution history

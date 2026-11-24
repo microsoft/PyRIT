@@ -226,10 +226,27 @@ async def test_list_empty_and_terminal_pages_async(registry: AttackTechniqueRegi
     assert empty.pagination.next_cursor is None
 
 
-async def test_list_unknown_cursor_starts_at_first_page_like_targets_async(registry: AttackTechniqueRegistry) -> None:
-    page = await TechniqueService().list_async(limit=3, cursor="missing")
-    assert [item.name for item in page.items] == registry.instances.get_names()[:3]
-    assert page.pagination.prev_cursor == "missing"
+async def test_list_rejects_a_cursor_that_names_no_technique_async(registry: AttackTechniqueRegistry) -> None:
+    """A stale cursor must raise, not silently restart at the first page."""
+    service = TechniqueService()
+    names = registry.instances.get_names()
+    cursor = (await service.list_async(limit=1)).pagination.next_cursor
+    assert cursor == names[0]
+    assert [item.name for item in (await service.list_async(limit=1, cursor=cursor)).items] == [names[1]]
+
+    registry.instances.unregister(cursor)
+
+    with pytest.raises(ValueError, match="cursor is not valid for the technique registry"):
+        await service.list_async(limit=1, cursor=cursor)
+
+
+def test_rest_list_returns_400_for_a_cursor_that_names_no_technique(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    response = client.get("/api/techniques", params={"limit": 1, "cursor": "removed_technique"})
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "The cursor is not valid for the technique registry"
 
 
 def test_rest_list_follows_all_pages_with_default_limit(
@@ -1096,21 +1113,25 @@ async def test_reports_technique_storage_failures_as_unavailable(
     assert saving_catalog.instances.get("base64_send") is None
 
 
-async def test_deletes_the_saved_file_when_another_technique_takes_the_name_first(
-    saving_catalog: AttackTechniqueRegistry, tmp_path: Path
+@pytest.mark.parametrize(("taken_first", "field"), [("base64_send", "name"), ("encoded", "tags")])
+async def test_deletes_the_saved_file_when_another_technique_takes_the_name_or_a_tag_first(
+    saving_catalog: AttackTechniqueRegistry, tmp_path: Path, taken_first: str, field: str
 ) -> None:
     register_runtime = saving_catalog.instances.register_runtime
 
     def register_another_first(factory: AttackTechniqueFactory, *, metadata: dict[str, Any] | None = None) -> None:
-        register_runtime(AttackTechniqueFactory(name="base64_send", attack_class=PromptSendingAttack))
+        register_runtime(AttackTechniqueFactory(name=taken_first, attack_class=PromptSendingAttack))
         register_runtime(factory, metadata=metadata)
 
     with (
         patch.object(saving_catalog.instances, "register_runtime", side_effect=register_another_first),
-        pytest.raises(SavedEntryConflictError, match="already exists"),
+        pytest.raises(SavedEntryConflictError) as conflict,
     ):
-        await TechniqueService().create_async(request=_persist_technique("base64_send"), recipes_source=str(tmp_path))
+        await TechniqueService().create_async(
+            request=_persist_technique("base64_send", tags=["encoded"]), recipes_source=str(tmp_path)
+        )
 
+    assert conflict.value.field == field
     assert not (tmp_path / "techniques" / "base64_send.json").exists()
 
 
@@ -1151,6 +1172,7 @@ def test_rest_create_with_persist_saves_or_explains_why_it_cant(
         created = client.post("/api/techniques", json=body)
         refused = client.post("/api/techniques", json={**body, "name": "rot13_send", "request_converters": ["rot13"]})
         clashing = client.post("/api/techniques", json={**body, "name": startup_name})
+        tag_clashing = client.post("/api/techniques", json={**body, "name": "tagged_send", "tags": [startup_name]})
         invalid = client.post("/api/techniques", json={**body, "name": "Base64Send"})
         listed = client.get("/api/techniques", params={"limit": 200})
 
@@ -1171,8 +1193,36 @@ def test_rest_create_with_persist_saves_or_explains_why_it_cant(
         "not_saveable_reason": "Uses temporary converter 'rot13', which won't exist after a restart.",
     }
     assert clashing.status_code == 409
+    assert clashing.json()["errors"] == [{"field": "body.name", "message": clashing.json()["detail"]}]
+    assert tag_clashing.status_code == 409
+    assert tag_clashing.json() == {
+        "detail": f"Tag '{startup_name}' conflicts with a technique name",
+        "errors": [{"field": "body.tags", "message": f"Tag '{startup_name}' conflicts with a technique name"}],
+    }
     assert invalid.status_code == 422
     assert sorted(path.name for path in (tmp_path / "techniques").glob("*.json")) == ["base64_send.json"]
+
+
+def test_rest_saveability_answers_as_saving_would_without_registering_anything(
+    saving_catalog: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    before = saving_catalog.catalog_revision
+    body = {"type": "PromptSendingAttack", "request_converters": ["base64"]}
+
+    saveable = client.post("/api/techniques/saveability", json=body)
+    temporary = client.post("/api/techniques/saveability", json={**body, "request_converters": ["rot13"]})
+    unknown = client.post("/api/techniques/saveability", json={**body, "type": "MissingAttack"})
+    named = client.post("/api/techniques/saveability", json={**body, "name": "base64_send"})
+
+    assert (saveable.status_code, saveable.json()) == (200, {"not_saveable_reason": None})
+    assert (temporary.status_code, temporary.json()) == (
+        200,
+        {"not_saveable_reason": "Uses temporary converter 'rot13', which won't exist after a restart."},
+    )
+    assert (unknown.status_code, unknown.json()["detail"]) == (400, "'MissingAttack' is not a registered attack type.")
+    assert named.status_code == 422
+    assert saving_catalog.catalog_revision == before
 
 
 @pytest.mark.parametrize(

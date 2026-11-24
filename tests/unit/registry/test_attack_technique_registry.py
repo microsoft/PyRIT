@@ -15,6 +15,7 @@ from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.registry import AttackTechniqueRegistry, Registry, TargetRegistry
+from pyrit.registry.components.attack_technique_registry import TechniqueSelectorConflictError
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
     SavedEntryReplacementError,
@@ -409,6 +410,24 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
 
         assert refusals == [("techniques", "formal")]
 
+    @pytest.mark.parametrize(
+        ("clash", "field"),
+        [
+            ({"name": "FORMAL"}, "name"),
+            ({"name": "custom"}, "name"),
+            ({"name": "other", "technique_tags": ["formal"]}, "tags"),
+            ({"name": "other", "technique_tags": ["Custom"]}, "tags"),
+        ],
+    )
+    def test_register_runtime_says_whether_the_name_or_a_tag_conflicts(self, clash: dict[str, Any], field: str) -> None:
+        startup = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(startup)
+
+        with pytest.raises(TechniqueSelectorConflictError) as conflict:
+            self.registry.instances.register_runtime(AttackTechniqueFactory(attack_class=_StubAttack, **clash))
+
+        assert conflict.value.field == field
+
     def test_register_runtime_records_no_tag_clash_with_a_startup_technique(self) -> None:
         startup = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
         self.registry.instances.register_runtime(startup)
@@ -420,6 +439,49 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
                 )
 
         assert refusals == []
+
+    @pytest.mark.parametrize(
+        "clash",
+        [
+            {"name": "custom"},
+            {"name": "Formal"},
+            {"name": "other", "technique_tags": ["formal"]},
+            {"name": "other", "technique_tags": ["Custom"]},
+        ],
+    )
+    def test_register_from_factories_refuses_to_stand_in_for_a_saved_technique(self, clash: dict[str, Any]) -> None:
+        saved = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+        first = AttackTechniqueFactory(name="first", attack_class=_StubAttack)
+
+        with record_saved_entry_refusals() as refusals:
+            with pytest.raises(SavedEntryReplacementError, match="Saved technique 'formal'"):
+                self.registry.register_from_factories(
+                    [first, AttackTechniqueFactory(attack_class=_StubAttack, **clash)]
+                )
+
+        assert refusals == [("techniques", "formal")]
+        assert self.registry.instances.get_names() == ["formal"]
+
+    def test_register_from_factories_shares_a_saved_techniques_tag(self) -> None:
+        saved = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+        sharing = AttackTechniqueFactory(name="casual", attack_class=_StubAttack, technique_tags=["custom"])
+
+        self.registry.register_from_factories([sharing])
+
+        assert self.registry.instances.get("casual") is sharing
+
+    def test_register_technique_refuses_to_stand_in_for_a_saved_technique(self) -> None:
+        saved = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+
+        with pytest.raises(SavedEntryReplacementError, match="Saved technique 'formal'"):
+            self.registry.register_technique(
+                name="custom", factory=AttackTechniqueFactory(name="custom", attack_class=_StubAttack)
+            )
+
+        assert self.registry.instances.get("custom") is None
 
     def test_register_from_factories_still_skips_an_existing_startup_technique(self):
         startup = AttackTechniqueFactory(name="startup", attack_class=_StubAttack)

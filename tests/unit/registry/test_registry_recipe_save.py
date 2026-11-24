@@ -2,8 +2,10 @@
 # Licensed under the MIT license.
 
 import asyncio
+import dataclasses
 import json
 import os
+import re
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -14,22 +16,25 @@ import pytest
 from azure.core.exceptions import AzureError
 
 from pyrit.converter import Base64Converter
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentType, Parameter, RegistryReference
-from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind
-from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget, TextTarget
+from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, TechniqueRecipe
+from pyrit.prompt_target import OpenAIChatTarget, PromptTarget, RoundRobinTarget, TextTarget
 from pyrit.registry import (
+    AttackRegistry,
     ConverterRegistry,
     NotSaveableError,
     SavedEntryConflictError,
     SavedEntryStorageError,
     ScorerRegistry,
     TargetRegistry,
+    check_saved_technique_async,
     get_class_saveability,
     prepare_saved_params_async,
-    refuse_temporary_references,
     save_then_register_async,
 )
 from pyrit.registry.instance_registry import RegistryNameTakenError, registration_origin, registry_entry_origin
+from pyrit.registry.registry_recipe_save import _refuse_temporary_references
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.score import SubStringScorer
 from unit.async_utils import TEST_WATCHDOG_SECONDS
@@ -346,7 +351,7 @@ def test_refuse_temporary_references_refuses_an_entry_that_is_gone_after_a_resta
     component_type: ComponentType, value: object, named: str
 ) -> None:
     with pytest.raises(NotSaveableError) as refusal:
-        refuse_temporary_references(parameters=[_reference("uses", component_type)], params={"uses": value})
+        _refuse_temporary_references(parameters=[_reference("uses", component_type)], params={"uses": value})
 
     assert str(refusal.value) == (
         f"Uses temporary {named}, which won't exist after a restart. It can still be created without saving it."
@@ -368,12 +373,14 @@ def test_refuse_temporary_references_refuses_an_entry_that_is_gone_after_a_resta
 def test_refuse_temporary_references_accepts_entries_that_come_back_or_a_reference_left_unset(
     component_type: ComponentType, value: object
 ) -> None:
-    refuse_temporary_references(parameters=[_reference("uses", component_type)], params={"uses": value})
+    _refuse_temporary_references(parameters=[_reference("uses", component_type)], params={"uses": value})
 
 
 def test_refuse_temporary_references_refuses_a_kind_that_saved_entries_cant_use() -> None:
     with pytest.raises(NotSaveableError) as refusal:
-        refuse_temporary_references(parameters=[_reference("uses", ComponentType.SCENARIO)], params={"uses": "nightly"})
+        _refuse_temporary_references(
+            parameters=[_reference("uses", ComponentType.SCENARIO)], params={"uses": "nightly"}
+        )
 
     assert str(refusal.value) == (
         "Uses scenario 'nightly', which saved entries can't use yet. It can still be created without saving it."
@@ -422,3 +429,111 @@ async def test_save_then_register_async_refuses_a_recipe_naming_a_temporary_entr
         )
 
     assert not (tmp_path / "converters" / "formal_tone.json").exists()
+
+
+class _RegionAttack(PromptSendingAttack):
+    """An attack that reads its region from this server's environment when it's left empty."""
+
+    environment_backed_parameters = frozenset({"region"})
+
+    def __init__(self, *, objective_target: PromptTarget, region: str | None = None) -> None:
+        super().__init__(objective_target=objective_target)
+        self.region = region
+
+
+class _EndpointAttack(PromptSendingAttack):
+    """An attack that sends requests to an address it's given."""
+
+    destination_parameters = {"endpoint": True}
+
+    def __init__(self, *, objective_target: PromptTarget, endpoint: str | None = None) -> None:
+        super().__init__(objective_target=objective_target)
+        self.endpoint = endpoint
+
+
+@pytest.fixture
+def attack_registry() -> Iterator[AttackRegistry]:
+    AttackRegistry.reset_registry_singleton()
+    yield AttackRegistry.get_registry_singleton()
+    AttackRegistry.reset_registry_singleton()
+
+
+def _add_attack_parameter(registry: AttackRegistry, monkeypatch: pytest.MonkeyPatch, parameter: Parameter) -> None:
+    """Give PromptSendingAttack one more declared parameter, as restore and saving both read it."""
+    registered = registry.get_registered_class_metadata
+
+    def with_parameter(name: str) -> Any:
+        metadata = registered(name)
+        if name != "PromptSendingAttack" or metadata is None:
+            return metadata
+        return dataclasses.replace(metadata, parameters=(*metadata.parameters, parameter))
+
+    monkeypatch.setattr(registry, "get_registered_class_metadata", with_parameter)
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_and_temporary_entries")
+@pytest.mark.parametrize(
+    ("component_type", "name"),
+    [
+        (ComponentType.TARGET, "launch_chat"),
+        (ComponentType.CONVERTER, "launch_base64"),
+        (ComponentType.SCORER, "launch_leak"),
+    ],
+)
+async def test_check_saved_technique_async_refuses_an_attack_parameter_naming_a_temporary_entry(
+    attack_registry: AttackRegistry, monkeypatch: pytest.MonkeyPatch, component_type: ComponentType, name: str
+) -> None:
+    _add_attack_parameter(attack_registry, monkeypatch, _reference("uses", component_type))
+
+    with pytest.raises(NotSaveableError) as refusal:
+        await check_saved_technique_async(recipe=TechniqueRecipe(type="PromptSendingAttack", params={"uses": name}))
+
+    assert refusal.value.cause == f"Uses temporary {component_type.value} '{name}', which won't exist after a restart."
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_and_temporary_entries")
+async def test_check_saved_technique_async_accepts_entries_that_come_back_after_a_restart(
+    attack_registry: AttackRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _add_attack_parameter(attack_registry, monkeypatch, _reference("uses", ComponentType.SCORER))
+    recipe = TechniqueRecipe(
+        type="RedTeamingAttack",
+        request_converters=["startup_base64"],
+        adversarial_chat="startup_chat",
+        params={"uses": "startup_leak"},
+    )
+
+    await check_saved_technique_async(recipe=recipe)
+    await check_saved_technique_async(recipe=recipe.model_copy(update={"type": "PromptSendingAttack"}))
+
+
+async def test_check_saved_technique_async_refuses_a_setting_left_to_this_servers_environment(
+    attack_registry: AttackRegistry,
+) -> None:
+    attack_registry.register_class(_RegionAttack, name="region_attack")
+
+    with pytest.raises(NotSaveableError) as refusal:
+        await check_saved_technique_async(recipe=TechniqueRecipe(type="region_attack"))
+    await check_saved_technique_async(recipe=TechniqueRecipe(type="region_attack", params={"region": "eastus"}))
+
+    assert refusal.value.cause == (
+        "'region' is empty, so '_RegionAttack' would read it from this server's environment. A saved entry sets it."
+    )
+
+
+@pytest.mark.parametrize(
+    ("type_name", "params", "message"),
+    [
+        ("missing_attack", {}, "'missing_attack' is not a registered attack type."),
+        ("endpoint_attack", {"endpoint": "contoso"}, "'endpoint' must be a full http(s) or ws(s) address"),
+    ],
+)
+async def test_check_saved_technique_async_raises_value_error_for_a_technique_that_needs_fixing(
+    attack_registry: AttackRegistry, type_name: str, params: dict[str, Any], message: str
+) -> None:
+    attack_registry.register_class(_EndpointAttack, name="endpoint_attack")
+
+    with pytest.raises(ValueError, match=re.escape(message)) as error:
+        await check_saved_technique_async(recipe=TechniqueRecipe(type=type_name, params=params))
+
+    assert not isinstance(error.value, NotSaveableError)

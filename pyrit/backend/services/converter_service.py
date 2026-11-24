@@ -40,7 +40,9 @@ from pyrit.backend.models import (
     CreateConverterRequest,
     PreviewStep,
 )
+from pyrit.backend.models.common import SaveabilityResponse
 from pyrit.backend.models.converters import (
+    ConverterSaveabilityRequest,
     UnregisteredConverter,
 )
 from pyrit.backend.services.component_lifecycle import construct_component_async
@@ -410,6 +412,64 @@ class ConverterService:
 
         return converter
 
+    async def check_saveability_async(self, *, request: ConverterSaveabilityRequest) -> SaveabilityResponse:
+        """
+        Say whether a converter could be saved as asked, without building or saving it.
+
+        Only the type and parameters are checked, by the checks saving runs before the converter is built. The name
+        isn't checked, and the converter isn't built, so its constructor's own checks don't run: no reason means the
+        save checks pass, not that creating the converter succeeds.
+
+        Args:
+            request (ConverterSaveabilityRequest): The converter to check.
+
+        Returns:
+            SaveabilityResponse: Why the converter can't be saved, or no reason when the save checks pass.
+
+        Raises:
+            ValueError: If the converter type is not found, or saving would refuse a parameter as invalid.
+        """
+        if request.type not in self._registry:
+            raise ValueError(f"Converter type '{request.type}' not found")
+        try:
+            await self._prepare_saved_params_async(converter_type=request.type, params=request.params)
+        except NotSaveableError as error:
+            return SaveabilityResponse(not_saveable_reason=error.cause)
+        return SaveabilityResponse()
+
+    async def _prepare_saved_params_async(
+        self, *, converter_type: str, params: dict[str, Any]
+    ) -> tuple[type[Any], dict[str, Any]]:
+        """
+        Run the checks saving a converter runs before it's built, and return what to build and save it with.
+
+        Saving and the saveability check both use this, so they can't disagree.
+
+        Returns:
+            tuple[type[Any], dict[str, Any]]: The converter class and the parameters to build and save it with.
+
+        Raises:
+            NotSaveableError: If the type needs an uploaded file, the converter would use one, or the library's save
+                checks refuse its parameters.
+            ValueError: If saving would refuse a parameter as invalid.
+        """
+        refusal = self._required_upload_refusal(converter_type=converter_type)
+        if refusal is not None:
+            raise NotSaveableError(refusal)
+        upload_params = self._upload_params(converter_type=converter_type)
+        # An optional file left empty means no file, so the converter is saved without it, as restore builds it.
+        requested = {
+            name: value for name, value in params.items() if name not in upload_params or value not in (None, "")
+        }
+        uploads = [parameter for parameter in upload_params if parameter in requested]
+        if uploads:
+            raise NotSaveableError(f"Saved converters can't keep uploaded files yet ('{uploads[0]}').")
+        converter_cls = self._registry.get_class(converter_type)
+        saved_params = await prepare_saved_params_async(
+            registry=self._registry, type_name=converter_type, cls=converter_cls, params=requested
+        )
+        return converter_cls, saved_params
+
     async def _save_converter_async(
         self,
         *,
@@ -434,17 +494,8 @@ class ConverterService:
             SavedEntryConflictError: If a saved or registered converter already has the name.
             SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
-        refusal = self._required_upload_refusal(converter_type=request.type)
-        if refusal is not None:
-            raise NotSaveableError(refusal)
-        uploads = [
-            parameter for parameter in self._upload_params(converter_type=request.type) if parameter in request.params
-        ]
-        if uploads:
-            raise NotSaveableError(f"Saved converters can't keep uploaded files yet ('{uploads[0]}').")
-        converter_cls = self._registry.get_class(request.type)
-        params = await prepare_saved_params_async(
-            registry=self._registry, type_name=request.type, cls=converter_cls, params=request.params
+        converter_cls, params = await self._prepare_saved_params_async(
+            converter_type=request.type, params=request.params
         )
         try:
             self._registry.instances.validate_name_available(name)
@@ -618,9 +669,7 @@ class ConverterService:
             str | None: The reason, or None when the type needs no uploaded file.
         """
         if any(parameter.required for parameter in self._upload_params(converter_type=converter_type).values()):
-            return (
-                f"'{converter_type}' can't be saved. It needs an uploaded file, which saved converters can't keep yet."
-            )
+            return "It needs an uploaded file, which saved converters can't keep yet."
         return None
 
     async def _persist_data_uri_params_async(
