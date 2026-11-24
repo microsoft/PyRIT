@@ -630,6 +630,45 @@ class TestContextValidation:
                 prepended_conversation=prepended,
             )
 
+    async def test_prepended_conversation_using_every_turn_is_rejected(
+        self,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+    ):
+        """Test that a prepended conversation with exactly max_turns turns is rejected (issue #4472)."""
+        # Create a separate chat target for objective since prepended_conversation requires PromptTarget
+        mock_chat_objective_target = MagicMock(spec=PromptTarget)
+        mock_chat_objective_target.send_prompt_async = AsyncMock()
+        mock_chat_objective_target.set_system_prompt_async = AsyncMock()
+        mock_chat_objective_target.get_identifier.return_value = _mock_target_id("MockChatTarget")
+        mock_chat_objective_target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
+        mock_chat_objective_target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
+
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
+
+        attack = RedTeamingAttack(
+            objective_target=mock_chat_objective_target,
+            attack_adversarial_config=adversarial_config,
+            attack_scoring_config=scoring_config,
+            max_turns=2,  # Equal to prepended turns (2)
+        )
+
+        # Create prepended conversation with 2 assistant messages
+        prepended = [
+            Message.from_prompt(prompt="Hello", role="user"),
+            Message.from_prompt(prompt="Hi there!", role="assistant"),
+            Message.from_prompt(prompt="How are you?", role="user"),
+            Message.from_prompt(prompt="I'm fine!", role="assistant"),
+        ]
+
+        # No turn is left to send, so the attack must fail loudly instead of reporting FAILURE
+        with pytest.raises(RuntimeError, match="equals or exceeds max_turns=2"):
+            await attack.execute_async(
+                objective="Test objective",
+                prepended_conversation=prepended,
+            )
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestSetupPhase:
