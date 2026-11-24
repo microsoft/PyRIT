@@ -177,7 +177,7 @@ def test_path_traversal_check_handles_invalid_chars(tmp_path):
     info.filename = "foo\x00.txt"
 
     with pytest.raises(UnsafeArchiveError, match="invalid characters"):
-        _reject_path_traversal(info, tmp_path.resolve())
+        _reject_path_traversal(info, dest_real=tmp_path.resolve())
 
 
 def test_rejects_symlink_when_create_system_is_dos(tmp_path):

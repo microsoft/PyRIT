@@ -11,32 +11,29 @@ import logging
 from collections import OrderedDict
 from functools import lru_cache
 from time import monotonic
+from typing import cast
 
 from pyrit.backend.models import DatasetListResponse, ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.memory import CentralMemory
 from pyrit.models import (
-    DatasetSelectionMode,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
-    SeedGroupRequirements,
 )
 from pyrit.models.catalog import (
     RegisteredScenario,
 )
-from pyrit.models.dataset_compatibility import (
-    DatasetCompatibility,
-    DatasetCompatibilityReason,
-    DatasetCompatibilityStatus,
-    ScenarioDatasetCompatibility,
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    ScenarioMetadata,
+    ScenarioRegistry,
+    ScorerRegistry,
+    TargetRegistry,
 )
-from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params
-from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core import Scenario, override_default_adversarial_target
-from pyrit.scenario.core.dataset_compatibility import assess_candidate_profiles, describe_requirements
 
 logger = logging.getLogger(__name__)
 _ESTIMATE_CACHE_SIZE = 128
@@ -45,10 +42,27 @@ _CONFIGURED_ESTIMATE_CONCURRENCY = 4
 _DEFAULT_ESTIMATE_TIMEOUT_SECONDS = 3.0
 _ESTIMATE_INFLIGHT_SIZE = 256
 _UNAVAILABLE_CACHE_TTL_SECONDS = 30.0
-_EstimateCacheKey = tuple[str, int, tuple[object, int]]
+_RegistryView = tuple[str | None, ...]
+_EstimateCacheKey = tuple[str, int, tuple[object, int, str | None], _RegistryView]
 _EstimateCacheValue = tuple[ScenarioRunSizeEstimate, float | None]
 _EstimateTask = asyncio.Task[ScenarioRunSizeEstimate]
-_ConfiguredEstimateKey = tuple[str, type[Scenario], str, tuple[object, int]]
+_ConfiguredEstimateKey = tuple[str, type[Scenario], str, tuple[object, int, str | None], _RegistryView]
+
+
+def _registry_view() -> _RegistryView:
+    """
+    Describe which private entries the caller in scope sees in the registries a scenario resolves.
+
+    Callers who see the same entries get the same view, so they share estimates; callers who see
+    different entries never do. Private techniques are part of the technique ``catalog_revision``.
+
+    Returns:
+        _RegistryView: The visibility key of the target, scorer, and converter registries.
+    """
+    return tuple(
+        registry.get_registry_singleton().instances.visibility_key
+        for registry in (TargetRegistry, ScorerRegistry, ConverterRegistry)
+    )
 
 
 def _metadata_to_registered_scenario(
@@ -237,6 +251,8 @@ class ScenarioService:
                 self._configured_estimate_tasks = tasks
             task = tasks.get(estimate_key)
             if task is None:
+                # The estimate runs as the requesting caller. Its key holds what that caller can see, so it is
+                # shared only with callers who see the same entries.
                 task = asyncio.create_task(
                     self._run_configured_estimate_with_capacity_async(
                         scenario_name=scenario_name,
@@ -300,207 +316,43 @@ class ScenarioService:
             settings=settings, items=[item for item in metadata.items if item.name in names]
         )
 
-    async def assess_datasets_async(
-        self,
-        *,
-        scenario_name: str,
-        request: ScenarioRunSizeEstimateRequest,
-        validate_selected: bool = False,
-    ) -> ScenarioDatasetCompatibility | None:
-        """
-        List candidates from stored facts; fully check only an explicitly requested selection.
-
-        Returns:
-            ScenarioDatasetCompatibility | None: Assessment, or None for an unknown scenario.
-        """
-        try:
-            scenario_class = self._registry.get_class(scenario_name)
-        except KeyError:
-            return None
-        reject_non_external_params(
-            params=request.scenario_params or {},
-            declared=scenario_class.supported_parameters(),
-            owner=scenario_name,
-        )
-        resolver = ScenarioConfigurationResolver()
-        adversarial_target = resolver.resolve_adversarial_target(target_name=request.adversarial_target_name)
-        with override_default_adversarial_target(adversarial_target):
-            scenario = await self._create_assessment_scenario_async(
-                scenario_name=scenario_name, scenario_class=scenario_class, request=request
-            )
-            result = await self._list_dataset_candidates_async(scenario)
-            if validate_selected:
-                try:
-                    async with self._configured_estimate_semaphore:
-                        selected = await scenario.get_dataset_compatibility_async(allow_unloaded=True)
-                except ValueError as error:
-                    reason = DatasetCompatibilityReason(code="invalid_dataset", message=str(error))
-                    selected = ScenarioDatasetCompatibility(
-                        selection_compatible=False,
-                        selection_reasons=[reason],
-                        items=[
-                            DatasetCompatibility(
-                                name=name,
-                                selected=True,
-                                status=DatasetCompatibilityStatus.INCOMPATIBLE,
-                                reasons=[reason],
-                            )
-                            for name in scenario._dataset_config.dataset_names
-                        ],
-                    )
-                checked = {item.name: item for item in selected.items}
-                result.items = [checked.pop(item.name, item) for item in result.items]
-                result.items.extend(checked.values())
-                result.selection_compatible = selected.selection_compatible
-                result.selection_reasons = selected.selection_reasons
-        return result
-
     async def list_compatible_datasets_async(self, *, scenario_name: str) -> DatasetListResponse | None:
         """
-        List datasets satisfying the scenario's contract, independently of launch-form settings.
+        List the catalog datasets the scenario can run, independently of launch-form settings.
 
-        Stored facts narrow the candidates; a schema hint never certifies a dataset. Providers are
-        not fetched, and only potentially suitable stored population contents are fully checked.
-        Mandatory ingredient metadata is retained without applying the assembled population's
-        requirements to each ingredient on its own.
+        The scenario decides compatibility from stored catalog facts without fetching providers.
 
         Returns:
-            DatasetListResponse | None: Required ingredients and eligible populations, or None for an unknown scenario.
+            DatasetListResponse | None: The runnable catalog entries, or None for an unknown scenario.
         """
         try:
             scenario_class = self._registry.get_class(scenario_name)
         except KeyError:
             return None
-        scenario = await self._create_assessment_scenario_async(
-            scenario_name=scenario_name,
-            scenario_class=scenario_class,
-            request=ScenarioRunSizeEstimateRequest(),
-        )
-        metadata = await get_dataset_service().list_datasets_async()
-        allowed = self._permitted_dataset_names(scenario)
-        named = [
-            item
-            for item in metadata.items
-            if item.selection_key != "dataset:unnamed" and (allowed is None or item.name in allowed)
-        ]
-        if scenario.get_dataset_requirements() == SeedGroupRequirements():
-            return DatasetListResponse(items=named)
-        hints = await self._list_dataset_candidates_async(scenario, metadata=metadata)
-        candidates = {item.name for item in hints.items if item.status is not DatasetCompatibilityStatus.INCOMPATIBLE}
-        required_names = set(scenario._required_data.dataset_names) if scenario._required_data is not None else set()
-        compatible = []
-        async with self._configured_estimate_semaphore:
-            for item in named:
-                if item.name in required_names:
-                    compatible.append(item)
-                    continue
-                if not item.loaded or item.name not in candidates:
-                    continue
-                configuration = scenario._dataset_config.with_overrides(
-                    sources=[DatasetSource(name=item.name, max_size="all")],
-                    max_per_dataset="all",
-                    max_total="all",
-                )
-                try:
-                    population = await configuration.get_attack_groups_by_dataset_async(apply_sampling=False)
-                    await asyncio.to_thread(scenario._validate_dataset_population, population)
-                except ValueError as error:
-                    logger.debug("Dataset '%s' is ineligible for '%s': %s", item.name, scenario_name, error)
-                    continue
-                compatible.append(item)
-        return DatasetListResponse(items=compatible)
-
-    async def _create_assessment_scenario_async(
-        self,
-        *,
-        scenario_name: str,
-        scenario_class: type[Scenario],
-        request: ScenarioRunSizeEstimateRequest,
-    ) -> Scenario:
         resolver = ScenarioConfigurationResolver()
         kwargs = await asyncio.to_thread(
-            resolver.resolve_configuration,
-            scenario_name=scenario_name,
-            scenario_class=scenario_class,
-            techniques=request.techniques,
-            technique_override=request.technique_override,
-            datasets=request.dataset_request,
-            objective_target=resolver.resolve_target(target_name=request.target_name) if request.target_name else None,
-            scoring_target_name=request.scoring_target_name,
-            include_baseline=request.include_baseline,
+            resolver.resolve_configuration, scenario_name=scenario_name, scenario_class=scenario_class
         )
-        constructor = resolver.resolve_constructor_kwargs(
-            scenario_class=scenario_class, objective_scorer=request.objective_scorer
-        )
-        scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name, **constructor)
-        scenario.set_params_from_args(args={**(request.scenario_params or {}), **kwargs})
-        await asyncio.to_thread(scenario._resolve_runtime_configuration, require_objective_target=False)
-        return scenario
-
-    @staticmethod
-    def _permitted_dataset_names(scenario: Scenario) -> set[str] | None:
-        """Return source restrictions including required ingredients, or None for a general catalog."""
-        options = scenario.get_dataset_options()
-        if options.mode is DatasetSelectionMode.ANY:
-            return None
-        allowed = set(options.allowed_names)
-        if options.mode is DatasetSelectionMode.FIXED:
-            allowed = {source.name for source in scenario.get_default_dataset_settings().sources}
-        if scenario._required_data is not None:
-            allowed.update(scenario._required_data.dataset_names)
-        return allowed
-
-    async def _list_dataset_candidates_async(
-        self, scenario: Scenario, *, metadata: DatasetListResponse | None = None
-    ) -> ScenarioDatasetCompatibility:
-        requirements = scenario.get_dataset_requirements()
-        if metadata is None:
-            metadata = await get_dataset_service().list_datasets_async()
-        profiles = await CentralMemory.get_memory_instance().get_seed_dataset_group_profiles_async(
-            metadata_keys=[requirement.key for requirement in requirements.metadata]
-        )
-        by_name = {}
-        for profile in profiles:
-            by_name.setdefault(profile.dataset_name, []).append(profile)
-        selected = set(scenario._dataset_config.dataset_names)
-        required = scenario._required_data
-        if required is not None:
-            selected.update(required.dataset_names)
-        allowed = self._permitted_dataset_names(scenario)
-        candidates = {item.name for item in metadata.items if item.selection_key != "dataset:unnamed"} | selected
-        items = []
-        for name in sorted(candidates):
-            if allowed is not None and name not in allowed:
-                continue
-            item = assess_candidate_profiles(name=name, profiles=by_name.get(name, []), requirements=requirements)
-            if item.status is DatasetCompatibilityStatus.INCOMPATIBLE and (
-                scenario._dataset_config.filters or type(scenario._dataset_config) is not DatasetAttackConfiguration
-            ):
-                item.status = DatasetCompatibilityStatus.NOT_VERIFIED
-                item.reasons = [
-                    DatasetCompatibilityReason(
-                        code="not_verified",
-                        message="Stored facts do not apply the selected filters or custom grouping. "
-                        "Validate the selected contents.",
-                    )
-                ]
-            item.selected = name in selected
-            if name not in by_name:
-                item.group_count = None
-                item.reasons = [
-                    DatasetCompatibilityReason(
-                        code="not_loaded", message="Not verified. Load this provider's data and validate it first."
-                    )
-                ]
-            items.append(item)
-        return ScenarioDatasetCompatibility(requirements=describe_requirements(requirements), items=items)
+        scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name)
+        scenario.set_params_from_args(args=kwargs)
+        metadata = await get_dataset_service().list_datasets_async()
+        named = [item for item in metadata.items if item.selection_key != "dataset:unnamed"]
+        async with self._configured_estimate_semaphore:
+            compatible = set(
+                await scenario.get_compatible_dataset_names_async(
+                    dataset_names=[item.name for item in named],
+                    loaded_dataset_names={item.name for item in named if item.loaded},
+                )
+            )
+        return DatasetListResponse(items=[item for item in named if item.name in compatible])
 
     async def _get_default_run_size_estimate_async(self, *, metadata: ScenarioMetadata) -> ScenarioRunSizeEstimate:
-        """Return a cached, cancellation-safe scenario-owned estimate."""
+        """Return a cached, cancellation-safe scenario-owned estimate for the requesting caller."""
         cache_key = (
             metadata.registry_name,
             metadata.scenario_version,
             AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+            _registry_view(),
         )
         cache = getattr(self, "_estimate_cache", None)
         if cache is None:
@@ -522,9 +374,12 @@ class ScenarioService:
                 if cached is not None:
                     return cached
 
-                tasks = getattr(self, "_estimate_tasks", None)
+                # Only __init__ and the fallback below set this attribute, both with this type.
+                tasks = cast(
+                    "OrderedDict[_EstimateCacheKey, _EstimateTask] | None", getattr(self, "_estimate_tasks", None)
+                )
                 if tasks is None:
-                    tasks = OrderedDict()
+                    tasks = OrderedDict[_EstimateCacheKey, _EstimateTask]()
                     self._estimate_tasks = tasks
                 for completed_key in [key for key, candidate in tasks.items() if candidate.done()]:
                     del tasks[completed_key]
@@ -795,6 +650,10 @@ class ScenarioService:
                 if item.scenario_name == cursor:
                     start_idx = i + 1
                     break
+            else:
+                # A cursor naming no registered scenario must not silently
+                # restart at the first page, which would serve duplicate rows.
+                raise ValueError("The cursor is not valid for the scenario catalog")
         page = items[start_idx : start_idx + limit]
         has_more = len(items) > start_idx + limit
         return page, has_more
@@ -810,7 +669,7 @@ class ScenarioService:
         Build a stable key for semantically identical configured estimate requests.
 
         Returns:
-            _ConfiguredEstimateKey: Scenario identity and canonical request JSON.
+            _ConfiguredEstimateKey: Scenario identity, canonical request JSON, and the caller's view of the registries.
         """
         request_json = json.dumps(
             request.model_dump(mode="json"),
@@ -822,6 +681,7 @@ class ScenarioService:
             scenario_class,
             request_json,
             AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+            _registry_view(),
         )
 
 

@@ -17,11 +17,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.backend.models.prompt_generations import (
-    PromptGenerationProgress,
     PromptGeneratorDescriptor,
     PromptGeneratorStage,
     PromptGeneratorTargetRole,
-    TargetObjectiveGenerationRequest,
+    TargetObjectiveCreateRequest,
 )
 from pyrit.datasets import AssertProvider, TargetObjectiveProvider
 from pyrit.executor.promptgen import AssertGenerator, TargetObjectiveGenerator, TargetObjectiveGeneratorResult
@@ -33,17 +32,31 @@ from pyrit.models import (
     AssertGroupMetadata,
     AssertTaxonomy,
     PromptGenerationEstimate,
+    PromptGenerationProgress,
+    TargetObjectiveGenerationRequest,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
+    from typing import Protocol
 
     from pydantic import JsonValue
 
     from pyrit.models import SeedDataset, SeedRecord
     from pyrit.prompt_target import PromptTarget
 
-    CheckpointCallback = Callable[[dict[str, Any], PromptGenerationProgress], Awaitable[None]]
+    class CheckpointCallback(Protocol):
+        """Persist a generation checkpoint and its progress."""
+
+        async def __call__(self, checkpoint: dict[str, Any], *, progress: PromptGenerationProgress) -> None:
+            """
+            Persist the checkpoint.
+
+            Args:
+                checkpoint (dict[str, Any]): The generator's JSON checkpoint.
+                progress (PromptGenerationProgress): Progress derived from the checkpoint.
+            """
+            ...
 
 
 @dataclass(frozen=True)
@@ -70,9 +83,11 @@ class PromptGenerationAdapter(ABC):
         """
 
     @abstractmethod
-    def validate_targets(self, *, request: Mapping[str, Any], targets: Mapping[str, PromptTarget]) -> None:
+    def validate_targets(
+        self, *, request: Mapping[str, Any], checkpoint: Mapping[str, Any] | None, targets: Mapping[str, PromptTarget]
+    ) -> None:
         """
-        Check that resolved targets can run the request, without model calls.
+        Check that resolved targets can run the remaining stages, without model calls.
 
         Raises:
             ValueError: If a target lacks a required capability.
@@ -81,6 +96,17 @@ class PromptGenerationAdapter(ABC):
     @abstractmethod
     def estimate(self, *, request: Mapping[str, Any], checkpoint: Mapping[str, Any] | None) -> PromptGenerationEstimate:
         """Estimate the remaining work without model calls."""
+
+    def get_roles_to_run(self, *, request: Mapping[str, Any], checkpoint: Mapping[str, Any] | None) -> set[str]:
+        """
+        Name the target roles that running the remaining stages needs.
+
+        Returns:
+            set[str]: The required roles and the role of each stage the generator still runs.
+        """
+        required = {role.role for role in self.descriptor.target_roles if role.required}
+        estimate = self.estimate(request=request, checkpoint=checkpoint)
+        return required | {stage.target_role for stage in estimate.stages}
 
     @abstractmethod
     def get_progress(
@@ -108,8 +134,8 @@ class PromptGenerationAdapter(ABC):
         targets: Mapping[str, PromptTarget],
         checkpoint: Mapping[str, Any],
         dataset_name: str,
-    ) -> tuple[SeedDataset, dict[str, JsonValue]]:
-        """Package a complete checkpoint as a dataset and a result summary."""
+    ) -> tuple[SeedDataset, dict[str, JsonValue] | None]:
+        """Package a complete checkpoint as a dataset and its result summary, if the generator has one."""
 
     def get_review(self, *, checkpoint: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
         """
@@ -137,15 +163,6 @@ class PromptGenerationAdapter(ABC):
             dict[str, Any] | None: The request, or None when the seeds don't record it.
         """
         return None
-
-    def dataset_matches_checkpoint(self, *, seeds: Sequence[SeedRecord], checkpoint: Mapping[str, Any]) -> bool:
-        """
-        Report whether stored seeds were saved from this checkpoint, so a retried save can finish.
-
-        Returns:
-            bool: False unless the generator can recognize its own output.
-        """
-        return False
 
 
 class AssertGenerationAdapter(PromptGenerationAdapter):
@@ -193,9 +210,13 @@ class AssertGenerationAdapter(PromptGenerationAdapter):
         """
         return AssertGenerationConfig.model_validate(dict(request)).model_dump(mode="json")
 
-    def validate_targets(self, *, request: Mapping[str, Any], targets: Mapping[str, PromptTarget]) -> None:
-        """Check target capabilities and the request's web search policy."""
-        self._create_generator(targets).validate_config(config=AssertGenerationConfig.model_validate(dict(request)))
+    def validate_targets(
+        self, *, request: Mapping[str, Any], checkpoint: Mapping[str, Any] | None, targets: Mapping[str, PromptTarget]
+    ) -> None:
+        """Check target capabilities, the web search policy, and earlier work's producers for the remaining stages."""
+        self._create_generator(targets).validate_checkpoint(
+            checkpoint=self._load_checkpoint(request=request, checkpoint=checkpoint)
+        )
 
     def estimate(self, *, request: Mapping[str, Any], checkpoint: Mapping[str, Any] | None) -> PromptGenerationEstimate:
         """
@@ -236,7 +257,7 @@ class AssertGenerationAdapter(PromptGenerationAdapter):
         if not (pause_for_review and self._is_ready_for_review(current)):
 
             async def save_async(progress: AssertGenerationCheckpoint) -> None:
-                await on_checkpoint(progress.model_dump(mode="json"), self._progress(progress))
+                await on_checkpoint(progress.model_dump(mode="json"), progress=self._progress(progress))
 
             current = await self._create_generator(targets).advance_async(
                 checkpoint=current,
@@ -326,23 +347,6 @@ class AssertGenerationAdapter(PromptGenerationAdapter):
         metadata = self._read_metadata(seeds)
         return metadata.config.model_dump(mode="json") if metadata is not None else None
 
-    def dataset_matches_checkpoint(self, *, seeds: Sequence[SeedRecord], checkpoint: Mapping[str, Any]) -> bool:
-        """
-        Report whether stored seeds came from this checkpoint's generation conversations.
-
-        Returns:
-            bool: True when a stored group's research and seed-group conversations belong to the checkpoint.
-        """
-        metadata = self._read_metadata(seeds)
-        if metadata is None:
-            return False
-        current = AssertGenerationCheckpoint.model_validate(dict(checkpoint))
-        provenance = metadata.provenance
-        return (
-            provenance.systematization_conversation_id == current.provenance.systematization_conversation_id
-            and provenance.group_generation_conversation_id in current.conversation_ids
-        )
-
     @staticmethod
     def _read_metadata(seeds: Sequence[SeedRecord]) -> AssertGroupMetadata | None:
         for seed in seeds:
@@ -369,12 +373,13 @@ class AssertGenerationAdapter(PromptGenerationAdapter):
 
     @staticmethod
     def _progress(checkpoint: AssertGenerationCheckpoint) -> PromptGenerationProgress:
-        stages = list(AssertGenerationStage)
-        next_stage = checkpoint.next_stage
-        done = stages if next_stage is None else stages[: stages.index(next_stage)]
+        # The estimate lists the stages the generator still runs, which skips stages the request supplies.
+        stages = [stage.value for stage in AssertGenerationStage]
+        remaining = [stage.stage for stage in AssertGenerator.estimate(checkpoint=checkpoint).stages]
+        current_stage = remaining[0] if remaining else None
         return PromptGenerationProgress(
-            completed_stages=[stage.value for stage in done],
-            current_stage=next_stage.value if next_stage is not None else None,
+            completed_stages=stages[: stages.index(current_stage)] if current_stage is not None else stages,
+            current_stage=current_stage,
             items_completed=len(checkpoint.groups),
             items_total=checkpoint.config.group_count,
         )
@@ -401,14 +406,16 @@ class TargetObjectiveGenerationAdapter(PromptGenerationAdapter):
 
     def normalize_request(self, request: Mapping[str, Any]) -> dict[str, Any]:
         """
-        Validate an objective generation request.
+        Validate an objective generation request within the backend's size limits.
 
         Returns:
             dict[str, Any]: The request with defaults filled in.
         """
-        return TargetObjectiveGenerationRequest.model_validate(dict(request)).model_dump(mode="json")
+        return TargetObjectiveCreateRequest.model_validate(dict(request)).model_dump(mode="json")
 
-    def validate_targets(self, *, request: Mapping[str, Any], targets: Mapping[str, PromptTarget]) -> None:
+    def validate_targets(
+        self, *, request: Mapping[str, Any], checkpoint: Mapping[str, Any] | None, targets: Mapping[str, PromptTarget]
+    ) -> None:
         """Construct the generator, which checks the target and bundled prompt."""
         TargetObjectiveGenerator(target=targets[TargetObjectiveGenerator.GENERATION_ROLE])
 
@@ -464,7 +471,7 @@ class TargetObjectiveGenerationAdapter(PromptGenerationAdapter):
                 instructions=parsed.instructions, count=parsed.count, harm_categories=list(parsed.harm_categories)
             )
             checkpoint = result.model_dump(mode="json")
-            await on_checkpoint(dict(checkpoint), self.get_progress(request=request, checkpoint=checkpoint))
+            await on_checkpoint(dict(checkpoint), progress=self.get_progress(request=request, checkpoint=checkpoint))
         return GenerationRunOutcome(
             checkpoint=dict(checkpoint),
             progress=self.get_progress(request=request, checkpoint=checkpoint),
@@ -478,45 +485,30 @@ class TargetObjectiveGenerationAdapter(PromptGenerationAdapter):
         targets: Mapping[str, PromptTarget],
         checkpoint: Mapping[str, Any],
         dataset_name: str,
-    ) -> tuple[SeedDataset, dict[str, JsonValue]]:
+    ) -> tuple[SeedDataset, dict[str, JsonValue] | None]:
         """
         Package the objectives with ``TargetObjectiveProvider``.
 
         Returns:
-            tuple[SeedDataset, dict[str, JsonValue]]: The dataset and its objective count.
+            tuple[SeedDataset, dict[str, JsonValue] | None]: The dataset and no summary, because the
+                request's count and the progress already give the number of objectives.
         """
         result = TargetObjectiveGeneratorResult.model_validate(dict(checkpoint))
         parsed = TargetObjectiveGenerationRequest.model_validate(dict(request))
-        dataset = TargetObjectiveProvider.package_result(
-            dataset_name=dataset_name,
-            result=result,
-            instructions=parsed.instructions,
-            harm_categories=parsed.harm_categories,
-        )
-        return dataset, {"objective_count": len(result.objectives)}
+        return TargetObjectiveProvider.package_result(dataset_name=dataset_name, result=result, request=parsed), None
 
     def request_from_seeds(self, seeds: Sequence[SeedRecord]) -> dict[str, Any] | None:
         """
         Read the generation request stored in objective metadata.
 
         Returns:
-            dict[str, Any] | None: The request, or None when no seed records one.
+            dict[str, Any] | None: The request, or None when no seed records a valid one.
         """
         for seed in seeds:
-            request = TargetObjectiveProvider.request_from_metadata(seed.metadata)
+            request = TargetObjectiveGenerationRequest.from_metadata(seed.metadata)
             if request is not None:
-                return self.normalize_request(request)
+                return request.model_dump(mode="json")
         return None
-
-    def dataset_matches_checkpoint(self, *, seeds: Sequence[SeedRecord], checkpoint: Mapping[str, Any]) -> bool:
-        """
-        Report whether stored objectives came from this checkpoint's generation conversation.
-
-        Returns:
-            bool: True when a stored objective names the checkpoint's conversation.
-        """
-        conversation_id = TargetObjectiveGeneratorResult.model_validate(dict(checkpoint)).conversation_id
-        return any((seed.metadata or {}).get("generation_conversation_id") == conversation_id for seed in seeds)
 
 
 def create_prompt_generation_adapters() -> dict[str, PromptGenerationAdapter]:

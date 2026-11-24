@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import event, select, update
 from sqlalchemy.dialects import mssql, sqlite
+from sqlalchemy.dialects.mssql import pyodbc
 from sqlalchemy.engine import Dialect, Engine
 
 from pyrit.memory import SeedEntry, SQLiteMemory
@@ -21,8 +22,7 @@ from pyrit.models import (
     SeedPrompt,
     group_seeds_into_attack_groups,
 )
-from pyrit.models.dataset_compatibility import DatasetCompatibilityStatus
-from pyrit.scenario.core.dataset_compatibility import assess_candidate_profiles, assess_scenario_groups
+from pyrit.scenario.core.dataset_compatibility import assess_candidate_profiles, validate_scenario_groups
 from unit.assert_mocks import make_assert_config, make_assert_result
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
@@ -128,14 +128,10 @@ async def test_group_profiles_separate_standalone_seed_and_explicit_group_namesp
             ),
         )
     )
-    candidate = assess_candidate_profiles(name="collision", profiles=profiles, requirements=requirements)
-    assert candidate.status is DatasetCompatibilityStatus.NOT_VERIFIED
+    assert assess_candidate_profiles(profiles=profiles, requirements=requirements) == []
     hydrated = group_seeds_into_attack_groups(stored)
     assert len(hydrated) == 2
-    assert (
-        assess_scenario_groups(name="collision", groups=hydrated, requirements=requirements).status
-        is DatasetCompatibilityStatus.COMPATIBLE
-    )
+    validate_scenario_groups(population={"collision": hydrated}, requirements=requirements)
 
 
 @pytest.mark.parametrize(
@@ -192,29 +188,20 @@ async def test_legacy_prompt_roles_keep_candidate_assessment_conservative_async(
     profiles = await sqlite_instance.get_seed_dataset_group_profiles_async(
         metadata_keys=[AssertGroupMetadata.METADATA_KEY]
     )
-    candidate = assess_candidate_profiles(name="legacy", profiles=profiles, requirements=requirements)
-    expected_hint = (
-        DatasetCompatibilityStatus.NOT_VERIFIED
-        if None in roles or "user" in roles
-        else DatasetCompatibilityStatus.INCOMPATIBLE
-    )
-    assert candidate.status is expected_hint
-    assert candidate.status is not DatasetCompatibilityStatus.COMPATIBLE
+    # A hint only rules datasets out; unset roles may still hydrate as user prompts.
+    ruled_out = assess_candidate_profiles(profiles=profiles, requirements=requirements)
+    assert bool(ruled_out) is not (None in roles or "user" in roles)
 
     (restored,) = await sqlite_instance.get_seed_groups_async(dataset_name="legacy")
     hydrated = AttackSeedGroup(seeds=restored.seeds)
-    assessment = assess_scenario_groups(name="legacy", groups=[hydrated], requirements=requirements)
-    assert (assessment.status is DatasetCompatibilityStatus.COMPATIBLE) is valid_user
+    assert (requirements.check(seed_group=hydrated) == []) is valid_user
     assert all(
         prompt.role == ("user" if valid_user else next(role for role in roles if role is not None))
         for prompt in hydrated.prompts
     )
     if "assistant" in roles or "system" in roles:
         static_users = SeedGroupRequirements(user_prompts_only=True)
-        assert (
-            assess_candidate_profiles(name="legacy", profiles=profiles, requirements=static_users).status
-            is DatasetCompatibilityStatus.INCOMPATIBLE
-        )
+        assert assess_candidate_profiles(profiles=profiles, requirements=static_users)
         assert static_users.check(seed_group=hydrated)
 
 
@@ -256,3 +243,13 @@ def test_group_profile_query_uses_portable_presence_projections(dialect: Dialect
         assert "max(CASE" not in sql
     else:
         assert "json_each" in sql
+
+
+def test_group_profile_query_groups_by_columns_without_bound_parameters_for_sql_server() -> None:
+    # pyodbc sends each bind as its own parameter, and SQL Server can't match a parameterized
+    # SELECT expression to a parameterized GROUP BY expression.
+    statement = SQLiteMemory._build_seed_dataset_group_profiles_statement(metadata_keys=["policy"])
+    sql = str(statement.compile(dialect=pyodbc.dialect(paramstyle="qmark")))
+    _, inner, outer = sql.split("GROUP BY")
+    assert "?" not in inner.split(") AS ")[0]
+    assert "?" not in outer

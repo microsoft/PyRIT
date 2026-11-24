@@ -62,6 +62,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
 
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements(
         required=frozenset({CapabilityName.STREAMING_AUDIO}),
+        native_required=frozenset({CapabilityName.RESPONSES}),
     )
 
     @apply_defaults

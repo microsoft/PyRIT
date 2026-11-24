@@ -29,5 +29,4 @@ class SeedDatasetGroupProfile:
     has_user_prompt: bool
     has_non_user_prompt: bool
     has_simulated_conversation: bool
-    has_adversarial_prompts: bool
     metadata_keys: tuple[str, ...] = ()

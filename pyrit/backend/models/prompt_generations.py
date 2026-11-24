@@ -2,48 +2,27 @@
 # Licensed under the MIT license.
 
 """
-REST models for prompt generation: running generator requests as background jobs, reviewing
-intermediate output, and saving the result as a named seed dataset.
+REST envelopes and views for prompt generation: running generator requests as background jobs,
+reviewing intermediate output, and saving the result as a named seed dataset.
 
-The record is generator-neutral. Each generator defines the shape of its ``request``, its review
-payload, and its result summary; ``GET /prompt-generators`` describes the registered generators.
+The stored job, its status, and its progress are ``pyrit.models`` types. Each generator defines the
+shape of its ``request``, its review payload, and its result summary; ``GET /prompt-generators``
+describes the registered generators.
 """
 
 from datetime import datetime
-from enum import Enum
 from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints
 
 from pyrit.backend.models.common import IdentifierStr
-from pyrit.models import PromptGenerationEstimate
-
-DATASET_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
-
-DatasetNameStr = Annotated[str, StringConstraints(pattern=DATASET_NAME_PATTERN)]
-GeneratorNameStr = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
-TargetRoleStr = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
-
-
-class PromptGenerationStatus(str, Enum):
-    """Where a generation is in its lifecycle."""
-
-    QUEUED = "queued"
-    RUNNING = "running"
-    AWAITING_REVIEW = "awaiting_review"
-    SAVING = "saving"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    INTERRUPTED = "interrupted"
-
-
-ACTIVE_GENERATION_STATUSES = frozenset(
-    {PromptGenerationStatus.QUEUED, PromptGenerationStatus.RUNNING, PromptGenerationStatus.SAVING}
+from pyrit.models import (
+    PromptGenerationEstimate,
+    PromptGenerationProgress,
+    PromptGenerationStatus,
+    TargetObjectiveGenerationRequest,
 )
-RETRYABLE_GENERATION_STATUSES = frozenset(
-    {PromptGenerationStatus.FAILED, PromptGenerationStatus.CANCELLED, PromptGenerationStatus.INTERRUPTED}
-)
+from pyrit.models.prompt_generation import DatasetNameStr, GeneratorNameStr, TargetRoleStr
 
 
 class PromptGeneratorStage(BaseModel):
@@ -80,59 +59,6 @@ class PromptGeneratorListResponse(BaseModel):
     """The registered generators."""
 
     items: list[PromptGeneratorDescriptor]
-
-
-class TargetObjectiveGenerationRequest(BaseModel):
-    """The ``request`` of a ``target_objective`` generation."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    instructions: Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]
-    count: Annotated[int, Field(strict=True, ge=1, le=1_000)]
-    harm_categories: list[Annotated[str, StringConstraints(min_length=1, max_length=100)]] = Field(
-        default_factory=list, max_length=50
-    )
-
-
-class PromptGenerationProgress(BaseModel):
-    """Completed stages and item counts."""
-
-    completed_stages: list[str] = Field(default_factory=list)
-    current_stage: str | None = Field(None, description="The next or running stage, or None when every stage is done")
-    items_completed: int = Field(0, ge=0, description="Generated items, such as ASSERT seed groups or objectives")
-    items_total: int = Field(0, ge=0)
-
-
-class PromptGenerationRecord(BaseModel):
-    """
-    A stored generation: its inputs, status, resumable progress, and output dataset name.
-
-    Stored as one JSON document in the memory's results storage.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    generator: GeneratorNameStr
-    dataset_name: DatasetNameStr
-    status: PromptGenerationStatus
-    request: dict[str, JsonValue] = Field(..., description="Generator-specific request, as originally submitted")
-    targets: dict[TargetRoleStr, IdentifierStr] = Field(
-        default_factory=dict, description="Target registry name for each target role"
-    )
-    pause_for_review: bool = False
-    review_completed: bool = False
-    group_id: str | None = Field(None, description="Shared by generations created together in one batch")
-    group_label: str | None = None
-    progress: PromptGenerationProgress = Field(default_factory=PromptGenerationProgress)
-    checkpoint: dict[str, JsonValue] | None = Field(None, description="Generator-owned resumable progress")
-    summary: dict[str, JsonValue] | None = Field(None, description="Generator-specific result summary")
-    error: str | None = None
-    created_by: str | None = None
-    created_at: datetime
-    updated_at: datetime
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
 
 
 class PromptGenerationSummary(BaseModel):
@@ -179,6 +105,15 @@ class PromptGenerationCreateRequest(BaseModel):
     request: dict[str, Any]
     targets: dict[TargetRoleStr, IdentifierStr] = Field(default_factory=dict)
     pause_for_review: bool = Field(False, description="Pause after a reviewable stage so its output can be edited")
+
+
+class TargetObjectiveCreateRequest(TargetObjectiveGenerationRequest):
+    """A ``target_objective`` request within the backend's size limits."""
+
+    count: Annotated[int, Field(strict=True, ge=1, le=1_000)]
+    harm_categories: list[Annotated[str, StringConstraints(pattern=r"\S", max_length=100)]] = Field(
+        default_factory=list, max_length=50
+    )
 
 
 class PromptGenerationPreflightResponse(BaseModel):

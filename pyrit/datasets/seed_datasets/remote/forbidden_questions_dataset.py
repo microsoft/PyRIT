@@ -33,6 +33,8 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
     size: str = "medium"  # 390 questions (13 scenarios x 30 questions)
     tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
 
+    source_url = "https://huggingface.co/datasets/TrustAIRLab/forbidden_question_set"
+
     def __init__(
         self,
         *,

@@ -24,7 +24,6 @@ from pyrit.backend.models.prompt_generations import (
     PromptGenerationDetail,
     PromptGenerationListResponse,
     PromptGenerationPreflightResponse,
-    PromptGenerationRecord,
     PromptGenerationRequestFromDataset,
     PromptGenerationReview,
     PromptGenerationReviewUpdate,
@@ -37,7 +36,7 @@ from pyrit.backend.services.prompt_generation_service import (
     to_summary,
 )
 from pyrit.datasets import list_assert_behavior_presets, list_assert_suite_presets
-from pyrit.models import AssertBehaviorPreset, AssertSuitePreset, PromptGenerationEstimate
+from pyrit.models import AssertBehaviorPreset, AssertSuitePreset, PromptGenerationEstimate, PromptGenerationRecord
 
 T = TypeVar("T")
 
@@ -100,7 +99,8 @@ async def list_assert_suites_async() -> AssertSuitePresetListResponse:
 @router.get("/prompt-generations", response_model=PromptGenerationListResponse)
 async def list_prompt_generations_async() -> PromptGenerationListResponse:
     """
-    List generations, newest first. Generations created in one batch share a ``group_id``.
+    List generations, newest first. Generations created in one batch share a ``group_id`` and list in the
+    batch's order.
 
     Returns:
         PromptGenerationListResponse: Generations without their requests.
@@ -117,6 +117,7 @@ async def list_prompt_generations_async() -> PromptGenerationListResponse:
 )
 async def create_prompt_generation_async(
     request: PromptGenerationCreateRequest,
+    *,
     user: Annotated[str | None, Depends(current_user_name)],
 ) -> PromptGenerationDetail:
     """
@@ -137,6 +138,7 @@ async def create_prompt_generation_async(
 )
 async def create_prompt_generation_batch_async(
     request: PromptGenerationBatchCreateRequest,
+    *,
     user: Annotated[str | None, Depends(current_user_name)],
 ) -> PromptGenerationListResponse:
     """
@@ -284,4 +286,6 @@ async def _handle_async(pending: Awaitable[T]) -> T:
 
 
 def _detail(record: PromptGenerationRecord) -> PromptGenerationDetail:
-    return PromptGenerationDetail.model_validate(record.model_dump(include=set(PromptGenerationDetail.model_fields)))
+    return PromptGenerationDetail.model_validate(
+        record.model_dump(mode="json", include=set(PromptGenerationDetail.model_fields))
+    )

@@ -32,6 +32,7 @@ from pyrit.backend.services import (
     get_converter_service,
 )
 from pyrit.converter import (
+    AzureSpeechTextToAudioConverter,
     Base64Converter,
     BinaryConverter,
     CaesarConverter,
@@ -418,6 +419,40 @@ async def test_role_play_editor_receives_full_system_prompt_async(upload_service
         assert parameter.type_name == "str"
         assert parameter.multiline
         assert parameter.default == prompt
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_speech_copies_keep_their_source_connection_async(upload_service: ConverterService) -> None:
+    source = AzureSpeechTextToAudioConverter(azure_speech_region="eastus", azure_speech_key="source-key")
+    upload_service._registry.instances.register(source, name="speech")
+    spec = SourceInstanceSpec(
+        source_name="speech", source_hash=source.get_identifier().hash, params={"azure_speech_region": "westus2"}
+    )
+
+    instance = await upload_service.get_converter_async(converter_id="speech")
+    assert instance is not None
+    assert {parameter.name for parameter in instance.parameters} >= {"synthesis_voice_name"}
+    assert not {parameter.name for parameter in instance.parameters} & source.COPY_LOCKED_PARAMETER_NAMES
+    with pytest.raises(ValueError, match="can't set azure_speech_region"):
+        await upload_service.create_converter_async(
+            request=CreateConverterRequest(type="AzureSpeechTextToAudioConverter", register=False, source=spec)
+        )
+    with pytest.raises(ValueError, match="can't set azure_speech_region"):
+        await upload_service.create_converter_async(
+            request=CreateConverterRequest(
+                type="AzureSpeechTextToAudioConverter", register=True, name="moved_speech", source=spec
+            )
+        )
+    assert upload_service._registry.instances.get("moved_speech") is None
+    # The preview runs the converter, so keep a regression from reaching the Speech service.
+    with (
+        patch.object(AzureSpeechTextToAudioConverter, "convert_async", new_callable=AsyncMock) as convert,
+        pytest.raises(ValueError, match="can't set azure_speech_region"),
+    ):
+        await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(original_value="hello", converter_ids=["speech"], converter_specs=[spec])
+        )
+    convert.assert_not_called()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -811,6 +846,32 @@ class TestCreateConverter:
 
         with pytest.raises(ValueError, match="reserved"):
             await service.create_converter_async(request=request)
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize(
+        ("converter_type", "name_parameter", "file_text", "message"),
+        [
+            ("PersuasionConverter", "persuasion_technique", 'value: "A file"\n', "does not exist or is not supported"),
+            ("ImagePromptStyleConverter", "filter_name", "style_instructions: x\nvariations:\n  v1: d\n", "not found"),
+        ],
+    )
+    async def test_create_converter_refuses_a_template_name_that_names_a_file(
+        self, tmp_path: Path, converter_type: str, name_parameter: str, file_text: str, message: str
+    ) -> None:
+        (tmp_path / "other.yaml").write_text(file_text)
+        service = ConverterService()
+        request = CreateConverterRequest(
+            name="named_file",
+            type=converter_type,
+            params={"converter_target": "chat", name_parameter: str(tmp_path / "other")},
+        )
+
+        with patch.object(TargetRegistry, "get_registry_singleton", return_value=TargetRegistry()):
+            TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="chat")
+            with pytest.raises(ValueError, match=message):
+                await service.create_converter_async(request=request)
+
+        assert service.get_converter_object(converter_id="named_file") is None
 
 
 class TestDeleteConverter:
@@ -2118,6 +2179,7 @@ def _try_instantiate_converter(converter_name: str):
         "PromptTemplateConverter": {"template": "Test {{ prompt }}"},
         "ImagePromptStyleConverter": {"filter_name": "gritty_documentary"},
         "VigenereConverter": {"key": "testvalue"},
+        "ColumnarTranspositionConverter": {"key": "testvalue"},
         "GridCompositeConverter": {"innocuous_images": ["a.png", "b.png", "c.png"]},
     }
 

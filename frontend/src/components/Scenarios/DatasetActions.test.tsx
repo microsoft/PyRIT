@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter } from 'react-router'
 
@@ -29,9 +29,9 @@ function deferredList(): { resolve: (result: ListResult) => void, reject: (error
   }
 }
 
-function actionsTree(scenarioName: string) {
+function actionsTree(scenarioName: string, canGenerate?: boolean) {
   return <FluentProvider theme={webLightTheme}><MemoryRouter>
-    <DatasetActions scenarioName={scenarioName} />
+    <DatasetActions scenarioName={scenarioName} canGenerate={canGenerate} />
   </MemoryRouter></FluentProvider>
 }
 
@@ -47,6 +47,28 @@ describe('DatasetActions', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     setGeneration('first')
+  })
+
+  it('should open the dataset catalog in a new tab so the form keeps its edits', () => {
+    render(<FluentProvider theme={webLightTheme}><DatasetActions /></FluentProvider>)
+
+    const actions = screen.getByRole('group', { name: 'Dataset actions' })
+    const browse = within(actions).getByRole('link', { name: 'Browse datasets' })
+    expect(browse).toHaveAttribute('href', '/datasets')
+    expect(browse).toHaveAttribute('target', '_blank')
+    expect(browse).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(within(actions).getAllByRole('link')).toHaveLength(1)
+    expect(within(actions).queryByText('Generate datasets')).not.toBeInTheDocument()
+    expect(mockList).not.toHaveBeenCalled()
+  })
+
+  it('should offer only Browse datasets when the scenario cannot select a generated dataset', () => {
+    render(actionsTree('foundry.red_team_agent', false))
+
+    const actions = screen.getByRole('group', { name: 'Dataset actions' })
+    expect(within(actions).getAllByRole('link').map((link) => link.textContent)).toEqual(['Browse datasets'])
+    expect(within(actions).queryByText('Generate datasets')).not.toBeInTheDocument()
+    expect(mockList).not.toHaveBeenCalled()
   })
 
   it('should not guess a destination before the generators load', async () => {

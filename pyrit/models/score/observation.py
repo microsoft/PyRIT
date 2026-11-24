@@ -23,7 +23,7 @@ from pyrit.models.score.scorable import (
     ConversationScorable,
     MessageScorable,
     ProgramExecutionScorable,
-    ScorableUnion,  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    ScorableUnion,  # runtime-required by Pydantic field annotations
     SurfaceScorable,
     TraceScorable,
 )
@@ -375,8 +375,7 @@ class ExecutionTraceObservationPayload(BaseModel):
     """
     An immutable normalized execution snapshot: model calls, tool calls, agent steps, and their content.
 
-    Content is a bounded prefix with the full value's length and digest. When
-    ``content_retained`` is false, steps keep structure, names, lengths, and digests only.
+    Content is kept complete; budgets for what a judge is shown apply when rendering.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -386,8 +385,6 @@ class ExecutionTraceObservationPayload(BaseModel):
     scope: TraceScorable
     steps: tuple[ExecutionStep, ...] = ()
     coverage: TraceCoverage = Field(default_factory=TraceCoverage)
-    content_retained: bool = Field(default=True, strict=True)
-    max_content_chars: int = Field(default=4000, gt=0, strict=True)
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -408,13 +405,13 @@ class ExecutionTraceObservationPayload(BaseModel):
     @model_validator(mode="after")
     def _validate_steps(self) -> ExecutionTraceObservationPayload:
         """
-        Keep steps unique, ordered by index, in scope, and within the content policy.
+        Keep steps unique, ordered by index, and in scope.
 
         Returns:
             ExecutionTraceObservationPayload: The validated snapshot.
 
         Raises:
-            ValueError: If identities, indexes, scope, completeness, or content are inconsistent.
+            ValueError: If identities, indexes, scope, or completeness are inconsistent.
         """
         identities = [(step.trace_id, step.span_id) for step in self.steps]
         if len(set(identities)) != len(identities):
@@ -425,15 +422,6 @@ class ExecutionTraceObservationPayload(BaseModel):
             raise ValueError("Execution steps must belong to the declared trace scope.")
         if self.coverage.complete and any(step.end_time is None for step in self.steps):
             raise ValueError("Complete coverage cannot contain unfinished execution steps.")
-        contents = (
-            content
-            for step in self.steps
-            for content in (step.input_content, step.output_content, step.error_content)
-            if content
-        )
-        for content in contents:
-            if len(content.text) > self.max_content_chars or (content.text and not self.content_retained):
-                raise ValueError("Execution step content exceeds the payload's retention policy.")
         return self
 
 

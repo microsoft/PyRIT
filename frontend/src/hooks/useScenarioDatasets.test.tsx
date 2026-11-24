@@ -118,4 +118,25 @@ describe('useScenarioDatasets', () => {
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
     expect(list).toHaveBeenLastCalledWith('second', expect.any(AbortSignal))
   })
+
+  it('lists nothing until enabled, and aborts an in-flight listing when the scenario changes', async () => {
+    list.mockReturnValue(new Promise(() => {}))
+    const view = renderHook(({ name, enabled }: { name: string, enabled: boolean }) => useScenarioDatasets(name, enabled), {
+      initialProps: { name: 'first', enabled: false },
+    })
+    expect(list).not.toHaveBeenCalled()
+    expect(view.result.current.loading).toBe(false)
+    view.rerender({ name: 'first', enabled: true })
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+    expect(view.result.current.loading).toBe(true)
+    const firstSignal = list.mock.calls[0][1] as AbortSignal
+    expect(firstSignal.aborted).toBe(false)
+    view.rerender({ name: 'second', enabled: true })
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    expect(firstSignal.aborted).toBe(true)
+    view.rerender({ name: 'second', enabled: false })
+    expect((list.mock.calls[1][1] as AbortSignal).aborted).toBe(true)
+    expect(view.result.current.loading).toBe(false)
+    view.unmount()
+  })
 })
