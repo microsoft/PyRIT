@@ -10,6 +10,7 @@ import { Link } from 'react-router'
 import { attacksApi, operationsApi } from '@/services/api'
 import FindingDialog, { type FindingSaveAttempt } from '@/components/Operations/FindingDialog'
 import FindingSeverityBadge from '@/components/Operations/FindingSeverityBadge'
+import { useFindingFields } from '@/hooks/useFindingFields'
 import { toApiError } from '@/services/errors'
 import type { FindingCreate, FindingListItem, FindingListResponse, Operation } from '@/types'
 
@@ -74,7 +75,11 @@ export default function FindingEvidenceDialog({
   // Evidence can come from any attack; the user picks whose findings to link, defaulting to the attack's own Operation.
   const operation = chosen?.key === viewKey ? chosen.operation
     : defaultLookup?.key === viewKey ? defaultLookup.operation : null
-  const requestKey = JSON.stringify([attackResultId, operation?.id, title, offset, listRevision])
+  // `open` stays true while the embedded finding dialog replaces the picker, so this covers both.
+  const { fields, error: fieldsError, retry: retryFields, fieldsRevision } = useFindingFields(
+    operation?.id, open && operation !== null,
+  )
+  const requestKey = JSON.stringify([attackResultId, operation?.id, title, offset, listRevision, fieldsRevision])
   // A selection only applies to the attack and operation it was made for.
   const selectionKey = JSON.stringify([attackResultId, operation?.id])
   const selection = picked?.key === selectionKey ? picked.finding : null
@@ -173,7 +178,8 @@ export default function FindingEvidenceDialog({
   return (
     <>
       {notice?.key === viewKey && <Text size={200} role="status">{notice.text}</Text>}
-      {creating && <FindingDialog
+      {creating && fields !== null && <FindingDialog
+        fields={fields}
         context={<>
           <Text>Operation: {creationSource?.operation.name}. Save and attach the viewed attack.</Text>
           {!draftEligible && <MessageBar intent="error"><MessageBarBody>
@@ -204,7 +210,7 @@ export default function FindingEvidenceDialog({
                 </Dropdown>
               </Field>
               <Button ref={newFindingRef} className={styles.button} icon={<AddRegular />}
-                disabled={submitting || disabled || !operation}
+                disabled={submitting || disabled || !operation || fields === null}
                 onClick={() => {
                   if (operation) {
                     setCreationSource({ operation, attackResultId })
@@ -212,6 +218,10 @@ export default function FindingEvidenceDialog({
                   }
                 }}>New finding</Button>
             </div>
+            {fieldsError && <MessageBar intent="error"><MessageBarBody>
+              Could not load finding fields: {fieldsError}{' '}
+              <Button className={styles.button} aria-label="Retry finding fields" onClick={retryFields}>Retry</Button>
+            </MessageBarBody></MessageBar>}
             <Field label="Search findings by title">
               <Input value={title} disabled={submitting} maxLength={MAX_TITLE_SEARCH_LENGTH} onChange={(_, data) => {
                 setTitle(data.value); setOffset(0); setSelection(null); setNotice(null); setAttachError('')
@@ -236,10 +246,7 @@ export default function FindingEvidenceDialog({
                   children: (
                     <span title={`Finding ID: ${item.id}`}>
                       <span className={styles.findingHeading}><span className={styles.findingTitle}>{item.title}</span>
-                        <FindingSeverityBadge finding={item} /></span>
-                      {item.harm_type && <span className={styles.context}>Harm-type: {
-                        item.harm_type === 'Other' ? item.harm_type_other : item.harm_type
-                      }</span>}
+                        {fields !== null && <FindingSeverityBadge fields={fields} severity={item.severity} />}</span>
                       <span className={styles.context}>{new Date(item.created_at).toLocaleString()}</span>
                     </span>
                   ),

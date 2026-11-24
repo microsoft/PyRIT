@@ -102,11 +102,12 @@ async def make_request_and_raise_if_error_async(
     2. Via the extra_url_parameters dict
     3. Both (extra_url_parameters will be merged with URL query parameters, with extra_url_parameters taking precedence)
 
+    An explicitly supplied empty JSON object is sent as ``{}``; ``None`` sends no JSON body.
+
     Returns:
         httpx.Response: The response from the request.
     """
     headers = headers or {}
-    request_body = request_body or {}
 
     # Keep every query parameter from the URL as a (key, value) pair, so repeated keys such as
     # ``?tag=a&tag=b`` are all sent. A key in extra_url_parameters replaces all of its URL values.
@@ -123,7 +124,7 @@ async def make_request_and_raise_if_error_async(
             method=method,
             params=merged_params if merged_params else None,
             url=clean_url,
-            json=request_body if request_body and post_type == "json" and not files else None,
+            json=request_body if request_body is not None and post_type == "json" and not files else None,
             data=request_body if request_body and post_type != "json" and not files else None,
             files=files if files else None,
             headers=headers,
