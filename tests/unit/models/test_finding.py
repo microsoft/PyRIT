@@ -1,86 +1,58 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import importlib
+import re
 from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models import DecompositionNode, DecompositionPath, Finding, FindingCreate, is_finding_path_complete
+from pyrit.models import (
+    DecompositionNode,
+    DecompositionPath,
+    Finding,
+    FindingCreate,
+    is_finding_path_complete,
+)
 from pyrit.models.harm_category import HarmCategory
 
 OPERATION_ID = UUID(int=1)
 
 
-@pytest.mark.parametrize("severity", ["critical", "important", "moderate", "low", "informational"])
-def test_finding_round_trips_named_severity(severity: str) -> None:
-    finding = Finding(operation_id=OPERATION_ID, title="Assessment", severity=severity)
+def test_finding_round_trips_severity_and_field_values() -> None:
+    finding = Finding(
+        operation_id=OPERATION_ID, title="Assessment", severity="moderate", field_values={"harm_type": "Malware"}
+    )
     assert Finding.model_validate_json(finding.model_dump_json()) == finding
-    assert finding.description == ""
+    assert FindingCreate(title="Assessment", severity="low").field_values == {}
     assert finding.created_at.utcoffset().total_seconds() == 0
 
 
-def test_finding_round_trips_custom_classifications_without_normalizing_text() -> None:
-    finding = Finding.model_validate(
-        {
-            "operation_id": OPERATION_ID,
-            "title": "Assessment",
-            "severity": "other",
-            "severity_other": "  Team assessment  ",
-            "harm_type": "Other",
-            "harm_type_other": "  Team harm  ",
-        }
+def test_finding_strips_severity_drops_blank_field_values_and_keeps_other_text_exactly() -> None:
+    finding = FindingCreate(
+        title="  Leak  ", severity="  Sev 2.5  ", field_values={"steps": "", "owner": "   ", "notes": "  kept  "}
     )
-    assert finding.severity.value == "other"
-    assert finding.severity_other == "  Team assessment  "
-    assert finding.harm_type.value == "Other"
-    assert finding.harm_type_other == "  Team harm  "
-    assert Finding.model_validate_json(finding.model_dump_json()) == finding
-
-
-def test_finding_harm_type_is_optional_and_accepts_every_canonical_category() -> None:
-    assert FindingCreate(title="Optional", severity="low").harm_type is None
-    for category in HarmCategory:
-        finding = FindingCreate.model_validate(
-            {
-                "title": "Classified",
-                "severity": "moderate",
-                "harm_type": category.value,
-                "harm_type_other": "Custom harm" if category == HarmCategory.OTHER else None,
-            }
-        )
-        assert finding.harm_type == category
+    assert finding.title == "  Leak  "
+    assert finding.severity == "Sev 2.5"
+    assert finding.field_values == {"notes": "  kept  "}
 
 
 @pytest.mark.parametrize(
-    "fields",
+    "data",
     [
-        {"severity": "other"},
-        {"severity": "other", "severity_other": " "},
-        {"severity": "low", "severity_other": "Stray custom severity"},
-        {"harm_type": "Other"},
-        {"harm_type": "Other", "harm_type_other": " "},
-        {"harm_type": "Malware", "harm_type_other": "Stray custom harm"},
-        {"harm_type_other": "Custom without category"},
-        {"harm_type": "Unknown category"},
+        {"title": " ", "severity": "low"},
+        {"title": "Leak", "severity": " "},
+        {"title": "Leak", "severity": "low", "notes": "x"},
+        {"title": "Leak", "severity": "low", "field_values": {"steps": 3}},
     ],
 )
-def test_finding_rejects_inconsistent_classifications(fields: dict[str, str]) -> None:
+def test_finding_rejects_invalid_input(data: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
-        FindingCreate.model_validate({"title": "Assessment", "severity": "low", **fields})
+        FindingCreate.model_validate(data)
 
 
-@pytest.mark.parametrize("title", ["", "  "])
-def test_finding_rejects_blank_title(title: str) -> None:
-    with pytest.raises(ValidationError):
-        FindingCreate(title=title, severity="low")
-
-
-def test_finding_rejects_unknown_input_and_requires_operation() -> None:
-    with pytest.raises(ValidationError):
-        FindingCreate(title="Assessment", severity="urgent")
-    with pytest.raises(ValidationError):
-        FindingCreate.model_validate({"title": "Assessment", "severity": "low", "operation": "Case"})
+def test_finding_requires_an_operation() -> None:
     with pytest.raises(ValidationError):
         Finding(title="Assessment", severity="low")
 
@@ -149,3 +121,126 @@ def test_path_is_complete_only_when_every_step_is_demonstrated() -> None:
     assert is_finding_path_complete(path=path, demonstrated={first: True, second: True})
     assert not is_finding_path_complete(path=path, demonstrated={first: True, second: False})
     assert not is_finding_path_complete(path=path, demonstrated={first: True})
+
+
+@pytest.mark.parametrize("module_name", ["pyrit.models", "pyrit.models.finding"])
+def test_finding_severity_is_deprecated_and_keeps_its_values(module_name: str) -> None:
+    module = importlib.import_module(module_name)
+    with pytest.warns(DeprecationWarning, match=rf"{re.escape(module_name)}\.FindingSeverity .* 1\.5\.0"):
+        severity = module.FindingSeverity
+    assert [member.value for member in severity] == [
+        "critical",
+        "important",
+        "moderate",
+        "low",
+        "informational",
+        "other",
+    ]
+    assert FindingCreate(title="Leak", severity=severity.CRITICAL).severity == "critical"
+
+
+@pytest.mark.parametrize(
+    ("old_fields", "severity", "field_values"),
+    [
+        (
+            {"severity": "other", "severity_other": "  Sev 2.5 ", "harm_type": "Malware", "description": "Notes"},
+            "Sev 2.5",
+            {"harm_type": "Malware", "description": "Notes"},
+        ),
+        (
+            {"severity": "low", "harm_type": HarmCategory.OTHER, "harm_type_other": "Model theft", "description": " "},
+            "low",
+            {"harm_type": "Model theft"},
+        ),
+        (
+            {
+                "severity": "Sev 2.5",
+                "severity_other": "Sev 2.5",
+                "harm_type": None,
+                "harm_type_other": None,
+                "description": "Notes",
+                "field_values": {"steps": "1. Open", "description": "Notes"},
+            },
+            "Sev 2.5",
+            {"steps": "1. Open", "description": "Notes"},
+        ),
+    ],
+)
+def test_finding_create_moves_deprecated_fields(
+    old_fields: dict[str, object], severity: str, field_values: dict[str, str]
+) -> None:
+    with pytest.warns(DeprecationWarning, match=r"FindingCreate\(\w+=\.\.\.\) is deprecated .* 1\.5\.0"):
+        finding = FindingCreate.model_validate({"title": "Leak", **old_fields})
+    assert finding.severity == severity
+    assert finding.field_values == field_values
+
+
+@pytest.mark.parametrize(
+    ("old_fields", "message"),
+    [
+        ({"severity": "other", "description": "Notes"}, "severity_other must not be blank when severity is Other"),
+        ({"severity": "other", "severity_other": " "}, "severity_other must not be blank when severity is Other"),
+        ({"severity": "low", "severity_other": "Sev 2.5"}, "severity_other is only allowed when severity is Other"),
+        ({"severity": "low", "harm_type": "Other"}, "harm_type_other must not be blank when harm_type is Other"),
+        ({"severity": "low", "harm_type_other": "Theft"}, "harm_type_other is only allowed when harm_type is Other"),
+        (
+            {"severity": "low", "description": "Notes", "field_values": {"description": "Other notes"}},
+            r"description conflicts with field_values\['description'\]",
+        ),
+    ],
+)
+def test_finding_create_rejects_invalid_deprecated_fields(old_fields: dict[str, object], message: str) -> None:
+    with pytest.warns(DeprecationWarning), pytest.raises(ValidationError, match=message):
+        FindingCreate.model_validate({"title": "Leak", **old_fields})
+
+
+def test_finding_create_requires_text_for_the_deprecated_other_severity() -> None:
+    with pytest.warns(DeprecationWarning):
+        severity = importlib.import_module("pyrit.models").FindingSeverity
+    with pytest.raises(ValidationError, match="severity_other must not be blank when severity is Other"):
+        FindingCreate(title="Leak", severity=severity.OTHER)
+    # A deployment's own option key "other" is not the PyRIT 1.2 severity.
+    assert FindingCreate(title="Leak", severity="other").severity == "other"
+
+
+@pytest.mark.parametrize(
+    ("severity", "field_values", "expected"),
+    [
+        (
+            "critical",
+            {"harm_type": "Malware", "description": "Notes"},
+            {
+                "description": "Notes",
+                "severity_other": None,
+                "harm_type": HarmCategory.MALWARE,
+                "harm_type_other": None,
+            },
+        ),
+        (
+            "Sev 2.5",
+            {"harm_type": "Model theft"},
+            {
+                "description": "",
+                "severity_other": "Sev 2.5",
+                "harm_type": HarmCategory.OTHER,
+                "harm_type_other": "Model theft",
+            },
+        ),
+        ("low", {}, {"description": "", "severity_other": None, "harm_type": None, "harm_type_other": None}),
+    ],
+)
+def test_finding_reads_deprecated_fields(
+    severity: str, field_values: dict[str, str], expected: dict[str, object]
+) -> None:
+    finding = Finding(operation_id=OPERATION_ID, title="Leak", severity=severity, field_values=field_values)
+    for name, value in expected.items():
+        with pytest.warns(DeprecationWarning, match=rf"Finding\.{name} is deprecated .* 1\.5\.0"):
+            assert getattr(finding, name) == value
+
+
+def test_finding_severity_value_is_deprecated() -> None:
+    finding = Finding(operation_id=OPERATION_ID, title="Leak", severity=" critical ")
+    with pytest.warns(DeprecationWarning, match=r"Finding\.severity\.value is deprecated .* 1\.5\.0"):
+        assert finding.severity.value == "critical"
+    assert finding.severity == "critical"
+    assert Finding.model_validate_json(finding.model_dump_json()) == finding

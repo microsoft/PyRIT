@@ -28,7 +28,13 @@ if TYPE_CHECKING:
     from pyrit.auth.browser_session_copilot_authenticator import (
         BrowserSessionCopilotAuthenticator,
     )
+    from pyrit.auth.caller_principal import (
+        caller_principal_context,
+        caller_principal_scope,
+        get_caller_principal,
+    )
     from pyrit.auth.copilot_authenticator import CopilotAuthenticator
+    from pyrit.auth.credential_values import clean_credential_value, clean_request_headers
     from pyrit.auth.manual_copilot_authenticator import ManualCopilotAuthenticator
     from pyrit.auth.openai_auth import resolve_openai_auth
 
@@ -38,6 +44,11 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AzureAuth": "pyrit.auth.azure_auth",
     "AzureStorageAuth": "pyrit.auth.azure_storage_auth",
     "BrowserSessionCopilotAuthenticator": "pyrit.auth.browser_session_copilot_authenticator",
+    "caller_principal_context": "pyrit.auth.caller_principal",
+    "caller_principal_scope": "pyrit.auth.caller_principal",
+    "get_caller_principal": "pyrit.auth.caller_principal",
+    "clean_credential_value": "pyrit.auth.credential_values",
+    "clean_request_headers": "pyrit.auth.credential_values",
     "CopilotAuthenticator": "pyrit.auth.copilot_authenticator",
     "ManualCopilotAuthenticator": "pyrit.auth.manual_copilot_authenticator",
     "resolve_openai_auth": "pyrit.auth.openai_auth",
