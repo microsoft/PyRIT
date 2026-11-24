@@ -80,7 +80,15 @@ if TYPE_CHECKING:
         validate_own_decomposition,
     )
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
-    from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, FindingSeverity, is_finding_path_complete
+    from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, is_finding_path_complete
+    from pyrit.models.finding_fields import (
+        DEFAULT_FINDING_FIELDS,
+        FindingField,
+        FindingFields,
+        FindingFieldType,
+        FindingSeverityColor,
+        FindingValuesError,
+    )
     from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
     from pyrit.models.identifiers import (
         REGISTRY_NAME_PATTERN,
@@ -250,6 +258,7 @@ if TYPE_CHECKING:
         ContentWritten,
         ConversationObservationPayload,
         ConversationScorable,
+        DisclosesSecret,
         DivergesFromRepetition,
         Equals,
         ExecutionStep,
@@ -257,6 +266,7 @@ if TYPE_CHECKING:
         ExecutionTraceObservationPayload,
         FloatFeedback,
         InvalidFloatFeedbackError,
+        InvalidStrongRejectAnswersError,
         MatchesObjective,
         MessageScorable,
         Observation,
@@ -278,6 +288,7 @@ if TYPE_CHECKING:
         ScoreType,
         ScoringExpectation,
         StartsWith,
+        StrongRejectAnswers,
         SurfaceBaseline,
         SurfaceCoverage,
         SurfaceEntry,
@@ -545,13 +556,19 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Finding": "pyrit.models.finding",
     "FindingCreate": "pyrit.models.finding",
     "FindingEvidence": "pyrit.models.finding",
-    "FindingSeverity": "pyrit.models.finding",
     "is_finding_path_complete": "pyrit.models.finding",
+    "DEFAULT_FINDING_FIELDS": "pyrit.models.finding_fields",
+    "FindingField": "pyrit.models.finding_fields",
+    "FindingFields": "pyrit.models.finding_fields",
+    "FindingFieldType": "pyrit.models.finding_fields",
+    "FindingSeverityColor": "pyrit.models.finding_fields",
+    "FindingValuesError": "pyrit.models.finding_fields",
     "ConversationType": "pyrit.models.messages.conversation_reference",
     "ContentEntryScorable": "pyrit.models.score",
     "ContentScorable": "pyrit.models.score",
     "ContentWritten": "pyrit.models.score",
     "construct_response_from_request": "pyrit.models.messages.conversations",
+    "DisclosesSecret": "pyrit.models.score",
     "display_choices": "pyrit.models.parameter",
     "DivergesFromRepetition": "pyrit.models.score",
     "EmbeddingData": "pyrit.models.embeddings",
@@ -620,6 +637,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScorerCapabilityName": "pyrit.models.score",
     "FloatFeedback": "pyrit.models.score",
     "InvalidFloatFeedbackError": "pyrit.models.score",
+    "InvalidStrongRejectAnswersError": "pyrit.models.score",
+    "StrongRejectAnswers": "pyrit.models.score",
     "ScoringExpectation": "pyrit.models.score",
     "SurfaceBaseline": "pyrit.models.score",
     "SurfaceCoverage": "pyrit.models.score",
@@ -777,6 +796,17 @@ def __getattr__(name: str) -> object:
     Returns:
         object: The resolved export.
     """
+    # TODO(PyRIT 1.5): Remove FindingSeverity.
+    if name == "FindingSeverity":
+        from pyrit.common import print_deprecation_message
+        from pyrit.models.finding import _FindingSeverity
+
+        print_deprecation_message(
+            old_item=f"{__name__}.FindingSeverity",
+            new_item="the option keys of FindingFields.severity",
+            removed_in="1.5.0",
+        )
+        return _FindingSeverity
     return resolve_lazy_export(
         name=name,
         module_name=__name__,
