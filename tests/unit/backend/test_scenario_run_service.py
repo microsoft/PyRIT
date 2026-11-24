@@ -1230,7 +1230,7 @@ class TestAdversarialRunScope:
         async def initialize_async(*args: object, **kwargs: object) -> Any:
             observed.append(get_default_adversarial_target())
             started.set()
-            await asyncio.wait_for(release.wait(), 5)
+            await asyncio.wait_for(release.wait(), TEST_WATCHDOG_SECONDS)
             observed.append(get_default_adversarial_target())
             return mock_all_registries["scenario_instance"]
 
@@ -1239,13 +1239,13 @@ class TestAdversarialRunScope:
         request.adversarial_target_name = "selected"
         task = asyncio.create_task(service.start_run_async(request=request))
         try:
-            await asyncio.wait_for(started.wait(), 5)
+            await wait_for_event_async(event=started, tasks=[task])
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
             assert get_default_adversarial_target() is fallback
             release.set()
-            await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), 5)
+            await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), TEST_WATCHDOG_SECONDS)
             assert observed == [selected, selected]
             assert not service._active_tasks
         finally:
@@ -2185,14 +2185,14 @@ class TestScenarioRunServiceStartRun:
         with patch.object(service, "_prepare_run_async", _slow_prepare_async):
             with patch.object(service._memory, "try_update_scenario_run_state_async") as update_state:
                 task = asyncio.create_task(service.start_run_async(request=_make_request()))
-                await asyncio.wait_for(started.wait(), 5)
+                await wait_for_event_async(event=started, tasks=[task])
                 task.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await task
 
                 assert service.has_active_work()
                 release.set()
-                await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), 5)
+                await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), TEST_WATCHDOG_SECONDS)
                 assert not service.has_active_work()
                 scenario_instance.run_async.assert_not_awaited()
                 update_state.assert_called_once()
@@ -2226,7 +2226,7 @@ class TestScenarioRunServiceStartRun:
                 with patch.object(service._memory, "try_update_scenario_run_state_async") as update_state:
                     with pytest.raises(asyncio.CancelledError):
                         await service.start_run_async(request=_make_request())
-                    await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), 5)
+                    await asyncio.wait_for(asyncio.gather(*service._abandoned_prepare_tasks), TEST_WATCHDOG_SECONDS)
 
         update_state.assert_called_once()
         assert update_state.call_args.kwargs["scenario_result_id"] == "raced-id"
@@ -2784,12 +2784,12 @@ class TestScenarioRunServiceStartRun:
 
         with patch.object(service, "_prepare_run_async", _prepare_async):
             try:
-                await asyncio.wait_for(service.start_run_async(request=_make_request()), 5)
-                await asyncio.wait_for(child_started.wait(), 5)
+                await asyncio.wait_for(service.start_run_async(request=_make_request()), TEST_WATCHDOG_SECONDS)
+                await asyncio.wait_for(child_started.wait(), TEST_WATCHDOG_SECONDS)
                 assert len(children) == 1 and not children[0].done()
             finally:
                 release.set()
-                await asyncio.wait_for(asyncio.gather(*children), 5)
+                await asyncio.wait_for(asyncio.gather(*children), TEST_WATCHDOG_SECONDS)
                 await service.shutdown_async()
 
     async def test_start_run_propagates_prepare_failure(self, mock_all_registries) -> None:
@@ -4336,7 +4336,7 @@ class TestScenarioRunServiceRecovery:
 
         async def _prepare_async(*, request: Any) -> _svc_mod._PreparedRun:
             preparation_started.set()
-            await asyncio.wait_for(release_preparation.wait(), 5)
+            await asyncio.wait_for(release_preparation.wait(), TEST_WATCHDOG_SECONDS)
             return _svc_mod._PreparedRun(scenario=prepared_scenario)
 
         async def _shutdown_async() -> None:

@@ -632,7 +632,7 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
         assert threading.get_ident() != backend_thread
         assert get_default_adversarial_target() is target
         reads += 1
-        if not release.wait(5):
+        if not release.wait(TEST_WATCHDOG_SECONDS):
             raise TimeoutError("Many-shot disk read was not released.")
         return original_load()
 
@@ -680,8 +680,8 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
                 )
             )
             try:
-                await asyncio.wait_for(entered.wait(), 5)
-                await asyncio.wait_for(heartbeat.wait(), 1)
+                await wait_for_event_async(event=entered, tasks=[launch])
+                await asyncio.wait_for(heartbeat.wait(), TEST_WATCHDOG_SECONDS)
                 assert not launch.done()
                 release.set()
                 response = await wait_for_completion_async(future=launch)
@@ -737,7 +737,7 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
         assert threading.get_ident() != backend_thread
         assert get_default_adversarial_target() is target
         reads += 1
-        if not release.wait(5):
+        if not release.wait(TEST_WATCHDOG_SECONDS):
             raise TimeoutError("Foundry disk read was not released.")
         return original_load(file)
 
@@ -800,8 +800,8 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
                 )
             )
             try:
-                await asyncio.wait_for(entered.wait(), 5)
-                await asyncio.wait_for(heartbeat.wait(), 1)
+                await wait_for_event_async(event=entered, tasks=[launch])
+                await asyncio.wait_for(heartbeat.wait(), TEST_WATCHDOG_SECONDS)
                 assert not launch.done()
                 release.set()
                 response = await wait_for_completion_async(future=launch)

@@ -573,7 +573,7 @@ async def test_file_work_does_not_block_or_outlive_the_call_async(
     def gated(**kwargs: object) -> None:
         assert threading.get_ident() != loop_thread
         entered.set()
-        assert release.wait(5), "file work blocked the event loop"
+        assert release.wait(TEST_WATCHDOG_SECONDS), "file work blocked the event loop"
         original(**kwargs)
 
     with (

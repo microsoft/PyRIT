@@ -121,7 +121,7 @@ async def test_construction_offload_retains_context_and_ownership_async(
         assert get_default_adversarial_target() is selected
         configured.append(params["objective_target"])
         loop.call_soon_threadsafe(entered.set)
-        if not release.wait(5):
+        if not release.wait(TEST_WATCHDOG_SECONDS):
             raise TimeoutError("Construction was not released.")
         return scenario
 
