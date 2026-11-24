@@ -1905,6 +1905,35 @@ async def test_tool_loop_send_records_no_provider_ids_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("invoked", [True, False])
+async def test_tool_infrastructure_stop_after_one_completion_records_no_provider_ids_async(
+    litellm_stub: types.ModuleType, invoked: bool
+) -> None:
+    """The loop ends after one completion, but the local tool may have run outside the provider's trace."""
+    executions: list[str] = []
+
+    @tool
+    async def unstable_async(*, location: str) -> str:
+        executions.append(location)
+        raise ToolInfrastructureError("Sandbox unavailable.", invoked=invoked)
+
+    litellm_stub.acompletion = AsyncMock(
+        return_value=_identified_tool_response(
+            response_id="chatcmpl-1", calls=[("a", "unstable_async", '{"location":"SF"}')]
+        )
+    )
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o", tools=[unstable_async])
+    request = _user_message()
+    responses = await target.send_prompt_async(message=request)
+
+    assert litellm_stub.acompletion.await_count == 1
+    assert executions == ["SF"]
+    stop = ToolLoopStop.from_metadata(metadata=responses[-1].get_piece().prompt_metadata)
+    assert stop.reason == ToolLoopStopReason.TOOL_INFRASTRUCTURE_ERROR
+    assert ProviderTraceReference.METADATA_KEY not in request.get_piece().prompt_metadata
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_tool_enabled_send_without_tool_calls_records_the_response_id_async(
     litellm_stub: types.ModuleType, weather_tool: tuple[FunctionTool, list[str]]
 ) -> None:

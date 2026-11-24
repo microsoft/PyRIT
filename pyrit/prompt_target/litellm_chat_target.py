@@ -59,6 +59,7 @@ from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALIT
 from pyrit.prompt_target.common.tool_loop import (
     InvalidToolCallsError,
     PendingToolCall,
+    ToolDispatchResult,
     ToolFunction,
     dispatch_tool_call_async,
     run_tool_loop_async,
@@ -248,8 +249,8 @@ class LiteLLMChatTarget(PromptTarget):
             ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint; each request then
             sends a fresh ``traceparent`` in ``extra_headers``. Whatever this setting, each request
             records the provider's response id and LiteLLM's provider route as a
-            ``ProviderTraceReference``. A send that makes more than one completion through the
-            tool loop records none, since one id cannot name every completion's trace.
+            ``ProviderTraceReference``. A send whose tool loop runs a local tool records none,
+            since one id cannot name the tool's run or the traces of later completions.
         tools: Executable tools advertised to the model.
         tool_providers: Providers discovered within each send's resource scope.
         execute_tools: Execute configured tools locally, or return calls to the caller.
@@ -534,34 +535,35 @@ class LiteLLMChatTarget(PromptTarget):
                     conversation=normalized_conversation, request=request, tools=tools
                 )
 
-            completions = 0
+            tool_dispatched = False
 
             async def send_async(conversation: Sequence[Message]) -> Message:
-                nonlocal completions
-                completions += 1
-                if completions > 1:
-                    # One response id names only one completion's trace, so the request stays unlinked.
-                    for piece in request.message_pieces:
-                        ProviderTraceReference.clear_metadata(piece.prompt_metadata)
                 [reply] = await self._send_completion_async(
                     conversation=list(conversation),
                     request=request,
                     tools=tools,
-                    record_provider_trace=completions == 1,
+                    record_provider_trace=not tool_dispatched,
                 )
                 return reply
 
             async def resolve_tools_async() -> tuple[Sequence[Tool], Mapping[str, ToolFunction]]:
                 return tools, {}
 
+            async def dispatch_async(call: PendingToolCall) -> ToolDispatchResult:
+                # A local tool runs outside the provider's trace, and later completions get traces of
+                # their own, so one response id can no longer name this send. It stays unlinked.
+                nonlocal tool_dispatched
+                tool_dispatched = True
+                for piece in request.message_pieces:
+                    ProviderTraceReference.clear_metadata(piece.prompt_metadata)
+                return await dispatch_tool_call_async(call=call, resolve_tools_async=resolve_tools_async)
+
             return await run_tool_loop_async(
                 conversation=normalized_conversation,
                 request_piece=request.message_pieces[0],
                 send_async=send_async,
                 find_calls=self._tool_call_finder(normalized_conversation),
-                dispatch_async=lambda call: dispatch_tool_call_async(
-                    call=call, resolve_tools_async=resolve_tools_async
-                ),
+                dispatch_async=dispatch_async,
                 max_tool_rounds=self._max_tool_rounds,
             )
 

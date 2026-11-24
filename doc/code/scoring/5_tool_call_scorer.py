@@ -364,8 +364,8 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # A request with a W3C link resolves through that link, so set `enabled=False` for
 # a provider that does not continue it. An id the resolver cannot find, or finds in
 # more than one trace, leaves the request unlinked, and a verdict that rests on
-# absence stays undetermined. So does a send that runs several completions through
-# the tool loop, since one response id cannot name every completion's trace.
+# absence stays undetermined. So does a send whose tool loop runs a local tool,
+# since one response id cannot name the tool's run or later completions' traces.
 #
 # This cell stands a loopback gateway in for the provider. It ignores
 # `traceparent`, runs the tool under its own trace, records its response id on
