@@ -39,7 +39,7 @@ class ClaudeChatTarget(LiteLLMChatTarget):
         Args:
             model_name: A Claude name, with or without the ``anthropic/`` prefix.
             api_key: Explicit API key or sync/async token provider. Defaults to
-                ``ANTHROPIC_API_KEY``, never ``LITELLM_API_KEY``.
+                ``ANTHROPIC_API_KEY``, never ``LITELLM_API_KEY``; an empty string skips that default.
             endpoint: Optional Anthropic API base URL; ignores ``LITELLM_ENDPOINT``.
             headers: Additional request headers, copied at construction.
             custom_configuration: Override model-specific capabilities and policy.

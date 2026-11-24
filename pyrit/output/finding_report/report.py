@@ -5,7 +5,7 @@
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from uuid import UUID
 
@@ -14,10 +14,10 @@ from pyrit.models import (
     DecompositionPath,
     DecompositionTree,
     Finding,
-    FindingSeverity,
+    FindingCreate,
+    FindingFields,
     is_finding_path_complete,
 )
-from pyrit.models.harm_category import HarmCategory
 
 EVIDENCE_NOTE = "Evidence is listed as references with links to the PyRIT dashboard; transcripts are not included."
 UNAVAILABLE_EVIDENCE = "Evidence unavailable"
@@ -140,10 +140,48 @@ class FindingReport:
     findings: tuple[FindingReportEntry, ...]
 
 
+def finding_report_entry(
+    *, finding: FindingCreate, fields: FindingFields, evidence: Sequence[FindingReportEvidence] = ()
+) -> FindingReportEntry:
+    """
+    Lay out a finding for a report, labelled by finding fields.
+
+    Multi-line fields go in the Finding column; choices and single-line text go in the Assessment column. Values that
+    no configured field uses follow in the Finding column, labelled by their stored keys.
+
+    Args:
+        finding (FindingCreate): The finding's title, severity, field values and demonstrated flag.
+        fields (FindingFields): The finding fields that label the values.
+        evidence (Sequence[FindingReportEvidence]): The finding's evidence references. Defaults to none.
+
+    Returns:
+        FindingReportEntry: The finding's severity, its filled fields in configured order, its retired values, and
+            its evidence, without a number, paths, or sub-findings.
+    """
+    description = fields.describe_values(severity=finding.severity, field_values=finding.field_values)
+    current = (
+        FindingReportField(
+            label=row.label,
+            value=row.value,
+            column=FindingReportColumn.FINDING if row.multiline else FindingReportColumn.ASSESSMENT,
+        )
+        for row in description.rows
+    )
+    retired = (FindingReportField(label=key, value=value) for key, value in description.retired)
+    return FindingReportEntry(
+        title=finding.title,
+        severity=FindingReportField(label=fields.severity.label, value=description.severity_label),
+        fields=(*current, *retired),
+        evidence=tuple(evidence),
+        demonstrated=finding.demonstrated,
+    )
+
+
 def build_finding_report(
     *,
     operation_name: str,
     findings: Sequence[Finding],
+    fields: FindingFields,
     evidence: Mapping[UUID, tuple[FindingReportEvidence, ...]],
     part_of: Mapping[UUID, str],
 ) -> FindingReport:
@@ -153,6 +191,7 @@ def build_finding_report(
     Args:
         operation_name (str): The report's operation name.
         findings (Sequence[Finding]): Complete selected subtrees, without repeated findings.
+        fields (FindingFields): The finding fields that label each finding's values.
         evidence (Mapping[UUID, tuple[FindingReportEvidence, ...]]): Projected evidence for each finding.
         part_of (Mapping[UUID, str]): Titles of parents outside the selected subtrees.
 
@@ -175,7 +214,7 @@ def build_finding_report(
     )
     return FindingReport(
         operation_name=operation_name,
-        findings=_project_entries(tree=tree, findings=by_id, evidence=evidence, part_of=part_of),
+        findings=_project_entries(tree=tree, findings=by_id, fields=fields, evidence=evidence, part_of=part_of),
     )
 
 
@@ -183,6 +222,7 @@ def _project_entries(
     *,
     tree: DecompositionTree,
     findings: Mapping[UUID, Finding],
+    fields: FindingFields,
     evidence: Mapping[UUID, tuple[FindingReportEvidence, ...]],
     part_of: Mapping[UUID, str],
 ) -> tuple[FindingReportEntry, ...]:
@@ -195,17 +235,15 @@ def _project_entries(
     roots = set(tree.roots)
     for finding_id in reversed(visit_order):
         finding = findings[finding_id]
+        entry = finding_report_entry(finding=finding, fields=fields, evidence=evidence[finding_id])
         parent_id = finding.parent_finding_id
-        severity, fields = _project_finding_fields(
-            finding=finding, part_of=part_of.get(parent_id) if parent_id is not None and finding_id in roots else None
-        )
-        entries[finding_id] = FindingReportEntry(
-            title=finding.title,
-            severity=severity,
-            fields=fields,
-            evidence=evidence[finding_id],
+        parent_title = part_of.get(parent_id) if parent_id is not None and finding_id in roots else None
+        entries[finding_id] = replace(
+            entry,
+            fields=(FindingReportField(label="Part of", value=parent_title), *entry.fields)
+            if parent_title
+            else entry.fields,
             number=numbers[finding_id],
-            demonstrated=finding.demonstrated,
             paths=tuple(
                 _project_path(index=index, path=path, findings=findings, numbers=numbers)
                 for index, path in enumerate(finding.paths, start=1)
@@ -231,25 +269,6 @@ def _project_path(
             for step in path.steps
         ),
     )
-
-
-def _project_finding_fields(
-    *, finding: Finding, part_of: str | None
-) -> tuple[FindingReportField, tuple[FindingReportField, ...]]:
-    severity = (
-        finding.severity_other or "Other"
-        if finding.severity == FindingSeverity.OTHER
-        else finding.severity.value.capitalize()
-    )
-    harm_type = finding.harm_type_other if finding.harm_type == HarmCategory.OTHER else finding.harm_type
-    fields = [
-        FindingReportField(label="Harm-type", value=str(harm_type), column=FindingReportColumn.ASSESSMENT)
-        if harm_type
-        else None,
-        FindingReportField(label="Part of", value=part_of) if part_of else None,
-        FindingReportField(label="Description", value=finding.description) if finding.description else None,
-    ]
-    return FindingReportField(label="Severity", value=severity), tuple(field for field in fields if field)
 
 
 def plain_text(value: str) -> str:

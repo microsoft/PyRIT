@@ -12,10 +12,58 @@ import sys
 from abc import ABC, abstractmethod
 from collections.abc import Generator
 from contextlib import contextmanager, suppress
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 from pyrit.common import REQUIRED_VALUE, get_global_default_values
 from pyrit.models import Parameter
+
+
+class InitializerParameterInfo(TypedDict):
+    """One entry of ``InitializerInfo["supported_parameters"]``."""
+
+    name: str
+    description: str
+    default: Any
+
+
+class InitializerDefaultsInfo(TypedDict):
+    """
+    What ``PyRITInitializer.get_dynamic_default_values_info_async`` reports.
+
+    Each value is a list of names when the sandbox run succeeds. When it cannot run
+    (memory is not initialized) or it raises, both values are a message string instead.
+    """
+
+    default_values: list[str] | str
+    global_variables: list[str] | str
+
+
+# Functional syntax because ``class`` is a keyword.
+InitializerInfo = TypedDict(
+    "InitializerInfo",
+    {
+        "description": str,
+        "class": str,
+        "supported_parameters": NotRequired[list[InitializerParameterInfo]],
+        "required_env_vars": NotRequired[list[str]],
+        "default_values": list[str] | str,
+        "global_variables": list[str] | str,
+    },
+)
+InitializerInfo.__doc__ = """
+What ``PyRITInitializer.get_info_async`` reports about an initializer class.
+
+``supported_parameters`` and ``required_env_vars`` are absent when the initializer declares
+none. ``default_values`` and ``global_variables`` follow ``InitializerDefaultsInfo``: lists
+of names, or a message string when they could not be collected.
+"""
+
+
+class _InitializationTracking(TypedDict):
+    """Names collected while ``_track_initialization_changes`` is active."""
+
+    default_values: list[str]
+    global_variables: list[str]
 
 
 class PyRITInitializer(ABC):
@@ -182,7 +230,7 @@ class PyRITInitializer(ABC):
             await self.initialize_async()
 
     @contextmanager
-    def _track_initialization_changes(self) -> Generator[dict[str, Any], None, None]:
+    def _track_initialization_changes(self) -> Generator[_InitializationTracking, None, None]:
         """
         Context manager to track what changes during initialization.
 
@@ -195,7 +243,7 @@ class PyRITInitializer(ABC):
         current_main_dict = dict(sys.modules["__main__"].__dict__)
 
         # Initialize tracking dict
-        tracking_info: dict[str, list[str]] = {"default_values": [], "global_variables": []}
+        tracking_info: _InitializationTracking = {"default_values": [], "global_variables": []}
 
         try:
             yield tracking_info
@@ -216,7 +264,7 @@ class PyRITInitializer(ABC):
                 if name not in current_main_dict and name not in tracking_info["global_variables"]:
                     tracking_info["global_variables"].append(name)
 
-    async def get_dynamic_default_values_info_async(self) -> dict[str, Any]:
+    async def get_dynamic_default_values_info_async(self) -> InitializerDefaultsInfo:
         """
         Get information about what default values and global variables this initializer sets.
         This is useful for debugging what default_values are set by an initializer.
@@ -226,7 +274,8 @@ class PyRITInitializer(ABC):
         initializer has been run before or which instance is queried.
 
         Returns:
-            dict[str, Any]: Information about what defaults and globals are set.
+            InitializerDefaultsInfo: The ``ClassName.parameter`` defaults and the global variable
+            names the initializer sets, or a message string in both keys if they cannot be collected.
         """
         # Check if memory is initialized - required for running initialization in sandbox
         from pyrit.memory import CentralMemory
@@ -264,7 +313,10 @@ class PyRITInitializer(ABC):
             with self._track_initialization_changes() as tracking_info:
                 await self.initialize_async()
 
-            return tracking_info
+            return {
+                "default_values": tracking_info["default_values"],
+                "global_variables": tracking_info["global_variables"],
+            }
 
         except Exception as e:
             return {
@@ -297,7 +349,7 @@ class PyRITInitializer(ABC):
                 sys.modules["__main__"].__dict__[var_name] = value
 
     @classmethod
-    async def get_info_async(cls) -> dict[str, Any]:
+    async def get_info_async(cls) -> InitializerInfo:
         """
         Get information about this initializer class.
 
@@ -305,39 +357,48 @@ class PyRITInitializer(ABC):
         await TargetInitializer.get_info_async() instead of TargetInitializer().get_info_async()
 
         Returns:
-            dict[str, Any]: Dictionary containing name, description, class information, and default values.
+            InitializerInfo: The description, class name, declared parameters and required
+            environment variables (each only when present), and the default values and
+            global variables the initializer sets.
         """
         # Create a temporary instance to access properties
         instance = cls()
 
-        base_info = {
+        supported_parameters: list[InitializerParameterInfo] = [
+            {
+                "name": p.name,
+                "description": p.description,
+                "default": p.default,
+            }
+            for p in cls.supported_parameters()
+        ]
+        required_env_vars = instance.required_env_vars
+
+        # Add dynamic default values information
+        default_values: list[str] | str
+        global_variables: list[str] | str
+        try:
+            defaults_info = await instance.get_dynamic_default_values_info_async()
+            default_values = defaults_info["default_values"]
+            global_variables = defaults_info["global_variables"]
+        except Exception as e:
+            # If info fails, add error info but don't crash
+            default_values = f"Error getting defaults info: {str(e)}"
+            global_variables = f"Error getting globals info: {str(e)}"
+
+        base_info: InitializerInfo = {
             "description": instance.description,
             "class": cls.__name__,
+            "default_values": default_values,
+            "global_variables": global_variables,
         }
 
         # Add supported parameters if any are declared
-        if cls.supported_parameters():
-            base_info["supported_parameters"] = [
-                {
-                    "name": p.name,
-                    "description": p.description,
-                    "default": p.default,
-                }
-                for p in cls.supported_parameters()
-            ]
+        if supported_parameters:
+            base_info["supported_parameters"] = supported_parameters
 
         # Add required environment variables if any are defined
-        if instance.required_env_vars:
-            base_info["required_env_vars"] = instance.required_env_vars
-
-        # Add dynamic default values information
-        try:
-            defaults_info = await instance.get_dynamic_default_values_info_async()
-            base_info["default_values"] = defaults_info["default_values"]
-            base_info["global_variables"] = defaults_info["global_variables"]
-        except Exception as e:
-            # If info fails, add error info but don't crash
-            base_info["default_values"] = f"Error getting defaults info: {str(e)}"
-            base_info["global_variables"] = f"Error getting globals info: {str(e)}"
+        if required_env_vars:
+            base_info["required_env_vars"] = required_env_vars
 
         return base_info
