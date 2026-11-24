@@ -43,7 +43,7 @@ from pyrit.prompt_target import (
     TargetRequirements,
 )
 from pyrit.scenario import AtomicAttack, AttackTechnique, AttackTechniqueFactory, IncompatibleTechniqueError
-from pyrit.scenario.core import ScorerOverridePolicy
+from pyrit.scenario.core import ScorerOverridePolicy, TechniqueRequirements
 from pyrit.score import Scorer, SubStringScorer, TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -1690,6 +1690,16 @@ class TestSimulatedConversationWithTargetTools:
             "advertises no function tools" in error
             for error in factory.requirements.check_target(target=with_tools, attack_class=PromptSendingAttack)
         )
+
+    def test_custom_requirements_keep_the_target_tools_check(self) -> None:
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="tool_priming_one_shot",
+            mode=SimulatedConversationMode.ONE_SHOT,
+            use_target_tools=True,
+            requirements=TechniqueRequirements(),
+        )
+
+        assert factory.requirements.requires_target_tools
 
     def test_turn_by_turn_uses_tool_prompts_and_needs_a_tool_running_adversarial_chat(self) -> None:
         factory = AttackTechniqueFactory.with_simulated_conversation(

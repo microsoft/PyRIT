@@ -381,7 +381,8 @@ class AttackTechniqueFactory(Identifiable):
                 annotation. Defaults to ``WARN``. Forwarded to the factory
                 constructor.
             requirements: Optional requirements override. Defaults to strict
-                objective-only dataset input; technique-owned seeds are not restricted.
+                objective-only dataset input; technique-owned seeds are not restricted. With
+                ``use_target_tools``, an override still requires a target that advertises tools.
 
         Returns:
             AttackTechniqueFactory: A new factory whose ``seed_technique`` is the
@@ -469,7 +470,9 @@ class AttackTechniqueFactory(Identifiable):
             uses_adversarial=uses_adversarial,
             supports_additional_request_converters=supports_additional_request_converters,
             scorer_override_policy=scorer_override_policy,
-            requirements=requirements
+            requirements=replace(requirements, requires_target_tools=True)
+            if requirements is not None and use_target_tools
+            else requirements
             or TechniqueRequirements(
                 objective_target=cls.TOOL_HISTORY_TARGET_REQUIREMENTS if use_target_tools else TargetRequirements(),
                 requires_target_tools=use_target_tools,
