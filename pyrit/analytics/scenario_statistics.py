@@ -741,10 +741,12 @@ def _attribute_unit(
     Attribute one execution unit to the objective scorer that judged it.
 
     The scorer recorded on the unit's effective result (its latest completion) is preferred, then
-    one shared by that completion's linked child results. Mixed child scorers remain unknown or
-    conflicting rather than attributing a compound outcome to one child. A planned pool binding
-    applies when neither records a scorer, and a single-scorer run's identifier applies only when
-    the plan binds no scorers. Earlier executions of a resumed unit never decide its objective scorer.
+    one recorded by every linked child result of that completion. Mixed child scorers, or a linked
+    child whose scorer is unidentified (a nested compound or an unloaded result), never credit one
+    child or fall back to the plan or run: they are conflicting when a recorded child scorer differs
+    from the binding, else unknown. A planned pool binding applies when the effective result links
+    no children and records no scorer, and a single-scorer run's identifier applies only when the
+    plan binds no scorers. Earlier executions of a resumed unit never decide its objective scorer.
 
     Returns:
         tuple[ScenarioObjectiveScorerAttribution, str | None, ComponentIdentifier | None]: The attribution,
@@ -755,19 +757,27 @@ def _attribute_unit(
     recorded = effective.objective_scorer if effective is not None else None
     if recorded is None and effective is not None and effective.child_attack_result_ids:
         child_ids = set(effective.child_attack_result_ids)
+        children = [attempt for attempt in attempts if attempt.attempt_id in child_ids]
         child_scorers = {
-            attempt.objective_scorer.hash: attempt.objective_scorer
-            for attempt in attempts
-            if attempt.attempt_id in child_ids and attempt.objective_scorer is not None
+            child.objective_scorer.hash: child.objective_scorer
+            for child in children
+            if child.objective_scorer is not None
         }
-        if len(child_scorers) > 1:
+        # A nested compound or an unloaded result leaves a linked child's scorer unidentified.
+        complete = {child.attempt_id for child in children} == child_ids and all(
+            child.objective_scorer is not None for child in children
+        )
+        if len(child_scorers) > 1 or not complete:
+            contradicts_binding = binding is not None and any(
+                scorer_hash != binding.scorer_hash for scorer_hash in child_scorers
+            )
             attribution = (
                 ScenarioObjectiveScorerAttribution.CONFLICT
-                if binding is not None
+                if contradicts_binding
                 else ScenarioObjectiveScorerAttribution.UNKNOWN
             )
             return attribution, None, None
-        recorded = next(iter(child_scorers.values()), None)
+        recorded = next(iter(child_scorers.values()))
 
     if recorded is not None:
         if binding is not None and recorded.hash != binding.scorer_hash:

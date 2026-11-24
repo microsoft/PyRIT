@@ -534,3 +534,49 @@ def test_mixed_scorer_compound_does_not_credit_the_last_child(
     assert statistics.objective_scorer_scope == ScenarioObjectiveScorerScope.UNKNOWN_SCORER
     assert (statistics.overall.completed, statistics.overall.succeeded) == (1, 1)
     assert (scorer_statistics.overall.completed, scorer_statistics.overall.succeeded) == (1, 1)
+
+
+@pytest.mark.parametrize("unidentified_child", ["nested-compound", "missing-result"])
+@pytest.mark.parametrize(
+    ("bound", "attribution"),
+    [
+        (None, ScenarioObjectiveScorerAttribution.UNKNOWN),
+        (_JUDGE_A, ScenarioObjectiveScorerAttribution.UNKNOWN),
+        (_JUDGE_B, ScenarioObjectiveScorerAttribution.CONFLICT),
+    ],
+)
+def test_compound_with_an_unidentified_child_scorer_is_not_credited_to_a_recorded_child(
+    bound: ComponentIdentifier | None, attribution: ScenarioObjectiveScorerAttribution, unidentified_child: str
+) -> None:
+    # FIRST_SUCCESS: A's child fails, then an inner compound succeeds through a child that B judged.
+    envelope, [child_a] = make_sequential_attack_results(
+        atomic_attack_name="attack",
+        objective="objective-0",
+        envelope_outcome=AttackOutcome.SUCCESS,
+        child_outcomes=[AttackOutcome.FAILURE],
+    )
+    inner_envelope, [child_b] = make_sequential_attack_results(
+        atomic_attack_name="attack",
+        objective="objective-0",
+        envelope_outcome=AttackOutcome.SUCCESS,
+        child_outcomes=[AttackOutcome.SUCCESS],
+    )
+    inner_envelope.attribution_data["attempt_index"] = 2
+    child_a.atomic_attack_identifier = judged_attack_identifier(_JUDGE_A)
+    child_b.atomic_attack_identifier = judged_attack_identifier(_JUDGE_B)
+    envelope.metadata["child_attack_result_ids"].append(inner_envelope.attack_result_id)
+    attacks = [child_a, inner_envelope, child_b, envelope]
+    if unidentified_child == "missing-result":
+        attacks = [child_a, envelope]
+    for attack in attacks:
+        attack.attribution_data.update(parent_eval_hash="eval-attack", seed_group_id="seed-0")
+    result = make_judged_scenario_result(groups=[("attack", bound, None, [AttackOutcome.SUCCESS])])
+    result.attack_results["attack"] = attacks
+
+    statistics = compute_scenario_statistics(result)
+    [scorer_statistics] = statistics.objective_scorers
+
+    assert scorer_statistics.attribution == attribution
+    assert scorer_statistics.scorer_hash is None
+    assert scorer_statistics.scorer_identifier is None
+    assert statistics.objective_scorer_scope == ScenarioObjectiveScorerScope.UNKNOWN_SCORER
