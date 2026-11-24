@@ -42,12 +42,13 @@ async def test_pigpen_converter_encodes_every_letter_to_the_key():
         assert result.output_text == expected, f"{letter!r} encoded wrong"
 
 
-async def test_pigpen_converter_encodes_word_to_key_glyphs():
-    """A whole word encodes to the key's glyphs (and is case-folding)."""
+async def test_pigpen_converter_is_case_folding():
+    """``Hello`` and ``hello`` encode identically (the transform is case-folding and lossy).
+
+    Whole-word encoding through the *registered* technique is covered by
+    ``test_pigpen_technique_builds_registered_row`` in test_encoding.py.
+    """
     converter = PigpenConverter()
-    # c, a, t written independently from the key: └ ┘ ▷
-    assert (await converter.convert_async(prompt="cat")).output_text == "└┘▷"
-    # Case-folding: Hello and hello encode identically.
     assert (await converter.convert_async(prompt="Hello")).output_text == (
         await converter.convert_async(prompt="hello")
     ).output_text
