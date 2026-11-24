@@ -26,7 +26,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
 
-from pyrit.analytics import compute_outcome_statistics, count_execution_units, is_assert_policy_run
+from pyrit.analytics import compute_outcome_statistics, count_execution_units
 from pyrit.analytics.outcome_statistics import success_percentage
 from pyrit.analytics.scenario_statistics import (
     ScenarioAttempt,
@@ -94,6 +94,7 @@ from pyrit.models import (
     ScenarioRunListItem,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunProgress,
     ScenarioRunState,
     ScenarioTechniqueSummary,
@@ -2128,7 +2129,7 @@ class ScenarioRunService:
         objective_achieved_rate = overall_counts.success_percentage or 0
         successful_attacks = overall_counts.succeeded
         techniques_used = (
-            list(dict.fromkeys(group.technique_name or group.display_group for group in plan.atomic_groups))
+            list(dict.fromkeys(group.technique_label for group in plan.atomic_groups))
             if plan is not None
             else scenario_result.get_techniques_used()
         )
@@ -2529,7 +2530,7 @@ class ScenarioRunService:
         if terminal and record.completed_at is not None:
             timestamps.append(record.completed_at)
         techniques = (
-            list(dict.fromkeys(group.technique_name or group.display_group for group in atomic_groups))
+            list(dict.fromkeys(group.technique_label for group in atomic_groups))
             if atomic_groups is not None
             else list(aggregate.atomic_attack_names)
         )
@@ -2847,7 +2848,8 @@ class ScenarioRunService:
         enriched_groups: list[ScenarioRunPlanAtomicGroup] = []
         for group in atomic_groups:
             technique_name = group.technique_name
-            if technique_name is None:
+            # A baseline runs no technique, even when its display group shares a technique's name.
+            if technique_name is None and group.kind != ScenarioRunPlanGroupKind.BASELINE:
                 technique_name = next(
                     (
                         candidate
@@ -3005,7 +3007,6 @@ class ScenarioRunService:
             active_group_ids=active_group_ids,
             terminal=terminal,
             objective_scorer_identifier=objective_scorer_identifier,
-            legacy_display_group_map=header_result.display_group_map if is_assert_policy_run(header_result) else None,
         )
         progress = self._build_progress_response(
             header_result=header_result,
@@ -3066,9 +3067,7 @@ class ScenarioRunService:
         scenario_identifier = header_result.scenario_identifier
         target, datasets_used, scenario_parameters = self._safe_run_metadata(scenario_identifier=scenario_identifier)
         if plan is not None:
-            techniques_used = list(
-                dict.fromkeys(group.technique_name or group.display_group for group in plan.atomic_groups)
-            )
+            techniques_used = list(dict.fromkeys(group.technique_label for group in plan.atomic_groups))
         else:
             techniques_used = self._identifier_techniques(scenario_identifier)
         scenario_identity = ScenarioProgressReadModel._build_component_identity(
@@ -3080,7 +3079,6 @@ class ScenarioRunService:
                 scenario_result_id=scenario_result_id,
                 scenario_name=header_result.scenario_name,
                 scenario_registry_name=plan.scenario_registry_name if plan else None,
-                is_assert_policy=is_assert_policy_run(header_result),
                 scenario_version=header_result.scenario_version,
                 status=header_result.scenario_run_state,
                 created_at=header_result.creation_time,
@@ -3297,10 +3295,7 @@ class ScenarioRunService:
             scenario_result_id=scenario_result_id, roots=roots, max_nodes=max_nodes
         )
         aggregate = await self._get_hierarchy_aggregate_async(scenario_result_id=scenario_result_id, plan=plan)
-        summary_plan = plan or self._progress_read_model._synthesize_legacy_plan(
-            deltas=deltas,
-            display_group_map=header_result.display_group_map if is_assert_policy_run(header_result) else None,
-        )
+        summary_plan = plan or self._progress_read_model._synthesize_legacy_plan(deltas=deltas)
         plan_lookup = ScenarioPlanLookup.from_plan(plan=summary_plan)
         results = tuple(
             self._progress_read_model._map_progress_delta(delta=delta, plan_lookup=plan_lookup) for delta in deltas

@@ -78,19 +78,11 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     [state.plan],
   )
   const techniqueNames = useMemo(
-    () => new Map(state.plan?.atomic_groups.map((group) => [group.id, group.technique_name ?? group.atomic_attack_name]) ?? []),
+    () => new Map(state.plan?.atomic_groups.map((group) => [
+      group.id, group.kind === 'baseline' ? 'Baseline' : group.technique_name ?? group.atomic_attack_name,
+    ]) ?? []),
     [state.plan],
   )
-  const assertTechniqueLabels = useMemo(() => {
-    if (!state.run?.is_assert_policy) return undefined
-    return new Map(state.plan?.atomic_groups.map((group) => [
-      group.id,
-      group.kind === 'baseline' ? 'Baseline'
-        : group.technique_name === 'assert_package' ? 'ASSERT package'
-          : group.technique_name === 'assert_package_spanish' ? 'ASSERT package (Spanish)'
-            : group.technique_name?.replace(/_/g, ' ') ?? group.atomic_attack_name,
-    ]) ?? [])
-  }, [state.plan, state.run])
   const attemptsBySeed = useMemo(() => {
     const groups = new Map<string, ScenarioProgressResult[]>()
     for (const attempt of state.results) {
@@ -176,8 +168,6 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
             hierarchy={hierarchy}
             seedObjectives={seedObjectives}
             techniqueNames={techniqueNames}
-            isAssertPolicy={run.is_assert_policy ?? false}
-            techniqueLabels={assertTechniqueLabels}
             onOpenDetails={attackDetails.open}
             toggleRef={groupsToggleRef}
           />

@@ -102,6 +102,21 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
     #: The selected objective scorer for pool runs; absent for single-scorer runs.
     objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None
 
+    @property
+    def technique_label(self) -> str:
+        """
+        Name the technique this group's results count toward.
+
+        A baseline counts as ``baseline`` whatever its display group. Groups saved without a
+        technique name otherwise count under their display group.
+
+        Returns:
+            str: The technique label.
+        """
+        if self.kind == ScenarioRunPlanGroupKind.BASELINE:
+            return ScenarioRunPlanGroupKind.BASELINE.value
+        return self.technique_name or self.display_group
+
 
 class ScenarioRunPlan(BaseModel):
     """Versioned normalized execution plan persisted in ScenarioResult metadata."""
@@ -151,7 +166,6 @@ class ScenarioProgressHeader(BaseModel):
     scenario_result_id: str
     scenario_name: str
     scenario_registry_name: str | None = None
-    is_assert_policy: bool = False
     scenario_version: int
     status: ScenarioRunState
     created_at: datetime

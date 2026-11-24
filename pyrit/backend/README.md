@@ -520,18 +520,6 @@ unknown scenario returns 404, and a listing the scenario can't configure returns
 A listed name is not a launch guarantee. The run-size estimate and launch check the selected
 contents again, so data changed after the listing is rejected there with the reason.
 
-New ASSERT plans display one group per stored generated category, containing baseline
-and selected technique executions with readable technique labels on the rows. Distinct,
-readable policy labels qualify categories when several policies are selected. Each case
-still executes once per compatible technique, with unchanged execution identities.
-Category-rate metrics continue to use judged relevance, not the generation assignment.
-Saved plans and resumed runs retain their recorded grouping. No-plan legacy ASSERT reads
-use the recorded display map, falling back only to the original atomic name for an absent
-entry; they never infer categories from historical names or current datasets.
-The progress header's `is_assert_policy` confirms persisted registry/module identity for
-category presentation. A tentative metrics request alone does not establish that identity.
-Ordinary scenario presentation is unchanged.
-
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,

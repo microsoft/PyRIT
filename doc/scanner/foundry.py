@@ -134,7 +134,7 @@ await output_scenario_async(scenario_result)
 # red-teaming prompt, which pursues the objective rather than playing a stored user, so it isn't an
 # ASSERT scenario case. Techniques that take a turn count need a target that natively keeps
 # multi-turn history, because the judges read the whole conversation; with other targets they're
-# skipped or rejected the same way. Results are grouped by technique.
+# skipped or rejected the same way. Results are grouped by each case's generated category.
 #
 # Techniques with incompatible scoring configurations, such as TAP, are also skipped or rejected;
 # ASSERT never replaces its policy judge with a technique's default scorer.
@@ -228,12 +228,13 @@ baseline_result = next(
 await output_attack_async(baseline_result, include_auxiliary_scores=True)  # type: ignore
 
 # %% [markdown]
-# Results are grouped by technique, with the baseline in its own group. Read the ASSERT data that a
-# score records with the models in `pyrit.models`: `AssertDimensionResult.from_metadata` gives the
-# dimension, why a conversation wasn't judged, and any not-applicable answer or grade. In
-# `category_validated` mode, `AssertCategoryJudgment.from_metadata` gives the judge's per-category
-# judgments on each policy score, which ASSERT uses to split its violation rates by permissible and
-# impermissible categories.
+# Results are grouped by each case's generated category, with its baseline and technique results
+# together. When several selected policies share a category name, the behavior name tells them apart.
+# Read the ASSERT data that a score records with the models in `pyrit.models`:
+# `AssertDimensionResult.from_metadata` gives the dimension, why a conversation wasn't judged, and
+# any not-applicable answer or grade. In `category_validated` mode,
+# `AssertCategoryJudgment.from_metadata` gives the judge's per-category judgments on each policy
+# score, which ASSERT uses to split its violation rates by permissible and impermissible categories.
 #
 # Those success rates don't separate permissible from impermissible behavior. ASSERT reports two
 # separate headline rates, and `compute_assert_policy_metrics_async` computes them from those

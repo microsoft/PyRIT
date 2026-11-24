@@ -47,8 +47,6 @@ interface AttackExecutionTableProps {
   readonly showTimestamp?: boolean
   readonly showConversationLink?: boolean
   readonly booleanOutcome?: boolean
-  /** Readable attack labels per atomic group that replace the attack name in each row's hint and accessible name. */
-  readonly techniqueLabels?: ReadonlyMap<string, string>
 }
 
 /** How every row in one table renders, shared by top-level and child rows. */
@@ -60,7 +58,6 @@ interface RowOptions {
   readonly showTimestamp: boolean
   readonly showConversationLink: boolean
   readonly booleanOutcome: boolean
-  readonly techniqueLabels?: ReadonlyMap<string, string>
   readonly columnCount: number
 }
 
@@ -78,12 +75,10 @@ export default function AttackExecutionTable({
   showTimestamp = true,
   showConversationLink = false,
   booleanOutcome = false,
-  techniqueLabels,
 }: AttackExecutionTableProps) {
   const styles = useAttackExecutionTableStyles()
   const options: RowOptions = {
     scenarioResultId, hierarchy, onOpenDetails, techniqueNames, showTimestamp, showConversationLink, booleanOutcome,
-    techniqueLabels,
     columnCount: 4 + Number(showTimestamp) + Number(showConversationLink),
   }
   const savedRelationships = hierarchy.roots.status === 'ready'
@@ -159,8 +154,7 @@ function ResultRows({ nodeKey, result, objective, position, depth, ancestors, op
   const isExpanded = hierarchy.expanded.has(nodeKey)
   const expandable = node !== null && hasChildReferences(node)
   const preview = objectivePreview(objective || null, result.seed_group_id)
-  const readableLabel = options.techniqueLabels?.get(result.atomic_group_id)
-  const label = resultLabel(readableLabel ?? result.atomic_attack_name, preview, position)
+  const label = resultLabel(result, preview, position)
   const conversationPath = result.conversation_id
     ? attackConversationRoutePath(result.attack_result_id, result.conversation_id, options.scenarioResultId)
     : null
@@ -204,7 +198,7 @@ function ResultRows({ nodeKey, result, objective, position, depth, ancestors, op
             <div className={styles.identity}>
               <Text weight="semibold" title={objective}>{preview}</Text>
               <Text size={200} className={styles.hint}>
-                {readableLabel ?? options.techniqueNames?.get(result.atomic_group_id) ?? result.atomic_attack_name}
+                {options.techniqueNames?.get(result.atomic_group_id) ?? result.atomic_attack_name}
               </Text>
             </div>
           </div>
@@ -350,9 +344,9 @@ function indent(depth: number): CSSProperties {
   return { paddingInlineStart: `calc(${depth} * ${INDENT_STEP})` }
 }
 
-function resultLabel(attackLabel: string, objective: string, position: number | null): string {
+function resultLabel(result: ScenarioProgressResult | ScenarioHierarchyNode, objective: string, position: number | null): string {
   const text = objective.length > LABEL_OBJECTIVE_LENGTH
     ? `${objective.slice(0, LABEL_OBJECTIVE_LENGTH)}...`
     : objective
-  return `${position === null ? '' : `#${position + 1} `}${attackLabel}: ${text}`
+  return `${position === null ? '' : `#${position + 1} `}${result.atomic_attack_name}: ${text}`
 }

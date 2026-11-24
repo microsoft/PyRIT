@@ -62,6 +62,7 @@ from pyrit.models import (
     ScenarioRunExecutionToken,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
     ScenarioRunState,
     ScenarioTechniqueSummary,
@@ -3505,6 +3506,40 @@ class TestScenarioRunServiceListRuns:
         assert summary.techniques_used == [expected_name]
         if scenario_registry_name is None or technique_name is not None:
             lookup.assert_not_called()
+
+    async def test_list_runs_reports_a_baseline_grouped_under_a_technique_name_as_baseline(
+        self, mock_memory: MagicMock
+    ) -> None:
+        record = _make_history_record(result_id="sr-baseline-category", run_state=ScenarioRunState.COMPLETED)
+        groups = [
+            ScenarioRunPlanAtomicGroup(
+                id=f"group-{kind.value}",
+                atomic_attack_name=f"{kind.value}__case",
+                display_group="ignore_print",
+                technique_name=technique_name,
+                technique_eval_hash="eval",
+                seed_group_ids=["seed-1"],
+                kind=kind,
+            ).model_dump(mode="json", exclude_none=True)
+            for kind, technique_name in (
+                (ScenarioRunPlanGroupKind.BASELINE, None),
+                (ScenarioRunPlanGroupKind.ATTACK, "ignore_print"),
+            )
+        ]
+        record = replace(
+            record,
+            scenario_registry_name="garak.prompt_inject",
+            plan_atomic_groups=groups,
+            plan_seed_id_map=[{"id": "seed-1", "objective_sha256": "hash-1"}],
+        )
+        mock_memory.get_scenario_run_history_page_async.return_value = ([record], {}, False)
+        service = ScenarioRunService()
+        summaries = {"ignore_print": ScenarioTechniqueSummary(name="ignore_print")}
+
+        with patch.object(service, "_get_scenario_technique_summaries", return_value=summaries):
+            summary = (await service.list_runs_async()).items[0]
+
+        assert summary.techniques_used == ["baseline", "ignore_print"]
 
     async def test_history_preserves_plan_for_duplicate_objective_hashes_within_one_group(self, mock_memory) -> None:
         record = _make_history_record(result_id="sr-ambiguous-objective", run_state=ScenarioRunState.COMPLETED)

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections import Counter
 from dataclasses import replace
@@ -134,7 +133,7 @@ class AssertPolicy(Scenario):
     scoring target decides success by policy violation and also records overrefusal. Choose
     another objective scorer to judge other dimensions or execution traces. Blocked or errored
     target replies stay undetermined. Results are grouped by each case's generated category, across
-    baseline and selected techniques, qualified by policy when several policies are selected.
+    baseline and selected techniques, qualified by behavior name when several policies are selected.
 
     ``assert_package_spanish`` translates target-bound user requests with the configured adversarial
     chat, including later conversation turns, before that technique's ``technique_converters``. It
@@ -442,13 +441,21 @@ class AssertPolicy(Scenario):
         """
         if ViolatesAssertPolicy not in self._objective_scorer.get_condition_types():
             return None
+        return ScoringExpectation(conditions=(self._get_policy(group),))
+
+    def _get_policy(self, group: AttackSeedGroup) -> ViolatesAssertPolicy:
+        """
+        Build the policy that the group's conversations are judged against.
+
+        Returns:
+            ViolatesAssertPolicy: The group's taxonomy, application context, and judged instructions.
+        """
         metadata = AssertGroupMetadata.from_metadata(group.objective.metadata)
-        policy = ViolatesAssertPolicy(
+        return ViolatesAssertPolicy(
             taxonomy=metadata.taxonomy,
             application_context=metadata.config.context,
             target_instructions=self._get_judged_system_prompt(group),
         )
-        return ScoringExpectation(conditions=(policy,))
 
     @staticmethod
     def _get_stored_system_prompt(group: AttackSeedGroup) -> str | None:
@@ -499,13 +506,12 @@ class AssertPolicy(Scenario):
         counts = Counter(group.logical_id for group in context.seed_groups)
         self._repeated_ids = {logical_id for logical_id, count in counts.items() if count > 1}
         self._auxiliary_scorers = self._get_auxiliary_scorers()
-        local = {name: _build_assert_package_factory(name) for name in _ASSERT_PACKAGES}
-        factories = resolve_technique_factories(context=context, extra_factories=local)
-        display_groups = self._get_display_groups(context=context, technique_names=list(factories))
+        display_groups = self._get_display_groups(seed_groups=context.seed_groups)
         attacks = (
             self._build_baselines(context=context, display_groups=display_groups) if context.include_baseline else []
         )
-        for name, factory in factories.items():
+        local = {name: _build_assert_package_factory(name) for name in _ASSERT_PACKAGES}
+        for name, factory in resolve_technique_factories(context=context, extra_factories=local).items():
             # ASSERT's packages choose their attack per case, so their target is checked per group.
             if name not in _ASSERT_PACKAGES and not check_target_compatibility(
                 target=context.objective_target,
@@ -546,62 +552,54 @@ class AssertPolicy(Scenario):
                             technique_name=name,
                             factory=factory,
                             group=group,
-                            display_group=display_groups[self._get_unit_name(prefix=name, group=group)],
+                            display_group=display_groups[str(group.objective.id)],
                         )
                     )
         return attacks
 
-    def _get_display_groups(self, *, context: ScenarioContext, technique_names: list[str]) -> dict[str, str]:
-        names = [
-            self._get_unit_name(prefix=technique_name, group=group)
-            for group in context.seed_groups
-            for technique_name in ["baseline", *technique_names]
-        ]
-        if context.stored_run_plan is not None:
-            recorded = {
-                group.atomic_attack_name: group.display_group for group in context.stored_run_plan.atomic_groups
-            }
-            return {name: recorded.get(name, name) for name in names}
-        assignments: dict[str, tuple[str, str]] = {}
-        policies: dict[str, str] = {}
-        for group in context.seed_groups:
-            metadata = AssertGroupMetadata.from_metadata(group.objective.metadata)
-            policy = json.dumps(
-                {
-                    "taxonomy": metadata.taxonomy.model_dump(mode="json"),
-                    "behavior_description": metadata.config.behavior_description,
-                    "context": metadata.config.context,
-                    "effective_system_prompt": self._get_judged_system_prompt(group),
-                },
-                ensure_ascii=False,
-                sort_keys=True,
+    def _get_display_groups(self, *, seed_groups: Sequence[AttackSeedGroup]) -> dict[str, str]:
+        """
+        Group each case's baseline and technique results under its generated category.
+
+        With several judged policies, the behavior name qualifies each category, as in the ASSERT
+        metrics. A policy whose behavior name another policy shares, or whose label would still match
+        another policy's, also shows the start of its policy ID.
+
+        Returns:
+            dict[str, str]: The display group of each objective seed ID.
+        """
+        behaviors: dict[str, str] = {}
+        cases: dict[str, tuple[str, str]] = {}
+        for group in seed_groups:
+            policy = self._get_policy(group)
+            policy_id = policy.policy_id
+            behaviors[policy_id] = policy.taxonomy.behavior.name
+            category = AssertGroupMetadata.from_metadata(group.objective.metadata).behavior_category
+            cases[str(group.objective.id)] = (policy_id, category)
+        if len(behaviors) == 1:
+            return {seed_id: category for seed_id, (_, category) in cases.items()}
+
+        shared = Counter(behaviors.values())
+        labels = {
+            (policy_id, category): self._get_category_label(
+                behavior=behaviors[policy_id],
+                category=category,
+                policy_id=policy_id if shared[behaviors[policy_id]] > 1 else None,
             )
-            policies[policy] = metadata.taxonomy.behavior.name
-            assignments[str(group.objective.id)] = (policy, metadata.behavior_category)
-
-        policies_by_name: dict[str, list[str]] = {}
-        for policy, name in policies.items():
-            policies_by_name.setdefault(name, []).append(policy)
-        policy_positions = {
-            policy: position
-            for named_policies in policies_by_name.values()
-            for position, policy in enumerate(sorted(named_policies), start=1)
+            for policy_id, category in set(cases.values())
         }
-
-        display_groups: dict[str, str] = {}
-        for group in context.seed_groups:
-            policy, category = assignments[str(group.objective.id)]
-            category_label = category
-            if len(policies) > 1:
-                policy_name = policies[policy]
-                category_label = (
-                    f"{json.dumps(category, ensure_ascii=False)} / {json.dumps(policy_name, ensure_ascii=False)}"
+        repeated = Counter(labels.values())
+        for (policy_id, category), label in labels.items():
+            if repeated[label] > 1:
+                labels[policy_id, category] = self._get_category_label(
+                    behavior=behaviors[policy_id], category=category, policy_id=policy_id
                 )
-                if len(policies_by_name[policy_name]) > 1:
-                    category_label += f" (policy {policy_positions[policy]})"
-            for technique_name in ["baseline", *technique_names]:
-                display_groups[self._get_unit_name(prefix=technique_name, group=group)] = category_label
-        return display_groups
+        return {seed_id: labels[case] for seed_id, case in cases.items()}
+
+    @staticmethod
+    def _get_category_label(*, behavior: str, category: str, policy_id: str | None) -> str:
+        policy = f"{behavior} (policy {policy_id[:8]})" if policy_id else behavior
+        return f"{policy}: {category}"
 
     @staticmethod
     def _get_target_requirements(factory: AttackTechniqueFactory) -> TechniqueRequirements:
@@ -779,7 +777,7 @@ class AssertPolicy(Scenario):
             baselines.append(
                 AtomicAttack(
                     atomic_attack_name=self._get_unit_name(prefix="baseline", group=group),
-                    display_group=display_groups[self._get_unit_name(prefix="baseline", group=group)],
+                    display_group=display_groups[str(group.objective.id)],
                     # Keep the stored group so baseline and technique results share its logical ID and resume.
                     # The prompt case doesn't use the group's tester prompts; this records that on the technique.
                     attack_technique=AttackTechnique(attack=attack, adversarial_prompts=group.adversarial_prompts),

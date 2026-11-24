@@ -4,7 +4,9 @@ import { Button, Text } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
 
 import type { UseScenarioResultHierarchyResult } from '@/hooks/useScenarioResultHierarchy'
-import type { ScenarioHierarchyNode, ScenarioProgressResult, ScenarioProgressSummary, ScenarioRunState } from '@/types'
+import type {
+  ScenarioDisplayGroupProgress, ScenarioHierarchyNode, ScenarioProgressResult, ScenarioProgressSummary, ScenarioRunState,
+} from '@/types'
 
 import AttackExecutionTable from './AttackExecutionTable'
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
@@ -22,10 +24,6 @@ interface AtomicAttackGroupsSectionProps {
   readonly hierarchy: UseScenarioResultHierarchyResult
   readonly seedObjectives: ReadonlyMap<string, string>
   readonly techniqueNames: ReadonlyMap<string, string>
-  /** Whether the stored run identity confirms an ASSERT policy run, which groups results by generated category. */
-  readonly isAssertPolicy?: boolean
-  /** Readable ASSERT attack labels per atomic group. */
-  readonly techniqueLabels?: ReadonlyMap<string, string>
   readonly onOpenDetails: (attempt: ScenarioProgressResult | ScenarioHierarchyNode, trigger: HTMLElement) => void
   /** The section toggle, which receives focus when an opened attack is no longer on the page. */
   readonly toggleRef: Ref<HTMLButtonElement>
@@ -33,8 +31,7 @@ interface AtomicAttackGroupsSectionProps {
 
 /** Every display group's progress, expandable to its attack executions. */
 export default function AtomicAttackGroupsSection({
-  scenarioResultId, runStatus, summary, results, hierarchy, seedObjectives, techniqueNames, isAssertPolicy = false,
-  techniqueLabels, onOpenDetails, toggleRef,
+  scenarioResultId, runStatus, summary, results, hierarchy, seedObjectives, techniqueNames, onOpenDetails, toggleRef,
 }: AtomicAttackGroupsSectionProps) {
   const styles = useScenarioRunPageStyles()
   const [sectionExpandedChoice, setSectionExpandedChoice] = useState<boolean | null>(null)
@@ -89,10 +86,6 @@ export default function AtomicAttackGroupsSection({
           {`${displayGroups.length.toLocaleString()} group${displayGroups.length === 1 ? '' : 's'}, ${executions.count.toLocaleString()} ${executions.exact ? '' : 'loaded '}execution${executions.count === 1 ? '' : 's'}`}
         </Text>
       </div>
-      {isAssertPolicy && <Text className={styles.sectionHint}>
-        New runs group baseline and technique executions by generated category; older runs keep their recorded grouping.
-        Category rates use judged relevance.
-      </Text>}
       <div id="atomic-groups-panel" hidden={!sectionExpanded}>
         {sectionExpanded && (
           <ScenarioResultHierarchy hierarchy={hierarchy} runStatus={runStatus}>
@@ -106,6 +99,7 @@ export default function AtomicAttackGroupsSection({
                     .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
                   const expanded = expandedGroupChoices.get(group.id) ?? defaultExpanded
                   const panelId = `atomic-group-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+                  const techniques = groupTechniques(group, techniqueNames)
                   return (
                     <article key={group.id} className={styles.displayGroup}>
                       <div className={styles.displayGroupSummary}>
@@ -120,9 +114,9 @@ export default function AtomicAttackGroupsSection({
                         />
                         <span className={styles.displayGroupIdentity}>
                           <Text size={400} weight="semibold">{group.display_group}</Text>
-                          {!isAssertPolicy && <Text size={200} className={styles.sectionHint}>
-                            {group.atomic_attack_names.join(', ')}
-                          </Text>}
+                          {techniques && techniques.toLowerCase() !== group.display_group.toLowerCase() && (
+                            <Text size={200} className={styles.sectionHint}>{techniques}</Text>
+                          )}
                         </span>
                         <span className={styles.displayGroupMetrics}>
                           <DisplayGroupMetric label="Completed" value={formatCompletion(group.completed, group.planned)} />
@@ -147,7 +141,6 @@ export default function AtomicAttackGroupsSection({
                             hierarchy={hierarchy}
                             seedObjectives={seedObjectives}
                             techniqueNames={techniqueNames}
-                            techniqueLabels={techniqueLabels}
                             onOpenDetails={onOpenDetails}
                             showTimestamp={false}
                             showConversationLink
@@ -175,6 +168,13 @@ function DisplayGroupMetric({ label, value }: { readonly label: string; readonly
       <Text weight="semibold">{value}</Text>
     </div>
   )
+}
+
+/** A group's distinct techniques, or its atomic attack names when the saved plan doesn't name every member. */
+function groupTechniques(group: ScenarioDisplayGroupProgress, techniqueNames: ReadonlyMap<string, string>): string {
+  const names = group.atomic_group_ids.map((atomicGroupId) => techniqueNames.get(atomicGroupId))
+  const known = names.filter((name): name is string => name !== undefined)
+  return [...new Set(known.length > 0 && known.length === names.length ? known : group.atomic_attack_names)].join(', ')
 }
 
 function formatCompletion(completed: number, planned: number | null): string {
