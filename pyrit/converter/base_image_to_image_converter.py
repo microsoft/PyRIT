@@ -112,35 +112,18 @@ class BaseImageToImageConverter(Converter, ABC):
         """
         Convert an image to RGB, or RGBA when it has transparency, unless it already is one of them.
 
+        An RGB image with a transparent color key counts as having transparency: it is converted
+        to RGBA so the color key becomes an alpha channel that transforms cannot silently drop.
+
         Args:
             image (PIL.Image.Image): The image to convert.
 
         Returns:
             PIL.Image.Image: The image in RGB or RGBA mode.
         """
-        if image.mode in ("RGB", "RGBA"):
+        if image.mode == "RGBA" or (image.mode == "RGB" and not image.has_transparency_data):
             return image
         return image.convert("RGBA" if image.has_transparency_data else "RGB")
-
-    @staticmethod
-    def _promote_color_key_to_alpha(image: Image.Image) -> Image.Image:
-        """
-        Convert an RGB image whose transparency is a color key to RGBA.
-
-        ``_convert_to_rgb_or_rgba`` returns an RGB image with a transparent color key
-        unchanged. A transform that changes pixel values can noise the key color or make
-        other pixels collide with it, so such transforms promote the key to an alpha
-        channel first. Transforms that only move pixels do not need this.
-
-        Args:
-            image (PIL.Image.Image): An image in RGB or RGBA mode.
-
-        Returns:
-            PIL.Image.Image: The image in RGBA mode when it had a color key, otherwise unchanged.
-        """
-        if image.mode == "RGB" and image.has_transparency_data:
-            return image.convert("RGBA")
-        return image
 
     def _transform_image(self, image: Image.Image, original_format: str) -> tuple[BytesIO, str]:
         """
