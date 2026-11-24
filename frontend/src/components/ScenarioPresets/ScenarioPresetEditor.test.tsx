@@ -2,11 +2,11 @@ import type { ReactNode } from 'react'
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { FluentProvider, Tab, TabList, webLightTheme } from '@fluentui/react-components'
 import { createMemoryRouter, RouterProvider, Link, useLocation, useNavigate } from 'react-router'
 
 import * as scenarioConfigForm from '@/components/Scenarios/scenarioConfigForm'
-import { scenarioPresetsApi, scenariosApi } from '@/services/api'
+import { datasetsApi, scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { deferred } from '@/test-utils/deferred'
 import { installRouterTestRequest } from '@/test-utils/routerRequest'
 import { makeScenario } from '@/test-utils/scenarioFixtures'
@@ -108,6 +108,19 @@ function RouterProbe(): ReactNode {
   )
 }
 
+// The app shell keeps a Fluent tab list mounted across routes. That keeps the
+// shared accessibility manager alive when a routed dialog unmounts, which is
+// what restores the background the dialog had hidden. The harness mirrors the
+// shell for that reason: with the dialog as the only holder, the manager is
+// disposed together with it and the restore can be lost.
+function AppShell(): ReactNode {
+  return (
+    <TabList defaultSelectedValue="presets" aria-label="Sections">
+      <Tab value="presets">Presets</Tab>
+    </TabList>
+  )
+}
+
 function buildPresetRouter(initialPath: string) {
   return createMemoryRouter([
     {
@@ -145,6 +158,7 @@ function renderCreate() {
     router,
     ...render(
       <FluentProvider theme={webLightTheme}>
+        <AppShell />
         <RouterProvider router={router} />
       </FluentProvider>,
     ),
@@ -157,6 +171,7 @@ function renderEdit(name = 'nightly_probe') {
     router,
     ...render(
       <FluentProvider theme={webLightTheme}>
+        <AppShell />
         <RouterProvider router={router} />
       </FluentProvider>,
     ),
@@ -578,8 +593,11 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
     const replacement = deferred<RegisteredScenario>()
     mockGetScenario.mockReturnValueOnce(replacement.promise)
     await selectScenario(user, REPLACEMENT_SCENARIO.scenario_name)
+    expect(screen.getByText('Loading scenario...')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(await screen.findByRole('dialog', { name: /discard/i })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Discard changes' }))
     expect(await screen.findByRole('heading', { name: 'Preset library' })).toBeInTheDocument()
     await act(async () => { replacement.resolve(REPLACEMENT_SCENARIO) })
 
@@ -596,21 +614,21 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
     )
     renderEdit()
     await user.type(await screen.findByTestId('preset-description-input'), ' Updated.')
+    const leave = screen.getByRole('button', { name: 'Leave editor' })
 
-    // A dialog teardown in an earlier test can leave the page aria-hidden in
-    // jsdom, so the probe button is queried with hidden elements included.
-    await user.click(screen.getByRole('button', { name: 'Leave editor', hidden: true }))
+    await user.click(leave)
     expect(await screen.findByRole('dialog', { name: /discard/i })).toBeInTheDocument()
     expect(screen.getByLabelText('Current URL')).toHaveTextContent(
       '/registry/scenario-presets/nightly_probe/edit',
     )
 
     await user.click(screen.getByRole('button', { name: 'Keep editing' }))
-    expect(screen.queryByRole('dialog', { name: /discard/i })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /discard/i })).not.toBeInTheDocument())
+    await waitFor(() => expect(leave).toHaveFocus())
 
-    await user.click(screen.getByRole('button', { name: 'Leave editor', hidden: true }))
+    await user.click(leave)
     await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
-    expect(await screen.findByLabelText('Current URL')).toHaveTextContent('/other')
+    expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
   })
 
   it('navigates to the library without a prompt after saving unsaved edits', async () => {
@@ -625,9 +643,11 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
     await user.click(scenarioCombo)
     await user.click(await screen.findByRole('option', { name: SCENARIO.scenario_name, exact: true }))
 
-    await user.click(await screen.findByRole('button', { name: 'Save preset' }))
+    const save = await screen.findByRole('button', { name: 'Save preset' })
+    await waitFor(() => expect(save).toBeEnabled())
+    await user.click(save)
 
-    expect(await screen.findByLabelText('Current URL')).toHaveTextContent('/registry/scenario-presets')
+    expect(await screen.findByRole('heading', { name: 'Preset library' })).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: /discard/i })).not.toBeInTheDocument()
     expect(mockCreate).toHaveBeenCalledTimes(1)
   })
@@ -647,15 +667,211 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
     mockUseNavigate.mockImplementation(
       jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
     )
+    const scenario = deferred<RegisteredScenario>()
+    mockGetScenario.mockReturnValueOnce(scenario.promise)
     renderEdit()
     await screen.findByTestId('preset-description-input')
+
+    // Untouched while the stored scenario is still loading.
+    const duringLoad = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(duringLoad)
+    expect(duringLoad.defaultPrevented).toBe(false)
+
+    // Untouched after the stored scenario has loaded.
+    scenario.resolve(SCENARIO)
+    expect(await screen.findByTestId('technique-crescendo')).toBeChecked()
+    await waitFor(() => expect(screen.queryByText('Loading scenario...')).not.toBeInTheDocument())
+    const afterLoad = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(afterLoad)
+    expect(afterLoad.defaultPrevented).toBe(false)
+
+    await user.click(screen.getByRole('button', { name: 'Leave editor' }))
+    expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
+  })
+
+  it('keeps the leave guard on while the stored scenario is still loading', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    mockGetScenario.mockReturnValueOnce(deferred<RegisteredScenario>().promise)
+    renderEdit()
+
+    const description = await screen.findByRole('textbox', { name: 'Description' })
+    expect(screen.getByText('Loading scenario...')).toBeInTheDocument()
+    await user.type(description, 'Typed while the scenario loads.')
+
+    const event = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(await screen.findByRole('dialog', { name: /discard/i })).toBeInTheDocument()
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(
+      '/registry/scenario-presets/nightly_probe/edit',
+    )
+  })
+
+  it('stays on the page chosen while a save was pending once the save completes', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    const saving = deferred<ScenarioPresetResponse>()
+    mockUpdate.mockReturnValueOnce(saving.promise)
+    renderEdit()
+
+    await user.type(await screen.findByRole('textbox', { name: 'Description' }), ' Updated.')
+    const save = screen.getByRole('button', { name: 'Save preset' })
+    await waitFor(() => expect(save).toBeEnabled())
+    await user.click(save)
+    expect(await screen.findByRole('button', { name: 'Saving...' })).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Leave editor' }))
+    expect(await screen.findByRole('dialog', { name: 'Leave while saving?' })).toHaveTextContent(
+      'The save continues after you leave. If it fails, you will not see the error.',
+    )
+    await user.click(screen.getByRole('button', { name: 'Leave' }))
+    expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
+
+    await act(async () => { saving.resolve({ preset: STORED_PRESET, version: 'v2', issues: [] }) })
+
+    expect(screen.getByRole('heading', { name: 'Other page' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Preset library' })).not.toBeInTheDocument()
+  })
+
+  it('keeps leave protection while a save is pending and after it is rejected', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    const saving = deferred<ScenarioPresetResponse>()
+    mockUpdate.mockReturnValueOnce(saving.promise)
+    renderEdit()
+
+    await user.type(await screen.findByTestId('preset-description-input'), ' Updated.')
+    const save = screen.getByRole('button', { name: 'Save preset' })
+    await waitFor(() => expect(save).toBeEnabled())
+    await user.click(save)
+
+    // The pending save dialog is found by role alone, because its wording
+    // differs from the discard dialog.
+    await user.click(screen.getByRole('button', { name: 'Leave editor' }))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(
+      '/registry/scenario-presets/nightly_probe/edit',
+    )
+    await user.keyboard('{Escape}')
+
+    await act(async () => { saving.reject(apiError(409, 'The preset changed since it was loaded.')) })
+    expect(await screen.findByText('The preset changed since it was loaded.')).toBeInTheDocument()
+    const event = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+
+    await user.click(await screen.findByRole('button', { name: 'Leave editor' }))
+    expect(await screen.findByRole('dialog', { name: /discard/i })).toBeInTheDocument()
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(
+      '/registry/scenario-presets/nightly_probe/edit',
+    )
+  })
+
+  it('does not treat the click order of a restored technique selection as an edit', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, techniques: ['crescendo', 'default_technique'] },
+      version: 'v1',
+      issues: [],
+    })
+    renderEdit()
+
+    const crescendo = await screen.findByTestId('technique-crescendo')
+    expect(crescendo).toBeChecked()
+    expect(screen.getByTestId('technique-default_technique')).toBeChecked()
+    await user.click(crescendo)
+    expect(crescendo).not.toBeChecked()
+    await user.click(crescendo)
+    expect(crescendo).toBeChecked()
 
     const event = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(event)
     expect(event.defaultPrevented).toBe(false)
-
     await user.click(screen.getByRole('button', { name: 'Leave editor' }))
     expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
+  })
+
+  it('does not treat the click order of a restored dataset selection as an edit', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, datasets: { sources: [{ name: 'harmbench' }, { name: 'xstest' }] } },
+      version: 'v1',
+      issues: [],
+    })
+    renderEdit()
+
+    const removeHarmbench = await screen.findByRole('button', { name: 'Remove harmbench' })
+    await user.click(removeHarmbench)
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    await user.click(await screen.findByRole('option', { name: 'harmbench (unknown)', exact: true }))
+    expect(await screen.findByRole('button', { name: 'Remove harmbench' })).toBeInTheDocument()
+
+    const event = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(false)
+    await user.click(screen.getByRole('button', { name: 'Leave editor' }))
+    expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
+  })
+
+  it('does not treat the click order of a restored filter selection as an edit', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    // Three harm categories across the two stored datasets, and a preset that keeps two of them.
+    const listedDatasets = datasetsApi.listDatasets as jest.Mock
+    const { items } = await datasetsApi.listDatasets({ loaded_only: false })
+    const defaultListing = listedDatasets.getMockImplementation()
+    listedDatasets.mockResolvedValue({
+      items: items.map((item) => ({
+        ...item,
+        harm_categories: item.name === 'harmbench' ? ['hate', 'violence'] : ['toxicity'],
+      })),
+    })
+    mockGet.mockResolvedValue({
+      preset: {
+        ...STORED_PRESET,
+        datasets: {
+          sources: [{ name: 'harmbench' }, { name: 'xstest' }],
+          filters: { harm_categories: ['hate', 'violence'] },
+        },
+      },
+      version: 'v1',
+      issues: [],
+    })
+    try {
+      renderEdit()
+
+      const hate = 'Filter harm category hate'
+      await screen.findByRole('button', { name: hate, pressed: true })
+      await user.click(screen.getByRole('button', { name: hate }))
+      await screen.findByRole('button', { name: hate, pressed: false })
+      await user.click(screen.getByRole('button', { name: hate }))
+      await screen.findByRole('button', { name: hate, pressed: true })
+
+      const event = new Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(false)
+      await user.click(screen.getByRole('button', { name: 'Leave editor' }))
+      expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
+    } finally {
+      listedDatasets.mockImplementation(defaultListing)
+    }
   })
 
   it('does not apply replacement metadata after unmount', async () => {
@@ -693,8 +909,8 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
     await act(async () => { saving.resolve({ preset: STORED_PRESET, version: 'v1', issues: [] }) })
 
     expect(mockCreate).toHaveBeenCalledTimes(1)
-    expect(mockNavigate).toHaveBeenCalledTimes(1)
-    expect(mockNavigate).toHaveBeenCalledWith('/registry/scenario-presets')
+    // The editor was left before the save finished, so its result must not redirect.
+    expect(mockNavigate).not.toHaveBeenCalled()
   })
 })
 
@@ -1406,6 +1622,7 @@ describe('ScenarioPresetEditor dynamic parameters', () => {
     ], { initialEntries: ['/registry/scenario-presets/first/edit'] })
     render(
       <FluentProvider theme={webLightTheme}>
+        <AppShell />
         <RouterProvider router={router} />
       </FluentProvider>,
     )
@@ -1414,12 +1631,12 @@ describe('ScenarioPresetEditor dynamic parameters', () => {
     await user.click(screen.getByRole('link', { name: 'Open second preset' }))
     expect(await screen.findByRole('dialog', { name: /discard/i })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Discard changes' }))
-    // The dialog teardown leaves the background aria-hidden in jsdom, so the
-    // reloaded editor is queried with hidden elements included.
     await waitFor(() =>
-      expect(screen.getByRole('textbox', { name: 'goals', hidden: true })).toHaveValue(' Next, goal ')
+      expect(screen.getByRole('textbox', { name: 'goals' })).toHaveValue(' Next, goal ')
     )
-    await user.click(screen.getByRole('button', { name: 'Save preset', hidden: true }))
+    const save = await screen.findByRole('button', { name: 'Save preset' })
+    await waitFor(() => expect(save).toBeEnabled())
+    await user.click(save)
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
       'second',

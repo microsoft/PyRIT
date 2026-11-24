@@ -35,6 +35,24 @@ function DialogWithTabs() {
   )
 }
 
+function DialogWithVanishingOpener() {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <>
+      {!open && <Button onClick={() => setOpen(true)}>Open dialog</Button>}
+      <ConfirmDialog
+        open={open}
+        title="Discard draft?"
+        onConfirm={() => setOpen(false)}
+        onCancel={() => setOpen(false)}
+      >
+        The draft will be lost.
+      </ConfirmDialog>
+    </>
+  )
+}
+
 describe('ConfirmDialog', () => {
   const defaultProps = {
     open: true,
@@ -126,5 +144,45 @@ describe('ConfirmDialog', () => {
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
       expect(await screen.findByRole('textbox', { name: 'Draft' })).toHaveValue('Unsaved draft')
     }
+  })
+
+  it('should return focus to the control that opened the dialog after Escape', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><DialogWithTabs /></TestWrapper>)
+
+    const opener = screen.getByRole('button', { name: 'Open dialog' })
+    await user.click(opener)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus())
+
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open dialog' })).toHaveFocus())
+  })
+
+  it('should return focus to the control that opened the dialog after its cancel button', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><DialogWithTabs /></TestWrapper>)
+
+    await user.click(screen.getByRole('button', { name: 'Open dialog' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus())
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open dialog' })).toHaveFocus())
+  })
+
+  it('should still close cleanly when the control that opened the dialog is gone', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><DialogWithVanishingOpener /></TestWrapper>)
+
+    await user.click(screen.getByRole('button', { name: 'Open dialog' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus())
+
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    expect(await screen.findByRole('button', { name: 'Open dialog' })).toBeInTheDocument()
   })
 })

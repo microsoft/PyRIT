@@ -71,7 +71,31 @@ interface PresetDraft {
   config: ScenarioConfigFormState | null
 }
 
-const presetDraftSignature = (draft: PresetDraft): string => JSON.stringify(draft)
+// Techniques, dataset sources and filter values are selections, and their
+// controls append in click order, so restoring a removed item must not read
+// as an edit. Only the comparison uses the sorted copies; the draft itself
+// keeps the order the operator produced.
+const presetDraftSignature = (draft: PresetDraft): string => {
+  const { config } = draft
+  if (!config) {
+    return JSON.stringify(draft)
+  }
+  const { datasets } = config
+  return JSON.stringify({
+    ...draft,
+    config: {
+      ...config,
+      techniques: [...config.techniques].sort(),
+      datasets: {
+        ...datasets,
+        sources: [...(datasets.sources ?? [])].sort((first, second) => first.name.localeCompare(second.name)),
+        filters: Object.fromEntries(
+          Object.entries(datasets.filters ?? {}).map(([key, values]) => [key, [...values].sort()]),
+        ),
+      },
+    },
+  })
+}
 
 export default function ScenarioPresetEditor({ mode }: { mode: 'create' | 'edit' }) {
   const { presetName } = useParams<{ presetName: string }>()
@@ -90,6 +114,13 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   const navigate = useNavigate()
   const decodedName = presetName === undefined ? '' : routerPathParamValue(presetName)
   const allowNavigation = useRef(false)
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   const [status, setStatus] = useState<LoadStatus>('loading')
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -147,6 +178,17 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
         setShowInScanner(response.preset.show_in_scanner !== false)
         setSelectedScenarioName(response.preset.scenario_name)
         setScenarioLoading(true)
+        // The stored fields are the baseline for the leave guard as soon as
+        // they are on screen. The configuration joins the baseline once it has
+        // loaded; until then neither side holds one, so an untouched editor
+        // stays clean while a typed edit is already protected.
+        setSavedDraft({
+          name: response.preset.name,
+          description: response.preset.description ?? '',
+          showInScanner: response.preset.show_in_scanner !== false,
+          scenarioName: response.preset.scenario_name,
+          config: null,
+        })
         setStatus('ready')
 
         // The list endpoint omits run-size estimates, so the preset's scenario is
@@ -157,26 +199,14 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
         try {
           const full = await scenariosApi.getScenario(response.preset.scenario_name)
           if (cancelled) return
+          const hydrated = presetToConfigState(full, response.preset)
           setScenario(full)
-          setConfig(presetToConfigState(full, response.preset))
+          setConfig(hydrated)
           setResolvedScenarioRequestSequence(scenarioRequestSequence.current)
-          setSavedDraft({
-            name: response.preset.name,
-            description: response.preset.description ?? '',
-            showInScanner: response.preset.show_in_scanner !== false,
-            scenarioName: response.preset.scenario_name,
-            config: presetToConfigState(full, response.preset),
-          })
+          setSavedDraft((previous) => ({ ...previous, config: hydrated }))
         } catch (scenarioErr) {
           if (cancelled) return
           setScenarioUnavailable(toApiError(scenarioErr).detail)
-          setSavedDraft({
-            name: response.preset.name,
-            description: response.preset.description ?? '',
-            showInScanner: response.preset.show_in_scanner !== false,
-            scenarioName: response.preset.scenario_name,
-            config: null,
-          })
         } finally {
           if (!cancelled) {
             setScenarioLoading(false)
@@ -204,7 +234,6 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   }
   const hasUnsavedChanges = status === 'ready'
     && !readOnly
-    && !scenarioLoading
     && presetDraftSignature(currentDraft) !== presetDraftSignature(savedDraft)
   const shouldBlockNavigation = useCallback(
     (): boolean => hasUnsavedChanges && !allowNavigation.current,
@@ -377,7 +406,11 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
         await scenarioPresetsApi.update(loaded.preset.name, preset, loaded.version)
       }
       allowNavigation.current = true
-      navigate(PRESETS_ROUTE)
+      // A router navigate keeps working after unmount, so a save that finishes
+      // once the operator has left must not pull them to the library.
+      if (mounted.current) {
+        navigate(PRESETS_ROUTE)
+      }
     } catch (err) {
       setSaveError(toApiError(err).detail)
       setSaving(false)
@@ -617,13 +650,15 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
 
       <ConfirmDialog
         open={blocker.state === 'blocked'}
-        title="Discard unsaved changes?"
-        confirmLabel="Discard changes"
-        cancelLabel="Keep editing"
+        title={saving ? 'Leave while saving?' : 'Discard unsaved changes?'}
+        confirmLabel={saving ? 'Leave' : 'Discard changes'}
+        cancelLabel={saving ? 'Stay' : 'Keep editing'}
         onConfirm={discardAndLeave}
         onCancel={keepEditing}
       >
-        Your unsaved preset changes will be lost if you continue.
+        {saving
+          ? 'The save continues after you leave. If it fails, you will not see the error.'
+          : 'Your unsaved preset changes will be lost if you continue.'}
       </ConfirmDialog>
     </section>
   )
