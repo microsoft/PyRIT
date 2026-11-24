@@ -198,7 +198,7 @@ class TechniqueService:
         try:
             await asyncio.to_thread(self._registry.instances.check_runtime_available, factory)
         except TechniqueSelectorConflictError as error:
-            raise SavedEntryConflictError(str(error)) from error
+            raise SavedEntryConflictError(str(error), field=error.field) from error
         result = await asyncio.to_thread(
             technique_to_instance, name=request.name, factory=factory, origin=RegistryEntryOrigin.SAVED
         )

@@ -1113,21 +1113,25 @@ async def test_reports_technique_storage_failures_as_unavailable(
     assert saving_catalog.instances.get("base64_send") is None
 
 
-async def test_deletes_the_saved_file_when_another_technique_takes_the_name_first(
-    saving_catalog: AttackTechniqueRegistry, tmp_path: Path
+@pytest.mark.parametrize(("taken_first", "field"), [("base64_send", "name"), ("encoded", "tags")])
+async def test_deletes_the_saved_file_when_another_technique_takes_the_name_or_a_tag_first(
+    saving_catalog: AttackTechniqueRegistry, tmp_path: Path, taken_first: str, field: str
 ) -> None:
     register_runtime = saving_catalog.instances.register_runtime
 
     def register_another_first(factory: AttackTechniqueFactory, *, metadata: dict[str, Any] | None = None) -> None:
-        register_runtime(AttackTechniqueFactory(name="base64_send", attack_class=PromptSendingAttack))
+        register_runtime(AttackTechniqueFactory(name=taken_first, attack_class=PromptSendingAttack))
         register_runtime(factory, metadata=metadata)
 
     with (
         patch.object(saving_catalog.instances, "register_runtime", side_effect=register_another_first),
-        pytest.raises(SavedEntryConflictError, match="already exists"),
+        pytest.raises(SavedEntryConflictError) as conflict,
     ):
-        await TechniqueService().create_async(request=_persist_technique("base64_send"), recipes_source=str(tmp_path))
+        await TechniqueService().create_async(
+            request=_persist_technique("base64_send", tags=["encoded"]), recipes_source=str(tmp_path)
+        )
 
+    assert conflict.value.field == field
     assert not (tmp_path / "techniques" / "base64_send.json").exists()
 
 
@@ -1168,6 +1172,7 @@ def test_rest_create_with_persist_saves_or_explains_why_it_cant(
         created = client.post("/api/techniques", json=body)
         refused = client.post("/api/techniques", json={**body, "name": "rot13_send", "request_converters": ["rot13"]})
         clashing = client.post("/api/techniques", json={**body, "name": startup_name})
+        tag_clashing = client.post("/api/techniques", json={**body, "name": "tagged_send", "tags": [startup_name]})
         invalid = client.post("/api/techniques", json={**body, "name": "Base64Send"})
         listed = client.get("/api/techniques", params={"limit": 200})
 
@@ -1188,6 +1193,12 @@ def test_rest_create_with_persist_saves_or_explains_why_it_cant(
         "not_saveable_reason": "Uses temporary converter 'rot13', which won't exist after a restart.",
     }
     assert clashing.status_code == 409
+    assert clashing.json()["errors"] == [{"field": "body.name", "message": clashing.json()["detail"]}]
+    assert tag_clashing.status_code == 409
+    assert tag_clashing.json() == {
+        "detail": f"Tag '{startup_name}' conflicts with a technique name",
+        "errors": [{"field": "body.tags", "message": f"Tag '{startup_name}' conflicts with a technique name"}],
+    }
     assert invalid.status_code == 422
     assert sorted(path.name for path in (tmp_path / "techniques").glob("*.json")) == ["base64_send.json"]
 

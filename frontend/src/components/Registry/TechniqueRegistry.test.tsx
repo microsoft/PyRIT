@@ -522,8 +522,9 @@ describe('TechniqueRegistry', () => {
   })
 
   it('shows a taken name on the name field and needs a lowercase name to save', async () => {
+    const taken = "Technique 'first' already exists (names are case-insensitive)"
     techniques.createTechnique.mockRejectedValueOnce(
-      axiosError(409, { detail: "Technique 'first' already exists (names are case-insensitive)" }),
+      axiosError(409, { detail: taken, errors: [{ field: 'body.name', message: taken }] }),
     )
     render(tree())
     const user = await openCreate()
@@ -547,26 +548,45 @@ describe('TechniqueRegistry', () => {
     expect(screen.getByRole('button', { name: 'Save technique' })).toBeEnabled()
   })
 
-  it('lets a taken tag be changed and saved again', async () => {
+  it('shows a taken tag on Tags and lets it be changed and saved again', async () => {
+    const taken = "Tag 'first' conflicts with a technique name"
     techniques.createTechnique.mockRejectedValueOnce(
-      axiosError(409, { detail: "Tag 'first' conflicts with technique 'first'" }),
+      axiosError(409, { detail: taken, errors: [{ field: 'body.tags', message: taken }] }),
     )
     render(tree())
     const user = await openCreate()
-    await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'fresh')
+    const name = screen.getByRole('textbox', { name: 'Registry name' })
+    await user.type(name, 'fresh')
     const tags = screen.getByRole('textbox', { name: 'Tags' })
     await user.type(tags, 'first')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
     await user.click(screen.getByRole('button', { name: 'Save technique' }))
-    expect(await screen.findByText("Tag 'first' conflicts with technique 'first'")).toBeInTheDocument()
+    await waitFor(() => expect(tags).toHaveAccessibleDescription(expect.stringContaining(taken)))
+    expect(tags).toHaveAttribute('aria-invalid', 'true')
+    expect(name).not.toHaveAccessibleDescription(expect.stringContaining(taken))
+    expect(name).not.toHaveAttribute('aria-invalid', 'true')
     expect(screen.getByRole('button', { name: 'Save technique' })).toBeDisabled()
 
     await user.clear(tags)
     await user.type(tags, 'single_turn')
-    expect(screen.queryByText("Tag 'first' conflicts with technique 'first'")).not.toBeInTheDocument()
+    expect(screen.queryByText(taken)).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Save technique' }))
 
     await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(2))
     expect(techniques.createTechnique.mock.calls[1][0]).toMatchObject({ name: 'fresh', tags: ['single_turn'] })
+  })
+
+  it('shows a conflict that names no field above the form', async () => {
+    const taken = "The technique name or tag 'fresh' is taken."
+    techniques.createTechnique.mockRejectedValueOnce(axiosError(409, { detail: taken }))
+    render(tree())
+    const user = await openCreate()
+    const name = screen.getByRole('textbox', { name: 'Registry name' })
+    await user.type(name, 'fresh')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
+    await user.click(screen.getByRole('button', { name: 'Save technique' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(taken)
+    expect(name).not.toHaveAccessibleDescription(expect.stringContaining(taken))
   })
 })

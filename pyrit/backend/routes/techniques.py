@@ -137,7 +137,10 @@ async def validate_technique_edit_async(name: IdentifierStr, request: TechniqueO
         },
         409: {
             "model": ProblemDetail,
-            "description": "A technique to save has the name or a tag of a registered technique",
+            "description": (
+                "A technique to save has the name or a tag of a registered technique; `errors` names the field, "
+                "`body.name` or `body.tags`"
+            ),
         },
         503: {"model": ProblemDetail, "description": "Saved techniques can't be written right now"},
     },
@@ -148,7 +151,7 @@ async def create_technique_async(*, body: CreateTechniqueRequest, request: Reque
 
     Returns:
         TechniqueInstance | JSONResponse: The admitted factory, or the problem response for a technique that can't
-            be saved as asked.
+            be saved as asked or whose name or tag conflicts with a registered technique.
     """
     try:
         return await get_technique_service().create_async(
@@ -159,7 +162,11 @@ async def create_technique_async(*, body: CreateTechniqueRequest, request: Reque
     except NotSaveableError as exc:
         return not_saveable_response(error=exc, request=request)
     except SavedEntryConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        # Says whether the name or a tag conflicts, so the editor can show it on that field.
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": str(exc), "errors": [{"field": f"body.{exc.field}", "message": str(exc)}]},
+        )
     except SavedEntryStorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except PermissionError as exc:

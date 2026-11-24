@@ -15,6 +15,7 @@ from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.registry import AttackTechniqueRegistry, Registry, TargetRegistry
+from pyrit.registry.components.attack_technique_registry import TechniqueSelectorConflictError
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
     SavedEntryReplacementError,
@@ -408,6 +409,24 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
                 self.registry.instances.register_runtime(AttackTechniqueFactory(attack_class=_StubAttack, **clash))
 
         assert refusals == [("techniques", "formal")]
+
+    @pytest.mark.parametrize(
+        ("clash", "field"),
+        [
+            ({"name": "FORMAL"}, "name"),
+            ({"name": "custom"}, "name"),
+            ({"name": "other", "technique_tags": ["formal"]}, "tags"),
+            ({"name": "other", "technique_tags": ["Custom"]}, "tags"),
+        ],
+    )
+    def test_register_runtime_says_whether_the_name_or_a_tag_conflicts(self, clash: dict[str, Any], field: str) -> None:
+        startup = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(startup)
+
+        with pytest.raises(TechniqueSelectorConflictError) as conflict:
+            self.registry.instances.register_runtime(AttackTechniqueFactory(attack_class=_StubAttack, **clash))
+
+        assert conflict.value.field == field
 
     def test_register_runtime_records_no_tag_clash_with_a_startup_technique(self) -> None:
         startup = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])

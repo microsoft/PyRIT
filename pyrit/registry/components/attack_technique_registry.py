@@ -24,7 +24,7 @@ import logging
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import lru_cache, wraps
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from weakref import WeakSet
 
 from pydantic import ValidationError
@@ -176,6 +176,17 @@ class TechniqueSelectorConflictError(RegistryNameTakenError):
     Names and tags both select techniques, so either one counts as taken.
     """
 
+    def __init__(self, message: str, *, field: Literal["name", "tags"]) -> None:
+        """
+        Initialize the error with what conflicts.
+
+        Args:
+            message (str): What conflicts, in words safe to show users.
+            field (Literal["name", "tags"]): Whether the technique's name or one of its tags conflicts.
+        """
+        super().__init__(message)
+        self.field = field
+
 
 class TechniqueAdmissionError(ValueError):
     """A technique can't be registered for a reason of its own, such as a name a scenario can't use."""
@@ -247,25 +258,31 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
             # A clash with a technique the caller can't see says only that the selector is taken.
             folded_name = factory.name.casefold()
             if folded_name in hidden_names or folded_name in hidden_tags:
-                raise TechniqueSelectorConflictError(f"The technique name or tag '{factory.name}' is taken.")
+                raise TechniqueSelectorConflictError(
+                    f"The technique name or tag '{factory.name}' is taken.", field="name"
+                )
             for tag in factory.technique_tags:
                 folded = tag.casefold()
                 if folded in hidden_names or hidden_tags.get(folded, tag) != tag:
-                    raise TechniqueSelectorConflictError(f"The technique name or tag '{tag}' is taken.")
+                    raise TechniqueSelectorConflictError(f"The technique name or tag '{tag}' is taken.", field="tags")
             if folded_name in names:
                 raise TechniqueSelectorConflictError(
-                    f"Technique '{factory.name}' already exists (names are case-insensitive)"
+                    f"Technique '{factory.name}' already exists (names are case-insensitive)", field="name"
                 )
             if folded_name in tags:
-                raise TechniqueSelectorConflictError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
+                raise TechniqueSelectorConflictError(
+                    f"Technique name '{factory.name}' conflicts with an aggregate tag", field="name"
+                )
             for tag in factory.technique_tags:
                 folded = tag.casefold()
                 if folded == folded_name:
                     raise TechniqueAdmissionError(f"Tag '{tag}' repeats the technique's name")
                 if folded in names:
-                    raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name")
+                    raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name", field="tags")
                 if folded in tags and tags[folded] != tag:
-                    raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
+                    raise TechniqueSelectorConflictError(
+                        f"Tag '{tag}' conflicts with tag '{tags[folded]}'", field="tags"
+                    )
         except TechniqueSelectorConflictError:
             # Code that catches the error would leave a saved technique standing in, so the clash is recorded.
             for entry in saved_clashes:

@@ -17,7 +17,7 @@ import asyncio
 import inspect
 import logging
 import traceback
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.common.azure_storage import redact_urls
@@ -62,7 +62,19 @@ class NotSaveableError(ValueError):
 
 
 class SavedEntryConflictError(ValueError):
-    """An entry can't be saved under a name that a registered or saved entry of its kind already has."""
+    """An entry can't be saved under a name, or a technique with a tag, that a registered or saved entry has."""
+
+    def __init__(self, message: str, *, field: Literal["name", "tags"] = "name") -> None:
+        """
+        Initialize the error with what conflicts.
+
+        Args:
+            message (str): What conflicts, in words safe to show users.
+            field (Literal["name", "tags"]): Whether the entry's name or, for a technique, one of its tags
+                conflicts. Defaults to "name".
+        """
+        super().__init__(message)
+        self.field = field
 
 
 class SavedEntryStorageError(RuntimeError):
@@ -516,7 +528,7 @@ async def _save_then_register_async(
         if not await _delete_recipe_async(storage=storage, singular=singular, name=name, version=version):
             raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
         if isinstance(error, RegistryNameTakenError):
-            raise SavedEntryConflictError(str(error)) from error
+            raise SavedEntryConflictError(str(error), field=error.field) from error
         raise
 
 

@@ -761,7 +761,8 @@ name, is saved under `registry_recipes_source` with the signed-in user recorded,
 at every start. A request receives **400** with `"type": "/errors/not-saveable"`, and can be sent again without
 `persist`, if its attack type was added by a scan's launch scripts, or a converter or the adversarial target it names
 is Temporary. A name or tag that clashes with a
-registered technique receives **409**, and storage that can't be written receives **503**. Each listed technique's
+registered technique receives **409**, whose `errors` names the field that clashes, `body.name` or `body.tags`, and
+storage that can't be written receives **503**. Each listed technique's
 `origin` is `saved`, `configuration` (registered by a startup script), or `temporary`, as for targets. Settings
 changed for a single run aren't saved.
 
