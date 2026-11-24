@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from pyrit.converter.flip_converter import FlipConverter
     from pyrit.converter.fullwidth_converter import FullwidthConverter
     from pyrit.converter.grid_composite_converter import GridCompositeConverter
+    from pyrit.converter.image_blur_converter import ImageBlurConverter
     from pyrit.converter.image_color_saturation_converter import ImageColorSaturationConverter
     from pyrit.converter.image_compression_converter import ImageCompressionConverter
     from pyrit.converter.image_overlay_converter import ImageOverlayConverter
@@ -199,6 +200,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FlipConverter": "pyrit.converter.flip_converter",
     "FullwidthConverter": "pyrit.converter.fullwidth_converter",
     "GridCompositeConverter": "pyrit.converter.grid_composite_converter",
+    "ImageBlurConverter": "pyrit.converter.image_blur_converter",
     "ImageColorSaturationConverter": "pyrit.converter.image_color_saturation_converter",
     "ImageCompressionConverter": "pyrit.converter.image_compression_converter",
     "ImageOverlayConverter": "pyrit.converter.image_overlay_converter",
