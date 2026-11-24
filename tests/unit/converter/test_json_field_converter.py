@@ -173,8 +173,13 @@ async def test_rejects_documents_the_pointer_cannot_convert(prompt: str, json_po
 async def test_rejects_documents_too_deep_to_parse():
     converter = JsonFieldConverter(sub_converter=_UpperConverter(), json_pointer="/state")
 
-    with pytest.raises(ValueError, match="requires a JSON document"):
-        await converter.convert_async(prompt="[" * 100_000 + "]" * 100_000)
+    # Forced, because Python 3.14 limits nesting by the real stack size: a 100,000-deep document
+    # raises RecursionError with an 8 MB stack but parses on CI runners with a larger one.
+    with (
+        patch.object(json, "loads", side_effect=RecursionError("too deep")),
+        pytest.raises(ValueError, match="requires a JSON document: too deep"),
+    ):
+        await converter.convert_async(prompt=_REQUEST)
 
 
 async def test_reports_the_escaped_path_of_a_missing_key():
