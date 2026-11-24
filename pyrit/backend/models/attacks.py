@@ -861,11 +861,6 @@ class AddMessageRequest(MessageRequest):
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
     target_binding: TargetBindingInput | None = None
-    converter_ids: list[IdentifierStr] | None = Field(
-        None,
-        max_length=MAX_ITEMS,
-        description="Deprecated global request converter pipeline. Use request_converter_configurations instead.",
-    )
     request_converter_configurations: list[ConverterConfigurationRequest] | None = Field(
         None,
         min_length=1,
@@ -896,6 +891,27 @@ class AddMessageRequest(MessageRequest):
         "Usually the attack's main conversation, but can be a related conversation.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_converter_ids(cls, data: Any) -> Any:
+        """
+        Reject the removed top-level ``converter_ids`` field instead of silently ignoring it.
+
+        Unknown fields are otherwise ignored, so a client still sending ``converter_ids``
+        would have its message sent without converters and without any error.
+
+        Returns:
+            The unchanged model input.
+
+        Raises:
+            ValueError: If the input has a top-level ``converter_ids`` field.
+        """
+        if isinstance(data, dict) and "converter_ids" in data:
+            raise ValueError(
+                "converter_ids is no longer supported on this request; use request_converter_configurations instead"
+            )
+        return data
+
     @model_validator(mode="after")
     def _validate_converter_configurations(self) -> "AddMessageRequest":
         """
@@ -909,11 +925,8 @@ class AddMessageRequest(MessageRequest):
         """
         if any(piece.source_piece_id is not None for piece in self.pieces):
             raise ValueError("source_piece_id requires a complete conversation save")
-        if self.converter_ids and self.request_converter_configurations:
-            raise ValueError("converter_ids and request_converter_configurations cannot both be provided")
-
         has_converter_configurations = bool(
-            self.converter_ids or self.request_converter_configurations or self.response_converter_configurations
+            self.request_converter_configurations or self.response_converter_configurations
         )
         if not self.send and has_converter_configurations:
             raise ValueError("Converter configurations require send=True")

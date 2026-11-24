@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from starlette.requests import Request
 
 import pyrit.backend.services.runtime_lifecycle as lifecycle_module
+from pyrit.auth import caller_principal_scope, get_caller_principal
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
@@ -27,6 +28,7 @@ from pyrit.backend.routes import configuration, health, targets
 from pyrit.backend.services import ScenarioRunService, get_converter_service, get_target_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
+from pyrit.backend.services.prompt_generation_service import PromptGenerationService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.scenario_run_service import _PreparedRun
 from pyrit.backend.services.scorer_service import get_scorer_service
@@ -106,6 +108,21 @@ async def apply_async(runtime: RuntimeLifecycle) -> None:
     assert result["outcome"] == "accepted"
     assert runtime.apply_task is not None
     await runtime.apply_task
+
+
+async def test_live_apply_runs_as_the_server_not_the_requesting_admin_async(*, runtime: RuntimeLifecycle) -> None:
+    seen: list[str | None] = []
+
+    async def apply_async(*, version: str) -> None:
+        seen.append(get_caller_principal())
+
+    _, version = await runtime.source.read_with_version_async()
+    with patch.object(runtime, "_apply_async", side_effect=apply_async), caller_principal_scope("admin"):
+        assert runtime.begin_apply(version=version)["outcome"] == "accepted"
+        assert runtime.apply_task is not None
+        await runtime.apply_task
+
+    assert seen == [None]
 
 
 @pytest.mark.parametrize("state", ["initializing", "ready", "failed", "restart-required", None])
@@ -404,6 +421,17 @@ async def test_active_suite_submission_rejects_apply_without_mutating(runtime: R
     service = MagicMock()
     service.has_active_work.return_value = True
     with patch.object(lifecycle_module, "peek_scenario_suite_execution_service", return_value=service):
+        await apply_async(runtime)
+
+    assert runtime.outcome == "busy"
+    assert runtime.state == "ready"
+    lifecycle_module.close_services_async.assert_not_awaited()
+
+
+async def test_active_prompt_generation_rejects_apply_without_mutating(runtime: RuntimeLifecycle) -> None:
+    service = MagicMock(spec=PromptGenerationService)
+    service.has_active_work.return_value = True
+    with patch.object(lifecycle_module, "peek_prompt_generation_service", return_value=service):
         await apply_async(runtime)
 
     assert runtime.outcome == "busy"
