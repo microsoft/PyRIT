@@ -7,7 +7,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from pyrit.backend.models.common import IdentifierStr, PaginationInfo, TextStr
+from pyrit.backend.models.common import FieldError, IdentifierStr, PaginationInfo, TextStr
 from pyrit.models import ComponentIdentifier, Parameter, validate_registry_name
 from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.models.request_limits import MAX_ITEMS
@@ -146,3 +146,10 @@ class CreateTechniqueRequest(TechniqueParametersRequest):
 
 class TechniqueSaveabilityRequest(TechniqueParametersRequest):
     """A technique to check, as a create request would give it, without building or saving it."""
+
+
+class TechniqueConflictResponse(BaseModel):
+    """A technique to save whose name or tag is taken, with the field that clashes."""
+
+    detail: str = Field(..., description="What clashes")
+    errors: list[FieldError] = Field(..., description="The field that clashes: body.name or body.tags")

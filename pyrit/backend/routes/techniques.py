@@ -9,10 +9,11 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
 from pyrit.backend.models import ProblemDetail
-from pyrit.backend.models.common import CursorStr, IdentifierStr, SaveabilityResponse
+from pyrit.backend.models.common import CursorStr, FieldError, IdentifierStr, SaveabilityResponse
 from pyrit.backend.models.techniques import (
     CreateTechniqueRequest,
     TechniqueConfiguration,
+    TechniqueConflictResponse,
     TechniqueEditResponse,
     TechniqueInstance,
     TechniqueListResponse,
@@ -136,11 +137,8 @@ async def validate_technique_edit_async(name: IdentifierStr, request: TechniqueO
             ),
         },
         409: {
-            "model": ProblemDetail,
-            "description": (
-                "A technique to save has the name or a tag of a registered technique; `errors` names the field, "
-                "`body.name` or `body.tags`"
-            ),
+            "model": TechniqueConflictResponse,
+            "description": "A technique to save has the name or a tag of a registered technique",
         },
         503: {"model": ProblemDetail, "description": "Saved techniques can't be written right now"},
     },
@@ -163,10 +161,10 @@ async def create_technique_async(*, body: CreateTechniqueRequest, request: Reque
         return not_saveable_response(error=exc, request=request)
     except SavedEntryConflictError as exc:
         # Says whether the name or a tag conflicts, so the editor can show it on that field.
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content={"detail": str(exc), "errors": [{"field": f"body.{exc.field}", "message": str(exc)}]},
+        conflict = TechniqueConflictResponse(
+            detail=str(exc), errors=[FieldError(field=f"body.{exc.field}", message=str(exc))]
         )
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=conflict.model_dump(exclude_none=True))
     except SavedEntryStorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except PermissionError as exc:
