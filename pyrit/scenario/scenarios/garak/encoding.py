@@ -450,11 +450,12 @@ class Encoding(Scenario):
         """
         Return the seed groups one converter variant attacks.
 
-        ``AsciiSmugglerConverter`` replaces characters such as curly quotes, dashes and newlines with
-        ASCII equivalents before encoding, so a target that decodes it correctly answers with that ASCII
-        text. Its variant gets copies of the seed groups whose prompts carry that text as ``decoded_text``
-        metadata, which ``DecodingScorer`` accepts alongside the original value. Other variants and the
-        baseline keep the shared groups, so their scoring still requires the exact original text.
+        A converter may expose ``to_ascii_equivalent`` when it replaces characters before encoding, as
+        ``AsciiSmugglerConverter`` does with curly quotes, dashes and newlines, so a target that decodes it
+        correctly answers with that replaced text. Such a variant gets copies of the seed groups whose prompts
+        carry that text as ``decoded_text`` metadata, which ``DecodingScorer`` accepts alongside the original
+        value. Other variants and the baseline keep the shared groups, so their scoring still requires the
+        exact original text.
 
         Args:
             converters (Sequence[Converter]): The converters this variant applies.
@@ -463,7 +464,15 @@ class Encoding(Scenario):
         Returns:
             list[AttackSeedGroup]: The seed groups for this variant's atomic attacks.
         """
-        if not any(isinstance(converter, AsciiSmugglerConverter) for converter in converters):
+        fold = next(
+            (
+                to_ascii_equivalent
+                for converter in converters
+                if (to_ascii_equivalent := getattr(converter, "to_ascii_equivalent", None)) is not None
+            ),
+            None,
+        )
+        if fold is None:
             return list(seed_groups)
 
         variant_seed_groups = []
@@ -472,7 +481,7 @@ class Encoding(Scenario):
             for prompt in copied_group.prompts:
                 if prompt.data_type != "text":
                     continue
-                ascii_value = AsciiSmugglerConverter.to_ascii_equivalent(text=prompt.value)
+                ascii_value = fold(text=prompt.value)
                 if ascii_value is not None and ascii_value != prompt.value:
                     prompt.metadata = {**(prompt.metadata or {}), "decoded_text": ascii_value}
             variant_seed_groups.append(copied_group)
