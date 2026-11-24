@@ -185,8 +185,8 @@ class ToolArgumentRequirement(BaseModel):
     One argument a tool call must have been made with, compared by a text matcher.
 
     ``name`` is an exact, case-sensitive top-level argument key, or a dotted path of object keys
-    into a nested argument, such as ``recipient.email``. A path does not index arrays and cannot
-    name a key that itself contains a dot. A string value is compared as it is; any other JSON
+    into a nested argument, such as ``recipient.email``. A top-level key that is exactly the whole
+    name is read first, and a path does not index arrays. A string value is compared as it is; any other JSON
     value is compared as its compact JSON text, with sorted keys.
     """
 
@@ -504,3 +504,29 @@ ConditionTuple = Annotated[
     BeforeValidator(_parse_conditions),
     _ConditionTupleSchema(),
 ]
+
+
+class _PersistedConditions(BaseModel):
+    """Carry a stored condition list through the same validation a seed gives it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    conditions: ConditionTuple
+
+
+def validate_persisted_conditions(value: Any) -> tuple[Condition, ...]:
+    """
+    Validate a condition list read back from storage.
+
+    Stored conditions keep the meaning they were saved with, so a rule added since, such as
+    argument names being paths, does not reject them.
+
+    Args:
+        value (Any): The stored condition list.
+
+    Returns:
+        tuple[Condition, ...]: The validated conditions, in stored order.
+    """
+    return _PersistedConditions.model_validate(
+        {"conditions": value}, context={_PERSISTED_VALIDATION_CONTEXT: True}
+    ).conditions

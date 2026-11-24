@@ -370,7 +370,8 @@ async def test_a_tool_that_never_ran_is_reported_as_not_executed_async(sqlite_in
         ({"recipient": {"email": "a@example.com"}}, ScoreStatus.COMPLETE),
         ({"recipient": {"email": "b@example.com"}}, ScoreStatus.UNDETERMINED),
         ({"recipient": "a@example.com"}, ScoreStatus.UNDETERMINED),
-        ({"recipient.email": "a@example.com"}, ScoreStatus.UNDETERMINED),
+        ({"recipient.email": "a@example.com"}, ScoreStatus.COMPLETE),
+        ({"recipient.email": "b@example.com", "recipient": {"email": "a@example.com"}}, ScoreStatus.UNDETERMINED),
     ],
 )
 async def test_a_dotted_argument_name_reads_the_nested_stored_argument_async(

@@ -119,7 +119,8 @@ def test_requirement_description_names_constrained_arguments() -> None:
         ({"recipient": "a@example.com"}, False),
         ({"recipient": [{"email": "a@example.com"}]}, False),
         ({"recipient": None}, False),
-        ({"recipient.email": "a@example.com"}, False),
+        ({"recipient.email": "a@example.com"}, True),
+        ({"recipient.email": "b@example.com", "recipient": {"email": "a@example.com"}}, False),
         ({}, False),
     ],
 )

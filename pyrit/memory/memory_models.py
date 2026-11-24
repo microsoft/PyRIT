@@ -92,6 +92,7 @@ from pyrit.models import (
 )
 from pyrit.models.operation import operation_name_key
 from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
+from pyrit.models.score.condition import validate_persisted_conditions
 
 logger = logging.getLogger(__name__)
 
@@ -2057,7 +2058,7 @@ class SeedEntry(Base):
             sequence=self.sequence,
             role=self.role,
             parameters=self.parameters,
-            conditions=self.conditions,
+            conditions=validate_persisted_conditions(self.conditions) if self.conditions is not None else None,
             response_json_schema=response_json_schema,
             is_general_technique=self.is_general_technique,
             parent_objective_id=self.parent_objective_id,
@@ -2107,7 +2108,7 @@ class SeedEntry(Base):
                 added_by=self.added_by,
                 metadata=cleaned_metadata,
                 prompt_group_id=self.prompt_group_id,
-                conditions=self.conditions if self.conditions is not None else (),
+                conditions=validate_persisted_conditions(self.conditions) if self.conditions is not None else (),
                 parent_objective_id=self.parent_objective_id,
                 paths=self._decode_paths(),
             )
@@ -2886,5 +2887,7 @@ class ScenarioPlanSeedGroupEntry(Base):
                         seed[field] = {**prompt, "is_jinja_template": False}
                 # Group validation strips prompt-only keys such as ``sequence`` from dicts, so pass an instance.
                 seed = SeedSimulatedConversation.model_validate(seed)
+            elif seed["seed_type"] == "objective" and seed.get("conditions") is not None:
+                seed = {**seed, "conditions": validate_persisted_conditions(seed["conditions"])}
             seeds.append(seed)
         return AttackSeedGroup.model_validate({**self.seed_group, "seeds": seeds})

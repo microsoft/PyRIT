@@ -50,3 +50,10 @@ def test_read_argument_follows_object_keys_only(path: str, expected: tuple[bool,
 def test_read_argument_reads_a_name_that_is_not_a_path_as_one_literal_key() -> None:
     assert read_argument({"a..b": "x"}, path="a..b") == (True, "x")
     assert read_argument({"a": {"": {"b": "x"}}}, path="a..b") == (False, None)
+
+
+def test_read_argument_reads_a_top_level_key_that_is_the_whole_name_first() -> None:
+    # A name written when names were plain keys keeps reading the key it always read.
+    assert read_argument({"recipient.email": "x"}, path="recipient.email") == (True, "x")
+    assert read_argument({"recipient.email": "x", "recipient": {"email": "y"}}, path="recipient.email") == (True, "x")
+    assert read_argument({"recipient": {"email": "y"}}, path="recipient.email") == (True, "y")
