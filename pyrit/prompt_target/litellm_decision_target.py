@@ -43,17 +43,6 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
 
     _SUPPORTS_TOOL_CALL_HISTORY = False
     _DEFAULT_CONFIGURATION = TargetConfiguration(capabilities=TargetCapabilities())
-    _CREDENTIAL_HEADERS = frozenset(
-        {
-            "authorization",
-            "proxy-authorization",
-            "x-api-key",
-            "api-key",
-            "ocp-apim-subscription-key",
-            "cookie",
-            "set-cookie",
-        }
-    )
 
     def __init__(
         self,
@@ -102,10 +91,7 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
         Returns:
             ComponentIdentifier: The target identity.
         """
-        headers = {
-            key: value for key, value in (self._headers or {}).items() if key.lower() not in self._CREDENTIAL_HEADERS
-        }
-        return self._create_identifier(params={"endpoint": self._endpoint, "headers": headers or None})
+        return self._create_identifier(params={"endpoint": self._endpoint, "headers": self._identifier_headers()})
 
     @pyrit_target_retry
     @limit_requests_per_minute

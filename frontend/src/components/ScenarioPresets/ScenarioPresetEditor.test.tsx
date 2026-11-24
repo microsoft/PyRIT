@@ -6,7 +6,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { Link, MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 
 import * as scenarioConfigForm from '@/components/Scenarios/scenarioConfigForm'
-import { scenarioPresetsApi, scenariosApi } from '@/services/api'
+import { promptGeneratorsApi, scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { deferred } from '@/test-utils/deferred'
 import { makeScenario } from '@/test-utils/scenarioFixtures'
 import type {
@@ -31,6 +31,7 @@ jest.mock('@/services/api', () => ({
       })),
     }),
   },
+  promptGeneratorsApi: { list: jest.fn() },
   scenarioPresetsApi: {
     get: jest.fn(),
     create: jest.fn(),
@@ -49,6 +50,7 @@ const mockUpdate = scenarioPresetsApi.update as jest.Mock
 const mockListCatalog = scenariosApi.listCatalog as jest.Mock
 const mockGetScenario = scenariosApi.getScenario as jest.Mock
 const mockEstimateRun = scenariosApi.estimateRun as jest.Mock
+const mockListGenerators = promptGeneratorsApi.list as jest.Mock
 
 const mockNavigate = jest.fn()
 
@@ -128,9 +130,10 @@ function renderEdit(name = 'nightly_probe', scorers?: ScorerInstance[]) {
 
 beforeEach(() => {
   jest.clearAllMocks()
-  for (const mock of [mockGet, mockCreate, mockUpdate, mockListCatalog, mockGetScenario, mockEstimateRun]) {
+  for (const mock of [mockGet, mockCreate, mockUpdate, mockListCatalog, mockGetScenario, mockEstimateRun, mockListGenerators]) {
     mock.mockReset()
   }
+  mockListGenerators.mockResolvedValue({ items: [] })
   mockUseNavigate.mockReturnValue(mockNavigate)
   mockListCatalog.mockResolvedValue({
     items: [SCENARIO],
@@ -931,7 +934,7 @@ describe('ScenarioPresetEditor edit mode', () => {
     renderEdit()
 
     await user.click(await screen.findByRole('combobox', { name: 'Add dataset' }))
-    await user.click(screen.getByRole('option', { name: 'xstest (unknown)', exact: true }))
+    await user.click(screen.getByRole('option', { name: 'xstest (Unknown)', exact: true }))
     await editLimit(user, 'Maximum objectives', '25')
     await user.click(screen.getByTestId('save-preset-btn'))
 
@@ -939,6 +942,51 @@ describe('ScenarioPresetEditor edit mode', () => {
     const saved = mockUpdate.mock.calls.at(-1)?.[1] as ScenarioPreset
     expect(saved.datasets?.sources?.map((source) => source.name)).toEqual(['harmbench', 'xstest'])
     expect(saved.datasets?.max_total).toBe(25)
+  })
+
+  it('opens the dataset catalog in a new tab so unsaved preset edits stay', async () => {
+    renderEdit()
+
+    const actions = await screen.findByRole('group', { name: 'Dataset actions' })
+    expect(within(actions).getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('target', '_blank')
+    expect(screen.getAllByRole('link', { name: 'Browse datasets' })).toHaveLength(1)
+  })
+
+  it("offers Generate datasets for the preset's scenario once its generators load", async () => {
+    const generators = deferred<{ items: unknown[] }>()
+    mockListGenerators.mockReturnValue(generators.promise)
+    renderEdit()
+
+    const actions = await screen.findByRole('group', { name: 'Dataset actions' })
+    expect(within(actions).getByRole('button', { name: 'Generate datasets' })).toHaveAttribute('aria-disabled', 'true')
+    await act(async () => {
+      generators.resolve({ items: [{
+        name: 'objective', display_name: 'Objective dataset', description: 'Objectives.',
+        stages: [], target_roles: [], follow_up_scenario: STORED_PRESET.scenario_name,
+      }] })
+    })
+
+    expect(await within(actions).findByRole('link', { name: 'Generate datasets' }))
+      .toHaveAttribute('href', '/datasets/generate/new?generator=objective')
+    expect(within(actions).getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'Browse datasets', 'Generate datasets',
+    ])
+  })
+
+  it('offers only Browse datasets when the scenario takes only named datasets', async () => {
+    mockGetScenario.mockResolvedValue(makeScenario({
+      dataset_options: {
+        mode: 'subset', allowed_names: ['harmbench', 'xstest'], max_selected: null, per_dataset_limit: true,
+        total_limit: true, supports_overrides: true, filters: true, source_settings: true,
+      },
+    }))
+    renderEdit()
+
+    const actions = await screen.findByRole('group', { name: 'Dataset actions' })
+    expect(within(actions).getByRole('link', { name: 'Browse datasets' })).toBeInTheDocument()
+    expect(within(actions).queryByRole('button', { name: 'Generate datasets' })).not.toBeInTheDocument()
+    expect(within(actions).queryByRole('link', { name: 'Generate datasets' })).not.toBeInTheDocument()
+    expect(mockListGenerators).not.toHaveBeenCalled()
   })
 
   it('refuses to save while the dataset control reports an invalid limit', async () => {

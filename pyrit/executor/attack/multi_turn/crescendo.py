@@ -136,8 +136,11 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
     # Crescendo relies on native live history for both gradual escalation and
     # backtracking. Squashed or non-editable history changes those semantics.
+    # Each turn's response drives the next escalation step.
     TARGET_REQUIREMENTS = TargetRequirements(
-        native_required=frozenset({CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN}),
+        native_required=frozenset(
+            {CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN, CapabilityName.RESPONSES}
+        ),
     )
 
     # Default system prompt template path for Crescendo attack
@@ -220,6 +223,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             )
 
         self._objective_scorer = objective_scorer
+        self._validate_objective_scorer(scorer=self._objective_scorer)
         self._use_score_as_feedback = attack_scoring_config.use_score_as_feedback
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
 

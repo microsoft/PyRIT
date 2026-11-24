@@ -78,6 +78,7 @@ result = await multi_turn_attack.execute_async(
 await output_attack_async(result)
 
 # %% [markdown]
+# (browser-session-authentication)=
 # ## Browser Session Authentication
 #
 # `BrowserSessionCopilotAuthenticator` captures a token from a persistent Edge session.
@@ -116,6 +117,7 @@ async with BrowserSessionCopilotAuthenticator() as auth:
     await output_attack_async(result)
 
 # %% [markdown]
+# (alternative-authentication-with-manualcopilotauthenticator)=
 # ## Alternative Authentication with `ManualCopilotAuthenticator`
 #
 # If browser automation is not suitable for your environment, you can use the `ManualCopilotAuthenticator` instead. This authenticator accepts a pre-obtained access token that you can extract from your browser's DevTools.
