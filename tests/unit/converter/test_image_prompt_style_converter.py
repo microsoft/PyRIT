@@ -204,6 +204,23 @@ def test_init_invalid_filter_name_raises(mock_target) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "filter_name", ["../image_prompt_style/gritty_documentary", "image_prompt_style_system_prompt"]
+)
+def test_init_filter_name_accepts_only_built_in_filters(mock_target, filter_name: str) -> None:
+    with pytest.raises(ValueError, match="not found"):
+        ImagePromptStyleConverter(converter_target=mock_target, filter_name=filter_name)
+
+
+def test_filter_name_does_not_read_a_file_named_by_its_path(mock_target, tmp_path: Path) -> None:
+    (tmp_path / "other.yaml").write_text("style_instructions: Another style.\nvariations:\n  v1: desc\n")
+
+    with pytest.raises(ValueError, match="not found"):
+        ImagePromptStyleConverter(converter_target=mock_target, filter_name=str(tmp_path / "other"))
+    with pytest.raises(ValueError, match="not found"):
+        ImagePromptStyleConverter.list_available_variations(filter_name=str(tmp_path / "other"))
+
+
 def test_init_invalid_variation_raises(mock_target) -> None:
     with pytest.raises(ValueError, match="not found in filter"):
         ImagePromptStyleConverter(

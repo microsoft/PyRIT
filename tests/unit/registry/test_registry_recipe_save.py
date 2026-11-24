@@ -26,10 +26,10 @@ from pyrit.registry import (
     TargetRegistry,
     get_class_saveability,
     prepare_saved_params_async,
-    refuse_temporary_references,
     save_then_register_async,
 )
 from pyrit.registry.instance_registry import RegistryNameTakenError, registration_origin, registry_entry_origin
+from pyrit.registry.registry_recipe_save import _refuse_temporary_references
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.score import SubStringScorer
 from unit.async_utils import TEST_WATCHDOG_SECONDS
@@ -346,7 +346,7 @@ def test_refuse_temporary_references_refuses_an_entry_that_is_gone_after_a_resta
     component_type: ComponentType, value: object, named: str
 ) -> None:
     with pytest.raises(NotSaveableError) as refusal:
-        refuse_temporary_references(parameters=[_reference("uses", component_type)], params={"uses": value})
+        _refuse_temporary_references(parameters=[_reference("uses", component_type)], params={"uses": value})
 
     assert str(refusal.value) == (
         f"Uses temporary {named}, which won't exist after a restart. It can still be created without saving it."
@@ -368,12 +368,14 @@ def test_refuse_temporary_references_refuses_an_entry_that_is_gone_after_a_resta
 def test_refuse_temporary_references_accepts_entries_that_come_back_or_a_reference_left_unset(
     component_type: ComponentType, value: object
 ) -> None:
-    refuse_temporary_references(parameters=[_reference("uses", component_type)], params={"uses": value})
+    _refuse_temporary_references(parameters=[_reference("uses", component_type)], params={"uses": value})
 
 
 def test_refuse_temporary_references_refuses_a_kind_that_saved_entries_cant_use() -> None:
     with pytest.raises(NotSaveableError) as refusal:
-        refuse_temporary_references(parameters=[_reference("uses", ComponentType.SCENARIO)], params={"uses": "nightly"})
+        _refuse_temporary_references(
+            parameters=[_reference("uses", ComponentType.SCENARIO)], params={"uses": "nightly"}
+        )
 
     assert str(refusal.value) == (
         "Uses scenario 'nightly', which saved entries can't use yet. It can still be created without saving it."

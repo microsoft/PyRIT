@@ -32,10 +32,10 @@ export default function RegistryIdentityRow({
     <>
       <TableRow {...rowProps} className={mergeClasses(styles.row, rowClassName)} data-testid={rowTestId}>
         {leadingCell}
-        <TableCell className={nameCellClassName}>
+        <TableCell className={mergeClasses(styles.nameCell, nameCellClassName)}>
           {identity ? <IdentityDisclosureButton name={name} expanded={expanded} controlsId={detailsId}
             className={styles.name} onToggle={onToggle} /> : <Text size={200}>{name}</Text>}
-          {nameContent}
+          {nameContent ? <div className={styles.nameIndicators}>{nameContent}</div> : null}
         </TableCell>
         {children}
       </TableRow>

@@ -4,6 +4,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -232,6 +233,37 @@ async def test_filter_by_ids(sqlite_instance: MemoryInterface, sample_attack_res
     assert len(results) == 1
     assert results[0].scenario_name == "Scenario 1"
     assert results[0].id == scenario_result1.id
+
+
+@pytest.mark.parametrize(("limit", "expected_hours"), [(2, [4, 3]), (None, [4, 3, 2, 1, 0])])
+async def test_limit_and_order_hold_when_ids_span_batches(
+    sqlite_instance: MemoryInterface, sample_attack_results, limit, expected_hours
+):
+    """A batched id query must keep the caller's ordering and limit across batches.
+
+    Rows come back from one statement per batch, so the limit has to bound the
+    merged rows and the completion time ordering has to be re-applied globally
+    instead of leaving each batch's local order in place. The ids are passed
+    oldest first, three per batch, so the first batch holds more rows than the
+    limit: keeping batch order or capping each batch below the limit both give
+    a different result.
+    """
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    stored = []
+    for hour in range(5):
+        scenario_result = create_scenario_result(
+            name=f"Scenario {hour}",
+            attack_results={"Attack1": [sample_attack_results[0]]},
+        )
+        scenario_result.completion_time = base + timedelta(hours=hour)
+        await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result])
+        stored.append(scenario_result)
+    ids = [str(result.id) for result in stored]
+
+    with patch.object(sqlite_instance, "_MAX_BIND_VARS", 3):
+        results = await sqlite_instance.get_scenario_results_async(scenario_result_ids=ids, limit=limit)
+
+    assert [result.scenario_name for result in results] == [f"Scenario {hour}" for hour in expected_hours]
 
 
 async def test_empty_ids_returns_empty(sqlite_instance: MemoryInterface):

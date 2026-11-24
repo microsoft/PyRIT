@@ -32,12 +32,12 @@ from pyrit.registry import (
     get_class_saveability,
     record_private_references,
     refuse_temporary_entries,
-    refuse_temporary_references,
     save_then_register_async,
 )
 from pyrit.registry.components.attack_technique_registry import TechniqueSelectorConflictError
 from pyrit.registry.instance_registry import registry_entry_origin
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
+from pyrit.registry.registry_recipe_save import _refuse_temporary_references
 from pyrit.scenario.core import AttackTechniqueFactory
 
 
@@ -54,12 +54,20 @@ class TechniqueService:
 
         Returns:
             TechniqueListResponse: A page and its pagination metadata.
+
+        Raises:
+            ValueError: If the cursor does not name a registered technique.
         """
         return await asyncio.to_thread(self._list, limit=limit, cursor=cursor)
 
     def _list(self, *, limit: int, cursor: str | None) -> TechniqueListResponse:
         entries = self._registry.instances.get_all_instances()
-        start = next((index + 1 for index, entry in enumerate(entries) if entry.name == cursor), 0)
+        start = next((index + 1 for index, entry in enumerate(entries) if entry.name == cursor), None)
+        if cursor and start is None:
+            # A cursor naming an entry that no longer exists must not silently
+            # restart at the first page, which would serve duplicate rows.
+            raise ValueError("The cursor is not valid for the technique registry")
+        start = start or 0
         page = entries[start : start + limit]
         has_more = len(entries) > start + limit
         return TechniqueListResponse(
@@ -215,7 +223,7 @@ class TechniqueService:
             if error.reason is RestoreFailureReason.INVALID_RECIPE:
                 raise ValueError(str(error)) from error
             raise NotSaveableError(str(error)) from error
-        refuse_temporary_references(parameters=metadata.parameters, params=request.params)
+        _refuse_temporary_references(parameters=metadata.parameters, params=request.params)
 
     async def types_async(self) -> TechniqueTypeResponse:
         """

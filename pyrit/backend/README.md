@@ -204,6 +204,11 @@ PUT /api/targets/my-claude/credentials
 - `GET /api/converters/types` - List the converter types that can be created, with their parameters, and why a
   type can't be saved at all (`not_saveable_reason`)
 - `POST /api/converters` - Create a converter
+- `POST /api/converters/saveability` - Say whether a converter could be saved, without building or saving it. Send the
+  create request's `type` and `params`; the answer is `{"not_saveable_reason": ...}`, which gives only the cause, or
+  null when the save checks pass. It runs the checks saving runs before the converter is built, and an unknown type or
+  a parameter those checks refuse gets the same **400** as create. It doesn't check the name, and the converter's own
+  constructor checks don't run, so null doesn't mean the create succeeds.
 - `DELETE /api/converters/{converter_id}` - Remove a converter
 - `POST /api/scorers` - Create a scorer
 

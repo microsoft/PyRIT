@@ -638,17 +638,16 @@ export default function TargetTable({
                     </TableCell>
                   </>
                 }
-                nameCellClassName={styles.registryNameCell}
                 nameContent={
                   (target.origin || isDefaultAdversarial(target)) && (
-                    <div className={styles.defaultIndicators}>
+                    <>
                       {target.origin && <OriginBadge origin={target.origin} />}
                       {isDefaultAdversarial(target) && (
                         <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
                           Adversarial
                         </Badge>
                       )}
-                    </div>
+                    </>
                   )
                 }
                 rowClassName={mergeClasses(
