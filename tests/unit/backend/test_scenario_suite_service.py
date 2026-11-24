@@ -20,7 +20,6 @@ from pyrit.models import (
     ScenarioSuite,
     ScenarioSuiteEntry,
 )
-from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.registry import (
     ScenarioPresetRegistry,
     ScenarioRegistry,
@@ -231,8 +230,8 @@ async def test_entry_status_projects_the_preset_launch_defaults(
     service: ScenarioSuiteService,
     preset_registry: MagicMock,
 ) -> None:
-    """Test that suite reads show each preset's pinned scorer before launch."""
-    scorer = RegisteredComponentReference(registry_name="inverted_refusal", identifier_hash="a" * 64)
+    """Test that suite reads show each preset's scorer name before launch."""
+    scorer = "inverted_refusal"
     preset_registry.get_preset.return_value = PresetEntry(
         preset=ScenarioPreset(
             name="nightly",

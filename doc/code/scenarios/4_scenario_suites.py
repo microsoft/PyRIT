@@ -227,16 +227,15 @@ else:
 #
 # ### Per-preset objective scorers
 #
-# A preset can pin the objective scorer its entry uses, for example an inverted refusal
-# scorer for a preset whose prompts the target should refuse:
+# Presets in one suite can score with different configurations. For example, one preset can
+# use the `inverted_refusal` true/false scorer while another uses
+# `scale_gpt4o_temp9_threshold_09`, a `FloatScaleThresholdScorer` that turns a 0-1 harm
+# scale into a true/false result at 0.9. A preset names its scorer by registry name:
 #
 # ```python
 # from pyrit.models import ScenarioPresetLaunchDefaults
-# from pyrit.models.component_spec import RegisteredComponentReference
 #
-# launch_defaults = ScenarioPresetLaunchDefaults(
-#     objective_scorer=RegisteredComponentReference(registry_name="inverted_refusal", identifier_hash="...")
-# )
+# launch_defaults = ScenarioPresetLaunchDefaults(objective_scorer="scale_gpt4o_temp9_threshold_09")
 # ```
 #
 # Pass `launch_defaults` to `ScenarioPreset`, or pick **Objective scorer** in the GUI preset
@@ -244,7 +243,7 @@ else:
 # otherwise its preset's scorer, otherwise the scenario default. A launch-level scorer
 # replaces the scorer of every entry whose scenario accepts one; entries for scenarios with a
 # built-in scorer, such as `foundry.red_team_agent`, skip it and report the binding source
-# `unsupported`. Readiness and preflight report a missing or changed preset scorer against its
-# entry. The identifier hash includes any judge target, so a pinned scorer makes the preset
-# deployment-specific: it runs only where that exact scorer is registered, and must be
-# re-pinned after the scorer's configuration changes.
+# `unsupported`. The preset stores only the name, so it stays portable: at launch, each
+# deployment uses the scorer it registers under that name and records that scorer's identity
+# with the run. Readiness and preflight report a name this deployment does not register
+# against its entry, and check the scorer's fit for the scenario as they do for a launch scorer.

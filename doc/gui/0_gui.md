@@ -220,7 +220,7 @@ They are stored separately from live component instances.
 Suite launch dialogs apply arriving target defaults only to untouched selections.
 An explicit target choice, including clearing an optional adversarial target to
 use the server default, is retained when the registry refreshes.
-A preset may pin an objective scorer. The suite launch dialog shows each entry's
+A preset may name an objective scorer, so presets in one suite can score differently. The suite launch dialog shows each entry's
 effective scorer, and its scorer override replaces the scorer of every entry whose
 scenario accepts one. Scanner History lists each run's scorer. See
 [scenario suites](../code/scenarios/4_scenario_suites.ipynb) for the precedence rules.

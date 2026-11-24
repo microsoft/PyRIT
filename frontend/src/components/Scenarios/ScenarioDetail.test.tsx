@@ -2897,11 +2897,10 @@ describe('ScenarioDetail', () => {
       mockGetPreset.mockResolvedValue(makePresetResponse())
     })
 
-    it('should seed the objective scorer from the preset launch defaults', async () => {
+    it('should seed the objective scorer from the scorer the preset names', async () => {
+      const user = userEvent.setup()
       mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: true }))
-      mockGetPreset.mockResolvedValue(makePresetResponse({
-        launch_defaults: { objective_scorer: { registry_name: 'inverted_refusal', identifier_hash: 'refusal-hash' } },
-      }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({ launch_defaults: { objective_scorer: 'inverted_refusal' } }))
       renderDetail(PRESET_PATH, { scorers: [{
         scorer_registry_name: 'inverted_refusal',
         identifier: { class_name: 'TrueFalseInverterScorer', hash: 'refusal-hash', scorer_type: 'true_false' },
@@ -2909,13 +2908,20 @@ describe('ScenarioDetail', () => {
 
       await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective scorer' }))
         .toHaveValue('registered:inverted_refusal'))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0]).toHaveProperty(
+        'objective_scorer', { registry_name: 'inverted_refusal', identifier_hash: 'refusal-hash' },
+      )
     })
 
     it('should not seed a preset scorer the scenario cannot use', async () => {
       const user = userEvent.setup()
       mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: false }))
       mockGetPreset.mockResolvedValue(makePresetResponse({
-        launch_defaults: { objective_scorer: { registry_name: 'deleted_scorer', identifier_hash: 'gone-hash' } },
+        launch_defaults: { objective_scorer: 'deleted_scorer' },
       }))
       renderDetail(PRESET_PATH)
 

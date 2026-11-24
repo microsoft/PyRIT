@@ -10,7 +10,6 @@ import {
 } from '@/components/Scenarios/scenarioConfigForm'
 import { untouchedPresetScenarioParams } from '@/components/Scenarios/scenarioPresetSeed'
 import type {
-  RegisteredComponentReference,
   RegisteredScenario,
   ScenarioPreset,
   ScenarioPresetLaunchDefaults,
@@ -117,8 +116,8 @@ interface PresetIdentity {
   description: string
   /** Whether the Scanner lists the preset as an entry of its own. */
   showInScanner: boolean
-  /** The pinned objective scorer, or `null` to use the scenario default. */
-  objectiveScorer: RegisteredComponentReference | null
+  /** The registered objective scorer name, or `null` to use the scenario default. */
+  objectiveScorer: string | null
 }
 
 interface PresetWriteContext {
@@ -186,7 +185,7 @@ function presetScenarioParams(
 
 /** Keeps launch defaults this editor has no control for and drops the section when it is empty. */
 function presetLaunchDefaults(
-  objectiveScorer: RegisteredComponentReference | null,
+  objectiveScorer: string | null,
   previous: ScenarioPreset | null,
 ): ScenarioPresetLaunchDefaults | null {
   const merged: ScenarioPresetLaunchDefaults = { ...(previous?.launch_defaults ?? {}) }

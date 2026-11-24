@@ -256,12 +256,8 @@ describe('LaunchSuiteDialog', () => {
 
   function suiteWithPresetScorer(): ScenarioSuiteResponse {
     const suite = makeSuite()
-    suite.entry_statuses[0].launch_defaults = {
-      objective_scorer: { registry_name: 'inverted_refusal', identifier_hash: 'refusal-hash' },
-    }
-    suite.entry_statuses[1].launch_defaults = {
-      objective_scorer: { registry_name: 'deleted_scorer', identifier_hash: 'gone-hash' },
-    }
+    suite.entry_statuses[0].launch_defaults = { objective_scorer: 'inverted_refusal' }
+    suite.entry_statuses[1].launch_defaults = { objective_scorer: 'deleted_scorer' }
     return suite
   }
 

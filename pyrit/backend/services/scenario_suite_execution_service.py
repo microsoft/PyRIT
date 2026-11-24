@@ -28,7 +28,7 @@ from pyrit.models import (
     ScenarioSuiteExecutionSummary,
     ScenarioSuiteSubmissionState,
 )
-from pyrit.models.scenario_readiness import ScenarioReadiness
+from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness
 from pyrit.registry import (
     ResolvedScenarioSuiteEntry,
     ScenarioPresetRegistry,
@@ -208,6 +208,8 @@ class ScenarioSuiteExecutionService:
         )
         if request.initializers:
             await self._get_run_service()._run_initializers_async(request=resolved_launch.entries[0].request)
+            # Initializers can register a scorer a preset names, so bind preset values after they run.
+            resolved_launch = await asyncio.to_thread(self._resolver.resolve, name=name, request=request)
         readiness, references = await self._resolve_roles_async(entries=resolved_launch.entries)
         if readiness.issues:
             raise ScenarioSuiteNotRunnableError(
@@ -268,6 +270,20 @@ class ScenarioSuiteExecutionService:
                 request=entry.request,
             )
             prefix = f"Entry {entry.entry_position} ({entry.preset_name})"
+            # A preset value this deployment could not bind replaces what readiness found for its role.
+            unbound_roles = {REQUEST_FIELD_ROLES[field_name] for field_name in entry.launch_default_errors}
+            result.issues.extend(
+                ScenarioConfigurationIssue.model_validate(
+                    {
+                        "role": REQUEST_FIELD_ROLES[field_name],
+                        "component": f"{prefix}: {entry.request.scenario_name}",
+                        "reason": reason,
+                        "remediation": "",
+                        **_entry_role_attribution(entry=entry, role=REQUEST_FIELD_ROLES[field_name], remediation=""),
+                    }
+                )
+                for field_name, reason in entry.launch_default_errors.items()
+            )
             result.issues.extend(
                 issue.model_copy(
                     update={
@@ -276,7 +292,9 @@ class ScenarioSuiteExecutionService:
                     }
                 )
                 for issue in readiness.issues
+                if issue.role not in unbound_roles
             )
+            bindings = [binding for binding in readiness.bindings if binding.role not in unbound_roles]
             result.bindings.extend(
                 binding.model_copy(
                     update={
@@ -284,11 +302,9 @@ class ScenarioSuiteExecutionService:
                         **_entry_role_attribution(entry=entry, role=binding.role),
                     }
                 )
-                for binding in readiness.bindings
+                for binding in bindings
             )
-            references[entry.entry_id] = {
-                f"{binding.role}_hash": binding.identifier.hash for binding in readiness.bindings
-            }
+            references[entry.entry_id] = {f"{binding.role}_hash": binding.identifier.hash for binding in bindings}
         return result, references
 
     async def get_execution_async(self, *, execution_id: UUID) -> ScenarioSuiteExecutionSummary | None:

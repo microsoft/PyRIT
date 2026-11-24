@@ -41,7 +41,7 @@ import type {
   ScorerInstance,
   TargetInstance,
 } from '@/types'
-import { findRegisteredScorer } from '@/utils/scorerPresentation'
+import { findRegisteredScorer, scorerNameReference } from '@/utils/scorerPresentation'
 
 import { useLaunchSuiteDialogStyles } from './LaunchSuiteDialog.styles'
 import { suiteExecutionRoutePath } from './suiteRoutes'
@@ -65,7 +65,8 @@ interface LaunchSuiteDialogProps {
 
 /**
  * Mirrors the server's precedence: a launch override, then the preset's scorer, then the scenario
- * default. A scenario with a built-in scorer ignores the launch override.
+ * default. A preset names its scorer, which resolves against this deployment's loaded scorers. A
+ * scenario with a built-in scorer ignores the launch override.
  */
 function entryScorerLabel(
   entry: ScenarioSuiteEntryStatus,
@@ -75,7 +76,7 @@ function entryScorerLabel(
   if (entry.supports_objective_scorer === false) {
     return override ? 'Scenario default scorer (override not applicable)' : 'Scenario default scorer'
   }
-  const reference = override ?? entry.launch_defaults?.objective_scorer ?? null
+  const reference = override ?? scorerNameReference(entry.launch_defaults?.objective_scorer, loadedScorers ?? [])
   if (!reference) {
     return 'Scenario default scorer'
   }

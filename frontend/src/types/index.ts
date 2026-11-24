@@ -1777,12 +1777,12 @@ export interface ScenarioPreset {
 }
 
 /**
- * Launch-owned values a preset may pin. A value chosen at launch replaces the
+ * Launch-owned values a preset may set, in portable form. A value chosen at launch replaces the
  * preset's value, and an absent value falls back to the scenario default.
  */
 export interface ScenarioPresetLaunchDefaults {
-  /** Registry name and hash of a scorer. The hash includes the scorer's judge target, so it is deployment-specific. */
-  objective_scorer?: RegisteredComponentReference | null
+  /** Registered objective scorer name, bound to this deployment's scorer of that name at launch. */
+  objective_scorer?: string | null
 }
 
 /** One advisory problem found checking a preset against this deployment's registry. */

@@ -49,7 +49,7 @@ const IDENTITY = {
   showInScanner: true,
   objectiveScorer: null,
 }
-const REFUSAL_SCORER = { registry_name: 'inverted_refusal', identifier_hash: 'hash-refusal' }
+const REFUSAL_SCORER = 'inverted_refusal'
 const ITERATION_PARAMETER: Parameter = {
   name: 'max_turns',
   type_name: 'int',

@@ -16,7 +16,6 @@ from pyrit.models import (
 )
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.models.catalog.scenario_preset import PRESET_SCHEMA_VERSION
-from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
 
 
@@ -253,16 +252,12 @@ def test_identity_params_are_json_safe_for_nested_configuration() -> None:
     assert "name" not in params
 
 
-def _scorer_reference(name: str = "refusal", identifier_hash: str = "a" * 64) -> RegisteredComponentReference:
-    return RegisteredComponentReference(registry_name=name, identifier_hash=identifier_hash)
-
-
 def test_launch_defaults_round_trip_through_json() -> None:
-    """Test that a pinned scorer survives the stored document shape."""
+    """Test that a preset scorer name survives the stored document shape."""
     preset = ScenarioPreset(
         name="refuse",
         scenario_name="foundry.red_team_agent",
-        launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer=_scorer_reference()),
+        launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer="refusal"),
     )
 
     restored = ScenarioPreset.model_validate_json(preset.model_dump_json())
@@ -281,15 +276,15 @@ def test_empty_launch_defaults_normalize_to_unset_with_unchanged_identity() -> N
     assert empty.get_identifier().unique_name == omitted.get_identifier().unique_name
 
 
-def test_identity_covers_the_pinned_scorer() -> None:
-    """Test that pinning a different scorer is a behavioral change."""
+def test_identity_covers_the_preset_scorer() -> None:
+    """Test that naming a different scorer is a behavioral change."""
     refusal = ScenarioPreset(
         name="nightly",
         scenario_name="foundry.red_team_agent",
-        launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer=_scorer_reference()),
+        launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer="refusal"),
     )
     inverted = refusal.model_copy(
-        update={"launch_defaults": ScenarioPresetLaunchDefaults(objective_scorer=_scorer_reference("inverted"))}
+        update={"launch_defaults": ScenarioPresetLaunchDefaults(objective_scorer="inverted_refusal")}
     )
 
     assert refusal.get_identifier().unique_name != inverted.get_identifier().unique_name

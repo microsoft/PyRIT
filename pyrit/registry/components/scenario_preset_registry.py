@@ -509,7 +509,7 @@ def _launch_default_issues(*, preset: ScenarioPreset, metadata: ScenarioMetadata
     """
     Report launch defaults the scenario structurally cannot accept.
 
-    Whether a referenced component is registered is deliberately not checked here: that
+    Whether a named component is registered is deliberately not checked here: that
     depends on the deployment and on any launch override, so launch readiness reports it.
 
     Args:
@@ -517,7 +517,7 @@ def _launch_default_issues(*, preset: ScenarioPreset, metadata: ScenarioMetadata
         metadata (ScenarioMetadata): Registry metadata for the scenario it names.
 
     Returns:
-        list[PresetIssue]: A single issue when the preset pins a scorer the scenario cannot use.
+        list[PresetIssue]: A single issue when the preset names a scorer the scenario cannot use.
     """
     if preset.launch_defaults is None or preset.launch_defaults.objective_scorer is None:
         return []

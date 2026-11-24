@@ -4,7 +4,7 @@
 """Tests for transient scenario suite execution coordination."""
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -717,14 +717,27 @@ REFUSE_SCORER = RegisteredComponentReference(registry_name="inverted_refusal", i
 OVERRIDE_SCORER = RegisteredComponentReference(registry_name="override", identifier_hash="c" * 64)
 
 
-def _pin_first_preset_scorer(preset_registry: MagicMock) -> None:
-    """Make the first preset pin a scorer while the second keeps the scenario default."""
+@pytest.fixture
+def named_scorers() -> Iterator[MagicMock]:
+    """Register the preset scorer name so launches bind it to REFUSE_SCORER."""
+    registry = MagicMock()
+    registry.instances.get.side_effect = lambda name: (
+        MagicMock(**{"get_identifier.return_value.hash": REFUSE_SCORER.identifier_hash})
+        if name == REFUSE_SCORER.registry_name
+        else None
+    )
+    with patch.object(ScorerRegistry, "get_registry_singleton", return_value=registry):
+        yield registry
+
+
+def _pin_first_preset_scorer(preset_registry: MagicMock, *, scorer_name: str = "inverted_refusal") -> None:
+    """Make the first preset name a scorer while the second keeps the scenario default."""
     presets = {
         "first": PresetEntry(
             preset=ScenarioPreset(
                 name="first",
                 scenario_name="scenario.first",
-                launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer=REFUSE_SCORER),
+                launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer=scorer_name),
             ),
             origin="stored",
             version="first-v1",
@@ -743,6 +756,7 @@ def _scorer_issue(*, component: str) -> ScenarioConfigurationIssue:
     )
 
 
+@pytest.mark.usefixtures("named_scorers")
 async def test_children_launch_with_their_own_preset_scorer_async(execution_context) -> None:
     service, suite_registry, preset_registry, _, calls, _ = execution_context
     _pin_first_preset_scorer(preset_registry)
@@ -758,6 +772,7 @@ async def test_children_launch_with_their_own_preset_scorer_async(execution_cont
     assert [request.objective_scorer for request in readiness_requests] == [REFUSE_SCORER, None]
 
 
+@pytest.mark.usefixtures("named_scorers")
 async def test_unresolved_preset_scorer_is_attributed_to_its_entry_and_preset_async(execution_context) -> None:
     service, suite_registry, preset_registry, run_service, _, _ = execution_context
     _pin_first_preset_scorer(preset_registry)
@@ -777,6 +792,7 @@ async def test_unresolved_preset_scorer_is_attributed_to_its_entry_and_preset_as
     run_service.start_run_async.assert_not_awaited()
 
 
+@pytest.mark.usefixtures("named_scorers")
 async def test_unresolved_preset_scorer_blocks_the_whole_launch_async(execution_context) -> None:
     service, suite_registry, preset_registry, run_service, _, _ = execution_context
     _pin_first_preset_scorer(preset_registry)
@@ -791,6 +807,32 @@ async def test_unresolved_preset_scorer_blocks_the_whole_launch_async(execution_
     run_service.start_run_async.assert_not_awaited()
 
 
+@pytest.mark.usefixtures("named_scorers")
+async def test_unregistered_preset_scorer_name_is_an_entry_issue_that_does_not_hide_others_async(
+    execution_context,
+) -> None:
+    service, suite_registry, preset_registry, run_service, _, _ = execution_context
+    _pin_first_preset_scorer(preset_registry, scorer_name="not_here")
+    stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+    second_issue = ScenarioConfigurationIssue(
+        role="objective_target", component="scenario.second", reason="Target is missing.", remediation="Pick one."
+    )
+    _execution_mod.ScenarioConfigurationResolver.resolve_readiness.side_effect = [
+        ScenarioReadiness(),
+        ScenarioReadiness(issues=[second_issue]),
+    ]
+
+    readiness = await service.get_readiness_async(name="weekly", request=_launch_request(suite_version=stored.version))
+
+    scorer_issue, target_issue = readiness.issues
+    assert (scorer_issue.entry_id, scorer_issue.role, scorer_issue.source) == (ENTRY_ONE, "objective_scorer", "preset")
+    assert "'not_here' is not registered" in scorer_issue.reason
+    assert "launch_defaults.objective_scorer" in scorer_issue.remediation
+    assert (target_issue.entry_id, target_issue.role) == (ENTRY_TWO, "objective_target")
+    run_service.start_run_async.assert_not_awaited()
+
+
+@pytest.mark.usefixtures("named_scorers")
 async def test_launch_scorer_override_replaces_preset_scorers_async(execution_context) -> None:
     service, suite_registry, preset_registry, _, calls, _ = execution_context
     _pin_first_preset_scorer(preset_registry)

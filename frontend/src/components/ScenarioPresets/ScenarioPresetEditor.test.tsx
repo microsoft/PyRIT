@@ -854,12 +854,12 @@ describe('ScenarioPresetEditor edit mode', () => {
       })
     })
 
-    it('loads the pinned scorer and saves a newly picked one in launch defaults', async () => {
+    it('loads the named scorer and saves a newly picked one by name in launch defaults', async () => {
       const user = userEvent.setup()
       mockGet.mockResolvedValue({
         preset: {
           ...STORED_PRESET,
-          launch_defaults: { objective_scorer: { registry_name: 'inverted_refusal', identifier_hash: 'refusal-hash' } },
+          launch_defaults: { objective_scorer: 'inverted_refusal' },
         },
         version: 'v1',
         issues: [],
@@ -874,7 +874,7 @@ describe('ScenarioPresetEditor edit mode', () => {
       await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
         'nightly_probe',
         expect.objectContaining({
-          launch_defaults: { objective_scorer: { registry_name: 'refusal', identifier_hash: 'allow-hash' } },
+          launch_defaults: { objective_scorer: 'refusal' },
         }),
         'v1',
       ))
@@ -885,7 +885,7 @@ describe('ScenarioPresetEditor edit mode', () => {
       mockGet.mockResolvedValue({
         preset: {
           ...STORED_PRESET,
-          launch_defaults: { objective_scorer: { registry_name: 'inverted_refusal', identifier_hash: 'refusal-hash' } },
+          launch_defaults: { objective_scorer: 'inverted_refusal' },
         },
         version: 'v1',
         issues: [],
@@ -897,6 +897,27 @@ describe('ScenarioPresetEditor edit mode', () => {
 
       await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
       expect(mockUpdate.mock.calls.at(-1)?.[1]).not.toHaveProperty('launch_defaults')
+    })
+
+    it('keeps the stored scorer when the scenario renders no scorer control', async () => {
+      const user = userEvent.setup()
+      const scenario = makeScenario({ supports_objective_scorer: false })
+      mockGetScenario.mockResolvedValue(scenario)
+      mockListCatalog.mockResolvedValue({ items: [scenario], pagination: { has_more: false, next_cursor: null } })
+      mockGet.mockResolvedValue({
+        preset: { ...STORED_PRESET, launch_defaults: { objective_scorer: 'inverted_refusal' } },
+        version: 'v1',
+        issues: [],
+      })
+      renderEdit('nightly_probe', [REFUSAL])
+
+      const description = await screen.findByTestId('preset-description-input')
+      expect(screen.queryByRole('combobox', { name: 'Objective scorer' })).not.toBeInTheDocument()
+      await user.type(description, ' Edited.')
+      await user.click(screen.getByTestId('save-preset-btn'))
+
+      await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+      expect(mockUpdate.mock.calls.at(-1)?.[1]).toHaveProperty('launch_defaults', { objective_scorer: 'inverted_refusal' })
     })
   })
 

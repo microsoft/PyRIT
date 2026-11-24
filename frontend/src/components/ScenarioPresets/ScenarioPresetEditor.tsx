@@ -34,7 +34,6 @@ import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
-  RegisteredComponentReference,
   RegisteredScenario,
   ScenarioPresetResponse,
   ScenarioRunSizeEstimateRequest,
@@ -43,6 +42,7 @@ import type {
 } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 import { routerPathParamValue } from '@/utils/routeParams'
+import { scorerNameReference } from '@/utils/scorerPresentation'
 
 import ScannerVisibilityLabel from './ScannerVisibilityLabel'
 import { useScenarioPresetEditorStyles } from './ScenarioPresetEditor.styles'
@@ -113,7 +113,7 @@ function ScenarioPresetEditorContent({
   const [name, setName] = useState(mode === 'edit' ? decodedName : '')
   const [description, setDescription] = useState('')
   const [showInScanner, setShowInScanner] = useState(true)
-  const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(null)
+  const [objectiveScorer, setObjectiveScorer] = useState<string | null>(null)
   const [selectedScenarioName, setSelectedScenarioName] = useState('')
   const [scenario, setScenario] = useState<RegisteredScenario | null>(null)
   const [scenarioLoading, setScenarioLoading] = useState(false)
@@ -339,7 +339,10 @@ function ScenarioPresetEditorContent({
         scenarioName: scenario.scenario_name,
         description,
         showInScanner,
-        objectiveScorer: scenario.supports_objective_scorer ? objectiveScorer : null,
+        // With no scorer control rendered the operator cannot have cleared it, so keep what is stored.
+        objectiveScorer: scenario.supports_objective_scorer
+          ? objectiveScorer
+          : loaded?.preset.launch_defaults?.objective_scorer ?? null,
       },
       builtConfig.config,
       { scenario, previous: loaded?.preset ?? null },
@@ -527,13 +530,13 @@ function ScenarioPresetEditorContent({
                   <ChatScorerPicker
                     label="Objective scorer"
                     usage="scenario"
-                    value={objectiveScorer}
+                    value={scorerNameReference(objectiveScorer, scorers)}
                     scorers={scorers}
                     loading={scorersLoading}
                     error={scorersError}
                     disabled={saving}
                     onChange={(value) => {
-                      setObjectiveScorer(value)
+                      setObjectiveScorer(value?.registry_name ?? null)
                       setValidationError(null)
                     }}
                   />
