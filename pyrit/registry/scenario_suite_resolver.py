@@ -53,7 +53,7 @@ class ScenarioSuiteNotRunnableError(ValueError):
 _LaunchSource = ScenarioLaunchConfiguration | LaunchScenarioSuiteRequest | ScenarioSuiteReadinessRequest
 
 
-def bind_registered_scorer(name: str) -> RegisteredComponentReference:
+def _bind_registered_scorer(name: str) -> RegisteredComponentReference:
     """
     Bind a preset's portable scorer name to the scorer this deployment registers under it.
 
@@ -84,7 +84,7 @@ class _LaunchDefaultBinding:
 _LAUNCH_DEFAULT_BINDINGS: Mapping[str, _LaunchDefaultBinding] = MappingProxyType(
     {
         "objective_scorer": _LaunchDefaultBinding(
-            bind=bind_registered_scorer,
+            bind=_bind_registered_scorer,
             is_supported=lambda metadata: metadata.supports_objective_scorer,
         ),
     }

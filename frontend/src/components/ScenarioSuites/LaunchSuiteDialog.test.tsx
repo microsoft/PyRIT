@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { FluentProvider, tokens, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter } from 'react-router'
 
 import { scenarioSuitesApi } from '@/services/api'
@@ -363,7 +363,30 @@ describe('LaunchSuiteDialog', () => {
     const issues = await screen.findByLabelText('Suite configuration issues')
     expect(issues).toHaveTextContent(`Entry 2 (second_preset): scenario: ${reason}`)
     expect(issues).toHaveTextContent("Update the objective scorer in scenario preset 'second_preset'.")
+    expect(scorerLabel(SECOND_ENTRY_ID)).toHaveStyle({ color: tokens.colorStatusDangerForeground1 })
+    expect(scorerLabel(FIRST_ENTRY_ID)).not.toHaveStyle({ color: tokens.colorStatusDangerForeground1 })
     expect(screen.getByTestId('confirm-launch-suite')).toBeDisabled()
+  })
+
+  it('lists a launch-level issue once and colours only scorer issues on entries', async () => {
+    const targetIssue = (entryId: string) => ({
+      role: 'objective_target',
+      component: 'Execute',
+      reason: 'objective_target is required; no target selected.',
+      remediation: 'Create and select the target to scan.',
+      entry_id: entryId,
+    })
+    mockGetReadiness.mockResolvedValue({
+      bindings: [scorerBinding(FIRST_ENTRY_ID, 'preset'), scorerBinding(SECOND_ENTRY_ID, 'preset')],
+      issues: [targetIssue(FIRST_ENTRY_ID), targetIssue(SECOND_ENTRY_ID)],
+    })
+    renderDialog({ suite: suiteWithPresetScorer(), defaultObjectiveTarget: null })
+
+    const issues = await screen.findByLabelText('Suite configuration issues')
+    expect(within(issues).getAllByRole('listitem')).toHaveLength(1)
+    expect(issues).toHaveTextContent('Execute: objective_target is required; no target selected.')
+    expect(scorerLabel(FIRST_ENTRY_ID)).not.toHaveStyle({ color: tokens.colorStatusDangerForeground1 })
+    expect(scorerLabel(SECOND_ENTRY_ID)).not.toHaveStyle({ color: tokens.colorStatusDangerForeground1 })
   })
 
   it('shows resolving and failure states instead of recomputing the scorer', async () => {

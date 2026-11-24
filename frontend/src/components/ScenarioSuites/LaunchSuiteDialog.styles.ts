@@ -17,6 +17,15 @@ export const useLaunchSuiteDialogStyles = makeStyles({
   entryIssue: {
     color: tokens.colorStatusDangerForeground1,
   },
+  // Text renders inline; a block label starts below the preset name instead of running on.
+  entryScorer: {
+    display: 'block',
+    margin: 0,
+  },
+  // DialogContent is a flex column; without this the bar shrinks under its list on narrow screens.
+  issueBar: {
+    flexShrink: 0,
+  },
   issueList: {
     margin: 0,
     paddingLeft: tokens.spacingHorizontalL,
