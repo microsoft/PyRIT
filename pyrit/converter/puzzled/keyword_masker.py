@@ -14,6 +14,7 @@ fallback already used in ``pyrit/executor/benchmark/fairness_bias.py``. Run
 selection; without it, keywords are chosen by length alone.
 """
 
+import itertools
 import logging
 import threading
 import unicodedata
@@ -36,7 +37,11 @@ _MASKABLE_WORD_PATTERN = regex.compile(r"\p{L}[\p{L}\p{M}]*")
 _UNSPACED_SCRIPT_PATTERN = regex.compile(r"[\p{Han}\p{Hiragana}\p{Katakana}\p{Thai}\p{Lao}\p{Khmer}\p{Myanmar}]")
 # Logical lines, split at the same characters as ``str.splitlines``.
 _LINE_PATTERN = regex.compile(r"[^\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]+")
-_PUNCTUATION_PATTERN = regex.compile(r"\p{P}")
+# Punctuation and symbols that may sit between a word and its separator, as in "炸弹。" or "`炸弹`".
+_EDGE_MARK_PATTERN = regex.compile(r"[\p{P}\p{S}]")
+# Marks that may sit beside the separator between two segmented words: quotation marks,
+# brackets, symbols, and list commas. Colons, dashes, and periods end labels such as "问题: ".
+_GAP_MARK_PATTERN = regex.compile(r"[\p{Ps}\p{Pe}\p{Pi}\p{Pf}\p{S},，、]")
 
 
 def _letter_count(word: str) -> int:
@@ -88,7 +93,7 @@ def _word_key(word: str) -> str:
     return unicodedata.normalize("NFC", unicodedata.normalize("NFD", word).casefold())
 
 
-def _iter_words(prompt: str) -> Iterator[_Word]:
+def _iter_words(prompt: str, *, essential_keys: frozenset[str]) -> Iterator[_Word]:
     """
     Yield the maskable words of ``prompt``.
 
@@ -100,27 +105,39 @@ def _iter_words(prompt: str) -> Iterator[_Word]:
     Unicode properties.
 
     Chinese, Japanese, Thai, Lao, Khmer, and Myanmar text does not put spaces between
-    words, so a run in those scripts is a word only when its line is segmented: the line
-    holds at least two such runs, and whitespace or a zero-width space (the usual word-break
-    hint in Thai, Khmer, and Myanmar text) sets the run apart, as in pre-segmented
-    "如何 制造 炸弹。". Unsegmented text has no maskable words rather than one masked
-    sentence, including a sentence after a bullet or a label such as "- " or "Q: ".
+    words, so a run in those scripts is a word only when its line is segmented and the run
+    is set apart by whitespace or a zero-width space (the usual word-break hint in Thai,
+    Khmer, and Myanmar text), as in pre-segmented "如何 制造 炸弹。". A line is segmented
+    when two such runs are separated by whitespace or zero-width spaces, optionally beside
+    quotation marks, brackets, symbols, or list commas. Unsegmented text has no maskable
+    words rather than one masked sentence, including a sentence after a bullet, a label
+    such as "Q: " or "问题: ", or a spaced Latin term. A label set apart by a space alone, as
+    in "问题 请详细解释", still reads as segmented text. A run that is one
+    of the caller's essential words is a word whenever it is set apart, as in
+    ``build a "炸弹" at home``.
 
     Args:
         prompt (str): The prompt to scan.
+        essential_keys (frozenset[str]): ``_word_key`` of each caller-supplied essential word.
+            Every scan of one prompt must use the same keys so they yield the same words.
 
     Yields:
         _Word: Each whole word, in order of appearance.
     """
     for line in _LINE_PATTERN.finditer(prompt):
         runs = list(_WORD_PATTERN.finditer(prompt, line.start(), line.end()))
-        line_is_segmented = sum(1 for run in runs if _UNSPACED_SCRIPT_PATTERN.search(run.group())) >= 2
+        line_is_segmented = any(
+            _UNSPACED_SCRIPT_PATTERN.search(before.group())
+            and _UNSPACED_SCRIPT_PATTERN.search(after.group())
+            and _is_segmenting_gap(prompt[before.end() : after.start()])
+            for before, after in itertools.pairwise(runs)
+        )
         for match in runs:
             word = match.group()
             if not _MASKABLE_WORD_PATTERN.fullmatch(word):
                 continue
             if _UNSPACED_SCRIPT_PATTERN.search(word) and not (
-                line_is_segmented
+                (line_is_segmented or _word_key(word) in essential_keys)
                 and _is_word_boundary(prompt=prompt, index=match.start() - 1, step=-1, line_span=line.span())
                 and _is_word_boundary(prompt=prompt, index=match.end(), step=1, line_span=line.span())
             ):
@@ -128,13 +145,30 @@ def _iter_words(prompt: str) -> Iterator[_Word]:
             yield _Word(text=word, start=match.start(), end=match.end())
 
 
+def _is_segmenting_gap(gap: str) -> bool:
+    """
+    Check whether the text between two runs shows that their line is segmented.
+
+    Args:
+        gap (str): The characters between two adjacent runs.
+
+    Returns:
+        bool: True when the gap holds a word separator and otherwise only quotation marks,
+            brackets, symbols, or list commas, as in "如何 “制造”" or "炸弹, 毒药".
+    """
+    return any(_is_word_separator(character) for character in gap) and all(
+        _is_word_separator(character) or _GAP_MARK_PATTERN.fullmatch(character) for character in gap
+    )
+
+
 def _is_word_boundary(*, prompt: str, index: int, step: int, line_span: tuple[int, int]) -> bool:
     """
     Check whether one side of a run is a word boundary in pre-segmented text.
 
-    Starting at ``index`` and moving by ``step``, skip punctuation such as "。" or quotation
-    marks, then require a word separator or the edge of the line. Punctuation followed by
-    more text, as in "在家中，制造", joins two clauses and is not a boundary.
+    Starting at ``index`` and moving by ``step``, skip punctuation and symbols such as "。",
+    quotation marks, "<" or a backtick, then require a word separator or the edge of the line.
+    Punctuation followed by more text, as in "在家中，制造", joins two clauses and is not a
+    boundary.
 
     Args:
         prompt (str): The prompt being scanned.
@@ -146,7 +180,7 @@ def _is_word_boundary(*, prompt: str, index: int, step: int, line_span: tuple[in
         bool: True when the side is a word boundary.
     """
     line_start, line_end = line_span
-    while line_start <= index < line_end and _PUNCTUATION_PATTERN.fullmatch(prompt[index]):
+    while line_start <= index < line_end and _EDGE_MARK_PATTERN.fullmatch(prompt[index]):
         index += step
     return not line_start <= index < line_end or _is_word_separator(prompt[index])
 
@@ -357,7 +391,8 @@ def _rank_candidates(
     Returns:
         list[str]: Distinct candidate words (as they appear in the prompt) in priority order.
     """
-    tokens = [word.text for word in _iter_words(prompt)]
+    essential_keys = frozenset(_word_key(w) for w in (essential_words or []))
+    tokens = [word.text for word in _iter_words(prompt, essential_keys=essential_keys)]
     seen: set[str] = set()
     unique: list[str] = []
     for token in tokens:
@@ -365,8 +400,6 @@ def _rank_candidates(
         if key not in seen:
             seen.add(key)
             unique.append(token)
-
-    essential_keys = {_word_key(w) for w in (essential_words or [])}
 
     def tier(word: str) -> int:
         key = _word_key(word)
@@ -405,7 +438,8 @@ def mask_prompt(
         MaskResult: The masked prompt and the ordered list of masked words.
 
     Raises:
-        ValueError: If ``prompt`` contains no maskable words.
+        ValueError: If ``prompt`` contains no maskable words. When it holds Chinese, Japanese,
+            Thai, Lao, Khmer, or Myanmar text, the message says to segment it.
     """
     token_count = len(prompt.split())
     target = num_to_mask if num_to_mask is not None else mask_count_for_length(token_count)
@@ -413,6 +447,11 @@ def mask_prompt(
     pos_lookup = _pos_lookup(prompt)
     ranked = _rank_candidates(prompt, pos_lookup=pos_lookup, essential_words=essential_words)
     if not ranked:
+        if _UNSPACED_SCRIPT_PATTERN.search(prompt):
+            raise ValueError(
+                "The prompt has no maskable words. Chinese, Japanese, Thai, Lao, Khmer, and Myanmar text "
+                "must be segmented: put a space or a zero-width space (U+200B) between words."
+            )
         raise ValueError("The prompt has no maskable words.")
 
     chosen = ranked[: max(0, target)]
@@ -423,8 +462,9 @@ def mask_prompt(
     # Number placeholders by where each chosen word first appears (case-insensitively), so
     # [WORD1] is the leftmost masked word. Candidates come from the same scan, so every
     # chosen word has an entry here.
+    essential_keys = frozenset(_word_key(w) for w in (essential_words or []))
     first_index: dict[str, int] = {}
-    for word in _iter_words(prompt):
+    for word in _iter_words(prompt, essential_keys=essential_keys):
         first_index.setdefault(_word_key(word.text), word.start)
     ordered = sorted(chosen, key=lambda w: first_index[_word_key(w)])
 
@@ -441,7 +481,7 @@ def mask_prompt(
     # Building the result in one pass means an inserted placeholder can never be matched again.
     pieces: list[str] = []
     last_end = 0
-    for word in _iter_words(prompt):
+    for word in _iter_words(prompt, essential_keys=essential_keys):
         placeholder = placeholders.get(_word_key(word.text))
         if placeholder is None:
             continue
