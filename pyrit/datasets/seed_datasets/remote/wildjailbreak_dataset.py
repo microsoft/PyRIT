@@ -94,6 +94,8 @@ class _WildJailbreakDataset(_RemoteDatasetLoader):
         "Carnegie Mellon University",
     ]
     HF_DATASET_NAME: str = _HF_REPO_ID
+    required_environment_variables = ("HUGGINGFACE_TOKEN",)
+    access_url = f"https://huggingface.co/datasets/{_HF_REPO_ID}"
     modalities: list[str] = ["text"]
     size: str = "large"  # 2,000 prompts with the default filters
     tags: set[str] = {"safety", "jailbreak"}
