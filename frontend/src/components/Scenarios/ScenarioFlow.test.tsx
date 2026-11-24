@@ -23,6 +23,11 @@ jest.mock('@/hooks/useScenarioRunProgress', () => ({
 
 jest.mock('@/services/api', () => ({
   scenariosApi: {
+    listCompatibleDatasets: jest.fn().mockResolvedValue({ items: [{
+      name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: true, provider_available: true,
+      logical_examples: 2, modalities: ['text'], harm_categories: [], has_unlabeled_harm_categories: false,
+    }] }),
+    loadDatasets: jest.fn(),
     cancelRun: jest.fn(),
     estimateRun: jest.fn(),
     getRunHierarchy: jest.fn(() => new Promise(() => {})),
