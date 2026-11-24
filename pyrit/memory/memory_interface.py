@@ -3125,8 +3125,10 @@ class MemoryInterface(abc.ABC):
         if order_by is not None:
             # Rows come back per statement, so the merged sequence is in batch
             # order and any limit only applied inside each batch. The caller's
-            # ordering is re-applied across the merged rows (ties broken by the
-            # row id, keeping the merge deterministic) before the limit trims.
+            # ordering is re-applied across the merged rows before the limit
+            # trims. Rows that tie on every order key keep their row id order,
+            # so the result does not depend on batch order, but which tied rows
+            # each statement returned under its limit is still up to the database.
             order_keys = _order_by_attribute_keys(order_by)
             all_results.sort(key=lambda row: str(getattr(row, "id", "")))
             for name, ascending in reversed(order_keys):
