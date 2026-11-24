@@ -7,7 +7,7 @@ import pathlib
 import re
 import uuid
 from collections import Counter
-from typing import Any
+from typing import Any, cast
 
 from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -73,8 +73,8 @@ def _tokens(text: str) -> list[str]:
     Returns:
         list[str]: The lowercase word tokens.
     """
-    tokens: list[str] = re.findall(r"\w+", text.lower(), flags=re.UNICODE)
-    return tokens
+    # A pattern without groups makes findall return the matched strings.
+    return cast("list[str]", re.findall(r"\w+", text.lower(), flags=re.UNICODE))
 
 
 def _token_recall(source: list[str], *, got: list[str]) -> float:
