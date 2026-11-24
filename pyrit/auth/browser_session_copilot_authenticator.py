@@ -10,7 +10,7 @@ from concurrent.futures import Future
 from contextlib import AsyncExitStack
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Self, TypeVar
+from typing import Any, Self, TypeVar, cast
 from urllib.parse import parse_qs, urlparse
 
 import jwt
@@ -352,7 +352,8 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
         Returns:
             The captured access token as a string.
         """
-        token_future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        # This future is resolved only with a validated string access token.
+        token_future = cast("asyncio.Future[str]", asyncio.get_running_loop().create_future())
         page = await self._ensure_browser_session_async()
 
         def handle_websocket(websocket: Any) -> None:
