@@ -9,9 +9,9 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from typing import Any
 
-from pyrit.models import Message
+from pyrit.models import Message, PromptDataType
 from pyrit.models.messages.chat_message import FunctionCall
-from pyrit.prompt_target.common.tool_call_history import parse_function_call
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES, parse_function_call
 from pyrit.prompt_target.common.tool_loop import (
     InvalidToolCallsError,
     PendingToolCall,
@@ -79,6 +79,17 @@ class _ChatCompletionsToolLoopMixin(ABC):
             "execute_tools": None if self._execute_tools else False,
             "max_tool_rounds": self._max_tool_rounds if self._direct_tools or self._tool_providers else None,
         }
+
+    def _implied_input_modalities(self) -> frozenset[frozenset[PromptDataType]]:
+        """
+        Accept tool-call history when tools run locally, since the target's own tool loop produces it.
+
+        Advertised capabilities are unchanged, so callers can still tell whether the model is known to call tools.
+
+        Returns:
+            frozenset[frozenset[PromptDataType]]: Tool-call combinations, or none without configured tools.
+        """
+        return TOOL_CALL_INPUT_MODALITIES if self._direct_tools or self._tool_providers else frozenset()
 
     def _validate_tool_definitions(self, tools: Sequence[Tool]) -> None:
         """

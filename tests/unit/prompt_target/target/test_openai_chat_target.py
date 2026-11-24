@@ -2371,7 +2371,9 @@ def weather_tool() -> tuple[FunctionTool, list[str]]:
 
 
 def _tool_target(**kwargs: Any) -> OpenAIChatTarget:
-    return OpenAIChatTarget(model_name="gpt-4o", endpoint="https://mock.azure.com/", api_key="mock-api-key", **kwargs)
+    return OpenAIChatTarget(
+        **{"model_name": "gpt-4o", "endpoint": "https://mock.azure.com/", "api_key": "mock-api-key", **kwargs}
+    )
 
 
 def _weather_completion(*locations: str) -> Any:
@@ -2421,6 +2423,25 @@ class TestOpenAIChatToolLoop:
         assert [message["role"] for message in messages] == ["user", "assistant", "tool", "tool", "assistant", "user"]
         assert [message["tool_call_id"] for message in messages if message["role"] == "tool"] == ["call-SF", "call-NY"]
         assert executions == ["SF", "NY"]
+
+    async def test_unknown_deployment_continues_a_tool_conversation_async(
+        self, *, sqlite_instance: SQLiteMemory, weather_tool: tuple[FunctionTool, list[str]]
+    ) -> None:
+        configured, executions = weather_tool
+        target = _tool_target(model_name="my-gpt4o-deployment", tools=[configured])
+        target._async_client.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
+            side_effect=[_weather_completion("SF"), _text_completion("Done."), _text_completion("Second.")]
+        )
+        normalizer = PromptNormalizer()
+
+        for prompt in ("Weather?", "Again"):
+            reply = await normalizer.send_prompt_async(
+                target=target, message=Message.from_prompt(prompt=prompt, role="user"), conversation_id="unknown"
+            )
+
+        assert reply.get_value() == "Second."
+        assert executions == ["SF"]
+        assert target.capabilities == _tool_target(model_name="my-gpt4o-deployment").capabilities
 
     async def test_retried_completion_does_not_rerun_tools_async(
         self, weather_tool: tuple[FunctionTool, list[str]]

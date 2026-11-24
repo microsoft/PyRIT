@@ -23,6 +23,7 @@ from pyrit.prompt_target import (
     collect_tools_async,
     tool,
 )
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 from pyrit.registry import TargetRegistry
 
 
@@ -200,10 +201,12 @@ def test_openai_target_copy_adds_tools_to_a_tool_less_source(target_class: type[
     assert copy.get_identifier().params["tools"]
 
 
-def _chat_tool_target(target_class: type[OpenAIChatTarget | LiteLLMChatTarget], **kwargs: Any) -> object:
+def _chat_tool_target(
+    target_class: type[OpenAIChatTarget | LiteLLMChatTarget], *, model: str = "gpt-4o", **kwargs: Any
+) -> OpenAIChatTarget | LiteLLMChatTarget:
     if target_class is LiteLLMChatTarget:
-        return LiteLLMChatTarget(model_name="openai/gpt-4o", **kwargs)
-    return OpenAIChatTarget(model_name="gpt-4o", endpoint="https://mock.azure.com", api_key="mock-key", **kwargs)
+        return LiteLLMChatTarget(model_name=f"openai/{model}", **kwargs)
+    return OpenAIChatTarget(model_name=model, endpoint="https://mock.azure.com", api_key="mock-key", **kwargs)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -229,6 +232,34 @@ def test_chat_tool_targets_accept_nested_settings_without_local_execution(
     *, target_class: type[OpenAIChatTarget | LiteLLMChatTarget], settings: dict[str, Any], nested: dict[str, Any]
 ) -> None:
     _chat_tool_target(target_class, **settings, extra_body_parameters={"extra_body": nested})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, LiteLLMChatTarget])
+@pytest.mark.parametrize("with_tools", [False, True])
+def test_chat_tool_targets_accept_tool_history_from_their_own_tools(
+    *, target_class: type[OpenAIChatTarget | LiteLLMChatTarget], with_tools: bool
+) -> None:
+    call = {"type": "function", "id": "call-1", "function": {"name": "add", "arguments": '{"x": 1}'}}
+    result = {"type": "function_call_output", "call_id": "call-1", "output": "2"}
+    conversation = [
+        Message.from_prompt(prompt="Add", role="user"),
+        MessagePiece(
+            role="assistant", original_value=json.dumps(call), original_value_data_type="function_call"
+        ).to_message(),
+        MessagePiece(
+            role="tool", original_value=json.dumps(result), original_value_data_type="function_call_output"
+        ).to_message(),
+        Message.from_prompt(prompt="Again", role="user"),
+    ]
+    target = _chat_tool_target(target_class, model="my-deployment", tools=[add] if with_tools else None)
+
+    assert not target.capabilities.input_modalities & TOOL_CALL_INPUT_MODALITIES
+    if with_tools:
+        target._validate_request(normalized_conversation=conversation)
+    else:
+        with pytest.raises(ValueError, match="tool-history modality 'function_call'"):
+            target._validate_request(normalized_conversation=conversation)
 
 
 async def test_identifier_does_not_depend_on_tool_discovery(patch_central_database) -> None:
