@@ -21,10 +21,12 @@ import type {
   ConverterListResponse,
   ConverterPreviewRequest,
   ConverterPreviewResponse,
+  ConverterSaveabilityRequest,
   CreateConverterRequest,
   CreateTechniqueRequest,
   TechniqueInstance,
   TechniqueListResponse,
+  TechniqueSaveabilityRequest,
   TechniqueTypeResponse,
   TechniqueConfiguration,
   TechniqueOverride,
@@ -95,13 +97,13 @@ import type {
   UpdateAttackRequest,
   SaveConversationRequest,
   Finding,
-  FindingCreate,
   FindingCreateRequest,
+  FindingFields,
   FindingListItem,
   FindingListParams,
   FindingListResponse,
-  FindingOptionsResponse,
   FindingPathsUpdateRequest,
+  FindingUpdateRequest,
   FindingEvidenceCreateRequest,
   FindingEvidenceAttachResponse,
   FindingEvidenceListResponse,
@@ -142,8 +144,10 @@ export const mediaApi = {
 const operationPath = (operationId: string): string => `/operations/${encodeURIComponent(operationId)}`
 
 export const operationsApi = {
-  getFindingOptions: async (): Promise<FindingOptionsResponse> => {
-    return (await apiClient.get('/operations/finding-options')).data
+  /** Reads the deployment's finding fields, or the fields that label and check an operation's findings. */
+  getFindingFields: async (operationId?: string): Promise<FindingFields> => {
+    const path = operationId === undefined ? '/operations' : operationPath(operationId)
+    return (await apiClient.get(`${path}/finding-fields`)).data
   },
   list: async (): Promise<OperationListResponse> => {
     return (await apiClient.get('/operations')).data
@@ -166,7 +170,7 @@ export const operationsApi = {
   createFinding: async (operationId: string, request: FindingCreateRequest): Promise<Finding> => {
     return (await apiClient.post(`${operationPath(operationId)}/findings`, request)).data
   },
-  updateFinding: async (operationId: string, findingId: string, request: FindingCreate): Promise<Finding> => {
+  updateFinding: async (operationId: string, findingId: string, request: FindingUpdateRequest): Promise<Finding> => {
     return (await apiClient.put(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`, request)).data
   },
   replaceFindingPaths: async (
@@ -477,6 +481,11 @@ export const techniquesApi = {
     (await apiClient.get('/techniques/types')).data,
   createTechnique: async (request: CreateTechniqueRequest): Promise<TechniqueInstance> =>
     (await apiClient.post('/techniques', request)).data,
+  checkSaveability: async (
+    request: TechniqueSaveabilityRequest,
+    signal?: AbortSignal,
+  ): Promise<SaveabilityResponse> =>
+    (await apiClient.post('/techniques/saveability', request, { signal })).data,
   getConfiguration: async (name: string): Promise<TechniqueConfiguration> =>
     (await apiClient.get(`/techniques/${encodeURIComponent(name)}/configuration`)).data,
   validateEdit: async (request: TechniqueOverride): Promise<TechniqueEditResponse> =>
@@ -501,6 +510,13 @@ export const convertersApi = {
 
   createConverter: async (request: CreateConverterRequest): Promise<ConverterInstance> => {
     const response = await apiClient.post('/converters', request)
+    return response.data
+  },
+  checkSaveability: async (
+    request: ConverterSaveabilityRequest,
+    signal?: AbortSignal,
+  ): Promise<SaveabilityResponse> => {
+    const response = await apiClient.post('/converters/saveability', request, { signal })
     return response.data
   },
   buildConverter: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredConverter> => {

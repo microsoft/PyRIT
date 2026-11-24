@@ -31,7 +31,7 @@ import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
 from pyrit.auth import get_caller_principal
 from pyrit.models.catalog import RegistryEntryOrigin
@@ -84,6 +84,9 @@ _saved_entry_registration: ContextVar[tuple[str, str] | None] = ContextVar("_sav
 
 class RegistryNameTakenError(ValueError):
     """A name is already registered, so another entry can't take it."""
+
+    #: What the new entry gives that is taken: its name, or for a technique, which tags also select, a tag.
+    field: Literal["name", "tags"] = "name"
 
 
 @dataclass

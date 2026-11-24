@@ -54,10 +54,9 @@ if TYPE_CHECKING:
         SavedEntryConflictError,
         SavedEntryReplacement,
         SavedEntryStorageError,
+        check_saved_technique_async,
         get_class_saveability,
         prepare_saved_params_async,
-        refuse_temporary_entries,
-        refuse_temporary_references,
         save_then_register_async,
     )
     from pyrit.registry.scenario_preset_storage import ScenarioPresetConflictError, ScenarioPresetStorage
@@ -90,9 +89,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "SavedEntryReplacement": "pyrit.registry.registry_recipe_save",
     "SavedEntryStorageError": "pyrit.registry.registry_recipe_save",
     "get_class_saveability": "pyrit.registry.registry_recipe_save",
+    "check_saved_technique_async": "pyrit.registry.registry_recipe_save",
     "prepare_saved_params_async": "pyrit.registry.registry_recipe_save",
-    "refuse_temporary_entries": "pyrit.registry.registry_recipe_save",
-    "refuse_temporary_references": "pyrit.registry.registry_recipe_save",
     "save_then_register_async": "pyrit.registry.registry_recipe_save",
     "SupportsInstances": "pyrit.registry.instance_registry",
     "discover_in_directory": "pyrit.registry.discovery",

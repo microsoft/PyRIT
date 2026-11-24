@@ -653,13 +653,35 @@ def test_load_downloads_the_pinned_revision() -> None:
     fake.load.assert_called_once_with("cache", device="cpu")
 
 
-def test_load_reads_model_path_without_downloading(tmp_path: Path) -> None:
+@pytest.mark.parametrize("location", ["model_path", "model_id"])
+async def test_scorer_loads_its_checkpoint_from_model_path_or_the_hub_async(tmp_path: Path, *, location: str) -> None:
+    from_hub = location == "model_id"
+    scorer = (
+        LocalRefusalClassifierScorer(model_id="contoso/laya_tuned")
+        if from_hub
+        else LocalRefusalClassifierScorer(model_path=tmp_path)
+    )
     fake = MagicMock()
-    with patch.dict(sys.modules, {"laya": fake}), patch("huggingface_hub.snapshot_download") as download:
-        _LayaEncoder(model_path=tmp_path)._load_model()
+    with (
+        patch.dict(sys.modules, {"laya": fake}),
+        patch("huggingface_hub.snapshot_download", return_value="hub-cache") as download,
+        patch.object(module, "_load_training_rows", return_value=([("objective", "response")], [1])),
+        patch.object(
+            _LayaEncoder,
+            "_training_features",
+            return_value=_TrainingFeatures(features=[[0.0], [1.0]], labels=[0, 1]),
+        ),
+        patch.object(module, "_train_head", return_value=_head()),
+    ):
+        await scorer.load_model_async()
 
-    download.assert_not_called()
-    fake.load.assert_called_once_with(str(tmp_path), device=None)
+    if from_hub:
+        assert download.call_args.args == ("contoso/laya_tuned",)
+        assert download.call_args.kwargs["revision"] == _LayaEncoder.DEFAULT_MODEL_REVISION
+        fake.load.assert_called_once_with("hub-cache", device=None)
+    else:
+        download.assert_not_called()
+        fake.load.assert_called_once_with(str(tmp_path), device=None)
 
 
 def test_load_downloads_model_id_even_when_a_folder_has_that_name(tmp_path: Path) -> None:

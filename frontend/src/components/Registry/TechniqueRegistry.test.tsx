@@ -14,7 +14,7 @@ installAutoRefreshTimers()
 let mockRuntime = { generation: 1, ready: true }
 jest.mock('@/hooks/useRuntime', () => ({ useRuntime: () => mockRuntime }))
 jest.mock('@/services/api', () => ({
-  techniquesApi: { listTechniques: jest.fn(), listTypes: jest.fn(), createTechnique: jest.fn() },
+  techniquesApi: { listTechniques: jest.fn(), listTypes: jest.fn(), createTechnique: jest.fn(), checkSaveability: jest.fn() },
   targetsApi: { listTargets: jest.fn() },
   convertersApi: { listConverters: jest.fn() },
 }))
@@ -80,6 +80,7 @@ describe('TechniqueRegistry', () => {
     techniques.listTechniques.mockResolvedValue(techniquePage([technique('first'), technique('second', 'RedTeamingAttack', ['advanced'])]))
     techniques.listTypes.mockResolvedValue(metadata)
     techniques.createTechnique.mockResolvedValue(technique('created'))
+    techniques.checkSaveability.mockResolvedValue({ not_saveable_reason: null })
     targets.listTargets.mockResolvedValue({
       items: [makeTarget({ target_registry_name: 'local' })], pagination: { limit: 200, has_more: false },
     })
@@ -408,6 +409,11 @@ describe('TechniqueRegistry', () => {
       { converter_id: 'rot13', origin: 'temporary',
         identifier: { class_name: 'ROT13Converter', class_module: 'pyrit.converter', hash: 'rot13', pyrit_version: '1' } },
     ] })
+    techniques.checkSaveability.mockImplementation(async (request) => ({
+      not_saveable_reason: request.request_converters?.includes('rot13')
+        ? "Uses temporary converter 'rot13', which won't exist after a restart."
+        : null,
+    }))
     render(tree())
     const user = await openCreate()
     await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'encoded')
@@ -418,7 +424,7 @@ describe('TechniqueRegistry', () => {
     await user.click(screen.getByRole('combobox', { name: 'Request converters' }))
     await user.click(screen.getByTestId('converter-option-rot13'))
 
-    expect(screen.getByText("This technique can't be saved")).toBeInTheDocument()
+    expect(await screen.findByText("This technique can't be saved")).toBeInTheDocument()
     expect(screen.getByText(/Uses temporary converter 'rot13', which won't exist after a restart\. A Temporary technique is gone after the backend restarts or is reinitialized\./)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
     await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(1))
@@ -431,16 +437,49 @@ describe('TechniqueRegistry', () => {
     targets.listTargets.mockResolvedValue({
       items: [makeTarget({ target_registry_name: 'local', origin: 'temporary' })], pagination: { limit: 200, has_more: false },
     })
+    techniques.checkSaveability.mockImplementation(async (request) => ({
+      not_saveable_reason: request.adversarial_chat === 'local'
+        ? "Uses temporary target 'local', which won't exist after a restart."
+        : null,
+    }))
     render(tree())
     const user = await openCreate()
     await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'adversarial')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'RedTeamingAttack')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Adversarial target' }), 'local')
 
-    expect(screen.getByText(/Uses temporary target 'local', which won't exist after a restart\./)).toBeInTheDocument()
+    expect(await screen.findByText(/Uses temporary target 'local', which won't exist after a restart\./)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
     await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(1))
     expect(techniques.createTechnique.mock.calls[0][0]).toMatchObject({ adversarial_chat: 'local', persist: false })
+  })
+
+  it('asks the backend whether the technique can be saved', async () => {
+    render(tree())
+    const user = await openCreate()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
+    await user.click(screen.getByRole('combobox', { name: 'Request converters' }))
+    await user.click(screen.getByTestId('converter-option-b64'))
+
+    await waitFor(() => expect(techniques.checkSaveability).toHaveBeenLastCalledWith(
+      { type: 'PromptSendingAttack', params: {}, request_converters: ['b64'], response_converters: [] },
+      expect.anything(),
+    ))
+    expect(screen.getByRole('button', { name: 'Save technique' })).toBeInTheDocument()
+  })
+
+  it('keeps offering Save when the saveability check fails', async () => {
+    techniques.checkSaveability.mockRejectedValue(new Error('Network Error'))
+    render(tree())
+    const user = await openCreate()
+    await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'offline')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
+    await waitFor(() => expect(techniques.checkSaveability).toHaveBeenCalled())
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Save technique' }))
+    await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(1))
+    expect(techniques.createTechnique.mock.calls[0][0]).toMatchObject({ name: 'offline', persist: true })
   })
 
   it('offers a Temporary technique when the server refuses to save it, until a value changes', async () => {
@@ -486,8 +525,9 @@ describe('TechniqueRegistry', () => {
   })
 
   it('shows a taken name on the name field and needs a lowercase name to save', async () => {
+    const taken = "Technique 'first' already exists (names are case-insensitive)"
     techniques.createTechnique.mockRejectedValueOnce(
-      axiosError(409, { detail: "Technique 'first' already exists (names are case-insensitive)" }),
+      axiosError(409, { detail: taken, errors: [{ field: 'body.name', message: taken }] }),
     )
     render(tree())
     const user = await openCreate()
@@ -495,7 +535,11 @@ describe('TechniqueRegistry', () => {
     await user.type(name, 'First')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
 
-    expect(screen.getByText('Use lowercase letters, digits and underscores, starting with a letter (max 64 characters).')).toBeInTheDocument()
+    // The rule is given once, by the error, then the field's help.
+    expect(name).toHaveAccessibleDescription(
+      'Use lowercase letters, digits and underscores, starting with a letter (max 64 characters). '
+        + 'A unique name used to find and reuse this technique. Adding a technique does not run an attack.',
+    )
     expect(screen.getByRole('button', { name: 'Save technique' })).toBeDisabled()
     await user.clear(name)
     await user.type(name, 'first')
@@ -507,26 +551,45 @@ describe('TechniqueRegistry', () => {
     expect(screen.getByRole('button', { name: 'Save technique' })).toBeEnabled()
   })
 
-  it('lets a taken tag be changed and saved again', async () => {
+  it('shows a taken tag on Tags and lets it be changed and saved again', async () => {
+    const taken = "Tag 'first' conflicts with a technique name"
     techniques.createTechnique.mockRejectedValueOnce(
-      axiosError(409, { detail: "Tag 'first' conflicts with technique 'first'" }),
+      axiosError(409, { detail: taken, errors: [{ field: 'body.tags', message: taken }] }),
     )
     render(tree())
     const user = await openCreate()
-    await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'fresh')
+    const name = screen.getByRole('textbox', { name: 'Registry name' })
+    await user.type(name, 'fresh')
     const tags = screen.getByRole('textbox', { name: 'Tags' })
     await user.type(tags, 'first')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
     await user.click(screen.getByRole('button', { name: 'Save technique' }))
-    expect(await screen.findByText("Tag 'first' conflicts with technique 'first'")).toBeInTheDocument()
+    await waitFor(() => expect(tags).toHaveAccessibleDescription(expect.stringContaining(taken)))
+    expect(tags).toHaveAttribute('aria-invalid', 'true')
+    expect(name).not.toHaveAccessibleDescription(expect.stringContaining(taken))
+    expect(name).not.toHaveAttribute('aria-invalid', 'true')
     expect(screen.getByRole('button', { name: 'Save technique' })).toBeDisabled()
 
     await user.clear(tags)
     await user.type(tags, 'single_turn')
-    expect(screen.queryByText("Tag 'first' conflicts with technique 'first'")).not.toBeInTheDocument()
+    expect(screen.queryByText(taken)).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Save technique' }))
 
     await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(2))
     expect(techniques.createTechnique.mock.calls[1][0]).toMatchObject({ name: 'fresh', tags: ['single_turn'] })
+  })
+
+  it('shows a conflict that names no field above the form', async () => {
+    const taken = "The technique name or tag 'fresh' is taken."
+    techniques.createTechnique.mockRejectedValueOnce(axiosError(409, { detail: taken }))
+    render(tree())
+    const user = await openCreate()
+    const name = screen.getByRole('textbox', { name: 'Registry name' })
+    await user.type(name, 'fresh')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
+    await user.click(screen.getByRole('button', { name: 'Save technique' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(taken)
+    expect(name).not.toHaveAccessibleDescription(expect.stringContaining(taken))
   })
 })

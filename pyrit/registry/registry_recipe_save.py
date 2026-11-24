@@ -7,7 +7,8 @@ Save registry entries, so ``RegistryRecipeRestorer`` rebuilds them at every star
 Saving takes three steps: ``prepare_saved_params_async`` turns off the values the entry would take from this
 server and refuses what a saved entry can't hold, the caller builds the entry from the parameters it returns, and
 ``save_then_register_async`` writes the entry's recipe and registers the entry as saved. Targets, converters, and
-scorers are saved the same way.
+scorers are saved the same way. A technique is checked with ``check_saved_technique_async`` instead of the first step,
+since it builds its attack when it runs.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import inspect
 import logging
 import traceback
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.common.azure_storage import redact_urls
@@ -62,7 +63,20 @@ class NotSaveableError(ValueError):
 
 
 class SavedEntryConflictError(ValueError):
-    """An entry can't be saved under a name that a registered or saved entry of its kind already has."""
+    """An entry can't be saved under a name, or a technique with a tag, that a registered or saved entry has."""
+
+    def __init__(self, message: str, *, field: Literal["name", "tags"] | None = "name") -> None:
+        """
+        Initialize the error with what conflicts.
+
+        Args:
+            message (str): What conflicts, in words safe to show users.
+            field (Literal["name", "tags"] | None): Whether the entry's name or, for a technique, one of its tags
+                conflicts, or None when it's neither, such as an entry the recipe names that was deleted while it
+                was being saved. Defaults to "name".
+        """
+        super().__init__(message)
+        self.field = field
 
 
 class SavedEntryStorageError(RuntimeError):
@@ -178,8 +192,67 @@ async def prepare_saved_params_async(
     _name_default_references(cls=cls, parameters=parameters, params=saved_params)
     _refuse_values_restore_cant_pass(cls=cls, parameters=parameters, params=saved_params)
     _refuse_environment_values(cls=cls, params=saved_params)
-    refuse_temporary_references(parameters=parameters, params=saved_params)
+    _refuse_temporary_references(parameters=parameters, params=saved_params)
     return saved_params
+
+
+async def check_saved_technique_async(*, recipe: TechniqueRecipe) -> None:
+    """
+    Refuse a technique to save that restore couldn't bring back as it is.
+
+    Restore checks the same things when it rebuilds the technique, and lists the entries it names with the same
+    helper. A technique builds its attack when it runs, from the configuration at that time, so nothing it would
+    take from the defaults then is named in its recipe.
+
+    Args:
+        recipe (TechniqueRecipe): The technique's recipe, as it would be saved.
+
+    Raises:
+        NotSaveableError: If the attack type can't be saved or was added by a scan's launch script, an attack
+            parameter holds or would use a credential or leaves a setting to this server's environment, or the
+            technique uses a Temporary entry.
+        ValueError: If the attack type isn't registered, or an address an attack parameter gives isn't a full
+            http(s) or ws(s) address.
+    """
+    # Finding the attack class can run the registry's first, slow class discovery, so it stays off the event loop.
+    await asyncio.to_thread(_check_saved_technique, recipe=recipe)
+
+
+def _check_saved_technique(*, recipe: TechniqueRecipe) -> None:
+    """
+    Run ``check_saved_technique_async``'s checks.
+
+    Raises:
+        NotSaveableError: If restore couldn't bring the technique back as it is.
+        ValueError: If the attack type isn't registered, or an attack parameter gives an invalid address.
+    """
+    from pyrit.registry.components.attack_registry import AttackRegistry
+
+    attack_registry = AttackRegistry.get_registry_singleton()
+    try:
+        attack_class = attack_registry.get_class(recipe.type)
+    except KeyError as error:
+        raise ValueError(f"'{recipe.type}' is not a registered attack type.") from error
+    _, class_reason = get_class_saveability(registry=attack_registry, type_name=recipe.type)
+    if class_reason is not None:
+        raise NotSaveableError(class_reason)
+    metadata = attack_registry.get_registered_class_metadata(recipe.type) or attack_registry.get_class_metadata(
+        attack_class
+    )
+    try:
+        check_saved_entry_params(cls=attack_class, parameters=metadata.parameters, params=recipe.params)
+    except SavedEntryRefusedError as error:
+        # The address needs fixing; creating the technique without saving it wouldn't make it usable.
+        if error.reason is RestoreFailureReason.INVALID_RECIPE:
+            raise ValueError(str(error)) from error
+        raise NotSaveableError(str(error)) from error
+    _refuse_environment_values(cls=attack_class, params=recipe.params)
+    for ref in RegistryRecipeRestorer().recipe_references(kind=RegistryRecipeKind.TECHNIQUES, recipe=recipe):
+        entry = _registry_for_kind(ref.kind).instances.get_entry(ref.name)
+        if entry is not None and registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
+            raise NotSaveableError(
+                f"Uses temporary {ref.kind.value.removesuffix('s')} '{ref.name}', which won't exist after a restart."
+            )
 
 
 def _refuse_values_restore_cant_pass(*, cls: type, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
@@ -318,7 +391,7 @@ def _referenced_registry(component_type: ComponentType) -> InstanceHoldingRegist
     return registry.get_registry_singleton() if registry is not None else None
 
 
-def refuse_temporary_references(*, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
+def _refuse_temporary_references(*, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
     """
     Refuse an entry to save that uses a Temporary entry, which won't exist after a restart.
 
@@ -333,13 +406,13 @@ def refuse_temporary_references(*, parameters: Sequence[Parameter], params: Mapp
         if parameter.reference is None:
             continue
         value = params.get(parameter.name)
-        refuse_temporary_entries(
+        _refuse_temporary_entries(
             component_type=parameter.reference.component_type,
             names=value if isinstance(value, list) else [value],
         )
 
 
-def refuse_temporary_entries(*, component_type: ComponentType, names: Sequence[Any]) -> None:
+def _refuse_temporary_entries(*, component_type: ComponentType, names: Sequence[Any]) -> None:
     """
     Refuse an entry to save that names a Temporary entry, which won't exist after a restart.
 
@@ -424,7 +497,8 @@ def _refuse_missing_references(
         if entry is None or registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
             raise SavedEntryConflictError(
                 f"{ref.kind.value.removesuffix('s').capitalize()} '{ref.name}' was deleted while this was being "
-                "saved, so it can't be saved now."
+                "saved, so it can't be saved now.",
+                field=None,
             )
 
 
@@ -507,7 +581,7 @@ async def _save_then_register_async(
         if not await _delete_recipe_async(storage=storage, singular=singular, name=name, version=version):
             raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
         if isinstance(error, RegistryNameTakenError):
-            raise SavedEntryConflictError(str(error)) from error
+            raise SavedEntryConflictError(str(error), field=error.field) from error
         raise
 
 

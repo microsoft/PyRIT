@@ -35,12 +35,6 @@ export const useTargetTableStyles = makeStyles({
     marginTop: tokens.spacingVerticalXL,
     marginBottom: tokens.spacingVerticalXL,
   },
-  defaultIndicators: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: tokens.spacingHorizontalXS,
-    marginTop: tokens.spacingVerticalXXS,
-  },
   registryNameCell: {
     minWidth: 0,
   },

@@ -106,7 +106,13 @@ export const useCreateConverterDialogStyles = makeStyles({
     maxWidth: '560px',
     maxHeight: 'calc(100vh - 32px)',
   },
+  // The surface's height less its padding and border, so a long form scrolls instead of pushing the actions out.
+  body: {
+    minHeight: 0,
+    maxHeight: 'calc(100vh - 32px - 50px)',
+  },
   content: {
+    minHeight: 0,
     maxHeight: '70vh',
     overflowY: 'auto',
   },

@@ -204,6 +204,11 @@ PUT /api/targets/my-claude/credentials
 - `GET /api/converters/types` - List the converter types that can be created, with their parameters, and why a
   type can't be saved at all (`not_saveable_reason`)
 - `POST /api/converters` - Create a converter
+- `POST /api/converters/saveability` - Say whether a converter could be saved, without building or saving it. Send the
+  create request's `type` and `params`; the answer is `{"not_saveable_reason": ...}`, which gives only the cause, or
+  null when the save checks pass. It runs the checks saving runs before the converter is built, and an unknown type or
+  a parameter those checks refuse gets the same **400** as create. It doesn't check the name, and the converter's own
+  constructor checks don't run, so null doesn't mean the create succeeds.
 - `DELETE /api/converters/{converter_id}` - Remove a converter
 - `POST /api/scorers` - Create a scorer
 
@@ -755,6 +760,7 @@ IDs remain available through the single-node and saved-conversation APIs.
 | `GET /api/techniques/types` | Attack-class parameters and supported converter/adversarial controls |
 | `GET /api/techniques/{name}` | Safe settings for one factory; 404 if not registered |
 | `POST /api/techniques` | Validate and register a basic runtime technique, saving it with `persist`; 201 on success |
+| `POST /api/techniques/saveability` | Say whether a technique could be saved, without building or saving it |
 
 The list accepts `limit` (default 50, range 1-200) and `cursor` (the last returned
 registry name). Results use registry-name order. Follow `pagination.next_cursor`
@@ -786,17 +792,27 @@ A created technique is Temporary unless the request sets `"persist": true`. A te
 lowercase letters, digits, and underscores that starts with a letter (otherwise **422**). Its request, without the
 name, is saved under `registry_recipes_source` with the signed-in user recorded, and it's rebuilt with the same call
 at every start. A request receives **400** with `"type": "/errors/not-saveable"`, and can be sent again without
-`persist`, if its attack type was added by a scan's launch scripts, or a converter or the adversarial target it names
-is Temporary. A name or tag that clashes with a
-registered technique receives **409**, and storage that can't be written receives **503**. Each listed technique's
-`origin` is `saved`, `configuration` (registered by a startup script), or `temporary`, as for targets. Settings
-changed for a single run aren't saved.
+`persist`, if restore couldn't bring the technique back as it is: its attack type can't be saved or was added by a
+scan's launch scripts, an attack parameter holds or would use a credential or leaves a setting to this server's
+environment, or a converter, the adversarial target, or an entry an attack parameter names is Temporary. A name or tag
+that clashes with a registered technique receives **409**, whose `errors` names the field that clashes, `body.name` or
+`body.tags`, and storage that can't be written receives **503**. Each listed technique's `origin` is `saved`,
+`configuration` (registered by a startup script), or `temporary`, as for targets. Settings changed for a single run
+aren't saved.
+
+`POST /api/techniques/saveability` takes the create request's `type`, `params`, `request_converters`,
+`response_converters`, and `adversarial_chat`, and answers `{"not_saveable_reason": ...}` with only the cause, or null
+when the save checks pass. It runs the checks saving runs before the technique is built, through
+`check_saved_technique_async` in `pyrit.registry`, and an unknown attack type or an invalid address gets the same
+**400** as create. It doesn't check the name or tags, and the technique isn't built, so null doesn't mean the create
+succeeds.
 
 The basic GUI supports scalar inputs and one level of declared structured settings.
 It hides nested structured settings that the shared resolver cannot construct.
 
-Additions are runtime-only and available in compatible scenarios. Restart or
-reinitialize PyRIT to remove them. Existing scenario snapshots and runs do not
+Added techniques are available in compatible scenarios. A Temporary technique is gone after the backend restarts or
+is reinitialized, while a saved one comes back; to remove a saved technique, delete `techniques/<name>.json` under
+`registry_recipes_source` and restart the backend. Existing scenario snapshots and runs do not
 change. List and detail responses include Python-created factories without
 disclosing target credentials.
 Scenario-local factories take precedence over registered factories of the same name.
