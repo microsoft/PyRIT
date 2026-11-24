@@ -425,14 +425,19 @@ class ConverterService:
         refusal = self._required_upload_refusal(converter_type=request.type)
         if refusal is not None:
             raise NotSaveableError(refusal)
-        uploads = [
-            parameter for parameter in self._upload_params(converter_type=request.type) if parameter in request.params
-        ]
+        upload_params = self._upload_params(converter_type=request.type)
+        # An optional file left empty means no file, so the converter is saved without it, as restore builds it.
+        requested = {
+            name: value
+            for name, value in request.params.items()
+            if name not in upload_params or value not in (None, "")
+        }
+        uploads = [parameter for parameter in upload_params if parameter in requested]
         if uploads:
             raise NotSaveableError(f"Saved converters can't keep uploaded files yet ('{uploads[0]}').")
         converter_cls = self._registry.get_class(request.type)
         params = await prepare_saved_params_async(
-            registry=self._registry, type_name=request.type, cls=converter_cls, params=request.params
+            registry=self._registry, type_name=request.type, cls=converter_cls, params=requested
         )
         try:
             self._registry.instances.validate_name_available(name)

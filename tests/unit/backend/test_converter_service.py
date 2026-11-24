@@ -2544,7 +2544,6 @@ class TestPersistConverter:
         [
             _make_data_uri(mime_type="font/ttf", content=b"font"),
             "https://contoso.blob.core.windows.net/results/fonts/font.ttf",
-            None,
         ],
     )
     async def test_refuses_an_uploaded_file_before_storing_it(
@@ -2587,11 +2586,13 @@ class TestPersistConverter:
         assert list(upload_service._upload_path.iterdir()) == []
         assert not (tmp_path / "converters").exists()
 
+    @pytest.mark.parametrize("left_out", [{}, {"font_name": None}, {"font_name": ""}])
     async def test_saves_a_converter_whose_optional_file_is_left_out(
-        self, upload_service: ConverterService, tmp_path: Path
+        self, upload_service: ConverterService, tmp_path: Path, left_out: dict[str, str | None]
     ) -> None:
         await upload_service.create_converter_async(
-            request=_persist("banner", "AddTextImageConverter", {"text_to_add": "hello"}), recipes_source=str(tmp_path)
+            request=_persist("banner", "AddTextImageConverter", {"text_to_add": "hello", **left_out}),
+            recipes_source=str(tmp_path),
         )
 
         assert _saved_converter(tmp_path, "banner")["params"] == {"text_to_add": "hello"}
