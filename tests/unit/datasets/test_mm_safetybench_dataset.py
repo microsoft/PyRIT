@@ -51,19 +51,19 @@ def _category_split(
 
 def _patch_loader(loader: _MMSafetyBenchDataset, *, hf_lookup: dict[tuple[str, str], list[dict[str, Any]]]):
     """
-    Patch ``_fetch_from_huggingface_async`` so it returns rows from ``hf_lookup`` keyed by (config, split),
+    Patch ``_fetch_single_split_async`` so it returns rows from ``hf_lookup`` keyed by (config, split),
     and patch ``_save_pil_image_async`` so no real image cache is touched.
     """
 
-    async def fake_fetch_from_huggingface_async(*, dataset_name: str, config: str, split: str, **_: Any) -> Any:
-        return hf_lookup.get((config, split), [])
+    async def fake_fetch_single_split_async(*, category_value: str, split: str, **_: Any) -> Any:
+        return hf_lookup.get((category_value, split), [])
 
     fake_save = AsyncMock(
         side_effect=lambda *, pil_image, category_value, question_id: f"/fake/{category_value}_{question_id}.jpg"
     )
 
     return (
-        patch.object(loader, "_fetch_from_huggingface_async", side_effect=fake_fetch_from_huggingface_async),
+        patch.object(loader, "_fetch_single_split_async", side_effect=fake_fetch_single_split_async),
         patch.object(loader, "_save_pil_image_async", new=fake_save),
     )
 
@@ -187,16 +187,16 @@ class TestMMSafetyBenchDataset:
 
         observed_splits: list[tuple[str, str]] = []
 
-        async def fake_fetch_from_huggingface_async(*, dataset_name: str, config: str, split: str, **_: Any) -> Any:
-            observed_splits.append((config, split))
-            return hf_lookup.get((config, split), [])
+        async def fake_fetch_single_split_async(*, category_value: str, split: str, **_: Any) -> Any:
+            observed_splits.append((category_value, split))
+            return hf_lookup.get((category_value, split), [])
 
         fake_save = AsyncMock(
             side_effect=lambda *, pil_image, category_value, question_id: f"/fake/{category_value}_{question_id}.jpg"
         )
 
         with (
-            patch.object(loader, "_fetch_from_huggingface_async", side_effect=fake_fetch_from_huggingface_async),
+            patch.object(loader, "_fetch_single_split_async", side_effect=fake_fetch_single_split_async),
             patch.object(loader, "_save_pil_image_async", new=fake_save),
         ):
             dataset = await loader.fetch_dataset_async(cache=False)
@@ -214,9 +214,9 @@ class TestMMSafetyBenchDataset:
 
         observed_configs: set[str] = set()
 
-        async def fake_fetch_from_huggingface_async(*, dataset_name: str, config: str, split: str, **_: Any) -> Any:
-            observed_configs.add(config)
-            if config != MMSafetyBenchCategory.FRAUD.value:
+        async def fake_fetch_single_split_async(*, category_value: str, split: str, **_: Any) -> Any:
+            observed_configs.add(category_value)
+            if category_value != MMSafetyBenchCategory.FRAUD.value:
                 return []
             if split == "Text_only":
                 return [_text_only_row(qid="2", question="Run a fraudulent scheme.")]
@@ -227,7 +227,7 @@ class TestMMSafetyBenchDataset:
         )
 
         with (
-            patch.object(loader, "_fetch_from_huggingface_async", side_effect=fake_fetch_from_huggingface_async),
+            patch.object(loader, "_fetch_single_split_async", side_effect=fake_fetch_single_split_async),
             patch.object(loader, "_save_pil_image_async", new=fake_save),
         ):
             dataset = await loader.fetch_dataset_async(cache=False)
@@ -403,8 +403,8 @@ class TestMMSafetyBenchDataset:
             ],
         )
 
-        async def fake_fetch_from_huggingface_async(*, dataset_name: str, config: str, split: str, **_: Any) -> Any:
-            return hf_lookup.get((config, split), [])
+        async def fake_fetch_single_split_async(*, category_value: str, split: str, **_: Any) -> Any:
+            return hf_lookup.get((category_value, split), [])
 
         async def flaky_save(*, pil_image: Any, category_value: str, question_id: str) -> str:
             if question_id == "0":
@@ -412,7 +412,7 @@ class TestMMSafetyBenchDataset:
             return f"/fake/{category_value}_{question_id}.jpg"
 
         with (
-            patch.object(loader, "_fetch_from_huggingface_async", side_effect=fake_fetch_from_huggingface_async),
+            patch.object(loader, "_fetch_single_split_async", side_effect=fake_fetch_single_split_async),
             patch.object(loader, "_save_pil_image_async", side_effect=flaky_save),
             caplog.at_level("WARNING", logger="pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset"),
         ):

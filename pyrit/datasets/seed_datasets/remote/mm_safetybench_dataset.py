@@ -1,12 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import io
 import logging
+import os
 import uuid
 from enum import Enum
 from typing import Any, ClassVar
 
+from datasets import DownloadMode, disable_progress_bars, load_dataset, load_dataset_builder
+from huggingface_hub import HfFileSystem, hf_hub_download
+from huggingface_hub.hf_file_system import HfFileSystemResolvedRepositoryPath
+
+from pyrit.common.path import DB_DATA_PATH
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
 )
@@ -121,8 +128,9 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
     GitHub repo remains the canonical reference and hosts
     ``TinyVersion_ID_List.json`` (used by the ``use_tiny`` filter).
 
-    The first call downloads ~500 MB of imagery from HuggingFace and caches it
-    locally. Subsequent calls are fast.
+    Only the parquet files backing the selected categories and variant are
+    downloaded (~250 MB for the default all-categories ``SD_TYPOGRAPHY`` load,
+    ~15 MB per single category) and cached locally. Subsequent calls are fast.
 
     Reference: https://isxinliu.github.io/Project/MM-SafetyBench/
     Paper: [@liu2024mmsafetybench]
@@ -312,14 +320,87 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         Returns:
             dict mapping ``id`` (string) to the objective text.
         """
-        text_only = await self._fetch_from_huggingface_async(
-            dataset_name=self.HF_DATASET_NAME,
-            config=category_value,
-            split="Text_only",
-            cache=cache,
-            token=self.token,
-        )
+        text_only = await self._fetch_single_split_async(category_value=category_value, split="Text_only", cache=cache)
         return {str(row.get("id", "")): row.get("question", "") for row in text_only}
+
+    async def _fetch_single_split_async(self, *, category_value: str, split: str, cache: bool) -> Any:
+        """
+        Fetch one split of one config, downloading only the files that back it.
+
+        ``load_dataset(repo, config, split=...)`` downloads every split of the
+        config (for this dataset, all three image variants plus ``Text_only``,
+        ~30 MB per category when ~15 MB is needed), because ``split`` only
+        selects what gets prepared. Instead, resolve the split's data files and
+        features from the config metadata (a ~22 KB fetch), download exactly
+        those files, and load them with the parquet builder.
+
+        Args:
+            category_value: HuggingFace config name (e.g. ``"Illegal_Activitiy"``).
+            split: Split name within the config (e.g. ``"SD_TYPO"``).
+            cache: Whether to reuse cached data. When False, files are
+                force-redownloaded, mirroring ``_fetch_from_huggingface_async``.
+
+        Returns:
+            The HuggingFace ``Dataset`` for that split (iterable of dict rows,
+            with the ``image`` column decoded per the dataset's features).
+
+        Raises:
+            ValueError: If the config metadata lists no data files for ``split``.
+        """
+        disable_progress_bars()
+
+        def _load_split_sync() -> Any:
+            cache_dir = (os.getenv("HF_DATASETS_CACHE") or str(DB_DATA_PATH / "huggingface")) if cache else None
+            download_mode = DownloadMode.REUSE_DATASET_IF_EXISTS if cache else DownloadMode.FORCE_REDOWNLOAD
+
+            builder = load_dataset_builder(
+                self.HF_DATASET_NAME,
+                category_value,
+                cache_dir=cache_dir,
+                download_mode=download_mode,
+                token=self.token,
+            )
+            data_files = (builder.config.data_files or {}).get(split) or []
+            if not data_files:
+                raise ValueError(
+                    f"No data files found for config {category_value!r} split {split!r} of {self.HF_DATASET_NAME}"
+                )
+
+            # data_files entries are revision-pinned hf:// URLs; download each
+            # through the hub cache so repeated fetches reuse existing blobs.
+            fs = HfFileSystem(token=self.token)
+            local_files: list[str] = []
+            for url in data_files:
+                resolved = fs.resolve_path(url)
+                if not isinstance(resolved, HfFileSystemResolvedRepositoryPath):
+                    raise ValueError(f"Unexpected non-repository data file path for {self.HF_DATASET_NAME}: {url!r}")
+                local_files.append(
+                    hf_hub_download(
+                        repo_id=resolved.repo_id,
+                        filename=resolved.path_in_repo,
+                        repo_type=resolved.repo_type,
+                        revision=resolved.revision,
+                        token=self.token,
+                        force_download=not cache,
+                    )
+                )
+
+            # features from the config metadata restore the Image decoding the
+            # plain parquet builder would otherwise lose.
+            return load_dataset(
+                "parquet",
+                data_files=local_files,
+                split="train",
+                features=builder.info.features,
+                cache_dir=cache_dir,
+                download_mode=download_mode,
+            )
+
+        try:
+            return await asyncio.to_thread(_load_split_sync)
+        except Exception as e:
+            logger.error(f"Failed to load HuggingFace dataset {self.HF_DATASET_NAME} ({category_value}/{split}): {e}")
+            raise
 
     async def _load_variant_split_async(self, *, category_value: str, cache: bool) -> Any:
         """
@@ -332,12 +413,10 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         Returns:
             The HuggingFace dataset split (an iterable of dict-like rows).
         """
-        return await self._fetch_from_huggingface_async(
-            dataset_name=self.HF_DATASET_NAME,
-            config=category_value,
+        return await self._fetch_single_split_async(
+            category_value=category_value,
             split=self.variant.value,
             cache=cache,
-            token=self.token,
         )
 
     def _load_tiny_id_map(self, *, cache: bool) -> dict[str, set[int]]:
