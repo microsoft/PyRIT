@@ -11,8 +11,9 @@ import logging
 from collections import OrderedDict
 from functools import lru_cache
 from time import monotonic
+from typing import cast
 
-from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
+from pyrit.backend.models import DatasetListResponse, ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
@@ -315,6 +316,36 @@ class ScenarioService:
             settings=settings, items=[item for item in metadata.items if item.name in names]
         )
 
+    async def list_compatible_datasets_async(self, *, scenario_name: str) -> DatasetListResponse | None:
+        """
+        List the catalog datasets the scenario can run, independently of launch-form settings.
+
+        The scenario decides compatibility from stored catalog facts without fetching providers.
+
+        Returns:
+            DatasetListResponse | None: The runnable catalog entries, or None for an unknown scenario.
+        """
+        try:
+            scenario_class = self._registry.get_class(scenario_name)
+        except KeyError:
+            return None
+        resolver = ScenarioConfigurationResolver()
+        kwargs = await asyncio.to_thread(
+            resolver.resolve_configuration, scenario_name=scenario_name, scenario_class=scenario_class
+        )
+        scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name)
+        scenario.set_params_from_args(args=kwargs)
+        metadata = await get_dataset_service().list_datasets_async()
+        named = [item for item in metadata.items if item.selection_key != "dataset:unnamed"]
+        async with self._configured_estimate_semaphore:
+            compatible = set(
+                await scenario.get_compatible_dataset_names_async(
+                    dataset_names=[item.name for item in named],
+                    loaded_dataset_names={item.name for item in named if item.loaded},
+                )
+            )
+        return DatasetListResponse(items=[item for item in named if item.name in compatible])
+
     async def _get_default_run_size_estimate_async(self, *, metadata: ScenarioMetadata) -> ScenarioRunSizeEstimate:
         """Return a cached, cancellation-safe scenario-owned estimate for the requesting caller."""
         cache_key = (
@@ -343,9 +374,12 @@ class ScenarioService:
                 if cached is not None:
                     return cached
 
-                tasks = getattr(self, "_estimate_tasks", None)
+                # Only __init__ and the fallback below set this attribute, both with this type.
+                tasks = cast(
+                    "OrderedDict[_EstimateCacheKey, _EstimateTask] | None", getattr(self, "_estimate_tasks", None)
+                )
                 if tasks is None:
-                    tasks = OrderedDict()
+                    tasks = OrderedDict[_EstimateCacheKey, _EstimateTask]()
                     self._estimate_tasks = tasks
                 for completed_key in [key for key, candidate in tasks.items() if candidate.done()]:
                     del tasks[completed_key]
@@ -616,6 +650,10 @@ class ScenarioService:
                 if item.scenario_name == cursor:
                     start_idx = i + 1
                     break
+            else:
+                # A cursor naming no registered scenario must not silently
+                # restart at the first page, which would serve duplicate rows.
+                raise ValueError("The cursor is not valid for the scenario catalog")
         page = items[start_idx : start_idx + limit]
         has_more = len(items) > start_idx + limit
         return page, has_more

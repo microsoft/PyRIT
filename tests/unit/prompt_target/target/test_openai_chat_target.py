@@ -27,15 +27,19 @@ from pyrit.exceptions import (
     PyritException,
     RateLimitException,
 )
-from pyrit.memory import MemoryInterface
+from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.models import JsonResponseConfig, Message, MessagePiece, flatten_to_message_pieces
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import (
+    FunctionTool,
     OpenAIChatAudioConfig,
     OpenAIChatTarget,
     OpenAIResponseTarget,
     PromptTarget,
     TargetCapabilities,
     TargetConfiguration,
+    discover_target_capabilities_async,
+    tool,
 )
 
 
@@ -2347,6 +2351,162 @@ def test_construct_request_body_with_tools(patch_central_database):
 
     assert target._extra_body_parameters.get("tools") == tools
     assert target._extra_body_parameters.get("tool_choice") == "auto"
+
+
+# ============================================================================
+# Local Tool Loop Tests
+# ============================================================================
+
+
+@pytest.fixture
+def weather_tool() -> tuple[FunctionTool, list[str]]:
+    executions: list[str] = []
+
+    @tool
+    async def weather_async(*, location: str) -> str:
+        executions.append(location)
+        return f"Sunny in {location}"
+
+    return weather_async, executions
+
+
+def _tool_target(**kwargs: Any) -> OpenAIChatTarget:
+    return OpenAIChatTarget(
+        **{"model_name": "gpt-4o", "endpoint": "https://mock.azure.com/", "api_key": "mock-api-key", **kwargs}
+    )
+
+
+def _weather_completion(*locations: str) -> Any:
+    completion = create_mock_completion_with_tool_calls(
+        [
+            create_mock_tool_call(f"call-{location}", "weather_async", json.dumps({"location": location}))
+            for location in locations
+        ]
+    )
+    completion.usage = None
+    return completion
+
+
+def _text_completion(content: str) -> Any:
+    completion = create_mock_completion(content)
+    completion.usage = None
+    return completion
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestOpenAIChatToolLoop:
+    async def test_runs_calls_and_replays_persisted_history_async(
+        self, *, sqlite_instance: SQLiteMemory, weather_tool: tuple[FunctionTool, list[str]]
+    ) -> None:
+        configured, executions = weather_tool
+        target = _tool_target(tools=[configured])
+        create = AsyncMock(
+            side_effect=[_weather_completion("SF", "NY"), _text_completion("Done."), _text_completion("Second.")]
+        )
+        target._async_client.chat.completions.create = create  # type: ignore[method-assign]
+        normalizer = PromptNormalizer()
+
+        result = await normalizer.send_prompt_async(
+            target=target, message=Message.from_prompt(prompt="Weather?", role="user"), conversation_id="loop"
+        )
+
+        assert result.get_value() == "Done."
+        assert executions == ["SF", "NY"]
+        assert create.call_args_list[0].kwargs["tools"][0]["function"]["name"] == "weather_async"
+        history = await sqlite_instance.get_conversation_messages_async(conversation_id="loop")
+        assert [message.api_role for message in history] == ["user", "assistant", "tool", "tool", "assistant"]
+        target.validate_tool_history(history)
+        await normalizer.send_prompt_async(
+            target=target, message=Message.from_prompt(prompt="Again", role="user"), conversation_id="loop"
+        )
+        messages = create.call_args.kwargs["messages"]
+        assert [message["role"] for message in messages] == ["user", "assistant", "tool", "tool", "assistant", "user"]
+        assert [message["tool_call_id"] for message in messages if message["role"] == "tool"] == ["call-SF", "call-NY"]
+        assert executions == ["SF", "NY"]
+
+    async def test_unknown_deployment_continues_a_tool_conversation_async(
+        self, *, sqlite_instance: SQLiteMemory, weather_tool: tuple[FunctionTool, list[str]]
+    ) -> None:
+        configured, executions = weather_tool
+        target = _tool_target(model_name="my-gpt4o-deployment", tools=[configured])
+        target._async_client.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
+            side_effect=[_weather_completion("SF"), _text_completion("Done."), _text_completion("Second.")]
+        )
+        normalizer = PromptNormalizer()
+
+        for prompt in ("Weather?", "Again"):
+            reply = await normalizer.send_prompt_async(
+                target=target, message=Message.from_prompt(prompt=prompt, role="user"), conversation_id="unknown"
+            )
+
+        assert reply.get_value() == "Second."
+        assert executions == ["SF"]
+        assert target.capabilities == _tool_target(model_name="my-gpt4o-deployment").capabilities
+
+    async def test_retried_completion_does_not_rerun_tools_async(
+        self, weather_tool: tuple[FunctionTool, list[str]]
+    ) -> None:
+        configured, executions = weather_tool
+        target = _tool_target(tools=[configured])
+        create = AsyncMock(side_effect=[_weather_completion("SF"), _text_completion(""), _text_completion("Done.")])
+        target._async_client.chat.completions.create = create  # type: ignore[method-assign]
+
+        with patch.object(target._send_completion_async.retry, "sleep", new_callable=AsyncMock):
+            replies = await target.send_prompt_async(message=Message.from_prompt(prompt="Weather?", role="user"))
+
+        assert executions == ["SF"]
+        assert create.await_count == 3
+        assert [message.api_role for message in replies] == ["assistant", "tool", "assistant"]
+
+    async def test_execution_opt_out_advertises_tools_and_returns_calls_async(
+        self, weather_tool: tuple[FunctionTool, list[str]]
+    ) -> None:
+        configured, executions = weather_tool
+        target = _tool_target(tools=[configured], execute_tools=False)
+        create = AsyncMock(return_value=_weather_completion("SF"))
+        target._async_client.chat.completions.create = create  # type: ignore[method-assign]
+
+        replies = await target.send_prompt_async(message=Message.from_prompt(prompt="Weather?", role="user"))
+
+        assert len(replies) == 1
+        assert replies[0].get_piece().converted_value_data_type == "function_call"
+        assert create.call_args.kwargs["tools"][0]["function"]["name"] == "weather_async"
+        assert executions == []
+
+    @pytest.mark.parametrize(("n", "extra"), [(2, None), (None, {"n": 2})])
+    def test_tool_execution_requires_one_completion(
+        self, *, weather_tool: tuple[FunctionTool, list[str]], n: int | None, extra: dict[str, Any] | None
+    ) -> None:
+        with pytest.raises(ValueError, match="n=1"):
+            _tool_target(tools=[weather_tool[0]], n=n, extra_body_parameters=extra)
+
+    async def test_target_without_tools_sends_and_identifies_as_before_async(self) -> None:
+        target = _tool_target()
+        create = AsyncMock(return_value=_text_completion("Hi."))
+        target._async_client.chat.completions.create = create  # type: ignore[method-assign]
+
+        await target.send_prompt_async(message=Message.from_prompt(prompt="Hello", role="user"))
+
+        create.assert_awaited_once()
+        assert "tools" not in create.call_args.kwargs
+        tool_params = {"tools", "tool_providers", "execute_tools", "max_tool_rounds"}
+        assert not tool_params & target.get_identifier().params.keys()
+
+    async def test_probe_neither_discovers_nor_executes_tools_async(self) -> None:
+        class Provider:
+            identifier = {"provider": "test"}
+
+            async def get_tools_async(self) -> list[FunctionTool]:
+                raise AssertionError("Probes must not discover tools.")
+
+        target = _tool_target(tool_providers=[Provider()])
+        create = AsyncMock(return_value=_text_completion("ok"))
+        target._async_client.chat.completions.create = create  # type: ignore[method-assign]
+
+        await discover_target_capabilities_async(target=target, capabilities=["supports_multi_turn"], retries=0)
+
+        create.assert_awaited()
+        assert all("tools" not in call.kwargs for call in create.call_args_list)
 
 
 # ============================================================================

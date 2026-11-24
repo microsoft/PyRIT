@@ -28,6 +28,7 @@ class YamlLoadable(abc.ABC):  # noqa: B024
         Raises:
             FileNotFoundError: If the input YAML file path does not exist.
             ValueError: If the YAML file is invalid.
+            TypeError: If the class's ``from_dict`` returns an object of another type.
         """
         file = verify_and_resolve_path(file)
         yaml_data = load_yaml_file(path=file)
@@ -37,7 +38,10 @@ class YamlLoadable(abc.ABC):  # noqa: B024
 
         # If this class provides a from_dict factory, use it;
         # otherwise, just instantiate directly with **yaml_data
-        if hasattr(cls, "from_dict") and callable(getattr(cls, "from_dict")):  # noqa: B009
-            result: Self = cls.from_dict(yaml_data)  # type: ignore[ty:call-non-callable]
+        from_dict = getattr(cls, "from_dict", None)
+        if callable(from_dict):
+            result = from_dict(yaml_data)
+            if not isinstance(result, cls):
+                raise TypeError(f"{cls.__name__}.from_dict returned {type(result).__name__}, not {cls.__name__}")
             return result
         return cls(**yaml_data)

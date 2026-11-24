@@ -14,18 +14,18 @@ import type {
 import { UUID_PATTERN } from './routeParams'
 
 export const ANALYTICS_PAGE_SIZE = 25
-export const ANALYTICS_GROUP_LIMIT = 15
+const ANALYTICS_GROUP_LIMIT = 15
 export const ANALYTICS_AXIS_LIMIT = 20
 export const ANALYTICS_DEBOUNCE_MS = 250
-export const ANALYTICS_MAX_PREDICATES = 16
+const ANALYTICS_MAX_PREDICATES = 16
 export const ANALYTICS_MAX_VALUES = 100
 export const ANALYTICS_OUTCOMES: AttackOutcome[] = ['success', 'failure', 'error', 'undetermined']
 
 export const ANALYTICS_ASR_NOTE =
   '* Outcome filter active. ASR uses only the selected outcomes and may be 100% when only successes are selected.'
-export const ANALYTICS_ASR_DEFINITION =
+const ANALYTICS_ASR_DEFINITION =
   'Attack success rate is attacker successes among selected decided results. Errors and undetermined results are excluded.'
-export const ANALYTICS_ALL_ASR_DEFINITION =
+const ANALYTICS_ALL_ASR_DEFINITION =
   'Attack success rate uses all selected results as its denominator, including errors and undetermined results.'
 
 export const DEFAULT_ANALYTICS_VIEW: AttackAnalyticsViewState = {
