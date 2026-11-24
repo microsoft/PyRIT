@@ -5,9 +5,10 @@ import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
 
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { FindingListItem } from '@/types'
+import type { FindingFields, FindingListItem } from '@/types'
 import { subFindingNumbers } from '@/utils/findingTree'
 
+import FindingCardContent from './FindingCardContent'
 import FindingEvidenceList from './FindingEvidenceList'
 import FindingPathsPanel from './FindingPathsPanel'
 import FindingSeverityBadge from './FindingSeverityBadge'
@@ -31,12 +32,14 @@ export interface FindingTreeActions {
 interface FindingTreeItemProps {
   operationId: string
   finding: FindingListItem
+  /** The active finding fields, which decide the severity badges. */
+  fields: FindingFields
   /** The finding's number in the exported report: 1, 2, … for top-level findings, 1.1, 1.2, … below them. */
   number: string
   depth: number
   /** The parent's title, when this is a sub-finding. */
   parentTitle?: string
-  /** Changes whenever findings change, so expanded sub-findings reload. */
+  /** Changes whenever findings or the finding fields change, so expanded sub-findings reload. */
   revision: number
   expanded: ReadonlySet<string>
   actions: FindingTreeActions
@@ -48,7 +51,7 @@ type ChildrenLoad =
 
 /** One finding, its evidence and actions, and its sub-findings and paths when expanded. */
 export default function FindingTreeItem({
-  operationId, finding, number, depth, parentTitle, revision, expanded, actions,
+  operationId, finding, fields, number, depth, parentTitle, revision, expanded, actions,
 }: FindingTreeItemProps) {
   const styles = useOperationsStyles()
   const treeStyles = useFindingTreeItemStyles()
@@ -62,14 +65,13 @@ export default function FindingTreeItem({
         <Heading className={styles.title}>{finding.title}</Heading>
       </div>
       <div className={styles.metadata}>
-        <FindingSeverityBadge finding={finding} />
+        <FindingSeverityBadge fields={fields} severity={finding.severity} />
         {!finding.demonstrated && (
           <Badge className={treeStyles.badge} appearance="outline" color="warning">Not demonstrated</Badge>
         )}
         <time dateTime={finding.created_at}>{new Date(finding.created_at).toLocaleString()}</time>
       </div>
-      {finding.harm_type && <Text>Harm-type: {finding.harm_type === 'Other' ? finding.harm_type_other : finding.harm_type}</Text>}
-      {finding.description && <p className={styles.description}>{finding.description}</p>}
+      <FindingCardContent finding={finding} />
       <FindingEvidenceList operationId={operationId} findingId={finding.id} count={finding.evidence_count}
         onDetached={actions.onEvidenceDetached} actions={<>
           <Button className={styles.button} aria-label={`Edit finding: ${finding.title}`}
@@ -86,8 +88,8 @@ export default function FindingTreeItem({
           onClick={() => { actions.onToggle(finding.id) }}>Sub-findings ({childCount})</Button>
       )}
       {childCount > 0 && isExpanded && (
-        <FindingChildren operationId={operationId} parent={finding} parentNumber={number} depth={depth + 1} revision={revision}
-          expanded={expanded} actions={actions} />
+        <FindingChildren operationId={operationId} parent={finding} fields={fields} parentNumber={number} depth={depth + 1}
+          revision={revision} expanded={expanded} actions={actions} />
       )}
     </li>
   )
@@ -96,6 +98,7 @@ export default function FindingTreeItem({
 interface FindingChildrenProps {
   operationId: string
   parent: FindingListItem
+  fields: FindingFields
   parentNumber: string
   depth: number
   revision: number
@@ -104,7 +107,9 @@ interface FindingChildrenProps {
 }
 
 /** A finding's paths and every one of its direct sub-findings, which the paths choose their steps from. */
-function FindingChildren({ operationId, parent, parentNumber, depth, revision, expanded, actions }: FindingChildrenProps) {
+function FindingChildren({
+  operationId, parent, fields, parentNumber, depth, revision, expanded, actions,
+}: FindingChildrenProps) {
   const treeStyles = useFindingTreeItemStyles()
   const [retry, setRetry] = useState(0)
   const [load, setLoad] = useState<ChildrenLoad | null>(null)
@@ -156,7 +161,7 @@ function FindingChildren({ operationId, parent, parentNumber, depth, revision, e
             onEdit={trigger => { actions.onEditPaths(parent, parentNumber, current.children, trigger) }} />
           <ul className={treeStyles.childList}>
             {current.children.map(child => (
-              <FindingTreeItem key={child.id} operationId={operationId} finding={child}
+              <FindingTreeItem key={child.id} operationId={operationId} finding={child} fields={fields}
                 number={numbers.get(child.id) ?? ''} depth={depth}
                 parentTitle={parent.title} revision={revision} expanded={expanded} actions={actions} />
             ))}
