@@ -181,7 +181,8 @@ await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
 # `incompatible_technique_policy: raise` in YAML. `None` uses the scenario class default.
 #
 # This policy does not enable adaptation. Initialization fails if no selected technique can run,
-# even with a baseline. Other construction errors are not skipped.
+# even with a baseline. Other construction errors are not skipped. The policy covers selected
+# techniques only: an optional baseline skips groups it can't use under either policy.
 
 # %% [markdown]
 # ## Custom Scorers
