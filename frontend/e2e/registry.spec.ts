@@ -256,6 +256,22 @@ const CONVERTER_TYPES = {
       description: "A converter type that can't be saved.",
       not_saveable_reason: "It needs an uploaded file, which saved converters can't keep yet.",
     },
+    {
+      converter_type: "LongFormConverter",
+      supported_input_types: ["text"],
+      supported_output_types: ["text"],
+      parameters: Array.from({ length: 12 }, (_, index) => ({
+        name: `setting_${index}`,
+        type_name: "str",
+        required: false,
+        default: null,
+        choices: null,
+        description: `Long form setting ${index}.`,
+      })),
+      is_llm_based: false,
+      description: "A converter type with a long form that can't be saved.",
+      not_saveable_reason: "It needs an uploaded file, which saved converters can't keep yet.",
+    },
     ...Array.from({ length: 16 }, (_, index) => ({
       converter_type: `ViewportConverter${index}`,
       supported_input_types: ["text"],
@@ -623,6 +639,24 @@ test.describe("Converter Registry", () => {
         await lastOption.click();
         await expect(listbox).toBeHidden();
         await expect(trigger).toHaveText("ViewportConverter9");
+      });
+
+      test("keeps Create as Temporary on screen below a long form", async ({ page }) => {
+        await page.getByRole("button", { name: "New Converter" }).click();
+        await page.getByRole("combobox", { name: "Converter type" }).click();
+        await page.getByTestId("converter-type-option-LongFormConverter").click();
+
+        const dialog = page.getByRole("dialog");
+        await expect(dialog.getByRole("status")).toContainText("This converter can't be saved");
+        const create = dialog.getByRole("button", { name: "Create as Temporary" });
+        await expect(create).toBeInViewport({ ratio: 1 });
+        const surface = await dialog.boundingBox();
+        const button = await create.boundingBox();
+        expect(surface).not.toBeNull();
+        expect(button).not.toBeNull();
+        expect(button!.y + button!.height).toBeLessThanOrEqual(surface!.y + surface!.height);
+        await dialog.getByRole("textbox", { name: "setting_11", exact: true }).fill("last");
+        await expect(dialog.getByRole("textbox", { name: "setting_11", exact: true })).toBeInViewport();
       });
 
       test("lines up origin badges under converter names of any length", async ({ page }) => {

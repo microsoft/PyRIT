@@ -804,7 +804,7 @@ export default function CreateConverterDialog({
   return (
     <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) close() }}>
       <DialogSurface className={styles.surface}>
-        <DialogBody>
+        <DialogBody className={styles.body}>
           <DialogTitle>{editing ? 'Converter Settings' : 'Add Converter'}</DialogTitle>
           <DialogContent className={styles.content}>
             <form
