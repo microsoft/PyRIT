@@ -274,6 +274,61 @@ def test_tool_argument_requirement_rejects_invalid_input(argument: dict[str, obj
         ToolCallRequirement.model_validate({"name": "send_email", "arguments": [argument]})
 
 
+def test_argument_requirement_names_a_nested_field_by_dotted_path() -> None:
+    requirement = ToolCallRequirement(
+        name="send_email",
+        arguments=(ToolArgumentRequirement(name="recipient.email", matcher=Equals(value="a@example.com")),),
+    )
+    condition = ToolsCalled(tools=(requirement,))
+
+    assert condition.model_dump(mode="json")["tools"][0]["arguments"][0]["name"] == "recipient.email"
+    assert Condition.model_validate(condition.model_dump(mode="json")) == condition
+
+
+@pytest.mark.parametrize("name", [".", "recipient.", ".email", "recipient..email"])
+def test_argument_requirement_rejects_a_path_with_an_empty_key(name: str) -> None:
+    with pytest.raises(ValidationError, match="single dots"):
+        ToolArgumentRequirement(name=name, matcher=Equals(value="x"))
+
+
+def _stored_expectation(*, argument_name: str) -> dict:
+    stored = ScoringExpectation(
+        conditions=(
+            ToolsCalled(
+                tools=(
+                    ToolCallRequirement(
+                        name="send_email",
+                        arguments=(ToolArgumentRequirement(name="placeholder", matcher=Equals(value="x")),),
+                    ),
+                )
+            ),
+        )
+    ).model_dump(mode="json")
+    stored["conditions"][0]["tools"][0]["arguments"][0]["name"] = argument_name
+    return stored
+
+
+@pytest.mark.parametrize("name", ["a..b", ".email", "recipient."])
+def test_a_stored_requirement_keeps_a_name_that_is_not_a_path(name: str) -> None:
+    """Any nonempty name was valid before names became paths, so stored ones must still load."""
+    stored = _stored_expectation(argument_name=name)
+
+    loaded = ScoringExpectation.model_validate_persisted(stored)
+
+    condition = loaded.conditions[0]
+    assert isinstance(condition, ToolsCalled)
+    assert condition.tools[0].arguments[0].name == name
+    assert loaded.model_dump(mode="json") == stored
+    # New input is still held to the path rules.
+    with pytest.raises(ValidationError, match="single dots"):
+        ScoringExpectation.model_validate(stored)
+
+
+def test_a_stored_requirement_still_needs_a_nonempty_name() -> None:
+    with pytest.raises(ValidationError):
+        ScoringExpectation.model_validate_persisted(_stored_expectation(argument_name=""))
+
+
 @pytest.mark.parametrize("arguments", [True, "to", {"to": "a@example.com"}])
 def test_tool_call_requirement_rejects_unstructured_arguments(arguments: object) -> None:
     with pytest.raises(ValidationError):

@@ -108,3 +108,123 @@ def test_requirement_description_names_constrained_arguments() -> None:
         describe_tool_requirement(_requirement(to=Equals(value="x"), body=Contains(value="y")))
         == "send_email(to, body)"
     )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ({"recipient": {"email": "a@example.com", "name": "A"}}, True),
+        ({"recipient": {"email": "b@example.com"}}, False),
+        ({"recipient": {"name": "A"}}, False),
+        ({"recipient": "a@example.com"}, False),
+        ({"recipient": [{"email": "a@example.com"}]}, False),
+        ({"recipient": None}, False),
+        ({"recipient.email": "a@example.com"}, False),
+        ({}, False),
+    ],
+)
+def test_a_dotted_name_reads_a_nested_field(arguments: dict[str, JsonValue], expected: bool) -> None:
+    requirement = _requirement(**{"recipient.email": Equals(value="a@example.com")})
+
+    assert match_tool_arguments(requirement=requirement, arguments=arguments) is expected
+
+
+@pytest.mark.parametrize("name", ["attachments.0.name", "attachments.0", "attachments.name"])
+def test_a_path_does_not_index_arrays(name: str) -> None:
+    requirement = _requirement(**{name: Equals(value="report.pdf")})
+
+    assert match_tool_arguments(requirement=requirement, arguments={"attachments": [{"name": "report.pdf"}]}) is False
+
+
+def test_a_nested_object_compares_as_compact_json() -> None:
+    requirement = _requirement(recipient=Equals(value='{"email":"a@example.com","name":"A"}', case_sensitive=True))
+
+    assert (
+        match_tool_arguments(requirement=requirement, arguments={"recipient": {"name": "A", "email": "a@example.com"}})
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    ("kept", "name", "expected"),
+    [
+        (("recipient.email",), "recipient.email", True),
+        (("recipient",), "recipient.email", True),
+        (("recipient.email",), "recipient", None),
+        (("recipient.email",), "recipient.name", None),
+        (("recipient.email",), "recipient.email.domain", False),
+        (("recipient.name",), "recipient.email", None),
+        (("recipient.e",), "recipient.email", None),
+    ],
+)
+def test_only_a_kept_path_or_one_containing_it_decides_a_nested_field(
+    kept: tuple[str, ...], name: str, expected: bool | None
+) -> None:
+    requirement = _requirement(**{name: Equals(value="a@example.com")})
+    arguments = {"recipient": {"email": "a@example.com"}}
+
+    assert match_tool_arguments(requirement=requirement, arguments=arguments, kept=kept) is expected
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ({"to": "a@example.com"}, None),
+        ({"to": "b@example.com"}, False),
+        ({}, False),
+    ],
+)
+def test_a_redacted_argument_can_neither_confirm_nor_refute_a_call(
+    arguments: dict[str, JsonValue], expected: bool | None
+) -> None:
+    requirement = _requirement(to=Equals(value="a@example.com"), body=Contains(value="invoice"))
+
+    # ``body`` was redacted at write time: the verdict can rest only on the kept ``to``.
+    assert match_tool_arguments(requirement=requirement, arguments=arguments, kept=("to",)) is expected
+
+
+def test_a_kept_argument_the_call_lacks_is_absent_not_redacted() -> None:
+    requirement = _requirement(to=Equals(value="a@example.com"))
+
+    assert match_tool_arguments(requirement=requirement, arguments={}, kept=("to",)) is False
+    assert match_tool_arguments(requirement=requirement, arguments={}, kept=()) is None
+    assert match_tool_arguments(requirement=requirement, arguments={}) is False
+
+
+def test_redaction_leaves_name_only_requirements_unaffected() -> None:
+    assert match_tool_arguments(requirement=ToolCallRequirement(name="send_email"), arguments=None, kept=()) is True
+
+
+@pytest.mark.parametrize(
+    ("calls", "expected"),
+    [
+        ([{"to": "b@example.com"}, {"to": "a@example.com"}], None),
+        ([{"to": "b@example.com"}, {}], False),
+        ([], False),
+    ],
+)
+def test_redaction_makes_a_negative_that_rests_on_it_undetermined(
+    calls: list[dict[str, JsonValue] | None], expected: bool | None
+) -> None:
+    requirement = _requirement(to=Equals(value="a@example.com"), body=Contains(value="invoice"))
+
+    assert match_tool_requirement(requirement=requirement, calls=calls, kept=("to",)) is expected
+
+
+def _stored_requirement(name: str) -> ToolCallRequirement:
+    """Build a requirement as it loads from storage, where older names need not be paths."""
+    return ToolCallRequirement.model_validate(
+        {"name": "send_email", "arguments": [{"name": name, "matcher": Equals(value="x").model_dump(mode="json")}]},
+        context={"require_scoring_expectation_schema_version": True},
+    )
+
+
+@pytest.mark.parametrize("name", ["a..b", ".email", "recipient."])
+def test_a_stored_name_that_is_not_a_path_matches_as_one_literal_key(name: str) -> None:
+    requirement = _stored_requirement(name)
+
+    assert match_tool_arguments(requirement=requirement, arguments={name: "x"}) is True
+    assert match_tool_arguments(requirement=requirement, arguments={name: "y"}) is False
+    assert match_tool_arguments(requirement=requirement, arguments={"a": {"": {"b": "x"}}}) is False
+    # Kept paths are always valid paths, so a source never kept this literal key: it is redacted.
+    assert match_tool_arguments(requirement=requirement, arguments={name: "x"}, kept=("to",)) is None

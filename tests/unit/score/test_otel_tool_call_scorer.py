@@ -81,7 +81,7 @@ def test_scorer_identifier_retains_source_child() -> None:
 
     assert identifier.children["source"] == source.get_identifier()
     assert "source_hash" not in identifier.params
-    assert identifier.params["matching_version"] == 1
+    assert identifier.params["matching_version"] == 2
     assert identifier.hash != OtelToolCallScorer(source=other_source).get_identifier().hash
     assert ComponentIdentifier.model_validate_json(identifier.model_dump_json()).children == identifier.children
 
@@ -291,6 +291,204 @@ async def test_absent_name_only_tool_refutes_alongside_an_undetermined_argument_
         0
     ].get_value() is False
     assert (await scorer.score_async(scorable=scope, expectation=_argument_expectation()))[0].is_undetermined
+
+
+def _kept_argument_scorer(*arguments: JsonValue, kept: tuple[str, ...] = ("to",)) -> OtelToolCallScorer:
+    client = InMemoryTraceClient()
+    for index, value in enumerate(arguments):
+        span = _span(name="send_email", span_id=f"{index + 2:016x}")
+        if value is not None:
+            span.attributes["gen_ai.tool.call.arguments"] = value
+        client.add_span(span)
+    client.mark_complete(trace_ids=("1" * 32,))
+    return OtelToolCallScorer(source=OtelTraceSource(trace_client=client, kept_arguments=kept))
+
+
+def _send_email_expectation(**matchers: str) -> ScoringExpectation:
+    arguments = tuple(
+        ToolArgumentRequirement(name=name, matcher=Equals(value=value)) for name, value in matchers.items()
+    )
+    return ScoringExpectation(
+        conditions=(ToolsCalled(tools=(ToolCallRequirement(name="send_email", arguments=arguments),)),)
+    )
+
+
+async def test_source_keeps_only_the_named_arguments_async(sqlite_instance: SQLiteMemory) -> None:
+    scorer = _kept_argument_scorer(
+        '{"to": "a@example.com", "body": "private-body"}', '{"body": "private-other"}', kept=("to", "cc")
+    )
+
+    score = (
+        await scorer.score_async(
+            scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=_send_email_expectation(to="a@example.com")
+        )
+    )[0]
+
+    assert score.get_value() is True
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    assert observation.payload.kept_arguments == ("to", "cc")
+    assert [event.arguments for event in observation.payload.events] == [{"to": "a@example.com"}, {}]
+    assert "private-" not in observation.model_dump_json()
+    assert "gen_ai.tool.call.arguments" not in observation.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        None,
+        "not json",
+        '["a@example.com"]',
+        '"a@example.com"',
+        '{"to": NaN}',
+        '{"to": 1e400}',
+        '{"to": "a@example.com", "body": {"sizes": [1, -Infinity]}}',
+        {"to": float("inf")},
+        {"to": "a@example.com", "body": {"sizes": [1, float("nan")]}},
+        3,
+    ],
+)
+async def test_unreadable_trace_arguments_are_not_retained_and_stay_undetermined_async(
+    sqlite_instance: SQLiteMemory, arguments: JsonValue
+) -> None:
+    scorer = _kept_argument_scorer(arguments)
+
+    score = (
+        await scorer.score_async(
+            scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=_send_email_expectation(to="a@example.com")
+        )
+    )[0]
+
+    assert score.is_undetermined
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    assert observation.acquisition is Acquisition.COMPLETE
+    assert observation.payload.events[0].arguments is None
+
+
+@pytest.mark.parametrize(
+    ("arguments", "matchers", "expected"),
+    [
+        ('{"to": "a@example.com"}', {"to": "a@example.com"}, True),
+        ({"to": "a@example.com"}, {"to": "a@example.com"}, True),
+        ('{"to": "b@example.com"}', {"to": "a@example.com"}, False),
+        ('{"subject": "hi"}', {"to": "a@example.com"}, False),
+        ('{"to": "b@example.com", "body": "invoice"}', {"to": "a@example.com", "body": "invoice"}, False),
+        ('{"to": "a@example.com", "body": "invoice"}', {"to": "a@example.com", "body": "invoice"}, None),
+        ('{"to": "a@example.com", "body": "invoice"}', {"body": "invoice"}, None),
+        ('{"to": "a@example.com", "body": "other"}', {"body": "invoice"}, None),
+    ],
+)
+async def test_complete_evidence_never_decides_a_redacted_argument_async(
+    sqlite_instance: SQLiteMemory, arguments: JsonValue, matchers: dict[str, str], expected: bool | None
+) -> None:
+    scorer = _kept_argument_scorer(arguments)
+    expectation = _send_email_expectation(**matchers)
+
+    score = (await scorer.score_async(scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=expectation))[0]
+
+    assert score.score_value == (None if expected is None else str(expected).lower())
+    assert ("did not keep these arguments: body" in score.score_rationale) is (expected is None)
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    assert observation.acquisition is Acquisition.COMPLETE
+    replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
+    assert replay.score_value == score.score_value
+
+
+async def test_redaction_leaves_name_only_negatives_confident_async() -> None:
+    scorer = _kept_argument_scorer('{"to": "a@example.com", "body": "invoice"}')
+    expectation = ScoringExpectation(
+        conditions=(
+            ToolsCalled(
+                tools=(
+                    ToolCallRequirement(
+                        name="send_email",
+                        arguments=(ToolArgumentRequirement(name="body", matcher=Equals(value="invoice")),),
+                    ),
+                    ToolCallRequirement(name="lookup"),
+                )
+            ),
+        )
+    )
+
+    score = (await scorer.score_async(scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=expectation))[0]
+
+    assert score.get_value() is False
+
+
+def test_source_identity_records_kept_arguments_only_when_set() -> None:
+    client = InMemoryTraceClient(source_id="same")
+    default = OtelTraceSource(trace_client=client).get_identifier()
+
+    assert set(default.params) == {"normalization_version", "max_spans", "timeout_seconds"}
+    kept = OtelTraceSource(trace_client=client, kept_arguments=("to",)).get_identifier()
+    assert kept.params["kept_arguments"] == ["to"]
+    assert kept.hash != default.hash
+    assert OtelTraceSource(trace_client=client, kept_arguments=()).get_identifier().hash == default.hash
+
+
+_NESTED_ARGUMENTS = '{"recipient": {"email": "a@example.com", "name": "private-name"}, "body": "private-body"}'
+
+
+async def test_source_keeps_only_the_nested_field_a_path_names_async(sqlite_instance: SQLiteMemory) -> None:
+    scorer = _kept_argument_scorer(_NESTED_ARGUMENTS, kept=("recipient.email",))
+
+    score = (
+        await scorer.score_async(
+            scorable=TraceScorable(trace_ids=("1" * 32,)),
+            expectation=_send_email_expectation(**{"recipient.email": "a@example.com"}),
+        )
+    )[0]
+
+    assert score.get_value() is True
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    assert observation.payload.events[0].arguments == {"recipient": {"email": "a@example.com"}}
+    assert "private-" not in observation.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    ("kept", "matchers", "expected"),
+    [
+        (("recipient.email",), {"recipient.email": "b@example.com"}, False),
+        (("recipient.email",), {"recipient.name": "private-name"}, None),
+        (("recipient.email",), {"recipient": '{"email":"a@example.com"}'}, None),
+        (("recipient",), {"recipient.name": "private-name"}, True),
+        (("recipient.phone",), {"recipient.phone": "1"}, False),
+        (("body.text",), {"body.text": "private-body"}, False),
+    ],
+)
+async def test_complete_evidence_decides_a_nested_field_only_through_a_kept_path_async(
+    sqlite_instance: SQLiteMemory, kept: tuple[str, ...], matchers: dict[str, str], expected: bool | None
+) -> None:
+    scorer = _kept_argument_scorer(_NESTED_ARGUMENTS, kept=kept)
+    expectation = _send_email_expectation(**matchers)
+
+    score = (await scorer.score_async(scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=expectation))[0]
+
+    assert score.score_value == (None if expected is None else str(expected).lower())
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
+    assert replay.score_value == score.score_value
+
+
+async def test_rationale_names_only_the_nested_arguments_that_were_not_kept_async() -> None:
+    scorer = _kept_argument_scorer(_NESTED_ARGUMENTS, kept=("recipient",))
+    expectation = _send_email_expectation(**{"recipient.email": "a@example.com", "body": "private-body"})
+
+    score = (await scorer.score_async(scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=expectation))[0]
+
+    assert score.is_undetermined
+    assert score.score_rationale.endswith("The trace source did not keep these arguments: body.")
+
+
+@pytest.mark.parametrize("kept_arguments", [("recipient", "recipient.email"), ("recipient..email",), ("recipient.",)])
+def test_source_rejects_overlapping_or_malformed_kept_paths(kept_arguments: tuple[str, ...]) -> None:
+    with pytest.raises(ValueError, match="none inside another"):
+        OtelTraceSource(trace_client=InMemoryTraceClient(), kept_arguments=kept_arguments)
+
+
+@pytest.mark.parametrize("kept_arguments", ["to", ("",), ("to", "to"), (3,)])
+def test_source_rejects_invalid_kept_arguments(kept_arguments: object) -> None:
+    with pytest.raises(ValueError, match="kept_arguments"):
+        OtelTraceSource(trace_client=InMemoryTraceClient(), kept_arguments=kept_arguments)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

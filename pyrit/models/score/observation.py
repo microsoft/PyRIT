@@ -17,6 +17,7 @@ from pyrit.models.identifiers.component_identifier import (
     ComponentIdentifier,  # noqa: TC001  (runtime-required by Pydantic field annotations)
 )
 from pyrit.models.literals import MEDIA_PATH_DATA_TYPES
+from pyrit.models.score._argument_paths import holds_only_kept_arguments, validate_kept_argument_paths
 from pyrit.models.score.scorable import (
     ContentEntryScorable,
     ContentScorable,
@@ -307,7 +308,13 @@ class ConversationObservationPayload(BaseModel):
 
 
 class ToolEventsObservationPayload(BaseModel):
-    """An immutable allowlisted tool snapshot, with arguments and results not retained."""
+    """
+    An immutable allowlisted tool snapshot, with raw arguments and results not retained.
+
+    ``kept_arguments`` names the arguments the source kept at write time, each a top-level key or
+    a dotted path to a nested field. Every other argument was redacted, so a matcher treats it as
+    unknown, never as absent.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -317,6 +324,8 @@ class ToolEventsObservationPayload(BaseModel):
     events: tuple[ToolExecution, ...] = ()
     coverage: TraceCoverage = Field(default_factory=TraceCoverage)
     arguments_retained: Literal[False] = False
+    #: Left out of serialization while empty, so name-only snapshots keep their stored form.
+    kept_arguments: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @field_validator("arguments_retained", mode="before")
     @classmethod
@@ -331,7 +340,7 @@ class ToolEventsObservationPayload(BaseModel):
             ValueError: If the marker is not exactly false.
         """
         if value is not False:
-            raise ValueError("Tool payload arguments_retained must be false; arguments are not captured.")
+            raise ValueError("Tool payload arguments_retained must be false; raw arguments are not captured.")
         return False
 
     @field_validator("schema_version", mode="before")
@@ -359,7 +368,7 @@ class ToolEventsObservationPayload(BaseModel):
             ToolEventsObservationPayload: The validated snapshot.
 
         Raises:
-            ValueError: If identities, scope, or completeness are inconsistent.
+            ValueError: If identities, scope, completeness, or kept arguments are inconsistent.
         """
         identities = [(event.trace_id, event.span_id) for event in self.events]
         if len(set(identities)) != len(identities):
@@ -368,6 +377,12 @@ class ToolEventsObservationPayload(BaseModel):
             raise ValueError("Tool events must belong to the declared trace scope.")
         if self.coverage.complete and any(event.end_time is None for event in self.events):
             raise ValueError("Complete coverage cannot contain unfinished tool events.")
+        kept = validate_kept_argument_paths(self.kept_arguments)
+        if any(
+            event.arguments is not None and (not kept or not holds_only_kept_arguments(event.arguments, kept=kept))
+            for event in self.events
+        ):
+            raise ValueError("Tool events can only retain the arguments the payload declares kept.")
         return self
 
 
