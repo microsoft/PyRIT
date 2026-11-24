@@ -11,6 +11,7 @@ from types import MappingProxyType
 from typing import Any, ClassVar, NoReturn, cast
 
 from pyrit.auth import ensure_async_token_provider
+from pyrit.common.constructor_capture import capture_constructor_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -24,6 +25,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    ProviderTraceReference,
 )
 from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.chat_completions_message_builder import (
@@ -49,11 +51,16 @@ from pyrit.prompt_target.common.target_capabilities import (
     get_known_capabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
+from pyrit.prompt_target.common.target_trace_config import (
+    TargetTraceConfig,
+    record_provider_trace_reference,
+    request_trace_headers,
+)
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES, parse_function_call
 from pyrit.prompt_target.common.tool_loop import (
     InvalidToolCallsError,
     PendingToolCall,
+    ToolDispatchResult,
     ToolFunction,
     dispatch_tool_call_async,
     run_tool_loop_async,
@@ -156,6 +163,30 @@ def _provider_specific_headers(provider_specific_header: Any) -> dict[str, str]:
     return headers
 
 
+def _provider_trace_reference(response: Any) -> ProviderTraceReference | None:
+    """
+    Read the response id LiteLLM returned for a completion.
+
+    The response id is the provider's id for the completion, the value OpenTelemetry's GenAI
+    conventions record as ``gen_ai.response.id``. A response id that is missing or not a usable
+    string records nothing rather than failing the send.
+
+    Returns:
+        ProviderTraceReference | None: The identifier, or None when the response carries none.
+    """
+    hidden = getattr(response, "_hidden_params", None)
+    hidden = hidden if isinstance(hidden, dict) else {}
+
+    def usable(value: Any) -> str | None:
+        return value if isinstance(value, str) and 0 < len(value) <= 256 else None
+
+    request_id = usable(getattr(response, "id", None))
+    if request_id is None:
+        return None
+    provider = usable(hidden.get("custom_llm_provider")) or "litellm"
+    return ProviderTraceReference(provider=provider[:128], request_id=request_id)
+
+
 class LiteLLMChatTarget(PromptTarget):
     """
     Chat target that uses the LiteLLM SDK to access 100+ LLM providers.
@@ -182,9 +213,10 @@ class LiteLLMChatTarget(PromptTarget):
             ``LITELLM_MODEL`` environment variable.
         api_key: Optional API key, or a callable that returns an access token (sync or async).
             When omitted, falls back to the ``LITELLM_API_KEY`` environment variable and then
-            to LiteLLM's own provider-specific environment variable lookup.
+            to LiteLLM's own provider-specific environment variable lookup. An empty string
+            skips the ``LITELLM_API_KEY`` fallback.
         endpoint: Optional base URL override (e.g. for a self-hosted proxy or LiteLLM gateway).
-            Falls back to the ``LITELLM_ENDPOINT`` environment variable.
+            Falls back to the ``LITELLM_ENDPOINT`` environment variable unless it is an empty string.
         headers: Optional extra HTTP headers forwarded to the provider (``extra_headers``).
         temperature: Sampling temperature (0-2).
         top_p: Nucleus sampling probability (0-1).
@@ -217,7 +249,10 @@ class LiteLLMChatTarget(PromptTarget):
         trace_config: Request tracing configuration. Tracing is disabled by default because a
             provider or gateway is not known to accept W3C trace context. Pass
             ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint; each request then
-            sends a fresh ``traceparent`` in ``extra_headers``.
+            sends a fresh ``traceparent`` in ``extra_headers``. Whatever this setting, each request
+            records the provider's response id and LiteLLM's provider route as a
+            ``ProviderTraceReference``. A send whose tool loop runs a local tool records none,
+            since one id cannot name the tool's run or the traces of later completions.
         tools: Executable tools advertised to the model.
         tool_providers: Providers discovered within each send's resource scope.
         execute_tools: Execute configured tools locally, or return calls to the caller.
@@ -226,6 +261,12 @@ class LiteLLMChatTarget(PromptTarget):
     """
 
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
+    # A model name's provider prefix chooses where requests and the key go.
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {"model_name", "endpoint", "api_key", "headers", "extra_body_parameters"}
+    )
+
+    _reconstruction_parameters: dict[str, object] = {}
 
     # Environment variables read when ``api_key`` or ``endpoint`` is omitted. Subclasses that pin a
     # provider override these; None skips the lookup and leaves it to LiteLLM.
@@ -258,6 +299,13 @@ class LiteLLMChatTarget(PromptTarget):
         )
     )
 
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Opt in LiteLLM implementations to server-only reconstruction."""
+        super().__init_subclass__(**kwargs)
+        if "__init__" in cls.__dict__:
+            type.__setattr__(cls, "__init__", capture_constructor_parameters(cls.__init__))
+
+    @capture_constructor_parameters
     def __init__(
         self,
         *,
@@ -323,10 +371,12 @@ class LiteLLMChatTarget(PromptTarget):
         # sync token provider so we can uniformly await it at request time.
         if api_key is None and self._API_KEY_ENVIRONMENT_VARIABLE:
             api_key = os.environ.get(self._API_KEY_ENVIRONMENT_VARIABLE)
-        self._api_key = ensure_async_token_provider(api_key)
+        self._api_key = None if api_key == "" else ensure_async_token_provider(api_key)
 
         endpoint_variable = self._ENDPOINT_ENVIRONMENT_VARIABLE
-        self._endpoint = endpoint or (os.environ.get(endpoint_variable) if endpoint_variable else None)
+        if endpoint is None and endpoint_variable:
+            endpoint = os.environ.get(endpoint_variable)
+        self._endpoint = endpoint or None
         self._headers = headers
         self._temperature = temperature
         self._top_p = top_p
@@ -474,6 +524,40 @@ class LiteLLMChatTarget(PromptTarget):
             name: value for name, value in (self._headers or {}).items() if name.lower() not in self._CREDENTIAL_HEADERS
         } or None
 
+    def get_reconstruction_parameters(self) -> dict[str, object]:
+        """
+        Return server-only inputs, including resolved authentication.
+
+        Returns:
+            dict[str, object]: Resolved constructor inputs.
+
+        Raises:
+            ValueError: If ``extra_body_parameters`` sets temperature, which a copy's temperature can't override.
+        """
+        if "temperature" in (self._extra_body_parameters or {}):
+            raise ValueError(
+                "Separate temperature settings are not supported when extra_body_parameters sets temperature"
+            )
+        # Resolved values, with "" for unset ones, so a copy never reads this server's environment.
+        return {
+            **self._reconstruction_parameters,
+            "model_name": self._model_name,
+            "endpoint": self._endpoint or "",
+            "api_key": "" if self._api_key is None else self._api_key,
+            "underlying_model": self._underlying_model,
+            "custom_configuration": self.configuration,
+        }
+
+    def attach_reconstruction_source(self, source: object) -> None:
+        """
+        Share request pacing and credential status, not behavioral configuration.
+
+        Args:
+            source (object): The registered target this copy was built from.
+        """
+        super().attach_reconstruction_source(source)
+        self._rate_limit_source = getattr(source, "_rate_limit_source", source)
+
     def is_json_response_supported(self) -> bool:
         """
         Whether this target honors a JSON ``response_format`` request.
@@ -502,23 +586,35 @@ class LiteLLMChatTarget(PromptTarget):
                     conversation=normalized_conversation, request=request, tools=tools
                 )
 
+            tool_dispatched = False
+
             async def send_async(conversation: Sequence[Message]) -> Message:
                 [reply] = await self._send_completion_async(
-                    conversation=list(conversation), request=request, tools=tools
+                    conversation=list(conversation),
+                    request=request,
+                    tools=tools,
+                    record_provider_trace=not tool_dispatched,
                 )
                 return reply
 
             async def resolve_tools_async() -> tuple[Sequence[Tool], Mapping[str, ToolFunction]]:
                 return tools, {}
 
+            async def dispatch_async(call: PendingToolCall) -> ToolDispatchResult:
+                # A local tool runs outside the provider's trace, and later completions get traces of
+                # their own, so one response id can no longer name this send. It stays unlinked.
+                nonlocal tool_dispatched
+                tool_dispatched = True
+                for piece in request.message_pieces:
+                    ProviderTraceReference.clear_metadata(piece.prompt_metadata)
+                return await dispatch_tool_call_async(call=call, resolve_tools_async=resolve_tools_async)
+
             return await run_tool_loop_async(
                 conversation=normalized_conversation,
                 request_piece=request.message_pieces[0],
                 send_async=send_async,
                 find_calls=self._tool_call_finder(normalized_conversation),
-                dispatch_async=lambda call: dispatch_tool_call_async(
-                    call=call, resolve_tools_async=resolve_tools_async
-                ),
+                dispatch_async=dispatch_async,
                 max_tool_rounds=self._max_tool_rounds,
             )
 
@@ -591,7 +687,12 @@ class LiteLLMChatTarget(PromptTarget):
 
     @limit_requests_per_minute
     async def _send_completion_async(
-        self, *, conversation: list[Message], request: Message, tools: Sequence[Tool]
+        self,
+        *,
+        conversation: list[Message],
+        request: Message,
+        tools: Sequence[Tool],
+        record_provider_trace: bool = True,
     ) -> list[Message]:
         litellm = self._import_litellm()
 
@@ -624,6 +725,8 @@ class LiteLLMChatTarget(PromptTarget):
             response = await litellm.acompletion(**body)
         except Exception as exc:
             return self._handle_litellm_exception(exc=exc, request=request_piece)
+        if record_provider_trace:
+            record_provider_trace_reference(request=message, reference=_provider_trace_reference(response))
 
         # Content filtering is red-team critical: surface it as an error Message (not an
         # exception) so attacks can continue and blocked-content scorers can still score.
