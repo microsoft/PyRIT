@@ -606,13 +606,16 @@ function ScenarioLaunchForm({
     supportsDatasets || scenarioDatasetDefaults(scenario).sources.length > 0)
   // A compatible-only listing names every stored dataset this scenario can use, so a linked name it omits
   // can't run. Once the first listing succeeds, leave those names out and say why, rather than keep a row
-  // that only fails at launch. The picker is disabled until then, so no edit happens before this. Adjusted
-  // during render (React's "adjust state when props change" pattern) rather than in an effect.
+  // that only fails at launch. While the listing loads or has failed, the Add picker is disabled but rows can
+  // still be removed or limited; this filters the current selection, so those edits are kept and a row
+  // already removed isn't named. Adjusted during render (React's "adjust state when props change" pattern)
+  // rather than in an effect.
   const [omittedLinkedNames, setOmittedLinkedNames] = useState<string[] | null>(null)
   const compatibleListingReady = runtime.ready && compatibleDatasetsOnly && takesLinkedDatasets
     && !datasetMetadata.loading && datasetMetadata.error === null
   if (omittedLinkedNames === null && compatibleListingReady && linkedNames.length > 0) {
-    const omitted = linkedNames.filter((name) => !datasetMetadata.items.some((item) => item.name === name))
+    const omitted = linkedNames.filter((name) => (datasetEdits.sources ?? []).some((source) => source.name === name)
+      && !datasetMetadata.items.some((item) => item.name === name))
     setOmittedLinkedNames(omitted)
     if (omitted.length > 0) {
       setDatasetEdits({
@@ -919,11 +922,6 @@ function ScenarioLaunchForm({
                 </MessageBarBody>
               </MessageBar>
             )}
-            {omittedLinkedNames !== null && omittedLinkedNames.length > 0 && (
-              <MessageBar intent="warning" data-testid="omitted-linked-datasets">
-                <MessageBarBody>{omittedLinkedDatasetsMessage(omittedLinkedNames)}</MessageBarBody>
-              </MessageBar>
-            )}
             {(staleSelection || (targetName && unavailableSelection)) && (
               <MessageBar intent="warning">
                 <MessageBarBody>
@@ -1069,6 +1067,12 @@ function ScenarioLaunchForm({
                   canGenerate={acceptsAnyNamedDataset(scenario, datasetOptions)}
                 />
               </div>
+              {/* Shown beside the selection it changed, like the listing's loading, error and empty states. */}
+              {omittedLinkedNames !== null && omittedLinkedNames.length > 0 && (
+                <MessageBar intent="warning" data-testid="omitted-linked-datasets">
+                  <MessageBarBody>{omittedLinkedDatasetsMessage(omittedLinkedNames)}</MessageBarBody>
+                </MessageBar>
+              )}
               <ScenarioDatasetTable
                 request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}

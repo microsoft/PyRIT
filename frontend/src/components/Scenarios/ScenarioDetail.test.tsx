@@ -3548,9 +3548,13 @@ describe('ScenarioDetail', () => {
         const user = userEvent.setup()
         renderDetail(`${ASSERT_PATH}?dataset=ds_a&dataset=other_policy`)
 
-        expect(await screen.findByTestId('omitted-linked-datasets')).toHaveTextContent(
+        const warning = await screen.findByTestId('omitted-linked-datasets')
+        expect(warning).toHaveTextContent(
           "The linked dataset other_policy isn't a stored dataset this scenario can use, so it wasn't selected.",
         )
+        // The warning sits beside the selection it changed, not at the top of the form.
+        expect(within(screen.getByRole('region', { name: 'Datasets' })).getByTestId('omitted-linked-datasets'))
+          .toBe(warning)
         expect(screen.getByRole('button', { name: 'Remove ds_a' })).toBeInTheDocument()
         expect(screen.queryByRole('button', { name: 'Remove other_policy' })).not.toBeInTheDocument()
         expect(screen.queryByText('Not in the compatible list')).not.toBeInTheDocument()
@@ -3576,6 +3580,35 @@ describe('ScenarioDetail', () => {
         )
         expect(screen.queryByRole('table', { name: 'Selected datasets' })).not.toBeInTheDocument()
         expect(screen.getByRole('combobox', { name: 'Add dataset' })).toBeEnabled()
+      })
+
+      it('names only the omitted datasets still selected when the listing recovers', async () => {
+        const user = userEvent.setup()
+        jest.mocked(scenariosApi.listCompatibleDatasets).mockRejectedValueOnce(new Error('Listing offline'))
+        renderDetail(`${ASSERT_PATH}?dataset=ds_a&dataset=other_a&dataset=other_b`)
+
+        expect(await screen.findByText(/Listing offline/)).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Remove other_a' }))
+        await user.click(screen.getByRole('button', { name: 'Retry loading compatible datasets' }))
+
+        expect(await screen.findByTestId('omitted-linked-datasets')).toHaveTextContent(
+          "The linked dataset other_b isn't a stored dataset this scenario can use, so it wasn't selected.",
+        )
+        expect(screen.getByRole('button', { name: 'Remove ds_a' })).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Remove other_b' })).not.toBeInTheDocument()
+      })
+
+      it('keeps every linked dataset the compatible listing includes, without a warning', async () => {
+        const user = userEvent.setup()
+        renderDetail(`${ASSERT_PATH}?dataset=ds_a&dataset=ds_b`)
+
+        expect(await screen.findByRole('button', { name: 'Remove ds_b' })).toBeInTheDocument()
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+        expect(screen.queryByTestId('omitted-linked-datasets')).not.toBeInTheDocument()
+        await confirmRunPreview(user)
+
+        await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+        expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ sources: [{ name: 'ds_a' }, { name: 'ds_b' }] })
       })
     })
 
