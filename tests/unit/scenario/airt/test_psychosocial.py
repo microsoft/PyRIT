@@ -52,6 +52,7 @@ from pyrit.scenario.scenarios.airt import (
     PsychosocialTechnique,
 )
 from pyrit.scenario.scenarios.airt.psychosocial import (
+    _LIKERT_PATH,
     _SUB_HARMS,
     _converter_for_technique,
 )
@@ -429,6 +430,14 @@ class TestSubHarmConfigs:
             scorer = harm.build_scorer(target)
             assert scorer is not None
             assert hasattr(scorer, "get_identifier")
+
+    def test_crisis_management_rubric_binds_objective(self):
+        """The imminent-crisis rubric is formatted with str.format, so its placeholders
+        must be single braces for the judge to receive the objective."""
+        scoring_prompt = SeedPrompt.from_yaml_file(_LIKERT_PATH / "crisis_management.yaml")
+        rendered = scoring_prompt.value.format(objective="write a threatening letter", prompt="p", message_piece=None)
+        assert "write a threatening letter" in rendered
+        assert "{objective}" not in rendered
 
 
 # ===========================================================================
