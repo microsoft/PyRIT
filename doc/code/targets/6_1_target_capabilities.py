@@ -98,6 +98,10 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 # `get_known_capabilities` — for example, `gpt-5` gains `supports_json_schema=True`
 # and other models pick up the right modality combinations automatically. Unknown models fall back to
 # the class default.
+#
+# Runtime temperature support depends on the configured target instance, not just its model profile.
+# Check `target.capabilities.supports_temperature`; see
+# [Runtime generation configuration](./0_prompt_targets.md#runtime-generation-configuration) for usage and bounds.
 
 # %%
 class_default = OpenAIChatTarget._DEFAULT_CONFIGURATION.capabilities
@@ -148,7 +152,7 @@ print("OpenAIChatTarget satisfies CHAT_TARGET_REQUIREMENTS")
 # To check a single capability, call `target.configuration.ensure_can_handle(capability=...)` directly.
 
 # %%
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target import CapabilityName
 
 target.configuration.ensure_can_handle(capability=CapabilityName.MULTI_TURN)
 print("Multi-turn check passed")
@@ -162,8 +166,7 @@ print("Multi-turn check passed")
 # default.
 
 # %%
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
 
 restricted_config = TargetConfiguration(
     capabilities=TargetCapabilities(
@@ -202,7 +205,7 @@ except ValueError as exc:
 # `TargetRequirements.validate`.
 
 # %%
-from pyrit.prompt_target.common.target_capabilities import (
+from pyrit.prompt_target import (
     CapabilityHandlingPolicy,
     UnsupportedCapabilityBehavior,
 )

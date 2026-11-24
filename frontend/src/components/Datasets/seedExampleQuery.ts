@@ -1,10 +1,10 @@
+import { MAX_SEED_SEARCH_LENGTH } from '@/services/seedSearch'
 import type { SeedType } from '@/types'
-import { catalogPathFromNavigationState } from '@/utils/routeParams'
+import { catalogPathFromNavigationState, chatOriginFromNavigationState, type DatasetChatOrigin } from '@/utils/routeParams'
 
-export const MAX_SEED_SEARCH_LENGTH = 1_000
 export const DEFAULT_SEED_PAGE_SIZE = 20
-export const MIN_SEED_PAGE_SIZE = 1
-export const MAX_SEED_PAGE_SIZE = 100
+const MIN_SEED_PAGE_SIZE = 1
+const MAX_SEED_PAGE_SIZE = 100
 export const SEED_PAGE_SIZE_OPTIONS = [20, 50, 100] as const
 
 export const SEED_TYPES = ['prompt', 'objective', 'simulated_conversation'] as const
@@ -37,12 +37,13 @@ export interface SeedBrowserQuery {
 }
 
 export interface DatasetDetailLocationState {
+  readonly chatOrigin?: DatasetChatOrigin
   readonly catalogPath: string
   readonly seedCursors: readonly (string | null)[]
   readonly cursorGeneration: string
 }
 
-export function isSeedType(value: string): value is SeedType {
+function isSeedType(value: string): value is SeedType {
   return SEED_TYPES.some((seedType) => seedType === value)
 }
 
@@ -61,7 +62,7 @@ function oneValue(params: URLSearchParams, key: string): { value: string | null;
   const values = params.getAll(key)
   if (values.length > 1) return { value: null, repeated: true }
   if (values.length === 0 || values[0] === '') return { value: null, repeated: false }
-  return { value: values[0], repeated: false }
+  return { value: values[0] ?? null, repeated: false }
 }
 
 function pageSize(params: URLSearchParams): number {
@@ -90,7 +91,7 @@ function seedTypesFrom(params: URLSearchParams): SeedType[] {
  */
 export function seedBrowserQueryFromSearchParams(params: URLSearchParams): SeedBrowserQuery {
   const searchValues = params.getAll(SEARCH_PARAM)
-  const search = searchValues.length === 1 ? searchValues[0].slice(0, MAX_SEED_SEARCH_LENGTH) : ''
+  const search = searchValues.length === 1 ? (searchValues[0]?.slice(0, MAX_SEED_SEARCH_LENGTH) ?? '') : ''
   const cursor = oneValue(params, CURSOR_PARAM)
   const example = oneValue(params, EXAMPLE_PARAM)
   return {
@@ -202,7 +203,9 @@ export function seedNavigationState(
   seedCursors: readonly (string | null)[],
   generation: string,
 ): DatasetDetailLocationState {
+  const chatOrigin = chatOriginFromNavigationState(current)
   return {
+    ...(chatOrigin ? { chatOrigin } : {}),
     catalogPath: catalogPathFromNavigationState(current),
     seedCursors: [...seedCursors],
     cursorGeneration: generation,
@@ -222,7 +225,7 @@ export function popSeedCursor(cursors: readonly (string | null)[]): {
 } | null {
   if (cursors.length === 0) return null
   return {
-    cursor: cursors[cursors.length - 1],
+    cursor: cursors[cursors.length - 1] ?? null,
     seedCursors: cursors.slice(0, -1),
   }
 }

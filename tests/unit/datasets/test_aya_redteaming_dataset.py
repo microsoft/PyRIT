@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset import _AyaRedteamingDataset
+from pyrit.datasets.seed_datasets.remote import _AyaRedteamingDataset
 from pyrit.models import SeedDataset, SeedPrompt
 
 AYA_EXPECTED_HARM_CATEGORIES = [

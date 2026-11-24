@@ -17,8 +17,8 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
-from pyrit.models.parameter import Parameter
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.models import Parameter
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
 
@@ -67,7 +67,7 @@ def _build_text_adaptive_technique() -> type[ScenarioTechnique]:
 
     factories = [factory for factory in all_factories if factory.name not in _EXCLUDED_TECHNIQUES]
 
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-explicit-return]
         class_name="TextAdaptiveTechnique",
         factories=factories,
         default_names={"role_play_movie_script", "many_shot"},

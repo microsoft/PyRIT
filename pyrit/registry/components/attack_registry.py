@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyrit.common.apply_defaults import resolve_constructor_defaults
-from pyrit.models.identifiers import AttackIdentifier
+from pyrit.models import AttackIdentifier
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy
 
 
-class AttackRegistry(Registry["AttackStrategy", RegistryMetadata]):
+class AttackRegistry(Registry["AttackStrategy[Any, Any]", RegistryMetadata]):
     """
     Discover concrete ``AttackStrategy`` classes and build configured attacks.
 
@@ -29,7 +29,7 @@ class AttackRegistry(Registry["AttackStrategy", RegistryMetadata]):
     This registry stores classes, not live attacks or attack technique factories.
     """
 
-    def _base_type(self) -> type[AttackStrategy]:
+    def _base_type(self) -> type[AttackStrategy[Any, Any]]:
         """Return the attack base class, imported lazily."""
         from pyrit.executor.attack import AttackStrategy
 
@@ -49,7 +49,9 @@ class AttackRegistry(Registry["AttackStrategy", RegistryMetadata]):
         """Return the shared constructor metadata type."""
         return RegistryMetadata
 
-    def validate_constructor_parameters(self, *, attack_class: type[AttackStrategy], params: dict[str, Any]) -> None:
+    def validate_constructor_parameters(
+        self, *, attack_class: type[AttackStrategy[Any, Any]], params: dict[str, Any]
+    ) -> None:
         """
         Validate attack-owned constraints with constructor defaults, without constructing an attack.
 

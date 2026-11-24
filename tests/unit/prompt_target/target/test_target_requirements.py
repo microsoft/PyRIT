@@ -7,16 +7,14 @@ import pytest
 
 from pyrit.prompt_target import (
     CHAT_TARGET_REQUIREMENTS,
+    CapabilityHandlingPolicy,
     CapabilityName,
     PromptTarget,
-    TargetRequirements,
-)
-from pyrit.prompt_target.common.target_capabilities import (
-    CapabilityHandlingPolicy,
     TargetCapabilities,
+    TargetConfiguration,
+    TargetRequirements,
     UnsupportedCapabilityBehavior,
 )
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 def _make_target(*, configuration: TargetConfiguration) -> MagicMock:

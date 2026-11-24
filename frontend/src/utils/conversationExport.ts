@@ -224,7 +224,7 @@ export async function conversationToHtml(
 <body>
 <h1>CoPyRIT conversation export</h1>
 <p class="meta">${summary}</p>
-${exported.map((message, index) => renderMessage(message, media.perMessage[index])).join('\n')}
+${exported.map((message, index) => renderMessage(message, media.perMessage[index] ?? { attachments: [], originalAttachments: [] })).join('\n')}
 </body>
 </html>
 `

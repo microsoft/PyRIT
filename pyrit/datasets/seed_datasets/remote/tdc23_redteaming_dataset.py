@@ -12,7 +12,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 if TYPE_CHECKING:
-    from pyrit.models.seeds.seed_group import SeedUnion
+    from pyrit.models import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,8 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "small"  # 100 narrative-style harmful prompts
     tags: frozenset[str] = frozenset({"safety", "jailbreak"})
+
+    source_url = "https://huggingface.co/datasets/walledai/TDC23-RedTeaming"
 
     def __init__(
         self,

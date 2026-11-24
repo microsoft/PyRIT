@@ -13,14 +13,21 @@ from sqlalchemy import inspect, or_, select, text
 from sqlalchemy.dialects import mssql
 from sqlalchemy.orm import Query, Session
 
-from pyrit.common.singleton import Singleton
-from pyrit.converter.base64_converter import Base64Converter
-from pyrit.memory import AzureSQLMemory, EmbeddingDataEntry, MemoryInterface, PromptMemoryEntry
-from pyrit.memory.memory_interface import AttackResultKeysetCursor, MessagePieceKeysetCursor, _AttackResultQuery
-from pyrit.memory.memory_models import ScenarioResultEntry
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
+from pyrit.common import Singleton
+from pyrit.converter import Base64Converter
+from pyrit.memory import (
+    AttackResultEntry,
+    AttackResultKeysetCursor,
+    AzureSQLMemory,
+    EmbeddingDataEntry,
+    MemoryInterface,
+    PromptMemoryEntry,
+    set_message_piece_sha256_async,
+)
+from pyrit.memory.memory_interface import MessagePieceKeysetCursor, _AttackResultQuery
+from pyrit.memory.memory_models import ScenarioResultEntry, UTCDateTime
 from pyrit.models import Conversation, MessagePiece
-from pyrit.prompt_target.text_target import TextTarget
+from pyrit.prompt_target import TextTarget
 from unit.mocks import get_azure_sql_memory_async, get_sample_conversation_entries
 
 if TYPE_CHECKING:
@@ -188,6 +195,7 @@ def test_remove_seeds_metadata_only_matches_scalar_json_types(
     session.query.return_value = query
     query.filter.return_value = query
     query.delete.return_value = 1
+    query.first.return_value = None
 
     with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
         if remove_groups:
@@ -198,7 +206,7 @@ def test_remove_seeds_metadata_only_matches_scalar_json_types(
             removed = uninitialized_memory_interface._execute_remove_seeds_from_memory(metadata={"payload": value})
 
     assert removed == 1
-    condition = query.filter.call_args.args[0]
+    condition = query.filter.call_args_list[-1 if remove_groups else 0].args[0]
     compiled = condition.compile(dialect=mssql.dialect())
     assert "[metadata_0].[type] IN (1, 2, 3)" in str(compiled)
     assert compiled.params["md_key_0"] == "payload"
@@ -503,7 +511,7 @@ async def test_update_prompt_entries_by_conversation_id(memory_interface: AzureS
     "partial_match, expected_value",
     [
         (False, "testvalue"),
-        (True, "%testvalue%"),
+        (True, "%TestValue%"),
     ],
     ids=["exact_match", "partial_match"],
 )
@@ -517,7 +525,12 @@ def test_get_condition_json_property_match_bind_params(
         partial_match=partial_match,
     )
     # Extract the compiled bind parameters (param names include a random uid suffix)
-    params = condition.compile().params
+    params = condition.compile(dialect=mssql.dialect()).params
+    if partial_match:
+        assert "$.key" in params.values()
+        assert expected_value in params.values()
+        assert "ESCAPE '/'" in str(condition.compile(dialect=mssql.dialect()))
+        return
     pp_params = {k: v for k, v in params.items() if k.startswith("pp_")}
     mv_params = {k: v for k, v in params.items() if k.startswith("mv_")}
     assert len(pp_params) == 1
@@ -595,6 +608,41 @@ def test_get_attack_result_label_condition_empty_labels_dict(memory_interface: A
     assert not any("label_" in k for k in params)
 
 
+def test_get_conversation_stats_types_created_at_as_utc_datetime(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The raw aggregate is typed with UTCDateTime so its result processor reattaches UTC."""
+    session = MagicMock()
+    session.execute.return_value.fetchall.return_value = []
+
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        uninitialized_memory_interface._execute_get_conversation_stats(conversation_ids=["conversation"])
+
+    sql = session.execute.call_args.args[0]
+    assert isinstance(sql.selected_columns.created_at.type, UTCDateTime)
+
+
+def test_get_conversation_stats_orders_the_last_piece_canonically(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The last message lookup orders pieces the way the conversation page does.
+
+    SQL Server UUID ordering differs from the SDK string comparison the page
+    uses, so the lookup sorts ids through the same lowered collation, and the
+    timestamp decides between pieces that share a sequence number.
+    """
+    session = MagicMock()
+    session.execute.return_value.fetchall.return_value = []
+
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        uninitialized_memory_interface._execute_get_conversation_stats(conversation_ids=["conversation"])
+
+    sql = str(session.execute.call_args.args[0])
+    assert "p2.sequence DESC" in sql
+    assert "p2.timestamp DESC" in sql
+    assert "LOWER(CAST(p2.id AS VARCHAR(36))) COLLATE Latin1_General_100_BIN2 DESC" in sql
+
+
 def test_get_conversation_stats_uses_one_latest_row_apply(
     uninitialized_memory_interface: AzureSQLMemory,
 ) -> None:
@@ -610,6 +658,23 @@ def test_get_conversation_stats_uses_one_latest_row_apply(
     assert sql.upper().count("SELECT TOP 1") == 1
     assert "OUTER APPLY" in sql.upper()
     assert "p2.converted_value_data_type AS last_data_type" in sql
+
+
+def test_latest_per_conversation_tiebreak_orders_uuids_canonically(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The anti-join tiebreak normalizes both id operands for SQL Server.
+
+    Native uniqueidentifier ordering differs from the SDK string comparison,
+    so an unnormalized comparison would crown a different tie winner than the
+    post-fetch Python dedup on the same rows.
+    """
+    condition = uninitialized_memory_interface._attack_results_not_superseded_condition(conditions=[])
+    statement = select(AttackResultEntry.id).where(condition)
+    sql = str(statement.compile(dialect=mssql.dialect())).upper()
+
+    assert "LOWER(CAST(NEWER.ID AS VARCHAR(36)))" in sql
+    assert "LOWER(CAST([ATTACKRESULTENTRIES].ID AS VARCHAR(36)))" in sql
 
 
 def test_get_conversation_stats_chunks_within_bind_budget(
@@ -802,7 +867,7 @@ def test_scenario_progress_cursor_and_order_use_canonical_uuid_order(
     [
         (False, False, "LOWER(JSON_VALUE("),
         (True, False, "JSON_VALUE("),
-        (False, True, "LOWER(JSON_VALUE("),
+        (False, True, "LOWER((SELECT"),
     ],
     ids=["case_insensitive_exact", "case_sensitive_exact", "case_insensitive_partial"],
 )
@@ -819,7 +884,7 @@ def test_get_condition_json_property_match_sql_text(
         partial_match=partial_match,
         case_sensitive=case_sensitive,
     )
-    sql_text = str(condition.compile(compile_kwargs={"literal_binds": False}))
+    sql_text = str(condition.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": False}))
     assert expected_sql_fragment in sql_text
     # When case_sensitive=False, LOWER must wrap the entire JSON_VALUE(...) call
     if not case_sensitive:
@@ -828,7 +893,7 @@ def test_get_condition_json_property_match_sql_text(
 
 def test_get_condition_json_array_match_all_mode_joins_with_and(memory_interface: AzureSQLMemory):
     """match_mode='all' (default) produces per-element EXISTS clauses joined by AND."""
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     condition = memory_interface._get_condition_json_array_match(
         json_column=AttackResultEntry.atomic_attack_identifier,
@@ -849,7 +914,7 @@ def test_get_condition_json_array_match_any_mode_joins_with_or(memory_interface:
     The outer parens are essential: without them, operator precedence would bind the outer
     ``ISJSON(...) = 1 AND`` tighter than the inner ``OR``, corrupting the predicate.
     """
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     condition = memory_interface._get_condition_json_array_match(
         json_column=AttackResultEntry.atomic_attack_identifier,
@@ -872,7 +937,7 @@ def test_get_condition_json_array_match_any_mode_preserves_empty_absence_overloa
     """match_mode is ignored when array_to_match is empty — always returns the 'no converters' predicate."""
     import re
 
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     def _normalize(condition) -> str:
         # _uid() generates a random per-call suffix on param names; strip it for equality.

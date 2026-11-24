@@ -3,7 +3,8 @@
 
 import logging
 from collections.abc import MutableSequence, Sequence
-from typing import Any
+from copy import deepcopy
+from typing import Any, ClassVar
 
 from openai.types.chat import ChatCompletion
 
@@ -17,6 +18,7 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    PromptDataType,
 )
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
@@ -31,8 +33,13 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     detect_response_content,
     save_audio_response_async,
 )
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.chat_completions_tool_loop import _ChatCompletionsToolLoopMixin
+from pyrit.prompt_target.common.target_capabilities import (
+    CapabilityName,
+    TargetCapabilities,
+)
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
@@ -48,7 +55,7 @@ from pyrit.prompt_target.openai.openai_target import OpenAITarget
 logger = logging.getLogger(__name__)
 
 
-class OpenAIChatTarget(OpenAITarget):
+class OpenAIChatTarget(_ChatCompletionsToolLoopMixin, OpenAITarget):
     """
     Facilitates multimodal (image and text) input and text output generation.
 
@@ -76,14 +83,20 @@ class OpenAIChatTarget(OpenAITarget):
             Note that you will be charged based on the number of generated tokens across all
             of the choices. Keep n as 1 to minimize costs.
         extra_body_parameters (dict): Additional parameters to send in the request body
+        tools (Sequence[Tool]): Executable tools advertised to the model.
+        tool_providers (Sequence[ToolProvider]): Providers discovered within each send's resource scope.
+        execute_tools (bool): Execute configured tools locally, or return calls to the caller.
+        max_tool_rounds (int): Maximum completions containing locally dispatched calls per send.
 
     """
 
     _SUPPORTS_TOOL_CALL_HISTORY = True
+    _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset({CapabilityName.TEMPERATURE})
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
             supports_editable_history=True,
+            supports_prefill=True,
             supports_json_output=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
@@ -108,6 +121,10 @@ class OpenAIChatTarget(OpenAITarget):
         audio_response_config: OpenAIChatAudioConfig | None = None,
         extra_body_parameters: dict[str, Any] | None = None,
         custom_configuration: TargetConfiguration | None = None,
+        tools: Sequence[Tool] | None = None,
+        tool_providers: Sequence[ToolProvider] | None = None,
+        execute_tools: bool = True,
+        max_tool_rounds: int = 10,
         **kwargs: Any,
     ) -> None:
         """
@@ -144,6 +161,15 @@ class OpenAIChatTarget(OpenAITarget):
                 that support it (e.g., gpt-4o-audio-preview). When provided, enables audio modality in responses.
             extra_body_parameters (dict, Optional): Additional parameters to be included in the request body.
             custom_configuration (TargetConfiguration, Optional): Override the default target configuration.
+            tools (Sequence[Tool], Optional): Tools to advertise to the model and execute on the host.
+            tool_providers (Sequence[ToolProvider], Optional): Providers whose tools are discovered within
+                each send's execution scope, advertised to the model, and executed on the host.
+            execute_tools (bool, Optional): Whether to execute returned calls locally. If False, return the
+                first response, with its calls, without running them. Defaults to True.
+            max_tool_rounds (int, Optional): The most completions per send whose calls run locally. Calls in
+                a later completion get error results without running, and the send ends with an error
+                response. A tool raising ``ToolInfrastructureError`` also ends the send with an error
+                response, after every call in its round has a result. Defaults to 10.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional ``AsyncOpenAI`` constructor options.
                 For example, ``{"timeout": 180}`` sets a three-minute timeout. Custom ``http_client``
@@ -151,18 +177,26 @@ class OpenAIChatTarget(OpenAITarget):
 
         Raises:
             PyritException: If a generation parameter is out of bounds or a penalty is non-finite.
+            ValueError: If max_tool_rounds is not a nonnegative integer, tools run locally with n above 1, or
+                ``extra_body_parameters["extra_body"]`` declares tools while tools are configured.
             RateLimitException: If the target is rate-limited.
             httpx.HTTPStatusError: If the request fails with a 400 Bad Request or 429 Too Many Requests error.
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        super().__init__(custom_configuration=custom_configuration, **kwargs)
-
         # Validate generation parameters.
         validate_temperature(temperature)
         validate_top_p(top_p)
         validate_presence_penalty(presence_penalty)
         validate_frequency_penalty(frequency_penalty)
+        self._init_tools(
+            tools=tools,
+            tool_providers=tool_providers,
+            execute_tools=execute_tools,
+            max_tool_rounds=max_tool_rounds,
+            n=n,
+            extra_body_parameters=extra_body_parameters,
+        )
 
         self._temperature = temperature
         self._top_p = top_p
@@ -179,6 +213,14 @@ class OpenAIChatTarget(OpenAITarget):
             extra_body_parameters = {**audio_params, **extra_body_parameters} if extra_body_parameters else audio_params
 
         self._extra_body_parameters = extra_body_parameters
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
+
+    def _generation_capabilities_for_mode(self, capabilities: TargetCapabilities) -> TargetCapabilities:
+        capabilities = super()._generation_capabilities_for_mode(capabilities)
+        parameters = self._effective_generation_parameters()
+        if self._audio_response_config is not None or "audio" in (parameters.get("modalities") or []):
+            return capabilities.model_copy(update={"supports_temperature": False})
+        return capabilities
 
     def validate_tool_history(self, messages: Sequence[Message]) -> None:
         """Check stored tool history and Chat Completions tool-message constraints."""
@@ -203,6 +245,7 @@ class OpenAIChatTarget(OpenAITarget):
                 "seed": self._seed,
                 "n": self._n,
                 "extra_body_parameters": self._extra_body_parameters,
+                **self._tool_identifier_params(),
             },
         )
 
@@ -230,32 +273,20 @@ class OpenAIChatTarget(OpenAITarget):
 
     @pyrit_target_retry
     @limit_requests_per_minute
-    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
-        """
-        Asynchronously sends a message and handles the response within a managed conversation context.
-
-        Args:
-            normalized_conversation (list[Message]): The full conversation
-                (history + current message) after running the normalization
-                pipeline. The current message is the last element.
-
-        Returns:
-            list[Message]: A list containing the response from the prompt target.
-        """
-        message = normalized_conversation[-1]
-        message_piece: MessagePiece = message.message_pieces[0]
+    async def _send_completion_async(
+        self, *, conversation: list[Message], request: Message, tools: Sequence[Tool]
+    ) -> Message:
+        message_piece: MessagePiece = request.message_pieces[0]
         json_config = self._get_json_response_config(message_piece=message_piece)
 
-        logger.info(f"Sending the following prompt to the prompt target: {message}")
+        logger.info(f"Sending the following prompt to the prompt target: {request}")
 
-        body = await self._construct_request_body_async(conversation=normalized_conversation, json_config=json_config)
-
-        # Use unified error handling - automatically detects ChatCompletion and validates
-        response = await self._handle_openai_request_async(
+        body = await self._construct_request_body_async(conversation=conversation, json_config=json_config, tools=tools)
+        self._prepare_request_generation(body=body, request=request)
+        return await self._handle_openai_request_async(
             api_call=lambda: self._client.chat.completions.create(**body),
-            request=message,
+            request=request,
         )
-        return [response]
 
     def _detect_response_content(self, message: Any) -> tuple[bool, bool, bool]:
         """
@@ -299,6 +330,27 @@ class OpenAIChatTarget(OpenAITarget):
             has_text_piece=has_text_piece,
             prefer_transcript_for_history=prefer_transcript_for_history,
         )
+
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
+        """
+        Match the Chat Completions adapter's replayed blocked errors and omitted audio history.
+
+        Args:
+            message_piece: Historical message piece to check.
+            has_text_piece: Whether its message contains a text piece.
+
+        Returns:
+            PromptDataType | None: The wire modality, or None for omitted audio.
+        """
+        if self._should_skip_sending_audio(
+            message_piece=message_piece, is_last_message=False, has_text_piece=has_text_piece
+        ):
+            return None
+        if message_piece.is_blocked_error():
+            return "text"
+        return message_piece.converted_value_data_type
 
     async def _construct_message_from_response_async(self, response: ChatCompletion, request: MessagePiece) -> Message:
         """
@@ -424,7 +476,7 @@ class OpenAIChatTarget(OpenAITarget):
         )
 
     async def _construct_request_body_async(
-        self, *, conversation: MutableSequence[Message], json_config: JsonResponseConfig
+        self, *, conversation: MutableSequence[Message], json_config: JsonResponseConfig, tools: Sequence[Tool] = ()
     ) -> dict[str, Any]:
         messages = await self._build_chat_messages_async(conversation)
         response_format = self._build_response_format(json_config)
@@ -444,10 +496,12 @@ class OpenAIChatTarget(OpenAITarget):
         }
 
         if self._extra_body_parameters:
-            body_parameters.update(self._extra_body_parameters)
+            body_parameters.update(deepcopy(self._extra_body_parameters))
 
         # Filter out None values
-        return {k: v for k, v in body_parameters.items() if v is not None}
+        body: dict[str, Any] = {k: v for k, v in body_parameters.items() if v is not None}
+        self._add_tool_definitions(body=body, tools=tools)
+        return body
 
     def _build_response_format(self, json_config: JsonResponseConfig) -> dict[str, Any] | None:
         return build_response_format(json_config=json_config)

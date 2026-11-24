@@ -12,8 +12,17 @@ deferred inside each ``*MemoryPrinter`` constructor, so importing this module (o
 import asyncio
 import os
 
-from pyrit.models import AttackResult, ComponentIdentifier, Message, ScenarioResult, Score
-from pyrit.output._derivation import select_attacks
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ComponentIdentifier,
+    Message,
+    ScenarioResult,
+    ScenarioSuiteExecutionSummary,
+    Score,
+    ScorerSelectionReport,
+)
+from pyrit.output._derivation import attack_objective_scorer_identifier, select_attacks
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 from pyrit.output.conversation.json import JsonConversationMemoryPrinter, JsonConversationPrinter
@@ -30,8 +39,11 @@ from pyrit.output.scenario_result.json import (
     build_scenario_full_payload,
 )
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
+from pyrit.output.scenario_suite_result.json import JsonScenarioSuiteResultMemoryPrinter
+from pyrit.output.scenario_suite_result.pretty import PrettyScenarioSuiteResultMemoryPrinter
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
+from pyrit.output.scorer_selection.pretty import PrettyScorerSelectionReportPrinter
 from pyrit.output.sink import OutputFormat, Sink, StdoutSink, get_default_sink
 
 
@@ -76,7 +88,14 @@ async def output_attack_async(
         blurred_dir (str | PathLike | None): For "markdown" output, directory to write
             blurred copies into. Defaults to None (sibling of the original). Ignored
             when ``format != "markdown"``.
+
+    Raises:
+        ValueError: If ``format`` is not a supported value.
     """
+    if format not in ("pretty", "markdown"):
+        raise ValueError(
+            f"Unsupported format for attack results: {format!r}. Only 'pretty' and 'markdown' are available."
+        )
     if format == "markdown":
         printer = MarkdownAttackResultMemoryPrinter(
             sink=sink or get_default_sink(),
@@ -115,7 +134,8 @@ async def output_scenario_async(
         format (OutputFormat): Output format. Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
         sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted so
-            that the group with the highest success rate appears first. Defaults to False,
+            that the group with the highest success rate appears first, unless different objective
+            scorers judged the groups, which then stay unsorted with a notice. Defaults to False,
             which preserves the original insertion order.
 
     Raises:
@@ -142,6 +162,7 @@ async def output_scenario_attacks_async(
     *,
     attack_result_ids: list[str] | None = None,
     limit: int | None = None,
+    outcome: AttackOutcome | None = None,
     format: OutputFormat = "pretty",  # noqa: A002
     sink: Sink | None = None,
 ) -> None:
@@ -155,16 +176,27 @@ async def output_scenario_attacks_async(
         result (ScenarioResult): The scenario result whose attacks to list.
         attack_result_ids (list[str] | None): Restrict to these attack ids. Defaults to None.
         limit (int | None): Maximum number of attacks to show. Defaults to None.
+        outcome (AttackOutcome | None): Keep only attacks with this outcome before applying
+            ``limit``. Defaults to None (all outcomes).
         format (OutputFormat): Output format — "pretty" or "json". Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
+
+    Raises:
+        ValueError: If ``format`` is not a supported value.
     """
     if format == "json":
         json_printer = JsonScenarioResultMemoryPrinter(sink=sink or StdoutSink())
-        await json_printer.write_async(result, view="attacks", attack_result_ids=attack_result_ids, limit=limit)
+        await json_printer.write_async(
+            result, view="attacks", attack_result_ids=attack_result_ids, limit=limit, outcome=outcome
+        )
         return
+    if format != "pretty":
+        raise ValueError(
+            f"Unsupported format for scenario attacks: {format!r}. Only 'pretty' and 'json' are available."
+        )
     resolved_sink = sink or get_default_sink(StdoutSink)
     printer = PrettyScenarioResultMemoryPrinter(sink=resolved_sink)
-    await printer.write_async(result, view="attacks", attack_result_ids=attack_result_ids, limit=limit)
+    await printer.write_async(result, view="attacks", attack_result_ids=attack_result_ids, limit=limit, outcome=outcome)
 
 
 async def output_scenario_conversations_async(
@@ -172,6 +204,7 @@ async def output_scenario_conversations_async(
     *,
     attack_result_ids: list[str] | None = None,
     limit: int | None = None,
+    outcome: AttackOutcome | None = None,
     format: OutputFormat = "json",  # noqa: A002
     sink: Sink | None = None,
 ) -> None:
@@ -179,15 +212,17 @@ async def output_scenario_conversations_async(
     Print every attack's summary and conversation for a scenario result as one JSON document.
 
     The document has the same format as the CLI's ``scenario-results --view conversations
-    --format json`` output, and each response keeps only the score from the scenario's objective
-    scorer. Conversations are read from memory and every attack is included unless you pass
-    ``attack_result_ids`` or ``limit``, so narrow large scenarios.
+    --format json`` output, and each response keeps only the score from the objective scorer that
+    judged its attack. Conversations are read from memory and every attack is included unless you pass
+    ``attack_result_ids``, ``outcome``, or ``limit``, so narrow large scenarios.
 
     Args:
         result (ScenarioResult): The scenario result whose conversations to print.
         attack_result_ids (list[str] | None): Restrict to these attack ids. Defaults to None.
         limit (int | None): Maximum number of conversations to include; 0 gives an empty
             document. Defaults to None (all).
+        outcome (AttackOutcome | None): Keep only attacks with this outcome before applying
+            ``limit``. Defaults to None (all outcomes).
         format (OutputFormat): Output format. Only "json" is supported, so it is the default.
         sink (Sink | None): Output sink. Defaults to StdoutSink.
 
@@ -197,7 +232,9 @@ async def output_scenario_conversations_async(
     if format != "json":
         raise ValueError(f"Unsupported format for scenario conversations: {format!r}. Only 'json' is available.")
 
-    entries = await _collect_conversation_entries_async(result=result, attack_result_ids=attack_result_ids, limit=limit)
+    entries = await _collect_conversation_entries_async(
+        result=result, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome
+    )
     document = build_scenario_conversations_document(result=result, entries=entries)
     await (sink or StdoutSink()).write_async(document)
 
@@ -207,6 +244,7 @@ async def output_scenario_full_async(
     *,
     attack_result_ids: list[str] | None = None,
     limit: int | None = None,
+    outcome: AttackOutcome | None = None,
     format: OutputFormat = "json",  # noqa: A002
     sink: Sink | None = None,
 ) -> None:
@@ -215,8 +253,8 @@ async def output_scenario_full_async(
 
     The report has the same format as the CLI's ``scenario-results --view full`` output with
     ``--format json`` or ``--format html``, and each response keeps only the score from the
-    scenario's objective scorer. The overview always covers the whole scenario;
-    ``attack_result_ids`` and ``limit`` only choose which conversations are included.
+    objective scorer that judged its attack. The overview always covers the whole scenario;
+    ``attack_result_ids``, ``outcome``, and ``limit`` only choose which conversations are included.
 
     Args:
         result (ScenarioResult): The scenario result to report.
@@ -224,6 +262,8 @@ async def output_scenario_full_async(
             Defaults to None.
         limit (int | None): Maximum number of conversations to include; 0 gives none.
             Defaults to None (all).
+        outcome (AttackOutcome | None): Keep only attacks with this outcome before applying
+            ``limit``. Defaults to None (all outcomes).
         format (OutputFormat): Output format — "json" or a standalone, text-only "html"
             report. Defaults to "json".
         sink (Sink | None): Output sink. Defaults to StdoutSink for "json"; "html" requires
@@ -242,7 +282,9 @@ async def output_scenario_full_async(
             "format='html' writes a report file and requires an explicit sink, such as FileSink(path=...)."
         )
 
-    entries = await _collect_conversation_entries_async(result=result, attack_result_ids=attack_result_ids, limit=limit)
+    entries = await _collect_conversation_entries_async(
+        result=result, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome
+    )
     # The overview's scorer metrics are read from a JSONL file, so build it off the event loop.
     overview = await asyncio.to_thread(JsonScenarioResultMemoryPrinter().build, result, view="overview")
     if format == "html":
@@ -258,16 +300,18 @@ async def _collect_conversation_entries_async(
     result: ScenarioResult,
     attack_result_ids: list[str] | None,
     limit: int | None,
+    outcome: AttackOutcome | None = None,
 ) -> list[ConversationEntry]:
     """
     Read each selected attack's conversation from memory and build its JSON form.
 
-    Attacks are filtered by id and then limited before any conversation is read, as in the CLI.
+    Attacks are filtered by id and outcome, then limited before any conversation is read.
 
     Args:
         result (ScenarioResult): The scenario result whose attacks to read.
         attack_result_ids (list[str] | None): Restrict to these attack ids.
         limit (int | None): Maximum number of attacks to read.
+        outcome (AttackOutcome | None): Keep only attacks with this outcome. Defaults to None.
 
     Returns:
         list[ConversationEntry]: ``(atomic_attack_name, attack, structured_messages)`` triples.
@@ -277,13 +321,12 @@ async def _collect_conversation_entries_async(
     """
     if limit is not None and limit < 0:
         raise ValueError(f"limit must be zero or greater, got {limit}.")
-    selected = select_attacks(result, attack_result_ids=attack_result_ids)
+    selected = select_attacks(result, attack_result_ids=attack_result_ids, outcome=outcome)
     if limit is not None:
         selected = selected[:limit]
     if not selected:
         return []
 
-    objective_scorer_identifier = result.objective_scorer_identifier
     source = MemoryConversationSource()
     printer = JsonConversationPrinter(source=source)
     entries: list[ConversationEntry] = []
@@ -292,6 +335,9 @@ async def _collect_conversation_entries_async(
         messages = (
             await source.get_messages_async(conversation_id=attack.conversation_id) if attack.conversation_id else []
         )
+        objective_scorer_identifier = attack_objective_scorer_identifier(
+            attack=attack, run_scorer_identifier=result.objective_scorer_identifier
+        )
         structured = await printer.build_async(
             messages,
             include_scores=objective_scorer_identifier is not None,
@@ -299,6 +345,36 @@ async def _collect_conversation_entries_async(
         )
         entries.append((atomic_attack_name, attack, structured))
     return entries
+
+
+async def output_scenario_suite_async(
+    execution: ScenarioSuiteExecutionSummary,
+    *,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
+    """
+    Print a suite execution snapshot with each submitted entry's stored scenario result.
+
+    Child results are loaded from CentralMemory; entries without a stored result are shown
+    as unavailable. Snapshot states may be older than the loaded result counts.
+
+    Args:
+        execution (ScenarioSuiteExecutionSummary): Snapshot providing suite status and every entry.
+        format (OutputFormat): Either "pretty" or "json". Defaults to "pretty".
+        sink (Sink | None): Output destination. Defaults to StdoutSink.
+
+    Raises:
+        ValueError: If the format is unsupported or stored results do not match the snapshot.
+    """
+    printer: PrettyScenarioSuiteResultMemoryPrinter | JsonScenarioSuiteResultMemoryPrinter
+    if format == "pretty":
+        printer = PrettyScenarioSuiteResultMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
+    elif format == "json":
+        printer = JsonScenarioSuiteResultMemoryPrinter(sink=sink or StdoutSink())
+    else:
+        raise ValueError(f"Unsupported format for scenario suites: {format!r}. Only 'pretty' and 'json' are available.")
+    await printer.write_async(execution)
 
 
 async def output_scorer_async(
@@ -389,6 +465,30 @@ async def output_conversation_async(
         include_scores=include_scores,
         include_reasoning_summaries=include_reasoning_summaries,
     )
+
+
+async def output_scorer_selection_report_async(
+    report: ScorerSelectionReport,
+    *,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
+    """
+    Print which objective scorer each planned atomic group will use, and why earlier candidates were passed over.
+
+    Args:
+        report (ScorerSelectionReport): The report, from ``Scenario.get_scorer_selection_report()``.
+        format (OutputFormat): Output format. Only "pretty" is supported, so it is the default.
+        sink (Sink | None): Output sink. Defaults to StdoutSink.
+
+    Raises:
+        ValueError: If ``format`` is not "pretty".
+    """
+    if format != "pretty":
+        raise ValueError(f"Unsupported format for scorer selection reports: {format!r}. Only 'pretty' is available.")
+
+    printer = PrettyScorerSelectionReportPrinter(sink=sink or get_default_sink(StdoutSink))
+    await printer.write_async(report)
 
 
 async def output_score_async(

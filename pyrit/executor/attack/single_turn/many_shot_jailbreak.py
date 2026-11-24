@@ -3,9 +3,9 @@
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import DATASETS_PATH, JAILBREAK_TEMPLATES_PATH
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
@@ -32,8 +32,8 @@ def load_many_shot_jailbreaking_dataset() -> list[dict[str, str]]:
         list[dict[str, str]]: A list of many-shot jailbreaking examples.
     """
     with open(_MANY_SHOT_EXAMPLES_PATH, encoding="utf-8") as f:
-        data: list[dict[str, str]] = json.load(f)
-        return data
+        # The dataset ships with the package as a list of user/assistant string pairs.
+        return cast("list[dict[str, str]]", json.load(f))
 
 
 class ManyShotJailbreakAttack(PromptSendingAttack):

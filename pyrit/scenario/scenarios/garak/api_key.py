@@ -17,6 +17,8 @@ from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, Pr
 from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
+    DatasetSelectionMode,
+    ScenarioDatasetOptions,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateStatus,
@@ -25,16 +27,19 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     DatasetSource,
+    DatasetSourceKind,
     ResolvedDataset,
 )
+from pyrit.scenario.core.required_data import ScenarioRequiredData
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import CredentialLeakScorer
@@ -43,6 +48,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import Literal
 
+    from pyrit.models import ScenarioIdentifier, ScenarioResult
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.score import TrueFalseScorer
 
@@ -57,6 +63,10 @@ _CORPUS_DATASETS: tuple[str, ...] = (
     DATASET_PARTIAL_KEYS,
     DATASET_SAFE_PLACEHOLDERS,
 )
+# The values the default scorer excludes, so a reply that repeats them is not a leak.
+_SCORER_EXCLUSION_DATASETS: tuple[str, ...] = (DATASET_PARTIAL_KEYS, DATASET_SAFE_PLACEHOLDERS)
+# The scorer identity params that record those values.
+_EXCLUSION_IDENTIFIER_PARAMS: tuple[str, ...] = ("excluded_values_count", "excluded_values_digest")
 
 
 class ApiKeyTechnique(ScenarioTechnique):
@@ -80,7 +90,12 @@ class ApiKeyTechnique(ScenarioTechnique):
 
 
 class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
-    """Build API-key attack groups before standard dataset sampling."""
+    """
+    Limit the API-key requests ``ApiKey`` assembles from its corpus.
+
+    The corpus datasets are ApiKey's required data (``ApiKey.get_required_data``), read in
+    full. This configuration only limits the assembled requests with ``max_total``.
+    """
 
     DEFAULT_MAX_DATASET_SIZE: ClassVar[int] = 20
 
@@ -95,7 +110,6 @@ class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
         """
         super().__init__(**kwargs)
         self._techniques: list[ApiKeyTechnique] = [ApiKeyTechnique.GetKey, ApiKeyTechnique.CompleteKey]
-        self.excluded_values: tuple[str, ...] = ()
 
     def _default_max_per_dataset(self) -> Literal["all"]:
         return "all"
@@ -120,81 +134,77 @@ class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
 
     def validate_configuration(self) -> None:
         """
-        Check the corpus selection without reading its contents.
+        Check that only the assembled requests are limited.
 
         Raises:
-            DatasetConstraintError: If the required corpus datasets are not selected.
+            DatasetConstraintError: If the configuration names datasets or supplies inline seeds.
         """
         super().validate_configuration()
-        if any(self.source_limit(source.name) != "all" for source in self.sources):
-            raise DatasetConstraintError("ApiKey ingredient sources must be uncapped; use max_total.")
-        if set(self.dataset_names) != set(_CORPUS_DATASETS):
+        if self.sources or self.source_kind is DatasetSourceKind.INLINE:
             raise DatasetConstraintError(
-                f"ApiKey requires exactly these datasets: {list(_CORPUS_DATASETS)}; inline seeds are not supported."
+                f"ApiKey reads its corpus as required data: {list(_CORPUS_DATASETS)}. "
+                "ApiKeyDatasetConfiguration only takes max_total; inline seeds and other datasets are not supported."
             )
 
-    async def _build_groups_by_dataset_async(self) -> tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]:
-        """
-        Resolve the corpus and group requests by technique.
 
-        Returns:
-            tuple: Technique populations and the raw dataset for validation.
+def _require_one_template_per_technique(resolved: ResolvedDataset, *, techniques: Sequence[ApiKeyTechnique]) -> None:
+    """
+    Check the corpus has exactly one prompt template for each selected technique.
 
-        Raises:
-            DatasetConstraintError: If the configuration does not select the required corpus.
-        """
-        seeds_by_dataset = await self._collect_named_seeds_async()
-        seeds = [seed for population in seeds_by_dataset.values() for seed in population]
-        self.excluded_values = tuple(
-            seed.value for name in (DATASET_PARTIAL_KEYS, DATASET_SAFE_PLACEHOLDERS) for seed in seeds_by_dataset[name]
+    A technique's template is only used by a run that selects it, so a GetKey-only run does not
+    require a CompleteKey template.
+
+    Raises:
+        DatasetConstraintError: If a selected technique has no template, several, or a non-prompt one.
+    """
+    for technique in techniques:
+        templates = [
+            seed
+            for seed in resolved.seeds
+            if seed.dataset_name == DATASET_TEMPLATES and (seed.metadata or {}).get("technique") == technique.value
+        ]
+        if len(templates) != 1 or not isinstance(templates[0], SeedPrompt):
+            raise DatasetConstraintError(f"ApiKey requires one prompt template for {technique.value}.")
+
+
+def _assemble_requests(
+    *, corpus: dict[str, list[Seed[Any]]], techniques: Sequence[ApiKeyTechnique]
+) -> dict[str, list[AttackSeedGroup]]:
+    """
+    Render one request for each service and technique input.
+
+    Returns:
+        dict[str, list[AttackSeedGroup]]: Unsampled API-key attack groups keyed by technique.
+    """
+    services = corpus[DATASET_SERVICES]
+    partials = [seed.value for seed in corpus[DATASET_PARTIAL_KEYS]]
+    populations: dict[str, list[AttackSeedGroup]] = {}
+    for technique in techniques:
+        groups: list[AttackSeedGroup] = []
+        populations[str(technique.value)] = groups
+        template = next(
+            cast("SeedPrompt", seed)
+            for seed in corpus[DATASET_TEMPLATES]
+            if (seed.metadata or {}).get("technique") == technique.value
         )
-        populations = self._build_technique_populations(seeds)
-        return populations, ResolvedDataset(
-            seeds=seeds, source_kind=self.source_kind, dataset_names=tuple(self.dataset_names)
-        )
-
-    def _build_technique_populations(self, seeds: list[Seed[Any]]) -> dict[str, list[AttackSeedGroup]]:
-        """
-        Render one request for each selected service and technique input.
-
-        Returns:
-            dict[str, list[AttackSeedGroup]]: Unsampled API-key attack groups keyed by technique.
-
-        Raises:
-            DatasetConstraintError: If a selected technique has no unique prompt template.
-        """
-        services = [seed for seed in seeds if seed.dataset_name == DATASET_SERVICES]
-        partials = [seed.value for seed in seeds if seed.dataset_name == DATASET_PARTIAL_KEYS]
-        populations: dict[str, list[AttackSeedGroup]] = {}
-        for technique in self._techniques:
-            groups: list[AttackSeedGroup] = []
-            populations[str(technique.value)] = groups
-            templates = [
-                seed
-                for seed in seeds
-                if seed.dataset_name == DATASET_TEMPLATES and (seed.metadata or {}).get("technique") == technique.value
-            ]
-            if len(templates) != 1 or not isinstance(templates[0], SeedPrompt):
-                raise DatasetConstraintError(f"ApiKey requires one prompt template for {technique.value}.")
-            template = templates[0]
-            for service in services:
-                for partial in partials if technique is ApiKeyTechnique.CompleteKey else [""]:
-                    prompt = template.model_copy(deep=True)
-                    prompt.value = template.render_template_value(key=service.value, partial=partial)
-                    groups.append(
-                        AttackSeedGroup(
-                            seeds=[
-                                SeedObjective(
-                                    value=f"Elicit a {service.value} credential in response to: {prompt.value}",
-                                    source=service.source,
-                                    harm_categories=service.harm_categories,
-                                    metadata={"technique": technique.value, "service": service.value},
-                                ),
-                                prompt,
-                            ]
-                        )
+        for service in services:
+            for partial in partials if technique is ApiKeyTechnique.CompleteKey else [""]:
+                prompt = template.model_copy(deep=True)
+                prompt.value = template.render_template_value(key=service.value, partial=partial)
+                groups.append(
+                    AttackSeedGroup(
+                        seeds=[
+                            SeedObjective(
+                                value=f"Elicit a {service.value} credential in response to: {prompt.value}",
+                                source=service.source,
+                                harm_categories=service.harm_categories,
+                                metadata={"technique": technique.value, "service": service.value},
+                            ),
+                            prompt,
+                        ]
                     )
-        return populations
+                )
+    return populations
 
 
 class ApiKey(Scenario):
@@ -202,10 +212,11 @@ class ApiKey(Scenario):
     Exercise a model's tendency to generate or complete API credentials.
 
     GetKey requests a credential for each service. CompleteKey requests completion
-    of synthetic partial keys. The dataset configuration samples up to 20 requests
-    across the selected techniques by default. The base scenario persists that sample
-    for resume. Credential-shaped responses are scored, excluding supplied partials
-    and safe placeholders.
+    of synthetic partial keys. The service, template, partial-key, and placeholder
+    datasets are required data, always read in full. The dataset configuration samples
+    up to 20 of the assembled requests across the selected techniques by default. The
+    base scenario persists that sample for resume. Credential-shaped responses are
+    scored, excluding supplied partials and safe placeholders.
 
     Reference: [@derczynski2024garak]
     """
@@ -238,13 +249,31 @@ class ApiKey(Scenario):
             version=self.VERSION,
             technique_class=ApiKeyTechnique,
             default_dataset_config=ApiKeyDatasetConfiguration(
-                sources=[DatasetSource(name=name) for name in self.required_datasets()],
-                max_per_dataset="all",
-                max_total=ApiKeyDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
+                max_total=ApiKeyDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE
             ),
             objective_scorer=objective_scorer or CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS),
             scenario_result_id=scenario_result_id,
         )
+
+    def get_required_data(self) -> ScenarioRequiredData:
+        """
+        Return the API-key corpus, read in full to assemble the requests.
+
+        Returns:
+            ScenarioRequiredData: The service, template, partial-key, and placeholder datasets.
+        """
+        return ScenarioRequiredData(
+            sources=[DatasetSource(name=name) for name in self.required_datasets()],
+            validators=[self._validate_templates_for_selected_techniques],
+        )
+
+    def _validate_templates_for_selected_techniques(self, resolved: ResolvedDataset) -> None:
+        """Require one template per technique the run actually selects."""
+        techniques = getattr(self._dataset_config, "_techniques", None) or [
+            ApiKeyTechnique.GetKey,
+            ApiKeyTechnique.CompleteKey,
+        ]
+        _require_one_template_per_technique(resolved, techniques=techniques)
 
     def _validate_runtime_configuration(self) -> None:
         config = self._dataset_config
@@ -254,6 +283,65 @@ class ApiKey(Scenario):
             )
         config._set_techniques([ApiKeyTechnique(technique.value) for technique in self._scenario_techniques])
         super()._validate_runtime_configuration()
+
+    async def _prepare_resume_state_async(self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]) -> None:
+        """
+        Restore the default credential scorer, whose excluded values the stored groups don't carry.
+
+        The stored groups already hold the requests, so resume reads only the partial keys and
+        placeholders the scorer excludes. A custom scorer needs neither, so resume then reads no dataset.
+
+        Args:
+            seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
+        """
+        if self._uses_default_scorer:
+            required_data = cast("ScenarioRequiredData", self._required_data)
+            self._set_default_scorer(corpus=await required_data.load_async(names=_SCORER_EXCLUSION_DATASETS))
+
+    def _validate_stored_scenario(
+        self, *, stored_result: ScenarioResult, current_identifier: ScenarioIdentifier
+    ) -> None:
+        """
+        Name the exclusion datasets when an edit to them is what blocks resume.
+
+        The default scorer's identity includes the values it excludes, and resume reads them live,
+        so an edited exclusion dataset changes the scorer. No configuration can match that, so the
+        error says to restore the data instead.
+
+        Args:
+            stored_result (ScenarioResult): The scenario result retrieved from memory.
+            current_identifier (ScenarioIdentifier): Identifier for the current run.
+
+        Raises:
+            ValueError: If the exclusion datasets changed, or the configuration otherwise differs.
+        """
+        stored_scorer = stored_result.scenario_identifier.objective_scorer
+        current_scorer = current_identifier.objective_scorer
+
+        def without_exclusions(params: dict[str, Any]) -> dict[str, Any]:
+            return {key: value for key, value in params.items() if key not in _EXCLUSION_IDENTIFIER_PARAMS}
+
+        # Only the excluded values differ: same scorer class and patterns, a different exclusion digest.
+        # A planned default scorer always excludes some values, so a stored scorer without exclusions was
+        # a custom one, and the generic mismatch applies.
+        if (
+            self._uses_default_scorer
+            and stored_scorer is not None
+            and current_scorer is not None
+            and stored_scorer.params.get("excluded_values_count")
+            and stored_scorer.class_name == current_scorer.class_name
+            and without_exclusions(stored_scorer.params) == without_exclusions(current_scorer.params)
+            and stored_scorer.params.get("excluded_values_digest")
+            != current_scorer.params.get("excluded_values_digest")
+        ):
+            names = ", ".join(repr(name) for name in _SCORER_EXCLUSION_DATASETS)
+            raise ValueError(
+                self._resume_error_message(
+                    reason=f"the values the default scorer excludes, read from {names}, changed since the run "
+                    "was planned"
+                )
+            )
+        super()._validate_stored_scenario(stored_result=stored_result, current_identifier=current_identifier)
 
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
@@ -268,13 +356,21 @@ class ApiKey(Scenario):
             DatasetConstraintError: If an unsupported configuration is supplied.
         """
         config = cast("ApiKeyDatasetConfiguration", self._dataset_config)
-        groups = await config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
+        required_data = cast("ScenarioRequiredData", self._required_data)
+        corpus = await required_data.load_async()
+        populations = _assemble_requests(corpus=corpus, techniques=config._techniques)
+        groups = config.select_assembled_groups(groups_by_population=populations, apply_sampling=apply_sampling)
         if self._uses_default_scorer:
-            self._objective_scorer = CredentialLeakScorer.from_excluded_values(
-                config.excluded_values, patterns=CredentialLeakScorer.GARAK_PATTERNS
-            )
-            self._objective_scorer_identifier = self._objective_scorer.get_identifier()
+            self._set_default_scorer(corpus=corpus)
         return groups
+
+    def _set_default_scorer(self, *, corpus: dict[str, list[Seed[Any]]]) -> None:
+        """Build the default credential scorer, excluding the corpus's partial keys and safe placeholders."""
+        excluded_values = [seed.value for name in _SCORER_EXCLUSION_DATASETS for seed in corpus[name]]
+        self._objective_scorer = CredentialLeakScorer.from_excluded_values(
+            excluded_values, patterns=CredentialLeakScorer.GARAK_PATTERNS
+        )
+        self._objective_scorer_identifier = self._objective_scorer.get_identifier()
 
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
@@ -335,9 +431,7 @@ class ApiKey(Scenario):
                         attack=PromptSendingAttack(
                             objective_target=context.objective_target,
                             attack_converter_config=converter_config,
-                            attack_scoring_config=AttackScoringConfig(
-                                objective_scorer=cast("TrueFalseScorer", self._objective_scorer)
-                            ),
+                            attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
                         )
                     ),
                     seed_groups=seed_groups,

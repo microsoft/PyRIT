@@ -57,6 +57,7 @@ from pyrit.memory.analytics_sql import (
     JsonScalar,
     UnicodeLower,
     UnicodeStrip,
+    text_match,
 )
 from pyrit.memory.memory_models import (
     AtomicAttackIdentifierEntry,
@@ -598,8 +599,10 @@ class AttackAnalyticsQueryCompiler:
             members.c.value0,
             func.min(members.c.label0).label("label0"),
         )
-        if query.search:
-            statement = statement.where(self._search_condition(label=members.c.label0, search=query.search))
+        if query.search or query.search_pattern is not None:
+            statement = statement.where(
+                self._search_condition(label=members.c.label0, search=query.search, pattern=query.search_pattern)
+            )
         return (
             statement.group_by(members.c.kind0, members.c.value0)
             .order_by(members.c.kind0, members.c.value0)
@@ -622,8 +625,10 @@ class AttackAnalyticsQueryCompiler:
                 select(value.label("raw")).select_from(self._from).where(*conditions).cte("scalar_facet_values")
             )
             page = select(projected.c.raw).distinct()
-            if query.search:
-                page = page.where(self._search_condition(label=projected.c.raw, search=query.search))
+            if query.search or query.search_pattern is not None:
+                page = page.where(
+                    self._search_condition(label=projected.c.raw, search=query.search, pattern=query.search_pattern)
+                )
             visible = (
                 page.order_by(projected.c.raw).offset(query.offset).limit(query.limit + 1).cte("visible_facet_values")
             )
@@ -641,8 +646,8 @@ class AttackAnalyticsQueryCompiler:
                 force=True,
             )
             kind, value, label = projected
-        if query.search:
-            conditions.append(self._search_condition(label=label, search=query.search))
+        if query.search or query.search_pattern is not None:
+            conditions.append(self._search_condition(label=label, search=query.search, pattern=query.search_pattern))
         minimum = func.min(self._collate(label))
         return (
             select(kind.label("kind0"), value.label("value0"), minimum.label("label0"))
@@ -678,9 +683,11 @@ class AttackAnalyticsQueryCompiler:
         return func.likely(condition, type_=Boolean) if self.dialect == "sqlite" else condition
 
     @staticmethod
-    def _search_condition(*, label: ColumnElement[Any], search: str) -> ColumnElement[bool]:
+    def _search_condition(
+        *, label: ColumnElement[Any], search: str | None, pattern: str | None = None
+    ) -> ColumnElement[bool]:
         """
-        Match literal display-text substrings with Unicode-aware lowercase semantics.
+        Match display text with Unicode-aware literal-search case folding.
 
         Escape LIKE wildcards and its escape character, including SQL Server's
         bracket character classes. The bound pattern remains data, never SQL text.
@@ -688,8 +695,7 @@ class AttackAnalyticsQueryCompiler:
         Returns:
             ColumnElement[bool]: A case-insensitive substring predicate.
         """
-        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace("[", "\\[")
-        return UnicodeLower(label).like(UnicodeLower(literal(f"%{escaped}%", UnicodeText())), escape="\\")
+        return text_match(column=label, value=search, pattern=pattern, casefold=pattern is None)
 
     def results(self, *, limit: int, after: DecodedKeysetCursor | None = None) -> Select[*tuple[Any, ...]]:
         """

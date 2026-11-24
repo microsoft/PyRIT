@@ -13,7 +13,7 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 from pyrit.models.harm_category import HarmCategory
 
 if TYPE_CHECKING:
-    from pyrit.models.seeds.seed_group import SeedUnion
+    from pyrit.models import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,8 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "large"  # 939 prompts across multiple risk areas
     tags: frozenset[str] = frozenset({"default", "safety", "refusal"})
+
+    source_url = "https://huggingface.co/datasets/LibrAI/do-not-answer"
 
     def __init__(
         self,

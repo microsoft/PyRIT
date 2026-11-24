@@ -11,18 +11,27 @@ import logging
 from collections import OrderedDict
 from functools import lru_cache
 from time import monotonic
+from typing import cast
 
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models import DatasetListResponse, ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
-from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.models.catalog.scenario import (
-    RegisteredScenario,
+from pyrit.models import (
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
 )
-from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry
+from pyrit.models.catalog import (
+    RegisteredScenario,
+)
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    ScenarioMetadata,
+    ScenarioRegistry,
+    ScorerRegistry,
+    TargetRegistry,
+)
 from pyrit.registry.resolution import reject_non_external_params
 from pyrit.scenario.core import Scenario, override_default_adversarial_target
 
@@ -33,10 +42,27 @@ _CONFIGURED_ESTIMATE_CONCURRENCY = 4
 _DEFAULT_ESTIMATE_TIMEOUT_SECONDS = 3.0
 _ESTIMATE_INFLIGHT_SIZE = 256
 _UNAVAILABLE_CACHE_TTL_SECONDS = 30.0
-_EstimateCacheKey = tuple[str, int, tuple[object, int]]
+_RegistryView = tuple[str | None, ...]
+_EstimateCacheKey = tuple[str, int, tuple[object, int, str | None], _RegistryView]
 _EstimateCacheValue = tuple[ScenarioRunSizeEstimate, float | None]
 _EstimateTask = asyncio.Task[ScenarioRunSizeEstimate]
-_ConfiguredEstimateKey = tuple[str, type[Scenario], str, tuple[object, int]]
+_ConfiguredEstimateKey = tuple[str, type[Scenario], str, tuple[object, int, str | None], _RegistryView]
+
+
+def _registry_view() -> _RegistryView:
+    """
+    Describe which private entries the caller in scope sees in the registries a scenario resolves.
+
+    Callers who see the same entries get the same view, so they share estimates; callers who see
+    different entries never do. Private techniques are part of the technique ``catalog_revision``.
+
+    Returns:
+        _RegistryView: The visibility key of the target, scorer, and converter registries.
+    """
+    return tuple(
+        registry.get_registry_singleton().instances.visibility_key
+        for registry in (TargetRegistry, ScorerRegistry, ConverterRegistry)
+    )
 
 
 def _metadata_to_registered_scenario(
@@ -225,6 +251,8 @@ class ScenarioService:
                 self._configured_estimate_tasks = tasks
             task = tasks.get(estimate_key)
             if task is None:
+                # The estimate runs as the requesting caller. Its key holds what that caller can see, so it is
+                # shared only with callers who see the same entries.
                 task = asyncio.create_task(
                     self._run_configured_estimate_with_capacity_async(
                         scenario_name=scenario_name,
@@ -273,6 +301,7 @@ class ScenarioService:
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 include_baseline=request.include_baseline,
             )
             constructor_kwargs = resolver.resolve_constructor_kwargs(
@@ -287,12 +316,43 @@ class ScenarioService:
             settings=settings, items=[item for item in metadata.items if item.name in names]
         )
 
+    async def list_compatible_datasets_async(self, *, scenario_name: str) -> DatasetListResponse | None:
+        """
+        List the catalog datasets the scenario can run, independently of launch-form settings.
+
+        The scenario decides compatibility from stored catalog facts without fetching providers.
+
+        Returns:
+            DatasetListResponse | None: The runnable catalog entries, or None for an unknown scenario.
+        """
+        try:
+            scenario_class = self._registry.get_class(scenario_name)
+        except KeyError:
+            return None
+        resolver = ScenarioConfigurationResolver()
+        kwargs = await asyncio.to_thread(
+            resolver.resolve_configuration, scenario_name=scenario_name, scenario_class=scenario_class
+        )
+        scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name)
+        scenario.set_params_from_args(args=kwargs)
+        metadata = await get_dataset_service().list_datasets_async()
+        named = [item for item in metadata.items if item.selection_key != "dataset:unnamed"]
+        async with self._configured_estimate_semaphore:
+            compatible = set(
+                await scenario.get_compatible_dataset_names_async(
+                    dataset_names=[item.name for item in named],
+                    loaded_dataset_names={item.name for item in named if item.loaded},
+                )
+            )
+        return DatasetListResponse(items=[item for item in named if item.name in compatible])
+
     async def _get_default_run_size_estimate_async(self, *, metadata: ScenarioMetadata) -> ScenarioRunSizeEstimate:
-        """Return a cached, cancellation-safe scenario-owned estimate."""
+        """Return a cached, cancellation-safe scenario-owned estimate for the requesting caller."""
         cache_key = (
             metadata.registry_name,
             metadata.scenario_version,
             AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+            _registry_view(),
         )
         cache = getattr(self, "_estimate_cache", None)
         if cache is None:
@@ -314,9 +374,12 @@ class ScenarioService:
                 if cached is not None:
                     return cached
 
-                tasks = getattr(self, "_estimate_tasks", None)
+                # Only __init__ and the fallback below set this attribute, both with this type.
+                tasks = cast(
+                    "OrderedDict[_EstimateCacheKey, _EstimateTask] | None", getattr(self, "_estimate_tasks", None)
+                )
                 if tasks is None:
-                    tasks = OrderedDict()
+                    tasks = OrderedDict[_EstimateCacheKey, _EstimateTask]()
                     self._estimate_tasks = tasks
                 for completed_key in [key for key, candidate in tasks.items() if candidate.done()]:
                     del tasks[completed_key]
@@ -553,6 +616,7 @@ class ScenarioService:
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
@@ -586,6 +650,10 @@ class ScenarioService:
                 if item.scenario_name == cursor:
                     start_idx = i + 1
                     break
+            else:
+                # A cursor naming no registered scenario must not silently
+                # restart at the first page, which would serve duplicate rows.
+                raise ValueError("The cursor is not valid for the scenario catalog")
         page = items[start_idx : start_idx + limit]
         has_more = len(items) > start_idx + limit
         return page, has_more
@@ -601,7 +669,7 @@ class ScenarioService:
         Build a stable key for semantically identical configured estimate requests.
 
         Returns:
-            _ConfiguredEstimateKey: Scenario identity and canonical request JSON.
+            _ConfiguredEstimateKey: Scenario identity, canonical request JSON, and the caller's view of the registries.
         """
         request_json = json.dumps(
             request.model_dump(mode="json"),
@@ -613,6 +681,7 @@ class ScenarioService:
             scenario_class,
             request_json,
             AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+            _registry_view(),
         )
 
 

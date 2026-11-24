@@ -27,6 +27,7 @@ from pyrit.score import (
     ContentClassifier,
     ContentClassifierCategory,
     FloatScaleScorer,
+    HarmBenchScorer,
     InsecureCodeScorer,
     JsonSchemaResponseHandler,
     LikertScale,
@@ -50,6 +51,7 @@ from pyrit.score import (
     SelfAskTrueFalseScorer,
     ShieldGemmaGuideline,
     ShieldGemmaScorer,
+    StrongRejectScorer,
     TrueFalseScorer,
     WildGuardScorer,
 )
@@ -298,6 +300,8 @@ def test_legacy_constructor_rejects_invalid_target(legacy_scorer_type: type[Scor
         (LlamaGuardScorer, {}),
         (ShieldGemmaScorer, {"guideline": ShieldGemmaGuideline(name="Harm", description="Harmful content.")}),
         (WildGuardScorer, {}),
+        (HarmBenchScorer, {}),
+        (StrongRejectScorer, {}),
         (InsecureCodeScorer, {"system_prompt": "Judge the code.", "harm_categories": ["test"]}),
         (
             SelfAskGeneralFloatScaleScorer,
@@ -382,7 +386,7 @@ async def test_migrated_typed_override_preserves_custom_verdict_async() -> None:
             self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
         ) -> list[Score]:
             scores = await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
-            scores[0].score_value = str(not scores[0].get_value()).lower()
+            scores[0].set_value(not scores[0].get_value())
             return scores
 
     target = MagicMock(spec=PromptTarget)

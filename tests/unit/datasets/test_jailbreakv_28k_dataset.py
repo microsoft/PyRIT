@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from pyrit.datasets.seed_datasets.remote import (
+    _JailbreakV28KDataset,
+)
 from pyrit.datasets.seed_datasets.remote.jailbreakv_28k_dataset import (
     _HarmCategory,
-    _JailbreakV28KDataset,
 )
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 

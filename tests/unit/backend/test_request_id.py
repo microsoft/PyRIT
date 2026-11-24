@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from pyrit.backend.middleware.request_id import RequestIdMiddleware
+from pyrit.backend.middleware import RequestIdMiddleware
 
 
 class TestRequestIdMiddleware:

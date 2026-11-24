@@ -4,6 +4,7 @@
 import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,15 +12,19 @@ from pydantic import BaseModel, ValidationError
 from tenacity import wait_none
 
 from pyrit.exceptions import RateLimitException
-from pyrit.models import JsonResponseConfig, Message, MessagePiece
+from pyrit.models import JsonResponseConfig, Message, MessagePiece, ToolExecutionMetadata
 from pyrit.prompt_target import (
     FunctionTool,
+    LiteLLMChatTarget,
     MCPToolProvider,
+    OpenAIChatTarget,
     OpenAIResponseTarget,
     ToolProvider,
     collect_tools_async,
     tool,
 )
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
+from pyrit.registry import TargetRegistry
 
 
 @tool
@@ -57,6 +62,12 @@ async def test_tool_validates_arguments_and_returns_scalar() -> None:
 
     with pytest.raises(ValidationError):
         await add.execute_async(arguments={"x": 2, "unexpected": True})
+
+
+@pytest.mark.parametrize("arguments", [{"x": "two"}, {"y": 3}, {"x": 2, "unexpected": True}])
+def test_function_tool_validate_arguments_rejects_mismatched_arguments(arguments: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        add.validate_arguments(arguments=arguments)
 
 
 async def test_tool_preserves_validated_structured_argument_type() -> None:
@@ -151,6 +162,104 @@ def test_openai_response_target_identifier_includes_advertised_tool_definition(p
             "strict": False,
         }
     ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, OpenAIResponseTarget])
+def test_openai_target_copy_keeps_tools_and_providers(target_class: type[OpenAIChatTarget]) -> None:
+    provider = MagicMock(spec=ToolProvider)
+    provider.identifier = {"type": "test"}
+    source = target_class(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tools=[add],
+        tool_providers=[provider],
+        execute_tools=False,
+        max_tool_rounds=3,
+    )
+
+    copy = TargetRegistry().recreate_instance(source=source, params={})
+
+    assert list(copy._direct_tools) == [add]
+    assert copy._tool_providers == [provider]
+    assert copy._execute_tools is False
+    assert copy._max_tool_rounds == 3
+    assert copy.get_identifier().hash == source.get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, OpenAIResponseTarget])
+def test_openai_target_copy_adds_tools_to_a_tool_less_source(target_class: type[OpenAIChatTarget]) -> None:
+    source = target_class(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="mock-key")
+
+    copy = TargetRegistry().recreate_instance(source=source, params={"tools": [add], "max_tool_rounds": 2})
+
+    assert list(copy._direct_tools) == [add]
+    assert copy._max_tool_rounds == 2
+    assert not source._direct_tools
+    assert copy.get_identifier().params["tools"]
+
+
+def _chat_tool_target(
+    target_class: type[OpenAIChatTarget | LiteLLMChatTarget], *, model: str = "gpt-4o", **kwargs: Any
+) -> OpenAIChatTarget | LiteLLMChatTarget:
+    if target_class is LiteLLMChatTarget:
+        return LiteLLMChatTarget(model_name=f"openai/{model}", **kwargs)
+    return OpenAIChatTarget(model_name=model, endpoint="https://mock.azure.com", api_key="mock-key", **kwargs)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, LiteLLMChatTarget])
+@pytest.mark.parametrize(
+    ("nested", "match"),
+    [({"n": 2}, "n=1"), ({"tools": []}, r"extra_body_parameters\['tools'\]")],
+)
+def test_chat_tool_targets_reject_nested_settings_that_override_local_tools(
+    *, target_class: type[OpenAIChatTarget | LiteLLMChatTarget], nested: dict[str, Any], match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        _chat_tool_target(target_class, tools=[add], extra_body_parameters={"extra_body": nested})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, LiteLLMChatTarget])
+@pytest.mark.parametrize(
+    ("settings", "nested"),
+    [({"tools": [add], "execute_tools": False}, {"n": 2}), ({}, {"n": 2, "tools": []})],
+)
+def test_chat_tool_targets_accept_nested_settings_without_local_execution(
+    *, target_class: type[OpenAIChatTarget | LiteLLMChatTarget], settings: dict[str, Any], nested: dict[str, Any]
+) -> None:
+    _chat_tool_target(target_class, **settings, extra_body_parameters={"extra_body": nested})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, LiteLLMChatTarget])
+@pytest.mark.parametrize("with_tools", [False, True])
+def test_chat_tool_targets_accept_tool_history_from_their_own_tools(
+    *, target_class: type[OpenAIChatTarget | LiteLLMChatTarget], with_tools: bool
+) -> None:
+    call = {"type": "function", "id": "call-1", "function": {"name": "add", "arguments": '{"x": 1}'}}
+    result = {"type": "function_call_output", "call_id": "call-1", "output": "2"}
+    conversation = [
+        Message.from_prompt(prompt="Add", role="user"),
+        MessagePiece(
+            role="assistant", original_value=json.dumps(call), original_value_data_type="function_call"
+        ).to_message(),
+        MessagePiece(
+            role="tool", original_value=json.dumps(result), original_value_data_type="function_call_output"
+        ).to_message(),
+        Message.from_prompt(prompt="Again", role="user"),
+    ]
+    target = _chat_tool_target(target_class, model="my-deployment", tools=[add] if with_tools else None)
+
+    assert not target.capabilities.input_modalities & TOOL_CALL_INPUT_MODALITIES
+    if with_tools:
+        target._validate_request(normalized_conversation=conversation)
+    else:
+        with pytest.raises(ValueError, match="tool-history modality 'function_call'"):
+            target._validate_request(normalized_conversation=conversation)
 
 
 async def test_identifier_does_not_depend_on_tool_discovery(patch_central_database) -> None:
@@ -395,6 +504,75 @@ async def test_malformed_arguments_reach_model_as_tool_error(*, arguments: str, 
             with pytest.raises(ValueError):
                 target.validate_tool_history(result)
         execute.assert_not_called()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("arguments", ['{"value": "one"}', "{}", '{"value": 1, "unexpected": true}'])
+@pytest.mark.parametrize("strict", [False, True])
+async def test_mismatched_arguments_reach_model_as_tool_error(*, arguments: str, strict: bool) -> None:
+    executed: list[int] = []
+
+    async def record_async(*, value: int) -> int:
+        executed.append(value)
+        return value
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://example.invalid",
+        api_key="not-a-key",
+        tools=[FunctionTool(function=record_async)],
+        fail_on_missing_function=strict,
+    )
+    call = MessagePiece(
+        role="assistant",
+        original_value=json.dumps(
+            {"type": "function_call", "call_id": "call-1", "name": "record_async", "arguments": arguments}
+        ),
+        original_value_data_type="function_call",
+    ).to_message()
+    final = Message.from_prompt(prompt="Please supply valid arguments.", role="assistant")
+    with (
+        patch.object(target, "_handle_openai_request_async", new_callable=AsyncMock, side_effect=[call, final]) as send,
+        patch.object(target._client.responses, "create", new_callable=AsyncMock) as create,
+    ):
+        if strict:
+            with pytest.raises(ValidationError):
+                await target.send_prompt_async(message=Message.from_prompt(prompt="Record", role="user"))
+            send.assert_awaited_once()
+        else:
+            result = await target.send_prompt_async(message=Message.from_prompt(prompt="Record", role="user"))
+            assert [message.api_role for message in result] == ["assistant", "tool", "assistant"]
+            assert send.await_count == 2
+            await send.call_args.kwargs["api_call"]()
+            output = json.loads(create.call_args.kwargs["input"][-1]["output"])
+            assert output.pop("message")
+            assert output == {
+                "error": "malformed_arguments",
+                "function": "record_async",
+                "raw_arguments": arguments,
+            }
+            execution = ToolExecutionMetadata.from_metadata(metadata=result[1].get_piece().prompt_metadata)
+            assert execution == ToolExecutionMetadata(invoked=False)
+            target.validate_tool_history(result)
+    assert executed == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("strict", [False, True])
+async def test_value_error_raised_by_tool_function_propagates(*, strict: bool) -> None:
+    async def lookup_async(*, key: str) -> str:
+        raise ValueError(f"no entry for {key}")
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://example.invalid",
+        api_key="not-a-key",
+        tools=[FunctionTool(function=lookup_async)],
+        fail_on_missing_function=strict,
+    )
+
+    with pytest.raises(ValueError, match="no entry for missing"):
+        await target._execute_call_section_async({"name": "lookup_async", "arguments": '{"key": "missing"}'})
 
 
 async def test_collect_tools_async_preserves_direct_and_provider_order() -> None:

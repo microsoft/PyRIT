@@ -12,8 +12,7 @@ from unit.async_utils import wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
 
 from pyrit.exceptions import ScenarioPartialFailureException
-from pyrit.executor.attack import PromptSendingAttack
-from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.executor.attack import AttackExecutorResult, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -81,6 +80,7 @@ def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
     mock_attack_strategy.get_attack_scoring_config.return_value = MagicMock()
 
     attack = MagicMock(spec=AtomicAttack)
+    attack.attack_technique.attack.IS_COMPOUND = False
     attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
     attack.seed_group_adaptations = {}
     attack.atomic_attack_name = name
@@ -301,9 +301,8 @@ class TestScenarioPartialAttackCompletion:
         assert scenario_results[0].error_type == "ScenarioPartialFailureException"
         assert scenario_results[0].error_message.endswith("Caused by RuntimeError: Failed obj3")
         saved_results = scenario_results[0].attack_results["partial_save_attack"]
-        assert len(saved_results) == 2
-        assert saved_results[0].objective == "obj1"
-        assert saved_results[1].objective == "obj2"
+        # Results are ordered by timestamp, which a coarse clock can leave tied.
+        assert sorted(result.objective for result in saved_results) == ["obj1", "obj2"]
 
     async def test_failure_before_worker_retries_before_marking_failed(self, mock_objective_target):
         atomic_attack = create_mock_atomic_attack("never_started", ["obj1"])
@@ -1151,6 +1150,10 @@ class TestScenarioPartialAttackCompletion:
             )[0]
             assert failed_result.scenario_run_state == ScenarioRunState.FAILED
             assert failed_result.number_tries == 1
+            assert failed_result.error_type == "ExceptionGroup"
+            assert all(str(error) in failed_result.error_message for error in partial_failures.values())
+            assert "Caused by RuntimeError: attack-a interrupted" in failed_result.error_message
+            assert "Caused by TimeoutError: attack-b timed out" in failed_result.error_message
 
             final_result = await scenario.run_async()
 

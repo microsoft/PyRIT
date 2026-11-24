@@ -6,6 +6,8 @@
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,20 +16,20 @@ import sqlalchemy as sa
 from pydantic import PydanticUserError
 from sqlalchemy.orm import Session
 
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     CreateAttackRequest,
     CreateConversationRequest,
     MessagePieceRequest,
     MessageRequest,
-    SaveConversationRequest,
     ScoreView,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
 )
+from pyrit.backend.models.attacks import SaveConversationRequest
 from pyrit.backend.models.message_sends import MessageSendRequest
 from pyrit.backend.models.scores import ApplyChatScorerRequest
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService
 from pyrit.backend.services.chat_scoring_service import ChatScoringError, ChatScoringService
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendScheduler
 from pyrit.backend.services.message_send_service import MessageSendService
@@ -42,6 +44,7 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    ContentWritten,
     ConversationReference,
     ConversationType,
     MatchesObjective,
@@ -59,8 +62,11 @@ from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.results.attack_result import AttackScoringInputs
 from pyrit.registry import ScorerRegistry
 from pyrit.score import (
+    FileWriteScorer,
     FloatScaleThresholdScorer,
+    LocalFileSurfaceSource,
     ManualScorer,
+    MessageFloatScaleScorer,
     MessageToolCallScorer,
     MessageTrueFalseScorer,
     ScorerPromptValidator,
@@ -73,8 +79,12 @@ from pyrit.score import (
     XSSOutputScorer,
     create_conversation_scorer,
 )
-from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from unit.async_utils import TEST_WATCHDOG_SECONDS
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    drain_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 from unit.mocks import MockPromptTarget, run_memory_session_async
 
 
@@ -476,7 +486,10 @@ async def test_public_metadata_cannot_authorize_stale_nested_projection_async(
 
 @pytest.mark.parametrize("exit_mode", ["error", "cancel"])
 async def test_apply_target_judge_owner_restored_on_abnormal_exit_async(
-    latest_response_chat, sqlite_instance: SQLiteMemory, exit_mode: str
+    *,
+    latest_response_chat: tuple[ChatScoringService, AttackResult, ApplyChatScorerRequest, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    exit_mode: str,
 ) -> None:
     policy, attack, request, _ = latest_response_chat
     target = _ChatJudgeTarget()
@@ -489,32 +502,36 @@ async def test_apply_target_judge_owner_restored_on_abnormal_exit_async(
         attack_result_id=attack.attack_result_id, request=UpdateAttackRequest(chat_scorer=reference)
     )
     request = request.model_copy(update={"scorer": reference})
-    entered = asyncio.Event()
+    entered, release = asyncio.Event(), asyncio.Event()
     outer_owner = str(uuid.uuid4())
-    owners = []
-    restored = []
+    owners: list[str | None] = []
+    restored: list[str | None] = []
 
-    async def provider_io(*, normalized_conversation):
+    async def provider_io_async(*, normalized_conversation: list[Message]) -> list[Message]:
         owners.append(get_current_attack_result_id())
         entered.set()
-        if exit_mode == "error":
-            raise RuntimeError("Deterministic judge failure")
-        await asyncio.Event().wait()
+        if exit_mode == "cancel":
+            await release.wait()
+        raise RuntimeError("Deterministic judge failure")
 
-    async def apply():
+    async def apply_async() -> None:
         with attack_result_id_scope(attack_result_id=outer_owner):
             try:
-                return await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+                await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
             finally:
                 restored.append(get_current_attack_result_id())
 
-    with patch.object(target, "_send_prompt_to_target_async", side_effect=provider_io):
-        task = asyncio.create_task(apply())
-        await asyncio.wait_for(entered.wait(), timeout=5)
-        if exit_mode == "cancel":
-            task.cancel()
-        with pytest.raises(asyncio.CancelledError if exit_mode == "cancel" else ChatScoringError):
-            await asyncio.wait_for(task, timeout=5)
+    with patch.object(target, "_send_prompt_to_target_async", side_effect=provider_io_async):
+        task = asyncio.create_task(apply_async())
+        try:
+            await wait_for_event_async(event=entered, tasks=[task])
+            if exit_mode == "cancel":
+                task.cancel()
+            with pytest.raises(asyncio.CancelledError if exit_mode == "cancel" else ChatScoringError):
+                await wait_for_completion_async(future=task)
+        finally:
+            release.set()
+            await drain_tasks_async(task)
     assert owners and set(owners) == {attack.attack_result_id}
     assert restored == [outer_owner]
     assert get_current_attack_result_id() is None
@@ -618,8 +635,11 @@ async def scoring_chat(
     with (
         patch.object(CentralMemory, "get_memory_instance", return_value=sqlite_instance),
         patch("pyrit.backend.services.message_send_service.get_target_service") as targets,
+        patch("pyrit.backend.services.attack_service.get_target_service") as attack_targets,
     ):
         targets.return_value.get_target_object.return_value = target
+        attack_targets.return_value = targets.return_value
+        targets.return_value.saved_capabilities.side_effect = lambda **kwargs: target.capabilities
         service = MessageSendService(scheduler=ManualSendScheduler())
         try:
             yield service, attack, target, scorer
@@ -1399,6 +1419,77 @@ async def test_scan_continuation_preserves_recorded_conditions_async(
     assert stored.get_scoring_failure(stored.conversation_id) is None
 
 
+@pytest.mark.parametrize("objective", ["", "Evaluate the response"])
+@pytest.mark.parametrize("explicit_off", [False, True])
+async def test_created_manual_attack_preserves_target_and_scoring_async(
+    *,
+    scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    objective: str,
+    explicit_off: bool,
+) -> None:
+    sender, _, target, scorer = scoring_chat
+    reference = RegisteredComponentReference(registry_name="chat-judge", identifier_hash=scorer.get_identifier().hash)
+    service = AttackService()
+    with patch.object(service, "_get_save_target_async", new=AsyncMock(return_value=target.get_identifier())):
+        created = await service.create_attack_async(
+            request=CreateAttackRequest(
+                target_registry_name="objective",
+                objective=objective,
+                chat_scorer=None if explicit_off else reference,
+            )
+        )
+    [attack] = await sqlite_instance.get_attack_results_async(attack_result_ids=[created.attack_result_id])
+    await sender.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
+    [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[created.attack_result_id])
+    assert stored.objective == objective
+    assert stored.get_attack_strategy_identifier().class_name == "ManualAttack"
+    assert stored.get_attack_strategy_identifier().get_child("objective_target") == target.get_identifier()
+    assert stored.scoring_inputs.scorer == (None if explicit_off else reference)
+    assert (stored.automated_score is not None) is (bool(objective) and not explicit_off)
+    if stored.automated_score is not None:
+        assert stored.automated_score.objective == objective
+        assert stored.automated_score.scorer_class_identifier == scorer.get_identifier()
+
+
+async def test_legacy_manual_identifier_stays_editable_and_scorable_without_reclassification_async(
+    *,
+    scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    sender, original, target, _ = scoring_chat
+    legacy = AttackResult(
+        conversation_id=str(uuid.uuid4()),
+        objective=original.objective,
+        metadata=original.metadata,
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
+            attack_identifier=AttackIdentifier(
+                class_name=original.objective, class_module="pyrit.backend", objective_target=target.get_identifier()
+            )
+        ),
+    )
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[legacy])
+    service = AttackService()
+    summary = await service.get_attack_async(attack_result_id=legacy.attack_result_id)
+    assert summary.attack_type == original.objective
+    assert not summary.execution_read_only
+    filtered = await service.list_attacks_async(attack_types=["ManualAttack"])
+    assert legacy.attack_result_id not in [item.attack_result_id for item in filtered.items]
+    assert original.objective in await service.get_attack_options_async()
+
+    await service.update_attack_async(
+        attack_result_id=legacy.attack_result_id,
+        request=UpdateAttackRequest(objective="Edited legacy goal", expected_objective=legacy.objective),
+    )
+    await sender.add_message_async(attack_result_id=legacy.attack_result_id, request=chat_request(legacy))
+    [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[legacy.attack_result_id])
+    assert stored.objective == "Edited legacy goal"
+    assert stored.automated_score.objective == "Edited legacy goal"
+    assert stored.atomic_attack_identifier == legacy.atomic_attack_identifier
+    [unchanged] = await sqlite_instance.get_attack_results_async(attack_result_ids=[original.attack_result_id])
+    assert unchanged.atomic_attack_identifier == original.atomic_attack_identifier
+
+
 @pytest.mark.parametrize("explicit_off", [False, True])
 async def test_first_manual_objective_uses_suggested_default_unless_explicitly_off_async(
     scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
@@ -1418,6 +1509,8 @@ async def test_first_manual_objective_uses_suggested_default_unless_explicitly_o
     )
     assert summary.chat_scorer == (None if explicit_off else reference)
     assert summary.chat_scorer_inherited is False
+    assert summary.attack_type == "ManualAttack"
+    assert summary.get_attack_strategy_identifier() == before.get_attack_strategy_identifier()
 
 
 @pytest.mark.parametrize("selection", ["unconfigured", "off", "selected"])
@@ -1494,6 +1587,8 @@ async def test_personal_suggestion_never_changes_scan_scoring_async(
             ),
         )
     summary = await AttackService().get_attack_async(attack_result_id=attack.attack_result_id)
+    assert summary.attack_type == "PromptSendingAttack"
+    assert summary.execution_read_only
     if has_scorer:
         assert summary.chat_scorer is not None
         assert summary.chat_scorer.identifier_hash == scorer.get_identifier().hash
@@ -1501,6 +1596,7 @@ async def test_personal_suggestion_never_changes_scan_scoring_async(
         assert summary.chat_scorer is None
     [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
     assert stored.scoring_inputs is None
+    assert stored.atomic_attack_identifier == attack.atomic_attack_identifier
 
 
 @pytest.mark.parametrize("inherited", [False, True])
@@ -1758,16 +1854,21 @@ async def test_late_score_does_not_overwrite_changed_settings_async(
             service.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
         )
         try:
-            await asyncio.wait_for(entered.wait(), 10)
+            await wait_for_event_async(event=entered, tasks=[task])
+            if task.done():
+                task.result()
+            assert not task.done(), "The scoring operation completed before settings could be changed."
             update = (
                 UpdateAttackRequest(objective="New objective")
                 if change == "objective"
                 else UpdateAttackRequest(chat_scorer=None)
             )
             await AttackService().update_attack_async(attack_result_id=attack.attack_result_id, request=update)
+            release.set()
+            await wait_for_completion_async(future=task)
         finally:
             release.set()
-            await task
+            await drain_tasks_async(task)
     [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
     assert stored.automated_score is None
     assert stored.get_scoring_failure(stored.conversation_id) is None
@@ -1788,6 +1889,263 @@ async def test_store_only_and_missing_objective_do_not_score_async(
         )
         await service.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
     assert score.call_count == 0
+
+
+@pytest.mark.parametrize("role", ["user", "assistant"])
+async def test_write_only_delivery_is_not_scored_whatever_its_role_async(
+    scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    role: str,
+) -> None:
+    service, attack, target, scorer = scoring_chat
+    target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
+    # The request matches the scorer, so scoring the delivered request would report success.
+    request = chat_request(attack).model_copy(
+        update={"role": role, "pieces": [MessagePieceRequest(original_value="default request")]}
+    )
+    with (
+        patch.object(target, "_send_prompt_to_target_async", return_value=[]),
+        patch.object(scorer, "score_async", wraps=scorer.score_async) as score,
+    ):
+        await service.add_message_async(attack_result_id=attack.attack_result_id, request=request)
+
+    assert score.call_count == 0
+    [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+    assert stored.automated_score is None
+    assert stored.last_response is None
+    assert stored.outcome is not AttackOutcome.SUCCESS
+    messages = await sqlite_instance.get_conversation_messages_async(conversation_id=attack.conversation_id)
+    assert [message.api_role for message in messages] == [role]
+
+
+@pytest.mark.parametrize("receipt", [False, True])
+@pytest.mark.parametrize("writes_file", [False, True])
+async def test_write_only_send_scores_inherited_side_effects_without_a_response_async(
+    *,
+    scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    tmp_path: Path,
+    receipt: bool,
+    writes_file: bool,
+) -> None:
+    service, attack, target, _ = scoring_chat
+    target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
+    scorer = FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path))
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="file-judge")
+    reference = RegisteredComponentReference(registry_name="file-judge", identifier_hash=scorer.get_identifier().hash)
+    expectation = ScoringExpectation(objective=attack.objective, conditions=(ContentWritten(uri="/result.txt"),))
+    receipt_timestamp = datetime.now(UTC) + timedelta(days=1)
+    await sqlite_instance.update_attack_result_by_id_async(
+        attack_result_id=attack.attack_result_id,
+        update_fields={
+            "attack_metadata": AttackScoringInputs(
+                scorer=reference, revision="inherited-file", inherited=True, expectation=expectation
+            ).to_metadata()
+        },
+    )
+
+    async def deliver_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        if writes_file:
+            await asyncio.to_thread((tmp_path / "result.txt").write_text, "delivered", encoding="utf-8")
+        return (
+            [
+                MessagePiece(
+                    original_value="Delivery receipt",
+                    role="assistant",
+                    conversation_id=attack.conversation_id,
+                    timestamp=receipt_timestamp,
+                ).to_message()
+            ]
+            if receipt
+            else []
+        )
+
+    with patch.object(target, "_send_prompt_to_target_async", side_effect=deliver_async):
+        request = chat_request(attack).model_copy(
+            update={
+                "pieces": [
+                    MessagePieceRequest(original_value="Write the result"),
+                    MessagePieceRequest(original_value="Keep this request as one multipart turn"),
+                ]
+            }
+        )
+        if not receipt and not writes_file:
+            status = await service.submit_async(
+                attack_result_id=attack.attack_result_id,
+                request=MessageSendRequest(**request.model_dump(), submission_id="multipart-delivery", count=2),
+            )
+            for _ in range(100):
+                status = await service.get_status_async(
+                    attack_result_id=attack.attack_result_id, send_id=status.send_id, wait_ms=1000
+                )
+                if status.state in ("completed", "failed"):
+                    break
+            assert status.state == "completed" and status.failure_stage is None
+            [published] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+            assert published.automated_score is not None
+            pieces = await sqlite_instance.get_message_pieces_async(attack_result_id=attack.attack_result_id)
+            scores = await sqlite_instance.get_prompt_scores_async(prompt_ids=[piece.id for piece in pieces])
+            assert len(scores) == 2
+            # The two evaluations run concurrently, so score creation order need not follow delivery order;
+            # the ordering tests below pin which delivery's verdict wins.
+            assert published.automated_score.id in {score.id for score in scores}
+        else:
+            await service.add_message_async(attack_result_id=attack.attack_result_id, request=request)
+
+    [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+    assert stored.last_response is None
+    assert stored.automated_score is not None
+    assert stored.automated_score.get_value() is writes_file
+    assert stored.automated_score.scored_expectation == expectation
+    assert stored.automated_score.observation_ids
+    assert stored.outcome == (AttackOutcome.SUCCESS if writes_file else AttackOutcome.FAILURE)
+    assert stored.get_scoring_failure(attack.conversation_id) is None
+    if receipt:
+        branch = await AttackService().create_related_conversation_async(
+            attack_result_id=attack.attack_result_id, request=CreateConversationRequest()
+        )
+        assert branch is not None
+        with patch.object(target, "_send_prompt_to_target_async", side_effect=deliver_async):
+            await service.add_message_async(
+                attack_result_id=attack.attack_result_id,
+                request=chat_request(attack).model_copy(update={"target_conversation_id": branch.conversation_id}),
+            )
+        [repeated] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        assert repeated.last_response is None
+        assert repeated.automated_score is not None and repeated.automated_score.id != stored.automated_score.id
+        assert repeated.automated_score.get_value() is writes_file
+
+
+async def test_older_write_only_evaluation_cannot_replace_newer_conversation_score_async(
+    *,
+    scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    tmp_path: Path,
+) -> None:
+    service, attack, target, _ = scoring_chat
+    target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
+    scorer = FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path))
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="ordered-file-judge")
+    reference = RegisteredComponentReference(
+        registry_name="ordered-file-judge", identifier_hash=scorer.get_identifier().hash
+    )
+    await sqlite_instance.update_attack_result_by_id_async(
+        attack_result_id=attack.attack_result_id,
+        update_fields={
+            "attack_metadata": AttackScoringInputs(
+                scorer=reference,
+                revision="ordered-file",
+                expectation=ScoringExpectation(conditions=(ContentWritten(uri="/result.txt"),)),
+            ).to_metadata()
+        },
+    )
+    branch = await AttackService().create_related_conversation_async(
+        attack_result_id=attack.attack_result_id, request=CreateConversationRequest()
+    )
+    assert branch is not None
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = scorer.score_async
+
+    async def deliver_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        if normalized_conversation[-1].get_piece().conversation_id == branch.conversation_id:
+            await asyncio.to_thread((tmp_path / "result.txt").write_text, "delivered", encoding="utf-8")
+        return []
+
+    async def delay_old_score_async(**kwargs: Any) -> list[Score]:
+        scores = await original(**kwargs)
+        if scores[0].get_value() is False:
+            entered.set()
+            await release.wait()
+        return scores
+
+    with (
+        patch.object(target, "_send_prompt_to_target_async", side_effect=deliver_async),
+        patch.object(scorer, "score_async", side_effect=delay_old_score_async),
+    ):
+        older = asyncio.create_task(
+            service.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
+        )
+        try:
+            await wait_for_event_async(event=entered, tasks=[older])
+            await service.add_message_async(
+                attack_result_id=attack.attack_result_id,
+                request=chat_request(attack).model_copy(update={"target_conversation_id": branch.conversation_id}),
+            )
+            [newer] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+            assert newer.automated_score is not None and newer.automated_score.get_value() is True
+            release.set()
+            await wait_for_completion_async(future=older)
+        finally:
+            release.set()
+            await drain_tasks_async(older)
+
+    [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+    assert stored.last_response is None
+    assert stored.automated_score is not None and stored.automated_score.id == newer.automated_score.id
+    assert stored.outcome == AttackOutcome.SUCCESS
+
+
+async def test_equal_time_multipart_write_only_delivery_replaces_earlier_score_async(
+    *,
+    scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    tmp_path: Path,
+) -> None:
+    service, attack, target, _ = scoring_chat
+    target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
+    scorer = FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path))
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="tied-file-judge")
+    reference = RegisteredComponentReference(
+        registry_name="tied-file-judge", identifier_hash=scorer.get_identifier().hash
+    )
+    await sqlite_instance.update_attack_result_by_id_async(
+        attack_result_id=attack.attack_result_id,
+        update_fields={
+            "attack_metadata": AttackScoringInputs(
+                scorer=reference,
+                revision="tied-file",
+                expectation=ScoringExpectation(conditions=(ContentWritten(uri="/result.txt"),)),
+            ).to_metadata()
+        },
+    )
+    branch = await AttackService().create_related_conversation_async(
+        attack_result_id=attack.attack_result_id, request=CreateConversationRequest()
+    )
+    assert branch is not None
+
+    async def deliver_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        if normalized_conversation[-1].get_piece().conversation_id == branch.conversation_id:
+            await asyncio.to_thread((tmp_path / "result.txt").write_text, "delivered", encoding="utf-8")
+        return []
+
+    multipart = chat_request(attack).model_copy(
+        update={
+            "pieces": [
+                MessagePieceRequest(original_value="Write the result"),
+                MessagePieceRequest(original_value="Keep this request as one multipart turn"),
+            ]
+        }
+    )
+    # A coarse clock gives both deliveries' pieces one timestamp; storage spaces out each message's later piece.
+    tick = datetime.now(UTC)
+    with (
+        patch.object(target, "_send_prompt_to_target_async", side_effect=deliver_async),
+        patch("pyrit.models.messages.message_piece.datetime") as clock,
+    ):
+        clock.now.return_value = tick
+        for conversation_id in (attack.conversation_id, branch.conversation_id):
+            await service.add_message_async(
+                attack_result_id=attack.attack_result_id,
+                request=multipart.model_copy(update={"target_conversation_id": conversation_id}),
+            )
+
+    pieces = await sqlite_instance.get_message_pieces_async(attack_result_id=attack.attack_result_id)
+    spaced = tick + timedelta(microseconds=1)
+    assert sorted(piece.timestamp for piece in pieces) == [tick, tick, spaced, spaced]
+    [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+    assert stored.last_response is None
+    assert stored.automated_score is not None and stored.automated_score.get_value() is True
+    assert stored.outcome == AttackOutcome.SUCCESS
 
 
 @pytest.mark.parametrize("scoring_failure", [False, True])

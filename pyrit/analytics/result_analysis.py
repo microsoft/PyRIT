@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Generic, Literal, TypedDict, TypeVar, overload
 
 from pyrit.analytics.outcome_statistics import compute_outcome_statistics
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -18,7 +18,7 @@ from pyrit.models import (
 )
 
 if TYPE_CHECKING:
-    from pyrit.memory.memory_interface import MemoryInterface
+    from pyrit.memory import MemoryInterface
 
 _SYNC_API_REMOVAL_VERSION = "1.4.0"
 _StatisticsT = TypeVar("_StatisticsT", bound=AttackStats)
@@ -31,7 +31,7 @@ class _AnalysisResult(TypedDict, Generic[_StatisticsT]):
     By_attack_identifier: dict[str, _StatisticsT]
 
 
-def _compute_stats(successes: int, failures: int, undetermined: int, errors: int) -> AttackStats:
+def _compute_stats(*, successes: int, failures: int, undetermined: int, errors: int) -> AttackStats:
     statistics = compute_outcome_statistics(
         {
             AttackOutcome.SUCCESS: successes,

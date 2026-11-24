@@ -60,6 +60,7 @@ function MetricCell({ name, value }: { name: string; value: unknown }) {
       ) : (
         <Tooltip relationship="description"
           content={`${scorerMetricDescription(name)} Recorded value: ${String(value)}`}>
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the metric description tooltip */}
           <span className={styles.numeric} tabIndex={0}>{display}</span>
         </Tooltip>
       )}
@@ -120,7 +121,7 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
                 <Tooltip content={scorerMetricDescription(name)} relationship="description">
                   <span className={scorerStyles.numeric}>
                     {name === 'f1_score' ? 'F1' : name === 'mean_absolute_error' ? 'MAE'
-                      : name === 'krippendorff_alpha_combined' ? 'Agreement' : scorerMetricLabel(name)}
+                      : name === 'krippendorff_alpha_combined' ? 'Combined alpha' : scorerMetricLabel(name)}
                   </span>
                 </Tooltip>
               </TableHeaderCell>

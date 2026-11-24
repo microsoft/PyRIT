@@ -14,10 +14,10 @@ from sqlalchemy.dialects import mssql
 from unit.mocks import add_legacy_attack_results_async, get_mock_target_identifier, make_scenario_result
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultKeysetCursor, MemoryInterface, SQLiteMemory
+from pyrit.memory import AttackResultEntry, AttackResultKeysetCursor, MemoryInterface, SQLiteMemory
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.memory_interface import _AttackResultQuery
-from pyrit.memory.memory_models import AtomicAttackIdentifierEntry, AttackResultEntry, TargetIdentifierEntry
+from pyrit.memory.memory_models import AtomicAttackIdentifierEntry, TargetIdentifierEntry
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
@@ -357,6 +357,84 @@ async def test_get_attack_results_by_conversation_id(sqlite_instance: MemoryInte
     assert retrieved_results[0].conversation_id == "conv_1"
 
 
+async def test_get_attack_results_breaks_timestamp_ties_by_the_greater_id(sqlite_instance: MemoryInterface):
+    """Legacy duplicate rows sharing a timestamp keep one deterministic winner.
+
+    The paginated SQL anti-join keeps the greater id on equal timestamps, so
+    the post-fetch Python dedup must apply the same rule or the unpaginated
+    detail view and the paginated list disagree on which attack owns the
+    conversation.
+    """
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    tied = datetime(2026, 1, 1, tzinfo=UTC)
+    low = str(UUID(int=1))
+    high = str(UUID(int=2))
+    conversation_id = "conv_tie"
+
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            AttackResult(
+                attack_result_id=low,
+                conversation_id=conversation_id,
+                objective="older id",
+                outcome=AttackOutcome.FAILURE,
+                timestamp=tied,
+            ),
+            AttackResult(
+                attack_result_id=high,
+                conversation_id=conversation_id,
+                objective="newer id",
+                outcome=AttackOutcome.SUCCESS,
+                timestamp=tied,
+            ),
+        ]
+    )
+
+    retrieved_results = await sqlite_instance.get_attack_results_async(conversation_id=conversation_id)
+
+    assert len(retrieved_results) == 1
+    assert retrieved_results[0].attack_result_id == high
+    assert retrieved_results[0].outcome == AttackOutcome.SUCCESS
+
+
+async def test_get_attack_results_tiebreak_agrees_across_paths_for_native_order_flipped_ids(
+    sqlite_instance: MemoryInterface,
+):
+    """IDs whose native and string order disagree keep one winner on both paths.
+
+    SQL Server orders uniqueidentifier columns by byte groups, which flips this
+    exact pair relative to str(UUID); the anti-join therefore normalizes both
+    id operands through the backend ordering expression. On SQLite both the
+    paginated anti-join and the post-fetch dedup must keep the row whose
+    string id is greater.
+    """
+    from datetime import UTC, datetime
+
+    tied = datetime(2026, 1, 1, tzinfo=UTC)
+    string_greater = "00000001-0000-4000-8000-000000000000"
+    string_lesser = "00000000-0000-4000-8000-000000000001"
+    for attack_result_id in (string_lesser, string_greater):
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                AttackResult(
+                    attack_result_id=attack_result_id,
+                    conversation_id="conv_native_vs_string",
+                    objective=attack_result_id,
+                    outcome=AttackOutcome.SUCCESS,
+                    timestamp=tied,
+                )
+            ]
+        )
+
+    paginated = await sqlite_instance.get_attack_results_async(limit=10)
+    unpaginated = await sqlite_instance.get_attack_results_async(conversation_id="conv_native_vs_string")
+
+    assert [result.attack_result_id for result in paginated] == [string_greater]
+    assert [result.attack_result_id for result in unpaginated] == [string_greater]
+
+
 async def test_get_attack_results_by_objective(sqlite_instance: MemoryInterface):
     """Test retrieving attack results by objective substring."""
     # Create and add attack results
@@ -399,6 +477,39 @@ async def test_get_attack_results_by_objective(sqlite_instance: MemoryInterface)
     objectives = {result.objective for result in retrieved_results}
     assert "Test objective for success" in objectives
     assert "Another objective for failure" in objectives
+
+
+@pytest.mark.parametrize(
+    ("searched", "matching_objective", "decoy_objective"),
+    [
+        ("100%", "Reach 100% coverage", "Reach 1000 coverage"),
+        ("snake_case", "Use snake_case names", "Use snakeXcase names"),
+    ],
+)
+async def test_get_attack_results_by_objective_treats_like_wildcards_literally_async(
+    *, sqlite_instance: MemoryInterface, searched: str, matching_objective: str, decoy_objective: str
+) -> None:
+    """The objective filter is a substring match, so ``%`` and ``_`` in it match only themselves."""
+    matching = AttackResult(conversation_id="conv_match", objective=matching_objective, outcome=AttackOutcome.SUCCESS)
+    decoy = AttackResult(conversation_id="conv_decoy", objective=decoy_objective, outcome=AttackOutcome.SUCCESS)
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[matching, decoy])
+
+    retrieved_results = await sqlite_instance.get_attack_results_async(objective=searched)
+
+    assert [result.conversation_id for result in retrieved_results] == ["conv_match"]
+
+
+def test_attack_result_objective_filter_escapes_sql_server_bracket_wildcard() -> None:
+    """SQL Server also treats ``[`` as a LIKE wildcard, so the filter escapes it too."""
+    conditions = MemoryInterface._build_attack_result_scalar_conditions(query=_AttackResultQuery(objective="[a]%"))
+    sql = str(
+        select(AttackResultEntry.id)
+        .where(*conditions)
+        .compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True})
+    )
+
+    assert "'%/[a]/%%'" in sql
+    assert "ESCAPE '/'" in sql
 
 
 async def test_get_attack_results_by_outcome(sqlite_instance: MemoryInterface):
@@ -928,7 +1039,7 @@ async def test_update_attack_result_stale_entry_does_not_overwrite(sqlite_instan
     Simulates the race condition where entry is loaded, then another update modifies
     the DB, and finally the stale entry is used for an unrelated update.
     """
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     attack_result = AttackResult(
         conversation_id="conv_1",
@@ -1830,7 +1941,7 @@ async def test_get_attack_results_attack_classes_empty_returns_all(sqlite_instan
 
 
 def _eval_hash_for(class_name: str) -> str:
-    from pyrit.models.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
+    from pyrit.models import AtomicAttackEvaluationIdentifier
 
     return AtomicAttackEvaluationIdentifier(
         AtomicAttackIdentifier.build(
@@ -2259,7 +2370,8 @@ async def test_get_attack_results_pagination_returns_recency_ordered_page(sqlite
 
 def test_get_attack_results_pagination_uses_not_exists_anti_join() -> None:
     """Pagination probes for a newer duplicate instead of ranking the full result set."""
-    condition = MemoryInterface._attack_results_not_superseded_condition(conditions=[])
+    instance = object.__new__(SQLiteMemory)
+    condition = instance._attack_results_not_superseded_condition(conditions=[])
     statement = select(AttackResultEntry.id).where(condition)
     sql = str(statement.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True})).upper()
 

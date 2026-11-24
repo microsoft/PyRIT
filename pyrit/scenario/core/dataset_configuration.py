@@ -28,18 +28,20 @@ from __future__ import annotations
 
 import copy
 import random
+from collections import Counter
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, TypeVar, cast
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AllAvailableDatasetSize,
     AttackSeedGroup,
     BoundedDatasetSize,
+    DatasetFetchPolicy,
     IndeterminateDatasetSize,
     ScenarioDatasetSizeEstimate,
     Seed,
@@ -49,14 +51,14 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit, normalize_dataset_limit
-from pyrit.models.scenario_dataset import DatasetFetchPolicy
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Awaitable, Callable, Sequence
 
     from pyrit.datasets import SeedDatasetProvider
     from pyrit.memory import MemoryInterface
     from pyrit.memory.memory_interface import PreparedSeedBatch
+    from pyrit.score import ScorerRequirements
 
 # Dataset-name label that inline ``seeds`` / ``seed_groups`` carry in by-dataset views, since
 # they have no real dataset name. Inline and named sources are mutually exclusive, so this
@@ -69,6 +71,70 @@ _ItemT = TypeVar("_ItemT")
 _candidate_populations: ContextVar[dict[str, list[Seed[Any]]] | None] = ContextVar(
     "dataset_candidate_populations", default=None
 )
+
+
+async def prepare_configurations_async(
+    *,
+    configurations: Sequence[DatasetConfiguration],
+    fetch: DatasetFetchPolicy | None = None,
+    validate_assembly: Callable[[], Awaitable[object]] | None = None,
+) -> None:
+    """
+    Load or refresh several configurations' datasets as one batch.
+
+    Every source is checked and fetched before anything is written. When any dataset is refreshed,
+    each configuration that fetched data and then ``validate_assembly`` run while all fetched
+    candidates are visible to reads, so a rejected refresh leaves every stored dataset unchanged.
+
+    Args:
+        configurations (Sequence[DatasetConfiguration]): The configurations to prepare together.
+        fetch (DatasetFetchPolicy | None): Optional policy for this operation only.
+        validate_assembly (Callable[[], Awaitable[object]] | None): A check over everything the
+            configurations build together, such as a scenario's full assembly.
+
+    Raises:
+        DatasetConstraintError: If a dataset is named by more than one configuration, a source cannot
+            be fetched, or the candidates fail validation.
+    """
+    # Candidates are keyed by name, so a shared name would validate one batch and commit both.
+    counts = Counter(name for config in configurations for name in dict.fromkeys(config.dataset_names))
+    shared = sorted(name for name, count in counts.items() if count > 1)
+    if shared:
+        raise DatasetConstraintError(
+            f"Datasets {shared} are named by more than one configuration prepared together, such as "
+            "required data and the population. List each dataset in one place."
+        )
+    fetches = [(config, *await config._fetch_for_preparation_async(fetch=fetch)) for config in configurations]
+    if not any(policies[name] is DatasetFetchPolicy.ALWAYS for _, fetched, policies in fetches for name in fetched):
+        for config, fetched, _ in fetches:
+            for dataset in fetched.values():
+                await config._memory.add_seed_datasets_to_memory_async(
+                    datasets=[dataset], added_by="DatasetConfiguration"
+                )
+        return
+    prepared: list[tuple[DatasetConfiguration, dict[str, PreparedSeedBatch], dict[str, DatasetFetchPolicy]]] = []
+    for config, fetched, policies in fetches:
+        batches = {
+            name: await config._memory.prepare_seed_batch_async(seeds=dataset.seeds, added_by="DatasetConfiguration")
+            for name, dataset in fetched.items()
+        }
+        prepared.append((config, batches, policies))
+    candidates = {name: batch.seeds for _, batches, _ in prepared for name, batch in batches.items()}
+    token = _candidate_populations.set(candidates)
+    try:
+        for config, batches, _ in prepared:
+            if batches:
+                await config.with_overrides()._validate_candidate_population_async()
+        if validate_assembly is not None:
+            await validate_assembly()
+    finally:
+        _candidate_populations.reset(token)
+    for config, batches, policies in prepared:
+        for name, batch in batches.items():
+            if policies[name] is DatasetFetchPolicy.ALWAYS:
+                await config._memory.replace_prepared_seed_batch_async(dataset_name=name, batch=batch)
+            else:
+                await config._memory.add_prepared_seed_batch_async(batch)
 
 
 class _Unset(Enum):
@@ -94,18 +160,25 @@ def _deprecated_argument(*, old: str, new: str) -> None:
 @dataclass(frozen=True, kw_only=True)
 class DatasetSource:
     """
-    A named dataset, with an optional provider, selection limit, and fetch policy.
+    A named dataset, with an optional provider, selection limit, fetch policy, and scorer needs.
 
     A configured provider must use the source name. Preparation keeps stored data unless
     the effective fetch policy explicitly requests a refresh.
     Generation count and selection limits are independent. Use one writer per dataset
     name: concurrent runs can otherwise generate and store different batches.
+
+    ``scorer_requirements`` states what this dataset needs judged, such as the evaluation
+    its objectives promise. Scenarios that set ``SUPPORTS_OBJECTIVE_SCORER_POOL``, and
+    Psychosocial, select or check an objective scorer that meets it; other scenarios reject a
+    source that declares it.
+    Overrides of the same source keep it.
     """
 
     name: str
     max_size: DatasetLimit = "default"
     fetch: DatasetFetchPolicy | None = None
     provider: SeedDatasetProvider | None = None
+    scorer_requirements: ScorerRequirements | None = None
 
     def __post_init__(self) -> None:
         """
@@ -122,6 +195,11 @@ class DatasetSource:
             raise DatasetConstraintError(f"'max_size': {exc}") from exc
         if self.fetch is not None and not isinstance(self.fetch, DatasetFetchPolicy):
             raise DatasetConstraintError("'fetch' must be a DatasetFetchPolicy.")
+        if self.scorer_requirements is not None:
+            from pyrit.score import ScorerRequirements
+
+            if not isinstance(self.scorer_requirements, ScorerRequirements):
+                raise DatasetConstraintError("'scorer_requirements' must be ScorerRequirements.")
         self._validate_provider()
 
     def _validate_provider(self) -> None:
@@ -187,6 +265,21 @@ class DatasetConstraintError(ValueError):
     while letting the CLI/backend present a friendly "dataset X doesn't satisfy
     scenario Y's requirements" message.
     """
+
+
+class MissingDatasetError(DatasetConstraintError):
+    """Raised when a dataset read finds no seeds in memory, naming that dataset."""
+
+    def __init__(self, message: str, *, dataset_name: str) -> None:
+        """
+        Initialize the error.
+
+        Args:
+            message (str): The error message.
+            dataset_name (str): The dataset that has no seeds in memory.
+        """
+        super().__init__(message)
+        self.dataset_name = dataset_name
 
 
 def require_nonempty() -> Callable[[ResolvedDataset], None]:
@@ -417,9 +510,10 @@ class DatasetConfiguration:
         self.max_total = None if isinstance(max_total, _Unset) else max_total
         self.fetch = DatasetFetchPolicy.IF_MISSING if isinstance(fetch, _Unset) else fetch
         self._filters: dict[str, list[str]] = dict(filters or {})
+        self._user_validators: list[Callable[[ResolvedDataset], None]] = list(validators) if validators else []
         self._validators: list[Callable[[ResolvedDataset], None]] = [
             *self._default_validators(),
-            *(list(validators) if validators else []),
+            *self._user_validators,
         ]
         self._validate_selection_options()
 
@@ -494,6 +588,7 @@ class DatasetConfiguration:
         result = copy.copy(self)
         result._filters = {key: list(values) for key, values in self._filters.items()}
         result._validators = list(self._validators)
+        result._user_validators = list(self._user_validators)
         if not isinstance(sources, _Unset):
             if self.source_kind is DatasetSourceKind.INLINE:
                 raise DatasetConstraintError("Cannot replace inline seeds with named sources through overrides.")
@@ -522,6 +617,19 @@ class DatasetConfiguration:
     def _preparation_sources(self) -> list[tuple[DatasetSource, DatasetFetchPolicy]]:
         return [(source, source.fetch or self.fetch) for source in self.sources]
 
+    async def get_missing_dataset_names_async(self) -> list[str]:
+        """
+        Check source availability without reading seed bodies or fetching providers.
+
+        Returns:
+            list[str]: Selected names that are not stored in this configuration's memory.
+        """
+        names = self.dataset_names
+        if not names:
+            return []
+        stored = set(await self._memory.get_seed_dataset_names_async())
+        return [name for name in names if name not in stored]
+
     async def prepare_async(self, *, fetch: DatasetFetchPolicy | None = None) -> None:
         """
         Check all sources, then load or refresh datasets from configured or registered providers.
@@ -536,11 +644,26 @@ class DatasetConfiguration:
         Raises:
             DatasetConstraintError: If a source cannot be fetched or provider data is invalid.
         """
+        await prepare_configurations_async(configurations=[self], fetch=fetch)
+
+    async def _fetch_for_preparation_async(
+        self, *, fetch: DatasetFetchPolicy | None
+    ) -> tuple[dict[str, SeedDataset], dict[str, DatasetFetchPolicy]]:
+        """
+        Check all sources and fetch the datasets that preparation would write, without writing.
+
+        Returns:
+            tuple[dict[str, SeedDataset], dict[str, DatasetFetchPolicy]]: The fetched datasets and
+            every source's effective policy, keyed by dataset name.
+
+        Raises:
+            DatasetConstraintError: If a source cannot be fetched or provider data is invalid.
+        """
         self.validate_configuration()
         if fetch is not None and not isinstance(fetch, DatasetFetchPolicy):
             raise DatasetConstraintError("'fetch' must be a DatasetFetchPolicy.")
         if self.source_kind is DatasetSourceKind.INLINE:
-            return
+            return {}, {}
         policies: dict[str, DatasetFetchPolicy] = {}
         configured_providers: dict[str, SeedDatasetProvider | None] = {}
         for source, policy in self._preparation_sources():
@@ -553,7 +676,7 @@ class DatasetConfiguration:
             policies[name] = policy
             configured_providers[name] = source.provider
         if not policies:
-            return
+            return {}, {}
         stored_names = set(await self._memory.get_seed_dataset_names_async())
         to_fetch: list[str] = []
         for name, policy in policies.items():
@@ -563,8 +686,8 @@ class DatasetConfiguration:
                 raise DatasetConstraintError(f"Dataset '{name}' is missing and fetch is 'never'. Import it first.")
             to_fetch.append(name)
         if not to_fetch:
-            return
-        from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+            return {}, policies
+        from pyrit.datasets import SeedDatasetProvider
 
         providers = {name: provider for name in to_fetch if (provider := configured_providers[name]) is not None}
         unresolved = [name for name in to_fetch if name not in providers]
@@ -597,34 +720,7 @@ class DatasetConfiguration:
                 )
             SeedDataset.group_seed_prompts_by_prompt_group_id(dataset.seeds)
             fetched[name] = dataset
-        if any(policies[name] is DatasetFetchPolicy.ALWAYS for name in fetched):
-            await self._commit_refresh_candidates_async(fetched=fetched, policies=policies)
-            return
-        for dataset in fetched.values():
-            await self._memory.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="DatasetConfiguration")
-
-    async def _commit_refresh_candidates_async(
-        self, *, fetched: dict[str, SeedDataset], policies: dict[str, DatasetFetchPolicy]
-    ) -> None:
-        prepared = {
-            name: await self._memory.prepare_seed_batch_async(seeds=dataset.seeds, added_by="DatasetConfiguration")
-            for name, dataset in fetched.items()
-        }
-        await self._validate_refresh_candidates_async(prepared=prepared)
-        for name, batch in prepared.items():
-            if policies[name] is DatasetFetchPolicy.ALWAYS:
-                await self._memory.replace_prepared_seed_batch_async(dataset_name=name, batch=batch)
-            else:
-                await self._memory.add_prepared_seed_batch_async(batch)
-
-    async def _validate_refresh_candidates_async(self, *, prepared: dict[str, PreparedSeedBatch]) -> None:
-        """Resolve task-local copies of storage-ready snapshots without modifying them."""
-        candidates = {name: batch.seeds for name, batch in prepared.items()}
-        token = _candidate_populations.set(candidates)
-        try:
-            await self.with_overrides()._validate_candidate_population_async()
-        finally:
-            _candidate_populations.reset(token)
+        return fetched, policies
 
     async def _validate_candidate_population_async(self) -> None:
         """Validate raw configuration populations before replacement."""
@@ -673,6 +769,18 @@ class DatasetConfiguration:
             list[str]: The dataset names, or an empty list when using inline seeds/groups.
         """
         return [source.name for source in self.sources]
+
+    def get_scorer_requirements_by_dataset(self) -> dict[str, ScorerRequirements]:
+        """
+        Return the scorer requirements each configured dataset declares.
+
+        Returns:
+            dict[str, ScorerRequirements]: Requirements keyed by dataset name; datasets
+                without requirements are omitted.
+        """
+        return {
+            source.name: source.scorer_requirements for source in self.sources if source.scorer_requirements is not None
+        }
 
     @property
     def source_kind(self) -> DatasetSourceKind:
@@ -796,7 +904,8 @@ class DatasetConfiguration:
             list[Seed]: The seeds for ``dataset_name``.
 
         Raises:
-            DatasetConstraintError: If the dataset is absent or its filters match no seeds.
+            MissingDatasetError: If the dataset has no seeds in memory.
+            DatasetConstraintError: If the configured filters match none of its seeds.
         """
         candidates = _candidate_populations.get()
         if candidates is not None and dataset_name in candidates:
@@ -817,9 +926,10 @@ class DatasetConfiguration:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' has seeds, but none match the configured filters {self._filters}."
                 )
-            raise DatasetConstraintError(
+            raise MissingDatasetError(
                 f"Dataset '{dataset_name}' could not be loaded: no seeds found in memory. "
-                "Call prepare_async() before reading a new selection, or import the dataset."
+                "Call prepare_async() before reading a new selection, or import the dataset.",
+                dataset_name=dataset_name,
             )
         return found
 
@@ -856,6 +966,12 @@ class DatasetConfiguration:
         return random.sample(items, self.max_total)
 
 
+class _AttackGroupSampler(Protocol):
+    def __call__(
+        self, *, configuration: DatasetAttackConfiguration, groups: dict[str, list[AttackSeedGroup]]
+    ) -> dict[str, list[AttackSeedGroup]]: ...
+
+
 @dataclass(frozen=True)
 class _ResolvedAttackGroups:
     """A per-read snapshot that validates compound populations before any sampling."""
@@ -864,15 +980,19 @@ class _ResolvedAttackGroups:
     groups: dict[str, list[AttackSeedGroup]]
     children: tuple[_ResolvedAttackGroups, ...] = ()
 
-    def select(self, *, apply_sampling: bool) -> dict[str, list[AttackSeedGroup]]:
+    def select(
+        self, *, apply_sampling: bool, sampler: _AttackGroupSampler | None = None
+    ) -> dict[str, list[AttackSeedGroup]]:
         if not apply_sampling:
             return self.groups
         groups = self.groups
         if self.children:
             groups = {}
             for child in self.children:
-                for name, population in child.select(apply_sampling=True).items():
+                for name, population in child.select(apply_sampling=True, sampler=sampler).items():
                     groups.setdefault(name, []).extend(population)
+        if sampler is not None:
+            return sampler(configuration=self.configuration, groups=groups)
         return self.configuration._sample_groups_by_dataset(groups)
 
 
@@ -953,7 +1073,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
                 dataset name, and the flat resolved seeds with their source kind.
 
         Raises:
-            DatasetConstraintError: If a configured dataset yields no seeds.
+            DatasetConstraintError: If a configured dataset yields no seeds or its seeds can't form attack groups.
         """
         inline = self._inline_attack_groups()
         if inline is not None:
@@ -962,7 +1082,14 @@ class DatasetAttackConfiguration(DatasetConfiguration):
             return {INLINE_DATASET_NAME: inline}, resolved
 
         seeds_by_dataset = await self._collect_named_seeds_async()
-        groups_by_dataset = {name: self._build_attack_groups(seeds) for name, seeds in seeds_by_dataset.items()}
+        groups_by_dataset = {}
+        for name, seeds in seeds_by_dataset.items():
+            try:
+                groups_by_dataset[name] = self._build_attack_groups(seeds)
+            except ValueError as exc:
+                raise DatasetConstraintError(
+                    f"Dataset '{name}' has seeds that can't form attack groups: {exc}"
+                ) from exc
         all_seeds = [seed for seeds in seeds_by_dataset.values() for seed in seeds]
         resolved = ResolvedDataset(
             seeds=all_seeds,
@@ -1021,11 +1148,48 @@ class DatasetAttackConfiguration(DatasetConfiguration):
                 dataset fails validation, or no attack groups could be built.
         """
         selection = await self._resolve_attack_groups_async()
-        sampled = selection.select(apply_sampling=apply_sampling)
-        if not any(sampled.values()):
+        return self._require_selected_groups(selection.select(apply_sampling=apply_sampling))
+
+    def select_assembled_groups(
+        self, *, groups_by_population: dict[str, list[AttackSeedGroup]], apply_sampling: bool = True
+    ) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Validate and limit attack groups a scenario assembled from its required data.
+
+        The configuration has no sources of its own here: it validates the assembled
+        population and applies ``max_total`` across it, keeping each population's key.
+
+        Args:
+            groups_by_population (dict[str, list[AttackSeedGroup]]): Assembled groups keyed by population.
+            apply_sampling (bool): When True (default), apply ``max_total``. Resume passes False.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: The validated, limited groups.
+
+        Raises:
+            DatasetConstraintError: If the configuration has its own sources or inline seeds, the
+                population fails validation, or no attack groups remain.
+        """
+        self.validate_configuration()
+        if self.sources or self.source_kind is DatasetSourceKind.INLINE:
+            raise DatasetConstraintError(
+                "Assembled populations can't be combined with dataset sources or inline seeds."
+            )
+        self.validate(
+            ResolvedDataset(
+                seeds=[seed for groups in groups_by_population.values() for group in groups for seed in group.seeds],
+                source_kind=self.source_kind,
+                dataset_names=tuple(groups_by_population),
+            )
+        )
+        selection = _ResolvedAttackGroups(configuration=self, groups=groups_by_population)
+        return self._require_selected_groups(selection.select(apply_sampling=apply_sampling))
+
+    def _require_selected_groups(self, selected: dict[str, list[AttackSeedGroup]]) -> dict[str, list[AttackSeedGroup]]:
+        if not any(selected.values()):
             names = ", ".join(self.dataset_names) if self.dataset_names else "<inline>"
             raise DatasetConstraintError(f"Resolved attack-group dataset is empty (datasets: {names}).")
-        return sampled
+        return selected
 
     async def _resolve_attack_groups_async(self) -> _ResolvedAttackGroups:
         self.validate_configuration()
@@ -1194,6 +1358,24 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             ]
         )
 
+    def select_assembled_groups(
+        self, *, groups_by_population: dict[str, list[AttackSeedGroup]], apply_sampling: bool = True
+    ) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Reject assembled populations: a compound's validators and limits live on its children.
+
+        Args:
+            groups_by_population (dict[str, list[AttackSeedGroup]]): Assembled groups keyed by population.
+            apply_sampling (bool): Unused; the selection is always rejected.
+
+        Raises:
+            DatasetConstraintError: Always, since the children's rules can't apply to assembled groups.
+        """
+        raise DatasetConstraintError(
+            "Assembled populations can't be limited by a compound configuration, because its children's "
+            "validators and limits would be skipped. Use a single DatasetAttackConfiguration without sources."
+        )
+
     @property
     def dataset_names(self) -> list[str]:
         """
@@ -1208,6 +1390,24 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
                 if name not in names:
                     names.append(name)
         return names
+
+    def get_scorer_requirements_by_dataset(self) -> dict[str, ScorerRequirements]:
+        """
+        Return the scorer requirements every child dataset declares.
+
+        Returns:
+            dict[str, ScorerRequirements]: Requirements keyed by dataset name.
+
+        Raises:
+            DatasetConstraintError: If two children declare different requirements for one dataset.
+        """
+        merged: dict[str, ScorerRequirements] = {}
+        for child in self._configurations:
+            for name, requirements in child.get_scorer_requirements_by_dataset().items():
+                if name in merged and merged[name] != requirements:
+                    raise DatasetConstraintError(f"Dataset '{name}' declares different scorer requirements.")
+                merged[name] = requirements
+        return merged
 
     @property
     def source_kind(self) -> DatasetSourceKind:

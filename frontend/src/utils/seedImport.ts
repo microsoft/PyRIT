@@ -238,6 +238,12 @@ export function buildSeedImport(members: readonly SeedRecord[]): SeedImportOutco
     // No sequence numbers stored on records
     if (promptRecords.length === 1) {
       const record = promptRecords[0]
+      if (!record) {
+        return {
+          type: 'unsupported',
+          reason: 'Prompt record is missing.',
+        }
+      }
       const mappedRole = mapToDraftRole(record.role) ?? 'user'
       turns.push({
         role: mappedRole,
@@ -250,9 +256,10 @@ export function buildSeedImport(members: readonly SeedRecord[]): SeedImportOutco
       // combine them into a single turn at sequence 0.
       const allRoles = promptRecords.map((r) => mapToDraftRole(r.role) ?? 'user')
       const distinctRoles = new Set(allRoles)
-      if (distinctRoles.size === 1) {
+      const firstRole = allRoles[0]
+      if (distinctRoles.size === 1 && firstRole !== undefined) {
         turns.push({
-          role: allRoles[0],
+          role: firstRole,
           sequence: 0,
           pieces: promptRecords.map(recordToDraftPiece),
         })
@@ -274,10 +281,10 @@ export function buildSeedImport(members: readonly SeedRecord[]): SeedImportOutco
 
   // 6. Differentiate Single Prompt vs. Multi-turn Conversation with Final User Turn Split
   // If exactly 1 turn and role is 'user', import as single prompt to editable composer.
-  if (turns.length === 1 && turns[0].role === 'user') {
-    const turn = turns[0]
-    const textPieces = turn.pieces.filter((p) => !isPathDataType(p.data_type))
-    const mediaPieces = turn.pieces.filter((p) => isPathDataType(p.data_type))
+  const firstTurn = turns[0]
+  if (turns.length === 1 && firstTurn && firstTurn.role === 'user') {
+    const textPieces = firstTurn.pieces.filter((p) => !isPathDataType(p.data_type))
+    const mediaPieces = firstTurn.pieces.filter((p) => isPathDataType(p.data_type))
 
     const text = textPieces.map((p) => p.original_value).join('\n\n')
     const attachments: MessageAttachment[] = mediaPieces.map(draftAttachment)
@@ -295,8 +302,8 @@ export function buildSeedImport(members: readonly SeedRecord[]): SeedImportOutco
   // Multi-turn or single non-user turn -> Conversation
   // Extract system prompt if first turn is system or developer
   let systemPrompt: string | undefined
-  if (turns[0].role === 'system' || turns[0].role === 'developer') {
-    const sysPieces = turns[0].pieces.filter((p) => !isPathDataType(p.data_type))
+  if (firstTurn && (firstTurn.role === 'system' || firstTurn.role === 'developer')) {
+    const sysPieces = firstTurn.pieces.filter((p) => !isPathDataType(p.data_type))
     if (sysPieces.length > 0) {
       systemPrompt = sysPieces.map((p) => p.original_value).join('\n\n')
     }
@@ -310,7 +317,7 @@ export function buildSeedImport(members: readonly SeedRecord[]): SeedImportOutco
   let historyTurns = turns
   let composerDraft: ConversationImport['composerDraft'] | undefined
 
-  if (lastTurn.role === 'user' && turns.length > 1) {
+  if (lastTurn && lastTurn.role === 'user' && turns.length > 1) {
     historyTurns = turns.slice(0, -1)
     const textPieces = lastTurn.pieces.filter((p) => !isPathDataType(p.data_type))
     const mediaPieces = lastTurn.pieces.filter((p) => isPathDataType(p.data_type))

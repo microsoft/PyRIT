@@ -1,20 +1,24 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import uuid
 from datetime import UTC, datetime
+from enum import StrEnum
 
 import pytest
 from unit.mocks import make_scenario_result
 
 from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
+    RetryEvent,
     ScenarioResult,
+    ScenarioRunState,
 )
-from pyrit.models.results.attack_result import AttackOutcome, AttackResult
-from pyrit.models.retry_event import RetryEvent
 
 
 def _make_component_identifier_dict(class_name="TestTarget"):
@@ -306,3 +310,16 @@ def test_scenario_result_display_group_map_is_public_field():
     # Mutable and writable (used by benchmark merge logic).
     result.display_group_map["foundry"] = "Foundry"
     assert result.display_group_map["foundry"] == "Foundry"
+
+
+@pytest.mark.parametrize("state", list(ScenarioRunState))
+def test_scenario_run_state_formats_as_its_value(state: ScenarioRunState) -> None:
+    value = state.value
+    assert isinstance(state, StrEnum)
+    assert str(state) == value
+    assert f"{state}" == value
+    assert format(state) == value
+    assert state == value
+    assert hash(state) == hash(value)
+    assert ScenarioRunState(value) is state
+    assert json.dumps(state) == json.dumps(value)

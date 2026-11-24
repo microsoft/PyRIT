@@ -18,8 +18,7 @@ from fastapi.testclient import TestClient
 from pyrit.backend.main import app
 from pyrit.backend.mappers.technique_mappers import technique_to_instance
 from pyrit.backend.models.techniques import CreateTechniqueRequest
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
-from pyrit.backend.services.scenario_service import ScenarioService
+from pyrit.backend.services import ScenarioRunService, ScenarioService
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.backend.services.technique_service import TechniqueService, get_technique_service
 from pyrit.executor.attack import PromptSendingAttack
@@ -31,16 +30,13 @@ from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
 )
-from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models.catalog import RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, Registry, ScenarioRegistry, TargetRegistry
-from pyrit.scenario import Scenario
+from pyrit.scenario import DatasetAttackConfiguration, Scenario, ScenarioTechnique
 from pyrit.scenario.core import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.scenarios import airt
-from pyrit.scenario.scenarios.airt.leakage import Leakage
-from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
+from pyrit.scenario.scenarios.airt import Leakage, RapidResponse
 from pyrit.score import SubStringScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 from unit.async_utils import (
@@ -198,10 +194,27 @@ async def test_list_empty_and_terminal_pages_async(registry: AttackTechniqueRegi
     assert empty.pagination.next_cursor is None
 
 
-async def test_list_unknown_cursor_starts_at_first_page_like_targets_async(registry: AttackTechniqueRegistry) -> None:
-    page = await TechniqueService().list_async(limit=3, cursor="missing")
-    assert [item.name for item in page.items] == registry.instances.get_names()[:3]
-    assert page.pagination.prev_cursor == "missing"
+async def test_list_rejects_a_cursor_that_names_no_technique_async(registry: AttackTechniqueRegistry) -> None:
+    """A stale cursor must raise, not silently restart at the first page."""
+    service = TechniqueService()
+    names = registry.instances.get_names()
+    cursor = (await service.list_async(limit=1)).pagination.next_cursor
+    assert cursor == names[0]
+    assert [item.name for item in (await service.list_async(limit=1, cursor=cursor)).items] == [names[1]]
+
+    registry.instances.unregister(cursor)
+
+    with pytest.raises(ValueError, match="cursor is not valid for the technique registry"):
+        await service.list_async(limit=1, cursor=cursor)
+
+
+def test_rest_list_returns_400_for_a_cursor_that_names_no_technique(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    response = client.get("/api/techniques", params={"limit": 1, "cursor": "removed_technique"})
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "The cursor is not valid for the technique registry"
 
 
 def test_rest_list_follows_all_pages_with_default_limit(

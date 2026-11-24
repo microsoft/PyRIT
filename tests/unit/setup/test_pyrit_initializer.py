@@ -2,19 +2,26 @@
 # Licensed under the MIT license.
 
 import sys
-from typing import Any, Literal
+from typing import Any, Literal, NotRequired, get_type_hints
 from unittest.mock import patch
 
 import pytest
 
-from pyrit.common.apply_defaults import (
+from pyrit.common import (
     REQUIRED_VALUE,
     reset_default_values,
     set_default_value,
+)
+from pyrit.common.apply_defaults import (
     set_global_variable,
 )
 from pyrit.models import Parameter
-from pyrit.setup.initializers import PyRITInitializer
+from pyrit.setup.initializers import (
+    InitializerDefaultsInfo,
+    InitializerInfo,
+    InitializerParameterInfo,
+    PyRITInitializer,
+)
 
 
 class TypedInitializer(PyRITInitializer):
@@ -311,7 +318,7 @@ class TestInitializeWithTracking:
         await init.initialize_with_tracking_async()
 
         # Verify the default was actually set
-        from pyrit.common.apply_defaults import get_global_default_values
+        from pyrit.common import get_global_default_values
 
         registry = get_global_default_values()
         assert len(registry._default_values) > 0
@@ -598,7 +605,7 @@ class TestGetDynamicDefaultValuesInfo:
         await init.get_dynamic_default_values_info_async()
 
         # Original default should still be there
-        from pyrit.common.apply_defaults import get_global_default_values
+        from pyrit.common import get_global_default_values
 
         registry = get_global_default_values()
         # Should only have the original default, not the temporary one
@@ -627,6 +634,157 @@ class TestGetDynamicDefaultValuesInfoWithoutMemory:
         # Should return helpful messages
         assert "await initialize_pyrit_async()" in str(info["default_values"])
         assert "await initialize_pyrit_async()" in str(info["global_variables"])
+
+
+class TestInitializerInfoContracts:
+    """The TypedDict contracts of get_info_async and get_dynamic_default_values_info_async."""
+
+    def test_initializer_info_keys(self) -> None:
+        """Only supported_parameters and required_env_vars may be absent from InitializerInfo."""
+        assert get_type_hints(InitializerInfo, include_extras=True) == {
+            "description": str,
+            "class": str,
+            "supported_parameters": NotRequired[list[InitializerParameterInfo]],
+            "required_env_vars": NotRequired[list[str]],
+            "default_values": list[str] | str,
+            "global_variables": list[str] | str,
+        }
+        assert InitializerInfo.__required_keys__ == {"description", "class", "default_values", "global_variables"}
+        assert InitializerInfo.__optional_keys__ == {"supported_parameters", "required_env_vars"}
+
+    def test_defaults_info_keys(self) -> None:
+        """Both InitializerDefaultsInfo keys are always present, as a list or a message string."""
+        assert get_type_hints(InitializerDefaultsInfo) == {
+            "default_values": list[str] | str,
+            "global_variables": list[str] | str,
+        }
+        assert InitializerDefaultsInfo.__required_keys__ == {"default_values", "global_variables"}
+        assert InitializerDefaultsInfo.__optional_keys__ == frozenset()
+
+    def test_parameter_info_keys(self) -> None:
+        """Each supported_parameters entry carries exactly name, description and default."""
+        assert get_type_hints(InitializerParameterInfo) == {"name": str, "description": str, "default": Any}
+        assert InitializerParameterInfo.__required_keys__ == {"name", "description", "default"}
+
+    @pytest.mark.usefixtures("patch_central_database")
+    async def test_get_info_reports_every_key_when_declared(self) -> None:
+        """An initializer with parameters, env vars, defaults and globals fills every key."""
+
+        class DummyTarget:
+            def __init__(self, *, endpoint: str = "default") -> None:
+                self.endpoint = endpoint
+
+        class FullInit(TypedInitializer):
+            """Full info"""
+
+            @property
+            def required_env_vars(self) -> list[str]:
+                return ["API_KEY"]
+
+            async def initialize_async(self) -> None:
+                set_default_value(class_type=DummyTarget, parameter_name="endpoint", value="custom")
+                set_global_variable(name="info_contract_global", value="value")
+
+        reset_default_values()
+        try:
+            info = await FullInit.get_info_async()
+        finally:
+            reset_default_values()
+            if hasattr(sys.modules["__main__"], "info_contract_global"):
+                del sys.modules["__main__"].info_contract_global
+
+        assert info == {
+            "description": "Full info",
+            "class": "FullInit",
+            "supported_parameters": [
+                {"name": "enabled", "description": "Enable setup", "default": True},
+                {"name": "count", "description": "Item count", "default": 7},
+                {"name": "tags", "description": "Selected tags", "default": []},
+            ],
+            "required_env_vars": ["API_KEY"],
+            "default_values": ["DummyTarget.endpoint"],
+            "global_variables": ["info_contract_global"],
+        }
+
+    @pytest.mark.usefixtures("patch_central_database")
+    async def test_get_info_omits_optional_keys_when_none_declared(self) -> None:
+        """Without parameters or env vars, only the required keys are present."""
+
+        class BareInit(PyRITInitializer):
+            """Bare"""
+
+            async def initialize_async(self) -> None:
+                pass
+
+        info = await BareInit.get_info_async()
+
+        assert info.keys() == InitializerInfo.__required_keys__
+        assert info["default_values"] == []
+        assert info["global_variables"] == []
+
+    async def test_get_info_reports_message_strings_without_memory(self) -> None:
+        """Without memory, both sandbox keys hold the same explanatory string."""
+        from pyrit.memory import CentralMemory
+
+        class NoMemoryInfoInit(PyRITInitializer):
+            """No memory"""
+
+            async def initialize_async(self) -> None:
+                pass
+
+        with patch.object(
+            CentralMemory,
+            "get_memory_instance",
+            autospec=True,
+            side_effect=ValueError("Central memory instance has not been set."),
+        ):
+            info = await NoMemoryInfoInit.get_info_async()
+
+        message = "Call await initialize_pyrit_async() first to see what this initializer configures"
+        assert info == {
+            "description": "No memory",
+            "class": "NoMemoryInfoInit",
+            "default_values": message,
+            "global_variables": message,
+        }
+
+    @pytest.mark.usefixtures("patch_central_database")
+    async def test_get_dynamic_info_reports_error_strings_when_initialize_raises(self) -> None:
+        """A failing sandbox run is reported as message strings, not raised."""
+
+        class RaisingInit(PyRITInitializer):
+            """Raises"""
+
+            async def initialize_async(self) -> None:
+                raise RuntimeError("boom")
+
+        info = await RaisingInit().get_dynamic_default_values_info_async()
+
+        assert info == {
+            "default_values": "Error getting defaults info: boom",
+            "global_variables": "Error getting globals info: boom",
+        }
+
+    @pytest.mark.usefixtures("patch_central_database")
+    async def test_get_info_reports_error_strings_when_dynamic_info_raises(self) -> None:
+        """get_info_async turns an exception from the sandbox lookup into message strings."""
+
+        class LookupFailsInit(PyRITInitializer):
+            """Lookup fails"""
+
+            async def initialize_async(self) -> None:
+                pass
+
+        with patch.object(
+            LookupFailsInit,
+            "get_dynamic_default_values_info_async",
+            autospec=True,
+            side_effect=RuntimeError("boom"),
+        ):
+            info = await LookupFailsInit.get_info_async()
+
+        assert info["default_values"] == "Error getting defaults info: boom"
+        assert info["global_variables"] == "Error getting globals info: boom"
 
 
 class TestSupportedParameters:

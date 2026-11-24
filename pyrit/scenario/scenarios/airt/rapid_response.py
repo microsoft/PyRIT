@@ -13,11 +13,11 @@ to test.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.common.async_compatibility import run_legacy_sync_async
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-    from pyrit.score import TrueFalseScorer
+    from pyrit.score import CompatibleScorers, TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
@@ -61,16 +61,19 @@ class RapidResponse(Scenario):
     techniques.
     """
 
+    SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = True
+
     #: Bumped from 2 → 3 by dropping the ``core`` pool gate so the selectable
     #: technique pool (and the ``all`` aggregate) reflects whatever the initializer
     #: registered. ``use_cached`` only matches prior runs at the current ``VERSION``.
     VERSION: int = 3
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = True
 
     @apply_defaults
     def __init__(
         self,
         *,
-        objective_scorer: TrueFalseScorer | None = None,
+        objective_scorer: TrueFalseScorer | CompatibleScorers | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
         """
@@ -79,19 +82,17 @@ class RapidResponse(Scenario):
         Args:
             objective_scorer: Scorer for evaluating attack success.
                 Defaults to a composite Azure-Content-Filter + refusal
-                scorer.
+                scorer. Or a ``CompatibleScorers`` pool, from which each
+                harm dataset selects the first candidate that meets its
+                ``DatasetSource.scorer_requirements`` and accepts its objectives.
             scenario_result_id: Optional ID of an existing scenario
                 result to resume.
         """
-        self._objective_scorer: TrueFalseScorer = (
-            objective_scorer if objective_scorer else self._get_default_objective_scorer()
-        )
-
         technique_class = _build_rapid_response_technique()
 
         super().__init__(
             version=self.VERSION,
-            objective_scorer=self._objective_scorer,
+            objective_scorer=objective_scorer,
             technique_class=technique_class,
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[
@@ -129,6 +130,7 @@ class RapidResponse(Scenario):
         return await run_legacy_sync_async(
             build_matrix_atomic_attacks,
             context=context,
-            objective_scorer=self._objective_scorer,
+            objective_scorer=self._objective_scorer_input,
+            scorer_requirements=self._get_objective_scorer_requirements(),
             display_group_fn=lambda combo: combo.dataset_name,
         )

@@ -11,8 +11,7 @@ from real remote sources, and stores them in in-memory CentralMemory.
 import logging
 
 from pyrit.memory import CentralMemory
-from pyrit.setup.initializers.load_default_datasets import LoadDefaultDatasets
-from pyrit.setup.initializers.techniques import TechniqueInitializer
+from pyrit.setup.initializers import LoadDefaultDatasets, TechniqueInitializer
 
 logger = logging.getLogger(__name__)
 

@@ -40,6 +40,13 @@ export function scenarioDatasetOptions(scenario: RegisteredScenario): ScenarioDa
   }
 }
 
+export function datasetTotalLimit(
+  request: ScenarioDatasetRequest, defaults: ScenarioDatasetSettings,
+): ScenarioDatasetSettings['max_total'] {
+  return typeof request.max_total === 'number' || request.max_total === 'all'
+    ? request.max_total : defaults.max_total
+}
+
 function explicitDatasetPolicy(value: ScenarioDatasetRequest['fetch']): DatasetFetchPolicy | undefined {
   return value === 'never' || value === 'if_missing' || value === 'always' ? value : undefined
 }
@@ -93,9 +100,22 @@ export function datasetChoices(
   return [...names].filter((name) => options.mode === 'any' || options.allowed_names.includes(name)).sort()
 }
 
+const ORIGIN_LABELS: Readonly<Record<string, string>> = {
+  generated: 'Generated',
+  local: 'Local files',
+  remote: 'Remote provider',
+  user: 'User',
+  unknown: 'Unknown',
+}
+
+/** The display name of a seed origin, shared by the dataset catalog and the scanner. */
+export function datasetOriginLabel(origin: string): string {
+  return ORIGIN_LABELS[origin] ?? origin
+}
+
 export function datasetNameWithOrigin(name: string, dataset: DatasetInfo | undefined): string {
   const origins = [...new Set(dataset?.origins ?? [])]
-  return `${name} (${origins.length > 0 ? origins.join(', ') : 'unknown'})`
+  return `${name} (${(origins.length > 0 ? origins : ['unknown']).map(datasetOriginLabel).join(', ')})`
 }
 
 export function datasetFacts(datasets: DatasetInfo[], names: string[]) {

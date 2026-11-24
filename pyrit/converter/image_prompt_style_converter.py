@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.common.random_context import get_random_generator
 from pyrit.common.yaml_helper import safe_load_yaml
@@ -64,7 +64,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
 
         Raises:
             ValueError: If both filter_name and filter_path are provided.
-            ValueError: If filter_name does not correspond to an existing YAML file.
+            ValueError: If filter_name isn't a built-in filter.
             ValueError: If filter_path does not exist.
             ValueError: If variation does not match any entry in the filter.
         """
@@ -84,10 +84,11 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
                 raise ValueError(f"Filter path '{filter_path}' does not exist.")
             self._filter_name = resolved_path.stem
         elif filter_name is not None:
-            resolved_path = self.IMAGE_PROMPT_STYLE_DIR / f"{filter_name}.yaml"
-            if not resolved_path.exists():
-                available = self.list_available_filters()
+            available = self.list_available_filters()
+            # Only built-in names are accepted, so a name can't reach other files on this machine.
+            if filter_name not in available:
                 raise ValueError(f"Filter '{filter_name}' not found. Available filters: {available}")
+            resolved_path = self.IMAGE_PROMPT_STYLE_DIR / f"{filter_name}.yaml"
             self._filter_name = filter_name
         else:
             # No filter specified — pick a random built-in filter
@@ -238,13 +239,12 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
             Sorted list of variation key names defined in the filter.
 
         Raises:
-            ValueError: If filter_name does not correspond to an existing YAML file, or if the
-                filter file is malformed.
+            ValueError: If filter_name isn't a built-in filter, or if the filter file is malformed.
         """
-        resolved_path = cls.IMAGE_PROMPT_STYLE_DIR / f"{filter_name}.yaml"
-        if not resolved_path.exists():
-            available = cls.list_available_filters()
+        available = cls.list_available_filters()
+        if filter_name not in available:
             raise ValueError(f"Filter '{filter_name}' not found. Available filters: {available}")
+        resolved_path = cls.IMAGE_PROMPT_STYLE_DIR / f"{filter_name}.yaml"
 
         with open(resolved_path, encoding="utf-8") as f:
             filter_data = safe_load_yaml(f)

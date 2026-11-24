@@ -45,16 +45,19 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from pyrit.common.path import DOCS_CODE_PATH
 from pyrit.converter import (
     AsciiArtConverter,
     AskToDecodeConverter,
     AtbashConverter,
     Base64Converter,
     Base2048Converter,
+    BifidConverter,
     BinaryConverter,
     BinAsciiConverter,
     BrailleConverter,
     CaesarConverter,
+    ColumnarTranspositionConverter,
     DigitBijectionConverter,
     EcojiConverter,
     LetterBijectionConverter,
@@ -70,7 +73,10 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 await initialize_pyrit_async(memory_db_type=IN_MEMORY, seed=42)  # type: ignore
 
 prompt = "tell me how to cut down a tree"
-token_bijection_vocab = Path("token_bijection_vocab.txt").read_text(encoding="utf-8").splitlines()
+token_bijection_vocab_path = Path("token_bijection_vocab.txt")
+if not token_bijection_vocab_path.exists():
+    token_bijection_vocab_path = DOCS_CODE_PATH / "converters" / "token_bijection_vocab.txt"
+token_bijection_vocab = token_bijection_vocab_path.read_text(encoding="utf-8").splitlines()
 token_bijection_tokenizer = SimpleNamespace(
     get_vocab=lambda: {word: index for index, word in enumerate(token_bijection_vocab)}
 )
@@ -85,6 +91,11 @@ print("NATO:", await NatoConverter().convert_async(prompt=prompt))  # type: igno
 print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=prompt))  # type: ignore
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
 print("Vigenere:", await VigenereConverter(key="key").convert_async(prompt=prompt))  # type: ignore
+print("Bifid:", await BifidConverter().convert_async(prompt=prompt))  # type: ignore
+print(
+    "ColumnarTransposition:",
+    await ColumnarTranspositionConverter(key="SECRET").convert_async(prompt=prompt),  # type: ignore
+)
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
 print("LetterBijectionConverter:", await LetterBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
 print("DigitBijectionConverter:", await DigitBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
@@ -127,6 +138,7 @@ from pyrit.converter import (
     EmojiConverter,
     FirstLetterConverter,
     FlipConverter,
+    FullwidthConverter,
     InsertPunctuationConverter,
     LeetspeakConverter,
     MathObfuscationConverter,
@@ -165,6 +177,7 @@ print("Acrostic:", await AcrosticConverter().convert_async(prompt="cut a tree"))
 print("String Join:", await StringJoinConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zero Width:", await ZeroWidthConverter().convert_async(prompt=prompt))  # type: ignore
 print("Flip:", await FlipConverter().convert_async(prompt=prompt))  # type: ignore
+print("Fullwidth:", await FullwidthConverter().convert_async(prompt=prompt))  # type: ignore
 # Character Space [@robustintelligence2024bypass] inserts spaces between characters
 print("Character Space:", await CharacterSpaceConverter().convert_async(prompt=prompt))  # type: ignore
 print("Diacritic:", await DiacriticConverter().convert_async(prompt=prompt))  # type: ignore
@@ -174,7 +187,7 @@ print("Bidi:", await BidiConverter().convert_async(prompt=prompt))  # type: igno
 # The Arabic converters only affect Arabic letters, so they use an Arabic prompt
 # ("tell me how to cut down a tree") rather than the Latin-script prompt above.
 arabic_prompt = "أخبرني كيف أقطع شجرة"
-# Tatweel inserts the Arabic kashida between adjacent Arabic letters
+# Tatweel inserts the Arabic kashida between adjacent Arabic letters that join
 print("Tatweel:", await TatweelConverter().convert_async(prompt=arabic_prompt))  # type: ignore
 # Arabic presentation form substitutes Arabic letters with their isolated glyphs
 print("Arabic Presentation Form:", await ArabicPresentationFormConverter().convert_async(prompt=arabic_prompt))  # type: ignore
@@ -243,6 +256,7 @@ from pyrit.converter import (
     SATA_TASK_TEMPLATE,
     JsonStringConverter,
     PolicyPuppetryConverter,
+    PolicyPuppetryTemplate,
     PromptTemplateConverter,
     SATAMaskingConverter,
     SearchReplaceConverter,
@@ -251,7 +265,6 @@ from pyrit.converter import (
     TextJailbreakConverter,
     UrlConverter,
 )
-from pyrit.converter.policy_puppetry_converter import PolicyPuppetryTemplate
 from pyrit.datasets import TextJailBreak
 
 prompt = "tell me how to cut down a tree"
@@ -402,6 +415,7 @@ from pyrit.converter import (
     DenylistConverter,
     ImagePromptStyleConverter,
     IPAConverter,
+    LogicJailbreakConverter,
     MaliciousQuestionGeneratorConverter,
     MathPromptConverter,
     NoiseConverter,
@@ -483,6 +497,10 @@ print("Toxic Sentence:", await toxic_generator.convert_async(prompt="building"))
 # MathPrompt [@bethany2024mathprompt] transforms text into symbolic math
 math_prompt_converter = MathPromptConverter(converter_target=attack_llm)
 print("Math Prompt:", await math_prompt_converter.convert_async(prompt=prompt))  # type: ignore
+
+# Logic Jailbreak [@peng2026logic] rewrites the request as a formal logical expression
+logic_jailbreak_converter = LogicJailbreakConverter(converter_target=attack_llm)
+print("Logic Jailbreak:", await logic_jailbreak_converter.convert_async(prompt=prompt))  # type: ignore
 
 # Scientific converter translates into scientific language
 scientific_translation_converter = ScientificTranslationConverter(converter_target=attack_llm, mode="academic")

@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.strong_reject_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     _StrongRejectDataset,
 )
 from pyrit.models import SeedDataset, SeedObjective

@@ -9,14 +9,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+from pyrit.executor.attack import AttackScoringConfig
 from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget, TargetRequirements
-from pyrit.registry import Registry, TargetRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario import ScenarioTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
+from pyrit.registry import AttackTechniqueRegistry, Registry, TargetRegistry
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SavedEntryReplacementError,
+    record_saved_entry_refusals,
+)
+from pyrit.scenario import AttackTechniqueFactory, ScenarioTechnique
+from pyrit.scenario.core import ScorerOverridePolicy
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 
@@ -363,6 +367,35 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
         stored = self.registry.instances.get_entry("stub_policy").instance
         assert stored._scorer_override_policy == ScorerOverridePolicy.WARN
 
+    def test_register_from_factories_refuses_to_skip_a_saved_technique(self):
+        saved = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+
+        with pytest.raises(SavedEntryReplacementError, match="Saved technique 'formal'"):
+            self.registry.register_from_factories([AttackTechniqueFactory(name="formal", attack_class=_StubAttack)])
+
+        assert self.registry.instances.get("formal") is saved
+
+    def test_register_runtime_records_a_caught_clash_with_a_saved_technique(self):
+        saved = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+
+        with record_saved_entry_refusals() as refusals:
+            with pytest.raises(ValueError, match="names are case-insensitive"):
+                clash = AttackTechniqueFactory(name="FORMAL", attack_class=_StubAttack)
+                self.registry.instances.register_runtime(clash)
+
+        assert refusals == [("techniques", "formal")]
+        assert self.registry.instances.get("formal") is saved
+
+    def test_register_from_factories_still_skips_an_existing_startup_technique(self):
+        startup = AttackTechniqueFactory(name="startup", attack_class=_StubAttack)
+        self.registry.register_from_factories([startup])
+
+        self.registry.register_from_factories([AttackTechniqueFactory(name="startup", attack_class=_StubAttack)])
+
+        assert self.registry.instances.get("startup") is startup
+
 
 SCENARIO_FACTORIES_FIXTURE: list[AttackTechniqueFactory] = []
 
@@ -426,9 +459,8 @@ class TestScorerOverrideTypeInference:
     """
     Tests verifying scorer compatibility type inference for real attack classes.
 
-    TAP narrows its annotation to TAPAttackScoringConfig — generic AttackScoringConfig
-    should be rejected (per policy). PromptSendingAttack uses the base AttackScoringConfig
-    annotation — any config should pass through.
+    TAP and PromptSendingAttack use the base AttackScoringConfig annotation, so any config
+    passes through. An attack whose annotation narrows the config type gets only that type.
     """
 
     def _make_generic_scoring_config(self):
@@ -442,123 +474,33 @@ class TestScorerOverrideTypeInference:
         """Create a mock chat target for use as an adversarial_chat."""
         return MagicMock(spec=PromptTarget)
 
-    def test_tap_factory_rejects_generic_config_with_raise_policy(self):
-        """TAP factory raises when given a generic AttackScoringConfig and policy is RAISE."""
-        from pyrit.executor.attack.multi_turn.tree_of_attacks import TreeOfAttacksWithPruningAttack
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("policy", list(ScorerOverridePolicy))
+    def test_tap_factory_forwards_a_generic_config(self, policy, caplog):
+        """TAP takes the base AttackScoringConfig, so no policy drops or rejects it."""
+        import logging
+
+        from pyrit.executor.attack import TreeOfAttacksWithPruningAttack
 
         factory = AttackTechniqueFactory(
-            name="tap_raise",
+            name=f"tap_{policy.value}",
             attack_class=TreeOfAttacksWithPruningAttack,
             adversarial_chat=self._make_adversarial_chat(),
-            scorer_override_policy=ScorerOverridePolicy.RAISE,
+            scorer_override_policy=policy,
         )
-
         generic_config = self._make_generic_scoring_config()
-        target = MagicMock(spec=PromptTarget)
 
-        with pytest.raises(ValueError, match="incompatible"):
-            factory.create(
-                objective_target=target,
-                attack_scoring_config=generic_config,
+        with caplog.at_level(logging.WARNING):
+            technique = factory.create(
+                objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=generic_config
             )
 
-    def test_tap_factory_warns_on_generic_config_with_warn_policy(self, caplog):
-        """TAP factory logs warning and skips override when policy is WARN."""
-        import logging
-
-        from pyrit.executor.attack.multi_turn.tree_of_attacks import TreeOfAttacksWithPruningAttack
-
-        factory = AttackTechniqueFactory(
-            name="tap_warn",
-            attack_class=TreeOfAttacksWithPruningAttack,
-            adversarial_chat=self._make_adversarial_chat(),
-            scorer_override_policy=ScorerOverridePolicy.WARN,
-        )
-
-        generic_config = self._make_generic_scoring_config()
-        target = MagicMock(spec=PromptTarget)
-
-        # Under WARN policy, the scorer override should be skipped with a warning
-        # rather than raising. The factory.create() call may succeed or fail for
-        # unrelated downstream reasons — we only assert that no scorer-incompatibility
-        # ValueError was raised and that a warning was emitted.
-        with caplog.at_level(logging.WARNING):
-            try:
-                factory.create(
-                    objective_target=target,
-                    attack_scoring_config=generic_config,
-                )
-            except Exception as exc:
-                assert "incompatible" not in str(exc).lower()
-
-        # A warning about incompatibility should be logged
-        assert any("incompatible" in record.message.lower() for record in caplog.records)
-
-    def test_tap_factory_silently_skips_on_generic_config_with_skip_policy(self, caplog):
-        """TAP factory silently skips override when policy is SKIP."""
-        import logging
-
-        from pyrit.executor.attack.multi_turn.tree_of_attacks import TreeOfAttacksWithPruningAttack
-
-        factory = AttackTechniqueFactory(
-            name="tap_skip",
-            attack_class=TreeOfAttacksWithPruningAttack,
-            adversarial_chat=self._make_adversarial_chat(),
-            scorer_override_policy=ScorerOverridePolicy.SKIP,
-        )
-
-        generic_config = self._make_generic_scoring_config()
-        target = MagicMock(spec=PromptTarget)
-
-        # Under SKIP policy, the scorer override should be skipped silently. The
-        # factory.create() call may succeed or fail for unrelated downstream reasons
-        # — we only assert that no scorer-incompatibility error or warning was emitted.
-        with caplog.at_level(logging.WARNING):
-            try:
-                factory.create(
-                    objective_target=target,
-                    attack_scoring_config=generic_config,
-                )
-            except Exception as exc:
-                assert "incompatible" not in str(exc).lower()
-
-        # No warning about incompatibility should be logged
+        assert technique.attack.get_attack_scoring_config() is generic_config
         assert not any("incompatible" in record.message.lower() for record in caplog.records)
-
-    def test_tap_factory_accepts_tap_scoring_config(self):
-        """TAP factory forwards TAPAttackScoringConfig regardless of policy."""
-        from pyrit.executor.attack.multi_turn.tree_of_attacks import (
-            TAPAttackScoringConfig,
-            TreeOfAttacksWithPruningAttack,
-        )
-        from pyrit.score import FloatScaleThresholdScorer
-
-        factory = AttackTechniqueFactory(
-            name="tap_accept",
-            attack_class=TreeOfAttacksWithPruningAttack,
-            adversarial_chat=self._make_adversarial_chat(),
-            scorer_override_policy=ScorerOverridePolicy.RAISE,
-        )
-
-        mock_scorer = MagicMock(spec=FloatScaleThresholdScorer)
-        mock_scorer.threshold = 0.7
-        tap_config = TAPAttackScoringConfig(objective_scorer=mock_scorer)
-        target = MagicMock(spec=PromptTarget)
-
-        # The factory should NOT raise about scorer incompatibility for a TAP-typed
-        # scoring config. Downstream construction may succeed or fail for unrelated
-        # reasons — we only assert no scorer-compatibility error is raised.
-        try:
-            factory.create(
-                objective_target=target,
-                attack_scoring_config=tap_config,
-            )
-        except Exception as exc:
-            assert "incompatible" not in str(exc).lower()
 
     def test_prompt_sending_factory_accepts_any_config(self):
         """PromptSendingAttack accepts base AttackScoringConfig — any config passes through."""
-        from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+        from pyrit.executor.attack import PromptSendingAttack
         from pyrit.memory import CentralMemory
 
         factory = AttackTechniqueFactory(
@@ -584,8 +526,8 @@ class TestScorerOverrideTypeInference:
 
     def test_prompt_sending_factory_accepts_tap_scoring_config(self):
         """PromptSendingAttack accepts TAPAttackScoringConfig (subclass of base) — passes through."""
+        from pyrit.executor.attack import PromptSendingAttack
         from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
-        from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
         from pyrit.memory import CentralMemory
         from pyrit.score import FloatScaleThresholdScorer
 
@@ -597,7 +539,8 @@ class TestScorerOverrideTypeInference:
 
         mock_scorer = MagicMock(spec=FloatScaleThresholdScorer)
         mock_scorer.threshold = 0.7
-        tap_config = TAPAttackScoringConfig(objective_scorer=mock_scorer)
+        with pytest.warns(DeprecationWarning, match="TAPAttackScoringConfig is deprecated"):
+            tap_config = TAPAttackScoringConfig(objective_scorer=mock_scorer)
         target = MagicMock(spec=PromptTarget)
 
         mock_memory = MagicMock(spec=MemoryInterface)

@@ -5,16 +5,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pyrit.executor.attack.core import AttackScoringConfig
-from pyrit.executor.attack.core.attack_config import (
+from pyrit.executor.attack import (
     AttackAdversarialConfig,
+    AttackScoringConfig,
+)
+from pyrit.executor.attack.core import (
     resolve_adversarial_json_schema,
     resolve_adversarial_system_prompt,
 )
 from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import Scorer
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score import Scorer, TrueFalseScorer
 
 
 class TestAttackScoringConfig:
@@ -49,6 +50,7 @@ class TestAttackScoringConfig:
     def test_init_raises_error_for_non_true_false_objective_scorer(self):
         """Test that initialization raises ValueError for non-TrueFalseScorer objective_scorer."""
         mock_scorer = MagicMock(spec=Scorer)
+        mock_scorer.capabilities.includes.return_value = False
 
         with pytest.raises(ValueError, match="Objective scorer must be a TrueFalseScorer"):
             AttackScoringConfig(objective_scorer=mock_scorer)
@@ -56,6 +58,7 @@ class TestAttackScoringConfig:
     def test_init_raises_error_for_non_true_false_refusal_scorer(self):
         """Test that initialization raises ValueError for non-TrueFalseScorer refusal_scorer."""
         mock_scorer = MagicMock(spec=Scorer)
+        mock_scorer.capabilities.includes.return_value = False
 
         with pytest.raises(ValueError, match="Refusal scorer must be a TrueFalseScorer"):
             AttackScoringConfig(refusal_scorer=mock_scorer)

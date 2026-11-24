@@ -7,6 +7,7 @@ import io
 import logging
 import os
 import sqlite3
+import sys
 import tempfile
 import threading
 import uuid
@@ -23,14 +24,17 @@ from sqlalchemy.dialects.sqlite import CHAR, JSON
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.sqltypes import NullType
 
-from pyrit.common.singleton import Singleton
-from pyrit.converter.base64_converter import Base64Converter
+from pyrit.common import Singleton
+from pyrit.converter import Base64Converter
+from pyrit.memory import (
+    EmbeddingDataEntry,
+    MemoryEmbedding,
+    PromptMemoryEntry,
+    SQLiteMemory,
+    set_message_piece_sha256_async,
+)
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
-from pyrit.memory.memory_embedding import MemoryEmbedding
-from pyrit.memory.memory_models import Base, EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
-from pyrit.memory.sqlite_memory import SQLiteMemory
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
     Conversation,
     EmbeddingData,
@@ -43,8 +47,8 @@ from pyrit.models import (
     TargetIdentifier,
     flatten_to_message_pieces,
 )
-from pyrit.prompt_target.text_target import TextTarget
-from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
+from pyrit.prompt_target import TextTarget
+from unit.async_utils import TEST_WATCHDOG_SECONDS, settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import get_sample_conversation_entries, make_scenario_result
 
 
@@ -806,7 +810,7 @@ async def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample
         sqlite_instance._insert_entries, entries=sample_conversation_entries
     )
     update_result = await sqlite_instance.update_prompt_entries_by_conversation_id_async(
-        conversation_id=specific_conversation_id, update_fields={"prompt_metadata": "updated_metadata"}
+        conversation_id=specific_conversation_id, update_fields={"prompt_metadata": {"status": "updated"}}
     )
     assert update_result is True
 
@@ -815,10 +819,169 @@ async def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample
             await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id=specific_conversation_id))
         ).all()
         for entry in updated_entries:
-            assert entry.prompt_metadata == "updated_metadata"
+            assert entry.prompt_metadata == {"status": "updated"}
 
         other_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="other_id"))).first()
         assert other_entry.prompt_metadata == original_metadata
+
+
+@pytest.mark.parametrize("metadata", [[], "invalid", None, 1])
+async def test_generic_metadata_update_rejects_invalid_roots_async(
+    sqlite_instance: SQLiteMemory, metadata: Any
+) -> None:
+    await sqlite_instance.add_message_pieces_to_memory_async(
+        message_pieces=[
+            MessagePiece(
+                role="assistant", original_value=value, conversation_id="generic", prompt_metadata={"owner": value}
+            )
+            for value in ("first", "second")
+        ]
+    )
+    before = await sqlite_instance.get_message_pieces_async(conversation_id="generic")
+    with pytest.raises(ValueError, match="prompt_metadata must be a dictionary"):
+        await sqlite_instance.update_prompt_entries_by_conversation_id_async(
+            conversation_id="generic", update_fields={"original_value": "must not change", "prompt_metadata": metadata}
+        )
+    after = await sqlite_instance.get_message_pieces_async(conversation_id="generic")
+    assert [piece.model_dump() for piece in after] == [piece.model_dump() for piece in before]
+
+
+@pytest.mark.parametrize("metadata", [{}, {"nested": {"values": [1, 2]}}])
+async def test_generic_metadata_update_accepts_dictionaries_async(sqlite_instance: SQLiteMemory, metadata: Any) -> None:
+    await sqlite_instance.add_message_pieces_to_memory_async(
+        message_pieces=[
+            MessagePiece(
+                role="assistant", original_value="original", conversation_id="generic", prompt_metadata={"old": 1}
+            )
+        ]
+    )
+    assert await sqlite_instance.update_prompt_entries_by_conversation_id_async(
+        conversation_id="generic", update_fields={"prompt_metadata": metadata, "original_value": "updated"}
+    )
+    pieces = await sqlite_instance.get_message_pieces_async(conversation_id="generic")
+    assert pieces[0].prompt_metadata == metadata
+    assert pieces[0].original_value == "updated"
+    assert not await sqlite_instance.update_prompt_entries_by_conversation_id_async(
+        conversation_id="missing", update_fields={"prompt_metadata": metadata}
+    )
+
+
+@pytest.mark.parametrize("metadata", [[], "invalid", None, 1])
+async def test_metadata_replacement_rejects_invalid_roots_async(sqlite_instance: SQLiteMemory, metadata: Any) -> None:
+    pieces = [
+        MessagePiece(
+            role="assistant", original_value=value, conversation_id="replace", prompt_metadata={"owner": value}
+        )
+        for value in ("first", "second")
+    ]
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+    before = await sqlite_instance.get_message_pieces_async(conversation_id="replace")
+
+    with pytest.raises(ValueError, match="prompt_metadata must be a dictionary"):
+        await sqlite_instance.update_prompt_metadata_by_conversation_id_async(
+            conversation_id="replace", prompt_metadata=metadata
+        )
+
+    after = await sqlite_instance.get_message_pieces_async(conversation_id="replace")
+    assert [piece.model_dump() for piece in after] == [piece.model_dump() for piece in before]
+
+
+@pytest.mark.parametrize("metadata", [{}, {"owner": "new", "count": 2}, {"nested": {"values": [1, 2]}}])
+async def test_metadata_replacement_preserves_dictionary_behavior_async(
+    sqlite_instance: SQLiteMemory, metadata: Any
+) -> None:
+    await sqlite_instance.add_message_pieces_to_memory_async(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="response",
+                conversation_id=conversation_id,
+                prompt_metadata={"owner": "original"},
+            )
+            for conversation_id in ("replace", "other")
+        ]
+    )
+    assert await sqlite_instance.update_prompt_metadata_by_conversation_id_async(
+        conversation_id="replace", prompt_metadata=metadata
+    )
+    pieces = await sqlite_instance.get_message_pieces_async(conversation_id="replace")
+    assert pieces[0].prompt_metadata == metadata
+    other = await sqlite_instance.get_message_pieces_async(conversation_id="other")
+    assert other[0].prompt_metadata == {"owner": "original"}
+    assert not await sqlite_instance.update_prompt_metadata_by_conversation_id_async(
+        conversation_id="missing", prompt_metadata=metadata
+    )
+
+
+async def test_metadata_replacement_sync_entry_rejects_invalid_root_async(sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.add_message_pieces_to_memory_async(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="response",
+                conversation_id="replace",
+                prompt_metadata={"owner": "original"},
+            )
+        ]
+    )
+    metadata: Any = []
+    with pytest.warns(DeprecationWarning, match="update_prompt_metadata_by_conversation_id"):
+        with pytest.raises(ValueError, match="prompt_metadata must be a dictionary"):
+            sqlite_instance.update_prompt_metadata_by_conversation_id(
+                conversation_id="replace", prompt_metadata=metadata
+            )
+    pieces = await sqlite_instance.get_message_pieces_async(conversation_id="replace")
+    assert len(pieces) == 1
+    assert pieces[0].original_value == "response"
+    assert pieces[0].prompt_metadata == {"owner": "original"}
+
+
+async def test_metadata_replacement_rejection_survives_reopen_async(tmp_path: Path) -> None:
+    script = """
+import asyncio
+import sys
+from pathlib import Path
+from pyrit.memory import SQLiteMemory
+from pyrit.models import MessagePiece
+
+async def main_async():
+    memory = SQLiteMemory(db_path=Path(sys.argv[1]), silent=True)
+    try:
+        if sys.argv[2] == "write":
+            await memory.add_message_pieces_to_memory_async(message_pieces=[
+                MessagePiece(role="assistant", original_value=value,
+                             conversation_id="replace", prompt_metadata={"owner": value})
+                for value in ("first", "second")
+            ])
+            for invalid in ([], "invalid"):
+                try:
+                    await memory.update_prompt_metadata_by_conversation_id_async(
+                        conversation_id="replace", prompt_metadata=invalid)
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError("Invalid metadata was accepted")
+        pieces = await memory.get_message_pieces_async(conversation_id="replace")
+        assert len(pieces) == 2
+        assert {p.original_value for p in pieces} == {"first", "second"}
+        assert all(p.prompt_metadata == {"owner": p.original_value} for p in pieces)
+    finally:
+        await memory.dispose_engine_async()
+
+asyncio.run(main_async())
+"""
+    for mode in ("write", "read"):
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            script,
+            str(tmp_path / "metadata.db"),
+            mode,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=TEST_WATCHDOG_SECONDS)
+        assert process.returncode == 0, (stdout + stderr).decode()
 
 
 async def test_get_conversation_stats_returns_empty_for_no_ids(sqlite_instance):
@@ -842,7 +1005,7 @@ async def test_get_conversation_stats_uses_indexed_latest_message_lookup(sqlite_
 
     sql = "\n".join(statements).upper()
     assert 'LEFT JOIN "PROMPTMEMORYENTRIES" LATEST' in sql
-    assert "ORDER BY P2.SEQUENCE DESC, P2.ID DESC" in sql
+    assert "ORDER BY P2.SEQUENCE DESC, P2.TIMESTAMP DESC, P2.ID DESC" in sql
     assert "ROW_NUMBER" not in sql
 
 
@@ -850,6 +1013,32 @@ async def test_get_conversation_stats_returns_empty_for_unknown_ids(sqlite_insta
     """Test that get_conversation_stats omits unknown conversation IDs."""
     result = await sqlite_instance.get_conversation_stats_async(conversation_ids=["nonexistent"])
     assert result == {}
+
+
+async def test_get_conversation_stats_returns_aware_utc_created_at(sqlite_instance):
+    """The raw MIN(timestamp) aggregate must still surface aware UTC like every other read path."""
+    import uuid
+    from datetime import UTC
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    piece = MessagePiece(
+        role="user",
+        original_value="hello",
+        original_value_data_type="text",
+        converted_value="hello",
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=0,
+    )
+    sqlite_instance._insert_entry(PromptMemoryEntry(entry=piece))
+
+    result = await sqlite_instance.get_conversation_stats_async(conversation_ids=[conv_id])
+
+    created_at = result[conv_id].created_at
+    assert created_at == piece.timestamp
+    assert created_at.utcoffset() == UTC.utcoffset(None)
 
 
 async def test_get_conversation_stats_counts_distinct_sequences(sqlite_instance, sample_conversation_entries):
@@ -897,6 +1086,52 @@ async def test_get_conversation_stats_does_not_read_labels_from_prompt_entries(s
     result = await sqlite_instance.get_conversation_stats_async(conversation_ids=[conv_id])
     assert conv_id in result
     assert result[conv_id].labels == {}
+
+
+async def test_get_conversation_stats_picks_the_canonical_last_piece(sqlite_instance):
+    """The preview names the piece the conversation page orders last.
+
+    Pieces of one turn share their sequence number, and the page orders them
+    by timestamp before the id tiebreak, so the preview lookup has to honor
+    the same order instead of handing the win to the bigger id.
+    """
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    earlier = MessagePiece(
+        id=uuid.UUID("ffffffff-0000-0000-0000-000000000001"),
+        role="assistant",
+        original_value="earlier piece",
+        original_value_data_type="text",
+        converted_value="earlier piece",
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=2,
+        timestamp=base,
+    )
+    later = MessagePiece(
+        id=uuid.UUID("00000000-0000-0000-0000-000000000002"),
+        role="assistant",
+        original_value="later piece",
+        original_value_data_type="text",
+        converted_value="later piece",
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=2,
+        timestamp=base + timedelta(seconds=10),
+    )
+    for piece in (earlier, later):
+        sqlite_instance._insert_entry(PromptMemoryEntry(entry=piece))
+
+    stats = await sqlite_instance.get_conversation_stats_async(conversation_ids=[conv_id])
+    page = await sqlite_instance.get_conversation_message_page_async(conversation_id=conv_id, limit=100)
+
+    assert stats[conv_id].last_message_preview == "later piece"
+    assert page.messages[-1].message_pieces[-1].converted_value == "later piece"
 
 
 async def test_get_conversation_stats_preview_caps_raw_value_at_fetch_limit(sqlite_instance):
@@ -1243,8 +1478,8 @@ async def test_file_backed_scenario_writes_wait_for_another_connections_lock_asy
 ) -> None:
     """Concurrent scenario writes wait in SQLite's busy handler rather than failing with ``database is locked``."""
     database = tmp_path / "contention.db"
-    memory = isolated_memory_factory(db_path=database, skip_schema_migration=True)
-    Base.metadata.create_all(memory.engine)
+    memory = isolated_memory_factory(db_path=database, _defer_initialization=True)
+    await memory.initialize_async()
     scenario_target = TargetIdentifier(class_name="ScenarioTarget", class_module="tests.unit.memory")
     existing = make_scenario_result(objective_target_identifier=scenario_target, attack_results={})
     await memory.add_scenario_results_to_memory_async(scenario_results=[existing])

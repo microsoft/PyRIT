@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, assert_never,
 
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.logger import logger
-from pyrit.exceptions.retry_collector import (
+from pyrit.exceptions import (
     get_retry_collector,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
@@ -30,7 +30,7 @@ from pyrit.executor.core import (
     StrategyEventData,
     StrategyEventHandler,
 )
-from pyrit.memory.central_memory import CentralMemory
+from pyrit.memory import CentralMemory
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -46,14 +46,15 @@ from pyrit.models import (
     Identifiable,
     Message,
     Score,
+    ScorerCapabilityName,
     ScorerIdentifier,
     ScoringExpectation,
     SeedPrompt,
     TargetIdentifier,
     UndeterminedScoreError,
 )
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score.observation.lifecycle import AttemptObserver
+from pyrit.prompt_target import CapabilityName, TargetRequirements
+from pyrit.score import AttemptObserver, ScorerRequirements
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Collection, Generator
@@ -74,7 +75,6 @@ if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.prompt_target import PromptTarget
-    from pyrit.prompt_target.common.target_capabilities import CapabilityName
     from pyrit.score import Scorer
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
@@ -171,7 +171,7 @@ class _ObjectiveTargetConversationLifecycle:
             except asyncio.CancelledError as cancellation:
                 # Attempt every reset, then honor the first cancellation after the loop.
                 pending_cancellation = pending_cancellation or cancellation
-            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+            except Exception as error:  # cleanup must not replace the attack outcome
                 self._logger.warning(
                     "Failed to reset objective-target conversation %s: %s",
                     conversation_id,
@@ -735,7 +735,21 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
 
     #: Capability requirements placed on ``objective_target``. Subclasses
     #: override to declare what the attack needs. Validated in ``__init__``.
-    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+    #: Attacks need the target's responses by default. An override keeps
+    #: ``CapabilityName.RESPONSES`` unless the attack supports write-only targets.
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements(
+        native_required=frozenset({CapabilityName.RESPONSES})
+    )
+    ADVERSARIAL_TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+    #: What the attack's algorithm needs from its objective scorer. Attacks decide success from a
+    #: true/false verdict by default; one that also ranks by float feedback adds
+    #: ``PRESERVES_FLOAT_SCALE_VALUE``. Validated in ``__init__`` through
+    #: ``_validate_objective_scorer``, and combined by scenarios with technique and dataset
+    #: requirements before selecting a scorer. Never an evaluation, which belongs to the
+    #: scenario or the dataset.
+    OBJECTIVE_SCORER_REQUIREMENTS: ClassVar[ScorerRequirements] = ScorerRequirements(
+        required=frozenset({ScorerCapabilityName.TRUE_FALSE})
+    )
     #: A fixed execution-input contract for attacks that do not expose ``params_type``.
     FIXED_PARAMS_TYPE: ClassVar[type[AttackParameters] | None] = None
 
@@ -745,6 +759,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: Compound attacks set this when children own outcome scoring and expectation validation.
     #: No scoring configuration alone does not imply delegation.
     DELEGATES_SCORING: ClassVar[bool] = False
+
+    #: Whether this strategy executes child attacks, independent of result attribution.
+    IS_COMPOUND: ClassVar[bool] = False
 
     #: What this strategy's persisted results represent. Compound attacks that only coordinate
     #: child attacks, and never call the objective target themselves, set ``ORCHESTRATION``.
@@ -783,7 +800,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="AttackStrategy")
 
@@ -833,6 +850,23 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             self._request_converters: list[Any] = []
         if not hasattr(self, "_response_converters"):
             self._response_converters: list[Any] = []
+
+    def _validate_objective_scorer(self, *, scorer: Scorer | None) -> None:
+        """
+        Require the objective scorer to meet ``OBJECTIVE_SCORER_REQUIREMENTS``.
+
+        Args:
+            scorer (Scorer | None): The resolved objective scorer; ``None`` is not checked.
+
+        Raises:
+            ValueError: Naming every capability the scorer lacks.
+        """
+        if scorer is None:
+            return
+        try:
+            type(self).OBJECTIVE_SCORER_REQUIREMENTS.validate(scorer=scorer)
+        except ValueError as exc:
+            raise ValueError(f"{type(self).__name__} objective scorer: {exc}") from exc
 
     def _get_prepended_normalizer_overrides(
         self,
@@ -1220,7 +1254,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             stopped.add(id(observer))
             try:
                 observer.stop_observing(attempt_id=attempt_id)
-            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+            except Exception as error:  # cleanup must not replace the attack outcome
                 self._logger.warning(
                     "Failed to stop %s observing attempt %s: %s",
                     type(observer).__name__,

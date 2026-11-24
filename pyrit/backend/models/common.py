@@ -7,20 +7,27 @@ Common models for the PyRIT API.
 Includes pagination, error handling (RFC 7807), shared base models, and request limits.
 """
 
-from typing import Annotated, Any
+from collections.abc import Mapping
+from typing import Annotated, Any, Self, cast
 
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic.main import IncEx
 
-from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_LABEL_KEY_LENGTH, MAX_LABEL_VALUE_LENGTH
+from pyrit.models.request_limits import (
+    MAX_IDENTIFIER_LENGTH,
+    MAX_ITEMS,
+    MAX_LABEL_KEY_LENGTH,
+    MAX_LABEL_VALUE_LENGTH,
+    MAX_TEXT_LENGTH,
+)
 
 REGISTRY_INSTANCE_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 
-# Request limits. Identifier, list, and label limits are shared with ``pyrit.models``. Prompt
+# Request limits. Identifier, list, label, and text limits are shared with ``pyrit.models``. Prompt
 # content (message pieces, system prompts, preview input) and free-form values (metadata and
 # parameter values) are only limited by the request body size, so long prompts and base64 media
 # keep working.
 MAX_CURSOR_LENGTH = 1_024
-MAX_TEXT_LENGTH = 100_000
 MAX_FILE_CONTENT_LENGTH = 1_048_576
 
 IdentifierStr = Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)]
@@ -59,6 +66,74 @@ def validate_label_filter(value: str) -> str:
 LabelFilterStr = Annotated[str, AfterValidator(validate_label_filter)]
 
 
+class RegistrationRequest(BaseModel):
+    """A registration flag with compatible wire and Python access."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    register_instance: bool = Field(
+        True, alias="register", description="Register the object; false returns only its descriptor"
+    )
+
+    @property
+    def register(self) -> bool:
+        """The registration flag, retained for Python caller compatibility."""
+        return self.register_instance
+
+    @register.setter
+    def register(self, value: bool) -> None:
+        self.register_instance = value
+
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
+        """
+        Copy the request, accepting the public registration key in updates.
+
+        Returns:
+            Self: The copied request.
+        """
+        if update is not None and "register" in update:
+            update = dict(update)
+            register = update.pop("register")
+            if "register_instance" in update and update["register_instance"] != register:
+                raise ValueError("register and register_instance updates must match")
+            update["register_instance"] = register
+        return super().model_copy(update=update, deep=deep)
+
+    def model_dump(
+        self, *, include: IncEx | None = None, exclude: IncEx | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        """
+        Serialize the request, accepting registration aliases in field filters.
+
+        Returns:
+            dict[str, Any]: The serialized request.
+        """
+        return super().model_dump(
+            include=self._registration_filter(include), exclude=self._registration_filter(exclude), **kwargs
+        )
+
+    def model_dump_json(self, *, include: IncEx | None = None, exclude: IncEx | None = None, **kwargs: Any) -> str:
+        """
+        Serialize JSON, accepting registration aliases in field filters.
+
+        Returns:
+            str: The serialized request.
+        """
+        return super().model_dump_json(
+            include=self._registration_filter(include), exclude=self._registration_filter(exclude), **kwargs
+        )
+
+    @staticmethod
+    def _registration_filter(fields: IncEx | None) -> IncEx | None:
+        if fields is None or "register" not in fields:
+            return fields
+        if isinstance(fields, set):
+            return (cast("set[str]", fields) - {"register"}) | {"register_instance"}
+        translated = dict(cast("Mapping[str, IncEx | bool]", fields))
+        translated["register_instance"] = translated.pop("register")
+        return translated
+
+
 class PaginationInfo(BaseModel):
     """Pagination metadata for list responses."""
 
@@ -90,6 +165,26 @@ class ProblemDetail(BaseModel):
     detail: str = Field(..., description="Human-readable explanation")
     instance: str | None = Field(None, description="URI of the specific occurrence")
     errors: list[FieldError] | None = Field(None, description="Field-level errors for validation")
+
+
+class NotSaveableProblemDetail(ProblemDetail):
+    """A problem response that can also say why an entry can't be saved as asked."""
+
+    not_saveable_reason: str | None = Field(
+        None,
+        description=(
+            "With type /errors/not-saveable, why the entry can't be saved, as a saveability answer gives it; the "
+            "detail also says that the entry can still be created without saving it"
+        ),
+    )
+
+
+class SaveabilityResponse(BaseModel):
+    """Whether an entry could be saved as asked, decided by the checks saving it runs."""
+
+    not_saveable_reason: str | None = Field(
+        None, description="Why the entry can't be saved, though it can be created without saving it; null if it can"
+    )
 
 
 # Sensitive field patterns to filter from identifiers

@@ -22,9 +22,9 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
-from pyrit.models.parameter import Parameter
+from pyrit.models import Parameter
 from pyrit.prompt_target import TargetRequirements
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
 
@@ -60,7 +60,7 @@ def _build_image_technique_adaptive_technique() -> type[ScenarioTechnique]:
     Returns:
         type[ScenarioTechnique]: The dynamically-built technique enum class.
     """
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-explicit-return]
         class_name="ImageTechniqueAdaptiveTechnique",
         factories=_image_technique_factories(),
         default_names={"blank_canvas", "grid_composite", "comic_panel"},

@@ -5,7 +5,7 @@ import json
 import logging
 import pathlib
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.exceptions import (
@@ -63,14 +63,11 @@ class PersuasionConverter(LLMGenericTextConverter):
             ValueError: If converter_target is not provided and no default has been configured.
             ValueError: If the persuasion technique is not supported or does not exist.
         """
-        try:
-            system_prompt_template = SeedPrompt.from_yaml_file(
-                pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "persuasion" / f"{persuasion_technique}.yaml"
-            )
-        except FileNotFoundError:
-            raise ValueError(
-                f"Persuasion technique '{persuasion_technique}' does not exist or is not supported."
-            ) from None
+        techniques_path = pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "persuasion"
+        # Only shipped names are accepted, so a name can't reach other files on this machine.
+        if persuasion_technique not in {path.stem for path in techniques_path.glob("*.yaml")}:
+            raise ValueError(f"Persuasion technique '{persuasion_technique}' does not exist or is not supported.")
+        system_prompt_template = SeedPrompt.from_yaml_file(techniques_path / f"{persuasion_technique}.yaml")
 
         self.system_prompt = str(system_prompt_template.value)
         self._persuasion_technique = persuasion_technique

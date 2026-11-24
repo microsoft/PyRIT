@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import base64
 import json
 from pathlib import Path
@@ -16,10 +17,10 @@ from pyrit.message_normalizer.message_normalizer import (
     SystemMessageBehavior,
     apply_system_message_behavior_async,
 )
-from pyrit.models import ChatMessage, Message, MessagePiece
+from pyrit.models import ChatMessage, ComponentIdentifier, Message, MessagePiece
 
 if TYPE_CHECKING:
-    from pyrit.models.literals import ChatMessageRole
+    from pyrit.models import ChatMessageRole
 
 
 class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNormalizer):
@@ -60,6 +61,27 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         self.use_developer_role = use_developer_role
         self.system_message_behavior = system_message_behavior
 
+    def as_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the configuration parameters that affect ChatMessage normalization.
+
+        Returns:
+            dict[str, Any]: Parameters including use_developer_role and system_message_behavior.
+        """
+        return {
+            "use_developer_role": self.use_developer_role,
+            "system_message_behavior": self.system_message_behavior,
+        }
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the behavioral identity for this normalizer.
+
+        Returns:
+            ComponentIdentifier: The frozen identity snapshot.
+        """
+        return ComponentIdentifier.of(self, params=self.as_identifier_params())
+
     async def normalize_async(self, messages: list[Message]) -> list[ChatMessage]:
         """
         Convert a list of Messages to a list of ChatMessages.
@@ -92,7 +114,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
                 role = "developer"
 
             # Use simple string for single text piece, otherwise use content list
-            if len(pieces) == 1 and pieces[0].converted_value_data_type == "text":
+            if len(pieces) == 1 and (pieces[0].converted_value_data_type == "text" or pieces[0].is_blocked_error()):
                 content: str | list[dict[str, Any]] = pieces[0].converted_value
             else:
                 content = [await self._piece_to_content_dict_async(piece) for piece in pieces]
@@ -121,7 +143,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         Convert a MessagePiece to a content dict for multipart messages.
 
         Supported data types:
-        - text: {"type": "text", "text": "..."}
+        - text, or a content-filtered error: {"type": "text", "text": "..."}
         - image_path: {"type": "image_url", "image_url": {"url": "data:..."}}
         - audio_path: {"type": "input_audio", "input_audio": {"data": "...", "format": "wav|mp3"}}
         - url: {"type": "image_url", "image_url": {"url": "https://..."}}
@@ -138,7 +160,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         data_type = piece.converted_value_data_type or piece.original_value_data_type
         content = piece.converted_value
 
-        if data_type == "text":
+        if data_type == "text" or piece.is_blocked_error():
             return {"type": "text", "text": content}
         if data_type == "image_path":
             # Convert local image to base64 data URL
@@ -175,7 +197,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         audio_format = self.SUPPORTED_AUDIO_FORMATS[ext]
 
         # Read and encode the audio file
-        if not Path(audio_path).is_file():
+        if not await asyncio.to_thread(Path(audio_path).is_file):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         async with aiofiles.open(audio_path, "rb") as f:

@@ -4,8 +4,10 @@
 import asyncio
 import logging
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
@@ -46,6 +48,7 @@ class GitHubCopilotTarget(PromptTarget):
 
     GITHUB_TOKEN_ENVIRONMENT_VARIABLE: str = "GITHUB_TOKEN"
     caller_path_parameters: ClassVar[frozenset[str]] = frozenset({"working_directory"})
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"github_token": None})
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(supports_multi_turn=True, supports_system_prompt=True)
@@ -384,7 +387,7 @@ class GitHubCopilotTarget(PromptTarget):
             raise RuntimeError("Copilot runtime status is unavailable after client startup.")
         logger.info(
             "Attempting Copilot session creation: pyrit_conversation_id=%s requested_sdk_session_id=%s "
-            "sdk_version=%s runtime_version=%s runtime_protocol_version=%s retain_session=%s remote_mode=OFF",
+            "sdk_version=%s runtime_version=%s runtime_protocol_version=%s retain_session=%s cloud_session=False",
             conversation_id,
             session_id,
             self._sdk.__version__,
@@ -411,7 +414,8 @@ class GitHubCopilotTarget(PromptTarget):
                 session_id=session_id,
                 model=self._model_name,
                 system_message=system_message,
-                remote_session=self._sdk.RemoteSessionMode.OFF,
+                # Cloud sessions are opt-in in the current SDK; keep this conversation local.
+                cloud=None,
                 available_tools=[],
                 skip_custom_instructions=True,
                 instruction_directories=[],
@@ -423,6 +427,14 @@ class GitHubCopilotTarget(PromptTarget):
                 memory={"enabled": False},
                 enable_session_store=False,
                 enable_file_hooks=False,
+                enable_skills=False,
+                included_builtin_skills=[],
+                skip_embedding_retrieval=True,
+                custom_agents_local_only=True,
+                coauthor_enabled=False,
+                manage_schedule_enabled=False,
+                enable_experimental_mode=False,
+                enable_session_telemetry=False,
             )
             async with self._lifecycle_condition:
                 conversation.session = session

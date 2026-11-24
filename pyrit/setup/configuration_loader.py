@@ -19,12 +19,11 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import yaml
 
+from pyrit.common import YamlLoadable, verify_and_resolve_path
 from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.text_helper import is_non_empty_string
-from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_helper import safe_load_yaml
-from pyrit.common.yaml_loadable import YamlLoadable
-from pyrit.models import class_name_to_snake_case
+from pyrit.models import FindingFields, class_name_to_snake_case
 from pyrit.setup.environment_loading import validate_env_akv_strict
 from pyrit.setup.initialization import AZURE_SQL, IN_MEMORY, SQLITE, initialize_pyrit_async, reinitialize_pyrit_async
 
@@ -91,6 +90,37 @@ class _ConfigurationLayer:
     reset_extensions: bool
 
 
+def _check_findings_initializers(initializers: Sequence["PyRITInitializer"]) -> None:
+    """
+    Check the finding fields that ``FindingsInitializer`` subclasses would set, without making them active.
+
+    Code that calls ``set_active_finding_fields`` directly isn't checked.
+
+    Args:
+        initializers (Sequence[PyRITInitializer]): The initializers of the replacement setup pass.
+
+    Raises:
+        ValueError: If two or more ``FindingsInitializer`` subclasses are configured, or the configured one
+            returns invalid fields or something other than ``FindingFields``.
+    """
+    from pyrit.setup.initializers import FindingsInitializer
+
+    setters = [initializer for initializer in initializers if isinstance(initializer, FindingsInitializer)]
+    if len(setters) > 1:
+        first, second = (type(setter).__name__ for setter in setters[:2])
+        raise ValueError(
+            f"{first} and {second} both set the finding fields. Use one FindingsInitializer per deployment."
+        )
+    if not setters:
+        return
+    initializer = setters[0]
+    result = initializer.get_finding_fields()
+    if not isinstance(result, FindingFields):
+        raise ValueError(
+            f"{type(initializer).__name__}.get_finding_fields() must return FindingFields, not {type(result).__name__}."
+        )
+
+
 @dataclass
 class ConfigurationLoader(YamlLoadable):
     """
@@ -116,6 +146,8 @@ class ConfigurationLoader(YamlLoadable):
             followed by a blob prefix, used to persist scenario presets.
         scenario_suites_source: Local directory or Azure Blob container URI, optionally
             followed by a blob prefix, used to persist scenario suites.
+        registry_recipes_source: Local directory or Azure Blob container URI, optionally
+            followed by a blob prefix, used to persist saved targets, converters, scorers, and techniques.
         silent: Whether to suppress initialization messages.
         seed: Optional root seed for deterministic converter operations.
         operator: Name for the current operator, e.g. a team or username.
@@ -171,6 +203,7 @@ class ConfigurationLoader(YamlLoadable):
     custom_initializers_source: str | None = None
     scenario_presets_source: str | None = None
     scenario_suites_source: str | None = None
+    registry_recipes_source: str | None = None
     target_upload_directory: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
@@ -181,7 +214,7 @@ class ConfigurationLoader(YamlLoadable):
 
         Raises:
             ValueError: If concurrency or source paths are invalid.
-            TypeError: If a boolean configuration option has the wrong type.
+            TypeError: If a boolean option, operator, or operation has the wrong type.
         """
         if type(self.max_concurrent_scenario_runs) is not int or self.max_concurrent_scenario_runs < 1:
             raise ValueError("max_concurrent_scenario_runs must be a positive integer.")
@@ -190,6 +223,9 @@ class ConfigurationLoader(YamlLoadable):
                 not isinstance(values, list) or any(not is_non_empty_string(value) for value in values)
             ):
                 raise ValueError("Environment files and initialization scripts must be lists of non-empty paths.")
+        for name, value in (("operator", self.operator), ("operation", self.operation)):
+            if value is not None and not isinstance(value, str):
+                raise TypeError(f"{name} must be a string or None.")
         validate_env_akv_strict(env_akv_strict=self.env_akv_strict)
         if not isinstance(self.enable_live_reinitialization, bool):
             raise TypeError("enable_live_reinitialization must be a bool.")
@@ -200,6 +236,7 @@ class ConfigurationLoader(YamlLoadable):
         self._validate_custom_initializers_source()
         self._validate_scenario_presets_source()
         self._validate_scenario_suites_source()
+        self._validate_registry_recipes_source()
         self._validate_target_upload_directory()
         self._normalize_server()
 
@@ -239,6 +276,15 @@ class ConfigurationLoader(YamlLoadable):
             ValueError: If the source is not a non-empty string.
         """
         self._validate_document_source(name="scenario_suites_source", value=self.scenario_suites_source)
+
+    def _validate_registry_recipes_source(self) -> None:
+        """
+        Validate the optional storage source for saved registry entries.
+
+        Raises:
+            ValueError: If the source is not a non-empty string.
+        """
+        self._validate_document_source(name="registry_recipes_source", value=self.registry_recipes_source)
 
     @staticmethod
     def _validate_document_source(*, name: str, value: Any) -> None:
@@ -573,13 +619,17 @@ class ConfigurationLoader(YamlLoadable):
         def to_init_data(config: ConfigurationLoader) -> dict[str, Any]:
             return {name: copy.deepcopy(getattr(config, name)) for name in init_fields}
 
+        # Console messages are deferred until the merged ``silent`` value is known, so that ``silent: true`` in a
+        # config file suppresses them just like it suppresses the other initialization messages.
+        console_messages: list[str] = []
+
         # 1. Try loading default config file if it exists
         config_data = to_init_data(cls())
         default_config_path = DEFAULT_CONFIG_PATH
         if default_config_path.exists():
             try:
                 logger.info(f"Loading default configuration file: {default_config_path}")
-                print(f"Loading default configuration file: {default_config_path}")
+                console_messages.append(f"Loading default configuration file: {default_config_path}")
                 config_data = to_init_data(cls.from_yaml_file(default_config_path))
             except _RemovedConfigurationOptionError:
                 raise
@@ -593,7 +643,7 @@ class ConfigurationLoader(YamlLoadable):
             if not config_file.exists():
                 raise FileNotFoundError(f"Configuration file not found: {config_file}")
             logger.info(f"Loading configuration file: {config_file}")
-            print(f"Loading configuration file: {config_file}")
+            console_messages.append(f"Loading configuration file: {config_file}")
             explicit_layer = cls._load_layer_from_yaml_file(file=config_file)
             cls._apply_layer(config_data=config_data, layer=explicit_layer, init_fields=init_fields)
         # 3. Apply overrides (non-None values take precedence)
@@ -623,6 +673,10 @@ class ConfigurationLoader(YamlLoadable):
 
         if env_akv_strict is not None:
             config_data["env_akv_strict"] = env_akv_strict
+
+        if not config_data.get("silent", False):
+            for message in console_messages:
+                print(message)
 
         return cls.from_dict(config_data)
 
@@ -706,11 +760,12 @@ class ConfigurationLoader(YamlLoadable):
             PreparedReinitialization: Immutable inputs ready for the mutation phase.
 
         Raises:
-            ValueError: If an initializer is invalid or a required environment value is missing.
+            ValueError: If an initializer is invalid, a required environment value is missing, more than one
+                ``FindingsInitializer`` subclass is configured, or the configured one returns invalid finding
+                fields. Code that calls ``set_active_finding_fields`` directly isn't checked.
         """
         from pyrit.registry import InitializerRegistry
-        from pyrit.setup.initializers.targets import TargetInitializer
-        from pyrit.setup.initializers.techniques import TechniqueInitializer
+        from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
         registry = await asyncio.to_thread(InitializerRegistry)
         registry.configure_custom_scripts_source(self.custom_initializers_source)
@@ -744,6 +799,7 @@ class ConfigurationLoader(YamlLoadable):
                 raise ValueError(
                     f"Initializer '{type(initializer).__name__}' has missing required environment variables."
                 )
+        _check_findings_initializers(initializers)
 
         return PreparedReinitialization(
             environment_values=dict(environment_values),
@@ -758,9 +814,9 @@ class ConfigurationLoader(YamlLoadable):
         Returns:
             Initializers constructed under the replacement environment.
         """
-        from pyrit.setup.initializers.targets import TargetInitializer
-        from pyrit.setup.initializers.techniques import TechniqueInitializer
+        from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
+        self._configure_scenario_sources()
         initializers = list(self.resolve_initializers(registry=prepared.initializer_registry))
         initializers.extend(initializer_type() for initializer_type in prepared.script_initializer_types)
         if not initializers:
@@ -865,6 +921,7 @@ class ConfigurationLoader(YamlLoadable):
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.
         """
+        await asyncio.to_thread(self._configure_scenario_sources)
         resolved_initializers = self.resolve_initializers(
             raise_on_initializer_error=raise_on_initializer_error,
         )
@@ -885,6 +942,13 @@ class ConfigurationLoader(YamlLoadable):
             seed=self.seed,
             raise_on_initializer_error=raise_on_initializer_error,
         )
+
+    def _configure_scenario_sources(self) -> None:
+        """Bind preset and suite storage before initializers register their definitions."""
+        from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
+
+        ScenarioPresetRegistry.get_registry_singleton().configure_source(self.scenario_presets_source)
+        ScenarioSuiteRegistry.get_registry_singleton().configure_source(self.scenario_suites_source)
 
 
 async def initialize_from_config_async(

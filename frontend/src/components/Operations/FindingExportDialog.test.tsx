@@ -4,9 +4,11 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { operationsApi } from '@/services/api'
 import { deferred } from '@/test-utils/deferred'
+import { DEFAULT_FINDING_FIELDS_FIXTURE } from '@/test-utils/findingFieldsFixtures'
 import type { FindingListItem, FindingListResponse, Operation } from '@/types'
 import { downloadFile } from '@/utils/downloadFile'
 import FindingExportDialog from './FindingExportDialog'
+import * as findingExportLimits from './findingExportLimits'
 
 jest.mock('@/services/api', () => ({ operationsApi: { listFindings: jest.fn(), exportFindings: jest.fn() } }))
 jest.mock('@/utils/downloadFile', () => ({ downloadFile: jest.fn() }))
@@ -21,8 +23,9 @@ const OTHER_OPERATION: Operation = {
 function syntheticFinding(index: number, overrides: Partial<FindingListItem> = {}): FindingListItem {
   return {
     id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, operation_id: OPERATION.id,
-    title: `Synthetic finding ${index}`, description: '', severity: 'moderate',
-    created_at: '2026-10-21T12:00:00Z', evidence_count: 0, ...overrides,
+    title: `Synthetic finding ${index}`, severity: 'moderate', field_values: {},
+    created_at: '2026-10-21T12:00:00Z', evidence_count: 0, rows: [], retired: [], parent_finding_id: null,
+    demonstrated: true, paths: [], child_count: 0, ...overrides,
   }
 }
 
@@ -33,9 +36,7 @@ function onePage(items: FindingListItem[]): FindingListResponse {
 const FIRST_PAGE: FindingListResponse = {
   items: Array.from({ length: 100 }, (_, index) => syntheticFinding(index + 1)), has_more: true, next_offset: 100,
 }
-const LAST_PAGE_FINDING = syntheticFinding(101, {
-  title: 'Final-page finding', severity: 'other', severity_other: 'Team-specific severity',
-})
+const LAST_PAGE_FINDING = syntheticFinding(101, { title: 'Final-page finding', severity: 'Team-specific severity' })
 const LAST_PAGE = onePage([LAST_PAGE_FINDING])
 const ALPHA = syntheticFinding(1, { title: 'Alpha', severity: 'critical' })
 const BETA = syntheticFinding(2, { title: 'Beta', severity: 'low' })
@@ -45,11 +46,14 @@ const FILENAME_TIME = '\\d{4}-\\d{2}-\\d{2}-\\d{4}'
 const FINDING_NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'Finding not found' } } }
 const OPERATION_NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'Operation not found' } } }
 const REVIEW_AGAIN = 'Review the list and download again.'
+// Deep enough that rendering one nested element per level exhausts the JavaScript call stack.
+const DEEP_DECOMPOSITION = 3_000
 
 function renderDialog(operation: Operation = OPERATION): ReturnType<typeof render> {
   return render(
     <FluentProvider theme={webLightTheme}>
-      <FindingExportDialog key={operation.id} operation={operation} />
+      <FindingExportDialog key={operation.id} operation={operation} fields={DEFAULT_FINDING_FIELDS_FIXTURE}
+        fieldsRevision={0} />
     </FluentProvider>,
   )
 }
@@ -65,6 +69,8 @@ beforeEach(() => {
   jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([ALPHA, BETA, GAMMA]))
   jest.mocked(operationsApi.exportFindings).mockResolvedValue(BLOB)
 })
+
+afterEach(() => { jest.restoreAllMocks() })
 
 describe('FindingExportDialog', () => {
   it('loads every page before enabling download and sends exactly the selected final-page finding', async () => {
@@ -115,6 +121,138 @@ describe('FindingExportDialog', () => {
     )
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await waitFor(() => expect(screen.getByRole('button', { name: 'Export findings' })).toHaveFocus())
+  })
+
+  it('blocks downloading more findings than one export accepts until the selection fits', async () => {
+    jest.replaceProperty(findingExportLimits, 'MAX_EXPORT_FINDINGS', 2)
+    const user = userEvent.setup()
+    renderDialog()
+    const dialog = await openDialog(user)
+    expect(await within(dialog).findByText('Select at most 2 findings to download at once.')).toBeInTheDocument()
+    const download = within(dialog).getByRole('button', { name: 'Download Word' })
+    expect(download).toBeDisabled()
+
+    await user.click(within(dialog).getByRole('checkbox', { name: BETA.title }))
+    expect(within(dialog).queryByText(/Select at most/)).not.toBeInTheDocument()
+    await user.click(download)
+
+    await waitFor(() => expect(operationsApi.exportFindings).toHaveBeenCalledTimes(1))
+    expect(jest.mocked(operationsApi.exportFindings).mock.calls[0][1].finding_ids).toEqual([ALPHA.id, GAMMA.id])
+  })
+
+  it('lists a decomposition deeper than the call stack without recursing', async () => {
+    const user = userEvent.setup()
+    const chain = Array.from({ length: DEEP_DECOMPOSITION }, (_, index) => syntheticFinding(1_000 + index, {
+      title: `Level ${index}`, parent_finding_id: index === 0 ? null : syntheticFinding(999 + index).id,
+    }))
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage(chain))
+    renderDialog()
+    const dialog = await openDialog(user)
+
+    // Accessible names resolve labels across every row, which is slow in jsdom at this depth, so the test finds the
+    // deepest title and takes the one checkbox in its row.
+    const deepestTitle = await within(dialog).findByText(`Level ${DEEP_DECOMPOSITION - 1}`)
+    const deepestRow = deepestTitle.closest('li')
+    if (!deepestRow) throw new Error('Expected the deepest finding in a list row.')
+    const deepest = within(deepestRow).getByRole('checkbox')
+    expect(deepest).toBeChecked()
+    expect(deepest).toBeDisabled()
+    expect(deepest).toHaveAccessibleDescription(new RegExp(`^Included with “Level ${DEEP_DECOMPOSITION - 2}”`))
+    expect(within(dialog).getAllByRole('list')).toHaveLength(1)
+  }, 60_000)
+
+  it('stops with an error when the server repeats the same page offset', async () => {
+    ;(operationsApi.listFindings as jest.Mock).mockImplementation(
+      async () => ({ items: [ALPHA], has_more: true, next_offset: 0 }),
+    )
+    const user = userEvent.setup()
+    renderDialog()
+    const dialog = await openDialog(user)
+    expect(await within(dialog).findByText(/did not advance/)).toBeInTheDocument()
+    expect(operationsApi.listFindings).toHaveBeenCalledTimes(1)
+  })
+
+  it('nests sub-findings oldest first while findings keep the dashboard order', async () => {
+    const user = userEvent.setup()
+    const parent = syntheticFinding(10, { title: 'Parent', severity: 'critical', child_count: 2 })
+    const first = syntheticFinding(11, {
+      title: 'Written first', severity: 'low', parent_finding_id: parent.id, created_at: '2026-10-21T12:01:00Z',
+    })
+    const second = syntheticFinding(12, {
+      title: 'Written second', severity: 'critical', parent_finding_id: parent.id, created_at: '2026-10-21T12:02:00Z',
+    })
+    // The unfiltered list is in dashboard order: by severity, then newest first.
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([parent, second, ALPHA, BETA, first]))
+    renderDialog()
+    const dialog = await openDialog(user)
+    await within(dialog).findByRole('checkbox', { name: 'Written first' })
+
+    const titles = ['Parent', 'Written first', 'Written second', ALPHA.title, BETA.title]
+    expect(within(dialog).getAllByRole('checkbox').slice(1))
+      .toEqual(titles.map(name => within(dialog).getByRole('checkbox', { name })))
+  })
+
+  it('selects a finding with all of its sub-findings and sends only the finding', async () => {
+    const user = userEvent.setup()
+    const parent = syntheticFinding(10, { title: 'Parent', child_count: 1 })
+    const child = syntheticFinding(11, { title: 'Child', parent_finding_id: parent.id, child_count: 1 })
+    const grandchild = syntheticFinding(12, { title: 'Grandchild', parent_finding_id: child.id })
+    // Findings at every depth arrive in listing order; sub-findings nest under their parent.
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([grandchild, parent, ALPHA, child]))
+    renderDialog()
+    const dialog = await openDialog(user)
+    const [parentBox, childBox, grandchildBox] = await Promise.all(['Parent', 'Child', 'Grandchild']
+      .map(title => within(dialog).findByRole('checkbox', { name: title })))
+    const selectAll = within(dialog).getByRole('checkbox', { name: 'Select all' })
+    expect(within(dialog).getAllByRole('checkbox')).toHaveLength(5)
+    expect(parentBox).toBeChecked()
+    expect(parentBox).toBeEnabled()
+    for (const box of [childBox, grandchildBox]) {
+      expect(box).toBeChecked()
+      expect(box).toBeDisabled()
+    }
+    expect(childBox).toHaveAccessibleDescription(/^Included with “Parent”/)
+    expect(grandchildBox).toHaveAccessibleDescription(/^Included with “Child”/)
+    expect(selectAll).toBeChecked()
+
+    await user.click(parentBox)
+    for (const box of [parentBox, childBox, grandchildBox]) expect(box).not.toBeChecked()
+    expect(childBox).toBeEnabled()
+    expect(selectAll).toBePartiallyChecked()
+
+    await user.click(childBox)
+    expect(childBox).toBeChecked()
+    expect(childBox).toHaveAccessibleDescription(/^Sub-finding of “Parent”/)
+    expect(grandchildBox).toBeChecked()
+    expect(grandchildBox).toBeDisabled()
+    expect(parentBox).not.toBeChecked()
+    await user.click(parentBox)
+    expect(childBox).toBeDisabled()
+    expect(selectAll).toBeChecked()
+    await user.click(within(dialog).getByRole('button', { name: 'Download Word' }))
+
+    await waitFor(() => expect(operationsApi.exportFindings).toHaveBeenCalledTimes(1))
+    expect(jest.mocked(operationsApi.exportFindings).mock.calls[0][1].finding_ids).toEqual([parent.id, ALPHA.id])
+  })
+
+  it('counts sub-findings toward the export limit', async () => {
+    jest.replaceProperty(findingExportLimits, 'MAX_EXPORT_FINDINGS', 2)
+    const user = userEvent.setup()
+    const parent = syntheticFinding(10, { title: 'Parent', child_count: 2 })
+    const children = [11, 12].map(index => syntheticFinding(index, { title: `Child ${index}`, parent_finding_id: parent.id }))
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([parent, ...children]))
+    renderDialog()
+    const dialog = await openDialog(user)
+    expect(await within(dialog).findByText('Select at most 2 findings to download at once.')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Download Word' })).toBeDisabled()
+
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Parent' }))
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Child 11' }))
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Child 12' }))
+    expect(within(dialog).queryByText(/Select at most/)).not.toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Download Word' }))
+    await waitFor(() => expect(operationsApi.exportFindings).toHaveBeenCalledTimes(1))
+    expect(jest.mocked(operationsApi.exportFindings).mock.calls[0][1].finding_ids).toEqual(children.map(child => child.id))
   })
 
   it('lists and exports once a finding that a later page repeats', async () => {
@@ -502,7 +640,8 @@ describe('FindingExportDialog', () => {
 
     view.rerender(
       <FluentProvider theme={webLightTheme}>
-        <FindingExportDialog key={OTHER_OPERATION.id} operation={OTHER_OPERATION} />
+        <FindingExportDialog key={OTHER_OPERATION.id} operation={OTHER_OPERATION}
+          fields={DEFAULT_FINDING_FIELDS_FIXTURE} fieldsRevision={0} />
       </FluentProvider>,
     )
     expect(jest.mocked(operationsApi.exportFindings).mock.calls[0][2]?.aborted).toBe(true)
@@ -523,7 +662,8 @@ describe('FindingExportDialog', () => {
 
     view.rerender(
       <FluentProvider theme={webLightTheme}>
-        <FindingExportDialog key={OTHER_OPERATION.id} operation={OTHER_OPERATION} />
+        <FindingExportDialog key={OTHER_OPERATION.id} operation={OTHER_OPERATION}
+          fields={DEFAULT_FINDING_FIELDS_FIXTURE} fieldsRevision={0} />
       </FluentProvider>,
     )
     const dialog = await openDialog(user)
@@ -533,5 +673,81 @@ describe('FindingExportDialog', () => {
     await act(async () => { staleList.resolve(onePage([ALPHA])) })
     expect(within(dialog).queryByRole('checkbox', { name: ALPHA.title })).not.toBeInTheDocument()
     expect(within(dialog).getByRole('checkbox', { name: other.title })).toBeChecked()
+  })
+
+  it('loads every page again when the finding fields change, keeping the selection', async () => {
+    const user = userEvent.setup()
+    const delta = syntheticFinding(4, { title: 'Delta', severity: 'critical' })
+    const view = renderDialog(OPERATION)
+    const dialog = await openDialog(user)
+    await user.click(await within(dialog).findByRole('checkbox', { name: BETA.title }))
+    expect(within(dialog).getByRole('checkbox', { name: BETA.title })).not.toBeChecked()
+
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([delta, GAMMA, ALPHA, BETA]))
+    view.rerender(
+      <FluentProvider theme={webLightTheme}>
+        <FindingExportDialog key={OPERATION.id} operation={OPERATION} fields={DEFAULT_FINDING_FIELDS_FIXTURE}
+          fieldsRevision={1} />
+      </FluentProvider>,
+    )
+    expect(await within(dialog).findByRole('checkbox', { name: delta.title })).not.toBeChecked()
+    expect(operationsApi.listFindings).toHaveBeenCalledTimes(2)
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith(OPERATION.id, { limit: 100, offset: 0 })
+    expect(within(dialog).getByRole('checkbox', { name: BETA.title })).not.toBeChecked()
+    expect(within(dialog).getByRole('checkbox', { name: ALPHA.title })).toBeChecked()
+    expect(within(dialog).getByRole('checkbox', { name: GAMMA.title })).toBeChecked()
+  })
+
+  it('selects every finding again after the finding fields change when every finding was selected', async () => {
+    const user = userEvent.setup()
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([ALPHA, BETA]))
+    const view = renderDialog(OPERATION)
+    const dialog = await openDialog(user)
+    expect(await within(dialog).findByRole('checkbox', { name: 'Select all' })).toBeChecked()
+
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([GAMMA, ALPHA, BETA]))
+    view.rerender(
+      <FluentProvider theme={webLightTheme}>
+        <FindingExportDialog key={OPERATION.id} operation={OPERATION} fields={DEFAULT_FINDING_FIELDS_FIXTURE}
+          fieldsRevision={1} />
+      </FluentProvider>,
+    )
+    expect(await within(dialog).findByRole('checkbox', { name: GAMMA.title })).toBeChecked()
+    expect(within(dialog).getByRole('checkbox', { name: 'Select all' })).toBeChecked()
+  })
+
+  it('keeps Download unavailable until the list reloads for changed finding fields', async () => {
+    const user = userEvent.setup()
+    const delta = syntheticFinding(4, { title: 'Delta', severity: 'critical' })
+    const reload = deferred<FindingListResponse>()
+    jest.mocked(operationsApi.listFindings)
+      .mockResolvedValueOnce(onePage([ALPHA, BETA, GAMMA]))
+      .mockReturnValueOnce(reload.promise)
+    const view = renderDialog(OPERATION)
+    const dialog = await openDialog(user)
+    await within(dialog).findByRole('checkbox', { name: 'Select all' })
+    const download = within(dialog).getByRole('button', { name: 'Download Word' })
+    download.focus()
+
+    view.rerender(
+      <FluentProvider theme={webLightTheme}>
+        <FindingExportDialog key={OPERATION.id} operation={OPERATION} fields={DEFAULT_FINDING_FIELDS_FIXTURE}
+          fieldsRevision={1} />
+      </FluentProvider>,
+    )
+    // The list from the earlier fields can miss a finding that the reload adds to Select all.
+    expect(within(dialog).getByText('Loading findings…')).toBeInTheDocument()
+    expect(download).toHaveAttribute('aria-disabled', 'true')
+    expect(download).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(operationsApi.exportFindings).not.toHaveBeenCalled()
+
+    await act(async () => { reload.resolve(onePage([delta, ALPHA, BETA, GAMMA])) })
+    expect(within(dialog).getByRole('checkbox', { name: delta.title })).toBeChecked()
+    expect(download).not.toHaveAttribute('aria-disabled')
+    await user.click(download)
+    expect(operationsApi.exportFindings).toHaveBeenCalledWith(OPERATION.id, expect.objectContaining({
+      finding_ids: [delta.id, ALPHA.id, BETA.id, GAMMA.id],
+    }), expect.anything())
   })
 })

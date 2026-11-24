@@ -3,8 +3,7 @@
 
 import pytest
 
-from pyrit.converter import ConverterResult, NatoConverter
-from pyrit.converter.text_selection_strategy import WordIndexSelectionStrategy
+from pyrit.converter import ConverterResult, NatoConverter, WordIndexSelectionStrategy
 
 
 async def test_nato_converter_simple_text():

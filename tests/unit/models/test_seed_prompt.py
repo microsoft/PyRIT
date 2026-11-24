@@ -6,8 +6,7 @@ import uuid
 
 import pytest
 
-from pyrit.models import MessagePiece, RequestTraceContext
-from pyrit.models.seeds.seed_prompt import SeedPrompt
+from pyrit.models import MessagePiece, ProviderTraceReference, RequestTraceContext, SeedPrompt
 
 
 def test_seed_prompt_init_defaults():
@@ -176,6 +175,7 @@ def test_seed_prompt_from_messages_copies_metadata_without_request_traces() -> N
             "custom": {"call_id": "call-1"},
             RequestTraceContext.METADATA_KEY: {"old": "trace"},
             RequestTraceContext.REQUEST_METADATA_KEY: {"old": "request"},
+            **ProviderTraceReference(provider="openai", request_id="chatcmpl-1").to_metadata(),
         },
     )
     seed = SeedPrompt.from_messages([piece.to_message()])[0]

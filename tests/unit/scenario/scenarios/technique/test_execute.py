@@ -20,11 +20,14 @@ from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackScoringConfig,
     ChunkedRequestAttack,
+    PrependedConversationConfig,
     PromptSendingAttack,
     RedTeamingAttack,
+    SequenceCompletionPolicy,
+    SequentialAttack,
+    SequentialAttackResult,
+    TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
-from pyrit.executor.attack.compound import SequenceCompletionPolicy, SequentialAttack, SequentialAttackResult
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
@@ -37,8 +40,11 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    MessageScorable,
     RequestTraceContext,
+    Scorable,
     Score,
+    ScoringExpectation,
     SeedGroupRequirements,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
@@ -50,10 +56,11 @@ from pyrit.scenario import (
     IncompatibleTechniqueError,
     TechniqueRequirements,
 )
-from pyrit.scenario.core.scenario_target_defaults import override_default_adversarial_target
+from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
-from pyrit.scenario.scenarios.technique.execute import Execute, _build_execute_technique
-from pyrit.score import SubStringScorer, TrueFalseScorer
+from pyrit.scenario.scenarios.technique import Execute
+from pyrit.scenario.scenarios.technique.execute import _build_execute_technique
+from pyrit.score import FloatScaleScorer, FloatScaleThresholdScorer, SubStringScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 
@@ -81,6 +88,27 @@ def catalog(patch_central_database: MagicMock) -> Iterator[AttackTechniqueRegist
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
     reset_dynamic_technique_caches()
+
+
+class _Scale(FloatScaleScorer):
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable,)
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
+        return []
+
+
+class _NarrowScoringConfig(AttackScoringConfig):
+    pass
+
+
+class _NarrowScoringAttack(PromptSendingAttack):
+    def __init__(
+        self, *, objective_target: MockPromptTarget, attack_scoring_config: _NarrowScoringConfig | None = None
+    ) -> None:
+        super().__init__(objective_target=objective_target, attack_scoring_config=attack_scoring_config)
 
 
 @pytest.fixture
@@ -408,7 +436,7 @@ class TestExecute:
         assert counts.attempts == 5
         assert counts.overall.errors == 1
         assert counts.overall.retries == 4
-        from pyrit.backend.services.scenario_run_service import ScenarioRunService
+        from pyrit.backend.services import ScenarioRunService
 
         service = ScenarioRunService()
         try:
@@ -449,7 +477,7 @@ class TestExecute:
             await resumed.initialize_async()
 
     async def test_three_attempts_count_as_two_retries_across_surfaces_async(self, scorer: MagicMock) -> None:
-        from pyrit.backend.services.scenario_run_service import ScenarioRunService
+        from pyrit.backend.services import ScenarioRunService
         from pyrit.output._derivation import scenario_overview
 
         target = MockPromptTarget()
@@ -563,8 +591,8 @@ class TestExecute:
         assert len(scenario._atomic_attacks) == 2
 
     async def test_catalog_exposes_technique_count_constraint_async(self, scorer: MagicMock) -> None:
-        from pyrit.backend.services.scenario_service import ScenarioService
-        from pyrit.models.catalog.scenario import ScenarioRunSizeEstimateRequest
+        from pyrit.backend.services import ScenarioService
+        from pyrit.models import ScenarioRunSizeEstimateRequest
 
         with patch.object(Execute, "_get_default_objective_scorer", return_value=scorer):
             service = ScenarioService()
@@ -772,6 +800,29 @@ class TestExecute:
             with pytest.raises(IncompatibleTechniqueError, match="objective target"):
                 await scenario.initialize_async()
 
+    async def test_tap_needs_a_scorer_that_keeps_float_feedback_async(self) -> None:
+        scenario = _scenario(scorer=SubStringScorer(substring="x"), scenario_techniques=["tap"])
+        with pytest.raises(IncompatibleTechniqueError, match="requires 'preserves_float_scale_value'"):
+            await scenario.initialize_async()
+
+    async def test_an_attack_that_would_drop_the_scenario_scorer_is_rejected_async(self, *, scorer: MagicMock) -> None:
+        factory = AttackTechniqueFactory(name="narrow_scoring", attack_class=_NarrowScoringAttack)
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        scenario = _scenario(scorer=scorer, scenario_techniques=["narrow_scoring"])
+        with patch.object(factory, "create", side_effect=AssertionError("Constructed incompatible technique")):
+            with pytest.raises(IncompatibleTechniqueError, match="requires _NarrowScoringConfig"):
+                await scenario.initialize_async()
+
+    async def test_tap_judges_with_the_scenario_scorer_async(self) -> None:
+        scorer = FloatScaleThresholdScorer(scorer=_Scale(), threshold=0.7)
+        with override_default_adversarial_target(MockPromptTarget()):
+            scenario = _scenario(scorer=scorer, scenario_techniques=["tap"])
+            await scenario.initialize_async()
+
+        attack = scenario._atomic_attacks[0].attack_technique.attack
+        assert isinstance(attack, TreeOfAttacksWithPruningAttack)
+        assert attack._objective_scorer is scorer
+
     @pytest.mark.parametrize("retries", [0, 2])
     async def test_permitted_history_adaptation_is_applied_to_each_attempt_async(self, *, retries: int) -> None:
         scorer = SubStringScorer(substring="not in the target response")
@@ -952,8 +1003,8 @@ class TestExecute:
 
     @pytest.mark.parametrize("retries", [0, 2])
     async def test_gui_resume_restores_only_declared_parameters_async(self, *, scorer: MagicMock, retries: int) -> None:
-        from pyrit.backend.services.scenario_run_service import ScenarioRunService
-        from pyrit.models.catalog.scenario import RunScenarioRequest
+        from pyrit.backend.services import ScenarioRunService
+        from pyrit.models.catalog import RunScenarioRequest
 
         target = MockPromptTarget()
         TargetRegistry.get_registry_singleton().instances.register(target, name="unit_objective")
@@ -1124,7 +1175,7 @@ class TestExecute:
             plan_scenario_ids=[scenario._scenario_result_id],
         )
         assert aggregates[scenario._scenario_result_id].error_attempts == 1
-        from pyrit.backend.services.scenario_run_service import ScenarioRunService
+        from pyrit.backend.services import ScenarioRunService
 
         service = ScenarioRunService()
         try:
@@ -1157,7 +1208,7 @@ class TestExecute:
             retries_on_objective_failure=retries,
             objective="Changed objective",
         )
-        with pytest.raises(ValueError, match="cannot resume: missing 1 planned seed group"):
+        with pytest.raises(ValueError, match="does not match the current .Execute. configuration"):
             await changed.initialize_async()
 
     @pytest.mark.parametrize("change", ["append", "metadata"])
@@ -1181,8 +1232,7 @@ class TestExecute:
             await memory.update_prompt_metadata_by_conversation_id_async(
                 conversation_id=history_id, prompt_metadata={"custom": "new metadata"}
             )
-        expected_error = "cannot resume: missing 1 planned seed group" if change == "append" else "does not match"
-        with pytest.raises(ValueError, match=expected_error):
+        with pytest.raises(ValueError, match="does not match"):
             await resumed.initialize_async()
 
     def test_alias_and_dynamic_cache_reset(self) -> None:
@@ -1241,7 +1291,7 @@ class TestExecute:
     async def test_existing_compound_identity_is_unchanged_without_packaged_children_async(
         self, scorer: MagicMock
     ) -> None:
-        from pyrit.executor.attack.compound import SequentialChildAttack
+        from pyrit.executor.attack import SequentialChildAttack
 
         scenario = _scenario(scorer=scorer)
         await scenario.initialize_async()

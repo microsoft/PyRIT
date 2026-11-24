@@ -13,8 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.assert_mocks import make_assert_config, make_assert_result
 
-from pyrit.executor.attack import AttackStrategy, PromptSendingAttack, RedTeamingAttack
-from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
+from pyrit.executor.attack import AttackScoringConfig, AttackStrategy, PromptSendingAttack, RedTeamingAttack
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
@@ -22,31 +21,37 @@ from pyrit.models import (
     AttackResult,
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
+    ComponentIdentifier,
+    ScenarioEvaluationIdentifier,
     ScenarioRunPlanGroupKind,
+    ScorerCapabilityName,
     SeedGroupRequirements,
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.identifiers import ComponentIdentifier, ScenarioEvaluationIdentifier
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario import IncompatibleTechniqueError, IncompatibleTechniquePolicy, TechniqueRequirements
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario import (
+    AttackTechnique,
+    AttackTechniqueFactory,
+    BaselineAttackPolicy,
+    DatasetAttackConfiguration,
+    IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
+    TechniqueRequirements,
+)
+from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_target_defaults import override_default_adversarial_target
-from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher
-from pyrit.scenario.scenarios.adaptive.selectors import (
+from pyrit.scenario.scenarios.adaptive import (
+    AdaptiveTechniqueDispatcher,
     EpsilonGreedyTechniqueSelector,
     SelectorScope,
     TechniqueSelector,
+    TextAdaptive,
 )
-from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.score import SubStringScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques.core import get_technique_factories
-from tests.unit.mocks import MockPromptTarget
+from tests.unit.mocks import MockPromptTarget, accept_scenario_scoring
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -71,6 +76,10 @@ def mock_objective_target() -> MagicMock:
 def mock_objective_scorer() -> MagicMock:
     mock = MagicMock(spec=TrueFalseScorer)
     mock.get_identifier.return_value = _mock_id("MockObjectiveScorer")
+    # Like the default composite scorer, it keeps no float value on its verdicts.
+    mock.capabilities.includes.side_effect = lambda *, capability: (
+        capability is not ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE
+    )
     return mock
 
 
@@ -107,25 +116,35 @@ def mock_runtime_env():
             "OPENAI_CHAT_MODEL": "gpt-4",
         },
     ):
-        yield
+        with override_default_adversarial_target(MockPromptTarget()):
+            yield
 
 
 def _make_seed_group(*, value: str, harm_categories: list[str] | None = None) -> AttackSeedGroup:
     return AttackSeedGroup(seeds=[SeedObjective(value=value, harm_categories=harm_categories)])
 
 
+class _NarrowScoringConfig(AttackScoringConfig):
+    pass
+
+
+class _NarrowScoringAttack(PromptSendingAttack):
+    def __init__(
+        self, *, objective_target: PromptTarget, attack_scoring_config: _NarrowScoringConfig | None = None
+    ) -> None:
+        super().__init__(objective_target=objective_target, attack_scoring_config=attack_scoring_config)
+
+
 def _make_fake_factory(
     *,
     seed_technique: AttackTechniqueSeedGroup | None = None,
     adversarial_chat: PromptTarget | None = None,
-    scoring_config_type: type | None = None,
     requirements: TechniqueRequirements | None = None,
 ) -> MagicMock:
     """Return a stub attack-technique factory that produces a fake ``AttackTechnique``.
 
     Mocks the surface ``AdaptiveScenario._build_techniques_dict`` consumes
-    (``factory.create(...)``, ``factory.adversarial_chat``, and
-    ``factory.scoring_config_type``). Each call assigns a unique fake
+    (``factory.create(...)`` and ``factory.adversarial_chat``). Each call assigns a unique fake
     attack identifier (via a fresh UUID) so the bundle dict keys (eval
     hashes) don't collide across calls — no shared mutable test state, so
     test execution order doesn't shift hash values.
@@ -139,14 +158,15 @@ def _make_fake_factory(
     )
     fake_technique = AttackTechnique(attack=fake_attack, seed_technique=seed_technique, requirements=requirements)
     factory = MagicMock(spec=AttackTechniqueFactory)
+    factory.uses_default_adversarial_target = False
+    factory.get_identifier.return_value = _mock_id(f"FakeFactory{fake_id}")
     factory.attack_class = PromptSendingAttack
     factory.requirements = fake_technique.requirements
     factory.seed_technique = seed_technique
     factory.create.return_value = fake_technique
     factory.adversarial_chat = adversarial_chat
     factory.resolve_adversarial_chat.return_value = adversarial_chat
-    factory.scoring_config_type = scoring_config_type
-    return factory
+    return accept_scenario_scoring(factory)
 
 
 FIXTURES = ["patch_central_database", "mock_runtime_env", "mock_dataset_preparation"]
@@ -598,7 +618,8 @@ class TestTextAdaptiveAtomicAttacks:
             len({ScenarioEvaluationIdentifier(result.scenario_identifier).eval_hash for result in stored_results}) == 1
         )
         assert mock_prepare.await_count == 2
-        assert [call.kwargs["apply_sampling"] for call in mock_groups.await_args_list] == [True, False, True]
+        # Resume rebuilds the stored population and never resolves the datasets.
+        assert [call.kwargs["apply_sampling"] for call in mock_groups.await_args_list] == [True, True]
 
     async def test_atomic_names_contain_dataset_and_objective_hash(self, mock_objective_target, mock_objective_scorer):
         groups = {
@@ -805,75 +826,28 @@ class TestTextAdaptiveAtomicAttacks:
         assert len(attacks) == 1
         assert any("dataset 'hate': skipped 1 seed group" in record.getMessage() for record in caplog.records)
 
-    async def test_factory_with_narrowed_scoring_config_type_receives_subtype(
-        self, mock_objective_target, mock_objective_scorer
-    ):
-        """When a factory's attack class narrows ``attack_scoring_config`` to a
-        subtype, the scenario builds and passes that subtype to ``create``."""
-        from pyrit.executor.attack import AttackScoringConfig
-
-        class NarrowScoringConfig(AttackScoringConfig):
-            pass
-
-        groups = {"violence": [_make_seed_group(value="obj")]}
-        narrow_factory = _make_fake_factory(scoring_config_type=NarrowScoringConfig)
-        with (
-            patch.object(
-                DatasetAttackConfiguration,
-                "get_attack_groups_by_dataset_async",
-                new_callable=AsyncMock,
-                return_value=groups,
-            ),
-        ):
-            scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            technique_class = scenario.get_technique_class()
-            with patch.object(
-                scenario,
-                "_get_attack_technique_factories",
-                return_value={"role_play_movie_script": narrow_factory},
-            ):
-                scenario.set_params_from_args(
-                    args={
-                        "objective_target": mock_objective_target,
-                        "include_baseline": False,
-                        "scenario_techniques": [technique_class("role_play_movie_script")],
-                    }
-                )
-                await scenario.initialize_async()
-
-        narrow_factory.create.assert_called_once()
-        kwargs = narrow_factory.create.call_args.kwargs
-        passed_config = kwargs["attack_scoring_config"]
-        assert isinstance(passed_config, NarrowScoringConfig)
-        assert passed_config.objective_scorer is mock_objective_scorer
-
-    async def test_factory_with_incompatible_narrowed_scoring_config_is_skipped(
+    async def test_a_technique_needing_float_feedback_is_skipped_with_its_reason(
         self, mock_objective_target, mock_objective_scorer, caplog
     ):
-        """When the narrowed ``attack_scoring_config`` subtype rejects the
-        scenario's objective scorer, the technique is skipped with a warning
-        rather than silently falling back to the base config (which could let
-        a WARN-policy factory substitute its internal default scorer)."""
+        """A scorer without float feedback skips TAP before construction, naming why."""
         import logging
 
-        class StrictScoringConfig(TAPAttackScoringConfig):
-            pass
+        from pyrit.executor.attack import TreeOfAttacksWithPruningAttack
 
         groups = {"violence": [_make_seed_group(value="obj")]}
         good_factory = _make_fake_factory()
-        strict_factory = _make_fake_factory(scoring_config_type=StrictScoringConfig)
+        ranking_factory = _make_fake_factory()
+        ranking_factory.attack_class = TreeOfAttacksWithPruningAttack
 
-        with (
-            patch.object(
-                DatasetAttackConfiguration,
-                "get_attack_groups_by_dataset_async",
-                new_callable=AsyncMock,
-                return_value=groups,
-            ),
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             technique_class = scenario.get_technique_class()
-            factories = {"role_play_movie_script": good_factory, "tap": strict_factory}
+            factories = {"role_play_movie_script": good_factory, "tap": ranking_factory}
             with patch.object(scenario, "_get_attack_technique_factories", return_value=factories):
                 with caplog.at_level(logging.WARNING):
                     scenario.set_params_from_args(
@@ -888,15 +862,50 @@ class TestTextAdaptiveAtomicAttacks:
                         context=scenario._build_scenario_context(seed_groups_by_dataset={})
                     )
 
-        # Strict factory's create is never called — incompatibility surfaces
-        # before construction, not via the factory's override policy.
-        strict_factory.create.assert_not_called()
-        # Only the compatible technique remains in the pool.
-        technique_names = {b.name for b in techniques.values()}
-        assert technique_names == {"role_play_movie_script"}
-        # The skip reason mentions the required config type so operators can
-        # diagnose the mismatch.
-        assert any("tap" in r.getMessage() and "StrictScoringConfig" in r.getMessage() for r in caplog.records)
+        ranking_factory.create.assert_not_called()
+        assert {b.name for b in techniques.values()} == {"role_play_movie_script"}
+        assert any("requires 'preserves_float_scale_value'" in r.getMessage() for r in caplog.records)
+
+    async def test_a_technique_that_would_drop_the_scenario_scorer_is_skipped(
+        self, mock_objective_target, mock_objective_scorer, caplog
+    ):
+        """An attack whose annotation drops a plain scoring config never runs with its own judge."""
+        import logging
+
+        groups = {"violence": [_make_seed_group(value="obj")]}
+        narrow = AttackTechniqueFactory(name="many_shot", attack_class=_NarrowScoringAttack)
+        factories = {"role_play_movie_script": _make_fake_factory(), "many_shot": narrow}
+
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
+            scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
+            technique_class = scenario.get_technique_class()
+            with (
+                patch.object(scenario, "_get_attack_technique_factories", return_value=factories),
+                patch.object(narrow, "create", side_effect=AssertionError("Constructed incompatible technique")),
+                caplog.at_level(logging.WARNING),
+            ):
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                        "scenario_techniques": [
+                            technique_class("role_play_movie_script"),
+                            technique_class("many_shot"),
+                        ],
+                    }
+                )
+                await scenario.initialize_async()
+                techniques = scenario._build_techniques_dict(
+                    context=scenario._build_scenario_context(seed_groups_by_dataset={})
+                )
+
+        assert {b.name for b in techniques.values()} == {"role_play_movie_script"}
+        assert any("requires _NarrowScoringConfig" in r.getMessage() for r in caplog.records)
 
     async def test_factory_create_failure_propagates_async(self, mock_objective_target, mock_objective_scorer):
         """Unrelated factory construction errors must not become skipped work."""
@@ -1090,12 +1099,13 @@ class TestTextAdaptiveResume:
         restored_selector.select_async.assert_not_awaited()
         assert [group.model_dump(mode="json") for group in groups] == snapshots
         if max_total == "all":
-            with pytest.raises(ValueError, match="planned seed-group occurrence.*missing"):
-                await initialize_async(
-                    selector=restored_selector,
-                    scenario_result_id=original._scenario_result_id,
-                    sources=groups[:1],
-                )
+            # Resume rebuilds the stored population, so a source losing an occurrence doesn't matter.
+            shrunk = await initialize_async(
+                selector=restored_selector,
+                scenario_result_id=original._scenario_result_id,
+                sources=groups[:1],
+            )
+            assert shrunk._build_run_plan() == plan
             restored_selector.select_async.assert_not_awaited()
 
     @pytest.mark.parametrize("simulated", [False, True])
@@ -1141,7 +1151,7 @@ class TestTextAdaptiveResume:
         original = await initialize_async(factory=original_factory)
         unchanged = await initialize_async(factory=original_factory, scenario_result_id=original._scenario_result_id)
         assert unchanged._build_run_plan() == original._build_run_plan()
-        with pytest.raises(ValueError, match="unavailable|reconstructable"):
+        with pytest.raises(ValueError, match="saved scenario dependencies changed"):
             await initialize_async(factory=changed_factory, scenario_result_id=original._scenario_result_id)
 
     async def _initialize_scenario_async(
@@ -1379,7 +1389,7 @@ class TestTextAdaptiveResume:
         selector.select_async.reset_mock()
         selector.select_async.side_effect = AssertionError("Resume selected techniques again")
 
-        with pytest.raises(ValueError, match="Selected adaptive techniques are unavailable or incompatible"):
+        with pytest.raises(ValueError, match="saved scenario dependencies changed"):
             await self._initialize_scenario_async(
                 target=mock_objective_target,
                 scorer=mock_objective_scorer,
@@ -1390,11 +1400,9 @@ class TestTextAdaptiveResume:
             )
         selector.select_async.assert_not_awaited()
 
-    @pytest.mark.parametrize("missing_data", ["choices", "run_plan"])
     async def test_resume_rejects_missing_saved_choices_async(
         self,
         *,
-        missing_data: str,
         mock_objective_target: MagicMock,
         mock_objective_scorer: MagicMock,
     ) -> None:
@@ -1413,10 +1421,7 @@ class TestTextAdaptiveResume:
         assert scenario_result_id is not None
         [stored] = await original._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
         metadata = dict(stored.metadata)
-        if missing_data == "choices":
-            del metadata["run_plan"]["atomic_groups"][0]["selected_technique_eval_hashes"]
-        else:
-            del metadata["run_plan"]
+        del metadata["run_plan"]["atomic_groups"][0]["selected_technique_eval_hashes"]
         await original._memory.update_scenario_metadata_async(
             scenario_result_id=scenario_result_id,
             metadata=metadata,

@@ -98,7 +98,6 @@ class PyRITShell(cmd.Cmd):
         run <scenario> [opts]      - Run a scenario with optional parameters
         scenario-history [N]       - List the last N (default 10) scenario runs
         scenario-results [id]      - Inspect a run: --view overview|attacks|conversations|full
-        print-scenario [id]        - Deprecated alias for 'scenario-results'
         start-server               - Start a local backend server
         stop-server                - Stop the owned backend server
         help [command]             - Show help for a command
@@ -514,6 +513,9 @@ class PyRITShell(cmd.Cmd):
             "scenario_name": scenario_name,
             "target_name": args.get("target") or "",
         }
+        for role in ("scoring", "adversarial"):
+            if args.get(f"{role}_target"):
+                request_kwargs[f"{role}_target_name"] = args[f"{role}_target"]
 
         # Map initializers
         initializers = args.get("initializers")
@@ -806,27 +808,6 @@ class PyRITShell(cmd.Cmd):
         except Exception as exc:
             _print_shell_exception(exc=exc)
             return
-
-    def do_print_scenario(self, arg: str) -> None:
-        """
-        Print a scenario run's overview (deprecated alias for ``scenario-results``).
-
-        Equivalent to ``scenario-results <id>``, whose default ``overview`` view
-        produces the same output.
-
-        Usage:
-            print-scenario <scenario_result_id>
-        """
-        from pyrit.common.deprecation import print_deprecation_message
-
-        print_deprecation_message(
-            old_item="print-scenario",
-            new_item="scenario-results",
-            removed_in="1.3.0",
-        )
-        # DeprecationWarning is suppressed by default in the REPL, so also print a visible note.
-        print("Note: 'print-scenario' is deprecated; use 'scenario-results <id>' instead.")
-        self.do_scenario_results(arg.strip())
 
     # ------------------------------------------------------------------
     # Server management

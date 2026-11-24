@@ -9,12 +9,11 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.converter import Base64Converter, ROT13Converter
-from pyrit.executor.attack import PromptSendingAttack
-from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget, TargetRequirements
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario import AttackTechniqueFactory
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
 from pyrit.score import TrueFalseScorer
 
@@ -52,11 +51,13 @@ def _create(factory: AttackTechniqueFactory, **kwargs):
     )
 
 
-def test_no_override_or_extras_preserves_baked_configuration():
+@pytest.mark.parametrize("has_config", [False, True])
+def test_no_override_or_extras_preserves_baked_configuration(has_config):
     baked = _converter_config(
         request=ConverterConfiguration.from_converters(converters=[Base64Converter()]),
         response=ConverterConfiguration.from_converters(converters=[ROT13Converter()]),
     )
+    baked = baked if has_config else None
     factory = AttackTechniqueFactory(
         name="test",
         attack_class=_ConverterAttack,
@@ -196,6 +197,19 @@ class _NoConverterAttack:
 
     def get_identifier(self) -> ComponentIdentifier:
         return ComponentIdentifier(class_name="_NoConverterAttack", class_module="test")
+
+
+@pytest.mark.parametrize("with_extras", [False, True])
+def test_baked_value_that_is_not_a_converter_config_raises(with_extras):
+    factory = AttackTechniqueFactory(
+        name="test",
+        attack_class=_ConverterAttack,
+        attack_kwargs={"attack_converter_config": {"request_converters": []}},
+    )
+    extras = ConverterConfiguration.from_converters(converters=[Base64Converter()]) if with_extras else None
+
+    with pytest.raises(TypeError, match="attack_converter_config must be an AttackConverterConfig"):
+        _create(factory, extra_request_converters=extras)
 
 
 def test_extras_raise_when_the_attack_cannot_take_converters():

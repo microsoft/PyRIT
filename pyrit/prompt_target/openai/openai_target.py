@@ -5,8 +5,10 @@ import json
 import logging
 import re
 from abc import abstractmethod
-from collections.abc import Awaitable, Callable
-from typing import Any, ClassVar
+from collections.abc import Awaitable, Callable, Mapping
+from copy import deepcopy
+from types import MappingProxyType
+from typing import Any, ClassVar, TypedDict
 from urllib.parse import urlparse
 
 from openai import (
@@ -21,16 +23,25 @@ from openai._exceptions import (
     APITimeoutError,
     AuthenticationError,
 )
+from pydantic import TypeAdapter
 
-from pyrit.auth import resolve_openai_auth
+from pyrit.auth import clean_credential_value, clean_request_headers, resolve_openai_auth
+from pyrit.auth.credential_values import FRAMING_HEADER_NAMES
 from pyrit.common import default_values
-from pyrit.exceptions.exception_classes import (
+from pyrit.exceptions import (
     RateLimitException,
     handle_bad_request_exception,
 )
-from pyrit.models import Message, MessagePiece
+from pyrit.models import (
+    GenerationRange,
+    Message,
+    MessagePiece,
+    ParameterResolution,
+    RequestGenerationConfig,
+    RequestGenerationInfo,
+)
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.openai._response_adapter import OpenAIResponseAdapter
 from pyrit.prompt_target.openai.openai_error_handling import (
@@ -40,6 +51,90 @@ from pyrit.prompt_target.openai.openai_error_handling import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _GenerationDeclarations(TypedDict, total=False):
+    supports_temperature: bool
+    ranges: dict[CapabilityName, tuple[float, float]]
+
+
+class _OpenAIModelSampling:
+    """Resolve shared OpenAI model sampling rules, independently of API-specific support."""
+
+    _REASONING_DEFAULT_MODELS: ClassVar[frozenset[str]] = frozenset(
+        {"gpt-5.5", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+    )
+    _UNSUPPORTED_MODELS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-5-pro",
+            "gpt-5.2-pro",
+            "gpt-5.4-pro",
+            "gpt-5.5-pro",
+            "gpt-5-codex",
+            "gpt-5.1-codex",
+            "gpt-5.1-codex-mini",
+            "gpt-5.1-codex-max",
+            "gpt-5.2-codex",
+            "gpt-5.3-codex",
+            "o1",
+            "o1-mini",
+            "o1-preview",
+            "o1-pro",
+            "o3",
+            "o3-mini",
+            "o3-pro",
+            "o4-mini",
+            "gpt-4o-audio-preview",
+            "gpt-4o-mini-audio-preview",
+            "gpt-4o-realtime-preview",
+            "gpt-4o-mini-realtime-preview",
+        }
+    )
+    _SNAPSHOT_SUFFIX: ClassVar[re.Pattern[str]] = re.compile(r"-\d{4}-\d{2}-\d{2}$")
+
+    @classmethod
+    def generation_range(cls, *, capability: CapabilityName, model_name: object) -> tuple[float, float] | None:
+        """
+        Return inferred bounds for a generation capability.
+
+        Returns:
+            tuple[float, float] | None: Inclusive bounds, or None when no inference is available.
+        """
+        if capability != CapabilityName.TEMPERATURE:
+            return None
+        model = cls._SNAPSHOT_SUFFIX.sub("", model_name).lower() if isinstance(model_name, str) else ""
+        return (0.0, 1.0) if model == "mistral-large-3" else (0.0, 2.0)
+
+    @classmethod
+    def supports_temperature(
+        cls, *, model_name: object, reasoning_effort: object = None, declared_support: bool | None = None
+    ) -> bool:
+        """
+        Resolve support from explicit declarations, then model inference.
+
+        Args:
+            model_name (object): Effective model or deployment name.
+            reasoning_effort (object): Explicit effective effort, or None when omitted.
+            declared_support (bool | None): Override model inference, including inferred reasoning defaults.
+                Explicit reasoning effort other than "none" still disables temperature.
+
+        Returns:
+            bool: Inferred support. Unrecognized models default to supported; providers may still reject them.
+        """
+        if not isinstance(model_name, str) or reasoning_effort not in (None, "none"):
+            return False
+        if declared_support is not None:
+            return declared_support
+        # Only dated snapshots inherit a named model's rule, not arbitrary prefixed variants.
+        model = cls._SNAPSHOT_SUFFIX.sub("", model_name).lower()
+        if model in cls._UNSUPPORTED_MODELS:
+            return False
+        if model in cls._REASONING_DEFAULT_MODELS:
+            return reasoning_effort == "none"
+        return True
 
 
 class OpenAITarget(PromptTarget):
@@ -57,11 +152,29 @@ class OpenAITarget(PromptTarget):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(supports_multi_message_pieces=True)
     )
+    _GENERATION_RANGES_ADAPTER: ClassVar[TypeAdapter[dict[str, tuple[float, float]]]] = TypeAdapter(
+        dict[str, GenerationRange]
+    )
     _response_adapter: OpenAIResponseAdapter[Any] = OpenAIResponseAdapter()
 
     # OpenAI-family targets can mint an Entra ID token for a recognized Azure
-    # endpoint (see ``is_azure_openai_endpoint``), so they support both modes.
-    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
+    # endpoint (see ``is_azure_openai_endpoint``), and OpenAI-compatible servers
+    # such as Ollama or vLLM may need no key at all.
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity", "none")
+    # Empty headers read ``OPENAI_ADDITIONAL_REQUEST_HEADERS`` unless the mode is "none"; "{}" sends none.
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType(
+        {"api_key": None, "headers": "{}"}
+    )
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
+    environment_backed_parameters: ClassVar[frozenset[str]] = frozenset({"endpoint", "model_name"})
+    # The OpenAI SDK adds these headers to every client it creates.
+    server_header_variables: ClassVar[tuple[str, ...]] = ("OPENAI_CUSTOM_HEADERS",)
+
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {"endpoint", "auth_mode", "api_key", "headers", "httpx_client_kwargs"}
+    )
+    # Identifier params that describe constructor inputs instead of repeating them, so copies keep the inputs.
+    _DESCRIPTIVE_IDENTIFIER_PARAMS: ClassVar[frozenset[str]] = frozenset({"tools", "tool_providers"})
 
     model_name_environment_variable: str
     endpoint_environment_variable: str
@@ -102,6 +215,7 @@ class OpenAITarget(PromptTarget):
         httpx_client_kwargs: dict[str, Any] | None = None,
         underlying_model: str | None = None,
         custom_configuration: TargetConfiguration | None = None,
+        generation_ranges: dict[str, GenerationRange] | None = None,
     ) -> None:
         """
         Initialize an instance of OpenAITarget.
@@ -119,9 +233,13 @@ class OpenAITarget(PromptTarget):
             auth_mode (AuthMode, Optional): Explicitly selects how to authenticate. ``"identity"``
                 authenticates with a Microsoft Entra ID token minted for the endpoint; it ignores the
                 API key environment variable, rejects an explicit ``api_key``, and requires a
-                recognized Azure OpenAI / AI Foundry endpoint. Defaults to ``"api_key"``, which
-                resolves the key as described above.
-            headers (str, Optional): Extra headers of the endpoint (JSON).
+                recognized Azure OpenAI / AI Foundry endpoint. ``"none"`` is for OpenAI-compatible
+                endpoints that need no key: it reads neither the API key nor the
+                ``OPENAI_ADDITIONAL_REQUEST_HEADERS`` environment variable, rejects an explicit
+                ``api_key``, and sends the non-secret placeholder ``not-needed`` because the OpenAI
+                SDK requires a key. Defaults to ``"api_key"``, which resolves the key as described above.
+            headers (str, Optional): Extra headers of the endpoint (JSON). Defaults to the
+                ``OPENAI_ADDITIONAL_REQUEST_HEADERS`` environment variable unless ``auth_mode`` is ``"none"``.
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
@@ -134,17 +252,28 @@ class OpenAITarget(PromptTarget):
                 Defaults to None.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. If None, uses the class-level defaults. Defaults to None.
+            generation_ranges (dict[str, GenerationRange] | None): Inclusive runtime bounds keyed by generation
+                option name, overriding model inference for those options. Omitted entries retain inference.
+                Does not enable unsupported options or model modes, or change configured defaults.
 
         Raises:
             ValueError: If identity auth is requested for an endpoint that is not a recognized
-                Azure OpenAI / AI Foundry endpoint, or if ``"api_key"`` auth is requested and no
-                key is available via parameter or environment variable.
+                Azure OpenAI / AI Foundry endpoint, if identity or no-key auth is requested with an
+                explicit ``api_key``, or if ``"api_key"`` auth is requested and no key is available
+                via parameter or environment variable.
         """
         self._headers: dict[str, str] = {}
-        self._httpx_client_kwargs = httpx_client_kwargs or {}
+        self._httpx_client_kwargs = dict(httpx_client_kwargs or {})
+        if (default_headers := self._httpx_client_kwargs.get("default_headers")) is not None:
+            self._httpx_client_kwargs["default_headers"] = clean_request_headers(default_headers)
+        self._auth_mode = auth_mode
 
-        request_headers = default_values.get_non_required_value(
-            env_var_name=self.ADDITIONAL_REQUEST_HEADERS, passed_value=headers
+        request_headers = (
+            headers
+            if auth_mode == "none"
+            else default_values.get_non_required_value(
+                env_var_name=self.ADDITIONAL_REQUEST_HEADERS, passed_value=headers
+            )
         )
 
         self._headers = self._parse_request_headers(request_headers)
@@ -157,6 +286,20 @@ class OpenAITarget(PromptTarget):
         endpoint_value = default_values.get_required_value(
             env_var_name=self.endpoint_environment_variable, passed_value=endpoint
         )
+        self._declared_generation: _GenerationDeclarations = {}
+        if (
+            custom_configuration is not None
+            and "supports_temperature" in custom_configuration.capabilities.model_fields_set
+        ):
+            self._declared_generation["supports_temperature"] = custom_configuration.capabilities.supports_temperature
+        self._effective_generation = deepcopy(self._declared_generation)
+        if generation_ranges is not None:
+            for name, bounds in self._GENERATION_RANGES_ADAPTER.validate_python(generation_ranges).items():
+                capability = RequestGenerationConfig.FIELD_CAPABILITIES.get(name)
+                if capability is None:
+                    raise ValueError(f"Unknown generation option: {name}")
+                self._apply_generation_range(capability=capability, bounds=bounds)
+        self._declared_generation = deepcopy(self._effective_generation)
 
         # Initialize parent with endpoint and model_name
         PromptTarget.__init__(
@@ -174,8 +317,147 @@ class OpenAITarget(PromptTarget):
             api_key_environment_variable=self.api_key_environment_variable,
             auth_mode=auth_mode,
         )
+        if auth_mode == "api_key" and isinstance(self._api_key, str):
+            self._api_key = clean_credential_value(self._api_key, name="api_key")
 
         self._initialize_openai_client()
+        if self._SUPPORTED_GENERATION_CAPABILITIES:
+            self._refresh_generation_capabilities()
+
+    def set_model_name(self, *, model_name: str) -> None:
+        """Set the model name and refresh request-generation support for opted-in adapters."""
+        super().set_model_name(model_name=model_name)
+        if self._SUPPORTED_GENERATION_CAPABILITIES:
+            self._refresh_generation_capabilities()
+
+    def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
+        """Apply declared model support subject to the adapter's configured sampling mode."""
+        self._effective_generation.pop("supports_temperature", None)
+        if "supports_temperature" in capabilities.model_fields_set:
+            self._effective_generation["supports_temperature"] = capabilities.supports_temperature
+        if self._SUPPORTED_GENERATION_CAPABILITIES:
+            capabilities = self._generation_capabilities_for_mode(capabilities)
+        super().apply_capabilities(capabilities=capabilities)
+
+    def generation_range(self, *, capability: CapabilityName) -> tuple[float, float] | None:
+        """
+        Resolve declared or inferred bounds independently of the current sampling mode.
+
+        Returns:
+            tuple[float, float] | None: Inclusive bounds for implemented generation options.
+        """
+        if capability not in self._SUPPORTED_GENERATION_CAPABILITIES:
+            return None
+        bounds = self._effective_generation.get("ranges", {}).get(capability)
+        if bounds is not None:
+            return bounds
+        return _OpenAIModelSampling.generation_range(
+            capability=capability, model_name=self._effective_generation_parameters()["model"]
+        )
+
+    def _apply_generation_range(self, *, capability: CapabilityName, bounds: tuple[float, float] | None) -> None:
+        """
+        Apply validated capability-specific bounds until the next model change; None restores inference.
+
+        Raises:
+            ValueError: The adapter does not implement the generation capability.
+        """
+        if bounds is None:
+            self._effective_generation.get("ranges", {}).pop(capability, None)
+            return
+        if capability not in self._SUPPORTED_GENERATION_CAPABILITIES:
+            raise ValueError(f"{type(self).__name__} does not implement runtime {capability.name.lower()}.")
+        self._effective_generation.setdefault("ranges", {})[capability] = bounds
+
+    def _refresh_generation_capabilities(self) -> None:
+        self._effective_generation = deepcopy(self._declared_generation)
+        parameters = self._effective_generation_parameters()
+        support: dict[str, bool] = {}
+        if CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES:
+            support["supports_temperature"] = _OpenAIModelSampling.supports_temperature(
+                model_name=parameters["model"],
+                reasoning_effort=parameters.get("reasoning_effort"),
+                declared_support=self._declared_generation.get("supports_temperature"),
+            )
+        super().apply_capabilities(
+            capabilities=self._generation_capabilities_for_mode(self.capabilities.model_copy(update=support))
+        )
+
+    def _effective_generation_parameters(self) -> dict[str, Any]:
+        parameters = getattr(self, "_extra_body_parameters", None) or {}
+        return {
+            "model": self._underlying_model or self._model_name,
+            **parameters,
+            **(parameters.get("extra_body") or {}),
+        }
+
+    def _generation_capabilities_for_mode(self, capabilities: TargetCapabilities) -> TargetCapabilities:
+        parameters = self._effective_generation_parameters()
+        temperature_supported = (
+            CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES
+            and capabilities.includes(capability=CapabilityName.TEMPERATURE)
+            and _OpenAIModelSampling.supports_temperature(
+                model_name=parameters["model"],
+                reasoning_effort=parameters.get("reasoning_effort"),
+                declared_support=self._effective_generation.get("supports_temperature"),
+            )
+            and not parameters.get("stream", False)
+        )
+        return capabilities.model_copy(update={"supports_temperature": temperature_supported})
+
+    def _validate_request_generation_config(self, config: RequestGenerationConfig) -> None:
+        if config.temperature is None:
+            return
+        capabilities = self._generation_capabilities_for_mode(self.capabilities)
+        if not capabilities.includes(capability=CapabilityName.TEMPERATURE):
+            raise ValueError(
+                f"Runtime temperature is not supported for this {type(self).__name__} model configuration."
+            )
+
+    def _prepare_request_generation(self, *, body: dict[str, Any], request: Message) -> None:
+        # Public sends and wrapper dispatch clear incoming evidence. Retries and tool
+        # continuations within this child invocation reuse its first resolution.
+        metadata = request.get_piece().prompt_metadata
+        info = RequestGenerationInfo.from_metadata(metadata=metadata)
+        if info is None:
+            config = self.validate_request_generation_config(request)
+            info = RequestGenerationInfo(temperature=self._resolve_request_temperature(body=body, config=config))
+        else:
+            self._apply_request_temperature(body=body, temperature=info.temperature.resolved)
+        metadata.update(info.to_metadata())
+
+    @staticmethod
+    def _apply_request_temperature(*, body: dict[str, Any], temperature: float | None) -> None:
+        nested = body.get("extra_body") or {}
+        if temperature is None:
+            body.pop("temperature", None)
+            # Preserve explicit passthrough nulls on retries, rather than changing the provider payload.
+            if nested.get("temperature") is not None:
+                nested.pop("temperature", None)
+        else:
+            body["temperature"] = temperature
+            # The SDK merges extra_body after its named arguments.
+            if "temperature" in nested:
+                nested["temperature"] = temperature
+
+    def _resolve_request_temperature(
+        self, *, body: dict[str, Any], config: RequestGenerationConfig
+    ) -> ParameterResolution:
+        nested = body.get("extra_body") or {}
+        if config.temperature is not None:
+            self._apply_request_temperature(body=body, temperature=config.temperature)
+        resolved = nested.get("temperature", body.get("temperature"))
+        return ParameterResolution(
+            requested=config.temperature,
+            resolved=resolved,
+            source=(
+                "request"
+                if config.temperature is not None
+                else "target_default"
+                if resolved is not None
+                else "provider_default"
+            ),
+        )
 
     def get_reconstruction_parameters(self) -> dict[str, object]:
         """
@@ -199,18 +481,28 @@ class OpenAITarget(PromptTarget):
         identifier = self.get_identifier()
         return {
             **self._reconstruction_parameters,
-            **identifier.params,
+            **{
+                name: value
+                for name, value in identifier.params.items()
+                if name not in self._DESCRIPTIVE_IDENTIFIER_PARAMS
+            },
             **identifier.promoted_scalar_values(),
             "model_name": self._model_name,
             "endpoint": self._endpoint,
-            "api_key": self._api_key,
-            # Reuse the resolved key or token provider, not the original credential-selection mode.
-            "auth_mode": "api_key",
+            # Reuse the resolved key or token provider, not the original credential-selection mode. A no-key
+            # target stays no-key, so a copy that overrides api_key or headers can't pick up a server value.
+            "api_key": None if self._auth_mode == "none" else self._api_key,
+            "auth_mode": "none" if self._auth_mode == "none" else "api_key",
             "headers": json.dumps(self._headers),
             "max_requests_per_minute": self._max_requests_per_minute,
             "httpx_client_kwargs": dict(self._httpx_client_kwargs),
             "underlying_model": self._underlying_model,
             "custom_configuration": self.configuration,
+            "generation_ranges": {
+                name: bounds
+                for name, capability in RequestGenerationConfig.FIELD_CAPABILITIES.items()
+                if (bounds := self._effective_generation.get("ranges", {}).get(capability)) is not None
+            },
         }
 
     async def cleanup_target_async(self) -> None:
@@ -219,8 +511,86 @@ class OpenAITarget(PromptTarget):
             await self._async_client.close()
 
     def attach_reconstruction_source(self, source: object) -> None:
-        """Share request pacing, not clients or behavioral configuration."""
+        """
+        Share request pacing and credential status, not clients or behavioral configuration.
+
+        Args:
+            source (object): The registered target this copy was built from.
+        """
+        super().attach_reconstruction_source(source)
         self._rate_limit_source = getattr(source, "_rate_limit_source", source)
+
+    @property
+    def supports_credential_updates(self) -> bool:
+        """Whether this target can replace its API key or request headers in place; not with its own HTTP client."""
+        return self._httpx_client_kwargs.get("http_client") is None
+
+    def update_credentials(self, *, api_key: str | None = None, headers: Mapping[str, str] | None = None) -> None:
+        """
+        Replace this target's API key or request headers in place, without changing anything else about it.
+
+        A header replaces any header of the same name, whatever its case, wherever it was configured: in
+        ``headers``, ``OPENAI_ADDITIONAL_REQUEST_HEADERS``, or ``httpx_client_kwargs``. A cookie is the
+        ``Cookie`` header. The new SDK client shares the old one's connections, and requests already
+        running finish with the old values. How the target authenticates never changes: a target that
+        gets its tokens from a token provider, such as Microsoft Entra ID (with ``auth_mode="identity"``
+        or a provider passed as ``api_key``), can't take an API key or an ``Authorization`` header, and a
+        target that needs no key can't take an API key. A configured ``Authorization`` header takes precedence
+        over an API key and must be updated explicitly. Errors never include a value.
+
+        Args:
+            api_key (str | None): The new API key or access token, or None to keep the current one.
+            headers (Mapping[str, str] | None): Request headers to set. Defaults to None.
+
+        Raises:
+            ValueError: If the target can't update its credentials, a value is blank or can't be sent, a header
+                controls how the request is sent, or the change would alter how the target authenticates.
+        """
+        if not self.supports_credential_updates:
+            raise ValueError(f"This {type(self).__name__} can't update its credentials. Create a new target instead.")
+        # A token provider, such as Entra ID passed as api_key by an initializer, is how the target authenticates
+        # even when its auth_mode says "api_key"; a static key or Authorization header would replace it.
+        uses_token_provider = self._auth_mode == "identity" or not isinstance(self._api_key, str)
+        if api_key is not None and self._auth_mode != "api_key":
+            raise ValueError(
+                f"This target authenticates with auth_mode '{self._auth_mode}', so it can't take an API key. "
+                "Create a new target instead."
+            )
+        if api_key is not None and uses_token_provider:
+            raise ValueError(
+                "This target authenticates with a token provider, so it can't take an API key. "
+                "Create a new target instead."
+            )
+        updates = clean_request_headers(headers or {})
+        blank = sorted(name for name, value in updates.items() if not value)
+        if blank:
+            raise ValueError(f"These headers need a nonblank value: {', '.join(blank)}")
+        framing = sorted(name for name in updates if name.lower() in FRAMING_HEADER_NAMES)
+        if framing:
+            raise ValueError(f"These headers control how a request is sent and can't be set: {', '.join(framing)}")
+        if uses_token_provider and any(name.lower() == "authorization" for name in updates):
+            raise ValueError(
+                "This target authenticates with a token provider, such as Microsoft Entra ID, so its Authorization "
+                "header can't be set. Create a new target instead."
+            )
+        key = clean_credential_value(api_key, name="api_key") if api_key is not None else None
+        # Keep the configured spelling, so the new value replaces a header instead of being sent beside it.
+        configured = [*(self._httpx_client_kwargs.get("default_headers") or {}), *self._headers]
+        spelling = {name.lower(): name for name in configured}
+        replaced = {name.lower() for name in updates}
+        if key is not None and "authorization" in spelling and "authorization" not in replaced:
+            raise ValueError(
+                "This target has an explicit Authorization header; update the Authorization header instead."
+            )
+        updates = {spelling.get(name.lower(), name): value for name, value in updates.items()}
+        self._async_client = self._client.with_options(api_key=key, default_headers=updates or None)
+        self._headers = {
+            **{name: value for name, value in self._headers.items() if name.lower() not in replaced},
+            **updates,
+        }
+        if key is not None:
+            self._api_key = key
+        self._reset_credential_status()
 
     @classmethod
     def get_auth_mode_parameters(cls, *, auth_mode: AuthMode) -> dict[str, object]:
@@ -256,7 +626,7 @@ class OpenAITarget(PromptTarget):
             if not isinstance(key, str) or not isinstance(header_value, str):
                 raise ValueError("Request headers must be a JSON object with string keys and values.")
             headers[key] = header_value
-        return headers
+        return clean_request_headers(headers)
 
     def _extract_deployment_from_azure_url(self, url: str) -> str:
         """
@@ -444,10 +814,15 @@ class OpenAITarget(PromptTarget):
         - Google Gemini: https://generativelanguage.googleapis.com/v1beta/openai
         - Custom endpoints: Any format (warnings may be shown but URL is not modified)
         """
-        # Merge custom headers with httpx_client_kwargs
+        # Header names are case-insensitive; explicit target headers win over the SDK options.
         httpx_kwargs = self._httpx_client_kwargs.copy()
-        if self._headers:
-            httpx_kwargs.setdefault("default_headers", {}).update(self._headers)
+        configured = {
+            name.lower(): (name, value)
+            for headers in (httpx_kwargs.get("default_headers") or {}, self._headers)
+            for name, value in headers.items()
+        }
+        if configured:
+            httpx_kwargs["default_headers"] = dict(configured.values())
 
         # Determine if this is Azure OpenAI based on the endpoint
         is_azure = "azure" in self._endpoint.lower() if self._endpoint else False

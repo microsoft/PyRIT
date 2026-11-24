@@ -3,16 +3,19 @@
 
 import pathlib
 import tempfile
+from collections.abc import Iterator
 from unittest import mock
 
 import pytest
 
-from pyrit.registry import InitializerRegistry
-from pyrit.setup.configuration_loader import (
+from pyrit.registry import InitializerRegistry, Registry
+from pyrit.setup import (
     ConfigurationLoader,
+    initialize_from_config_async,
+)
+from pyrit.setup.configuration_loader import (
     InitializerConfig,
     ServerConfig,
-    initialize_from_config_async,
 )
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
@@ -49,6 +52,15 @@ class TestConfigurationLoader:
         assert config.scenario_suites_source is None
         assert config.silent is False
 
+    @pytest.mark.parametrize("field", ["operator", "operation"])
+    def test_rejects_numeric_label_in_yaml(self, tmp_path: pathlib.Path, field: str) -> None:
+        """Reject numeric operator and operation values during configuration loading."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(f"{field}: 123\n", encoding="utf-8")
+
+        with pytest.raises(TypeError, match=field):
+            ConfigurationLoader.from_yaml_file(config_path)
+
     def test_custom_initializers_source_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
         """Test loading an Azure Blob container URI for custom initializer scripts."""
         config_path = tmp_path / "config.yaml"
@@ -84,6 +96,25 @@ class TestConfigurationLoader:
         """Test rejecting empty or non-string scenario suite sources."""
         with pytest.raises(ValueError, match="scenario_suites_source"):
             ConfigurationLoader(scenario_suites_source=invalid_value)  # type: ignore[arg-type]
+
+    def test_registry_recipes_source_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
+        """Test loading an Azure Blob container URI for saved registry entries."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "registry_recipes_source: https://account.blob.core.windows.net/pyrit-storage/registry-recipes\n",
+            encoding="utf-8",
+        )
+
+        config = ConfigurationLoader.from_yaml_file(config_path)
+
+        assert config.registry_recipes_source == "https://account.blob.core.windows.net/pyrit-storage/registry-recipes"
+        assert ConfigurationLoader().registry_recipes_source is None
+
+    @pytest.mark.parametrize("invalid_value", ["", "   ", 42])
+    def test_registry_recipes_source_rejects_invalid_value(self, invalid_value: object) -> None:
+        """Test rejecting empty or non-string sources for saved registry entries."""
+        with pytest.raises(ValueError, match="registry_recipes_source"):
+            ConfigurationLoader(registry_recipes_source=invalid_value)  # type: ignore[arg-type]
 
     def test_target_upload_directory_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
         config_path = tmp_path / "config.yaml"
@@ -443,7 +474,16 @@ class TestConfigurationLoaderResolvers:
             )
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.fixture
+def isolated_configuration_registries(tmp_path: pathlib.Path) -> Iterator[None]:
+    with (
+        mock.patch.dict(Registry._singletons, {}, clear=True),
+        mock.patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path),
+    ):
+        yield
+
+
+@pytest.mark.usefixtures("patch_central_database", "isolated_configuration_registries")
 class TestConfigurationLoaderInitialization:
     """Tests for ConfigurationLoader.initialize_pyrit_async method."""
 
@@ -771,6 +811,51 @@ silent: true
             assert config.silent is True
         finally:
             config_path.unlink()
+
+    @pytest.mark.parametrize(
+        ("silent", "expect_message"),
+        [(False, True), (True, False)],
+    )
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    def test_load_with_overrides_console_message_respects_silent(
+        self, mock_default_path, tmp_path, capsys, silent, expect_message
+    ):
+        """Test the 'Loading configuration file' console message is suppressed by ``silent: true``."""
+        mock_default_path.exists.return_value = False
+        config_path = tmp_path / "explicit.yaml"
+        config_path.write_text(f"memory_db_type: sqlite\nsilent: {str(silent).lower()}\n", encoding="utf-8")
+
+        ConfigurationLoader.load_with_overrides(config_file=config_path)
+
+        output = capsys.readouterr().out
+        assert (f"Loading configuration file: {config_path}" in output) is expect_message
+
+    @pytest.mark.parametrize(
+        ("silent", "expect_message"),
+        [(False, True), (True, False)],
+    )
+    def test_load_with_overrides_default_config_message_respects_silent(self, tmp_path, capsys, silent, expect_message):
+        """Test the 'Loading default configuration file' console message is suppressed by ``silent: true``."""
+        default_path = tmp_path / ".pyrit_conf"
+        default_path.write_text(f"memory_db_type: sqlite\nsilent: {str(silent).lower()}\n", encoding="utf-8")
+
+        with mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", default_path):
+            ConfigurationLoader.load_with_overrides()
+
+        output = capsys.readouterr().out
+        assert (f"Loading default configuration file: {default_path}" in output) is expect_message
+
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    def test_load_with_overrides_logs_config_file_even_when_silent(self, mock_default_path, tmp_path, caplog):
+        """Test that ``silent`` only affects console output; the log record is still emitted."""
+        mock_default_path.exists.return_value = False
+        config_path = tmp_path / "explicit.yaml"
+        config_path.write_text("silent: true\n", encoding="utf-8")
+
+        with caplog.at_level("INFO", logger="pyrit.setup.configuration_loader"):
+            ConfigurationLoader.load_with_overrides(config_file=config_path)
+
+        assert any(f"Loading configuration file: {config_path}" in record.message for record in caplog.records)
 
     @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
     def test_load_with_overrides_preserves_all_explicit_config_fields(self, mock_default_path, tmp_path):

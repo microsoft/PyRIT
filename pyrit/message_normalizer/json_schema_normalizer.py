@@ -2,9 +2,18 @@
 # Licensed under the MIT license.
 
 import json
+from typing import Any
 
 from pyrit.message_normalizer.message_normalizer import MessageListNormalizer
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, JsonResponseConfig, JsonSchemaDefinition, Message, MessagePiece
+from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
+    ComponentIdentifier,
+    Identifiable,
+    JsonResponseConfig,
+    JsonSchemaDefinition,
+    Message,
+    MessagePiece,
+)
 
 # Default text appended to a message piece when the target cannot natively
 # enforce a JSON schema. The exact phrasing mirrors the legacy in-prompt
@@ -26,7 +35,7 @@ DEFAULT_SCHEMA_INSTRUCTIONS_TEMPLATE = (
 )
 
 
-class JsonSchemaNormalizer(MessageListNormalizer[Message]):
+class JsonSchemaNormalizer(MessageListNormalizer[Message], Identifiable):
     """
     Adapts JSON-schema metadata for targets that cannot enforce it natively.
 
@@ -79,6 +88,26 @@ class JsonSchemaNormalizer(MessageListNormalizer[Message]):
         if "{schema_json}" not in schema_instructions_template:
             raise ValueError("schema_instructions_template must contain a '{schema_json}' placeholder.")
         self._schema_instructions_template = schema_instructions_template
+
+    def as_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the configuration parameters that affect JSON schema normalization.
+
+        Returns:
+            dict[str, Any]: Parameters including schema_instructions_template.
+        """
+        return {
+            "schema_instructions_template": self._schema_instructions_template,
+        }
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the behavioral identity for this normalizer.
+
+        Returns:
+            ComponentIdentifier: The frozen identity snapshot.
+        """
+        return ComponentIdentifier.of(self, params=self.as_identifier_params())
 
     async def normalize_async(self, messages: list[Message]) -> list[Message]:
         """

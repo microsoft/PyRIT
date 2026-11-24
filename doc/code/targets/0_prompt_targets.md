@@ -57,9 +57,39 @@ Target-side rate limiting remains independent and continues to use `limit_reques
 `_send_prompt_to_target_async(*, normalized_conversation: list[Message]) -> list[Message]` instead of
 overriding `send_prompt_async`.
 
+## Runtime generation configuration
+
+Use `RequestGenerationConfig` in a current request's `MessagePiece.prompt_metadata`
+to override temperature without changing shared target defaults:
+
+```python
+from pyrit.models import MessagePiece, RequestGenerationConfig
+
+piece = MessagePiece(
+    role="user",
+    original_value="Describe this scene.",
+    prompt_metadata=RequestGenerationConfig(temperature=0).to_metadata(),
+)
+```
+
+Check `target.capabilities.supports_temperature` and
+`target.generation_range(capability=CapabilityName.TEMPERATURE)` before choosing
+a value (`CapabilityName` is in `pyrit.models`). Bounds are inclusive; `None` means unspecified bounds,
+not lack of support. `target.generation_ranges` exposes all known bounds keyed by
+option name. OpenAI targets accept `generation_ranges={"temperature": (0.0, 1.0)}`
+to override inferred bounds for selected options; omitted entries retain inference.
+These declarations do not enable unsupported options or change configured defaults.
+Missing or null request temperature preserves existing defaults.
+Invalid, conflicting, or unsupported overrides fail before provider I/O.
+
+Read saved request and response evidence with
+`RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)` to inspect the
+requested temperature, resolved value, and source. Unknown provider defaults remain
+`None`. See [Chat temperature](../../gui/0_gui.md#temperature) for the UI.
+
 ## Chat-style targets vs general targets
 
-A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is that it will eventually be consumed by an AI application, but that doesn't have to be immediate. For example, you could have a SharePoint target. Everything you send a prompt to is a `PromptTarget`. Many attacks work generically with any `PromptTarget` including `RedTeamingAttack` and `PromptSendingAttack`.
+A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is that it will eventually be consumed by an AI application, but that doesn't have to be immediate. For example, you could have a SharePoint target. Everything you send a prompt to is a `PromptTarget`. Most attacks need the target's responses, so they require `supports_responses`. `PromptSendingAttack` and the attacks built on it also work with write-only targets such as `TextTarget` and `AzureBlobStorageTarget`: the request is never scored as a response, and only scorers that judge side effects (such as `FileWriteScorer`) decide the outcome.
 
 With some algorithms, you want to send a prompt, set a system prompt, and modify conversation history (including PAIR [@chao2023pair], TAP [@mehrotra2023tap], and flip attack [@liu2024flipattack]). These algorithms require a target whose [`TargetCapabilities`](#target-capabilities) declare both `supports_multi_turn=True` and `supports_editable_history=True` — i.e. you can modify a conversation history. Consumers express this requirement via `CHAT_TARGET_REQUIREMENTS` and validate it against `target.configuration` at construction time. See [Target Capabilities](#target-capabilities) below for the full list of capabilities and how they compose into a `TargetConfiguration`.
 
@@ -71,12 +101,16 @@ Here are some examples:
 | Example                             | Chat-style target?                                | Notes                                                                                           |
 |-------------------------------------|---------------------------------------------------|-------------------------------------------------------------------------------------------------|
 | **OpenAIChatTarget** (e.g., GPT-4)  | **Yes** (multi-turn + editable history)           | Designed for conversational prompts (system messages, conversation history, etc.).               |
+| **ClaudeChatTarget**               | **Yes** (multi-turn + editable history)           | Native Anthropic Messages via LiteLLM, with text/images and bounded local tool execution.         |
 | **OpenAIImageTarget**               | **No**                                            | Used for image generation; does not manage conversation history.                                 |
 | **HTTPTarget**                      | **No**                                            | Generic HTTP target. Some apps might allow conversation history, but this target doesn't handle it. |
 | **A2ATarget**                       | **No** (multi-turn, but no editable history)     | Text-only Agent-to-Agent endpoints through the official a2a-sdk (v0.3 / v1.0).                |
 | **AzureBlobStorageTarget**          | **No**                                            | Used primarily for storage; not for conversation-based AI.                                       |
 
 ## OpenAI SDK compatibility
+
+For Claude installation, authentication, capabilities, JSON output, and a harmless
+async tool example, see [Claude chat target](claude_chat_target.md).
 
 PyRIT supports OpenAI Python SDK 2.20 and later 2.x releases, and SDK 3.x.
 The upper bound excludes SDK 4 until it has been evaluated. The compatibility
@@ -119,9 +153,17 @@ than `/openai/deployments/.../chat/completions`. Pass deployment names through
 The SDK owns trailing-slash normalization and appending the operation path.
 
 `OpenAIVideoTarget` retains the deprecated videos API for compatible endpoints.
-This does not restore availability of OpenAI's retired Sora service. SDK 3's
-deprecation warnings remain visible; type-check exceptions are limited to the
-specific SDK calls in that adapter.
+This does not restore availability of [OpenAI's retired Sora service](https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation).
+The Sora generation tutorial and live integration tests have been removed.
+The adapter, public exports, existing environment-variable support, and unit tests
+remain available; no replacement video service is configured by default.
+SDK 3's deprecation warnings remain visible at runtime, including for compatible
+providers; the SDK warning does not check the configured endpoint. Mocked
+compatibility tests capture and assert the expected retirement warning while
+verifying Azure and custom-provider routing. Type-check exceptions are limited to
+the specific SDK calls in that adapter. Video scoring does not depend on Sora:
+see [scoring existing videos](../scoring/1_true_false_scorers.ipynb#scoring-existing-videos)
+and [float-scale media scorers](../scoring/2_float_scale_scorers.ipynb#multimodal-scorers).
 
 The default installation does not require LiteLLM and can resolve to SDK 3.
 The optional `litellm` and `all` extras retain stable LiteLLM releases. A stable
@@ -222,6 +264,7 @@ defaults to `agentCard/v1.0`; set it to
 `agentCard/v0.3` for a preview endpoint. The test requires a successful text
 response, not just a non-empty error. It does not create Azure resources.
 
+(target-capabilities)=
 ## Target Capabilities
 
 Every `PromptTarget` exposes a `TargetConfiguration` (via `target.configuration`) that declares what the target natively supports. This lets attacks, converters, and scorers reason about whether a given target is suitable for a given workflow — and, where possible, adapt automatically when a capability is missing.
@@ -244,12 +287,17 @@ A `TargetConfiguration` composes three concerns:
 | `supports_system_prompt`         | The target natively supports a system-role message.                                                                                      |
 | `supports_json_output`           | The target supports a "json" response format that guarantees valid JSON output.                                                          |
 | `supports_json_schema`           | The target supports constraining output to a caller-provided JSON schema.                                                                |
+| `supports_temperature`           | The adapter and configured model mode support per-request temperature overrides.                                                        |
+| `supports_responses`             | The target replies to requests. Defaults to `True`; write-only targets such as `TextTarget` and `AzureBlobStorageTarget` declare `False`. |
 | `input_modalities`               | The set of input modality combinations the target accepts (e.g. `{text}`, `{text, image_path}`).                                         |
 | `output_modalities`              | The set of output modality combinations the target produces.                                                                             |
 
 Each target class defines defaults; instances can override individual capabilities when they depend on deployment configuration (e.g. `HTTPTarget`, `PlaywrightTarget`).
 
 For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
+Profiles alone do not determine runtime temperature support; check the instance's
+capabilities and `generation_range(capability=CapabilityName.TEMPERATURE)` as described under
+[Runtime generation configuration](#runtime-generation-configuration).
 
 Tool-call history uses the existing `function_call` and `function_call_output` input
 modalities. These describe acceptance of prior calls and results, not tool execution.
@@ -323,11 +371,20 @@ queried = await discover_target_capabilities_async(target=target)
 
 Each probe sends a minimal request (bounded by `per_probe_timeout_s`, default 30s, with one retry on transient errors) and only marks a capability or modality as supported if the call returns cleanly. `discover_target_capabilities_async` returns a merged view: probed where possible, declared where probing is unavailable or out of scope. "Supported" here means *the request was accepted* — a target that silently ignores a system prompt or `response_format` directive is still reported as supporting it, so validate response content out of band when the distinction matters. This function is not safe to call concurrently with other operations on the same target instance: it temporarily mutates `target._configuration` and writes probe rows to memory (rows are tagged with `prompt_metadata["capability_probe"] == "1"` for filtering). See [Target Capabilities](./6_1_target_capabilities.ipynb) for runnable examples.
 
+Use `raise_on_error=True` when you apply results automatically. This shared discovery mode first requires a successful control request with a declared input, so a general request rejection does not become negative capability results. After a successful control, a confirmed rejection of a tested tool-history combination removes that combination even if it was declared; unavailable probes and untested declarations are preserved. If the control or an operational check fails, discovery raises `CapabilityDiscoveryError` and does not apply changes, even with `apply=True`. The default mode remains best-effort, retains declared tool-history support when its probe is inconclusive, and does not change the target unless you set `apply=True`.
+
+Provider HTTP 400/422 statuses survive LiteLLM's generic error wrapping, so strict checks can distinguish feature rejections from operational failures.
+
+Strict discovery only probes features with a verified adapter contract (OpenAI Chat, Responses, and LiteLLM). Other adapters, such as text-to-speech, receive a control request but retain their declared capabilities: accepting a text request does not prove that the adapter transmitted history, JSON constraints, or media. Image probe assets are checked for integrity and decodability before use; invalid or unavailable assets preserve existing declarations.
+
+`RoundRobinTarget` normalizes against its own configuration. During each child dispatch, capability reads use the parent's flags in a task-local scope, so detected support can reach the provider without changing independently registered children. Child configurations, identities, and independent sends retain their own settings; the dispatch scope is restored on success, failure, or cancellation.
+
+The backend snapshots capabilities when a manual chat selects a target, with or without a temperature override. Default-temperature chats use their saved flags in a task-local `PromptTarget.capabilities_scope` for normalization, validation, replay, and provider serialization. They continue using the original live target and its conversation state, without reconstruction or cleanup of caller-owned targets. Saved chats expose the same flags and effective replay support when reopened. Legacy chats without a snapshot use the source's pre-detection flags only within the detecting backend session; new chats take the current detected capabilities.
+
 ## Multi-Modal Targets
 
 Like most of PyRIT, targets can be multi-modal.
 
 - [OpenAI Chat Target](./1_openai_chat_target.ipynb) (*text + image --> text*)
 - [OpenAI Image Target](./3_openai_image_target.ipynb) (*text --> image* or *text + image --> image*)
-- [OpenAI Video Target](./4_openai_video_target.ipynb) (*text --> video*)
 - [OpenAI TTS Target](./5_openai_tts_target.ipynb) (*text --> audio*)

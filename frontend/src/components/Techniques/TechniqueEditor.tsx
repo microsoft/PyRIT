@@ -11,15 +11,17 @@ import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import ParameterField from '@/components/Parameters/ParameterField'
 import ConverterChainField from '@/components/Converters/ConverterChainField'
 import ReferenceField from '@/components/Parameters/ReferenceField'
-import { buildParametersFromForm, getInitialFormValues, type ParameterFormValue } from '@/components/Parameters/parameterForm'
-import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
+import {
+  buildParametersFromForm, getInitialFormValues, nonNullableTypeName, type ParameterFormValue,
+} from '@/components/Parameters/parameterForm'
+import { convertersApi, techniquesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { listRegisteredTargets } from '@/services/targetRegistry'
 import type {
   CreateTechniqueRequest, Parameter, RegistryReferenceOption, TechniqueTypeEntry,
   TechniqueConfiguration, TechniqueChanges, TechniqueEditResponse, SimulationChanges,
   ConverterInstance, ConverterSelection,
 } from '@/types'
-import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import { useTechniqueEditorStyles } from './TechniqueEditor.styles'
 
@@ -32,7 +34,7 @@ function canConfigure(parameter: Parameter, allowStructured = true): boolean {
     return allowStructured && !parameter.is_list && Object.values(parameter.variants).some((parameters) =>
       parameters.every((nested) => !nested.required || canConfigure(nested, false)))
   }
-  return SCALAR_TYPES.has(parameter.type_name) || Boolean(parameter.choices?.length)
+  return SCALAR_TYPES.has(nonNullableTypeName(parameter.type_name)) || Boolean(parameter.choices?.length)
 }
 
 function guiParameters(parameters: Parameter[], allowStructured = true): Parameter[] {
@@ -140,12 +142,7 @@ export default function TechniqueEditor({
               'adversarial_system_prompt', 'adversarial_seed_prompt', 'adversarial_prompt_template',
             ].includes(field)),
           }] }) : techniquesApi.listTypes(),
-          fetchAllPages(
-            (cursor: string | undefined) => targetsApi.listTargets(200, cursor),
-            undefined,
-            (entry) => entry.target_registry_name,
-            true,
-          ),
+          listRegisteredTargets(),
           convertersApi.listConverters(),
         ])
         if (ignore) return
@@ -182,7 +179,7 @@ export default function TechniqueEditor({
       changes.params = { ...result.parameters }
       for (const parameter of changedParameters) {
         if (!Object.prototype.hasOwnProperty.call(changes.params, parameter.name)) {
-          changes.params[parameter.name] = parameter.type_name === 'str' && !parameter.choices?.length
+          changes.params[parameter.name] = nonNullableTypeName(parameter.type_name) === 'str' && !parameter.choices?.length
             && !parameter.reference_type ? '' : null
         }
       }
@@ -288,6 +285,7 @@ export default function TechniqueEditor({
   const inputsDisabled = disabled || submitting
   const displayedError = autoApply && revision > 0 ? editError ?? error : error
   const content = (
+            // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- only keeps Enter in a field from submitting the form
             <div className={styles.form} onKeyDown={(event) => {
               if (autoApply && event.key === 'Enter' && event.target instanceof HTMLInputElement
                 && event.currentTarget.contains(event.target)) event.preventDefault()

@@ -1,6 +1,6 @@
-import type { ScenarioDatasetOptions, ScenarioDatasetSettings } from '@/types'
+import type { ScenarioDatasetOptions, ScenarioDatasetRequest, ScenarioDatasetSettings } from '@/types'
 
-import { datasetNameWithOrigin, datasetPolicies } from './datasetPresentation'
+import { datasetNameWithOrigin, datasetPolicies, datasetTotalLimit } from './datasetPresentation'
 
 const SETTINGS: ScenarioDatasetSettings = {
   sources: [
@@ -13,16 +13,30 @@ const OPTIONS: ScenarioDatasetOptions = {
   mode: 'any', allowed_names: [], per_dataset_limit: true, total_limit: true, supports_overrides: true, filters: true,
 }
 
+describe('datasetTotalLimit', () => {
+  it.each<[ScenarioDatasetRequest, number | 'all']>([
+    [{}, 5],
+    [{ max_total: null }, 5],
+    [{ max_total: 'default' }, 5],
+    [{ max_total: 3 }, 3],
+    [{ max_total: 'all' }, 'all'],
+  ])('resolves %j against the current defaults', (request: ScenarioDatasetRequest, expected: number | 'all') => {
+    expect(datasetTotalLimit(request, { ...SETTINGS, max_total: 5 })).toBe(expected)
+  })
+})
+
 describe('datasetNameWithOrigin', () => {
-  it.each(['local', 'remote', 'generated', 'user'])('displays recorded %s origin', (origin) => {
+  it.each([
+    ['local', 'Local files'], ['remote', 'Remote provider'], ['generated', 'Generated'], ['user', 'User'],
+  ])('displays recorded %s origin with the catalog label', (origin, label) => {
     expect(datasetNameWithOrigin('sample', {
       name: 'sample', selection_key: 'dataset:named:sample', loaded: true, provider_available: false,
       origins: [origin], logical_examples: 1, seed_pieces: 1, objectives: 1, modalities: [], harm_categories: [],
       has_unlabeled_harm_categories: false,
-    })).toBe(`sample (${origin})`)
+    })).toBe(`sample (${label})`)
   })
   it('does not guess the origin of an unloaded dataset', () => {
-    expect(datasetNameWithOrigin('sample', undefined)).toBe('sample (unknown)')
+    expect(datasetNameWithOrigin('sample', undefined)).toBe('sample (Unknown)')
   })
 })
 

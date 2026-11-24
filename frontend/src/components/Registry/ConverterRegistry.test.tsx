@@ -378,6 +378,57 @@ describe('ConverterRegistry', () => {
     expect(await screen.findByText('No Converters Registered')).toBeInTheDocument()
   })
 
+  it('shows an HTTP 404 removal error inside the open dialog and allows retry', async () => {
+    mockedConvertersApi.deleteConverter
+      .mockRejectedValueOnce({
+        isAxiosError: true,
+        response: { status: 404, data: { detail: 'Converter was already deleted' } },
+      })
+      .mockResolvedValueOnce()
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [converter] })
+      .mockResolvedValueOnce({ items: [] })
+    const user = userEvent.setup()
+    renderRegistry()
+    await screen.findByText('base64-default')
+
+    await user.click(screen.getByRole('button', { name: 'Remove base64-default' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert).toHaveTextContent('Converter was already deleted')
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeEnabled()
+    expect(within(dialog).getByRole('button', { name: 'Remove' })).toBeEnabled()
+    expect(screen.getAllByText('Converter was already deleted')).toHaveLength(1)
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+
+    expect(mockedConvertersApi.deleteConverter).toHaveBeenCalledTimes(2)
+    expect(await screen.findByText('No Converters Registered')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('clears a removal error when the dialog is cancelled and reopened', async () => {
+    mockedConvertersApi.deleteConverter.mockRejectedValueOnce(new Error('Converter not found'))
+    const user = userEvent.setup()
+    renderRegistry()
+    await screen.findByText('base64-default')
+
+    const trigger = screen.getByRole('button', { name: 'Remove base64-default' })
+    await user.click(trigger)
+    let dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+    await within(dialog).findByRole('alert')
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(trigger).toHaveFocus())
+
+    await user.click(trigger)
+    dialog = await screen.findByRole('dialog')
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('should restore focus to New Converter after the add dialog is dismissed', async () => {
     const user = userEvent.setup()
     renderRegistry()

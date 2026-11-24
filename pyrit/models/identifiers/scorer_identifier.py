@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Annotated, ClassVar
 
 from pydantic import Field
 
@@ -16,6 +17,9 @@ from pyrit.models.identifiers.target_identifier import (  # noqa: TC001
     TargetIdentifier,  # runtime-required by Pydantic field annotations
 )
 from pyrit.models.parameter import ComponentType
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 class ScorerIdentifier(ComponentIdentifier):
@@ -34,9 +38,17 @@ class ScorerIdentifier(ComponentIdentifier):
 
     The optional ``sub_scorers_order_independent`` param declares that the
     aggregation verdict does not depend on child order.
+
+    A source-backed scorer's ``source`` and ``trace_source`` constructor arguments
+    are references resolved by name from the source registry. Their identities
+    already sit in ``children``, so they are declared in ``constructor_references``
+    rather than promoted to typed fields.
     """
 
     component_type: ClassVar[ComponentType | None] = ComponentType.SCORER
+    constructor_references: ClassVar[Mapping[str, ComponentType]] = MappingProxyType(
+        {"source": ComponentType.SOURCE, "trace_source": ComponentType.SOURCE}
+    )
 
     #: The scorer category (e.g., ``"true_false"`` or ``"float_scale"``).
     scorer_type: Annotated[str | None, Evaluate.Include()] = None

@@ -53,6 +53,22 @@ export interface MessageAttachment {
   metadata?: Record<string, unknown>
 }
 
+export interface MediaUploadRequest {
+  data_type: string
+  content: string
+  mime_type: string
+}
+
+export interface MediaUploadResponse {
+  value: string
+  /** UTC Unix timestamp in seconds; absent on older backends. */
+  expires_at?: number
+}
+
+export type AttachmentUploadOutcome =
+  | { status: 'uploaded'; value: string }
+  | { status: 'failed'; detail: string }
+
 export interface ConverterInputPiece {
   id: string
   pieceType: string
@@ -106,12 +122,14 @@ export interface PendingComposerDraft {
 
 export interface ConversationEditState {
   messages: ConversationDraftMessage[]
+  baselineMessages?: ConversationDraftMessage[]
+  baselineTargetKey?: string | null
+  converters?: ChatConverterSnapshot
   objective?: string
   initialObjective?: string
   sourceConversationId?: string | null
   sourceAttackId?: string | null
   sourcePieceIds?: string[]
-  temperature?: string
   target?: TargetReference | null
   pendingPromptId?: string
   unsavedImport?: boolean
@@ -122,12 +140,23 @@ export interface ChatDraftContent {
   attachments: MessageAttachment[]
   systemPrompt?: string
   objective?: string
-  temperature?: string
+  generationDraft?: RequestGenerationDraft
   chatScorer?: RegisteredComponentReference | null
   target?: TargetReference | null
   converters?: ChatConverterSnapshot
   textMetadata?: Record<string, unknown>
   conversation?: ConversationEditState
+  /** Backend send ID for status verification before reconciling this snapshot with history. */
+  acceptedSendId?: string
+  /** Where the accepted send belongs in history, so only this send's saved request reconciles the draft. */
+  acceptedSendHistory?: AcceptedSendHistory
+}
+
+export interface AcceptedSendHistory {
+  /** Turn the backend assigned to the request, when known before leaving Chat. */
+  requestTurnNumber?: number
+  /** User piece IDs saved before the send; new pieces only prompt an exact status check. */
+  priorUserPieceIds: string[]
 }
 
 export interface ChatDraftContextState {
@@ -175,8 +204,13 @@ export interface ChatDraftHandoffContextValue {
   preserveDraft: (
     state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>,
     expectedSequence?: number,
+    retainedImportId?: string,
   ) => void
-  clearPreservedDraft: (expectedSequence?: number) => void
+  clearPreservedDraft: (
+    expectedSequence?: number,
+    targetAttackId?: string | null,
+    targetConversationId?: string | null,
+  ) => void
   /** Pass the sequence captured before preparing an import to reject stale async results. */
   stagePendingImport: (
     payload: Omit<PendingImportPayload, 'id' | 'sequence' | 'stagedAt'>,
@@ -193,6 +227,10 @@ export interface ChatDraftHandoffContextValue {
     currentConversationId?: string | null,
     expectedSequence?: number,
   ) => ChatDraftContent | null
+  getPreservedDraft: (
+    currentAttackId?: string | null,
+    currentConversationId?: string | null,
+  ) => ChatDraftContextState | null
   isDraftDirty: (draft?: Partial<ChatDraftContent> | null) => boolean
 }
 
@@ -260,7 +298,32 @@ export interface MessageMediaDisplayPiece {
 
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
 
+/** Provider-neutral options for one outbound send, not target defaults. */
+export interface RequestGenerationConfig {
+  readonly temperature?: number | null
+}
+
+/** Editable text is validated and converted to numeric request options at submission. */
+export type RequestGenerationDraft = {
+  readonly [Field in keyof RequestGenerationConfig]?: string
+}
+
+export interface ParameterResolution {
+  readonly requested: number | null
+  readonly resolved: number | null
+  readonly source: 'request' | 'target_default' | 'provider_default'
+}
+
+/** Framework-authored parameter evidence associated with the originating request. */
+export interface RequestGenerationInfo {
+  readonly temperature: ParameterResolution
+  readonly request_piece_ids: readonly string[]
+}
+
 export interface Message {
+  /** Saved sequence used to keep a split turn stable across piece pages. */
+  sequence?: number
+  isPartial?: boolean
   role: 'user' | 'assistant' | 'simulated_assistant' | 'tool' | 'simulated_tool' | 'system' | 'developer'
   content: string
   timestamp: string
@@ -285,6 +348,9 @@ export interface Message {
   originalContent?: string
   /** Original media attachments before conversion (when different from converted). */
   originalAttachments?: MessageAttachment[]
+  /** Saved provider parameter evidence, not a new request option. */
+  generationDescription?: string
+  generationDetails?: string
 }
 
 export interface MessageError {
@@ -312,6 +378,11 @@ export interface PaginationInfo {
   has_more: boolean
   next_cursor?: string | null
   prev_cursor?: string | null
+}
+
+export interface ConversationPageParams {
+  limit?: number
+  cursor?: string
 }
 
 export interface ConfigurationFileContent {
@@ -413,6 +484,8 @@ export interface ManualContinuation {
 }
 
 export interface TargetCapabilities {
+  input_modalities?: string[][]
+  output_modalities?: string[][]
   supports_multi_turn: boolean
   supports_multi_message_pieces?: boolean
   supports_json_schema: boolean
@@ -420,6 +493,10 @@ export interface TargetCapabilities {
   supports_editable_history?: boolean
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
+  supports_prefill?: boolean
+  supports_temperature?: boolean
+  /** Whether the target can search the web while it answers, such as for research. */
+  supports_web_search?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
 }
@@ -440,21 +517,31 @@ export interface TargetIdentifier {
   [key: string]: unknown
 }
 
+/** Where a registered target comes from, and so whether it is still there after a restart. */
+export type TargetOrigin = 'saved' | 'configuration' | 'temporary'
+
 export interface TargetInstance {
   target_registry_name: string
-  reconstructable?: boolean
-  reconstruction_error?: string | null
-  supports_temperature_override?: boolean
+  /** Saved, from the server's configuration, or Temporary. Absent for inner targets. */
+  origin?: TargetOrigin | null
   binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
   capabilities?: TargetCapabilities | null
+  /** Inclusive runtime bounds by option; missing entries mean unknown bounds, not lack of support. */
+  generation_ranges?: Partial<Record<keyof RequestGenerationConfig, readonly [number, number]>>
   /** Effective replay support, including configured adapters and provider restoration. */
   supports_history_replay?: boolean
   /** Non-promoted constructor params, curated for display (e.g., RoundRobin weights). */
   target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */
   inner_targets?: TargetInstance[] | null
+  /** True when only the requesting user, who created it, can see and use the target. */
+  private?: boolean
+  /** True when the target's API key or request headers can be updated in place. */
+  allow_credential_updates?: boolean
+  /** Whether the provider rejected the target's credentials on the last request; null until it is used. */
+  credentials_rejected?: boolean | null
 }
 
 export interface TargetListResponse {
@@ -463,9 +550,30 @@ export interface TargetListResponse {
 }
 
 export interface CreateTargetRequest {
+  /** Registry name; required with `persist`. */
+  name?: string
   type: string
   params: Record<string, unknown>
-  auth_mode?: 'api_key' | 'identity'
+  auth_mode?: TargetAuthMode
+  /** Save the target so it comes back after a restart. */
+  persist?: boolean
+  /** Makes the target visible to and usable by only its creator. */
+  private?: boolean
+  /** Lets the target's API key or request headers be updated later; defaults to true only when private. */
+  allow_credential_updates?: boolean
+}
+
+/** A target to check before saving it, as a create request would give it. */
+export interface TargetSaveabilityRequest {
+  type: string
+  params: Record<string, unknown>
+  auth_mode?: TargetAuthMode
+}
+
+/** Whether an entry could be saved as asked, decided by the checks saving it runs. */
+export interface SaveabilityResponse {
+  /** Why it can't be saved, though it can be created without saving it; null if it can. */
+  not_saveable_reason: string | null
 }
 
 // --- Initializers ---
@@ -564,11 +672,13 @@ export interface TargetBinding {
   source_hash: string
   temperature: number
   effective_hash: string
+  capabilities?: TargetCapabilities | null
 }
 
 export interface UnregisteredTarget {
   identifier: TargetIdentifier
   capabilities: TargetCapabilities
+  generation_ranges?: TargetInstance['generation_ranges']
 }
 
 export interface UnregisteredConverter {
@@ -680,6 +790,7 @@ export interface RegistryReferenceOption {
 
 export interface Parameter {
   name: string
+  /** Serialized type, retaining nullability, e.g. `int | None` or `list[str] | None`. */
   type_name: string
   required: boolean
   /** Scalar default renders as a display string; a list default renders as a list of display strings. */
@@ -688,13 +799,15 @@ export interface Parameter {
   is_list?: boolean
   /** Structured input variants mapped to their constructor parameters. */
   variants?: Record<string, Parameter[]> | null
-  reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | null
+  reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | 'source' | null
   /** Whether parameter controls must obscure the entered value. */
   sensitive?: boolean
   /** Whether parameter controls must preserve line breaks in the entered value. */
   multiline?: boolean
   /** Whether the value must be omitted when identity-based authentication is selected. */
   identity_conflicting?: boolean
+  /** Whether a private copy keeps its source's value, because it sets where requests go or how they sign in. */
+  copy_locked?: boolean
   description?: string | null
 }
 
@@ -740,10 +853,16 @@ export interface ConverterPreviewResponse {
   steps: ConverterPreviewStep[]
 }
 
+export type TargetAuthMode = 'api_key' | 'identity' | 'none'
+
 export interface TargetTypeEntry {
   target_type: string
   parameters: Parameter[]
-  supported_auth_modes: ('api_key' | 'identity')[]
+  supported_auth_modes: TargetAuthMode[]
+  /** Auth modes a saved target of this type can use; empty when it can't be saved. */
+  saveable_auth_modes?: TargetAuthMode[]
+  /** Why a target of this type can't be saved. */
+  not_saveable_reason?: string | null
   description?: string | null
 }
 
@@ -756,10 +875,13 @@ export interface TargetTypeListResponse {
 export interface TargetInfo {
   target_type: string
   target_registry_name?: string | null
+  identifier?: TargetIdentifier | null
   endpoint?: string | null
   model_name?: string | null
   identifier_hash: string
   binding?: TargetBinding | null
+  capabilities?: TargetCapabilities | null
+  supports_history_replay?: boolean | null
 }
 
 export type AttackTargetResolutionStatus =
@@ -774,6 +896,9 @@ export type AttackTargetResolutionStatus =
   | 'legacy'
 
 export type AttackOutcome = 'undetermined' | 'success' | 'failure' | 'error'
+
+/** An attack's saved outcome, or where it is before one exists. */
+export type AttackDisplayOutcome = AttackOutcome | 'in_progress' | 'preparing'
 
 // Wire contracts from pyrit.models.analytics. The SDK selects and counts the cohort.
 export type AttackAnalyticsDimensionName =
@@ -869,6 +994,8 @@ export interface AttackAnalyticsFacetQuery {
   readonly dimension: AttackAnalyticsDimension
   readonly filters?: AttackAnalyticsFilters
   readonly search?: string
+  /** Full LIKE pattern instead of literal search (% and _, / escaping). */
+  readonly search_pattern?: string
   readonly offset?: number
   readonly limit?: number
 }
@@ -976,6 +1103,10 @@ export interface AttackSummary {
   chat_scorer?: RegisteredComponentReference | null
   chat_scorer_inherited?: boolean
   execution_read_only?: boolean
+  /** The attack is still running in a scan; its result is not saved yet. */
+  in_progress?: boolean
+  /** The scan run that produced this attack; null outside a scan. */
+  scenario_result_id?: string | null
   manual_continuation?: ManualContinuation | null
   last_score?: BackendScore | null
   last_response?: BackendMessagePiece | null
@@ -997,9 +1128,26 @@ export interface AttackSummary {
   updated_at: string
 }
 
+/** Initial Chat metadata; reference membership does not depend on loading a sidebar page. */
+export interface AttackMetadata extends Pick<AttackSummary,
+  | 'attack_result_id' | 'conversation_id' | 'objective' | 'labels' | 'operator'
+  | 'target' | 'target_unbound' | 'outcome' | 'automated_score' | 'human_score'
+  | 'chat_scorer' | 'chat_scorer_inherited' | 'manual_continuation' | 'in_progress' | 'scenario_result_id'
+> {
+  readonly execution_read_only: boolean
+  readonly last_response_message_piece_id: string | null
+  /** Number of pruned references; excludes the main conversation. */
+  readonly related_conversation_count: number
+  readonly selected_conversation_id: string
+  readonly selected_conversation_valid: boolean
+}
+
 export interface CreateAttackRequest {
   target_registry_name?: string
   target_binding?: TargetBinding
+  /** The attack goal, independent of the ManualAttack strategy type. */
+  objective?: string | null
+  /** @deprecated Use objective. Non-null name and objective must match if both are supplied. */
   name?: string
   chat_scorer?: RegisteredComponentReference | null
   operator?: string
@@ -1029,6 +1177,7 @@ export interface ConversationDraftPiece extends MessagePieceRequest {
 }
 
 export interface ConversationSaveInput {
+  initialConverters?: ChatConverterSnapshot
   sourcePieceIds?: string[]
   messages: ConversationDraftMessage[]
   objective: string
@@ -1038,7 +1187,7 @@ export interface ConversationSaveInput {
   sourceConversationId: string | null
   labels?: Record<string, string>
   baselineMessages?: ConversationDraftMessage[]
-  temperature?: string
+  baselineTargetKey?: string | null
   unsavedImport?: boolean
   pendingPromptId?: string
 }
@@ -1157,8 +1306,21 @@ export interface DisplayScore extends BackendScore {
   sourceLabel: string
 }
 
+/** Message-score fields displayed by ScoreDetails. */
+export interface ScoreSummary {
+  scorer: string
+  value?: string | null
+  status?: string
+  rationale?: string | null
+  categories?: string[] | null
+  isObjective?: boolean
+}
+
 export interface BackendMessagePiece {
   id: string
+  sequence?: number
+  role?: string
+  timestamp?: string
   original_value_data_type: string
   converted_value_data_type: string
   original_value?: string | null
@@ -1198,6 +1360,8 @@ export interface ConversationMessagesResponse {
   conversation_id: string
   messages: BackendMessage[]
   target_response_status: TargetResponseStatus | null
+  pagination?: PaginationInfo | null
+  partial_message_sequences?: number[]
 }
 
 export interface MessagePieceRequest {
@@ -1235,7 +1399,6 @@ export interface AddMessageRequest extends MessageRequest {
   send: boolean
   target_registry_name?: string
   target_binding?: TargetBinding
-  converter_ids?: string[]
   request_converter_configurations?: ConverterConfigurationRequest[]
   response_converter_configurations?: ConverterConfigurationRequest[]
   start_token?: string
@@ -1302,6 +1465,7 @@ export interface AttackListResponse {
 
 export interface ConversationSummary {
   conversation_id: string
+  conversation_type?: 'main' | 'pruned'
   message_count: number
   last_message_preview?: string | null
   created_at?: string | null
@@ -1311,7 +1475,23 @@ export interface AttackConversationsResponse {
   attack_result_id: string
   main_conversation_id: string
   conversations: ConversationSummary[]
+  pagination?: PaginationInfo | null
+  total_count?: number | null
 }
+
+/** Read-only display references may lack saved-result counts and a main conversation. */
+export interface ConversationReferenceView extends Omit<ConversationSummary, 'message_count'> {
+  message_count: number | null
+}
+
+export interface AttackConversationReferencesView extends Omit<AttackConversationsResponse, 'main_conversation_id' | 'conversations'> {
+  main_conversation_id: string | null
+  conversations: ConversationReferenceView[]
+}
+
+export type ReadAttackConversationReferences = (
+  attackResultId: string, params?: ConversationPageParams,
+) => Promise<AttackConversationReferencesView>
 
 
 export interface CreateConversationRequest {
@@ -1333,16 +1513,31 @@ export interface ChangeMainConversationResponse {
  * Wire shape of `DatasetInfo` from `GET /api/datasets`.
  * Null counts mean the total is unknown, not zero.
  */
+export interface DatasetProviderInfo {
+  description: string | null
+  source_url: string | null
+  license_url: string | null
+  access_url: string | null
+  required_environment_variables: string[]
+  modalities: string[]
+  harm_categories: string[]
+  size: string[]
+  load_time: string[]
+  unavailable_reason: string | null
+}
+
 export interface DatasetInfo {
   name: string
   selection_key: string
   loaded: boolean
   provider_available: boolean
+  provider?: DatasetProviderInfo | null
   origins?: string[]
   logical_examples: number | null
   seed_pieces: number | null
   objectives: number | null
   modalities: string[]
+  modality_aliases?: Readonly<Record<string, string>>
   harm_categories: string[]
   has_unlabeled_harm_categories: boolean
 }
@@ -1420,6 +1615,7 @@ export interface SeedRecord {
   parameters: string[] | null
   conditions: SeedCondition[] | null
   response_json_schema: Record<string, unknown> | null
+  is_general_technique?: boolean
 }
 
 /** Wire shape of one logical example from `GET /api/datasets/seeds`. */
@@ -1454,6 +1650,8 @@ export interface SeedExampleListParams {
   limit?: number
   cursor?: string
   search?: string
+  /** Full LIKE pattern instead of literal search (% and _, / escaping). */
+  value_pattern?: string
   modality?: readonly string[]
   seed_type?: readonly SeedType[]
   harm_category?: readonly string[]
@@ -1481,12 +1679,16 @@ export interface ScenarioDatasetRequest {
 export interface ScenarioDatasetOptions {
   mode: 'any' | 'subset' | 'fixed'
   allowed_names: string[]
+  /** The fewest named datasets a run needs, when the scenario has no usable defaults. */
+  min_selected?: number | null
   max_selected?: number | null
   per_dataset_limit: boolean
   total_limit: boolean
   supports_overrides: boolean
   filters: boolean
   source_settings?: boolean
+  /** Only stored datasets whose contents pass the scenario's checks can be selected. */
+  compatible_only?: boolean
 }
 
 export interface ScenarioDatasetSourceSettings {
@@ -1587,7 +1789,7 @@ export interface ScenarioPresetResponse {
    * registered preset cannot be updated or deleted through the API.
    */
   origin: 'stored' | 'registered'
-  /** Opaque document version; required to update the preset. Null when registered in code. */
+  /** Opaque document version; required to update the preset and sent when deleting it. Null when registered in code. */
   version: string | null
   /** Empty when the preset is runnable here. Never blocks a save. */
   issues: PresetIssue[]
@@ -1641,7 +1843,7 @@ export interface ScenarioSuiteResponse {
    * registered suite cannot be updated or deleted through the API.
    */
   origin: 'stored' | 'registered'
-  /** Opaque document version required to update a stored suite. Null when registered in code. */
+  /** Opaque document version required to update a stored suite and sent when deleting it. Null when registered in code. */
   version: string | null
   /** Ordered exactly like `suite.entries`. */
   entry_statuses: ScenarioSuiteEntryStatus[]
@@ -1667,6 +1869,8 @@ export interface ScenarioSuiteLaunchEntrySnapshot {
 
 /** Launch-owned fields and optimistic preconditions for one suite execution. */
 export interface LaunchScenarioSuiteRequest {
+  scoring_target_name?: string | null
+  objective_scorer?: RegisteredComponentReference | null
   expected_version: string | null
   entries: ScenarioSuiteLaunchEntrySnapshot[]
   target_name: string
@@ -1725,6 +1929,7 @@ export interface ScenarioSuiteExecutionSummary {
 }
 
 export interface RunScenarioRequest {
+  scoring_target_name?: string | null
   objective_scorer?: RegisteredComponentReference | null
   scenario_name: string
   target_name?: string | null
@@ -1795,6 +2000,7 @@ export interface ScenarioRunSizeEstimateResponse {
 }
 
 export interface ScenarioRunSizeEstimateRequest {
+  scoring_target_name?: string | null
   objective_scorer?: RegisteredComponentReference | null
   target_name?: string | null
   adversarial_target_name?: string | null
@@ -1880,12 +2086,6 @@ export type ScenarioRunEstimateState =
       error: string
     }
   | ScenarioRunEstimateResult
-
-export type ScenarioRunEstimator = (
-  scenarioName: string,
-  request: ScenarioRunSizeEstimateRequest,
-  signal?: AbortSignal,
-) => Promise<ScenarioRunSizeEstimateResponse>
 
 export interface AttackErrorSummary {
   atomic_attack_name: string
@@ -2046,13 +2246,14 @@ export interface ScenarioQueueSnapshot {
   queued: ScenarioQueueEntry[]
 }
 
-/** One persisted attack attempt in ascending progress order. */
+/** The objective score of one persisted scan attack attempt. */
 export interface ScenarioProgressScore {
   scorer_name: string
   score_type: 'true_false' | 'float_scale' | 'unknown'
   status: 'complete' | 'undetermined'
   score_value?: string | null
   score_rationale?: string | null
+  score_category?: string[]
 }
 
 export type ScenarioIdentityValue =
@@ -2104,7 +2305,71 @@ export interface ScenarioRunPlanSeedPrompt {
   parameters: string[]
 }
 
+export interface PairedOutcomeStatistics {
+  baseline_group_id: string
+  attack_group_id: string
+  planned_pairs: number
+  decided_pairs: number
+  excluded_pairs: number
+  failure_to_success: number
+  success_to_failure: number
+  failure_to_failure: number
+  success_to_success: number
+  baseline_success_rate: number | null
+  attack_success_rate: number | null
+  paired_difference: number | null
+  missing_baseline: number
+  missing_attack: number
+  missing_both: number
+  baseline_errors: number
+  attack_errors: number
+  baseline_undetermined: number
+  attack_undetermined: number
+  unmatched_baseline_seeds: number
+  unmatched_attack_seeds: number
+  unattributed_attempts: number
+}
+
+/** Detail pages use the aggregate's exact pairing, exclusions, and latest top-level outcome. */
+export type PairedOutcomeTransition =
+  | 'failure_to_success'
+  | 'success_to_failure'
+  | 'failure_to_failure'
+  | 'success_to_success'
+
+export interface PairedOutcomeDetailSide {
+  outcome: AttackOutcome
+  attack_result_id: string
+  conversation_id: string
+  timestamp: string
+  outcome_reason: string | null
+  child_conversation?: {
+    attack_result_id: string
+    conversation_id: string
+    outcome: AttackOutcome
+  } | null
+}
+
+export interface PairedOutcomeDetail {
+  seed_group_id: string
+  objective: string
+  seed_prompts: ScenarioRunPlanSeedPrompt[]
+  baseline: PairedOutcomeDetailSide
+  attack: PairedOutcomeDetailSide
+}
+
+export interface PairedOutcomeDetailPage {
+  baseline_group_id: string
+  attack_group_id: string
+  transition: PairedOutcomeTransition
+  pairs: PairedOutcomeDetail[]
+  total_pairs: number
+  next_cursor: string | null
+}
+
 export interface ScenarioRunPlanAtomicGroup {
+  /** Absent in legacy plans, whose topology is unknown. */
+  is_compound?: boolean | null
   kind?: 'baseline' | 'attack' | 'adaptive' | 'unknown' | null
   id: string
   atomic_attack_name: string
@@ -2302,7 +2567,10 @@ export interface ScenarioProgressSummary {
 
 export interface ScenarioActiveConversation {
   attack_result_id: string
+  /** The conversation the attack is working on, or the recorded objective conversation. */
   conversation_id: string
+  /** Every objective conversation the running attack has started so far, in first-use order. */
+  conversation_ids?: string[]
   atomic_attack_name: string
   seed_group_id?: string | null
   objective: string
@@ -2326,6 +2594,25 @@ export interface RuntimeReadiness {
   ready: boolean
   state: string
   generation: string
+  /** How many saved entries couldn't be restored; administrators see why in the runtime status. */
+  restore_failures?: number
+}
+
+export type RegistryRecipeKind = 'targets' | 'converters' | 'scorers' | 'techniques'
+
+export interface SavedEntryRef {
+  kind: RegistryRecipeKind
+  name: string
+}
+
+/** A saved entry, or a whole folder of them when `name` is null, that couldn't be restored. */
+export interface RestoreFailure {
+  kind: RegistryRecipeKind
+  name: string | null
+  reason: string
+  message: string
+  version: string | null
+  dependency: SavedEntryRef | null
 }
 
 export interface RuntimeStatus {
@@ -2336,8 +2623,9 @@ export interface RuntimeStatus {
   applying: boolean
   outcome: string
   message: string
+  /** The saved entries that couldn't be restored; only administrators can read the runtime status. */
+  restore_failures?: RestoreFailure[]
 }
-export type FindingSeverity = 'critical' | 'important' | 'moderate' | 'low' | 'informational' | 'other'
 
 export interface OperationCreate {
   name: string
@@ -2367,7 +2655,8 @@ export interface OperationDetail extends Operation {
 }
 
 export interface OperationListItem extends Operation {
-  finding_counts: Partial<Record<FindingSeverity, number>>
+  /** Finding counts by stored severity, including severities that match no current option. */
+  finding_counts: Record<string, number>
 }
 
 export interface OperationListResponse {
@@ -2376,11 +2665,14 @@ export interface OperationListResponse {
 
 export interface FindingCreate {
   title: string
-  description: string
-  severity: FindingSeverity
-  severity_other?: string | null
-  harm_type?: string | null
-  harm_type_other?: string | null
+  /** A severity option key, or Other text. */
+  severity: string
+  /** Values of the other fields and of every level, by key. Severity isn't one of them. */
+  field_values: Record<string, string>
+  /** The finding this one is a sub-finding of, in the same Operation. Null or omitted for a top-level finding. */
+  parent_finding_id?: string | null
+  /** Whether the operator demonstrated it. A path is complete only when every step was. Defaults to true. */
+  demonstrated?: boolean
 }
 
 /** Resending the same id and content returns the finding an earlier, unanswered request saved. */
@@ -2390,14 +2682,83 @@ export interface FindingCreateRequest extends FindingCreate {
   attack_result_id?: string
 }
 
-export interface FindingOptionsResponse {
-  harm_types: string[]
+/**
+ * A finding edit. A key in `keep_retired_keys` keeps that stored value, even if a live apply configured its field
+ * again, and a key in `remove_retired_keys` drops that retired value.
+ */
+export interface FindingUpdateRequest extends FindingCreate {
+  keep_retired_keys: string[]
+  remove_retired_keys: string[]
+}
+
+export type FindingFieldType = 'text' | 'multiline' | 'choice' | 'number'
+
+export type FindingSeverityColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'gray' | 'dark' | 'neutral'
+
+export interface FindingFieldOption {
+  key: string
+  label: string
+  /** The options of the next dropdown when this option is chosen. */
+  children: FindingFieldOption[]
+}
+
+/** One field of the finding dialog, as the deployment defines it. */
+export interface FindingField {
+  key: string
+  label: string
+  type: FindingFieldType
+  required: boolean
+  options: FindingFieldOption[]
+  /** The `[key, label]` of each dropdown under a cascade's first one. */
+  levels: Array<[string, string]>
+  default: string | null
+  /** Whether a single-level choice also accepts typed text. */
+  allow_other: boolean
+  /** The severity slot's badge color for each top-level option. */
+  colors: Record<string, FindingSeverityColor>
+  hint: string | null
+  /** A heading, such as "Reproduction", shown above this field when the field before it has a different section. */
+  section: string | null
+}
+
+/** The active finding fields: the severity slot and the fields shown after it. */
+export interface FindingFields {
+  /** Its options run from highest to lowest severity; findings sort in that order. */
+  severity: FindingField
+  fields: FindingField[]
+}
+
+/** One ordered chain of a finding's direct sub-findings that together demonstrate it. */
+export interface FindingPath {
+  id: string
+  name?: string | null
+  description?: string
+  /** Direct sub-finding IDs, in order. */
+  steps: string[]
+}
+
+/** A saved path, with whether every step is a demonstrated sub-finding. Completeness is derived, never stored. */
+export interface FindingPathItem extends FindingPath {
+  complete: boolean
+}
+
+/** A path to save. Omit `id` to add a new path. */
+export interface FindingPathRequest extends Omit<FindingPath, 'id'> {
+  id?: string
+}
+
+/** Every path of a finding, in order, replacing the saved ones. */
+export interface FindingPathsUpdateRequest {
+  paths: FindingPathRequest[]
 }
 
 export interface Finding extends FindingCreate {
   id: string
   operation_id: string
   created_at: string
+  parent_finding_id: string | null
+  demonstrated: boolean
+  paths: FindingPath[]
 }
 
 export interface FindingListResponse {
@@ -2406,8 +2767,51 @@ export interface FindingListResponse {
   next_offset: number | null
 }
 
+/** One filled value of a finding, labelled by the active finding fields. */
+export interface FindingValueRow {
+  key: string
+  label: string
+  /** The option label of a matching choice value, otherwise the stored text. */
+  value: string
+  multiline: boolean
+}
+
 export interface FindingListItem extends Finding {
   evidence_count: number
+  /** The number of direct sub-findings. */
+  child_count: number
+  paths: FindingPathItem[]
+  /** The filled values in configured order, labelled by the active finding fields. */
+  rows: FindingValueRow[]
+  /** The `[key, value]` of each stored value that no active field or level uses, in stored order. */
+  retired: Array<[string, string]>
+}
+
+/** Optional filters for listing findings. Without one, findings at every depth are listed. */
+export interface FindingListParams {
+  limit: number
+  offset: number
+  title?: string
+  /** Full LIKE pattern instead of literal title search (% and _, / escaping). */
+  title_pattern?: string
+  /** Only the direct sub-findings of this finding, oldest first. */
+  parent_finding_id?: string
+  /** Only findings without a parent. */
+  top_level?: boolean
+}
+
+/** A finding that links an attack as evidence. */
+export interface AttackFindingItem extends Finding {
+  /** Current name of the finding's Operation. */
+  operation_name: string
+  /** The evidence link; detach it through the Operation evidence route. */
+  evidence_id: string
+}
+
+/** Every finding that links an attack, highest severity first, then newest first. */
+export interface AttackFindingListResponse {
+  attack_result_id: string
+  items: AttackFindingItem[]
 }
 
 export interface FindingEvidenceCreateRequest {
@@ -2449,10 +2853,349 @@ export interface FindingEvidenceListResponse {
 
 export type FindingExportFormat = 'docx' | 'markdown'
 
-/** Selected findings of one Operation to download as a single document. */
+/** Selected findings of one Operation to download as a single document. Each includes all of its sub-findings. */
 export interface FindingExportRequest {
   finding_ids: string[]
   format: FindingExportFormat
   /** The dashboard origin that evidence links open. */
   dashboard_origin: string
+}
+
+/** A flagged share of applicable conversations with a 90% Wilson interval; `rate` is null when none apply. */
+export interface AssertBinaryRate {
+  rate: number | null
+  flagged_count: number
+  applicable_count: number
+  not_applicable_count: number
+  ci_lower: number | null
+  ci_upper: number | null
+  /** False below 5 applicable conversations, ASSERT's minimum support. */
+  sufficient_support: boolean
+}
+
+export interface AssertCategoryMetrics {
+  behavior_name: string
+  /** Identifies the judged policy (taxonomy, context, instructions), so same-named policies stay separate. */
+  policy_id: string
+  name: string
+  permissible: boolean
+  /** Violated share of conversations that judged this category relevant. */
+  node_violation: AssertBinaryRate
+}
+
+/** Grade counts in declared scale order and the median grade for a graded judge dimension. */
+export interface AssertGradeDistribution {
+  scale: Array<number | string>
+  counts: Record<string, number>
+  median: number | string | null
+}
+
+export interface AssertNotJudgedCounts {
+  target_input_refused: number
+  target_error: number
+  judge_no_verdict: number
+  attack_error: number
+  not_scored: number
+}
+
+export interface AssertTechniqueMetrics {
+  technique: string
+  total: number
+  scored_total: number
+  not_judged: AssertNotJudgedCounts
+  unresolved_policy: number
+  rows_without_node_judgments: number
+  policy_violation_on_not_permissible: AssertBinaryRate | null
+  policy_violation_on_permissible: AssertBinaryRate | null
+  /** One violation rate per judge dimension; not-applicable answers stay out of the denominator. */
+  dimensions: Record<string, AssertBinaryRate>
+  /** Judged conversations where that dimension's judge gave no verdict, such as a blocked reply. */
+  dimension_no_verdict: Record<string, number>
+  dimension_grades: Record<string, AssertGradeDistribution[]>
+  categories: AssertCategoryMetrics[]
+}
+
+/** ASSERT's headline metrics for one completed foundry.assert_policy run. */
+export interface AssertPolicyMetrics {
+  scenario_result_id: string
+  judgment_mode: string | null
+  split_unavailable_reason: string | null
+  total: number
+  scored_total: number
+  techniques: Record<string, AssertTechniqueMetrics>
+}
+
+// --- Prompt generation ---
+
+/** Lifecycle of a generation job. Active statuses are queued, running, and saving. */
+export type PromptGenerationStatus =
+  | 'queued'
+  | 'running'
+  | 'awaiting_review'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+
+export interface PromptGeneratorStage {
+  name: string
+  label: string
+  /** Whether generation can pause after this stage for review. */
+  reviewable: boolean
+}
+
+export interface PromptGeneratorTargetRole {
+  role: string
+  label: string
+  description: string
+  required: boolean
+}
+
+/** A registered generator from `GET /api/prompt-generators`. */
+export interface PromptGeneratorDescriptor {
+  name: string
+  display_name: string
+  description: string
+  stages: PromptGeneratorStage[]
+  target_roles: PromptGeneratorTargetRole[]
+  /** A scenario that runs datasets from this generator, preselected after completion. */
+  follow_up_scenario: string | null
+}
+
+export interface PromptGeneratorListResponse {
+  items: PromptGeneratorDescriptor[]
+}
+
+export interface PromptGenerationProgress {
+  completed_stages: string[]
+  /** The next or running stage, or null when every stage is done. */
+  current_stage: string | null
+  items_completed: number
+  items_total: number
+}
+
+export interface PromptGenerationSummary {
+  id: string
+  generator: string
+  dataset_name: string
+  status: PromptGenerationStatus
+  pause_for_review: boolean
+  group_id: string | null
+  group_label: string | null
+  progress: PromptGenerationProgress
+  error: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  completed_at: string | null
+}
+
+/** A generation with its generator-specific request and result summary. */
+export interface PromptGenerationDetail extends PromptGenerationSummary {
+  request: Record<string, unknown>
+  /** Target registry name for each target role. */
+  targets: Record<string, string>
+  review_completed: boolean
+  summary: Record<string, unknown> | null
+  started_at: string | null
+}
+
+export interface PromptGenerationListResponse {
+  items: PromptGenerationSummary[]
+}
+
+export interface PromptGenerationCreateRequest {
+  generator: string
+  dataset_name: string
+  request: Record<string, unknown>
+  targets: Record<string, string>
+  pause_for_review: boolean
+}
+
+export interface PromptGenerationStageEstimate {
+  stage: string
+  target_role: string
+  min_calls: number
+  max_calls: number
+  min_tokens: number
+  max_tokens: number
+}
+
+/** Provider-call-free estimate of the remaining work. Tokens are approximate. */
+export interface PromptGenerationEstimate {
+  stages: PromptGenerationStageEstimate[]
+  exact_calls: boolean
+  notes: string[]
+  min_calls: number
+  max_calls: number
+  low_tokens: number
+  high_tokens: number
+}
+
+export interface PromptGenerationPreflightResponse {
+  valid: boolean
+  errors: string[]
+  dataset_name_available: boolean
+  estimate: PromptGenerationEstimate | null
+}
+
+/** Output awaiting review, in the generator's review shape. */
+export interface PromptGenerationReview {
+  generation_id: string
+  stage: string
+  payload: Record<string, unknown>
+}
+
+export interface PromptGenerationBatchItem {
+  dataset_name: string
+  request: Record<string, unknown>
+}
+
+/** Several generations that share a generator, targets, and settings, such as an ASSERT suite. */
+export interface PromptGenerationBatchRequest {
+  generator: string
+  label: string
+  items: PromptGenerationBatchItem[]
+  targets: Record<string, string>
+  pause_for_review: boolean
+}
+
+/** The created generations; they share a `group_id` and `group_label`. */
+export interface PromptGenerationBatchResponse {
+  items: PromptGenerationSummary[]
+}
+
+/** A generator request reconstructed from a stored dataset. */
+export interface PromptGenerationRequestFromDataset {
+  generator: string
+  request: Record<string, unknown>
+  source_dataset_name: string
+}
+
+/** A ready-made behavior from the bundled ASSERT library; `description` is markdown policy text. */
+export interface AssertBehaviorPreset {
+  name: string
+  version: string
+  tags: string[]
+  applicable_to: string[]
+  summary: string
+  description: string
+  suggested_judge_presets: string[]
+}
+
+export interface AssertBehaviorPresetListResponse {
+  items: AssertBehaviorPreset[]
+}
+
+/** An application context and the library behaviors to evaluate in it, one dataset per behavior. */
+export interface AssertSuitePreset {
+  name: string
+  version: string
+  tags: string[]
+  applicable_to: string[]
+  summary: string
+  context: string
+  behaviors: string[]
+  suggested_judge_presets: string[]
+}
+
+export interface AssertSuitePresetListResponse {
+  items: AssertSuitePreset[]
+}
+
+export interface AssertDimensionLevel {
+  name: string
+  definition: string
+}
+
+/** A coverage dimension: explicit levels, or a description from which levels are generated. */
+export interface AssertDimension {
+  name: string
+  description: string
+  levels: AssertDimensionLevel[]
+}
+
+export type AssertSamplingMethod = 'pairwise' | 'stratified' | 'full_factorial' | 'random'
+export type AssertReplication = 'balanced' | 'none'
+
+export interface AssertSamplingConfig {
+  method: AssertSamplingMethod
+  stratify_by: string[]
+  replication: AssertReplication
+  with_replacement: boolean
+}
+
+/** The `request` of an `assert` generation (`AssertGenerationConfig`). */
+export interface AssertGenerationRequest {
+  behavior_name: string
+  behavior_description: string
+  context: string
+  group_count: number
+  include_user_prompt: boolean
+  include_adversarial_prompt: boolean
+  behavior_category_count: number
+  dimensions: AssertDimension[]
+  dimension_level_count: number
+  sampling: AssertSamplingConfig
+  random_seed: number
+  web_search: boolean
+  target_system_prompt: string | null
+  target_owns_instructions: boolean
+  /** A reviewed taxonomy to reuse; generation then skips the research stages. */
+  taxonomy?: AssertTaxonomy
+}
+
+export interface AssertTerm {
+  term: string
+  definition: string
+  examples: string[]
+}
+
+export interface AssertBehaviorCategory {
+  name: string
+  definition: string
+  examples: string[]
+  permissible: boolean
+}
+
+export interface AssertTaxonomy {
+  behavior: { name: string; definition: string }
+  definition_of_terms: AssertTerm[]
+  behavior_categories: AssertBehaviorCategory[]
+}
+
+/** The read-only research summary shown during ASSERT review. */
+export interface AssertSystematizationSummary {
+  scope: string
+  reasoning_summary: string
+}
+
+export interface AssertReviewPayload {
+  systematization: AssertSystematizationSummary | null
+  taxonomy: AssertTaxonomy
+  dimensions: AssertDimension[]
+}
+
+export interface AssertCoverage {
+  sample_size: number
+  unique_assignments: number
+  total_levels: number
+  covered_levels: number
+  total_pairs: number
+  covered_pairs: number
+}
+
+/** The `summary` of a completed `assert` generation. */
+export interface AssertGenerationResultSummary {
+  group_count: number
+  coverage: AssertCoverage | null
+  categories: Array<{ name: string; permissible: boolean; groups: number }>
+  edited_stages: string[]
+}
+
+/** The `request` of a `target_objective` generation. */
+export interface TargetObjectiveGenerationRequest {
+  instructions: string
+  count: number
+  harm_categories: string[]
 }

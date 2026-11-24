@@ -7,9 +7,8 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   for (const name of ["objective_scorer_chat", "adversarial_chat", "registry_local_objective"]) {
     const existing = await request.get(`/api/targets/${name}`, { headers });
     if (existing.status() === 404) {
-      const created = await request.post("/api/targets", { headers, data: name === "registry_local_objective"
-        ? { name, type: "TextTarget", params: {} }
-        : { name, type: "OpenAIChatTarget", auth_mode: "api_key", params: {
+      const created = await request.post("/api/targets", { headers, data:
+        { name, type: "OpenAIChatTarget", auth_mode: "api_key", params: {
           endpoint: "http://127.0.0.1:9/v1", model_name: "local-test", api_key: "local-test-only",
         } } });
       expect(created.ok(), await created.text()).toBe(true);
@@ -141,6 +140,32 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await checkbox.check();
   await expect(checkbox).toBeChecked();
   expect(promptRequests).toEqual([]);
+});
+
+test("saves a target from the New Target dialog and still lists it as Saved after a reload @seeded", async ({ page, request }) => {
+  const name = `saved_chat_${Date.now()}`;
+  await page.goto("/registry/targets");
+  await page.getByRole("button", { name: "New Target", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  const picker = dialog.getByRole("combobox", { name: "Target Type" });
+  await expect(picker).toBeEnabled();
+  await picker.click();
+  await page.getByRole("option", { name: /Implementation: OpenAIChatTarget/ }).click();
+  await dialog.getByRole("radio", { name: /^No key/ }).check();
+  await dialog.getByPlaceholder("https://your-resource.openai.azure.com/").fill("http://127.0.0.1:9/v1");
+  await dialog.getByPlaceholder("e.g. gpt-4o, my-deployment").fill("local-test");
+  await dialog.getByRole("textbox", { name: /Registry Name/ }).fill(name);
+  await expect(dialog.getByText("This target can't be saved")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Save Target" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await expect(page.getByTestId(`target-row-${name}`).getByText("Saved", { exact: true })).toBeVisible();
+  const saved = await request.get(`/api/targets/${name}`, { headers: compatibilityHeaders() });
+  expect(saved.ok(), await saved.text()).toBe(true);
+  expect((await saved.json()).origin).toBe("saved");
+
+  await page.reload();
+  await expect(page.getByTestId(`target-row-${name}`).getByText("Saved", { exact: true })).toBeVisible();
 });
 
 interface RegisteredConverter {

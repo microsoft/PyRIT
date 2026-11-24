@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from scipy.io import wavfile
 
-from pyrit.converter.audio_echo_converter import AudioEchoConverter
+from pyrit.converter import AudioEchoConverter
 from pyrit.registry import ConverterRegistry
 
 
@@ -42,6 +42,16 @@ async def test_echo_unsigned_pcm_async(tmp_path: Path, stereo: bool, samples: li
     assert rate == 8000
     assert output.dtype == np.uint8
     np.testing.assert_array_equal(output, expected_data)
+
+
+def test_apply_echo_adds_delayed_decayed_copy() -> None:
+    """The helper mixes a delayed, decayed copy of the signal back into the original."""
+    converter = AudioEchoConverter(delay=2 / 8000, decay=0.5)
+    data = np.array([1000, -1000, 0, 0], dtype=np.int16)
+
+    output = converter._apply_echo(data, sample_rate=8000)
+
+    np.testing.assert_array_equal(output, np.array([1000, -1000, 500, -500], dtype=np.int16))
 
 
 async def test_echo_adds_delayed_signal(sqlite_instance):

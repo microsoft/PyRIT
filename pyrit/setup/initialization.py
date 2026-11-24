@@ -7,15 +7,15 @@ import pathlib
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
-from pyrit.common.apply_defaults import reset_default_values
+from pyrit.common import Singleton, reset_default_values
 from pyrit.common.random_context import configure_random_seed
-from pyrit.common.singleton import Singleton
 from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.setup.environment_loading import (
     load_environment_async,
     load_environment_files,
     validate_env_akv_strict,
 )
+from pyrit.setup.finding_fields import reset_active_finding_fields
 
 if TYPE_CHECKING:
     from pyrit.setup.pyrit_initializer import PyRITInitializer
@@ -70,9 +70,11 @@ def reset_setup_registries() -> None:
         AttackTechniqueRegistry,
         ConverterRegistry,
         InitializerRegistry,
+        ScenarioPresetRegistry,
         ScenarioRegistry,
         ScenarioSuiteRegistry,
         ScorerRegistry,
+        SourceRegistry,
         TargetRegistry,
     )
     from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
@@ -84,9 +86,11 @@ def reset_setup_registries() -> None:
         AttackTechniqueRegistry,
         ConverterRegistry,
         InitializerRegistry,
+        ScenarioPresetRegistry,
         ScenarioRegistry,
         ScenarioSuiteRegistry,
         ScorerRegistry,
+        SourceRegistry,
         TargetRegistry,
     ):
         registry.reset_registry_singleton()
@@ -206,6 +210,7 @@ async def initialize_pyrit_async(
     # Reset all default values before executing initialization scripts
     # This ensures a clean state for each initialization
     reset_default_values()
+    reset_active_finding_fields()
 
     # Set up memory BEFORE executing initialization scripts
     # This is critical because initialization scripts may instantiate objects
@@ -242,6 +247,7 @@ async def initialize_pyrit_async(
     CentralMemory.set_memory_instance(memory)
 
     try:
+        await memory.recover_dataset_cleanup_async()
         # Combine directly provided initializers with those loaded from scripts.
         all_initializers: list[PyRITInitializer] = list(initializers) if initializers else []
 
@@ -270,8 +276,7 @@ async def initialize_pyrit_async(
         # available default targets). Supplying any initializer/script means the caller owns
         # setup, so defaults are skipped; load_defaults=False skips them even on a bare call.
         if load_defaults and not all_initializers:
-            from pyrit.setup.initializers.targets import TargetInitializer
-            from pyrit.setup.initializers.techniques import TechniqueInitializer
+            from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
             all_initializers = [TechniqueInitializer(), TargetInitializer()]
 
@@ -302,6 +307,7 @@ async def reinitialize_pyrit_async(
     os.environ.update(environment_values)
     configure_random_seed(seed=seed)
     reset_default_values()
+    reset_active_finding_fields()
     CentralMemory.set_memory_instance(memory)
     initializers = await asyncio.to_thread(initializer_factory)
     await _execute_initializers_async(initializers=initializers, raise_on_initializer_error=True)

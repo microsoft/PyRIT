@@ -9,12 +9,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, ScorerCapabilityName
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
-from pyrit.scenario.scenarios.adaptive.image_technique_adaptive import ImageTechniqueAdaptive
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration
+from pyrit.scenario.scenarios.adaptive import ImageTechniqueAdaptive
 from pyrit.score import TrueFalseScorer
 
 _IMAGE_TECHNIQUE_NAMES = {
@@ -35,6 +34,10 @@ def _mock_id(name: str) -> ComponentIdentifier:
 def mock_objective_scorer() -> MagicMock:
     mock = MagicMock(spec=TrueFalseScorer)
     mock.get_identifier.return_value = _mock_id("MockObjectiveScorer")
+    # Like the default composite scorer, it keeps no float value on its verdicts.
+    mock.capabilities.includes.side_effect = lambda *, capability: (
+        capability is not ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE
+    )
     return mock
 
 

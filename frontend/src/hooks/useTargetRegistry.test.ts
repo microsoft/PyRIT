@@ -15,6 +15,7 @@ const listTargets = jest.mocked(targetsApi.listTargets)
 const runtime = jest.mocked(useRuntime)
 const first = makeTarget({ target_registry_name: 'first' })
 const second = makeTarget({ target_registry_name: 'second' })
+const sdkTarget = makeTarget({ target_registry_name: 'demo', target_type: 'TextTarget' })
 
 describe('useTargetRegistry', () => {
   beforeEach(() => {
@@ -35,12 +36,53 @@ describe('useTargetRegistry', () => {
     expect(listTargets).toHaveBeenLastCalledWith(200, 'next')
   })
 
+  it('skips SDK-only targets without losing the remaining registry pages', async () => {
+    listTargets.mockResolvedValueOnce({
+      items: [sdkTarget], pagination: { limit: 200, has_more: true, next_cursor: 'after-demo' },
+    }).mockResolvedValueOnce({
+      items: [first], pagination: { limit: 200, has_more: false },
+    })
+    const { result } = renderHook(useTargetRegistry)
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.targets).toEqual([first])
+    expect(result.current.isEmpty).toBe(false)
+    expect(listTargets).toHaveBeenLastCalledWith(200, 'after-demo')
+  })
+
+  it('treats a registry containing only SDK targets as empty for GUI choices', async () => {
+    listTargets.mockResolvedValue({
+      items: [sdkTarget], pagination: { limit: 200, has_more: false },
+    })
+    const { result } = renderHook(useTargetRegistry)
+    await waitFor(() => expect(result.current.isEmpty).toBe(true))
+    expect(result.current.targets).toEqual([])
+  })
+
+  it('does not reintroduce an SDK-only target through updates or full synchronization', async () => {
+    let complete: ((response: Awaited<ReturnType<typeof targetsApi.listTargets>>) => void) | undefined
+    listTargets.mockReturnValueOnce(new Promise((resolve) => { complete = resolve }))
+    const { result } = renderHook(useTargetRegistry)
+    act(() => {
+      result.current.rememberTarget(first)
+      result.current.rememberTarget({ ...sdkTarget, target_registry_name: first.target_registry_name })
+    })
+    expect(result.current.targets).toEqual([])
+    await act(async () => {
+      if (!complete) throw new Error('Registry request did not start')
+      complete({ items: [first, second], pagination: { limit: 200, has_more: false } })
+    })
+    expect(result.current.targets).toEqual([second])
+    act(() => result.current.synchronizeTargets([sdkTarget, first]))
+    expect(result.current.targets).toEqual([first])
+  })
+
   it('reports incomplete pagination and retries rather than using a partial registry', async () => {
     listTargets.mockResolvedValue({
       items: [first], pagination: { limit: 200, has_more: true, next_cursor: 'stuck' },
     })
     const { result } = renderHook(useTargetRegistry)
     await waitFor(() => expect(result.current.error).not.toBeNull())
+    expect(result.current.loading).toBe(false)
     expect(result.current.targets).toEqual([])
     expect(result.current.isEmpty).toBe(false)
     listTargets.mockResolvedValue({
@@ -50,6 +92,58 @@ describe('useTargetRegistry', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.error).toBeNull()
     expect(result.current.targets).toEqual([second])
+  })
+
+  it('reports loading when the runtime generation changes before the new list lands', async () => {
+    let complete!: (response: Awaited<ReturnType<typeof targetsApi.listTargets>>) => void
+    listTargets.mockReturnValueOnce(new Promise((resolve) => { complete = resolve }))
+    runtime.mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
+    const { result, rerender } = renderHook(useTargetRegistry)
+    act(() => { complete({ items: [first], pagination: { limit: 200, has_more: false } }) })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.targets).toEqual([first])
+
+    // The runtime reinitializes: the new fetch hangs, and the old targets
+    // must not stay selectable as if they belonged to the new generation.
+    listTargets.mockReturnValueOnce(new Promise(() => {}))
+    runtime.mockReturnValue({ ready: true, state: 'ready', generation: 'second' })
+    act(() => { rerender() })
+
+    expect(result.current.loading).toBe(true)
+  })
+
+  it.each([false, true])('settles failed loads and allows retry (previous generation loaded: %s)', async (
+    previousGenerationLoaded: boolean,
+  ) => {
+    if (previousGenerationLoaded) {
+      listTargets.mockResolvedValueOnce({ items: [first], pagination: { limit: 200, has_more: false } })
+    }
+    let fail: ((cause: Error) => void) | undefined
+    listTargets.mockReturnValueOnce(new Promise((_, reject) => { fail = reject }))
+    const { result, rerender } = renderHook(useTargetRegistry)
+    if (previousGenerationLoaded) {
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      runtime.mockReturnValue({ ready: true, state: 'ready', generation: 'second' })
+      rerender()
+    }
+    expect(result.current.loading).toBe(true)
+    await act(async () => {
+      if (!fail) throw new Error('Registry request did not start')
+      fail(new Error('Registry unavailable'))
+    })
+    expect(result.current.loading).toBe(false)
+    expect(result.current.error).toBe('Registry unavailable')
+    expect(result.current.targets).toEqual(previousGenerationLoaded ? [first] : [])
+    expect(result.current.isEmpty).toBe(false)
+
+    listTargets.mockResolvedValueOnce({ items: [second], pagination: { limit: 200, has_more: false } })
+    act(() => result.current.refresh())
+    expect(result.current.loading).toBe(true)
+    expect(result.current.error).toBeNull()
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.targets).toEqual([second])
+    expect(result.current.error).toBeNull()
+    expect(result.current.isEmpty).toBe(false)
   })
 
   it('keeps newer selections when an earlier registry load completes', async () => {

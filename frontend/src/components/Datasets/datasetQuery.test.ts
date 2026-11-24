@@ -5,7 +5,9 @@ import {
   catalogQueryIsDefault,
   catalogQueryToSearchParams,
   DEFAULT_DATASET_CATALOG_QUERY,
+  datasetModalities,
   filterDatasets,
+  normalizeDatasetModality,
   type DatasetCatalogQuery,
   type DatasetSort,
 } from './datasetQuery'
@@ -18,6 +20,7 @@ function makeDataset(overrides: Partial<DatasetInfo> & Pick<DatasetInfo, 'name' 
     seed_pieces: 1,
     objectives: 1,
     modalities: [],
+    modality_aliases: { image_path: 'image', audio_path: 'audio', video_path: 'video' },
     harm_categories: [],
     has_unlabeled_harm_categories: false,
     ...overrides,
@@ -25,6 +28,102 @@ function makeDataset(overrides: Partial<DatasetInfo> & Pick<DatasetInfo, 'name' 
 }
 
 describe('datasetQuery', () => {
+  it.each([
+    ['image', 'image_path'],
+    ['audio', 'audio_path'],
+    ['video', 'video_path'],
+  ])('matches %s providers before and after loading, including legacy filters', (modality: string, storedType: string) => {
+    const available = makeDataset({
+      name: 'provider', selection_key: 'dataset:named:provider', loaded: false, provider_available: true,
+      provider: {
+        description: null, source_url: null, license_url: null, access_url: null,
+        required_environment_variables: [], modalities: [modality, 'text'], harm_categories: [],
+        size: [], load_time: [], unavailable_reason: null,
+      },
+    })
+    const stored = { ...available, loaded: true, modalities: [storedType, 'text'] }
+    expect(datasetModalities(available, 'available')).toEqual([modality, 'text'])
+    expect(datasetModalities(stored)).toEqual([modality, 'text'])
+    for (const view of ['available', 'all'] as const) {
+      for (const filter of [modality, storedType]) {
+        const query = { ...DEFAULT_DATASET_CATALOG_QUERY, view, modalities: [filter] }
+        expect(filterDatasets([available], query)).toEqual([available])
+        expect(filterDatasets([stored], query)).toEqual([stored])
+      }
+    }
+    expect(filterDatasets([available], {
+      ...DEFAULT_DATASET_CATALOG_QUERY, view: 'memory', modalities: [modality],
+    })).toEqual([])
+  })
+
+  it.each(['text', 'binary_path', 'image/png', 'custom', 'constructor', '__proto__'])('preserves the distinct modality %s', (modality: string) => {
+    expect(normalizeDatasetModality(modality, { image_path: 'image' })).toBe(modality)
+  })
+
+  it('uses the returned alias contract rather than interpreting storage suffixes', () => {
+    const dataset = makeDataset({
+      name: 'custom', selection_key: 'dataset:named:custom',
+      modalities: ['custom_storage', 'image_path'], modality_aliases: { custom_storage: 'image' },
+    })
+    expect(datasetModalities(dataset)).toEqual(['image', 'image_path'])
+    expect(filterDatasets([dataset], {
+      ...DEFAULT_DATASET_CATALOG_QUERY, modalities: ['image'],
+    })).toEqual([dataset])
+  })
+
+  it('deduplicates equivalent stored and provider modality names', () => {
+    expect(datasetModalities(makeDataset({
+      name: 'mixed', selection_key: 'dataset:named:mixed', modalities: ['image', 'image_path', 'text'],
+    }))).toEqual(['image', 'text'])
+  })
+
+  it('uses one facet vocabulary per dataset in each view without treating unknown metadata as unlabeled', () => {
+    const builtin = makeDataset({
+      name: 'builtin', selection_key: 'dataset:named:builtin', provider_available: true,
+      modalities: ['audio_path'], harm_categories: ['MALWARE'], has_unlabeled_harm_categories: true,
+      provider: {
+        description: null, source_url: null, license_url: null, access_url: null,
+        required_environment_variables: [], modalities: ['text'], harm_categories: ['cybercrime'],
+        size: [], load_time: [], unavailable_reason: null,
+      },
+    })
+    const custom = makeDataset({
+      name: 'custom', selection_key: 'dataset:named:custom',
+      modalities: ['text'], harm_categories: ['cybercrime'], has_unlabeled_harm_categories: true,
+    })
+    const unknown = { ...builtin, name: 'unknown', selection_key: 'dataset:named:unknown', provider: null }
+    const rows = [builtin, custom, unknown]
+    for (const view of ['available', 'all'] as const) {
+      const expected = view === 'available' ? [builtin] : [builtin, custom]
+      expect(filterDatasets(rows, {
+        ...DEFAULT_DATASET_CATALOG_QUERY, view, modalities: ['text'], harmCategories: ['cybercrime'],
+      })).toEqual(expected)
+      expect(filterDatasets(rows, {
+        ...DEFAULT_DATASET_CATALOG_QUERY, view, harmCategories: ['MALWARE'],
+      })).toEqual([])
+      expect(filterDatasets(rows, {
+        ...DEFAULT_DATASET_CATALOG_QUERY, view, unlabeled: true,
+      })).toEqual(view === 'available' ? [] : [custom])
+    }
+    expect(filterDatasets(rows, {
+      ...DEFAULT_DATASET_CATALOG_QUERY, modalities: ['audio'], harmCategories: ['MALWARE'],
+    })).toEqual([builtin, unknown])
+  })
+
+  it('keeps provider availability independent of stored data and preserves the view in the URL', () => {
+    const stored = makeDataset({ name: 'stored', selection_key: 'dataset:named:stored' })
+    const available = makeDataset({
+      name: 'provider', selection_key: 'dataset:named:provider', loaded: false, provider_available: true,
+      logical_examples: null,
+    })
+    const both = makeDataset({ name: 'both', selection_key: 'dataset:named:both', provider_available: true })
+    const datasets = [stored, available, both]
+    expect(filterDatasets(datasets, DEFAULT_DATASET_CATALOG_QUERY).map((item) => item.name)).toEqual(['both', 'stored'])
+    const query = { ...DEFAULT_DATASET_CATALOG_QUERY, view: 'available' as const }
+    expect(filterDatasets(datasets, query).map((item) => item.name)).toEqual(['both', 'provider'])
+    expect(catalogQueryFromSearchParams(catalogQueryToSearchParams(query))).toEqual(query)
+    expect(filterDatasets(datasets, { ...query, view: 'all' })).toHaveLength(3)
+  })
   it('omits default catalog filters and restores special characters', () => {
     expect(catalogQueryToSearchParams(DEFAULT_DATASET_CATALOG_QUERY).toString()).toBe('')
     expect(catalogQueryIsDefault(DEFAULT_DATASET_CATALOG_QUERY)).toBe(true)
@@ -34,6 +133,7 @@ describe('datasetQuery', () => {
       modalities: ['image/png', 'text'],
       harmCategories: ['a&b', 'データ'],
       unlabeled: true,
+      origins: ['generated', 'remote'],
       sort: 'logical_examples_desc',
     }
     const params = catalogQueryToSearchParams(query)
@@ -43,10 +143,46 @@ describe('datasetQuery', () => {
     expect(catalogQueryIsDefault(restored)).toBe(false)
     expect(params.getAll('modality')).toEqual(['image/png', 'text'])
     expect(params.getAll('harm_category')).toEqual(['a&b', 'データ'])
+    expect(params.getAll('origin')).toEqual(['generated', 'remote'])
   })
 
   it('ignores an unknown sort value', () => {
     expect(catalogQueryFromSearchParams(new URLSearchParams('sort=nope')).sort).toBe('name')
+  })
+
+  it('deduplicates parsed facets in first-occurrence order', () => {
+    const params = new URLSearchParams([
+      ['modality', 'text'],
+      ['modality', 'image/png'],
+      ['modality', 'text'],
+      ['modality', 'audio_path'],
+      ['modality', 'image/png'],
+      ['harm_category', 'violence'],
+      ['harm_category', 'a&b'],
+      ['harm_category', 'violence'],
+      ['harm_category', 'データ'],
+      ['harm_category', 'a&b'],
+      ['origin', 'generated'],
+      ['origin', 'generated'],
+    ])
+
+    expect(catalogQueryFromSearchParams(params)).toEqual({
+      ...DEFAULT_DATASET_CATALOG_QUERY,
+      modalities: ['text', 'image/png', 'audio_path'],
+      harmCategories: ['violence', 'a&b', 'データ'],
+      origins: ['generated'],
+    })
+  })
+
+  it('deduplicates serialized facets in first-occurrence order', () => {
+    const params = catalogQueryToSearchParams({
+      ...DEFAULT_DATASET_CATALOG_QUERY,
+      modalities: ['text', 'image/png', 'text', 'audio_path', 'image/png'],
+      harmCategories: ['violence', 'a&b', 'violence', 'データ', 'a&b'],
+    })
+
+    expect(params.getAll('modality')).toEqual(['text', 'image/png', 'audio_path'])
+    expect(params.getAll('harm_category')).toEqual(['violence', 'a&b', 'データ'])
   })
 
   it('filters by name, modality, and harm without treating unlabeled rows as safe', () => {
@@ -82,6 +218,21 @@ describe('datasetQuery', () => {
       modalities: ['text'],
       unlabeled: true,
     })).toEqual([])
+  })
+
+  it('filters by any matching seed origin and treats a missing origin list as no match', () => {
+    const generated = makeDataset({ name: 'Generated', selection_key: 'dataset:named:generated', origins: ['generated'] })
+    const mixed = makeDataset({ name: 'Mixed', selection_key: 'dataset:named:mixed', origins: ['local', 'remote'] })
+    const legacy = makeDataset({ name: 'Legacy', selection_key: 'dataset:named:legacy' })
+    const datasets = [generated, mixed, legacy]
+
+    expect(filterDatasets(datasets, DEFAULT_DATASET_CATALOG_QUERY).map((item) => item.name))
+      .toEqual(['Generated', 'Legacy', 'Mixed'])
+    expect(filterDatasets(datasets, { ...DEFAULT_DATASET_CATALOG_QUERY, origins: ['generated'] }).map((item) => item.name))
+      .toEqual(['Generated'])
+    expect(filterDatasets(datasets, { ...DEFAULT_DATASET_CATALOG_QUERY, origins: ['remote', 'generated'] }).map((item) => item.name))
+      .toEqual(['Generated', 'Mixed'])
+    expect(catalogQueryIsDefault({ ...DEFAULT_DATASET_CATALOG_QUERY, origins: ['generated'] })).toBe(false)
   })
 
   it('sorts names and known counts with deterministic ties', () => {

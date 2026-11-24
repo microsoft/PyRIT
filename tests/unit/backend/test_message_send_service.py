@@ -19,13 +19,8 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from pyrit.backend.mappers import request_piece_to_pyrit_message_piece
-from pyrit.backend.mappers.attack_mappers import pyrit_messages_to_dto_async
-from pyrit.backend.models.attacks import (
-    AddMessageRequest,
-    ConverterConfigurationRequest,
-    MessagePieceRequest,
-)
+from pyrit.backend.mappers import pyrit_messages_to_dto_async, request_piece_to_pyrit_message_piece
+from pyrit.backend.models import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
 from pyrit.backend.models.message_sends import (
     MessageSendFailureStage,
     MessageSendRequest,
@@ -33,7 +28,7 @@ from pyrit.backend.models.message_sends import (
     MessageSendStatus,
     RequestConverterMode,
 )
-from pyrit.backend.services.converter_service import ConverterService
+from pyrit.backend.services import ConverterService, TargetService
 from pyrit.backend.services.manual_send_scheduler import (
     ManualSendConflictError,
     ManualSendQueueFullError,
@@ -45,7 +40,6 @@ from pyrit.backend.services.message_send_service import (
     MessageSendService,
     resolve_applied_converter_identifiers,
 )
-from pyrit.backend.services.target_service import TargetService
 from pyrit.common.attack_result_scope import get_current_attack_result_id
 from pyrit.common.utils import to_sha256
 from pyrit.converter import Base64Converter, Converter, ConverterResult
@@ -64,11 +58,11 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    TargetCapabilities,
 )
-from pyrit.models.target.target_capabilities import TargetCapabilities
+from pyrit.models.component_spec import TargetBinding
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import CapabilityName, TargetConfiguration
 from unit.async_utils import (
     TEST_WATCHDOG_SECONDS,
     settle_tasks_async,
@@ -273,6 +267,27 @@ def _make_round_robin_identifier(
 class TestAddMessage:
     """Synchronous sending and converter contracts moved with their owner."""
 
+    @pytest.mark.parametrize("saved_binding", [False, True])
+    async def test_binding_changes_explain_per_send_generation_settings_async(
+        self, *, message_send_service: MessageSendService, mock_memory: MagicMock, saved_binding: bool
+    ) -> None:
+        binding = TargetBinding(source_name="source", source_hash="source-hash", temperature=0.2, effective_hash="copy")
+        attack = make_attack_result(conversation_id="main")
+        if saved_binding:
+            attack.metadata = binding.to_metadata()
+        mock_memory.get_attack_results_async.return_value = [attack]
+        request = _request()
+        request.target_binding = binding.model_copy(update={"temperature": 0.8})
+        with patch("pyrit.backend.services.message_send_service.get_target_service") as get_target:
+            with pytest.raises(ValueError) as error:
+                await message_send_service.add_message_async(attack_result_id="attack", request=request)
+            get_target.assert_not_called()
+        assert str(error.value) == (
+            "This attack's saved target binding is read-only. "
+            "Use request_generation_config metadata for supported per-send generation settings."
+        )
+        assert not message_send_service._scheduler._conversations
+
     async def test_add_message_raises_for_nonexistent_attack(self, message_send_service, mock_memory) -> None:
         """Test that add_message raises ValueError for nonexistent attack."""
         mock_memory.get_attack_results_async.return_value = []
@@ -322,7 +337,11 @@ class TestAddMessage:
             patch("pyrit.backend.services.message_send_service.PromptNormalizer") as mock_normalizer_cls,
         ):
             mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
+            target = _make_matching_target_mock()
+            # Unlike the TextTarget the mock stands in for, this target replies.
+            target.configuration.includes.side_effect = None
+            target.configuration.includes.return_value = True
+            mock_target_svc.get_target_object.return_value = target
             mock_get_target_svc.return_value = mock_target_svc
 
             mock_normalizer = MagicMock()
@@ -393,96 +412,6 @@ class TestAddMessage:
 
             with pytest.raises(RuntimeError, match="boom"):
                 await message_send_service.add_message_async(attack_result_id="test-id", request=request)
-
-    async def test_add_message_with_legacy_converter_ids_warns_and_preserves_behavior(
-        self, message_send_service, mock_memory
-    ) -> None:
-        """Test that legacy converter IDs warn and remain an unrestricted pipeline."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results_async.return_value = [ar]
-        mock_memory.get_message_pieces_async.return_value = []
-        mock_memory.get_conversation_messages_async.return_value = []
-
-        with (
-            patch("pyrit.backend.services.message_send_service.get_target_service") as mock_get_target_svc,
-            patch("pyrit.backend.services.message_send_service.get_converter_service") as mock_get_conv_svc,
-            patch("pyrit.backend.services.message_send_service.PromptNormalizer") as mock_normalizer_cls,
-        ):
-            mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
-            mock_get_target_svc.return_value = mock_target_svc
-
-            first_converter = MagicMock()
-            first_converter.get_identifier.return_value = ComponentIdentifier(
-                class_name="FirstConverter",
-                class_module="test_module",
-                params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
-            )
-            second_converter = MagicMock()
-            second_converter.get_identifier.return_value = ComponentIdentifier(
-                class_name="SecondConverter",
-                class_module="test_module",
-                params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
-            )
-            mock_conv_svc = MagicMock()
-            mock_conv_svc.get_converter_objects_for_ids.return_value = [first_converter, second_converter]
-            mock_get_conv_svc.return_value = mock_conv_svc
-
-            mock_normalizer = MagicMock()
-            mock_normalizer.send_prompt_async = AsyncMock()
-            mock_normalizer_cls.return_value = mock_normalizer
-
-            request = AddMessageRequest(
-                pieces=[MessagePieceRequest(original_value="Hello")],
-                target_conversation_id="test-id",
-                send=True,
-                converter_ids=["first", "second"],
-                target_registry_name="test-target",
-            )
-
-            with pytest.warns(DeprecationWarning, match="AddMessageRequest.converter_ids is deprecated"):
-                await message_send_service.add_message_async(attack_result_id="test-id", request=request)
-
-            configurations = mock_normalizer.send_prompt_async.call_args.kwargs["request_converter_configurations"]
-            assert [configuration.converters for configuration in configurations] == [
-                [first_converter],
-                [second_converter],
-            ]
-            assert all(configuration.indexes_to_apply is None for configuration in configurations)
-            mock_conv_svc.get_converter_objects_for_ids.assert_called_once_with(converter_ids=["first", "second"])
-
-    def test_empty_legacy_converter_ids_allow_store_only_request(self) -> None:
-        """Test that an empty legacy converter list remains a no-op when send is false."""
-        request = AddMessageRequest(
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-            converter_ids=[],
-        )
-
-        assert request.converter_ids == []
-
-    def test_empty_legacy_converter_ids_warn_and_use_structured_configuration(self, message_send_service) -> None:
-        """Test that an empty legacy list does not override a structured configuration."""
-        converter = MagicMock()
-        request = AddMessageRequest(
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            converter_ids=[],
-            request_converter_configurations=[ConverterConfigurationRequest(converter_ids=["structured"])],
-        )
-
-        with patch("pyrit.backend.services.message_send_service.get_converter_service") as mock_get_converter_service:
-            mock_get_converter_service.return_value.get_converter_objects_for_ids.return_value = [converter]
-
-            with pytest.warns(DeprecationWarning, match="AddMessageRequest.converter_ids is deprecated"):
-                configurations = message_send_service._resolve_request_converter_configs(request=request)
-
-        assert len(configurations) == 1
-        assert configurations[0].converters == [converter]
-        mock_get_converter_service.return_value.get_converter_objects_for_ids.assert_called_once_with(
-            converter_ids=["structured"]
-        )
 
     async def test_add_message_preserves_converter_configuration_targeting(
         self, message_send_service, mock_memory
@@ -1879,6 +1808,7 @@ class TestConcurrentMessages:
     async def test_rate_limited_and_converter_sends_allow_unrelated_sends_async(
         self, *, mock_memory: MagicMock, send_dependencies: tuple[MagicMock, AsyncMock], kind: str
     ) -> None:
+        """Require unrelated completion before releasing the first send, not a latency budget."""
         target_service, send = send_dependencies
         scheduler = ManualSendScheduler(max_concurrency=2, max_operations=3)
         service = MessageSendService(scheduler=scheduler)
@@ -1906,10 +1836,7 @@ class TestConcurrentMessages:
         active = asyncio.create_task(service.add_message_async(attack_result_id="attack", request=first))
         try:
             await first_started.wait()
-            await asyncio.wait_for(
-                service.add_message_async(attack_result_id="attack", request=_request(conversation_id="second")),
-                timeout=3,
-            )
+            await service.add_message_async(attack_result_id="attack", request=_request(conversation_id="second"))
             assert order == ["main", "second"]
             assert not active.done()
         finally:
@@ -2497,6 +2424,9 @@ class TestNormalizerPersistence:
             request.request_converter_configurations = [ConverterConfigurationRequest(converter_ids=["base64"])]
         elif failure == "response-converter":
             request.response_converter_configurations = [ConverterConfigurationRequest(converter_ids=["base64"])]
+        if failure == "write-only":
+            # Only a target that declares no response support turns an empty reply into a delivery.
+            target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
         component = target if failure in {"target", "write-only"} else converter
         method = "_send_prompt_to_target_async" if failure in {"target", "write-only"} else "convert_async"
         with patch.object(

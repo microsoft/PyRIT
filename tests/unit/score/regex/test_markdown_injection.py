@@ -1,14 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import random
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.score import MarkdownInjectionScorer
-from pyrit.score.true_false.regex.markdown_injection import _find_images
+from pyrit.score.true_false.regex.markdown_injection import _find_images, _has_shortcut_pair
 
 
 @pytest.mark.parametrize(
@@ -272,6 +273,134 @@ async def test_md_injection_scales_on_unclosed_images_across_lines(patch_central
     scorer = MarkdownInjectionScorer()
     score = (await scorer.score_text_async("![a](b\n" * 20_000))[0]
     assert score.get_value() is False
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Unclosed inline images on one line make the default inline regex backtrack in cubic time.
+        "![x](" * 20_000,
+        "![x](y\r" * 20_000,
+        # Image openers alone are quadratic for the inline and reference regexes.
+        "![" * 100_000,
+    ],
+    ids=["unclosed-inline-one-line", "unclosed-inline-cr-lines", "image-openers"],
+)
+async def test_md_injection_scales_on_unclosed_images_on_one_line(text: str, patch_central_database):
+    scorer = MarkdownInjectionScorer(
+        patterns={
+            name: MarkdownInjectionScorer._DEFAULT_PATTERNS[name]
+            for name in ("Markdown Image (inline)", "Markdown Image (reference)")
+        }
+    )
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is False
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # The default inline and reference patterns match on one line even where CommonMark renders no image.
+        ("![a](b c)", ["Markdown Image (inline)"]),
+        ("![a][b]", ["Markdown Image (reference)"]),
+        ("x ![a] y](z) w", ["Markdown Image (inline)"]),
+        ("![a\r](b)", ["Markdown Image (inline)"]),
+        ("![a](b", []),
+        ("![a]\n(b)", []),
+        ("]()![", []),
+    ],
+)
+async def test_md_image_default_patterns_keep_regex_verdict(text: str, expected: list[str], patch_central_database):
+    patterns = {
+        name: MarkdownInjectionScorer._DEFAULT_PATTERNS[name]
+        for name in ("Markdown Image (inline)", "Markdown Image (reference)")
+    }
+    scorer = MarkdownInjectionScorer(patterns=patterns)
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is bool(expected)
+    assert [name for name, pattern in patterns.items() if re.search(pattern, text)] == expected
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Every image or definition line made the default shortcut regex scan the rest of the reply.
+        "![a] " * 60_000,
+        "![a]\n" * 60_000,
+        # The regex reads definition lines inside a code block too, while the CommonMark pass skips
+        # the block, so this case times only the shortcut check.
+        "```\n" + "[a]: x\n" * 100_000,
+    ],
+    ids=["shortcut-images", "shortcut-image-lines", "fenced-definition-lines"],
+)
+async def test_md_injection_scales_on_shortcut_candidates(text: str, patch_central_database):
+    scorer = MarkdownInjectionScorer()
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is False
+
+
+_SHORTCUT_NAME = "Markdown Image (shortcut reference)"
+_SHORTCUT_PATTERN = MarkdownInjectionScorer._DEFAULT_PATTERNS[_SHORTCUT_NAME]
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize(
+    "text",
+    [
+        # One image keeps the check reading every definition line in the block.
+        "![b]\n```\n" + "[a]: x\n" * 50_000,
+        # Image labels and definition labels that each share one closing bracket.
+        "![" * 50_000 + "a]\n```\n" + "[\n" * 50_000 + "b]: x\n",
+    ],
+    ids=["image-and-definition-lines", "nested-labels"],
+)
+async def test_md_injection_scales_on_unpaired_shortcut_labels(text: str, patch_central_database):
+    # The non-image default patterns are slow on many brackets, so only the shortcut check runs.
+    scorer = MarkdownInjectionScorer(patterns={_SHORTCUT_NAME: _SHORTCUT_PATTERN})
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is False
+
+
+async def test_md_injection_detects_shortcut_pair_only_the_pattern_matches(patch_central_database):
+    # The CommonMark pass skips the definition inside the code block, while the default pattern matches it.
+    scorer = MarkdownInjectionScorer()
+    score = (await scorer.score_text_async("![a]\n```\n[a]: x\n```"))[0]
+    assert score.get_value() is True
+    assert score.score_rationale == f"Matched: {_SHORTCUT_NAME}"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("![a]\n[a]: x", True),
+        ("[A]: x\n![a]", True),
+        ("[a]: x ![a]", True),
+        ("![![a]\n[a]: x", True),
+        ("![a\nB]\n[A\nb]: x", True),
+        # The backreference compares lowercase characters: U+0130 lowercases to "i", but long s stays long s.
+        ("![\u0130]\n[i]: x", True),
+        ("![\u017f]\n[s]: x", False),
+        ("![a]\n    [a]: x", False),
+        ("![a]\n[a]:\nx", False),
+        ("![a][b]\n[a]: x", False),
+        ("![a](\n[a]: x", False),
+        ("[a]: ![a]", False),
+        ("![]\n[]: x", False),
+    ],
+)
+def test_md_shortcut_check_keeps_regex_verdict(text: str, expected: bool):
+    assert bool(re.search(_SHORTCUT_PATTERN, text)) is expected
+    assert _has_shortcut_pair(text) is expected
+
+
+def test_md_shortcut_check_matches_regex_on_random_text():
+    rng = random.Random(0)
+    pieces = ["![", "[", "]", "]:", "(", " ", "    ", "\t", "\n", "a", "A", "x", "![a]", "[a]: x", "[A]:"]
+    for _ in range(20_000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randint(1, 12)))
+        assert _has_shortcut_pair(text) is bool(re.search(_SHORTCUT_PATTERN, text)), text
 
 
 async def test_md_injection_adds_to_memory():

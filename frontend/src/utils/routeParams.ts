@@ -17,17 +17,19 @@ export function routerPathParamValue(value: string | undefined): string {
 /** Returns one validated scenario-run provenance UUID from a route query. */
 export function scenarioRunProvenance(searchParams: URLSearchParams): string | null {
   const values = searchParams.getAll(SCENARIO_RESULT_ID_QUERY_KEY)
-  if (values.length !== 1 || !UUID_PATTERN.test(values[0])) {
+  const first = values[0]
+  if (values.length !== 1 || !first || !UUID_PATTERN.test(first)) {
     return null
   }
 
-  return values[0]
+  return first
 }
 
 /** Returns one validated evidence id. Never returns a caller-supplied return URL. */
 export function findingEvidenceOrigin(searchParams: URLSearchParams): string | null {
   const values = searchParams.getAll(FINDING_EVIDENCE_ID_QUERY_KEY)
-  return values.length === 1 && UUID_PATTERN.test(values[0]) ? values[0] : null
+  const first = values[0]
+  return values.length === 1 && first && UUID_PATTERN.test(first) ? first : null
 }
 
 /** Builds an attack-detail route with optional bounded scenario-run provenance. */
@@ -66,12 +68,28 @@ export function scenarioRunAttackRoutePath(scenarioResultId: string, attackResul
   return `${scenarioRunRoutePath(scenarioResultId)}/${encodeURIComponent(attackResultId)}`
 }
 
-export function scenarioConversationRoutePath(scenarioResultId: string, conversationId: string): string {
-  return `${scenarioRunRoutePath(scenarioResultId)}/conversations/${encodeURIComponent(conversationId)}`
-}
-
 export function scenarioRerunRoutePath(scenarioName: string, scenarioResultId: string): string {
   return `/scanner/launch/${encodeURIComponent(scenarioName)}?rerun=${encodeURIComponent(scenarioResultId)}`
+}
+
+/** Names a stored dataset that the Scanner launch form preselects. Repeatable. */
+export const DATASET_QUERY_PARAM = 'dataset'
+
+/** Opens the Scanner launch form for a scenario with stored datasets preselected. */
+export function scenarioLaunchRoutePath(scenarioName: string, datasetNames: readonly string[] = []): string {
+  const path = `/scanner/launch/${encodeURIComponent(scenarioName)}`
+  if (datasetNames.length === 0) return path
+  const params = new URLSearchParams()
+  for (const name of datasetNames) params.append(DATASET_QUERY_PARAM, name)
+  return `${path}?${params.toString()}`
+}
+
+/**
+ * Reads the distinct dataset names requested for preselection, exactly as written. Names are
+ * opaque, so whitespace is kept; blank values are kept too so the server can reject them.
+ */
+export function datasetNamesFromSearchParams(params: URLSearchParams): string[] {
+  return [...new Set(params.getAll(DATASET_QUERY_PARAM))]
 }
 
 function appendScenarioRunProvenance(path: string, scenarioResultId?: string | null): string {
@@ -100,7 +118,7 @@ const SELECTION_KEY_PARAM = 'selection_key'
 export function selectionKeyFromSearchParams(params: URLSearchParams): string | null {
   const values = params.getAll(SELECTION_KEY_PARAM)
   if (values.length !== 1) return null
-  return values[0]
+  return values[0] ?? null
 }
 
 /**
@@ -111,6 +129,19 @@ export function datasetDetailPath(selectionKey: string): string {
   const params = new URLSearchParams()
   params.set(SELECTION_KEY_PARAM, selectionKey)
   return `${DATASET_DETAIL_PATH}?${params.toString()}`
+}
+
+const NAMED_DATASET_SELECTION_PREFIX = 'dataset:named:'
+
+/** The selection key the dataset catalog assigns to a named dataset. */
+export function namedDatasetSelectionKey(datasetName: string): string {
+  return `${NAMED_DATASET_SELECTION_PREFIX}${datasetName}`
+}
+
+/** Whether a catalog selection key names a dataset, rather than the unnamed seeds. */
+export function isNamedDatasetSelectionKey(selectionKey: string): boolean {
+  return selectionKey.startsWith(NAMED_DATASET_SELECTION_PREFIX)
+    && selectionKey.length > NAMED_DATASET_SELECTION_PREFIX.length
 }
 
 const CATALOG_PATH_STATE_KEY = 'catalogPath'
@@ -154,42 +185,35 @@ function isCatalogReturnPath(value: string): boolean {
 /** Returns true if the pathname or path belongs to the dataset catalog or dataset detail view. */
 export function isDatasetsPath(pathOrUrl: string): boolean {
   if (!pathOrUrl) return false
-  const cleanPath = pathOrUrl.split('?')[0].split('#')[0]
+  const cleanPath = pathOrUrl.split('?')[0]?.split('#')[0] ?? ''
   return cleanPath === DATASETS_PATH || cleanPath === DATASET_DETAIL_PATH || cleanPath.startsWith(`${DATASETS_PATH}/`)
 }
 
 /** Returns true if the pathname or path belongs to the chat view or an attack view. */
 export function isChatPath(pathOrUrl: string): boolean {
   if (!pathOrUrl) return false
-  const cleanPath = pathOrUrl.split('?')[0].split('#')[0]
+  const cleanPath = pathOrUrl.split('?')[0]?.split('#')[0] ?? ''
   return cleanPath === '/attack/chat' || cleanPath.startsWith('/attack/chat/')
 }
 
-/** Parses attackId and conversationId from a chat or attack route path. */
-export function parseChatRoute(path: string): { attackId: string | null; conversationId: string | null } {
-  if (!path) return { attackId: null, conversationId: null }
-  const clean = path.split('?')[0].split('#')[0]
-  const matchWithConv = /^\/attacks\/([^/]+)\/conversations\/([^/]+)/.exec(clean)
-  if (matchWithConv) {
-    try {
-      return {
-        attackId: decodeURIComponent(matchWithConv[1]),
-        conversationId: decodeURIComponent(matchWithConv[2]),
-      }
-    } catch {
-      return { attackId: matchWithConv[1], conversationId: matchWithConv[2] }
-    }
+/** Chat destination captured only when browsing starts from Chat. */
+export interface DatasetChatOrigin {
+  path: string
+  state?: unknown
+  attackId: string | null
+  conversationId: string | null
+}
+
+export function chatOriginFromNavigationState(state: unknown): DatasetChatOrigin | null {
+  if (state == null || typeof state !== 'object' || !('chatOrigin' in state)) return null
+  const candidate = (state as { chatOrigin?: unknown }).chatOrigin
+  if (candidate == null || typeof candidate !== 'object') return null
+  const origin = candidate as { path?: unknown; state?: unknown; attackId?: unknown; conversationId?: unknown }
+  if (typeof origin.path !== 'string' || !isChatPath(origin.path)) return null
+  return {
+    path: origin.path,
+    state: origin.state,
+    attackId: typeof origin.attackId === 'string' ? origin.attackId : null,
+    conversationId: typeof origin.conversationId === 'string' ? origin.conversationId : null,
   }
-  const matchAttack = /^\/attacks\/([^/]+)/.exec(clean)
-  if (matchAttack) {
-    try {
-      return {
-        attackId: decodeURIComponent(matchAttack[1]),
-        conversationId: null,
-      }
-    } catch {
-      return { attackId: matchAttack[1], conversationId: null }
-    }
-  }
-  return { attackId: null, conversationId: null }
 }

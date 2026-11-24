@@ -5,11 +5,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.models import ContentEntryScorable
-from pyrit.score import SSRFOutputScorer, TrueFalseCompositeScorer, TrueFalseInverterScorer
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
+from pyrit.score import SSRFOutputScorer, TrueFalseCompositeScorer, TrueFalseInverterScorer, TrueFalseScoreAggregator
 
 
 @pytest.mark.parametrize(

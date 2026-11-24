@@ -9,14 +9,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_event_async
 
 from pyrit.exceptions import EmptyResponseException
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import A2ATarget
+from pyrit.prompt_target import A2ATarget, TargetCapabilities, TargetConfiguration
 from pyrit.prompt_target.a2a_target import _A2AConversationState
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 ENDPOINT = "https://agent.example.com/a2a"
 
@@ -780,9 +779,9 @@ async def test_a2a_serializes_conversation_state(action: str) -> None:
         return httpx.Response(200, json=_message_payload("ok", context_id="ctx-locked"))
 
     target = A2ATarget(endpoint=ENDPOINT, transport=httpx.MockTransport(handle_async))
-    async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
+    async with asyncio.timeout(TEST_WATCHDOG_SECONDS), asyncio.TaskGroup() as tasks:
         first = tasks.create_task(target.send_prompt_async(message=_user_message("first")))
-        await started.wait()
+        await wait_for_event_async(event=started, tasks=[first])
         with pytest.raises(RuntimeError, match="conversation is in use"):
             target.set_conversation_context(conversation_id="conv-1234", context_id="replacement")
         if action == "reset":
@@ -818,7 +817,7 @@ async def test_a2a_different_conversations_remain_concurrent() -> None:
         return httpx.Response(200, json=_message_payload("ok"))
 
     target = A2ATarget(endpoint=ENDPOINT, transport=httpx.MockTransport(handle_async))
-    async with asyncio.timeout(5):
+    async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
         await asyncio.gather(
             target.send_prompt_async(message=_user_message(conversation_id="one")),
             target.send_prompt_async(message=_user_message(conversation_id="two")),
@@ -900,7 +899,7 @@ async def test_a2a_poll_deadline_bounds_retry_after(mock_send: AsyncMock) -> Non
         httpx.Response(429, headers={"Retry-After": "3600"}, request=httpx.Request("POST", ENDPOINT)),
     ]
     target = A2ATarget(endpoint=ENDPOINT, task_timeout_seconds=0.02, poll_interval_seconds=0)
-    async with asyncio.timeout(5):
+    async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
         with pytest.raises(TimeoutError, match="TASK_STATE_WORKING"):
             await target.send_prompt_async(message=_user_message())
     assert mock_send.call_count == 2

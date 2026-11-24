@@ -11,7 +11,7 @@ hint extraction for consistent error handling across OpenAI-based prompt targets
 import json
 import logging
 
-from pyrit.exceptions.exception_classes import CONTENT_FILTER_MARKERS
+from pyrit.exceptions import CONTENT_FILTER_MARKERS
 
 logger = logging.getLogger(__name__)
 
@@ -107,39 +107,44 @@ def _is_content_filter_error(data: dict[str, object] | str) -> bool:
     return any(marker in haystack for marker in CONTENT_FILTER_MARKERS)
 
 
+def _as_string_keyed_dict(value: object) -> dict[str, object] | None:
+    """Return a string-keyed dictionary, or None for an invalid payload."""
+    if not isinstance(value, dict):
+        return None
+
+    result: dict[str, object] = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            return None
+        result[key] = item
+
+    return result
+
+
 def _extract_error_payload(exc: Exception) -> tuple[dict[str, object] | str, bool]:
     """
-    Extract error payload and detect content filter from an OpenAI SDK exception.
+    Extract error payload and detect content filtering from an OpenAI SDK exception.
 
-    This function tries multiple strategies to parse error information:
-    1. Try response.json() if response object exists
-    2. Fall back to e.body attribute
-    3. Fall back to str(e)
-
-    It also attempts to detect whether the error is due to content filtering by
-    delegating to ``_is_content_filter_error``, which scans the payload for the
-    markers in ``CONTENT_FILTER_MARKERS`` (or, for ``invalid_prompt`` errors,
-    inspects the message for ``SAFETY_MESSAGE_MARKERS``).
+    Tries response JSON, then exception body, then exception text.
 
     Args:
-        exc: An exception from the OpenAI SDK (typically BadRequestError).
+        exc: An exception from the OpenAI SDK.
 
     Returns:
-        A tuple of (payload, is_content_filter) where:
-        - payload is either a dict (if JSON) or a string
-        - is_content_filter is True if the error appears to be content policy related
+        A tuple containing the extracted dictionary or string payload and a
+        boolean indicating whether content filtering was detected.
     """
     # Strategy 1: Try response JSON
     resp = getattr(exc, "response", None)
     if resp is not None:
         try:
             data = resp.json()
-            # Validate that we got actual data, not a mock
-            if isinstance(data, dict):
-                json_payload: dict[str, object] = data
+            json_payload = _as_string_keyed_dict(data)
+            if json_payload is not None:
                 return json_payload, _is_content_filter_error(json_payload)
         except Exception:
             pass
+
         # Try text fallback from response
         try:
             text = resp.text
@@ -148,22 +153,25 @@ def _extract_error_payload(exc: Exception) -> tuple[dict[str, object] | str, boo
         except Exception:
             pass
 
-    # Strategy 2: Try e.body attribute
+    # Strategy 2: Try exception body
     body = getattr(exc, "body", None)
     if body is not None:
-        if isinstance(body, dict):
-            body_payload: dict[str, object] = body
+        body_payload = _as_string_keyed_dict(body)
+        if body_payload is not None:
             return body_payload, _is_content_filter_error(body_payload)
+
         if isinstance(body, str):
             try:
                 data = json.loads(body)
             except json.JSONDecodeError:
                 return body, _is_content_filter_error(body)
-            if isinstance(data, dict):
-                parsed_payload: dict[str, object] = data
+
+            parsed_payload = _as_string_keyed_dict(data)
+            if parsed_payload is not None:
                 return parsed_payload, _is_content_filter_error(parsed_payload)
+
             return body, _is_content_filter_error(body)
 
-    # Strategy 3: Fall back to str(e)
+    # Strategy 3: Fall back to exception text
     text = str(exc)
     return text, _is_content_filter_error(text)

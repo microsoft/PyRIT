@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs'
 import { test, expect } from '@playwright/test'
 
 import type {
-  CreateAttackResponse, Finding, FindingEvidenceAttachResponse, FindingExportFormat, Operation,
+  CreateAttackResponse, Finding, FindingEvidenceAttachResponse, FindingExportFormat, FindingFields,
+  FindingListResponse, Operation,
 } from '../src/types'
 import { waitForAppReady } from './_runtime'
 
@@ -21,9 +22,16 @@ for (const width of [1280, 390]) {
     const severity = `Custom severity ${'classification'.repeat(16)}`
     const harmType = `Custom harm ${'unbroken'.repeat(25)}`
     const findingResponse = await request.post(`/api/operations/${operation.id}/findings`, {
-      headers, data: { title, severity: 'other', severity_other: severity, harm_type: 'Other', harm_type_other: harmType },
+      headers, data: { title, severity, field_values: { harm_type: harmType } },
     })
     expect(findingResponse.status()).toBe(201)
+    const parent: Finding = await findingResponse.json()
+    // Sub-findings render in a narrower, indented panel; the low severity keeps the picker's badge lookup unique.
+    const nestedTitle = `Nested step ${'unbroken'.repeat(30)}`
+    const nestedResponse = await request.post(`/api/operations/${operation.id}/findings`, {
+      headers, data: { title: nestedTitle, severity: 'low', parent_finding_id: parent.id },
+    })
+    expect(nestedResponse.status()).toBe(201)
 
     await page.goto(`/operations/${operation.id}`)
     await waitForAppReady(page)
@@ -40,7 +48,23 @@ for (const width of [1280, 390]) {
     const timeBox = await finding.locator('time').boundingBox()
     if (!badgeBox || !timeBox) throw new Error('Expected visible finding metadata.')
     expect(badgeBox.x + badgeBox.width <= timeBox.x || badgeBox.y + badgeBox.height <= timeBox.y).toBeTruthy()
-    await expect(finding.getByText(`Harm-type: ${harmType}`, { exact: true })).toBeVisible()
+    await expect(finding.getByRole('term')).toHaveText('Harm-type:')
+    await expect(finding.getByRole('definition')).toHaveText(harmType)
+    await expect(finding.getByRole('definition')).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
+
+    await page.getByRole('button', { name: `Sub-findings (1): ${title}`, exact: true }).click()
+    const nestedHeading = page.getByRole('heading', { name: nestedTitle, exact: true })
+    await expect(nestedHeading).toBeVisible()
+    const nested = page.getByRole('region', { name: `Sub-findings of ${title}`, exact: true })
+      .getByRole('listitem').filter({ has: nestedHeading })
+    expect(await nested.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy()
+    expect(await finding.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy()
+    for (const action of ['Edit finding', 'Add sub-finding', 'Delete finding']) {
+      const box = await nested.getByRole('button', { name: `${action}: ${nestedTitle}`, exact: true }).boundingBox()
+      if (!box) throw new Error(`Expected a visible ${action} action on the sub-finding.`)
+      expect(box.x + box.width).toBeLessThanOrEqual(width)
+    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
 
     const attackResponse = await request.post('/api/attacks', {
@@ -65,10 +89,7 @@ for (const width of [1280, 390]) {
     )).toBeTruthy()
     const label = dialog.locator('label').filter({ hasText: title })
     expect(await label.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy()
-    const pickerBadgeBox = await pickerBadge.boundingBox()
-    const harmBox = await dialog.getByText(`Harm-type: ${harmType}`, { exact: true }).boundingBox()
-    if (!pickerBadgeBox || !harmBox) throw new Error('Expected visible picker classifications.')
-    expect(pickerBadgeBox.y + pickerBadgeBox.height).toBeLessThanOrEqual(harmBox.y)
+    await expect(dialog.getByText(harmType)).toHaveCount(0)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
     await radio.focus()
     await page.keyboard.press('Space')
@@ -116,7 +137,8 @@ test('creates a unique operation and records findings within it @seeded', async 
   dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('combobox', { name: 'Operation' })).toHaveCount(0)
   await dialog.getByRole('textbox', { name: 'Title' }).fill(title)
-  await dialog.getByRole('combobox', { name: 'Severity' }).selectOption('informational')
+  await dialog.getByRole('combobox', { name: 'Severity' }).click()
+  await page.getByRole('option', { name: 'Informational', exact: true }).click()
   await dialog.getByRole('textbox', { name: 'Description' }).fill(description)
   const savedResponse = page.waitForResponse(response =>
     response.url().endsWith(`/api/operations/${operation.id}/findings`) && response.request().method() === 'POST')
@@ -129,12 +151,13 @@ test('creates a unique operation and records findings within it @seeded', async 
   await expect(page.getByRole('button', { name: 'New finding' })).toBeFocused()
   await page.setViewportSize({ width: 390, height: 300 })
   const confirmation = page.locator('[aria-live="polite"]').filter({ hasText: 'Finding saved:' })
-  const confirmationBox = await confirmation.boundingBox()
-  const findingBox = await page.getByRole('heading', { level: 2, name: title }).boundingBox()
-  expect(confirmationBox).not.toBeNull()
-  expect(findingBox).not.toBeNull()
-  expect(await confirmation.evaluate(element => element.scrollHeight <= element.clientHeight)).toBeTruthy()
-  expect(confirmationBox!.y + confirmationBox!.height).toBeLessThanOrEqual(findingBox!.y)
+  const findingHeading = page.getByRole('heading', { level: 2, name: title })
+  await expect(confirmation).toBeVisible()
+  await expect.poll(async () => confirmation.evaluate((element, heading) => {
+    if (!heading) throw new Error('The saved finding heading is missing')
+    return element.getBoundingClientRect().bottom <= heading.getBoundingClientRect().top
+      && element.scrollHeight <= element.clientHeight
+  }, await findingHeading.elementHandle())).toBe(true)
   await page.setViewportSize({ width: 1280, height: 720 })
   await page.reload()
   await expect(page.getByRole('heading', { level: 2, name: title })).toBeVisible()
@@ -145,7 +168,7 @@ test('creates a unique operation and records findings within it @seeded', async 
   const headers = { 'PyRIT-Compatibility-ID': version.compatibility_id }
   for (let index = 0; index < 21; index++) {
     const response = await request.post(`/api/operations/${operation.id}/findings`, {
-      headers, data: { title: `Assessment ${index}`, description: '', severity: index === 20 ? 'critical' : 'low' },
+      headers, data: { title: `Assessment ${index}`, severity: index === 20 ? 'critical' : 'low' },
     })
 
     expect(response.status()).toBe(201)
@@ -189,7 +212,7 @@ test('renames an operation and deletes it only once it is empty @seeded', async 
     headers, data: { name: `Typo operation ${stamp}` },
   })).json()
   const finding: Finding = await (await request.post(`/api/operations/${operation.id}/findings`, {
-    headers, data: { title: 'Blocks deletion', description: '', severity: 'low' },
+    headers, data: { title: 'Blocks deletion', severity: 'low' },
   })).json()
 
   await page.goto(`/operations/${operation.id}`)
@@ -305,7 +328,7 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
     expect(other.ok()).toBeTruthy()
   }
   const finding = await request.post(`/api/operations/${operation.id}/findings`, {
-    headers, data: { title: 'Independent human finding', description: '', severity: 'low' },
+    headers, data: { title: 'Independent human finding', severity: 'low' },
   })
   expect(finding.status()).toBe(201)
   if (!sourceAttack) throw new Error('Expected a saved attack for the evidence test.')
@@ -338,7 +361,7 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
   expect(new URL(href!, 'http://localhost').searchParams.getAll('operation_id')).toEqual([operation.id])
   await historyLink.click()
   await expect(page).toHaveURL(/\/attack\/history\?/)
-  await expect(page.getByRole('row', { name: 'Open ManualAttack attack', exact: true })).toHaveCount(7)
+  await expect(page.getByRole('row', { name: /^Open attack: Offline saved history [0-6]$/ })).toHaveCount(7)
   await expect(page.getByRole('combobox', { name: 'All operations' })).toHaveValue(name)
   await page.goto(`/operations/${operation.id}`)
   await page.getByRole('link', { name: 'Scanner history', exact: true }).click()
@@ -351,7 +374,7 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
   await expect(page).toHaveURL(/\/attack\/history\?/)
   expect((await returnedAttacks).ok()).toBeTruthy()
   await expect(page.getByRole('progressbar', { name: 'Loading attacks...' })).toHaveCount(0, { timeout: 30_000 })
-  await expect(page.getByRole('row', { name: 'Open ManualAttack attack', exact: true })).toHaveCount(7)
+  await expect(page.getByRole('row', { name: /^Open attack: Offline saved history [0-6]$/ })).toHaveCount(7)
   await page.goto(`/operations/${operation.id}`)
   await page.reload()
   await expect(historyLink).toBeVisible()
@@ -372,7 +395,7 @@ test('exports selected findings as Word and Markdown @seeded', async ({ page, re
   // Saved out of severity order, so the document's order can only come from severity.
   const seeds = [
     { title: 'Export low', severity: 'low' },
-    { title: 'Export critical', severity: 'critical', description },
+    { title: 'Export critical', severity: 'critical', field_values: { description } },
     { title: longTitle, severity: 'informational' },
     ...Array.from({ length: 17 }, (_, index) => ({
       title: `Export moderate ${String(index).padStart(2, '0')}`, severity: 'moderate',
@@ -479,7 +502,8 @@ test('exports selected findings as Word and Markdown @seeded', async ({ page, re
   expect(markdownFile.filename).toMatch(new RegExp(`${filenameStart}\\.md$`))
   const markdown = markdownFile.content.toString('utf8')
   expect(markdown.startsWith(`# Findings - ${operation.name}\n\n`)).toBeTruthy()
-  expect(markdown.match(/^## .*$/gm)).toEqual(selectedTitles.map(title => `## ${title}`))
+  // Every exported finding is numbered, in the order the dialog lists them.
+  expect(markdown.match(/^## .*$/gm)).toEqual(selectedTitles.map((title, index) => `## ${index + 1} ${title}`))
   for (const title of excludedTitles) {
     expect(markdown).not.toContain(title)
   }
@@ -510,4 +534,105 @@ test('exports selected findings as Word and Markdown @seeded', async ({ page, re
 
   await page.goto(link)
   await expect(page.getByText('Saved offline evidence.', { exact: true })).toBeVisible()
+})
+
+test('keeps the page usable after removing a retired value and cancelling the edit @seeded', async ({
+  page, request,
+}) => {
+  const version = await (await request.get('/api/version')).json()
+  const headers = { 'PyRIT-Compatibility-ID': version.compatibility_id }
+  const fieldsResponse = await request.get('/api/operations/finding-fields', { headers })
+  expect(fieldsResponse.ok()).toBeTruthy()
+  const fields: FindingFields = await fieldsResponse.json()
+  const operationResponse = await request.post('/api/operations', {
+    headers, data: { name: `Retired values ${Date.now()}` },
+  })
+  expect(operationResponse.status()).toBe(201)
+  const operation: Operation = await operationResponse.json()
+  const title = 'Contoso retired notes'
+  const notes = 'Recorded before Contoso changed its finding fields.'
+  const findingResponse = await request.post(`/api/operations/${operation.id}/findings`, {
+    headers, data: { title, severity: 'low', field_values: { description: notes } },
+  })
+  expect(findingResponse.status()).toBe(201)
+  // The seeded backend accepts only known keys, so the browser gets the fields without Description instead,
+  // which makes the saved description a retired value. The list carries the backend's labels, so it changes too.
+  await page.route(`**/api/operations/${operation.id}/finding-fields`, async route => {
+    await route.fulfill({ json: { ...fields, fields: fields.fields.filter(field => field.key !== 'description') } })
+  })
+  await page.route(new RegExp(`/api/operations/${operation.id}/findings\\?`), async route => {
+    const response = await route.fetch()
+    const listed: FindingListResponse = await response.json()
+    const items = listed.items.map(item => ({
+      ...item,
+      rows: item.rows.filter(row => row.key !== 'description'),
+      retired: [...item.retired, ['description', notes]],
+    }))
+    await route.fulfill({ response, json: { ...listed, items } })
+  })
+
+  await page.goto(`/operations/${operation.id}`)
+  await waitForAppReady(page)
+  const edit = page.getByRole('button', { name: `Edit finding: ${title}`, exact: true })
+  const dialog = page.getByRole('dialog', { name: 'Edit finding' })
+  const retired = dialog.getByRole('group', { name: 'Retired fields · read-only' })
+  const removeButton = retired.getByRole('button', { name: 'Remove retired value description', exact: true })
+  await edit.click()
+  await expect(retired.getByText(notes, { exact: true })).toBeVisible()
+  const confirmation = page.getByRole('dialog', { name: 'Remove description?' })
+  await removeButton.click()
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(confirmation).toHaveCount(0)
+  await expect(removeButton).toBeFocused()
+  await removeButton.click()
+  await expect(confirmation).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(confirmation).toHaveCount(0)
+  await expect(dialog).toBeVisible()
+  await expect(removeButton).toBeFocused()
+
+  await removeButton.click()
+  await confirmation.getByRole('button', { name: 'Remove', exact: true }).click()
+  await expect(confirmation).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'Undo', exact: true })).toBeFocused()
+  await expect(dialog.getByText('1 retired value is removed when you save.', { exact: true })).toBeVisible()
+  await expect(retired).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+
+  await edit.click()
+  await expect(dialog).toBeVisible()
+  await expect(retired.getByText(notes, { exact: true })).toBeVisible()
+  await expect(removeButton).toBeVisible()
+})
+
+test.describe('finding dialog on a touch screen', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
+
+  test('gives every single-line field a 44px touch target @seeded', async ({ page, request }) => {
+    const version = await (await request.get('/api/version')).json()
+    const headers = { 'PyRIT-Compatibility-ID': version.compatibility_id }
+    const operationResponse = await request.post('/api/operations', {
+      headers, data: { name: `Touch fields ${Date.now()}` },
+    })
+    expect(operationResponse.status()).toBe(201)
+    const operation: Operation = await operationResponse.json()
+
+    await page.goto(`/operations/${operation.id}`)
+    await waitForAppReady(page)
+    await page.getByRole('button', { name: 'New finding' }).click()
+    const dialog = page.getByRole('dialog', { name: 'New finding' })
+    await dialog.getByRole('combobox', { name: 'Harm-type' }).click()
+    await page.getByRole('option', { name: 'Other', exact: true }).click()
+    for (const field of [
+      dialog.getByRole('textbox', { name: 'Title' }),
+      dialog.getByRole('combobox', { name: 'Severity' }),
+      dialog.getByRole('combobox', { name: 'Harm-type' }),
+      dialog.getByRole('textbox', { name: 'Other value for Harm-type' }),
+      dialog.getByRole('textbox', { name: 'Evidence attack ID' }),
+    ]) {
+      await expect(field).toBeVisible()
+      expect((await field.boundingBox())?.height).toBeGreaterThanOrEqual(44)
+    }
+  })
 })

@@ -17,15 +17,18 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pyrit.cli.api_client import PyRITApiClient
-    from pyrit.models import Operation, ScenarioResult
+    from pyrit.models import (
+        Operation,
+        ScenarioResult,
+        ScenarioRunListItem,
+    )
     from pyrit.models.catalog import (
         RegisteredInitializer,
         RegisteredScenario,
-        ScenarioRunListItem,
         ScenarioRunSummary,
         TargetInstance,
     )
-    from pyrit.output.sink import OutputFormat, Sink
+    from pyrit.output import OutputFormat, Sink
 
 try:
     import termcolor
@@ -63,7 +66,7 @@ def print_operation_list(*, items: list[Operation]) -> None:
         print(f"  {item.name}  {item.id}")
 
 
-def _truncate_text(text: str, max_length: int) -> str:
+def _truncate_text(text: str, *, max_length: int) -> str:
     """
     Truncate *text* to *max_length* characters, appending an ellipsis when cut.
 
@@ -105,7 +108,7 @@ def _wrap(*, text: str, indent: str, width: int = 78) -> str:
 
 def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
     """
-    Print a formatted list of scenarios.
+    Print scenarios with required parameters distinguished from defaulted ones.
 
     Args:
         items: Scenarios from ``GET /api/scenarios/catalog``.
@@ -134,7 +137,8 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
             print(f"    Default Datasets ({len(sc.default_datasets)}):")
             print(_wrap(text=", ".join(sc.default_datasets), indent="      "))
         options = sc.dataset_options
-        print(f"    Dataset selection: {options.mode.value}; overrides: {options.supports_overrides}")
+        minimum = f"; at least {options.min_selected} required" if options.min_selected else ""
+        print(f"    Dataset selection: {options.mode.value}; overrides: {options.supports_overrides}{minimum}")
         if options.allowed_names:
             print(_wrap(text="Options: " + ", ".join(options.allowed_names), indent="      "))
         defaults = sc.dataset_defaults
@@ -147,7 +151,10 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
         if sc.supported_parameters:
             print("    Supported Parameters:")
             for p in sc.supported_parameters:
-                default_str = f" [default: {p.default!r}]" if p.default is not None else ""
+                if p.required:
+                    default_str = " [required]"
+                else:
+                    default_str = f" [default: {p.default!r}]" if p.default is not None else ""
                 type_str = f" ({p.type_name})" if p.type_name else ""
                 choices_str = f" [choices: {', '.join(p.choices)}]" if p.choices else ""
                 print(f"      - {p.name}{type_str}{default_str}{choices_str}: {p.description}")
@@ -162,7 +169,7 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
 
 def print_initializer_list(*, items: list[RegisteredInitializer]) -> None:
     """
-    Print a formatted list of initializers.
+    Print initializers with required parameters distinguished from defaulted ones.
 
     Args:
         items: Initializers from ``GET /api/initializers``.
@@ -185,7 +192,10 @@ def print_initializer_list(*, items: list[RegisteredInitializer]) -> None:
         if init.supported_parameters:
             print("    Supported Parameters:")
             for p in init.supported_parameters:
-                default_str = f" [default: {p.default}]" if p.default is not None else ""
+                if p.required:
+                    default_str = " [required]"
+                else:
+                    default_str = f" [default: {p.default}]" if p.default is not None else ""
                 print(f"      - {p.name}{default_str}: {p.description}")
         if init.description:
             print("    Description:")
@@ -225,6 +235,19 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
             print(f"    Model: {model}")
         if identifier.endpoint:
             print(f"    Endpoint: {identifier.endpoint}")
+        print(f"    Account: {'Yours' if tgt.private else 'Shared'}")
+        if tgt.allow_credential_updates:
+            print("    Credential updates: allowed")
+        if tgt.credentials_rejected and tgt.allow_credential_updates:
+            print(
+                "    Credentials rejected by the provider on the last request; update them with "
+                f"'pyrit_scan set-target-credential {tgt.target_registry_name}'"
+            )
+        elif tgt.credentials_rejected:
+            print(
+                "    Credentials rejected by the provider on the last request; this target doesn't allow "
+                "credential updates, so ask whoever set it up"
+            )
     print("\n" + "=" * 80)
     print(f"\nTotal targets: {len(items)}")
 
@@ -255,7 +278,8 @@ def print_converter_list(*, items: list[dict[str, Any]]) -> None:
     for conv in items:
         name = conv.get("converter_id", "unknown")
         _header(name)
-        print(f"    Class: {conv.get('converter_type', '')}")
+        identifier = conv.get("identifier") or {}
+        print(f"    Class: {identifier.get('class_name', '')}")
         display_name = conv.get("display_name") or ""
         if display_name:
             print(f"    Name: {display_name}")
@@ -338,7 +362,7 @@ def print_scenario_retry_warnings(*, run: ScenarioRunSummary, seen_attack_ids: s
             exc = retry.exception_type or "error"
             message = (retry.exception_message or "").strip().splitlines()
             if message:
-                exc = f"{exc}: {_truncate_text(message[0], 160)}"
+                exc = f"{exc}: {_truncate_text(message[0], max_length=160)}"
             location = _format_retry_location(retry)
             _cprint(
                 f"  ! retry #{retry.attempt_number} [{attack.atomic_attack_name}]{location}: {exc}",
@@ -405,7 +429,7 @@ def print_scenario_run_summary(*, run: ScenarioRunSummary) -> None:
         for failed in run.failed_attacks:
             error_type = failed.error_type or "Error"
             message = (failed.error_message or "").strip().splitlines()
-            detail = _truncate_text(message[0], 200) if message else "no detail"
+            detail = _truncate_text(message[0], max_length=200) if message else "no detail"
             retry_note = f" [{failed.total_retries} retries]" if failed.total_retries else ""
             print(f"    - {failed.atomic_attack_name}{retry_note}: {error_type}: {detail}")
 
@@ -429,7 +453,7 @@ async def print_scenario_result_async(
         format: Output format — "pretty" or "json". Defaults to "pretty".
         sink: Output sink. Defaults to None (the helper's default destination).
     """
-    from pyrit.output.helpers import output_scenario_async
+    from pyrit.output import output_scenario_async
 
     await output_scenario_async(result, format=format, sink=sink)
 
@@ -455,7 +479,7 @@ async def _write_json_document_async(document: str, *, sink: Sink | None = None)
         document (str): The serialized JSON document.
         sink (Sink | None): Destination sink. Defaults to StdoutSink.
     """
-    from pyrit.output.sink import StdoutSink
+    from pyrit.output import StdoutSink
 
     await (sink or StdoutSink()).write_async(document)
 
@@ -484,13 +508,12 @@ async def _collect_conversation_entries_async(
         list[tuple[str, Any, list[dict[str, Any]]]]: ``(name, attack, structured_messages)`` triples.
     """
     from pyrit.cli._sources import RestApiConversationSource
-    from pyrit.output._derivation import select_attacks
+    from pyrit.output._derivation import attack_objective_scorer_identifier, select_attacks
     from pyrit.output.conversation.json import JsonConversationPrinter
 
     selected = select_attacks(result, attack_result_ids=attack_result_ids)
     if limit is not None:
         selected = selected[:limit]
-    objective_scorer_identifier = result.objective_scorer_identifier
 
     entries: list[tuple[str, Any, list[dict[str, Any]]]] = []
     for atomic_attack_name, attack_result in selected:
@@ -500,6 +523,9 @@ async def _collect_conversation_entries_async(
             await source.get_messages_async(conversation_id=attack_result.conversation_id)
             if attack_result.conversation_id
             else []
+        )
+        objective_scorer_identifier = attack_objective_scorer_identifier(
+            attack=attack_result, run_scorer_identifier=result.objective_scorer_identifier
         )
         structured = await JsonConversationPrinter(source=source).build_async(
             messages,
@@ -548,7 +574,12 @@ async def print_conversations_async(
         return
 
     from pyrit.cli._sources import RestApiConversationSource
-    from pyrit.output._derivation import attack_score_display, attack_technique_label, select_attacks
+    from pyrit.output._derivation import (
+        attack_objective_scorer_identifier,
+        attack_score_display,
+        attack_technique_label,
+        select_attacks,
+    )
     from pyrit.output.conversation.pretty import PrettyConversationPrinter
 
     selected = select_attacks(result, attack_result_ids=attack_result_ids)
@@ -560,7 +591,6 @@ async def print_conversations_async(
         print(f"\nNo conversations found for scenario {scenario_result_id}.")
         return
 
-    objective_scorer_identifier = result.objective_scorer_identifier
     _header(f"Conversations — scenario {scenario_result_id}")
     for index, (atomic_attack_name, attack_result) in enumerate(selected, start=1):
         technique = attack_technique_label(atomic_attack_name=atomic_attack_name, attack=attack_result)
@@ -578,6 +608,9 @@ async def print_conversations_async(
             await source.get_messages_async(conversation_id=attack_result.conversation_id)
             if attack_result.conversation_id
             else []
+        )
+        objective_scorer_identifier = attack_objective_scorer_identifier(
+            attack=attack_result, run_scorer_identifier=result.objective_scorer_identifier
         )
         printer = PrettyConversationPrinter(source=source)
         print(

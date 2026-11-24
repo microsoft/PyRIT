@@ -31,18 +31,26 @@ const METRIC_LABELS: Record<string, string> = {
   recall: 'Recall',
   mean_absolute_error: 'Mean absolute error',
   mae_standard_error: 'MAE std error',
-  krippendorff_alpha_combined: 'Agreement (Krippendorff alpha)',
+  krippendorff_alpha_combined: 'Combined alpha (humans + trials)',
+  krippendorff_alpha_gold_model: 'Gold vs model alpha',
   average_score_time_seconds: 'Average score time',
 }
 
-const RATIO_METRICS = new Set(['precision', 'recall', 'accuracy', 'f1_score'])
+// Shown as percentages. F1 stays on its 0-to-1 scale, like the other scores, and
+// standard errors stay raw decimals (as percentages they would need a percentage-points label).
+const PERCENT_METRICS = new Set(['precision', 'recall', 'accuracy'])
 const METRIC_DESCRIPTIONS: Record<string, string> = {
   precision: 'The share of positive predictions that are correct.',
   recall: 'The share of actual positives detected by the scorer.',
   accuracy: 'The share of evaluated cases scored correctly.',
   f1_score: 'The harmonic mean of precision and recall.',
   mean_absolute_error: 'The average absolute difference from human ratings. Lower is better.',
-  krippendorff_alpha_combined: "Krippendorff's alpha for agreement between human and model ratings.",
+  krippendorff_alpha_combined: 'Agreement among human raters and all model scoring trials pooled together. '
+    + 'Each trial counts as a separate rater, so repeating identical model answers changes the relative weight of '
+    + 'model and human ratings and can inflate this value. It is not guaranteed to increase with trial count. '
+    + "Use `krippendorff_alpha_gold_model` to compare gold labels with the model's per-response median score.",
+  krippendorff_alpha_gold_model: "Krippendorff's alpha between the gold (median human) label and the scorer's median score "
+    + "per response. Unlike the combined alpha, more trials with the same answers don't change it.",
   average_score_time_seconds: 'The average seconds per scored item during the recorded evaluation.',
 }
 
@@ -57,7 +65,7 @@ export function formatScorerMetric(name: string, value: unknown, fallback = 'n/a
     // Older evaluation records default an unmeasured duration to zero.
     return value > 0 ? `${value.toFixed(2)}s` : fallback
   }
-  if (name === 'accuracy') return `${(value * 100).toFixed(2)}%`
+  if (PERCENT_METRICS.has(name)) return `${(value * 100).toFixed(2)}%`
   if (name.startsWith('num_')) return String(value)
   return value.toFixed(4)
 }
@@ -66,7 +74,7 @@ export function formatScorerMetric(name: string, value: unknown, fallback = 'n/a
 export function formatScorerComparisonMetric(name: string, value: unknown): string {
   const numeric = scorerComparisonValue(name, value)
   if (numeric === undefined) return 'n/a'
-  return RATIO_METRICS.has(name) ? `${(numeric * 100).toFixed(1)}%` : formatScorerMetric(name, numeric)
+  return PERCENT_METRICS.has(name) ? `${(numeric * 100).toFixed(1)}%` : formatScorerMetric(name, numeric)
 }
 
 /** Keep display and sorting consistent about missing and unmeasured values. */

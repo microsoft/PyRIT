@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.sosbench_dataset import _SOSBenchDataset
+from pyrit.datasets.seed_datasets.remote import _SOSBenchDataset
 from pyrit.models import SeedDataset, SeedPrompt
 
 # The dataset's actual ``subject`` values mapped to their expected standardized

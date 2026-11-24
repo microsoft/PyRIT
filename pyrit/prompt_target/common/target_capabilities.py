@@ -7,8 +7,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import NoReturn, cast
 
-from pyrit.models.literals import PromptDataType
-from pyrit.models.target.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.models import CapabilityName, PromptDataType, TargetCapabilities
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 
 __all__ = [
@@ -65,7 +64,7 @@ class CapabilityHandlingPolicy:
 
         Raises:
             KeyError: If no behavior exists for the capability. This occurs for
-            non-adaptable capabilities (e.g., supports_multi_message_pieces).
+                non-adaptable capabilities (e.g., supports_multi_message_pieces).
         """
         try:
             return self.behaviors[capability]
@@ -104,6 +103,7 @@ class CapabilityHandlingPolicy:
 # Shared profiles are defined once and referenced by multiple model names.
 # ---------------------------------------------------------------------------
 
+
 _TEXT_IMAGE_INPUT: frozenset[frozenset[PromptDataType]] = cast(
     "frozenset[frozenset[PromptDataType]]",
     frozenset({frozenset({"text"}), frozenset({"image_path"}), frozenset({"text", "image_path"})}),
@@ -124,6 +124,27 @@ _GPT_4O = TargetCapabilities(
 )
 
 _GPT_5 = TargetCapabilities(
+    supports_multi_turn=True,
+    supports_multi_message_pieces=True,
+    supports_system_prompt=True,
+    supports_json_schema=True,
+    supports_json_output=True,
+    supports_editable_history=True,
+    input_modalities=_TEXT_IMAGE_INPUT | TOOL_CALL_INPUT_MODALITIES,
+    output_modalities=_TEXT_OUTPUT,
+)
+
+_CLAUDE_4 = TargetCapabilities(
+    supports_multi_turn=True,
+    supports_multi_message_pieces=True,
+    supports_system_prompt=True,
+    supports_json_output=True,
+    supports_editable_history=True,
+    input_modalities=_TEXT_IMAGE_INPUT | TOOL_CALL_INPUT_MODALITIES,
+    output_modalities=_TEXT_OUTPUT,
+)
+
+_GROK_4_3 = TargetCapabilities(
     supports_multi_turn=True,
     supports_multi_message_pieces=True,
     supports_system_prompt=True,
@@ -177,12 +198,20 @@ _KNOWN_CAPABILITIES: dict[str, TargetCapabilities] = {
     "gpt-realtime-1.5": _GPT_REALTIME_1_5,
     "tts": _TTS,
     "sora-2": _SORA_2,
+    "claude-sonnet-4-6": _CLAUDE_4,
+    "claude-opus-4-6": _CLAUDE_4,
+    "claude-sonnet-4-5": _CLAUDE_4,
+    "claude-haiku-4-5": _CLAUDE_4,
+    "claude-opus-4-5": _CLAUDE_4,
+    "grok-4.3": _GROK_4_3,
 }
 
 
 def get_known_capabilities(underlying_model: str) -> TargetCapabilities | None:
     """
     Return the known capabilities for a specific underlying model, or None if unrecognized.
+
+    Runtime generation support is resolved by target instances, not these model profiles.
 
     Args:
         underlying_model (str): The underlying model name (e.g., "gpt-4o").

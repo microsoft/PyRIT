@@ -13,12 +13,13 @@ import pytest
 from unit.mocks import get_sample_conversations
 
 from pyrit.converter import Base64Converter
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
+from pyrit.memory import set_message_piece_sha256_async
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
     Message,
     MessagePiece,
+    ProviderTraceReference,
     RequestTraceContext,
     Score,
     construct_response_from_request,
@@ -39,6 +40,7 @@ def test_simulated_history_provenance(
     piece = MessagePiece(role=role, original_value="history")
     piece.prompt_metadata.update(RequestTraceContext(traceparent=f"00-{'1' * 32}-{'2' * 16}-01").to_metadata())
     piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
+    piece.prompt_metadata.update(ProviderTraceReference(provider="openai", request_id="chatcmpl-1").to_metadata())
     piece.set_simulated_role()
     piece.set_simulated_role()
     restored = MessagePiece.model_validate_json(piece.model_dump_json())
@@ -48,6 +50,7 @@ def test_simulated_history_provenance(
     assert restored.prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY] is True
     assert RequestTraceContext.from_metadata(restored.prompt_metadata) is None
     assert RequestTraceContext.REQUEST_METADATA_KEY not in restored.prompt_metadata
+    assert ProviderTraceReference.METADATA_KEY not in restored.prompt_metadata
 
 
 @pytest.fixture

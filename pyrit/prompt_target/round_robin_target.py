@@ -8,8 +8,15 @@ from typing import Any
 from pyrit.models import (
     TARGET_EVAL_PARAM_FALLBACKS,
     TARGET_EVAL_PARAMS,
+    CapabilityName,
     ComponentIdentifier,
     Message,
+    MessagePiece,
+    PromptDataType,
+    ProviderTraceReference,
+    RequestGenerationConfig,
+    RequestGenerationInfo,
+    TargetCapabilities,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
@@ -47,6 +54,8 @@ class RoundRobinTarget(PromptTarget):
     Not thread-safe. Safe for concurrent use within a single asyncio event loop
     (all mutable state is modified in synchronous code blocks).
     """
+
+    _SUPPORTED_GENERATION_CAPABILITIES = frozenset(RequestGenerationConfig.FIELD_CAPABILITIES.values())
 
     def __init__(
         self,
@@ -110,6 +119,7 @@ class RoundRobinTarget(PromptTarget):
         # pipeline that actually runs matches what the user configured on their targets.
         _validate_configuration_consistency(targets)
 
+        self._targets = targets
         # The first target's configuration is representative since we've validated they are all identical.
         super().__init__(
             custom_configuration=targets[0].configuration,
@@ -122,7 +132,6 @@ class RoundRobinTarget(PromptTarget):
         # Ensure that for LLM scoring evaluation purposes, the inner targets have the equivalent behavioral params
         _validate_behavioral_consistency(targets)
 
-        self._targets = targets
         self._weights = weights
 
         # Build rotation sequence from weights.
@@ -144,6 +153,114 @@ class RoundRobinTarget(PromptTarget):
             list[PromptTarget]: A copy of the inner targets.
         """
         return list(self._targets)
+
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
+        """
+        Use the shared wire modality when every possible receiving target agrees.
+
+        Args:
+            message_piece: The historical piece to validate.
+            has_text_piece: Whether the historical message also contains text.
+
+        Returns:
+            The shared wire modality, or the stored modality when adapters disagree.
+        """
+        data_types = {
+            target._get_history_piece_data_type(message_piece=message_piece, has_text_piece=has_text_piece)
+            for target in self._targets
+        }
+        if len(data_types) == 1:
+            return next(iter(data_types))
+        return message_piece.converted_value_data_type
+
+    @property
+    def capabilities(self) -> TargetCapabilities:
+        """The wrapper capabilities restricted to generation options shared by every child."""
+        capabilities = super().capabilities
+        children = [target.capabilities for target in self._targets]
+        updates: dict[str, bool] = {}
+        for capability in self._SUPPORTED_GENERATION_CAPABILITIES:
+            bounds = self._generation_range_intersection(capability=capability)
+            supported = capabilities.includes(capability=capability) and all(
+                child.includes(capability=capability) for child in children
+            )
+            updates[capability.value] = supported and (bounds is None or bounds[0] <= bounds[1])
+        return capabilities.model_copy(update=updates)
+
+    def generation_range(self, *, capability: CapabilityName) -> tuple[float, float] | None:
+        """
+        Look up bounds shared by every child for a generation option.
+
+        Returns:
+            tuple[float, float] | None: Inclusive bounds, or None if unknown or disjoint.
+        """
+        if any(target.generation_range(capability=capability) is None for target in self._targets):
+            return None
+        bounds = self._generation_range_intersection(capability=capability)
+        return bounds if bounds is not None and bounds[0] <= bounds[1] else None
+
+    def _generation_range_intersection(self, *, capability: CapabilityName) -> tuple[float, float] | None:
+        """
+        Intersect the children's declared ranges.
+
+        Returns:
+            tuple[float, float] | None: Known intersection, or None if no bounds are declared.
+                A reversed pair indicates disjoint ranges.
+        """
+        ranges = [
+            bounds for target in self._targets if (bounds := target.generation_range(capability=capability)) is not None
+        ]
+        if not ranges:
+            return None
+        return max(bounds[0] for bounds in ranges), min(bounds[1] for bounds in ranges)
+
+    def validate_request_generation_config(self, message: Message) -> RequestGenerationConfig:
+        """
+        Validate overrides against every child before selecting a target or performing I/O.
+
+        Returns:
+            RequestGenerationConfig: Options accepted by every child.
+        """
+        config = super().validate_request_generation_config(message)
+        if config.required_capabilities:
+            for target in self._targets:
+                target.validate_request_generation_config(message)
+        return config
+
+    def aggregate_capabilities(self, *, child_capabilities: list[TargetCapabilities]) -> TargetCapabilities:
+        """
+        Combine one capability result per child without changing the children.
+
+        Inputs and feature flags must be supported by every child because
+        requests can reach any child. Outputs include every combination that
+        any child can produce.
+
+        Args:
+            child_capabilities: Capability results in inner-target order.
+
+        Returns:
+            TargetCapabilities: Shared input and feature support, and possible outputs.
+
+        Raises:
+            ValueError: Results are missing or the children have no shared input combination.
+        """
+        if len(child_capabilities) != len(self._targets):
+            raise ValueError("Provide one capability result for every round-robin child.")
+        inputs = frozenset.intersection(*(result.input_modalities for result in child_capabilities))
+        if not inputs:
+            raise ValueError("Round-robin children have no shared supported input modality combination.")
+        return TargetCapabilities.model_validate(
+            {
+                **{
+                    capability.value: all(result.includes(capability=capability) for result in child_capabilities)
+                    for capability in CapabilityName
+                },
+                "input_modalities": inputs,
+                "output_modalities": frozenset.union(*(result.output_modalities for result in child_capabilities)),
+            }
+        )
 
     def _next_target(self) -> PromptTarget:
         """
@@ -180,13 +297,22 @@ class RoundRobinTarget(PromptTarget):
             Exception: If all unique inner targets fail.
             RuntimeError: If no targets are available to try (should be unreachable).
         """
+        self.validate_request_generation_config(normalized_conversation[-1])
         first_target = self._next_target()
         targets_to_try = [first_target] + [t for t in self._targets if t is not first_target]
         last_exception: BaseException | None = None
 
         for target in targets_to_try:
+            self.validate_request_generation_config(normalized_conversation[-1])
             try:
-                responses = await target._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+                # Each child resolves its own defaults; only its internal retries share evidence.
+                for piece in normalized_conversation[-1].message_pieces:
+                    RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
+                responses = await target._send_with_capabilities_async(
+                    normalized_conversation=normalized_conversation, capabilities=self.capabilities
+                )
+                if last_exception is not None:
+                    self._forget_provider_trace_reference(normalized_conversation[-1])
 
                 inner_id_hash = target.get_identifier().hash
                 for response in responses:
@@ -200,11 +326,26 @@ class RoundRobinTarget(PromptTarget):
                     f"failed: {ex}. Trying next target."
                 )
                 last_exception = ex
+                self._forget_provider_trace_reference(normalized_conversation[-1])
 
         # All targets failed — propagate the last exception.
         if last_exception is not None:
             raise last_exception
         raise RuntimeError("No targets to try — this should be unreachable.")
+
+    @staticmethod
+    def _forget_provider_trace_reference(request: Message) -> None:
+        """
+        Drop the provider's response id once a child has failed.
+
+        A failed child may already have sent completions, so no single response id the next child
+        records can name every trace this request produced. The request stays unlinked instead.
+
+        Args:
+            request (Message): The normalized request the children share.
+        """
+        for piece in request.message_pieces:
+            ProviderTraceReference.clear_metadata(piece.prompt_metadata)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

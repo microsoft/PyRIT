@@ -11,16 +11,14 @@ parameters (no tree branching, no off-topic pruning) hardcoded.
 
 import logging
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.executor.attack.component import PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
+    AttackScoringConfig,
 )
-from pyrit.executor.attack.multi_turn.tree_of_attacks import (
-    TAPAttackScoringConfig,
-    TreeOfAttacksWithPruningAttack,
-)
+from pyrit.executor.attack.multi_turn.tree_of_attacks import TreeOfAttacksWithPruningAttack
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
@@ -58,7 +56,7 @@ class PAIRAttack(TreeOfAttacksWithPruningAttack):
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
         attack_converter_config: AttackConverterConfig | None = None,
-        attack_scoring_config: TAPAttackScoringConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
         tree_width: int = 3,
         tree_depth: int = 5,
@@ -75,8 +73,9 @@ class PAIRAttack(TreeOfAttacksWithPruningAttack):
                 adversarial chat component.
             attack_converter_config (AttackConverterConfig | None): Configuration for
                 attack converters. Defaults to None.
-            attack_scoring_config (TAPAttackScoringConfig | None): Scoring configuration.
-                The objective scorer must be a FloatScaleThresholdScorer. If not
+            attack_scoring_config (AttackScoringConfig | None): Scoring configuration.
+                The objective scorer's verdict decides success, and it must keep a float
+                value on each verdict, as FloatScaleThresholdScorer does. If not
                 provided, a default FloatScaleThresholdScorer wrapping
                 SelfAskScaleScorer (threshold 0.7) is created. Defaults to None.
             prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use.

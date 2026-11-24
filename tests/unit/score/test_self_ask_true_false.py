@@ -9,13 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_message_async
 
-from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.memory.central_memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.exceptions import InvalidJsonException
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece, MessageScorable, Score, ScoringExpectation, SeedPrompt
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.score import (
     SelfAskTrueFalseScorer,
     TrueFalseQuestion,

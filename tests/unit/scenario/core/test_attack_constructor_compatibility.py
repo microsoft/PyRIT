@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+from pyrit.executor.attack import AttackScoringConfig
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 
 if typing.TYPE_CHECKING:

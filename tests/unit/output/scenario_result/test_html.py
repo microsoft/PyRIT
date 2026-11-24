@@ -2,10 +2,12 @@
 # Licensed under the MIT license.
 
 import json
+import re
 import uuid
 from typing import Any
 
-from unit.mocks import make_scenario_result
+import pytest
+from unit.mocks import make_judged_scenario_result, make_scenario_result
 
 from pyrit.models import (
     AttackOutcome,
@@ -269,3 +271,241 @@ async def test_html_report_renders_role_aware_accounting():
 
     assert "Target-facing attempts" in html
     assert "Orchestration attempts" in html
+
+
+def _set_piece(payload: dict[str, Any], piece: dict[str, Any]) -> None:
+    payload["conversations"][0]["messages"][0]["pieces"][0] = {"response_error": None, **piece}
+
+
+def _flatten(html: str) -> str:
+    return re.sub(r">\s+<", "><", html)
+
+
+async def test_html_report_labels_original_and_converted_when_they_differ():
+    payload = _payload()
+    _set_piece(payload, {"data_type": "text", "original_value": "plain ask", "converted_value": "cGxhaW4gYXNr"})
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece">plain ask</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece">cGxhaW4gYXNr</div>' in html
+
+
+async def test_html_report_shows_value_once_when_converted_matches_original():
+    payload = _payload()
+    _set_piece(payload, {"data_type": "text", "original_value": "same text", "converted_value": "same text"})
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert html.count("same text") == 1
+    assert "Original:" not in html
+    assert "Converted:" not in html
+
+
+async def test_html_report_labels_empty_converted_text():
+    payload = _payload()
+    _set_piece(payload, {"data_type": "text", "original_value": "ORIGINAL_WAS_REMOVED", "converted_value": ""})
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece">ORIGINAL_WAS_REMOVED</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece"></div>' in html
+
+
+async def test_html_report_labels_empty_converted_media():
+    payload = _payload()
+    _set_piece(payload, {"data_type": "image_path", "original_value": "media/original.png", "converted_value": ""})
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert (
+        '<div class="piece-label">Original:</div><div class="piece media">[image_path] media/original.png</div>' in html
+    )
+    assert '<div class="piece-label">Converted:</div><div class="piece media">[image_path] </div>' in html
+
+
+@pytest.mark.parametrize("piece_extra", [{"converted_value": None}, {}])
+async def test_html_report_falls_back_to_original_when_converted_value_missing(piece_extra: dict[str, Any]):
+    payload = _payload()
+    _set_piece(payload, {"data_type": "text", "original_value": "only-original", **piece_extra})
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert '<div class="piece">only-original</div>' in html
+    assert "Original:" not in html
+
+
+async def test_html_report_escapes_original_and_converted_values():
+    payload = _payload()
+    _set_piece(
+        payload,
+        {
+            "data_type": "text",
+            "original_value": "<script>alert('o')</script>",
+            "converted_value": '<img src=x onerror="alert(1)">',
+        },
+    )
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert "<script>alert" not in html
+    assert "<img src=x" not in html
+    assert "&lt;script&gt;alert(&#39;o&#39;)&lt;/script&gt;" in html
+    assert "&lt;img src=x onerror=&#34;alert(1)&#34;&gt;" in html
+
+
+async def test_html_report_labels_converted_piece_from_real_builders():
+    attack = AttackResult(conversation_id=str(uuid.uuid4()), objective="obj", outcome=AttackOutcome.SUCCESS)
+    result = make_scenario_result(attack_results={"tech": [attack]})
+    overview = JsonScenarioResultPrinter().build(result, view="overview")
+    piece = MessagePiece(
+        role="user", original_value="ORIGINAL_WAS_REMOVED", converted_value="", conversation_id=attack.conversation_id
+    )
+    messages = await JsonConversationPrinter(source=_StubConversationSource({})).build_async(
+        [Message(message_pieces=[piece])]
+    )
+    payload = build_scenario_full_payload(result=result, overview=overview, entries=[("tech", attack, messages)])
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece">ORIGINAL_WAS_REMOVED</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece"></div>' in html
+
+
+async def test_html_report_labels_converted_media_by_converted_type():
+    payload = _payload()
+    _set_piece(
+        payload,
+        {
+            "data_type": "text",
+            "original_value_data_type": "text",
+            "converted_value_data_type": "image_path",
+            "original_value": "draw a cat",
+            "converted_value": "media/cat.png",
+        },
+    )
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece">draw a cat</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece media">[image_path] media/cat.png</div>' in html
+
+
+async def test_html_report_renders_converted_text_of_media_original_as_text():
+    payload = _payload()
+    _set_piece(
+        payload,
+        {
+            "data_type": "image_path",
+            "original_value_data_type": "image_path",
+            "converted_value_data_type": "text",
+            "original_value": "media/cat.png",
+            "converted_value": "a cat on a mat",
+        },
+    )
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece media">[image_path] media/cat.png</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece">a cat on a mat</div>' in html
+    assert "[image_path] a cat on a mat" not in html
+
+
+async def test_html_report_labels_unchanged_value_by_converted_type():
+    payload = _payload()
+    _set_piece(
+        payload,
+        {
+            "data_type": "text",
+            "original_value_data_type": "text",
+            "converted_value_data_type": "url",
+            "original_value": "https://example.com",
+            "converted_value": "https://example.com",
+        },
+    )
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert '<div class="piece media">[url] https://example.com</div>' in html
+    assert "Original:" not in html
+
+
+async def test_html_report_labels_converted_types_from_real_builders():
+    pieces = [
+        MessagePiece(
+            role="user",
+            original_value="draw a cat",
+            original_value_data_type="text",
+            converted_value="media/cat.png",
+            converted_value_data_type="image_path",
+            conversation_id="c1",
+            sequence=0,
+        ),
+        MessagePiece(
+            role="assistant",
+            original_value="media/dog.png",
+            original_value_data_type="image_path",
+            converted_value="a dog on a log",
+            converted_value_data_type="text",
+            conversation_id="c1",
+            sequence=1,
+        ),
+    ]
+    messages = await JsonConversationPrinter(source=_StubConversationSource({})).build_async(
+        [Message(message_pieces=[piece]) for piece in pieces]
+    )
+    payload = _payload()
+    payload["conversations"][0]["messages"] = messages
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece">draw a cat</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece media">[image_path] media/cat.png</div>' in html
+    assert '<div class="piece-label">Original:</div><div class="piece media">[image_path] media/dog.png</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece">a dog on a log</div>' in html
+
+
+async def test_html_report_renders_per_judge_breakdown_from_real_builders(patch_central_database):
+    judge_a = ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers")
+    judge_b = ComponentIdentifier(class_name="JudgeB", class_module="tests.scorers")
+    result = make_judged_scenario_result(
+        groups=[
+            ("attack_a", judge_a, judge_a, [AttackOutcome.SUCCESS]),
+            ("attack_b", judge_b, judge_b, [AttackOutcome.UNDETERMINED]),
+        ]
+    )
+    overview = JsonScenarioResultPrinter().build(result, view="overview")
+
+    html = await HtmlScenarioReportPrinter().render_async(
+        build_scenario_full_payload(result=result, overview=overview, entries=[])
+    )
+
+    assert re.search(r"Aggregate success rate\s+\(2\s+objective scorers, descriptive\)", html)
+    assert "Results by Objective Scorer" in html
+    assert "Each row contains only executions attributed to that scorer" in html
+    assert "not every execution rescored by every scorer" in html
+    assert f"JudgeA ({judge_a.hash[:12]})" in html
+    assert "<td>100.0%</td>" in html
+    assert "<td>N/A</td>" in html
+
+
+@pytest.mark.parametrize(
+    ("recorded", "expected"),
+    [
+        (
+            ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers"),
+            "Objective Scorer: JudgeA ({hash}) (recorded)",
+        ),
+        (None, "Objective Scorer: Unknown scorer (unknown)"),
+    ],
+)
+async def test_html_report_names_a_single_judge_under_the_headline(patch_central_database, recorded, expected):
+    result = make_judged_scenario_result(groups=[("attack", None, recorded, [AttackOutcome.SUCCESS])])
+    overview = JsonScenarioResultPrinter().build(result, view="overview")
+
+    html = await HtmlScenarioReportPrinter().render_async(
+        build_scenario_full_payload(result=result, overview=overview, entries=[])
+    )
+
+    assert expected.format(hash=recorded.hash[:12] if recorded is not None else "") in html
+    assert "Results by Objective Scorer" not in html

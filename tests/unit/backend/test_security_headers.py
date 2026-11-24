@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from pyrit.backend.middleware.security_headers import SecurityHeadersMiddleware
+from pyrit.backend.middleware import SecurityHeadersMiddleware
 
 
 def _build_client(*, dev_mode: bool) -> TestClient:
@@ -59,6 +59,14 @@ class TestSecurityHeadersMiddleware:
         response = prod_client.get("/")
         assert response.headers["Content-Security-Policy"] == SecurityHeadersMiddleware._FRONTEND_CSP
         assert "Cache-Control" not in response.headers or response.headers["Cache-Control"] != "no-store"
+
+    def test_pending_media_previews_allow_blob_urls_only_in_media_directives(self, prod_client: TestClient) -> None:
+        policy = prod_client.get("/").headers["Content-Security-Policy"]
+        directives = {parts[0]: parts[1:] for directive in policy.split(";") if (parts := directive.split())}
+        assert "blob:" in directives["img-src"]
+        assert "blob:" in directives["media-src"]
+        assert "blob:" not in directives["script-src"]
+        assert "blob:" not in directives["default-src"]
 
     def test_docs_path_in_dev_mode_skips_csp(self, dev_client: TestClient) -> None:
         response = dev_client.get("/docs")

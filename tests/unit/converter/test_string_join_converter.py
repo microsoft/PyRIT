@@ -3,8 +3,7 @@
 
 import pytest
 
-from pyrit.converter import ConverterResult, StringJoinConverter
-from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy, WordIndexSelectionStrategy
+from pyrit.converter import AllWordsSelectionStrategy, ConverterResult, StringJoinConverter, WordIndexSelectionStrategy
 from pyrit.registry import ConverterRegistry
 
 
@@ -46,6 +45,22 @@ async def test_string_join_single_char():
     assert isinstance(result, ConverterResult)
     assert result.output_text == "a"
     assert result.output_type == "text"
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("cafe\u0301", "c-a-f-e\u0301"),
+        ("\u0939\u093f\u0902\u0926\u0940", "\u0939\u093f\u0902-\u0926\u0940"),
+        ("\U0001f1ee\U0001f1f3\U0001f44d\U0001f3fd", "\U0001f1ee\U0001f1f3-\U0001f44d\U0001f3fd"),
+        ("\U0001f468\u200d\U0001f469\u200d\U0001f467ok", "\U0001f468\u200d\U0001f469\u200d\U0001f467-o-k"),
+        ("a\r\nb", "a-\r\n-b"),
+    ],
+)
+async def test_string_join_keeps_grapheme_clusters_async(*, prompt: str, expected: str) -> None:
+    result = await StringJoinConverter().convert_async(prompt=prompt)
+
+    assert result.output_text == expected
 
 
 async def test_string_join_input_not_supported():

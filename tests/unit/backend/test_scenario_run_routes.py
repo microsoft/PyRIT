@@ -17,9 +17,9 @@ from fastapi.testclient import TestClient
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit import _compatibility
 from pyrit.backend.main import app
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.backend.models import PaginationInfo, ScenarioRunListResponse
 from pyrit.backend.routes.scenarios import get_scenario_run_progress, list_scenario_runs
+from pyrit.backend.services import ScenarioRunService
 from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
@@ -31,11 +31,13 @@ from pyrit.models import (
     ScenarioProgressSummary,
     ScenarioQueueEntry,
     ScenarioQueueSnapshot,
+    ScenarioResult,
+    ScenarioRunListItem,
     ScenarioRunPlan,
     ScenarioRunProgress,
     ScenarioRunState,
 )
-from pyrit.models.catalog.scenario import ScenarioRunListItem, ScenarioRunSummary
+from pyrit.models.catalog import ScenarioRunSummary
 from unit.mocks import make_scenario_result
 
 OPERATION_ID = UUID(int=7)
@@ -605,13 +607,27 @@ class TestCancelScenarioRunRoute:
         """Test that cancelling a completed run returns 409 Conflict."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.cancel_run_async = AsyncMock(side_effect=ValueError("Cannot cancel run in 'completed' state."))
+            mock_service.cancel_run_async = AsyncMock(side_effect=ValueError("Cannot cancel run in 'COMPLETED' state."))
             mock_get.return_value = mock_service
 
             response = client.post("/api/scenarios/runs/test-run-id/cancel")
 
         assert response.status_code == status.HTTP_409_CONFLICT
         assert "Cannot cancel" in response.json()["detail"]
+
+    def test_cancel_completed_run_409_detail_names_state_by_value(self, client: TestClient) -> None:
+        """The 409 detail from the real service names the state by its value, not as ScenarioRunState.X."""
+        header = MagicMock(spec=ScenarioResult)
+        header.scenario_run_state = ScenarioRunState.COMPLETED
+        memory = MagicMock(spec=MemoryInterface)
+        memory.get_scenario_result_header_async = AsyncMock(return_value=header)
+        with patch("pyrit.memory.CentralMemory.get_memory_instance", return_value=memory):
+            service = ScenarioRunService()
+            with patch("pyrit.backend.routes.scenarios.get_scenario_run_service", return_value=service):
+                response = client.post("/api/scenarios/runs/sr-done/cancel")
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json()["detail"] == "Cannot cancel run in 'COMPLETED' state."
 
 
 class TestGetScenarioRunResultsRoute:
@@ -668,7 +684,7 @@ class TestGetScenarioRunResultsRoute:
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
             mock_service.get_run_results_async = AsyncMock(
-                side_effect=ValueError("Results are only available for completed runs. Current status: 'running'.")
+                side_effect=ValueError("Results are only available for completed runs. Current status: 'IN_PROGRESS'.")
             )
             mock_get.return_value = mock_service
 

@@ -38,6 +38,12 @@ server, including when the `litellm` or `all` extra is installed. Real adapter
 and outgoing-header checks run separately as
 [loopback integration tests](./6_integration_tests.md#litellm-loopback-integration-tests).
 
+Backend tests that use `sqlite_instance` dispose its async pools on each
+`TestClient` portal's owning event loop before that portal closes. Context-managed
+clients keep their pool throughout the application lifespan. Tests must still
+finish their background work before leaving the client or fixture; this cleanup
+does not suppress worker exceptions or replace production shutdown.
+
 ### CodeQL merge-group uploads
 
 CodeQL still analyzes all three languages on PRs, merge groups, main/release pushes,
@@ -107,6 +113,21 @@ remain unchanged.
 Use `wait_for_event_async` to observe readiness and `wait_for_completion_async` to
 observe the outcome, including failures after readiness. Observation timeouts do
 not cancel owned work. Release gates before calling `settle_tasks_async` in `finally`.
+
+For held thread workers, release the gate in `finally` and use `drain_tasks_async`
+while patches and fixtures remain active. Unlike `settle_tasks_async`, this helper
+does not cancel worker-owning tasks when the observer is cancelled or its watchdog
+expires: cancelling `asyncio.to_thread` cannot stop the underlying thread. It waits
+through repeated observer cancellation and then propagates the original cancellation
+message. Watchdog expiry explicitly reports incomplete cleanup; it cannot force a
+worker that never returns to finish.
+
+Use `wait_for_event_async` to observe the readiness event and its owning task together,
+so failures before readiness are reported immediately. For a worker held behind a
+gate, check the owner is still pending after observation; call `task.result()` first
+if it has finished so its original exception is preserved. Keep the outer test timeout
+larger than the combined readiness and cleanup watchdogs, allowing `finally` to release
+and drain workers before mocks are removed.
 
 The discovery provider-state test and Copilot cancellation-test startup use the
 shared `TEST_WATCHDOG_SECONDS` backstop in `tests/unit/async_utils.py`. Discovery
@@ -195,6 +216,21 @@ background accessibility.
      ```
 
 ## Running the other test tiers
+
+### SQL Server migration check
+
+The `SQL Server migrations` CI job uses disposable SQL Server 2022 Developer on
+GitHub-hosted Linux, without Azure credentials. On PRs and merge groups, it runs
+migrations on a fresh database to the **checked-out branch's Alembic head**, then
+checks schema agreement with models. It does not test data-dependent backfills.
+
+To run locally, install ODBC Driver 18 and the normal `uv sync` dependencies.
+Set `PYRIT_TEST_SQLSERVER_URL` to a disposable server's `mssql+pyodbc://.../master`
+SQL-authentication URL with permission to create/drop test databases:
+
+```bash
+uv run --frozen python -m build_scripts.check_sqlserver_migrations
+```
 
 ```{note}
 Avoid `pytest tests`. It collects the integration, end-to-end, and partner-integration tiers

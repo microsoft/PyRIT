@@ -11,14 +11,14 @@ from uuid import uuid4
 
 import pandas as pd
 
-from pyrit.common.utils import verify_and_resolve_path
+from pyrit.common import verify_and_resolve_path
 from pyrit.models import Message, MessagePiece, PromptDataType
 from pyrit.score.scorer_evaluation.metrics_type import MetricsType
 
 if TYPE_CHECKING:
     from collections.abc import Hashable
 
-    from pyrit.models.harm_definition import HarmDefinition
+    from pyrit.models import HarmDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +31,12 @@ class HumanLabeledEntry:
     the Messages and a list of human-assigned scores, which are floats between 0.0 and 1.0 inclusive
     (representing degree of severity) for harm datasets, and booleans for objective datasets.
 
-    Parameters:
+    Attributes:
         conversation (list[Message]): A list of Message objects representing the
             conversation to be scored. This can contain one Message object if you are just
             scoring individual assistant responses.
-        human_scores (List): A list of human-assigned scores for the responses. Each entry in the list corresponds to
-            a different person's score for the same response/conversation.
+        human_scores (list[Any]): A list of human-assigned scores for the responses. Each entry corresponds
+            to a different person's score for the same response/conversation.
     """
 
     conversation: list[Message]
@@ -183,7 +183,7 @@ class HumanLabeledDataset:
             return None
 
         if self._harm_definition_obj is None:
-            from pyrit.models.harm_definition import HarmDefinition
+            from pyrit.models import HarmDefinition
 
             self._harm_definition_obj = HarmDefinition.from_yaml(self.harm_definition)
 

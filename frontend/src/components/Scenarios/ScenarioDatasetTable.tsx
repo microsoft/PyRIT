@@ -1,20 +1,21 @@
-import { useEffect, useId, useState } from 'react'
+import { type Ref, useEffect, useId, useState } from 'react'
 
 import {
-  Badge, Button, Combobox, Divider, mergeClasses, MessageBar, MessageBarBody, Option, Radio, RadioGroup,
+  Badge, Button, Combobox, Divider, mergeClasses, MessageBar, MessageBarActions, MessageBarBody, Option, Radio, RadioGroup,
+  Spinner,
   Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, ToggleButton, Tooltip,
 } from '@fluentui/react-components'
 import { DismissRegular } from '@fluentui/react-icons'
-import { Link } from 'react-router'
 
 import { MODALITY_LABELS } from '@/components/Config/targetFilters'
+import HelpField from '@/components/HelpField'
 import type {
   DatasetInfo, DatasetFetchPolicy, ScenarioDatasetLimit, ScenarioDatasetOptions, ScenarioDatasetRequest,
   ScenarioDatasetSettings, ScenarioDatasetSourceInput,
 } from '@/types'
 
 import DatasetLimitControl from './DatasetLimitControl'
-import { canEditDatasetLoading, datasetChoices, datasetFacts, datasetNameWithOrigin, datasetPolicies, datasetSize, parseCaseLimit } from './datasetPresentation'
+import { canEditDatasetLoading, datasetChoices, datasetFacts, datasetNameWithOrigin, datasetPolicies, datasetSize, datasetTotalLimit, parseCaseLimit } from './datasetPresentation'
 import { useScenarioDatasetTableStyles } from './ScenarioDatasetTable.styles'
 
 interface ScenarioDatasetTableProps {
@@ -30,6 +31,13 @@ interface ScenarioDatasetTableProps {
   loadError?: string | null
   loadEnabled?: boolean
   onLoad?: () => void
+  /** The choices are stored datasets the scenario already checked, so load, reset and loading rules don't apply. */
+  compatibleOnly?: boolean
+  /** Marks the picker required until the first dataset is chosen. */
+  required?: boolean
+  /** Why the required picker has too few datasets, shown as its validation message. */
+  selectionError?: string | null
+  pickerRef?: Ref<HTMLInputElement>
   onReload: () => void
   onChange: (request: ScenarioDatasetRequest) => void
   onValidationChange: (error: string | null) => void
@@ -37,7 +45,9 @@ interface ScenarioDatasetTableProps {
 
 export default function ScenarioDatasetTable({
   request, defaults, effective, options, datasets, disabled, loading, metadataError,
-  preparing = false, loadError, loadEnabled = false, onLoad, onReload, onChange, onValidationChange,
+  preparing = false, loadError, loadEnabled = false, onLoad, compatibleOnly = false,
+  required = false, selectionError = null, pickerRef,
+  onReload, onChange, onValidationChange,
 }: ScenarioDatasetTableProps) {
   const styles = useScenarioDatasetTableStyles()
   const loadingId = useId()
@@ -45,18 +55,21 @@ export default function ScenarioDatasetTable({
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [emptySelections, setEmptySelections] = useState<string[]>([])
   const selected: ScenarioDatasetSourceInput[] = request.sources ?? defaults.sources.map((source) => ({ name: source.name }))
-  const canSelect = options.supports_overrides && options.mode !== 'fixed' && selected.length > 0
+  const canSelect = options.supports_overrides && options.mode !== 'fixed'
   const canEditSources = options.supports_overrides && options.source_settings !== false
   const canLimit = canEditSources && options.per_dataset_limit
   const canFilter = options.supports_overrides && options.filters
   const canAdd = options.max_selected == null || selected.length < options.max_selected
   const replaceSingleSource = options.max_selected === 1
-  const busy = disabled || preparing
-  const total = typeof request.max_total === 'number' || request.max_total === 'all'
-    ? request.max_total : defaults.max_total
+  const busy = disabled || preparing || (compatibleOnly && loading)
+  const total = datasetTotalLimit(request, defaults)
   const filters = { ...defaults.filters, ...request.filters }
-  const candidates = datasetChoices(datasets, defaults.sources, options)
+  const candidates = datasetChoices(datasets, compatibleOnly ? [] : defaults.sources, options)
     .filter((name) => !selected.some((source) => source.name === name) && name.toLowerCase().includes(search.toLowerCase()))
+  const noCompatibleDatasets = compatibleOnly && datasets.length === 0 && selected.length === 0
+    && !loading && !metadataError
+  // A required picker stays, so Launch can still point at it; the empty state becomes its hint.
+  const showEmptyText = noCompatibleDatasets && !required
   const { loaded, allLoaded } = datasetFacts(datasets, selected.map((source) => source.name))
   const availableMetadata: Record<string, string[]> = {
     harm_categories: [...new Set(loaded.flatMap((dataset) => dataset.harm_categories))],
@@ -140,10 +153,32 @@ export default function ScenarioDatasetTable({
     : policies[0] === 'always' ? 'Refresh datasets for each new scan'
     : policies[0] === 'never' ? 'Only use datasets already in memory'
     : 'Load missing datasets'
+  const picker = <Combobox ref={pickerRef} aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
+    placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]}
+    disabled={busy || (compatibleOnly && Boolean(metadataError))}
+    onOpenChange={(_, data) => { if (data.open && !compatibleOnly) onReload() }}
+    onChange={(event) => setSearch(event.target.value)}
+    onOptionSelect={(_, data) => {
+      const name = data.optionValue
+      if (!name || !candidates.includes(name)) return
+      if (replaceSingleSource) clearSourceDrafts()
+      onChange({ ...request, sources: replaceSingleSource ? [{ name }] : [...selected, { name }] })
+      setSearch('')
+    }}>
+    {candidates.map((name) => {
+      const label = datasetNameWithOrigin(name, datasets.find((dataset) => dataset.name === name))
+      return <Option key={name} value={name} text={label} aria-label={label}>{label}</Option>
+    })}
+  </Combobox>
 
   return (
     <div className={styles.root}>
-      {!allLoaded && selected.length > 0 && <div className={styles.toolbar}>
+      {compatibleOnly && loading && <Spinner size="tiny" label="Loading compatible datasets..." />}
+      {selected.length > 0 && (preparing || (loading && !compatibleOnly)) && <Text role="status" size={200}
+        className={styles.loadingHint}>
+        {preparing ? 'Loading datasets...' : 'Checking dataset details...'}
+      </Text>}
+      {!compatibleOnly && !allLoaded && selected.length > 0 && <div className={styles.toolbar}>
         {onLoad && <Button appearance="primary" className={styles.button}
           disabled={busy || loading || !loadEnabled || hasMissingRefresh || requiresImport
             || metadataError !== null || validationError !== null}
@@ -155,8 +190,17 @@ export default function ScenarioDatasetTable({
         {metadataError && <Button className={styles.button} disabled={busy} onClick={onReload}>Retry checking datasets</Button>}
       </div>}
       {[metadataError, loadError, ...errors].filter((error): error is string => Boolean(error))
-        .map((error) => <MessageBar key={error} intent="error"><MessageBarBody role="alert">{error}</MessageBarBody></MessageBar>)}
-      {selected.length === 0 ? <Text>This scenario has no named datasets.</Text> : <div className={styles.scroll}>
+        .map((error) => <MessageBar key={error} intent="error">
+          <MessageBarBody role="alert">{error}</MessageBarBody>
+          {compatibleOnly && error === metadataError && <MessageBarActions>
+            <Button size="small" disabled={disabled} aria-label="Retry loading compatible datasets"
+              onClick={onReload}>Retry</Button>
+          </MessageBarActions>}
+        </MessageBar>)}
+      {/* With nothing selected, a selectable scenario shows only its picker. */}
+      {showEmptyText ? <Text>No compatible datasets available.</Text>
+        : selected.length === 0 ? !canSelect && <Text>This scenario has no named datasets.</Text>
+        : <div className={styles.scroll}>
         <Table className={styles.table} aria-label="Selected datasets">
           <TableHeader><TableRow>
             <TableHeaderCell>Dataset</TableHeaderCell>
@@ -171,7 +215,8 @@ export default function ScenarioDatasetTable({
               ? settingsFor(source.name)?.max_size ?? sourceDefault : sourceDefault
             const cap = typeof source.max_size === 'number' || source.max_size === 'all' ? source.max_size : inherited
             const displayedCap = !canLimit || total === 'all' ? cap : cap === 'all' ? total : Math.min(cap, total)
-            const size = datasetSize(metadata, canLimit ? displayedCap : 'all')
+            const size = !metadata && (loading || preparing)
+              ? 'Loading...' : datasetSize(metadata, canLimit ? displayedCap : 'all')
             return <TableRow key={source.name}>
               <TableCell><Text className={styles.datasetName} weight="semibold">
                 {datasetNameWithOrigin(source.name, metadata)}
@@ -202,11 +247,12 @@ export default function ScenarioDatasetTable({
                   <Badge appearance="outline" color="subtle">Unlabeled</Badge>
                 </Tooltip>}
                 {metadata.harm_categories.length === 0 && metadata.modalities.length === 0 && <Text size={200}>No metadata labels.</Text>}
-              </div> : <Text size={200} role={loading || preparing ? 'status' : undefined}>
-                {loading || preparing ? 'Loading...' : metadataError ? 'Details unavailable' : 'Not stored in memory'}
+              </div> : <Text size={200}>
+                {loading || preparing ? 'Loading...' : metadataError ? 'Details unavailable'
+                  : compatibleOnly ? 'Not in the compatible list' : 'Not stored in memory'}
               </Text>}</TableCell>
               <TableCell className={styles.actionsCell}>
-                {canSelect && selected.length > 1 && <Button appearance="subtle" className={styles.button}
+                {canSelect && (compatibleOnly || selected.length > 1) && <Button appearance="subtle" className={styles.button}
                   icon={<DismissRegular />} aria-label={`Remove ${source.name}`} disabled={busy}
                   onClick={() => {
                     clearSourceDrafts(source.name)
@@ -217,39 +263,30 @@ export default function ScenarioDatasetTable({
           })}</TableBody>
         </Table>
       </div>}
-      {selected.length > 0 && <div className={styles.controls}>
-        {canSelect && <>
-        {(canAdd || replaceSingleSource) && <Combobox aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
-          placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]} disabled={busy}
-          onOpenChange={(_, data) => { if (data.open) onReload() }}
-          onChange={(event) => setSearch(event.target.value)}
-          onOptionSelect={(_, data) => {
-            const name = data.optionValue
-            if (!name || !candidates.includes(name)) return
-            if (replaceSingleSource) clearSourceDrafts()
-            onChange({ ...request, sources: replaceSingleSource ? [{ name }] : [...selected, { name }] })
-            setSearch('')
-          }}>
-          {candidates.map((name) => {
-            const label = datasetNameWithOrigin(name, datasets.find((dataset) => dataset.name === name))
-            return <Option key={name} value={name} text={label}>{label}</Option>
-          })}
-        </Combobox>}
-        <Button className={styles.button} disabled={busy} onClick={() => {
+      {!showEmptyText && canSelect && <div className={styles.controls}>
+        {(canAdd || replaceSingleSource) && (required ? <HelpField
+          label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} required={selected.length === 0}
+          hint={noCompatibleDatasets ? 'No compatible datasets available.' : undefined}
+          validationMessage={selectionError ?? undefined} validationState={selectionError ? 'error' : 'none'}>
+          {picker}
+        </HelpField> : picker)}
+        {/* Reset clears source and per-dataset edits, so it shows only when there are some. Saved presets
+            and runs send unset fields as null and 'default'. */}
+        {!compatibleOnly && (request.sources != null || (request.max_per_dataset != null && request.max_per_dataset !== 'default'))
+          && <Button className={styles.button} disabled={busy} onClick={() => {
           const edits = { ...request }
           delete edits.sources
           delete edits.max_per_dataset
           clearSourceDrafts()
           setSearch('')
           onChange(edits)
-        }}>Reset datasets</Button>
-        </>}
-        <Link className={styles.browseLink} to="/datasets">Browse datasets</Link>
+        }}>Reset datasets</Button>}
       </div>}
-      {selected.length > 0 && <Divider />}
+      {(selected.length > 0 || canSelect) && <Divider />}
       {canFilter && emptySelections.length > 0 && <Button className={styles.button} disabled={busy}
         onClick={() => setEmptySelections([])}>Restore metadata selection</Button>}
-      {selected.length > 0 && <Tooltip content={loadingDisabledReason || 'Refresh replaces the full stored dataset for a new scan.'} relationship="description">
+      {/* Compatible choices are stored datasets that were already checked, so there is nothing to load. */}
+      {!compatibleOnly && selected.length > 0 && <Tooltip content={loadingDisabledReason || 'Refresh replaces the full stored dataset for a new scan.'} relationship="description">
         <div className={styles.loadingRule}>
           <Text id={`${loadingId}-label`} className={styles.loadingLabel}>Dataset loading</Text>
           <div className={styles.loadingControl}>
@@ -273,7 +310,7 @@ export default function ScenarioDatasetTable({
           </div>
         </div>
       </Tooltip>}
-      {selected.length > 0 && options.supports_overrides && options.total_limit && <Divider />}
+      {!compatibleOnly && selected.length > 0 && options.supports_overrides && options.total_limit && <Divider />}
       {options.supports_overrides && options.total_limit && <DatasetLimitControl label="Maximum objectives"
         value={request.max_total} defaultValue={defaults.max_total} draft={drafts.total} disabled={busy}
         onDraftChange={(text) => updateDraft('total', text)} onChange={updateTotal} />}
