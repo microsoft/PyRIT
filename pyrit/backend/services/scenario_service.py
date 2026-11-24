@@ -11,6 +11,7 @@ import logging
 from collections import OrderedDict
 from functools import lru_cache
 from time import monotonic
+from typing import cast
 
 from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
@@ -343,9 +344,12 @@ class ScenarioService:
                 if cached is not None:
                     return cached
 
-                tasks = getattr(self, "_estimate_tasks", None)
+                # Only __init__ and the fallback below set this attribute, both with this type.
+                tasks = cast(
+                    "OrderedDict[_EstimateCacheKey, _EstimateTask] | None", getattr(self, "_estimate_tasks", None)
+                )
                 if tasks is None:
-                    tasks = OrderedDict()
+                    tasks = OrderedDict[_EstimateCacheKey, _EstimateTask]()
                     self._estimate_tasks = tasks
                 for completed_key in [key for key, candidate in tasks.items() if candidate.done()]:
                     del tasks[completed_key]
@@ -616,6 +620,10 @@ class ScenarioService:
                 if item.scenario_name == cursor:
                     start_idx = i + 1
                     break
+            else:
+                # A cursor naming no registered scenario must not silently
+                # restart at the first page, which would serve duplicate rows.
+                raise ValueError("The cursor is not valid for the scenario catalog")
         page = items[start_idx : start_idx + limit]
         has_more = len(items) > start_idx + limit
         return page, has_more

@@ -13,7 +13,7 @@ from pyrit.memory import SQLiteMemory
 from pyrit.memory._finding_decomposition import lock_finding_tree_async
 from pyrit.memory.memory_interface import FindingHierarchyError
 from pyrit.memory.memory_models import FindingEntry, FindingEvidenceEntry
-from pyrit.models import DecompositionPath, Finding, FindingCreate, FindingEvidence, Operation
+from pyrit.models import DEFAULT_FINDING_FIELDS, DecompositionPath, Finding, FindingCreate, FindingEvidence, Operation
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -95,10 +95,14 @@ async def test_findings_filter_by_parent_and_top_level(sqlite_instance: SQLiteMe
 
     everything = await sqlite_instance.get_findings_async(operation_id=operation.id)
     assert {finding.id for finding in everything} == {root.id, first.id, second.id, nested.id, standalone.id}
-    top_level = await sqlite_instance.get_findings_async(operation_id=operation.id, top_level_only=True)
+    top_level = await sqlite_instance.get_findings_async(
+        operation_id=operation.id, top_level_only=True, severity_order=DEFAULT_FINDING_FIELDS.severity_order
+    )
     assert [finding.title for finding in top_level] == ["Root", "Standalone"]
     # Sub-findings read in the order they were written, not by severity.
-    children = await sqlite_instance.get_findings_async(operation_id=operation.id, parent_finding_id=root.id)
+    children = await sqlite_instance.get_findings_async(
+        operation_id=operation.id, parent_finding_id=root.id, severity_order=DEFAULT_FINDING_FIELDS.severity_order
+    )
     assert [finding.title for finding in children] == ["First", "Second"]
     later_page = await sqlite_instance.get_findings_async(parent_finding_id=root.id, limit=1, offset=1)
     assert [finding.title for finding in later_page] == ["Second"]

@@ -70,6 +70,7 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     ScenarioRunState,
     ScorerEvaluationIdentifier,
+    ScorerSelectionReport,
     config_hash,
 )
 from pyrit.models.scenario_readiness import (
@@ -587,7 +588,7 @@ class Scenario(ABC):
         common case). Override *this* method only to **remove or replace** a common input,
         composing against ``super().supported_parameters()``.
 
-        Implemented as a classmethod so ``--list-scenarios`` can introspect without
+        Implemented as a classmethod so ``list-scenarios`` can introspect without
         instantiating.
 
         Returns:
@@ -1459,6 +1460,36 @@ class Scenario(ABC):
                         identifier=self._resolved_scoring_target.get_identifier(),
                     )
                 )
+
+    def get_scorer_selection_report(self) -> ScorerSelectionReport:
+        """
+        Report which objective scorer each planned atomic group will use, and why earlier candidates were passed over.
+
+        The report is built from the planned atomic groups, so it covers every scenario that selects
+        from a ``CompatibleScorers`` pool, and after a resume only the groups still planned. Call it
+        after ``initialize_async`` and before ``run_async``: building it sends no prompt and calls no
+        judge model. Groups whose scorer was not selected from a pool have no entry.
+
+        Returns:
+            ScorerSelectionReport: One entry per pool-selected group, in plan order.
+
+        Raises:
+            ValueError: If the scenario has not been initialized.
+        """
+        if not self._atomic_attacks:
+            raise ValueError("The scorer selection report reads the planned groups. Call initialize_async first.")
+        return ScorerSelectionReport(
+            entries=[
+                atomic.objective_scorer_selection.to_report_entry(
+                    atomic_attack_name=atomic.atomic_attack_name,
+                    display_group=atomic.display_group,
+                    technique=atomic.technique_name,
+                    group_kind=atomic.group_kind,
+                )
+                for atomic in self._atomic_attacks
+                if atomic.objective_scorer_selection is not None
+            ]
+        )
 
     def get_readiness(self) -> ScenarioReadiness:
         """

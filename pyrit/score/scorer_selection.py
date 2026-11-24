@@ -18,14 +18,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING
 
 from pyrit.models import (
+    ScenarioRunPlanGroupKind,
     ScenarioRunPlanScorerBinding,
     Scorable,
+    ScorerCandidateVerdict,
     ScorerCapabilityName,
     ScorerIdentifier,
+    ScorerMismatchKind,
+    ScorerSelectionEntry,
+    ScorerVerdictStatus,
     ScoringExpectation,
     scoring_expectation_fingerprint,
 )
@@ -229,19 +233,6 @@ class ScorerCandidate:
         return f"{type(self.scorer).__name__}{tag}"
 
 
-class ScorerMismatchKind(str, Enum):
-    """Why a candidate cannot judge a population."""
-
-    #: The scorer does not accept the evidence family the attack supplies.
-    EVIDENCE = "evidence"
-    #: The candidate's evaluation binding differs from what the population requires.
-    EVALUATION = "evaluation"
-    #: The scorer lacks a required capability, such as float feedback for ranking.
-    CAPABILITY = "capability"
-    #: The scorer cannot evaluate a condition or criterion an input carries.
-    CONDITION = "condition"
-
-
 @dataclass(frozen=True, kw_only=True)
 class ScorerMismatch:
     """
@@ -277,10 +268,15 @@ class ScorerSelection:
     Attributes:
         candidate (ScorerCandidate): The selected candidate.
         candidate_index (int): Its position in the pool.
+        requirements (ScorerRequirements): The requirements the candidate met.
+        rejected (tuple[ScorerMismatch, ...]): The candidates checked before this one, and why
+            each cannot judge the population.
     """
 
     candidate: ScorerCandidate
     candidate_index: int
+    requirements: ScorerRequirements = field(default_factory=lambda: ScorerRequirements())
+    rejected: tuple[ScorerMismatch, ...] = ()
 
     @property
     def scorer(self) -> TrueFalseScorer:
@@ -303,6 +299,54 @@ class ScorerSelection:
             candidate_index=self.candidate_index,
             evaluation=self.evaluation,
             scorer_hash=self.scorer.get_identifier().hash,
+        )
+
+    def to_report_entry(
+        self,
+        *,
+        atomic_attack_name: str,
+        display_group: str,
+        technique: str | None,
+        group_kind: ScenarioRunPlanGroupKind,
+    ) -> ScorerSelectionEntry:
+        """
+        Describe this selection for a scenario's scorer selection report.
+
+        Args:
+            atomic_attack_name (str): The planned atomic group this selection judges.
+            display_group (str): The group's report grouping.
+            technique (str | None): The technique that built the group, when known.
+            group_kind (ScenarioRunPlanGroupKind): What the group runs.
+
+        Returns:
+            ScorerSelectionEntry: The rejected candidates and the selected one, in pool order,
+                with every requirement the selection met.
+        """
+        verdicts = [
+            ScorerCandidateVerdict(
+                candidate_index=mismatch.candidate_index,
+                candidate_label=mismatch.candidate_label,
+                status=ScorerVerdictStatus.REJECTED,
+                reason_kind=mismatch.kind,
+                reason=mismatch.detail,
+            )
+            for mismatch in self.rejected
+        ]
+        verdicts.append(
+            ScorerCandidateVerdict(
+                candidate_index=self.candidate_index,
+                candidate_label=self.candidate.label,
+                status=ScorerVerdictStatus.SELECTED,
+            )
+        )
+        return ScorerSelectionEntry(
+            atomic_attack_name=atomic_attack_name,
+            display_group=display_group,
+            technique=technique,
+            group_kind=group_kind,
+            required_capabilities=sorted(self.requirements.required, key=lambda capability: capability.value),
+            required_evaluation=self.requirements.evaluation,
+            candidates=sorted(verdicts, key=lambda verdict: verdict.candidate_index),
         )
 
 
@@ -499,7 +543,9 @@ class CompatibleScorers:
             if mismatch is not None:
                 mismatches.append(mismatch)
                 continue
-            return ScorerSelection(candidate=candidate, candidate_index=index)
+            return ScorerSelection(
+                candidate=candidate, candidate_index=index, requirements=requirements, rejected=tuple(mismatches)
+            )
         raise NoCompatibleScorerError(
             requirements=requirements, mismatches=mismatches, available_evaluations=self.evaluations
         )
