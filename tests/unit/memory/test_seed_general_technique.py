@@ -65,7 +65,6 @@ class TestSeedGeneralTechnique:
             adversarial_chat_system_prompt=SeedPrompt(value="Write a history."),
             mode=SimulatedConversationMode.ONE_SHOT,
             use_target_tools=True,
-            max_attempts=5,
             dataset_name="tool_techniques",
         )
 
@@ -73,11 +72,7 @@ class TestSeedGeneralTechnique:
 
         [retrieved] = await sqlite_instance.get_seeds_async(dataset_name="tool_techniques")
         assert isinstance(retrieved, SeedSimulatedConversation)
-        assert (retrieved.mode, retrieved.use_target_tools, retrieved.max_attempts) == (
-            SimulatedConversationMode.ONE_SHOT,
-            True,
-            5,
-        )
+        assert (retrieved.mode, retrieved.use_target_tools) == (SimulatedConversationMode.ONE_SHOT, True)
         assert SeedIdentifier.from_seed(retrieved).hash == SeedIdentifier.from_seed(seed).hash
 
     async def test_filter_by_is_general_technique_async(self, sqlite_instance: MemoryInterface) -> None:

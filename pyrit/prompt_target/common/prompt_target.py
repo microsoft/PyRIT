@@ -22,10 +22,12 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    ProviderTraceReference,
     RequestGenerationConfig,
     RequestGenerationInfo,
     RequestTraceContext,
     TargetIdentifier,
+    ToolCaptureCoverage,
     ToolDefinition,
     WebSearchConfig,
     WebSearchMode,
@@ -115,6 +117,9 @@ class PromptTarget(Identifiable):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
     _DEFAULT_TRACE_ENABLED: ClassVar[bool] = False
     _SUPPORTS_TOOL_CALL_HISTORY: ClassVar[bool] = False
+    #: Whether this target runs its configured tools' calls itself and returns their results, so it can
+    #: stand in for a tool-using target in a simulated conversation.
+    RUNS_TOOLS_LOCALLY: ClassVar[bool] = False
     _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset()
     # Adapters that only deliver content (e.g. to a stream or a blob) and never reply set this to
     # False. ``supports_responses`` is then False under every configuration, including saved ones.
@@ -459,6 +464,10 @@ class PromptTarget(Identifiable):
         """
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            # Coverage is a target's statement about its own response, never an input.
+            piece.prompt_metadata.pop(ToolCaptureCoverage.METADATA_KEY, None)
+            # A resent request must not keep the identifiers of its earlier send if this one is rejected.
+            ProviderTraceReference.clear_metadata(piece.prompt_metadata)
             RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
             piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()
@@ -512,6 +521,12 @@ class PromptTarget(Identifiable):
                         normalized_conversation=normalized_conversation
                     )
                 finally:
+                    provider_reference = ProviderTraceReference.from_metadata(
+                        normalized_request.get_piece().prompt_metadata
+                    )
+                    if provider_reference is not None:
+                        for piece in message.message_pieces:
+                            piece.prompt_metadata.update(provider_reference.to_metadata())
                     generation_info = RequestGenerationInfo.from_metadata(
                         metadata=normalized_request.get_piece().prompt_metadata
                     )
@@ -529,6 +544,7 @@ class PromptTarget(Identifiable):
                         for key, value in piece.prompt_metadata.items()
                         if key not in (RequestTraceContext.METADATA_KEY, RequestTraceContext.REQUEST_METADATA_KEY)
                     }
+                    ProviderTraceReference.clear_metadata(piece.prompt_metadata)
                     RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
                     RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
                     if generation_info is not None:
@@ -732,7 +748,8 @@ class PromptTarget(Identifiable):
         custom_configuration_message = (
             "If your target does support this, set the custom_configuration parameter accordingly."
         )
-        supported_types_flat = {t for combo in self.capabilities.input_modalities for t in combo}
+        accepted_modalities = self.capabilities.input_modalities | self._implied_input_modalities()
+        supported_types_flat = {t for combo in accepted_modalities for t in combo}
         for turn in normalized_conversation:
             for piece in turn.message_pieces:
                 piece_type = piece.converted_value_data_type
@@ -768,6 +785,15 @@ class PromptTarget(Identifiable):
 
         if not self.configuration.includes(capability=CapabilityName.MULTI_TURN) and len(normalized_conversation) > 1:
             raise ValueError(f"This target only supports a single turn conversation. {custom_configuration_message}")
+
+    def _implied_input_modalities(self) -> frozenset[frozenset[PromptDataType]]:
+        """
+        Return input modalities a request may use without the target declaring them as capabilities.
+
+        Returns:
+            frozenset[frozenset[PromptDataType]]: Accepted modality combinations. Defaults to none.
+        """
+        return frozenset()
 
     def _get_history_piece_data_type(
         self, *, message_piece: MessagePiece, has_text_piece: bool

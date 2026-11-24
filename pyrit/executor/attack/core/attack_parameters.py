@@ -228,7 +228,6 @@ class AttackParameters:
                     num_turns=simulated_conversation_config.num_turns,
                     mode=simulated_conversation_config.mode,
                     tools=tools,
-                    max_attempts=simulated_conversation_config.max_attempts,
                     starting_sequence=simulated_conversation_config.sequence,
                     adversarial_chat_system_prompt=simulated_conversation_config.adversarial_chat_system_prompt,
                     simulated_target_system_prompt=simulated_conversation_config.simulated_target_system_prompt,

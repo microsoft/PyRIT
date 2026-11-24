@@ -90,7 +90,6 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             mode=SimulatedConversationMode.ONE_SHOT,
             use_target_tools=True,
             num_turns=6,
-            max_attempts=5,
             technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory(

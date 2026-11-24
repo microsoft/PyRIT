@@ -48,7 +48,7 @@ from pyrit.models import (
     load_simulated_target_prompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
+from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, PromptTarget
 from pyrit.score import TrueFalseScorer
 
 
@@ -1445,6 +1445,16 @@ class TestSimulatedConversationWithTools:
         assert (request["tool"]["name"], request["arguments"]) == ("lookup_ticket", {"ticket_id": "SEC-1"})
         assert "Reset the admin password." in adversarial_chat.system_prompt
 
+    async def test_chat_completions_target_can_stand_in_async(self) -> None:
+        source = OpenAIChatTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key")
+        writer = _ToolResultWriter(objective="objective", adversarial_chat=MockPromptTarget())
+
+        stand_in = _with_simulated_tools(target=source, tools=[_LOOKUP], writer=writer)
+
+        assert stand_in is not source
+        assert await stand_in.get_tool_definitions_async() == [_LOOKUP]
+        assert await source.get_tool_definitions_async() == []
+
     async def test_tool_results_share_one_writer_conversation_async(self) -> None:
         adversarial_chat = MockPromptTarget()
         adversarial_chat.set_system_prompt_async = AsyncMock()  # type: ignore[method-assign]
@@ -1628,6 +1638,22 @@ class TestSimulatedConversationWithTools:
             )
 
         assert "simulated tool results" in {reference.description for reference in result.related_conversations}
+
+    async def test_all_empty_stand_in_replies_are_a_preparation_failure_async(
+        self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt
+    ) -> None:
+        empty = MessagePiece(role="assistant", original_value="", response_error="empty").to_message()
+
+        result, _ = await _run_turn_by_turn_async(
+            conversation=[_piece_message("user", "Check SEC-1.", "text"), empty],
+            mock_objective_scorer=mock_objective_scorer,
+            adversarial_system_prompt=adversarial_system_prompt,
+        )
+
+        assert result.seed_prompts == []
+        assert result.preparation_failure is not None
+        assert result.preparation_failure.kind is AttackPreparationFailureKind.SIMULATED_TARGET_ERROR
+        assert "every simulated target reply was empty" in result.preparation_failure.reason
 
     async def test_stand_in_error_is_a_preparation_failure_async(
         self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt

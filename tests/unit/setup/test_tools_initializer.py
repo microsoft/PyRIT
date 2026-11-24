@@ -10,7 +10,7 @@ from unit.mocks import MockPromptTarget
 from pyrit.converter import RolePlayToolCallConverter, ROT13Converter
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target import OpenAIResponseTarget
+from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, InitializerRegistry, Registry, TargetRegistry
 from pyrit.setup.initializers import ToolsInitializer
 from pyrit.setup.initializers.techniques import build_technique_factories
@@ -76,15 +76,19 @@ async def test_tools_initializer_registers_configured_technique_async() -> None:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("runs_tools", [True, False])
+@pytest.mark.parametrize(
+    ("build_chat", "runs_tools"),
+    [
+        (lambda: OpenAIResponseTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key"), True),
+        (lambda: OpenAIChatTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key"), True),
+        (MockPromptTarget, False),
+    ],
+    ids=["responses", "chat_completions", "no_local_tools"],
+)
 async def test_tools_initializer_registers_simulated_tool_priming_only_for_a_tool_running_chat_async(
-    runs_tools: bool,
+    build_chat, runs_tools: bool
 ) -> None:
-    adversarial_chat = (
-        OpenAIResponseTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key")
-        if runs_tools
-        else MockPromptTarget()
-    )
+    adversarial_chat = build_chat()
     TargetRegistry.get_registry_singleton().instances.register(adversarial_chat, name="adversarial_chat")
 
     await ToolsInitializer().initialize_async()

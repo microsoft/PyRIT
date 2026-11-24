@@ -6,7 +6,6 @@
 import asyncio
 
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
-from pyrit.executor.attack.multi_turn.simulated_conversation import runs_tools_locally
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, TargetRegistry
 from pyrit.registry.instance_registry import refuse_saved_entry
@@ -32,7 +31,7 @@ class ToolsInitializer(PyRITInitializer):
         if (
             "tool_priming_simulated" not in registry.instances
             and adversarial_chat is not None
-            and runs_tools_locally(adversarial_chat)
+            and adversarial_chat.RUNS_TOOLS_LOCALLY
         ):
             registry.register_from_factories(
                 [

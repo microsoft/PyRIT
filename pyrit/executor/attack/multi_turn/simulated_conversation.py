@@ -59,7 +59,7 @@ from pyrit.models import (
     warn_prompt_path_deprecated,
 )
 from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
-from pyrit.prompt_target import LiteLLMChatTarget, OpenAIResponseTarget, Tool
+from pyrit.prompt_target import Tool
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -133,7 +133,7 @@ async def generate_simulated_conversation_async(
     mode: SimulatedConversationMode = SimulatedConversationMode.TURN_BY_TURN,
     tools: Sequence[ToolDefinition] | None = None,
     simulated_target: PromptTarget | None = None,
-    max_attempts: int = 3,
+    max_attempts: int = 5,
 ) -> SimulatedConversationResult:
     """
     Generate a simulated conversation between an adversarial chat and a target.
@@ -187,7 +187,7 @@ async def generate_simulated_conversation_async(
             MCP server); their calls and results are kept in the generated history. Cannot be
             combined with ``tools``.
         max_attempts: ``ONE_SHOT`` only. Writing attempts, including revisions after validation
-            feedback. Defaults to 3.
+            feedback. A runtime budget, not part of the seed's identity. Defaults to 5.
 
     Returns:
         The generated prompts and their source conversation references. Prompt sequence numbers
@@ -353,6 +353,14 @@ async def generate_simulated_conversation_async(
         kind = AttackPreparationFailureKind.SIMULATED_TARGET_ERROR
         preparation_failure = AttackPreparationFailure(
             kind=kind, reason=f"{kind.default_reason} Details: {error.converted_value[:500]}"
+        )
+        conversation_messages = []
+    elif preparation_failure is None and not any(message.api_role == "assistant" for message in kept):
+        # Without a single reply there is no history, and the run would be a direct ask scored
+        # under this technique's name.
+        kind = AttackPreparationFailureKind.SIMULATED_TARGET_ERROR
+        preparation_failure = AttackPreparationFailure(
+            kind=kind, reason=f"{kind.default_reason} Details: every simulated target reply was empty."
         )
         conversation_messages = []
 
@@ -852,23 +860,6 @@ class _SimulatedTool(Tool):
         return await self._writer.write_async(tool=self._definition, arguments=arguments)
 
 
-#: Targets that run tool calls locally, so they can stand in for a tool-using objective target.
-_TOOL_RUNNING_TARGETS: tuple[type[PromptTarget], ...] = (OpenAIResponseTarget, LiteLLMChatTarget)
-
-
-def runs_tools_locally(target: PromptTarget) -> bool:
-    """
-    Check whether a target can stand in for a tool-using target in a simulated conversation.
-
-    Args:
-        target (PromptTarget): The candidate stand-in.
-
-    Returns:
-        bool: True if the target runs tool calls locally.
-    """
-    return isinstance(target, _TOOL_RUNNING_TARGETS)
-
-
 def _with_simulated_tools(
     *, target: PromptTarget, tools: Sequence[ToolDefinition], writer: _ToolResultWriter
 ) -> PromptTarget:
@@ -884,15 +875,16 @@ def _with_simulated_tools(
     # Import here to avoid circular imports
     from pyrit.registry import TargetRegistry
 
-    if not runs_tools_locally(target):
+    if not target.RUNS_TOOLS_LOCALLY:
         raise ValueError(
-            "A simulated conversation with tools needs a simulated target that runs tool calls "
-            f"({', '.join(cls.__name__ for cls in _TOOL_RUNNING_TARGETS)}); got {type(target).__name__}."
+            "A simulated conversation with tools needs a simulated target that runs tool calls; "
+            f"{type(target).__name__} does not."
         )
     registry = TargetRegistry.get_registry_singleton()
     # The copy offers only the simulated tools: none of the source's own tools, providers, callbacks,
     # or declared and hosted tools carry over.
-    source_body = registry.get_reconstruction_parameters(target).get("extra_body_parameters")
+    source_parameters = registry.get_reconstruction_parameters(target)
+    source_body = source_parameters.get("extra_body_parameters")
     extra_body_parameters = dict(source_body) if isinstance(source_body, dict) else {}
     extra_body_parameters.pop("tools", None)
     extra_body_parameters.pop("tool_choice", None)
@@ -902,6 +894,6 @@ def _with_simulated_tools(
         "execute_tools": True,
         "extra_body_parameters": extra_body_parameters or None,
     }
-    if isinstance(target, OpenAIResponseTarget):
+    if "custom_functions" in source_parameters:
         params["custom_functions"] = None
     return registry.recreate_instance(source=target, params=params)

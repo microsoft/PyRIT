@@ -2150,7 +2150,6 @@ class SeedEntry(Base):
                     sequence=config.get("sequence", 0),
                     mode=config.get("mode", "turn_by_turn"),
                     use_target_tools=config.get("use_target_tools", False),
-                    max_attempts=config.get("max_attempts", 3),
                     pyrit_version=config.get("pyrit_version"),
                     is_general_technique=self.is_general_technique,
                     **prompt_config,

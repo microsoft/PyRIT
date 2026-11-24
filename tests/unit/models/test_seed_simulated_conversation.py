@@ -638,7 +638,8 @@ class TestSeedSimulatedConversationIdentity:
             use_target_tools=True,
         )
 
-        assert not {"mode", "use_target_tools", "max_attempts"} & set(json.loads(default.value))
+        assert not {"mode", "use_target_tools"} & set(json.loads(default.value))
+        assert "max_attempts" not in json.loads(one_shot.value)
         assert len({default.value, with_tools.value, one_shot.value}) == 3
 
     def test_one_shot_identity_ignores_the_unused_stand_in_prompt(self):
@@ -660,7 +661,6 @@ class TestSeedSimulatedConversationIdentity:
                 {"mode": "one_shot", "use_target_tools": True, "next_message_system_prompt": SeedPrompt(value="next")},
                 "do not generate a next message",
             ),
-            ({"max_attempts": 0}, "max_attempts"),
         ],
     )
     def test_rejects_invalid_mode_settings(self, kwargs, problem):

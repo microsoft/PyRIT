@@ -271,8 +271,6 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
         use_target_tools: Whether the conversation uses the objective target's function tools. In
             ``TURN_BY_TURN`` mode the stand-in target gets those tools, with results written by the
             adversarial chat; in ``ONE_SHOT`` mode the adversarial chat writes calls to them.
-        max_attempts: ``ONE_SHOT`` only. Writing attempts, including revisions after validation
-            feedback.
         adversarial_chat_system_prompt: System-prompt SeedPrompt for the adversarial chat. Use
             ``with_layered_prefix`` to prepend static guidance ahead of it.
         simulated_target_system_prompt: System-prompt SeedPrompt for the simulated target.
@@ -303,7 +301,6 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
     sequence: int = 0
     mode: SimulatedConversationMode = SimulatedConversationMode.TURN_BY_TURN
     use_target_tools: bool = False
-    max_attempts: int = 3
     # A prompt supplied directly is trusted as-is. The declared-parameter contract for the
     # simulated target and next message is enforced where a template is loaded from a file,
     # by load_simulated_target_prompt and load_next_message_prompt.
@@ -379,8 +376,6 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
             raise ValueError("num_turns must be a positive integer")
         if self.sequence < 0:
             raise ValueError("sequence must be a non-negative integer")
-        if self.max_attempts < 1:
-            raise ValueError("max_attempts must be at least 1")
         if self.mode is SimulatedConversationMode.ONE_SHOT:
             if not self.use_target_tools:
                 raise ValueError(
@@ -414,7 +409,6 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
         # Added only when set, so configurations that predate them keep their identity.
         if self.mode is not SimulatedConversationMode.TURN_BY_TURN:
             config["mode"] = self.mode.value
-            config["max_attempts"] = self.max_attempts
         if self.use_target_tools:
             config["use_target_tools"] = True
         return config

@@ -215,7 +215,10 @@ if TYPE_CHECKING:
         ScenarioExecutionStatistics,
         ScenarioExecutionUnit,
         ScenarioObjectiveScorer,
+        ScenarioObjectiveScorerAttribution,
         ScenarioObjectiveScorerMetrics,
+        ScenarioObjectiveScorerScope,
+        ScenarioObjectiveScorerStatistics,
         ScenarioProgressCounts,
         ScenarioProgressHeader,
         ScenarioProgressResult,
@@ -341,9 +344,11 @@ if TYPE_CHECKING:
         NextMessageSystemPromptPaths,
         Seed,
         SeedDataset,
+        SeedDatasetGroupProfile,
         SeedDatasetSummary,
         SeedGroup,
         SeedGroupRequirements,
+        SeedMetadataRequirement,
         SeedObjective,
         SeedOrigin,
         SeedPrompt,
@@ -409,10 +414,17 @@ if TYPE_CHECKING:
         register_common_json_schema,
         unregister_common_json_schema,
     )
+    from pyrit.models.target.provider_trace_reference import ProviderTraceReference
     from pyrit.models.target.reasoning_content_metadata import ReasoningContentMetadata
     from pyrit.models.target.request_trace_context import RequestTraceContext
     from pyrit.models.target.tool_definition import ToolDefinition
-    from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
+    from pyrit.models.target.tool_execution_metadata import (
+        ToolCaptureCoverage,
+        ToolCaptureGap,
+        ToolExecutionMetadata,
+        ToolLoopStop,
+        ToolLoopStopReason,
+    )
 
 _LAZY_EXPORTS: dict[str, str] = {
     "GCGSeedMetadata": "pyrit.models.seeds",
@@ -492,9 +504,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetSizeEstimate": "pyrit.models.scenario_dataset_size_estimate",
     "ScenarioDatasetSizeEstimateKind": "pyrit.models.scenario_dataset_size_estimate",
     "scenario_dataset_size_from_limit": "pyrit.models.scenario_dataset_size_estimate",
+    "ProviderTraceReference": "pyrit.models.target.provider_trace_reference",
     "ReasoningContentMetadata": "pyrit.models.target.reasoning_content_metadata",
     "RequestTraceContext": "pyrit.models.target.request_trace_context",
     "ToolDefinition": "pyrit.models.target.tool_definition",
+    "ToolCaptureCoverage": "pyrit.models.target.tool_execution_metadata",
+    "ToolCaptureGap": "pyrit.models.target.tool_execution_metadata",
     "ToolExecutionMetadata": "pyrit.models.target.tool_execution_metadata",
     "ToolLoopStop": "pyrit.models.target.tool_execution_metadata",
     "ToolLoopStopReason": "pyrit.models.target.tool_execution_metadata",
@@ -710,6 +725,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDisplayGroupProgress": "pyrit.models.scenario_progress",
     "ScenarioExecutionStatistics": "pyrit.models.scenario_progress",
     "ScenarioExecutionUnit": "pyrit.models.scenario_progress",
+    "ScenarioObjectiveScorerAttribution": "pyrit.models.scenario_progress",
+    "ScenarioObjectiveScorerScope": "pyrit.models.scenario_progress",
+    "ScenarioObjectiveScorerStatistics": "pyrit.models.scenario_progress",
     "ScenarioHierarchyDiagnostics": "pyrit.models.scenario_hierarchy",
     "ScenarioHierarchyGroup": "pyrit.models.scenario_hierarchy",
     "ScenarioHierarchyNode": "pyrit.models.scenario_hierarchy",
@@ -749,8 +767,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SeedDataset": "pyrit.models.seeds",
     "SeedDatasetSummary": "pyrit.models.seeds",
     "DatasetProviderInfo": "pyrit.models.dataset_provider",
+    "SeedDatasetGroupProfile": "pyrit.models.seeds",
     "SeedGroup": "pyrit.models.seeds",
     "SeedGroupRequirements": "pyrit.models.seeds",
+    "SeedMetadataRequirement": "pyrit.models.seeds",
     "SeedIdentifier": "pyrit.models.identifiers",
     "SeedSimulatedConversation": "pyrit.models.seeds",
     "SeedType": "pyrit.models.literals",

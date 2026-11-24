@@ -4,6 +4,7 @@
 import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +23,8 @@ from pyrit.prompt_target import (
     collect_tools_async,
     tool,
 )
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
+from pyrit.registry import TargetRegistry
 
 
 @tool
@@ -159,6 +162,104 @@ def test_openai_response_target_identifier_includes_advertised_tool_definition(p
             "strict": False,
         }
     ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, OpenAIResponseTarget])
+def test_openai_target_copy_keeps_tools_and_providers(target_class: type[OpenAIChatTarget]) -> None:
+    provider = MagicMock(spec=ToolProvider)
+    provider.identifier = {"type": "test"}
+    source = target_class(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tools=[add],
+        tool_providers=[provider],
+        execute_tools=False,
+        max_tool_rounds=3,
+    )
+
+    copy = TargetRegistry().recreate_instance(source=source, params={})
+
+    assert list(copy._direct_tools) == [add]
+    assert copy._tool_providers == [provider]
+    assert copy._execute_tools is False
+    assert copy._max_tool_rounds == 3
+    assert copy.get_identifier().hash == source.get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, OpenAIResponseTarget])
+def test_openai_target_copy_adds_tools_to_a_tool_less_source(target_class: type[OpenAIChatTarget]) -> None:
+    source = target_class(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="mock-key")
+
+    copy = TargetRegistry().recreate_instance(source=source, params={"tools": [add], "max_tool_rounds": 2})
+
+    assert list(copy._direct_tools) == [add]
+    assert copy._max_tool_rounds == 2
+    assert not source._direct_tools
+    assert copy.get_identifier().params["tools"]
+
+
+def _chat_tool_target(
+    target_class: type[OpenAIChatTarget | LiteLLMChatTarget], *, model: str = "gpt-4o", **kwargs: Any
+) -> OpenAIChatTarget | LiteLLMChatTarget:
+    if target_class is LiteLLMChatTarget:
+        return LiteLLMChatTarget(model_name=f"openai/{model}", **kwargs)
+    return OpenAIChatTarget(model_name=model, endpoint="https://mock.azure.com", api_key="mock-key", **kwargs)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, LiteLLMChatTarget])
+@pytest.mark.parametrize(
+    ("nested", "match"),
+    [({"n": 2}, "n=1"), ({"tools": []}, r"extra_body_parameters\['tools'\]")],
+)
+def test_chat_tool_targets_reject_nested_settings_that_override_local_tools(
+    *, target_class: type[OpenAIChatTarget | LiteLLMChatTarget], nested: dict[str, Any], match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        _chat_tool_target(target_class, tools=[add], extra_body_parameters={"extra_body": nested})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, LiteLLMChatTarget])
+@pytest.mark.parametrize(
+    ("settings", "nested"),
+    [({"tools": [add], "execute_tools": False}, {"n": 2}), ({}, {"n": 2, "tools": []})],
+)
+def test_chat_tool_targets_accept_nested_settings_without_local_execution(
+    *, target_class: type[OpenAIChatTarget | LiteLLMChatTarget], settings: dict[str, Any], nested: dict[str, Any]
+) -> None:
+    _chat_tool_target(target_class, **settings, extra_body_parameters={"extra_body": nested})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, LiteLLMChatTarget])
+@pytest.mark.parametrize("with_tools", [False, True])
+def test_chat_tool_targets_accept_tool_history_from_their_own_tools(
+    *, target_class: type[OpenAIChatTarget | LiteLLMChatTarget], with_tools: bool
+) -> None:
+    call = {"type": "function", "id": "call-1", "function": {"name": "add", "arguments": '{"x": 1}'}}
+    result = {"type": "function_call_output", "call_id": "call-1", "output": "2"}
+    conversation = [
+        Message.from_prompt(prompt="Add", role="user"),
+        MessagePiece(
+            role="assistant", original_value=json.dumps(call), original_value_data_type="function_call"
+        ).to_message(),
+        MessagePiece(
+            role="tool", original_value=json.dumps(result), original_value_data_type="function_call_output"
+        ).to_message(),
+        Message.from_prompt(prompt="Again", role="user"),
+    ]
+    target = _chat_tool_target(target_class, model="my-deployment", tools=[add] if with_tools else None)
+
+    assert not target.capabilities.input_modalities & TOOL_CALL_INPUT_MODALITIES
+    if with_tools:
+        target._validate_request(normalized_conversation=conversation)
+    else:
+        with pytest.raises(ValueError, match="tool-history modality 'function_call'"):
+            target._validate_request(normalized_conversation=conversation)
 
 
 async def test_identifier_does_not_depend_on_tool_discovery(patch_central_database) -> None:
