@@ -14,7 +14,7 @@ from contextlib import AbstractAsyncContextManager, nullcontext
 from contextvars import copy_context
 from functools import partial
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from uuid import uuid4
 
 from pyrit.common.attack_result_scope import get_current_attack_result_id
@@ -32,6 +32,7 @@ from pyrit.models import (
     Conversation,
     Message,
     MessagePiece,
+    ProviderTraceReference,
     RequestGenerationConfig,
     RequestTraceContext,
     construct_response_from_request,
@@ -224,6 +225,7 @@ class PromptNormalizer:
             )
             error_response.get_piece().prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
             error_response.get_piece().prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+            ProviderTraceReference.clear_metadata(error_response.get_piece().prompt_metadata)
             RequestGenerationConfig.clear_metadata(error_response.get_piece().prompt_metadata)
 
             await self._calc_hash_async(request=error_response)
@@ -245,6 +247,7 @@ class PromptNormalizer:
             )
             empty_response.get_piece().prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
             empty_response.get_piece().prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+            ProviderTraceReference.clear_metadata(empty_response.get_piece().prompt_metadata)
             RequestGenerationConfig.clear_metadata(empty_response.get_piece().prompt_metadata)
             await self._calc_hash_async(request=empty_response)
             (await self.memory.add_message_to_memory_async(request=empty_response))
@@ -261,6 +264,7 @@ class PromptNormalizer:
                 piece.conversation_id = conversation_id
                 piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
                 piece.prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+                ProviderTraceReference.clear_metadata(piece.prompt_metadata)
                 RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
             is_last = i == len(responses) - 1
             if is_last:
@@ -331,7 +335,7 @@ class PromptNormalizer:
             "send_context",
         ]
 
-        responses: list[Message] = await batch_task_async(
+        responses = await batch_task_async(
             prompt_target=target,
             batch_size=batch_size,
             items_to_batch=batch_items,
@@ -339,7 +343,8 @@ class PromptNormalizer:
             task_arguments=batch_item_keys,
             target=target,
         )
-        return responses
+        # Each batch result is the Message returned by send_prompt_async.
+        return cast("list[Message]", responses)
 
     async def convert_values_async(
         self,

@@ -38,6 +38,7 @@ from pyrit.memory import (
 )
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
+    DEFAULT_FINDING_FIELDS,
     SCENARIO_RUN_PLAN_METADATA_KEY,
     SCENARIO_SUITE_EXECUTION_METADATA_KEY,
     AtomicAttackIdentifier,
@@ -46,6 +47,8 @@ from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
+    FindingField,
+    FindingFields,
     Operation,
     RetryEvent,
     ScenarioAttackResultDelta,
@@ -91,7 +94,9 @@ from pyrit.scenario.core import (
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.scenarios.airt import Jailbreak, Scam
-from pyrit.setup.initializers import ConverterInitializer, ToolsInitializer
+from pyrit.setup.finding_fields import get_active_finding_fields
+from pyrit.setup.initializers import ConverterInitializer, FindingsInitializer, ToolsInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import (
     MockPromptTarget,
@@ -2070,6 +2075,29 @@ class TestScenarioRunServiceStartRun:
         assert response.status == ScenarioRunState.IN_PROGRESS
         assert mock_init_instance.initialize_async.await_count == 2
 
+    @pytest.mark.usefixtures("reset_finding_fields")
+    async def test_start_run_rejects_a_findings_initializer_before_running_any(self, mock_all_registries) -> None:
+        """A run that names a FindingsInitializer runs no initializers and leaves the finding fields alone."""
+
+        class ContosoFindingFields(FindingsInitializer):
+            def get_finding_fields(self) -> FindingFields:
+                return FindingFields(
+                    severity=FindingField(key="severity", label="Severity", type="choice", options=[("high", "High")])
+                )
+
+        service = ScenarioRunService()
+        target_initializer = MagicMock(spec=PyRITInitializer)
+        mock_all_registries["initializer_registry"].create_and_configure.side_effect = [
+            target_initializer,
+            ContosoFindingFields(),
+        ]
+
+        with pytest.raises(ValueError, match="'contoso_findings' sets the deployment's finding fields"):
+            await service.start_run_async(request=_make_request(initializers=["target", "contoso_findings"]))
+
+        target_initializer.initialize_async.assert_not_awaited()
+        assert get_active_finding_fields() is DEFAULT_FINDING_FIELDS
+
     async def test_start_run_passes_scenario_result_id_for_resume(self, mock_all_registries) -> None:
         """Test that scenario_result_id is passed to the registry for resumption."""
         service = ScenarioRunService()
@@ -3658,7 +3686,7 @@ class TestScenarioRunServiceCancelRun:
         mock_memory.get_scenario_result_header_async.side_effect = [initial, latest]
         service = ScenarioRunService()
 
-        with pytest.raises(ValueError, match="Cannot cancel run"):
+        with pytest.raises(ValueError, match=rf"^Cannot cancel run in '{latest_state.value}' state\.$"):
             await service.cancel_run_async(scenario_result_id="sr-uuid-1")
 
         assert mock_memory.get_scenario_result_header_async.await_count == 2
@@ -4493,7 +4521,7 @@ class TestScenarioRunServiceRecovery:
         mock_memory.get_scenario_result_header_async.return_value = db_result
 
         service = ScenarioRunService()
-        with pytest.raises(ValueError, match="Cannot cancel run"):
+        with pytest.raises(ValueError, match=r"^Cannot cancel run in 'COMPLETED' state\.$"):
             await service.cancel_run_async(scenario_result_id="sr-done")
         mock_memory.get_scenario_results_async.assert_not_awaited()
 
@@ -4503,7 +4531,7 @@ class TestScenarioRunServiceRecovery:
         mock_memory.get_scenario_result_header_async.return_value = db_result
 
         service = ScenarioRunService()
-        with pytest.raises(ValueError, match="Cannot cancel run"):
+        with pytest.raises(ValueError, match=r"^Cannot cancel run in 'CANCELLED' state\.$"):
             await service.cancel_run_async(scenario_result_id="sr-cancelled")
         mock_memory.get_scenario_results_async.assert_not_awaited()
 
@@ -4854,7 +4882,7 @@ class TestScenarioRunServiceGetResults:
         mock_memory.get_scenario_results_async = AsyncMock(return_value=[db_result])
 
         service = ScenarioRunService()
-        with pytest.raises(ValueError, match="only available for completed runs"):
+        with pytest.raises(ValueError, match=r"only available for completed runs\. Current status: 'IN_PROGRESS'\.$"):
             (await service.get_run_results_async(scenario_result_id="sr-running"))
 
     async def test_get_results_returns_details_for_completed_run(self, mock_memory) -> None:
