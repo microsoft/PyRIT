@@ -93,18 +93,6 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             max_attempts=5,
             technique_tags=["single_turn"],
         ),
-        # Not in any aggregate: its adversarial chat must be an OpenAIResponseTarget, which the
-        # default adversarial chat is not.
-        AttackTechniqueFactory.with_simulated_conversation(
-            name="tool_priming_simulated",
-            description=(
-                "Primes a tool-using target with a conversation in which a stand-in for it calls its real tools, "
-                "with results written by the adversarial chat to make the objective look approved."
-            ),
-            use_target_tools=True,
-            num_turns=3,
-            technique_tags=[],
-        ),
         AttackTechniqueFactory(
             name="best_of_n",
             attack_class=PromptSendingAttack,

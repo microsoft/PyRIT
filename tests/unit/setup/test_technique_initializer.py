@@ -58,7 +58,6 @@ EXTRA_TECHNIQUE_NAMES: list[str] = [
     "pair",
     "skeleton_key",
     "tool_priming_one_shot",
-    "tool_priming_simulated",
     "best_of_n",
     "violent_durian",
     "goat",

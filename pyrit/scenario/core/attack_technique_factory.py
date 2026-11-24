@@ -476,6 +476,7 @@ class AttackTechniqueFactory(Identifiable):
             requirements=requirements
             or TechniqueRequirements(
                 objective_target=cls.TOOL_HISTORY_TARGET_REQUIREMENTS if use_target_tools else TargetRequirements(),
+                requires_target_tools=use_target_tools,
                 seed_group=SeedGroupRequirements(objective_only=True),
             ),
         )
@@ -983,8 +984,8 @@ class AttackTechniqueFactory(Identifiable):
         """
         Serialize the technique requirements for the configuration fingerprint.
 
-        Scorer requirements that require nothing are left out, so a technique saved before
-        that field existed keeps its fingerprint.
+        Scorer requirements that require nothing, and an unset tools requirement, are left out, so a
+        technique saved before those fields existed keeps its fingerprint.
 
         Returns:
             Any: The serialized requirements.
@@ -992,6 +993,8 @@ class AttackTechniqueFactory(Identifiable):
         value = self._configuration_value(self._requirements)
         if self._requirements.objective_scorer == type(self._requirements.objective_scorer)():
             value.pop("objective_scorer", None)
+        if not self._requirements.requires_target_tools:
+            value.pop("requires_target_tools", None)
         return value
 
     @classmethod

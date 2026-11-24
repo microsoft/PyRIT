@@ -201,6 +201,16 @@ class OpenAIChatTarget(OpenAITarget):
         for message in messages:
             validate_chat_tool_message(message)
 
+    def may_advertise_tools(self) -> bool:
+        """
+        Whether this target may advertise function tools, without contacting any tool provider.
+
+        Returns:
+            bool: True if function tools are declared or configured. A configured tool provider counts,
+                since its tools are only known once it is contacted.
+        """
+        return bool(parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools") or []))
+
     async def get_tool_definitions_async(self) -> list[ToolDefinition]:
         """
         Report the function tools declared in ``extra_body_parameters["tools"]``.
@@ -210,7 +220,7 @@ class OpenAIChatTarget(OpenAITarget):
         Returns:
             list[ToolDefinition]: The declared function tools.
         """
-        return parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools", []))
+        return parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools") or [])
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

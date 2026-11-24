@@ -328,14 +328,20 @@ async def generate_simulated_conversation_async(
         related_conversations.add(tool_result_writer.reference)
 
     preparation_failure = AttackPreparationFailure.from_result(result=result)
-    # A stand-in whose tool loop stopped early (no rounds left, an invalid call, a tool error) leaves
-    # an error piece, which the objective target would reject as history.
+    # A stand-in whose tool loop stopped early (no rounds left, an invalid call, a tool error) or whose
+    # turn was filtered leaves an error piece, which the objective target would reject as history.
+    # Empty turns carry nothing, so they are dropped instead.
+    conversation_messages = [
+        message
+        for message in conversation_messages
+        if not all(piece.response_error == "empty" for piece in message.message_pieces)
+    ]
     error = next(
         (
             piece
             for message in conversation_messages
             for piece in message.message_pieces
-            if piece.converted_value_data_type == "error" or piece.response_error != "none"
+            if piece.converted_value_data_type == "error" or piece.response_error not in ("none", "empty")
         ),
         None,
     )
@@ -879,6 +885,19 @@ def _with_simulated_tools(
             "A simulated conversation with tools needs a simulated target that runs tool calls "
             f"({', '.join(cls.__name__ for cls in _TOOL_RUNNING_TARGETS)}); got {type(target).__name__}."
         )
-    return TargetRegistry.get_registry_singleton().recreate_instance(
-        source=target, params={"tools": [_SimulatedTool(definition=tool, writer=writer) for tool in tools]}
-    )
+    registry = TargetRegistry.get_registry_singleton()
+    # The copy offers only the simulated tools: none of the source's own tools, providers, callbacks,
+    # or declared and hosted tools carry over.
+    source_body = registry.get_reconstruction_parameters(target).get("extra_body_parameters")
+    extra_body_parameters = dict(source_body) if isinstance(source_body, dict) else {}
+    extra_body_parameters.pop("tools", None)
+    extra_body_parameters.pop("tool_choice", None)
+    params: dict[str, object] = {
+        "tools": [_SimulatedTool(definition=tool, writer=writer) for tool in tools],
+        "tool_providers": None,
+        "execute_tools": True,
+        "extra_body_parameters": extra_body_parameters or None,
+    }
+    if isinstance(target, OpenAIResponseTarget):
+        params["custom_functions"] = None
+    return registry.recreate_instance(source=target, params=params)

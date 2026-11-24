@@ -457,6 +457,17 @@ class LiteLLMChatTarget(PromptTarget):
         for message in messages:
             validate_chat_tool_message(message)
 
+    def may_advertise_tools(self) -> bool:
+        """
+        Whether this target may advertise function tools, without contacting any tool provider.
+
+        Returns:
+            bool: True if function tools are declared or configured. A configured tool provider counts,
+                since its tools are only known once it is contacted.
+        """
+        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools") or [])
+        return bool(declared or self._direct_tools or self._tool_providers)
+
     async def get_tool_definitions_async(self) -> list[ToolDefinition]:
         """
         Report the function tools advertised to the endpoint.
@@ -467,7 +478,7 @@ class LiteLLMChatTarget(PromptTarget):
         Returns:
             list[ToolDefinition]: The advertised function tools.
         """
-        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools", []))
+        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools") or [])
         async with AsyncExitStack() as stack:
             for provider in self._tool_providers:
                 if isinstance(provider, _ScopedToolProvider):

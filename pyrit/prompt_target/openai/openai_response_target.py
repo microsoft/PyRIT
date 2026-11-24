@@ -318,6 +318,17 @@ class OpenAIResponseTarget(OpenAITarget):
         ):
             raise ValueError("Required web search needs a configured tool and supports_web_search=True.")
 
+    def may_advertise_tools(self) -> bool:
+        """
+        Whether this target may advertise function tools, without contacting any tool provider.
+
+        Returns:
+            bool: True if function tools are declared or configured. A configured tool provider counts,
+                since its tools are only known once it is contacted.
+        """
+        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools") or [])
+        return bool(declared or self._direct_tools or self._tool_providers)
+
     async def get_tool_definitions_async(self) -> list[ToolDefinition]:
         """
         Report the function tools advertised to the endpoint.
@@ -331,7 +342,7 @@ class OpenAIResponseTarget(OpenAITarget):
             list[ToolDefinition]: The advertised function tools.
         """
         await self._initialize_tools_async()
-        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools", []))
+        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools") or [])
         return [*declared, *(tool.to_definition() for tool in self._tools)]
 
     def _build_identifier(self) -> ComponentIdentifier:

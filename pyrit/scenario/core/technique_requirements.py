@@ -47,6 +47,8 @@ class TechniqueRequirements:
     objective_target: TargetRequirements = field(default_factory=TargetRequirements)
     seed_group: SeedGroupRequirements = field(default_factory=SeedGroupRequirements)
     objective_scorer: ScorerRequirements = field(default_factory=ScorerRequirements)
+    #: The technique uses the objective target's own function tools.
+    requires_target_tools: bool = False
 
     def __post_init__(self) -> None:
         """
@@ -92,10 +94,13 @@ class TechniqueRequirements:
         Returns:
             list[str]: All unmet target requirements, without flattening subclass rules.
         """
-        return [
+        errors = [
             *attack_class.TARGET_REQUIREMENTS.check(target=target),
             *self.objective_target.check(target=target),
         ]
+        if self.requires_target_tools and not target.may_advertise_tools():
+            errors.append(f"{type(target).__name__} advertises no function tools for this technique to use.")
+        return errors
 
     def validate_target(self, *, target: PromptTarget, attack_class: type[AttackStrategy[Any, Any]]) -> None:
         """

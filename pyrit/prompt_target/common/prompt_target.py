@@ -328,6 +328,16 @@ class PromptTarget(Identifiable):
         if self._verbose:
             logging.basicConfig(level=logging.INFO)
 
+    def may_advertise_tools(self) -> bool:
+        """
+        Whether this target may advertise function tools, without contacting any tool provider.
+
+        Returns:
+            bool: True if function tools are declared or configured. A configured tool provider counts,
+                since its tools are only known once it is contacted.
+        """
+        return False
+
     async def get_tool_definitions_async(self) -> list[ToolDefinition] | None:
         """
         Report the function tools this target advertises to its model.

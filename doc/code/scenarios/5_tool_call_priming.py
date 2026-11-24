@@ -11,8 +11,8 @@
 # %% [markdown]
 # # Tool Call Priming
 #
-# Tool-using agents treat their own earlier tool calls and results as ground truth. Two techniques in
-# the `extra` catalog exploit that by prepending a fabricated history of the target's own tool calls,
+# Tool-using agents treat their own earlier tool calls and results as ground truth. Two techniques
+# exploit that by prepending a fabricated history of the target's own tool calls,
 # against the tools the target actually reports, before the objective is sent as is:
 #
 # - `tool_priming_one_shot`: the adversarial chat writes the whole history in one pass, for example a
@@ -24,14 +24,17 @@
 #
 # Both are simulated-conversation techniques (`SeedSimulatedConversation` with `use_target_tools=True`,
 # in `ONE_SHOT` and `TURN_BY_TURN` mode). The objective target must report its function tools and accept
-# tool-call history natively. `OpenAIResponseTarget` reports the tools it runs and declares;
-# `OpenAIChatTarget` and `LiteLLMChatTarget` report the tools declared in `extra_body_parameters["tools"]`,
-# and accept tool-call history for models PyRIT recognizes or when declared with `custom_configuration`.
+# tool-call history natively. `OpenAIResponseTarget` and `LiteLLMChatTarget` report the tools they run and
+# declare; `OpenAIChatTarget` reports the tools declared in `extra_body_parameters["tools"]`. Targets that
+# advertise no tools are skipped. Chat targets accept tool-call history for models PyRIT recognizes or when
+# declared with `custom_configuration`.
 #
-# The stand-in in `tool_priming_simulated` runs its tool calls, so the adversarial chat must be a target
-# that runs tools, such as `OpenAIResponseTarget` or `LiteLLMChatTarget`. Here one is built from the `ADVERSARIAL_CHAT_*` environment variables and
-# replaces the chat-completions `adversarial_chat` registered from them, so both techniques use it. The objective target uses
-# `OPENAI_RESPONSES_*`, and the scorer uses the default chat target.
+# `tool_priming_one_shot` is in the `extra` technique catalog. `tool_priming_simulated` copies the adversarial
+# chat as the stand-in, so the adversarial chat must run tool calls (`OpenAIResponseTarget` or
+# `LiteLLMChatTarget`), and the opt-in `ToolsInitializer` registers it only then. Here a Responses adversarial
+# chat is built from the `ADVERSARIAL_CHAT_*` environment variables and replaces the chat-completions
+# `adversarial_chat` registered from them. The objective target uses `OPENAI_RESPONSES_*`, and the scorer uses
+# the default chat target.
 
 # %%
 import os
@@ -40,7 +43,7 @@ from pyrit.auth import get_azure_openai_auth
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, tool
 from pyrit.registry import TargetRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers import TechniqueInitializer
+from pyrit.setup.initializers import TechniqueInitializer, ToolsInitializer
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=True)  # type: ignore
 techniques = TechniqueInitializer()
@@ -56,6 +59,7 @@ adversarial_chat = OpenAIResponseTarget(
 registry = TargetRegistry.get_registry_singleton()
 registry.instances.unregister("adversarial_chat")
 registry.instances.register(adversarial_chat, name="adversarial_chat")
+await ToolsInitializer().initialize_async()  # type: ignore
 
 
 @tool

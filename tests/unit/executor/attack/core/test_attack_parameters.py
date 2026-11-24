@@ -445,6 +445,34 @@ class TestFromSeedGroupAsyncWithOneShotToolHistory:
         assert "No valid history" in params.preparation_failure.reason
         assert not params.prepended_conversation
 
+    async def test_prompts_after_an_overflowing_history_move_back_async(self, objective_target: MagicMock) -> None:
+        simulation = SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt(value="Write a history."),
+            mode=SimulatedConversationMode.ONE_SHOT,
+            use_target_tools=True,
+            num_turns=1,
+        )
+        follow_up = SeedPrompt(value="Go ahead.", role="user", sequence=simulation.sequence_range.stop)
+        seed_group = AttackSeedGroup(seeds=[SeedObjective(value="Reset the admin password."), simulation, follow_up])
+        opening = SeedPrompt(value="Check the ticket.", data_type="text", role="user", sequence=0)
+
+        with patch.object(
+            simulated_conversation,
+            "_write_one_shot_history_async",
+            new_callable=AsyncMock,
+            return_value=[opening, *_tool_history()],
+        ):
+            params = await AttackParameters.from_seed_group_async(
+                seed_group=seed_group,
+                adversarial_chat=MockPromptTarget(),
+                objective_scorer=MagicMock(),
+                objective_target=objective_target,
+            )
+
+        assert [message.api_role for message in params.prepended_conversation or []] == ["user", "assistant", "tool"]
+        assert params.next_message is not None
+        assert params.next_message.get_value() == "Go ahead."
+
     async def test_raises_when_objective_target_missing(self, seed_group: AttackSeedGroup) -> None:
         with pytest.raises(ValueError, match="objective_target is required"):
             await AttackParameters.from_seed_group_async(

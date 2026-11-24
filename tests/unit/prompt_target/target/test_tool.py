@@ -237,6 +237,24 @@ async def test_chat_targets_report_declared_function_tools(build_target) -> None
     ]
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "build_target",
+    [
+        lambda body: OpenAIChatTarget(
+            model_name="gpt-4", endpoint="https://mock.azure.com", api_key="mock-key", extra_body_parameters=body
+        ),
+        lambda body: LiteLLMChatTarget(model_name="custom/model", extra_body_parameters=body),
+    ],
+    ids=["openai_chat", "litellm"],
+)
+async def test_null_tool_declarations_mean_no_tools(build_target) -> None:
+    target = build_target({"tools": None})
+
+    assert await target.get_tool_definitions_async() == []
+    assert not target.may_advertise_tools()
+
+
 async def test_litellm_target_reports_configured_tools(patch_central_database) -> None:
     provider = MagicMock(spec=ToolProvider)
     provider.identifier = {"type": "test"}
@@ -247,6 +265,7 @@ async def test_litellm_target_reports_configured_tools(patch_central_database) -
     definitions = await target.get_tool_definitions_async()
 
     assert [definition.name for definition in definitions] == ["add"]
+    assert target.may_advertise_tools()
 
 
 @pytest.mark.parametrize("from_provider", [False, True])

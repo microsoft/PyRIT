@@ -1419,7 +1419,16 @@ class TestSimulatedConversationWithTools:
     async def test_stand_in_gets_tools_whose_results_the_adversarial_chat_writes_async(self) -> None:
         adversarial_chat = MockPromptTarget()
         writer = _ToolResultWriter(objective="Reset the admin password.", adversarial_chat=adversarial_chat)
-        source = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key")
+        source = OpenAIResponseTarget(
+            model_name="gpt-4",
+            endpoint="https://mock.azure.com",
+            api_key="key",
+            custom_functions={"send_email": AsyncMock()},
+            extra_body_parameters={
+                "tools": [{"type": "function", "name": "send_email", "parameters": {}}, {"type": "web_search"}],
+                "tool_choice": "auto",
+            },
+        )
 
         stand_in = _with_simulated_tools(target=source, tools=[_LOOKUP], writer=writer)
         [simulated_tool] = stand_in._tools
@@ -1427,7 +1436,9 @@ class TestSimulatedConversationWithTools:
 
         assert stand_in is not source
         assert await stand_in.get_tool_definitions_async() == [_LOOKUP]
-        assert await source.get_tool_definitions_async() == []
+        assert not stand_in._custom_functions
+        assert not stand_in._extra_body_parameters
+        assert [tool.name for tool in await source.get_tool_definitions_async()] == ["send_email"]
         assert result == "default"
         assert writer.started
         request = json.loads(adversarial_chat.prompt_sent[-1])
@@ -1557,6 +1568,63 @@ class TestSimulatedConversationWithTools:
                 simulated_target=stand_in,
                 tools=[_LOOKUP],
             )
+
+    async def test_empty_stand_in_turn_is_dropped_from_the_history_async(
+        self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt
+    ) -> None:
+        empty = MessagePiece(role="assistant", original_value="", response_error="empty").to_message()
+
+        result, _ = await _run_turn_by_turn_async(
+            conversation=[
+                _piece_message("user", "Check SEC-1.", "text"),
+                empty,
+                _piece_message("user", "And SEC-2?", "text"),
+                _piece_message("assistant", "SEC-2 is approved.", "text"),
+            ],
+            mock_objective_scorer=mock_objective_scorer,
+            adversarial_system_prompt=adversarial_system_prompt,
+        )
+
+        assert result.preparation_failure is None
+        assert [prompt.value for prompt in result.seed_prompts] == ["Check SEC-1.", "And SEC-2?", "SEC-2 is approved."]
+
+    async def test_tool_result_conversation_is_linked_async(
+        self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt
+    ) -> None:
+        adversarial_chat = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key")
+        reply = Message.from_prompt(prompt="SEC-1 is approved.", role="assistant")
+        identifier = ComponentIdentifier(class_name="RedTeamingAttack", class_module="pyrit.executor.attack")
+
+        async def run_stand_in_async(**_: object) -> AttackResult:
+            stand_in = attack_class.call_args.kwargs["objective_target"]
+            await stand_in._tools[0].execute_async(arguments={"ticket_id": "SEC-1"})
+            return AttackResult(
+                atomic_attack_identifier=identifier,
+                conversation_id="simulated",
+                objective="objective",
+                outcome=AttackOutcome.SUCCESS,
+                executed_turns=1,
+                automated_score=MagicMock(spec=Score, scored_expectation=None, observation_ids=[]),
+            )
+
+        with (
+            patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as attack_class,
+            patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as memory_class,
+            patch.object(PromptNormalizer, "send_prompt_async", new_callable=AsyncMock, return_value=reply),
+        ):
+            attack_class.return_value.execute_async = AsyncMock(side_effect=run_stand_in_async)
+            memory_class.get_memory_instance.return_value.get_conversation_messages_async = AsyncMock(
+                return_value=[_piece_message("user", "Check SEC-1.", "text")]
+            )
+            result = await generate_simulated_conversation_async(
+                objective="objective",
+                adversarial_chat=adversarial_chat,
+                objective_scorer=mock_objective_scorer,
+                adversarial_chat_system_prompt=adversarial_system_prompt,
+                tools=[_LOOKUP],
+            )
+
+        assert "simulated tool results" in {reference.description for reference in result.related_conversations}
 
     async def test_stand_in_error_is_a_preparation_failure_async(
         self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt
@@ -1744,6 +1812,7 @@ class TestOneShotToolHistory:
             ([_CALL, _OUTPUT, {"type": "message", "role": "assistant", "content": "Done."}], "write no assistant"),
             ([_CALL, _OUTPUT, {"type": "message", "role": "user", "content": "Next."}], "only one user message"),
             ([_CALL, _SECOND_CALL, _OUTPUT], "must be followed immediately by its output"),
+            ([_CALL, _OUTPUT, _CALL, _OUTPUT], "call_id 'call_1' is reused"),
         ],
     )
     async def test_exhausted_attempts_are_a_preparation_failure_async(

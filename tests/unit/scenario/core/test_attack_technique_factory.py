@@ -1617,6 +1617,9 @@ class _ApprovalCheckingTarget(PromptTarget):
         )
     )
 
+    def may_advertise_tools(self) -> bool:
+        return True
+
     async def get_tool_definitions_async(self) -> list[ToolDefinition]:
         return [ToolDefinition(name="read_ticket", parameters={"type": "object"})]
 
@@ -1667,6 +1670,26 @@ class TestSimulatedConversationWithTargetTools:
             factory.requirements.validate_target(target=text_only, attack_class=PromptSendingAttack)
         assert factory.check_adversarial_target(target=text_only)
         assert factory.check_adversarial_target(target=MockPromptTarget()) == []
+
+    def test_targets_without_tools_are_incompatible(self) -> None:
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="tool_priming_one_shot", mode=SimulatedConversationMode.ONE_SHOT, use_target_tools=True
+        )
+        without_tools = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key")
+        declared = {"type": "function", "name": "read_ticket", "parameters": {"type": "object"}}
+        with_tools = OpenAIResponseTarget(
+            model_name="gpt-4",
+            endpoint="https://mock.azure.com",
+            api_key="key",
+            extra_body_parameters={"tools": [declared]},
+        )
+
+        errors = factory.requirements.check_target(target=without_tools, attack_class=PromptSendingAttack)
+        assert any("advertises no function tools" in error for error in errors)
+        assert not any(
+            "advertises no function tools" in error
+            for error in factory.requirements.check_target(target=with_tools, attack_class=PromptSendingAttack)
+        )
 
     def test_turn_by_turn_uses_tool_prompts_and_needs_a_tool_running_adversarial_chat(self) -> None:
         factory = AttackTechniqueFactory.with_simulated_conversation(
