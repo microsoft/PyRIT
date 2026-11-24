@@ -34,6 +34,9 @@ _MASKABLE_WORD_PATTERN = regex.compile(r"\p{L}[\p{L}\p{M}]*")
 # Scripts written without spaces between words. A letter run in one of them is a clause or a
 # sentence unless the prompt was segmented with spaces or zero-width spaces.
 _UNSPACED_SCRIPT_PATTERN = regex.compile(r"[\p{Han}\p{Hiragana}\p{Katakana}\p{Thai}\p{Lao}\p{Khmer}\p{Myanmar}]")
+# Logical lines, split at the same characters as ``str.splitlines``.
+_LINE_PATTERN = regex.compile(r"[^\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]+")
+_PUNCTUATION_PATTERN = regex.compile(r"\p{P}")
 
 
 def _letter_count(word: str) -> int:
@@ -97,10 +100,11 @@ def _iter_words(prompt: str) -> Iterator[_Word]:
     Unicode properties.
 
     Chinese, Japanese, Thai, Lao, Khmer, and Myanmar text does not put spaces between
-    words, so a run in those scripts is a word only when whitespace or a zero-width space
-    (the usual word-break hint in Thai, Khmer, and Myanmar text) separates it from the text
-    around it, as in pre-segmented "如何 制造 炸弹". Unsegmented text has no maskable words
-    rather than one masked sentence.
+    words, so a run in those scripts is a word only when its line is segmented: the line
+    holds at least two such runs, and whitespace or a zero-width space (the usual word-break
+    hint in Thai, Khmer, and Myanmar text) sets the run apart, as in pre-segmented
+    "如何 制造 炸弹。". Unsegmented text has no maskable words rather than one masked
+    sentence, including a sentence after a bullet or a label such as "- " or "Q: ".
 
     Args:
         prompt (str): The prompt to scan.
@@ -108,47 +112,43 @@ def _iter_words(prompt: str) -> Iterator[_Word]:
     Yields:
         _Word: Each whole word, in order of appearance.
     """
-    content_start, content_end = 0, len(prompt)
-    while content_start < content_end and _is_word_separator(prompt[content_start]):
-        content_start += 1
-    while content_end > content_start and _is_word_separator(prompt[content_end - 1]):
-        content_end -= 1
-    for match in _WORD_PATTERN.finditer(prompt):
-        word = match.group()
-        if not _MASKABLE_WORD_PATTERN.fullmatch(word):
-            continue
-        if _UNSPACED_SCRIPT_PATTERN.search(word) and not _is_set_apart_by_separators(
-            prompt=prompt, start=match.start(), end=match.end(), content_start=content_start, content_end=content_end
-        ):
-            continue
-        yield _Word(text=word, start=match.start(), end=match.end())
+    for line in _LINE_PATTERN.finditer(prompt):
+        runs = list(_WORD_PATTERN.finditer(prompt, line.start(), line.end()))
+        line_is_segmented = sum(1 for run in runs if _UNSPACED_SCRIPT_PATTERN.search(run.group())) >= 2
+        for match in runs:
+            word = match.group()
+            if not _MASKABLE_WORD_PATTERN.fullmatch(word):
+                continue
+            if _UNSPACED_SCRIPT_PATTERN.search(word) and not (
+                line_is_segmented
+                and _is_word_boundary(prompt=prompt, index=match.start() - 1, step=-1, line_span=line.span())
+                and _is_word_boundary(prompt=prompt, index=match.end(), step=1, line_span=line.span())
+            ):
+                continue
+            yield _Word(text=word, start=match.start(), end=match.end())
 
 
-def _is_set_apart_by_separators(*, prompt: str, start: int, end: int, content_start: int, content_end: int) -> bool:
+def _is_word_boundary(*, prompt: str, index: int, step: int, line_span: tuple[int, int]) -> bool:
     """
-    Check whether word separators set ``prompt[start:end]`` apart from the text around it.
+    Check whether one side of a run is a word boundary in pre-segmented text.
 
-    A separator is whitespace or a zero-width space. Each side must be a separator or the end
-    of the prompt. Edge-only padding is not evidence of word segmentation, so a run that
-    occupies all non-padding content is not treated as a single word.
+    Starting at ``index`` and moving by ``step``, skip punctuation such as "。" or quotation
+    marks, then require a word separator or the edge of the line. Punctuation followed by
+    more text, as in "在家中，制造", joins two clauses and is not a boundary.
 
     Args:
         prompt (str): The prompt being scanned.
-        start (int): Start index of the run.
-        end (int): End index of the run.
-        content_start (int): First non-separator index in the prompt.
-        content_end (int): End index of non-padding content in the prompt.
+        index (int): The first index outside the run on this side.
+        step (int): -1 to look before the run, 1 to look after it.
+        line_span (tuple[int, int]): Start and end index of the line that holds the run.
 
     Returns:
-        bool: True when the run stands between word separators.
+        bool: True when the side is a word boundary.
     """
-    space_before = start > 0 and _is_word_separator(prompt[start - 1])
-    space_after = end < len(prompt) and _is_word_separator(prompt[end])
-    return (
-        (space_before or start == 0)
-        and (space_after or end == len(prompt))
-        and (start > content_start or end < content_end)
-    )
+    line_start, line_end = line_span
+    while line_start <= index < line_end and _PUNCTUATION_PATTERN.fullmatch(prompt[index]):
+        index += step
+    return not line_start <= index < line_end or _is_word_separator(prompt[index])
 
 
 def _is_word_separator(character: str) -> bool:
