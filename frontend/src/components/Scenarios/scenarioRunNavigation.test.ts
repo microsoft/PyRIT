@@ -1,10 +1,10 @@
 import { scenarioRunBackLink } from './scenarioRunNavigation'
 
 describe('scenarioRunBackLink', () => {
-  it('returns to the suite execution that opened the run', () => {
+  it('returns to the preset run that opened it', () => {
     expect(scenarioRunBackLink({ suiteExecutionId: 'suite-1', suiteName: 'Nightly', fromScenarioHistory: true }))
       .toEqual({ path: '/scanner/history/suites/executions/suite-1', label: 'Back to Nightly' })
-    expect(scenarioRunBackLink({ suiteExecutionId: 'suite-1' }).label).toBe('Back to suite execution')
+    expect(scenarioRunBackLink({ suiteExecutionId: 'suite-1' }).label).toBe('Back to preset run')
   })
 
   it('returns to scan history with its filters', () => {

@@ -32,8 +32,9 @@ import ScenarioRunPage from './components/Scenarios/ScenarioRunPage'
 import ScanConversationRedirect from './components/Scenarios/ScanConversationRedirect'
 import ScenarioQueuePage from './components/Scenarios/ScenarioQueuePage'
 import ScenarioPresetEditor from './components/ScenarioPresets/ScenarioPresetEditor'
-import { presetEditorRoutePath } from './components/ScenarioPresets/presetRoutes'
-import ScenarioSuiteEditor from './components/ScenarioSuites/ScenarioSuiteEditor'
+import ScannerPresetsPage from './components/Scenarios/ScannerPresetsPage'
+import { NEW_PRESET_ROUTE, PRESETS_ROUTE, presetEditorRoutePath } from './components/ScenarioPresets/presetRoutes'
+import { SCANNER_PRESETS_ROUTE } from './components/ScenarioSuites/suiteRoutes'
 import ScenarioSuiteExecutionPage from './components/ScenarioSuites/ScenarioSuiteExecutionPage'
 import DatasetCatalog from './components/Datasets/DatasetCatalog'
 import DatasetSelection from './components/Datasets/DatasetSelection'
@@ -132,10 +133,7 @@ function viewFromPath(pathname: string): ViewName {
   if (pathname.startsWith(`${VIEW_PATHS.operations}/`)) {
     return 'operations'
   }
-  if (
-    pathname === '/scanner/launch'
-    || pathname.startsWith('/scanner/')
-  ) {
+  if (pathname === '/scanner' || pathname.startsWith('/scanner/')) {
     return 'scenarios'
   }
   if (
@@ -1012,10 +1010,13 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <FeatureNavigation
                 feature={currentView === 'chat' ? 'attacks' : 'scanner'}
                 selectedTab={location.pathname === HISTORY_ATTACKS_PATH || location.pathname.startsWith(HISTORY_SCANNER_PATH)
-                  ? 'history' : currentView === 'chat' ? 'chat' : 'launch'}
-                onTabChange={(tab: 'chat' | 'launch' | 'history') => {
+                  ? 'history'
+                  : currentView === 'chat' ? 'chat'
+                  : location.pathname === SCANNER_PRESETS_ROUTE ? 'presets' : 'launch'}
+                onTabChange={(tab) => {
                   if (tab === 'chat') handleNavigate('chat')
                   else if (tab === 'launch') handleNavigate('scenarios')
+                  else if (tab === 'presets') navigate(SCANNER_PRESETS_ROUTE)
                   else navigate(currentView === 'chat'
                     ? HISTORY_ATTACKS_PATH + lastHistorySearch.current
                     : HISTORY_SCANNER_PATH + lastScenarioHistorySearch.current)
@@ -1104,18 +1105,22 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 <Route path="scorers" element={<ScorerRegistry scorers={scorerRegistry.scorers}
                   loading={scorerRegistry.loading} error={scorerRegistry.error} onRefresh={scorerRegistry.refresh} />} />
                 <Route path="techniques" element={<TechniqueRegistry />} />
-                <Route path="scenario-presets" element={<ScenarioPresetRegistry />} />
-                <Route path="scenario-presets/new" element={<ScenarioPresetEditor mode="create" />} />
-                <Route path="scenario-presets/:presetName/edit" element={<ScenarioPresetEditor mode="edit" />} />
-                <Route path="scenario-suites" element={<Navigate to="/registry/scenario-presets" replace />} />
-                <Route path="scenario-suites/new" element={<ScenarioSuiteEditor mode="create" />} />
-                <Route path="scenario-suites/:suiteName/edit" element={<ScenarioSuiteEditor mode="edit" />} />
+                {/* One route for the page and its New preset dialog, so closing the dialog keeps page state. */}
+                <Route path="scenario-presets/new?" element={<ScenarioPresetRegistry />} />
+                <Route path="scenario-presets/:presetName/edit" element={<ScenarioPresetEditor />} />
+                {/* Presets used to have their own suite editor; old links land on the Scenario presets page. */}
+                <Route path="scenario-suites/*" element={<Navigate to={PRESETS_ROUTE} replace />} />
               </Route>
               <Route path="/targets" element={<Navigate to="/registry/targets" replace />} />
               <Route
-                path="/scanner/launch"
+                path="/scanner"
+                element={<Navigate to={VIEW_PATHS.scenarios} replace />}
+              />
+              <Route path="/scanner/launch" element={<ScenarioCatalog />} />
+              <Route
+                path={SCANNER_PRESETS_ROUTE}
                 element={
-                  <ScenarioCatalog
+                  <ScannerPresetsPage
                     targets={registry.targets}
                     defaultObjectiveTarget={targetDefaults.objectiveTarget}
                     defaultAdversarialTarget={targetDefaults.scanAdversarialTarget}
@@ -1141,8 +1146,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 }
               />
               <Route path={PROMPT_GENERATION_ROUTE} element={<PromptGenerationPage />} />
-              <Route path="/scanner/presets" element={<Navigate to="/registry/scenario-presets" replace />} />
-              <Route path="/scanner/presets/new" element={<Navigate to="/registry/scenario-presets/new" replace />} />
+              <Route path={`${SCANNER_PRESETS_ROUTE}/new`} element={<Navigate to={NEW_PRESET_ROUTE} replace />} />
               <Route path="/scanner/presets/:presetName/edit" element={<LegacyPresetEditorRedirect />} />
               <Route
                 path="/scanner/launch/:scenarioName"

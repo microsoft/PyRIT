@@ -263,28 +263,4 @@ export const useScenarioCatalogStyles = makeStyles({
     gap: tokens.spacingVerticalS,
     marginBottom: tokens.spacingVerticalL,
   },
-  sections: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalXXL,
-  },
-  section: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalM,
-    minWidth: 0,
-  },
-  presetMeta: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: tokens.spacingHorizontalS,
-  },
-  issueList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalXXS,
-    margin: 0,
-    paddingLeft: tokens.spacingHorizontalL,
-  },
 })

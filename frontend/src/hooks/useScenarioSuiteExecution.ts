@@ -49,7 +49,7 @@ export function useScenarioSuiteExecution(
       : {
           loadStatus: 'not-found',
           execution: null,
-          error: 'The scenario suite execution ID in this URL is missing or invalid.',
+          error: 'The preset run ID in this URL is missing or invalid.',
           stale: false,
         }
   ))

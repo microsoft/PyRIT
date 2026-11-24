@@ -4,15 +4,36 @@ import { AddRegular } from '@fluentui/react-icons'
 
 import { useFeatureNavigationStyles } from './FeatureNavigation.styles'
 
+type AttackTab = 'chat' | 'history'
+export type ScannerTab = 'launch' | 'presets' | 'history'
+type FeatureTab = AttackTab | ScannerTab
+
+interface FeatureTabOption {
+  readonly value: FeatureTab
+  readonly label: string
+}
+
+const ATTACK_TABS: readonly FeatureTabOption[] = [
+  { value: 'chat', label: 'Chat' },
+  { value: 'history', label: 'History' },
+]
+
+const SCANNER_TABS: readonly FeatureTabOption[] = [
+  { value: 'launch', label: 'Launch' },
+  { value: 'presets', label: 'Presets' },
+  { value: 'history', label: 'History' },
+]
+
 interface FeatureNavigationProps {
   readonly feature: 'attacks' | 'scanner'
-  readonly selectedTab: 'chat' | 'launch' | 'history'
-  readonly onTabChange: (tab: 'chat' | 'launch' | 'history') => void
+  readonly selectedTab: FeatureTab
+  readonly onTabChange: (tab: FeatureTab) => void
   readonly onNewAttack: () => void
 }
 
 export default function FeatureNavigation({ feature, selectedTab, onTabChange, onNewAttack }: FeatureNavigationProps) {
   const styles = useFeatureNavigationStyles()
+  const tabs = feature === 'attacks' ? ATTACK_TABS : SCANNER_TABS
   return (
     <header className={styles.root} data-tour="feature-tabs">
       <div className={styles.tabs}>
@@ -21,13 +42,13 @@ export default function FeatureNavigation({ feature, selectedTab, onTabChange, o
           aria-label={feature === 'attacks' ? 'Attack views' : 'Scanner views'}
           selectedValue={selectedTab}
           onTabSelect={(_: SelectTabEvent, data: SelectTabData) => {
-            if (data.value === 'chat' || data.value === 'launch' || data.value === 'history') {
-              onTabChange(data.value)
+            const tab = tabs.find((option) => option.value === data.value)
+            if (tab) {
+              onTabChange(tab.value)
             }
           }}
         >
-          <Tab value={feature === 'attacks' ? 'chat' : 'launch'}>{feature === 'attacks' ? 'Chat' : 'Launch'}</Tab>
-          <Tab value="history">History</Tab>
+          {tabs.map((tab) => <Tab key={tab.value} value={tab.value}>{tab.label}</Tab>)}
         </TabList>
       </div>
       {feature === 'attacks' && (

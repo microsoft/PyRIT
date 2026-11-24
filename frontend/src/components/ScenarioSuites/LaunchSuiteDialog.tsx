@@ -188,7 +188,7 @@ export default function LaunchSuiteDialog({
                 onChange={(target) => setTargetName(target?.target_registry_name ?? '')}
                 label="Target"
                 help={HELP_DEFINITIONS.objectiveTarget}
-                hint="The registered target every suite entry attacks."
+                hint="The registered target every scenario in this preset attacks."
                 placeholder="Select a target"
                 disabled={submitting}
               />
@@ -198,7 +198,7 @@ export default function LaunchSuiteDialog({
                 onChange={(target) => setAdversarialTargetName(target?.target_registry_name ?? '')}
                 label="Adversarial Target"
                 help={HELP_DEFINITIONS.adversarialTarget}
-                hint="Only used by suite entries whose scenarios require a second target."
+                hint="Only used by scenarios that require a second target."
                 placeholder="Use server default"
                 disabled={submitting}
               />
@@ -235,7 +235,7 @@ export default function LaunchSuiteDialog({
                 disabled={!runtime.ready || targetName === '' || submitting || !defaultsReady}
                 data-testid="confirm-launch-suite"
               >
-                {submitting ? 'Launching...' : 'Launch suite'}
+                {submitting ? 'Launching...' : 'Launch'}
               </Button>
             </DialogActions>
           </DialogBody>

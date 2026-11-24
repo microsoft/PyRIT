@@ -1816,7 +1816,12 @@ export interface ScenarioSuiteEntry {
   preset_name: string
 }
 
-/** A user-authored, ordered collection of scenario preset references. */
+/**
+ * A user-authored, ordered collection of scenario preset references.
+ *
+ * The GUI calls a suite a "preset" and each scenario preset inside it a "scenario";
+ * the API and storage keep the suite and preset names.
+ */
 export interface ScenarioSuite {
   name: string
   schema_version: number

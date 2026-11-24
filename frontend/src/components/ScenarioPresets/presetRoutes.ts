@@ -1,19 +1,16 @@
 /**
- * Presets live under the registry because a preset is a stored, reusable
- * configuration alongside targets and converters, not a property of one scan.
+ * The Registry's Scenario presets page lists presets (backend scenario suites); a
+ * stored scenario preset is edited as one scenario of a preset.
  *
  * Editing uses a trailing `/edit` segment rather than bare
- * `/registry/scenario-presets/:presetName` so the static create route cannot
- * shadow a preset whose name happens to be `new` — preset names are
- * user-authored and `new` matches the server's name pattern.
+ * `/registry/scenario-presets/:presetName` so the static `/new` route, which opens the
+ * New preset dialog, cannot shadow a scenario preset whose name happens to be `new`.
  */
 
 export const PRESETS_ROUTE = '/registry/scenario-presets'
 export const NEW_PRESET_ROUTE = `${PRESETS_ROUTE}/new`
 
-/** Where presets used to live. Kept as a redirect so bookmarked links still resolve. */
-export const LEGACY_PRESETS_ROUTE = '/scanner/presets'
-
+/** Edits one stored scenario preset, which every preset that uses it shares. */
 export function presetEditorRoutePath(name: string): string {
   return `${PRESETS_ROUTE}/${encodeURIComponent(name)}/edit`
 }

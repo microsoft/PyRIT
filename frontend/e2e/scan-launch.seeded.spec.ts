@@ -113,13 +113,14 @@ for (const width of [1280, 390]) {
     expect(await targetSnapshot(request)).toEqual(initialTargets)
   })
 
-  test(`launches suites with configured defaults and reports invalid children at ${width}px @seeded`, async ({ page, request }) => {
+  test(`launches presets from the Presets tab and reports invalid children at ${width}px @seeded`, async ({ page, request }) => {
     await page.setViewportSize({ width, height: 900 })
     const initialTargets = await targetSnapshot(request)
     const suiteName = `explicit_suite_${width}`
-    await page.goto('/scanner/launch')
+    await page.goto('/scanner/presets')
     await waitForAppReady(page)
-    await page.getByTestId(`launch-suite-${suiteName}`).click()
+    await expect(page.getByRole('tab', { name: 'Presets', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await page.getByRole('button', { name: `Launch ${suiteName}`, exact: true }).click()
     const dialog = page.getByRole('dialog', { name: `Launch ${suiteName}`, exact: true })
     await expect(dialog.getByRole('combobox')).toHaveCount(2)
     await expect(dialog.getByRole('button', { name: /Create/i })).toHaveCount(0)
@@ -139,9 +140,9 @@ for (const width of [1280, 390]) {
 
     const mixedName = `explicit_mixed_${width}`
     const before = await (await request.get('/api/scenarios/runs')).json()
-    await page.goto('/scanner/launch')
+    await page.goto('/scanner/presets')
     await waitForAppReady(page)
-    await page.getByTestId(`launch-suite-${mixedName}`).click()
+    await page.getByRole('button', { name: `Launch ${mixedName}`, exact: true }).click()
     const mixedDialog = page.getByRole('dialog', { name: `Launch ${mixedName}`, exact: true })
     await mixedDialog.getByRole('combobox', { name: 'Target', exact: true }).selectOption('browser_offline')
     await page.getByTestId('confirm-launch-suite').click()

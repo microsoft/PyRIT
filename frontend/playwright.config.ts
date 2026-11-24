@@ -30,8 +30,8 @@ const E2E_BACKEND_URL = `http://127.0.0.1:${E2E_BACKEND_PORT}`;
 
 /**
  * Copies the seeded backend's configuration into a fresh folder that also holds
- * its saved targets, converters, scorers, and techniques, so a run never reads
- * or writes the ones saved on the machine running it.
+ * its saved targets, converters, scorers, techniques, scenario presets, and
+ * suites, so a run never reads or writes the ones saved on the machine running it.
  */
 function createSeededBackendConfigFile(): string {
   const folder = mkdtempSync(path.join(tmpdir(), "pyrit-seeded-backend-"));
@@ -39,8 +39,14 @@ function createSeededBackendConfigFile(): string {
   process.once("exit", () => rmSync(folder, { recursive: true, force: true }));
   const configFile = path.join(folder, "browser_config.yaml");
   const config = readFileSync(new URL("../tests/end_to_end/browser_config.yaml", import.meta.url), "utf-8");
-  const recipesSource = JSON.stringify(path.join(folder, "registry_recipes"));
-  writeFileSync(configFile, `${config}\nregistry_recipes_source: ${recipesSource}\n`);
+  const source = (name: string): string => JSON.stringify(path.join(folder, name));
+  writeFileSync(configFile, [
+    config,
+    `registry_recipes_source: ${source("registry_recipes")}`,
+    `scenario_presets_source: ${source("scenario_presets")}`,
+    `scenario_suites_source: ${source("scenario_suites")}`,
+    "",
+  ].join("\n"));
   return configFile;
 }
 

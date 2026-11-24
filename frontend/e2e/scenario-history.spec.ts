@@ -661,7 +661,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
       "Configuration",
     ]);
     await expect(page.getByRole("button", { name: "Scanner", exact: true })).toHaveAttribute("aria-current", "page");
-    await expect(page.getByRole("table", { name: "Individual scanners" })).toBeVisible();
+    await expect(page.getByRole("table", { name: "Scenarios" })).toBeVisible();
     await expect(page.getByRole("columnheader", { name: "Default run size" })).toBeVisible();
 
     const row = page.getByTestId(`scenario-card-${SCENARIO_NAME}`);

@@ -1,5 +1,4 @@
 import {
-  LEGACY_PRESETS_ROUTE,
   NEW_PRESET_ROUTE,
   PRESET_QUERY_PARAM,
   PRESETS_ROUTE,
@@ -26,10 +25,6 @@ describe('presetEditorRoutePath', () => {
     expect(NEW_PRESET_ROUTE.startsWith('/registry/')).toBe(true)
   })
 
-  it('keeps the old scanner location distinct so it can redirect', () => {
-    expect(LEGACY_PRESETS_ROUTE).toBe('/scanner/presets')
-    expect(LEGACY_PRESETS_ROUTE).not.toBe(PRESETS_ROUTE)
-  })
 })
 
 describe('presetScannerRoutePath', () => {
@@ -47,7 +42,4 @@ describe('presetScannerRoutePath', () => {
     expect(url.searchParams.get(PRESET_QUERY_PARAM)).toBe('c&d')
   })
 
-  it('keeps a preset named like a legacy scanner route out of the path', () => {
-    expect(presetScannerRoutePath('foundry', 'presets').startsWith(`${LEGACY_PRESETS_ROUTE}`)).toBe(false)
-  })
 })
