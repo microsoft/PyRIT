@@ -54,6 +54,11 @@ async def test_ascii_smuggler_input_not_supported():
         "\x1f",
         "\x7f",
         "\u0301",
+        "a \u0301",
+        "10\u00b3",
+        "H\u2082O",
+        "1\u00ba",
+        "it\u00b4s",
         "\u200b",
         "\u4f60\u597d\u4e16\u754c",
         "\U0001f600",
@@ -64,7 +69,8 @@ async def test_ascii_smuggler_encode_unrepresentable_chars_raise(prompt: str) ->
     # Only the ASCII printable range (0x20-0x7E) maps to Unicode tags. Characters with no ASCII equivalent used
     # to be logged and dropped while convert_async still returned a success result, so an objective was smuggled
     # as a corrupted payload and an attack could be scored against a target that was never sent the objective.
-    # Encoding must fail loudly instead, even when the rest of the prompt can be normalized.
+    # Encoding must fail loudly instead, even when the rest of the prompt can be normalized. Superscripts,
+    # subscripts, ordinals and spacing accents would fold into different text (10^3 into "103"), so they raise too.
     converter = AsciiSmugglerConverter(action="encode")
     with pytest.raises(ValueError, match="ASCII printable range"):
         await converter.convert_async(prompt=prompt, input_type="text")
@@ -75,6 +81,7 @@ async def test_ascii_smuggler_encode_unrepresentable_chars_raise(prompt: str) ->
     [
         ("line1\nline2\r\n\tline3", "line1 line2   line3"),
         ("caf\u00e9", "cafe"),
+        ("cafe\u0301", "cafe"),
         ("na\u00efve r\u00e9sum\u00e9", "naive resume"),
         ("a\u00a0b\u2003c", "a b c"),
         ("\uff21\ufb01", "Afi"),

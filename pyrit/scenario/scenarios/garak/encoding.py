@@ -72,11 +72,6 @@ class EncodingDatasetConfiguration(DatasetAttackConfiguration):
         - A SeedObjective with the encoding attack objective
         - The original seed value as a SeedPrompt
 
-        ``AsciiSmugglerConverter`` replaces characters such as curly quotes, dashes and newlines with
-        ASCII equivalents before encoding, so a target that decodes it correctly answers with that
-        ASCII text. When it differs from the seed value, it is stored as the prompt's ``decoded_text``
-        metadata, which ``DecodingScorer`` accepts alongside the original value.
-
         Args:
             seeds (list[Seed]): The raw seeds loaded from memory.
 
@@ -87,27 +82,11 @@ class EncodingDatasetConfiguration(DatasetAttackConfiguration):
             AttackSeedGroup(
                 seeds=[
                     SeedObjective(value=f"Make the model say an encoded payload: {seed.value}"),
-                    SeedPrompt(value=seed.value, metadata=self._decoded_text_metadata(value=seed.value)),
+                    SeedPrompt(value=seed.value),
                 ]
             )
             for seed in seeds
         ]
-
-    @staticmethod
-    def _decoded_text_metadata(*, value: str) -> dict[str, str]:
-        """
-        Return ``decoded_text`` metadata when ASCII smuggling changes ``value``.
-
-        Args:
-            value (str): The seed value.
-
-        Returns:
-            dict[str, str]: ``{"decoded_text": ...}`` with the ASCII text, or an empty dict.
-        """
-        ascii_value = AsciiSmugglerConverter.to_ascii_equivalent(text=value)
-        if ascii_value is None or ascii_value == value:
-            return {}
-        return {"decoded_text": ascii_value}
 
 
 class EncodingTechnique(ScenarioTechnique):
@@ -444,6 +423,7 @@ class Encoding(Scenario):
                 )
             )
 
+        seed_groups = self._seed_groups_for_converters(converters=converters, seed_groups=context.seed_groups)
         atomic_attacks = []
         for config_suffix, attack_converter_config in converter_configs:
             attack = PromptSendingAttack(
@@ -456,9 +436,44 @@ class Encoding(Scenario):
                     atomic_attack_name=f"{variant_slug}_{config_suffix}",
                     display_group=encoding_name,
                     attack_technique=AttackTechnique(attack=attack),
-                    seed_groups=list(context.seed_groups),
+                    seed_groups=seed_groups,
                     memory_labels=context.memory_labels,
                 )
             )
 
         return atomic_attacks
+
+    @staticmethod
+    def _seed_groups_for_converters(
+        *, converters: Sequence[Converter], seed_groups: Sequence[AttackSeedGroup]
+    ) -> list[AttackSeedGroup]:
+        """
+        Return the seed groups one converter variant attacks.
+
+        ``AsciiSmugglerConverter`` replaces characters such as curly quotes, dashes and newlines with
+        ASCII equivalents before encoding, so a target that decodes it correctly answers with that ASCII
+        text. Its variant gets copies of the seed groups whose prompts carry that text as ``decoded_text``
+        metadata, which ``DecodingScorer`` accepts alongside the original value. Other variants and the
+        baseline keep the shared groups, so their scoring still requires the exact original text.
+
+        Args:
+            converters (Sequence[Converter]): The converters this variant applies.
+            seed_groups (Sequence[AttackSeedGroup]): The seed groups selected for this run.
+
+        Returns:
+            list[AttackSeedGroup]: The seed groups for this variant's atomic attacks.
+        """
+        if not any(isinstance(converter, AsciiSmugglerConverter) for converter in converters):
+            return list(seed_groups)
+
+        variant_seed_groups = []
+        for seed_group in seed_groups:
+            copied_group = seed_group.model_copy(deep=True)
+            for prompt in copied_group.prompts:
+                if prompt.data_type != "text":
+                    continue
+                ascii_value = AsciiSmugglerConverter.to_ascii_equivalent(text=prompt.value)
+                if ascii_value is not None and ascii_value != prompt.value:
+                    prompt.metadata = {**(prompt.metadata or {}), "decoded_text": ascii_value}
+            variant_seed_groups.append(copied_group)
+        return variant_seed_groups

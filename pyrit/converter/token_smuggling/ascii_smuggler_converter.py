@@ -29,8 +29,11 @@ class AsciiSmugglerConverter(SmugglerConverter):
 
     Unicode Tags only exist for printable ASCII, so before encoding, characters with a faithful ASCII
     equivalent are replaced: whitespace such as newlines and tabs becomes a space, typographic dashes,
-    quotes and ellipses become their ASCII forms, and accents are removed (``é`` becomes ``e``).
-    Characters with no ASCII equivalent, such as CJK text or emoji, still raise ``ValueError``.
+    quotes and ellipses become their ASCII forms, accents are removed (``é`` becomes ``e``, whether it is
+    written precomposed or as ``e`` plus a combining accent), and fullwidth letters and ligatures become their
+    ASCII letters (``Ａ`` becomes ``A``, ``ﬁ`` becomes ``fi``). Characters with no faithful ASCII equivalent,
+    such as CJK text, emoji, superscripts and subscripts (``²``, ``₂``) or spacing accents (``´``), still raise
+    ``ValueError``.
 
     Replicates the functionality detailed in the following blog post:
     [@embracethered2024unicode]
@@ -44,6 +47,11 @@ class AsciiSmugglerConverter(SmugglerConverter):
         **dict.fromkeys(map(ord, "\u201c\u201d\u201e\u201f\u2033"), '"'),
         ord("\u2026"): "...",
     }
+
+    # Compatibility decompositions that keep a character's meaning: fullwidth forms (``Ａ``) and plain
+    # compatibility forms such as ligatures (``ﬁ``). Others, such as superscripts (``²``) and subscripts
+    # (``₂``), would silently change the text, so those characters are rejected instead.
+    _FAITHFUL_COMPATIBILITY_TAGS: frozenset[str] = frozenset({"<wide>", "<compat>"})
 
     def __init__(self, *, action: Literal["encode", "decode"] = "encode", unicode_tags: bool = False) -> None:
         """
@@ -92,7 +100,9 @@ class AsciiSmugglerConverter(SmugglerConverter):
         """
         ascii_message = self.to_ascii_equivalent(text=message)
         if ascii_message is None:
-            invalid_chars = "".join(char for char in message if self._ascii_equivalent(char) is None)
+            invalid_chars = "".join(
+                char for char in unicodedata.normalize("NFC", message) if self._ascii_equivalent(char) is None
+            )
             raise ValueError(
                 f"Cannot encode {len(invalid_chars)} character(s) with no equivalent in the ASCII printable range "
                 f"(0x20-0x7E): {invalid_chars!r}. Use SneakyBitsSmugglerConverter or "
@@ -119,6 +129,10 @@ class AsciiSmugglerConverter(SmugglerConverter):
         """
         Return the printable ASCII text that encoding ``text`` actually smuggles.
 
+        ``text`` is first composed to NFC, so canonically equivalent spellings such as ``café`` and
+        ``cafe`` plus a combining acute give the same result. A combining mark with no base character to
+        compose with, such as one at the start of the text or after a space, has no equivalent.
+
         Args:
             text (str): The text to normalize.
 
@@ -126,7 +140,7 @@ class AsciiSmugglerConverter(SmugglerConverter):
             str | None: ``text`` with each character replaced by its ASCII equivalent, or None when any
                 character has no equivalent and encoding would raise.
         """
-        equivalents = [cls._ascii_equivalent(char) for char in text]
+        equivalents = [cls._ascii_equivalent(char) for char in unicodedata.normalize("NFC", text)]
         if any(equivalent is None for equivalent in equivalents):
             return None
         return "".join(equivalent for equivalent in equivalents if equivalent is not None)
@@ -146,14 +160,35 @@ class AsciiSmugglerConverter(SmugglerConverter):
             return char
         replacement = cls._ASCII_EQUIVALENTS.get(ord(char))
         if replacement is None:
-            replacement = "".join(
-                decomposed
-                for decomposed in unicodedata.normalize("NFKD", char)
-                if not unicodedata.combining(decomposed)
-            )
+            replacement = cls._decomposed_without_marks(char)
         if replacement and all(0x20 <= ord(ascii_char) <= 0x7E for ascii_char in replacement):
             return replacement
         return None
+
+    @classmethod
+    def _decomposed_without_marks(cls, char: str) -> str:
+        """
+        Return ``char`` decomposed with its combining marks removed, or ``""`` when that changes its meaning.
+
+        Canonical decompositions (``é`` to ``e`` plus an acute) and the compatibility forms in
+        ``_FAITHFUL_COMPATIBILITY_TAGS`` are used. Other compatibility forms, and spacing accents such as
+        ``´`` that decompose to a space plus a combining mark, are rejected.
+
+        Args:
+            char (str): A single character.
+
+        Returns:
+            str: The decomposed text without combining marks, or ``""`` when it is not a faithful replacement.
+        """
+        decomposition = unicodedata.decomposition(char)
+        tag = decomposition.split(" ", 1)[0] if decomposition.startswith("<") else None
+        if tag is not None and tag not in cls._FAITHFUL_COMPATIBILITY_TAGS:
+            return ""
+        decomposed = unicodedata.normalize("NFD" if tag is None else "NFKD", char)
+        replacement = "".join(part for part in decomposed if not unicodedata.combining(part))
+        if " " in replacement:
+            return ""
+        return replacement
 
     def decode_message(self, *, message: str) -> str:
         """
