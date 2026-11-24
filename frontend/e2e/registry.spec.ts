@@ -624,6 +624,48 @@ test.describe("Converter Registry", () => {
         await expect(listbox).toBeHidden();
         await expect(trigger).toHaveText("ViewportConverter9");
       });
+
+      test("lines up origin badges under converter names of any length", async ({ page }) => {
+        const names = ["rot", "caesar_converter_for_the_quarterly_red_team_operation"];
+        await page.route(/\/api\/converters$/, async (route) => {
+          if (route.request().method() !== "GET") {
+            await route.fallback();
+            return;
+          }
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              items: names.map((converterId) => ({
+                converter_id: converterId,
+                identifier: {
+                  class_name: "CaesarConverter",
+                  class_module: "pyrit.converter",
+                  hash: `${converterId}-hash`,
+                  pyrit_version: "0.0.0",
+                  supported_input_types: ["text"],
+                  supported_output_types: ["text"],
+                },
+                is_llm_based: false,
+                origin: "saved",
+              })),
+            }),
+          });
+        });
+        await page.reload();
+
+        const badgeLefts: number[] = [];
+        for (const converterId of names) {
+          const row = page.getByRole("row", { name: new RegExp(converterId) });
+          const name = await row.getByRole("button", { name: `Identity for ${converterId}` }).boundingBox();
+          const badge = await row.getByText("Saved", { exact: true }).boundingBox();
+          expect(name).not.toBeNull();
+          expect(badge).not.toBeNull();
+          expect(badge!.y).toBeGreaterThanOrEqual(name!.y + name!.height - 1);
+          badgeLefts.push(badge!.x);
+        }
+        expect(Math.abs(badgeLefts[0] - badgeLefts[1])).toBeLessThan(1);
+      });
     });
   }
 });
