@@ -100,7 +100,7 @@ export default function SaveConverterDialog({
             {error && <MessageBar intent="error">
               <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error}</MessageBarBody>
             </MessageBar>}
-            <Field label="Registry name" required hint="Lowercase letters, digits, and underscores, starting with a letter."
+            <Field label="Registry name" required
               validationMessage={showValidation && nameMessage !== null ? nameMessage : undefined}>
               <Input value={name} disabled={submitting} onChange={(_, data) => setName(data.value)} />
             </Field>

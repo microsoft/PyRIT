@@ -160,12 +160,14 @@ describe('SaveConverterDialog', () => {
   it('should need a lowercase name to save the copy', async () => {
     const user = userEvent.setup()
     render(tree())
-    await user.type(screen.getByRole('textbox', { name: /Registry name/ }), 'Saved-Copy')
+    const name = screen.getByRole('textbox', { name: /Registry name/ })
+    await user.type(name, 'Saved-Copy')
     await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
 
-    expect(
-      await screen.findByText('Use lowercase letters, digits and underscores, starting with a letter (max 64 characters).'),
-    ).toBeInTheDocument()
+    // The error alone gives the rule, once.
+    await waitFor(() => expect(name).toHaveAccessibleDescription(
+      'Use lowercase letters, digits and underscores, starting with a letter (max 64 characters).',
+    ))
     expect(convertersApi.createConverter).not.toHaveBeenCalled()
   })
 })
