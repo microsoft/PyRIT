@@ -2,7 +2,9 @@
 # Licensed under the MIT license.
 
 
+import asyncio
 import re
+import threading
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -751,38 +753,56 @@ def test_constructor_sets_no_underscore_existing_pdf_attribute(mock_pdf_path):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
-async def test_convert_async_offloads_pdf_build_off_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    import asyncio
-    import threading
-
-    converter = PDFConverter()
+async def test_convert_async_offloads_pdf_build_off_event_loop(
+    monkeypatch: pytest.MonkeyPatch, mock_pdf_path: Path
+) -> None:
     event_loop_thread = threading.current_thread()
-    worker_threads: list[threading.Thread] = []
+
+    # 1. Generated PDF path
+    converter = PDFConverter()
+    gen_threads: list[threading.Thread] = []
     original_generate = converter._generate_pdf
 
     def tracked_generate(content: str) -> bytes:
-        worker_threads.append(threading.current_thread())
+        gen_threads.append(threading.current_thread())
         return original_generate(content)
 
     monkeypatch.setattr(converter, "_generate_pdf", tracked_generate)
     result = await converter.convert_async(prompt="hello world")
-
     assert result.output_type == "binary_path"
-    assert len(worker_threads) == 1
-    assert worker_threads[0] is not event_loop_thread
-    assert asyncio.get_running_loop() is not None
+    assert len(gen_threads) == 1
+    assert gen_threads[0] is not event_loop_thread
+
+    # 2. Existing PDF overlay path
+    existing_converter = PDFConverter(
+        existing_pdf=mock_pdf_path,
+        injection_items=[{"page": 0, "x": 10, "y": 10, "text": "injected"}],
+    )
+    mod_threads: list[threading.Thread] = []
+    original_modify = existing_converter._modify_existing_pdf
+
+    def tracked_modify() -> bytes:
+        mod_threads.append(threading.current_thread())
+        return original_modify()
+
+    monkeypatch.setattr(existing_converter, "_modify_existing_pdf", tracked_modify)
+    existing_result = await existing_converter.convert_async(prompt="hello overlay")
+    assert existing_result.output_type == "binary_path"
+    assert len(mod_threads) == 1
+    assert mod_threads[0] is not event_loop_thread
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
-async def test_convert_async_existing_pdf_is_thread_safe_under_concurrency(mock_pdf_path) -> None:
-    import asyncio
-    from pathlib import Path
-
+async def test_convert_async_existing_pdf_is_thread_safe_under_concurrency(mock_pdf_path: Path) -> None:
     converter = PDFConverter(
         existing_pdf=mock_pdf_path,
         injection_items=[{"page": 0, "x": 10, "y": 10, "text": "injected"}],
     )
+
+    baseline = await converter.convert_async(prompt="baseline")
+    baseline_reader = PdfReader(BytesIO(Path(baseline.output_text).read_bytes()))
+    baseline_page_count = len(baseline_reader.pages)
 
     results = await asyncio.gather(
         *(converter.convert_async(prompt=f"prompt-{idx}") for idx in range(5))
@@ -791,4 +811,9 @@ async def test_convert_async_existing_pdf_is_thread_safe_under_concurrency(mock_
     assert len(results) == 5
     for res in results:
         assert res.output_type == "binary_path"
-        assert Path(res.output_text).read_bytes().startswith(b"%PDF-")
+        pdf_bytes = Path(res.output_text).read_bytes()
+        assert pdf_bytes.startswith(b"%PDF-")
+        reader = PdfReader(BytesIO(pdf_bytes))
+        assert len(reader.pages) == baseline_page_count
+        extracted = reader.pages[0].extract_text() or ""
+        assert "injected" in extracted
