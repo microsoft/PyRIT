@@ -262,8 +262,8 @@ labels; scorers can be saved through the API.
 
 **New technique** saves the technique the same way. Give it a registry name of
 lowercase letters, digits, and underscores that starts with a letter. A technique
-that uses a Temporary converter or a Temporary adversarial target is created as
-**Temporary** instead, and the dialog says why. Settings changed for a single run
+the backend can't save, such as one that uses a Temporary converter or adversarial
+target, is created as **Temporary** instead, and the dialog says why. Settings changed for a single run
 in Scanner stay with that run. The Techniques table uses the same three labels. To
 remove a saved technique, delete its file (`techniques/<name>.json`) in
 `registry_recipes_source`, then restart the backend. Use
