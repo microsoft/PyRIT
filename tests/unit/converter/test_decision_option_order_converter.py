@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import json
+import random
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -61,11 +62,13 @@ async def test_reorder_keeps_option_definitions_and_state():
 
 
 async def test_shuffle_always_changes_order():
-    # Seed 15 first draws the original order, so this case also runs the redraw.
-    result = await DecisionOptionOrderConverter(
-        order=DecisionOptionOrderConverter.Order.SHUFFLE, seed=15
-    ).convert_async(prompt=_request({"route": _choice()}))
+    # Seed 39 first draws the original order, so this case also runs the redraw.
+    with patch.object(random.Random, "shuffle", autospec=True, side_effect=random.Random.shuffle) as shuffle:
+        result = await DecisionOptionOrderConverter(
+            order=DecisionOptionOrderConverter.Order.SHUFFLE, seed=39
+        ).convert_async(prompt=_request({"route": _choice()}))
 
+    assert shuffle.call_count == 2
     order = _order(result.output_text)
     assert order != list(_OPTIONS)
     assert sorted(order) == sorted(_OPTIONS)
@@ -75,11 +78,13 @@ async def test_shuffle_always_changes_order():
 async def test_two_options_are_swapped(order: DecisionOptionOrderConverter.Order):
     options = {"yes": "Escalate to a human.", "no": "Do not escalate."}
 
-    # With seed 1 the first shuffle keeps the original order, so SHUFFLE has to redraw.
-    result = await DecisionOptionOrderConverter(order=order, seed=1).convert_async(
-        prompt=_request({"route": _choice(options)})
-    )
+    # With seed 1 the first two shuffles keep the original order, so SHUFFLE has to redraw.
+    with patch.object(random.Random, "shuffle", autospec=True, side_effect=random.Random.shuffle) as shuffle:
+        result = await DecisionOptionOrderConverter(order=order, seed=1).convert_async(
+            prompt=_request({"route": _choice(options)})
+        )
 
+    assert shuffle.call_count == (3 if order is DecisionOptionOrderConverter.Order.SHUFFLE else 0)
     assert _order(result.output_text) == ["no", "yes"]
 
 
