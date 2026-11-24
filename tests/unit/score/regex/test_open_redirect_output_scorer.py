@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import time
 from unittest.mock import MagicMock, patch
 from urllib.parse import unquote, urlsplit
 
@@ -102,6 +103,10 @@ from pyrit.score import OpenRedirectOutputScorer
         "https://example.com/login?redirect=data:text/javascript;base64,YWxlcnQoMSk=",
         "https://example.com/login?redirect=\x00\x1fjavascript:alert(1)",
         "Location: %6a%61%76%61%73%63%72%69%70%74:alert(1)",
+        "?next=/home&redirect=%6a%61%76%61%73%63%72%69%70%74:alert(1)",
+        "Location: https://example.com/?redirect=java%09script:alert(1)",
+        "Location: https://example.com/?redirect=java\tscript:alert(1)",
+        '?next=/home&url="data:text/html,<script>alert(1)</script>"',
     ],
 )
 async def test_open_redirect_detected(text: str, patch_central_database):
@@ -162,6 +167,7 @@ async def test_open_redirect_detected(text: str, patch_central_database):
         "redirect=data:text/html,",
         "redirect=javaſcript:alert(1)",
         "redirect=\xa0javascript:alert(1)",
+        "url=data:text/html&other=1,2",
     ],
 )
 async def test_open_redirect_not_detected(text: str, patch_central_database):
@@ -270,3 +276,28 @@ async def test_open_redirect_scorer_adds_to_memory():
         await scorer.score_text_async(text="nothing here")
 
         memory.add_scores_to_memory_async.assert_called_once()
+
+
+@pytest.mark.parametrize("copy_defaults", [False, True])
+@pytest.mark.usefixtures("patch_central_database")
+async def test_open_redirect_custom_patterns_do_not_normalize_async(*, copy_defaults: bool) -> None:
+    default_patterns = OpenRedirectOutputScorer._DEFAULT_PATTERNS
+    assert default_patterns is not None
+    patterns = dict(default_patterns) if copy_defaults else {"Marker": "LOCAL_MARKER"}
+    scorer = OpenRedirectOutputScorer(patterns=patterns)
+    text = "redirect=%6a%61%76%61%73%63%72%69%70%74:alert(1)"
+
+    assert (await scorer.score_text_async(text))[0].get_value() is False
+    if not copy_defaults:
+        assert (await scorer.score_text_async("LOCAL_MARKER"))[0].get_value() is True
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_pseudo_protocol_padding_does_not_catastrophic_backtrack() -> None:
+    scorer = OpenRedirectOutputScorer()
+    payload = "url=" + " " * 8000 + "not_matching"
+    start = time.perf_counter()
+    score = (await scorer.score_text_async(payload))[0]
+    duration = time.perf_counter() - start
+    assert score.get_value() is False
+    assert duration < 0.5, f"Pseudo-protocol padding check took too long: {duration:.3f}s"
