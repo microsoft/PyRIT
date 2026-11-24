@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from pyrit.models.score._argument_paths import read_argument
 from pyrit.score.text_matching import match_text
 
 if TYPE_CHECKING:
@@ -48,7 +49,8 @@ def match_tool_arguments(*, requirement: ToolCallRequirement, arguments: Mapping
 
     A requirement without argument constraints is satisfied by any call. Arguments that were not
     retained cannot show a match, so they leave the call undetermined. A missing argument, or one
-    that does not match, decides the call.
+    that does not match, decides the call. A dotted name reads a nested field; a key that is
+    missing, or a value on the way that is not an object, means the field is missing.
 
     Returns:
         bool | None: True when every constraint matches, false when one fails, otherwise None.
@@ -58,9 +60,8 @@ def match_tool_arguments(*, requirement: ToolCallRequirement, arguments: Mapping
     if arguments is None:
         return None
     for constraint in requirement.arguments:
-        if constraint.name not in arguments:
-            return False
-        if not match_text(matcher=constraint.matcher, text=_argument_text(arguments[constraint.name])):
+        found, value = read_argument(arguments, path=constraint.name)
+        if not found or not match_text(matcher=constraint.matcher, text=_argument_text(value)):
             return False
     return True
 

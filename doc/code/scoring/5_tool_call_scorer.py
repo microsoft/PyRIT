@@ -472,6 +472,12 @@ print(f"Trace the backend does not have: {missing.acquisition.value}")
 # and `true`, and `"null"` and `null`. One execution of the tool must satisfy every
 # argument requirement.
 #
+# Arguments are often nested JSON. A dotted name such as `recipient.email` reads
+# a nested field, one exact object key per segment. A key that is missing, or a
+# value on the way that is not an object, means the field is missing. Paths do not
+# index arrays and cannot name a key that itself contains a dot; to check inside
+# an array, match the array's compact JSON text with `Contains` or `Regex`.
+#
 # ```python
 # ToolCallRequirement(
 #     name="send_email",

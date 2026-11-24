@@ -9,12 +9,13 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from pyrit.models.score.condition import ConditionTuple  # noqa: TC001  (runtime Pydantic annotation)
+from pyrit.models.score.condition import (
+    _PERSISTED_VALIDATION_CONTEXT,
+    ConditionTuple,
+)
 
 if TYPE_CHECKING:
     from pydantic import ValidationInfo
-
-_PERSISTED_VALIDATION_CONTEXT = "require_scoring_expectation_schema_version"
 
 
 class ScoringExpectation(BaseModel):
