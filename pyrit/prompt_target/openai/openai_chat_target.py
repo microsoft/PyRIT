@@ -33,13 +33,7 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     detect_response_content,
     save_audio_response_async,
 )
-from pyrit.prompt_target.common.chat_completions_tool_loop import (
-    chat_tool_definition,
-    send_with_tools_async,
-    tool_identifier_params,
-    validate_passthrough_tool_conflicts,
-    validate_tool_loop_settings,
-)
+from pyrit.prompt_target.common.chat_completions_tool_loop import _ChatCompletionsToolLoopMixin
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
     TargetCapabilities,
@@ -61,7 +55,7 @@ from pyrit.prompt_target.openai.openai_target import OpenAITarget
 logger = logging.getLogger(__name__)
 
 
-class OpenAIChatTarget(OpenAITarget):
+class OpenAIChatTarget(_ChatCompletionsToolLoopMixin, OpenAITarget):
     """
     Facilitates multimodal (image and text) input and text output generation.
 
@@ -183,7 +177,8 @@ class OpenAIChatTarget(OpenAITarget):
 
         Raises:
             PyritException: If a generation parameter is out of bounds or a penalty is non-finite.
-            ValueError: If max_tool_rounds is not a nonnegative integer, or tools run locally with n above 1.
+            ValueError: If max_tool_rounds is not a nonnegative integer, tools run locally with n above 1, or
+                ``extra_body_parameters["extra_body"]`` declares tools while tools are configured.
             RateLimitException: If the target is rate-limited.
             httpx.HTTPStatusError: If the request fails with a 400 Bad Request or 429 Too Many Requests error.
             json.JSONDecodeError: If the response from the target is not valid JSON.
@@ -194,10 +189,13 @@ class OpenAIChatTarget(OpenAITarget):
         validate_top_p(top_p)
         validate_presence_penalty(presence_penalty)
         validate_frequency_penalty(frequency_penalty)
-        validate_tool_loop_settings(
+        self._init_tools(
+            tools=tools,
+            tool_providers=tool_providers,
+            execute_tools=execute_tools,
             max_tool_rounds=max_tool_rounds,
-            runs_tools=execute_tools and bool(tools or tool_providers),
-            n=(extra_body_parameters or {}).get("n", n),
+            n=n,
+            extra_body_parameters=extra_body_parameters,
         )
 
         self._temperature = temperature
@@ -208,11 +206,6 @@ class OpenAIChatTarget(OpenAITarget):
         self._seed = seed
         self._n = n
         self._audio_response_config = audio_response_config
-        self._direct_tools = list(tools or [])
-        self._tool_providers = list(tool_providers or [])
-        self._execute_tools = execute_tools
-        self._max_tool_rounds = max_tool_rounds
-        self._suppress_tools = False
 
         # Merge audio config into extra_body_parameters if provided
         if audio_response_config:
@@ -252,12 +245,7 @@ class OpenAIChatTarget(OpenAITarget):
                 "seed": self._seed,
                 "n": self._n,
                 "extra_body_parameters": self._extra_body_parameters,
-                **tool_identifier_params(
-                    tools=self._direct_tools,
-                    tool_providers=self._tool_providers,
-                    execute_tools=self._execute_tools,
-                    max_tool_rounds=self._max_tool_rounds,
-                ),
+                **self._tool_identifier_params(),
             },
         )
 
@@ -283,38 +271,11 @@ class OpenAIChatTarget(OpenAITarget):
             "generativelanguage.googleapis.com": "https://generativelanguage.googleapis.com/v1beta/openai",
         }
 
-    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
-        """
-        Send the conversation, running the model's calls to configured tools locally.
-
-        Args:
-            normalized_conversation (list[Message]): The full conversation
-                (history + current message) after running the normalization
-                pipeline. The current message is the last element.
-
-        Returns:
-            list[Message]: Every response and tool result for the normalizer to persist, in order.
-        """
-        request = normalized_conversation[-1]
-        return await send_with_tools_async(
-            normalized_conversation=normalized_conversation,
-            tools=() if self._suppress_tools else self._direct_tools,
-            tool_providers=() if self._suppress_tools else self._tool_providers,
-            execute_tools=self._execute_tools,
-            max_tool_rounds=self._max_tool_rounds,
-            validate_tools=lambda tools: validate_passthrough_tool_conflicts(
-                tools=tools, extra_body_parameters=self._extra_body_parameters or {}
-            ),
-            send_completion_async=lambda conversation, tools: self._send_completion_async(
-                conversation=conversation, request=request, tools=tools
-            ),
-        )
-
     @pyrit_target_retry
     @limit_requests_per_minute
     async def _send_completion_async(
         self, *, conversation: list[Message], request: Message, tools: Sequence[Tool]
-    ) -> list[Message]:
+    ) -> Message:
         message_piece: MessagePiece = request.message_pieces[0]
         json_config = self._get_json_response_config(message_piece=message_piece)
 
@@ -322,11 +283,10 @@ class OpenAIChatTarget(OpenAITarget):
 
         body = await self._construct_request_body_async(conversation=conversation, json_config=json_config, tools=tools)
         self._prepare_request_generation(body=body, request=request)
-        response = await self._handle_openai_request_async(
+        return await self._handle_openai_request_async(
             api_call=lambda: self._client.chat.completions.create(**body),
             request=request,
         )
-        return [response]
 
     def _detect_response_content(self, message: Any) -> tuple[bool, bool, bool]:
         """
@@ -540,8 +500,7 @@ class OpenAIChatTarget(OpenAITarget):
 
         # Filter out None values
         body: dict[str, Any] = {k: v for k, v in body_parameters.items() if v is not None}
-        if tools:
-            body["tools"] = [*body.get("tools", []), *(chat_tool_definition(tool) for tool in tools)]
+        self._add_tool_definitions(body=body, tools=tools)
         return body
 
     def _build_response_format(self, json_config: JsonResponseConfig) -> dict[str, Any] | None:

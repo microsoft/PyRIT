@@ -4,6 +4,7 @@
 import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,6 +15,7 @@ from pyrit.exceptions import RateLimitException
 from pyrit.models import JsonResponseConfig, Message, MessagePiece, ToolExecutionMetadata
 from pyrit.prompt_target import (
     FunctionTool,
+    LiteLLMChatTarget,
     MCPToolProvider,
     OpenAIChatTarget,
     OpenAIResponseTarget,
@@ -196,6 +198,37 @@ def test_openai_target_copy_adds_tools_to_a_tool_less_source(target_class: type[
     assert copy._max_tool_rounds == 2
     assert not source._direct_tools
     assert copy.get_identifier().params["tools"]
+
+
+def _chat_tool_target(target_class: type[OpenAIChatTarget | LiteLLMChatTarget], **kwargs: Any) -> object:
+    if target_class is LiteLLMChatTarget:
+        return LiteLLMChatTarget(model_name="openai/gpt-4o", **kwargs)
+    return OpenAIChatTarget(model_name="gpt-4o", endpoint="https://mock.azure.com", api_key="mock-key", **kwargs)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, LiteLLMChatTarget])
+@pytest.mark.parametrize(
+    ("nested", "match"),
+    [({"n": 2}, "n=1"), ({"tools": []}, r"extra_body_parameters\['tools'\]")],
+)
+def test_chat_tool_targets_reject_nested_settings_that_override_local_tools(
+    *, target_class: type[OpenAIChatTarget | LiteLLMChatTarget], nested: dict[str, Any], match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        _chat_tool_target(target_class, tools=[add], extra_body_parameters={"extra_body": nested})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, LiteLLMChatTarget])
+@pytest.mark.parametrize(
+    ("settings", "nested"),
+    [({"tools": [add], "execute_tools": False}, {"n": 2}), ({}, {"n": 2, "tools": []})],
+)
+def test_chat_tool_targets_accept_nested_settings_without_local_execution(
+    *, target_class: type[OpenAIChatTarget | LiteLLMChatTarget], settings: dict[str, Any], nested: dict[str, Any]
+) -> None:
+    _chat_tool_target(target_class, **settings, extra_body_parameters={"extra_body": nested})
 
 
 async def test_identifier_does_not_depend_on_tool_discovery(patch_central_database) -> None:

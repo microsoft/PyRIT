@@ -40,13 +40,7 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     is_content_filter_response,
     validate_chat_completion_response,
 )
-from pyrit.prompt_target.common.chat_completions_tool_loop import (
-    chat_tool_definition,
-    send_with_tools_async,
-    tool_identifier_params,
-    validate_passthrough_tool_conflicts,
-    validate_tool_loop_settings,
-)
+from pyrit.prompt_target.common.chat_completions_tool_loop import _ChatCompletionsToolLoopMixin
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import (
     TargetCapabilities,
@@ -148,7 +142,7 @@ def _provider_specific_headers(provider_specific_header: Any) -> dict[str, str]:
     return headers
 
 
-class LiteLLMChatTarget(PromptTarget):
+class LiteLLMChatTarget(_ChatCompletionsToolLoopMixin, PromptTarget):
     """
     Chat target that uses the LiteLLM SDK to access 100+ LLM providers.
 
@@ -292,16 +286,14 @@ class LiteLLMChatTarget(PromptTarget):
         validate_top_p(top_p)
         validate_presence_penalty(presence_penalty)
         validate_frequency_penalty(frequency_penalty)
-        validate_tool_loop_settings(
+        self._init_tools(
+            tools=tools,
+            tool_providers=tool_providers,
+            execute_tools=execute_tools,
             max_tool_rounds=max_tool_rounds,
-            runs_tools=execute_tools and bool(tools or tool_providers),
-            n=(extra_body_parameters or {}).get("n", n),
+            n=n,
+            extra_body_parameters=extra_body_parameters,
         )
-        self._direct_tools = list(tools or [])
-        self._tool_providers = list(tool_providers or [])
-        self._execute_tools = execute_tools
-        self._max_tool_rounds = max_tool_rounds
-        self._suppress_tools = False
 
         super().__init__(
             model_name=resolved_model,
@@ -449,12 +441,7 @@ class LiteLLMChatTarget(PromptTarget):
                 "n": self._n,
                 "stop": self._stop,
                 "extra_body_parameters": self._extra_body_parameters,
-                **tool_identifier_params(
-                    tools=self._direct_tools,
-                    tool_providers=self._tool_providers,
-                    execute_tools=self._execute_tools,
-                    max_tool_rounds=self._max_tool_rounds,
-                ),
+                **self._tool_identifier_params(),
             },
         )
 
@@ -480,27 +467,10 @@ class LiteLLMChatTarget(PromptTarget):
 
     # Not decorated with ``pyrit_target_retry``: LiteLLM owns transient/rate-limit retry via
     # ``num_retries`` (see ``__init__``). Stacking both would multiply the retry count.
-    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
-        request = normalized_conversation[-1]
-        return await send_with_tools_async(
-            normalized_conversation=normalized_conversation,
-            tools=() if self._suppress_tools else self._direct_tools,
-            tool_providers=() if self._suppress_tools else self._tool_providers,
-            execute_tools=self._execute_tools,
-            max_tool_rounds=self._max_tool_rounds,
-            validate_tools=self._validate_tool_definitions,
-            send_completion_async=lambda conversation, tools: self._send_completion_async(
-                conversation=conversation, request=request, tools=tools
-            ),
-        )
-
-    def _validate_tool_definitions(self, tools: Sequence[Tool]) -> None:
-        validate_passthrough_tool_conflicts(tools=tools, extra_body_parameters=self._extra_body_parameters or {})
-
     @limit_requests_per_minute
     async def _send_completion_async(
         self, *, conversation: list[Message], request: Message, tools: Sequence[Tool]
-    ) -> list[Message]:
+    ) -> Message:
         litellm = self._import_litellm()
 
         message = request
@@ -512,8 +482,7 @@ class LiteLLMChatTarget(PromptTarget):
         messages = await self._build_chat_messages_async(conversation)
         api_key = await self._resolve_api_key_async()
         body = self._construct_request_body(messages=messages, json_config=json_config, api_key=api_key)
-        if tools:
-            body["tools"] = [*body.get("tools", []), *(chat_tool_definition(tool) for tool in tools)]
+        self._add_tool_definitions(body=body, tools=tools)
         # Applied after the passthrough merge so ``extra_body_parameters`` cannot drop the context.
         # LiteLLM merges ``headers`` with ``extra_headers`` and then the provider-specific headers,
         # so all three are checked for manual values.
@@ -531,7 +500,8 @@ class LiteLLMChatTarget(PromptTarget):
         try:
             response = await litellm.acompletion(**body)
         except Exception as exc:
-            return self._handle_litellm_exception(exc=exc, request=request_piece)
+            [error_message] = self._handle_litellm_exception(exc=exc, request=request_piece)
+            return error_message
 
         # Content filtering is red-team critical: surface it as an error Message (not an
         # exception) so attacks can continue and blocked-content scorers can still score.
@@ -546,7 +516,7 @@ class LiteLLMChatTarget(PromptTarget):
             # otherwise be lost precisely where a red teamer most wants to see it.
             capture_usage_and_finish_reason(pieces=filter_message.message_pieces, response=response)
             self._capture_response_cost(pieces=filter_message.message_pieces, response=response)
-            return [filter_message]
+            return filter_message
 
         # A response cut off at the token limit may legitimately carry a partial answer (or no
         # content at all), so skip the strict empty-response validation for it — mirroring
@@ -555,7 +525,7 @@ class LiteLLMChatTarget(PromptTarget):
             warn_truncated_response(signal="finish_reason='length'", limit_parameter="max_tokens")
         else:
             validate_chat_completion_response(response=response)
-        return [await self._construct_message_from_response_async(response=response, request=request_piece)]
+        return await self._construct_message_from_response_async(response=response, request=request_piece)
 
     async def _resolve_api_key_async(self) -> str | None:
         """
