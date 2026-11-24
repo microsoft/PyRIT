@@ -22,7 +22,7 @@ def test_taxonomy_version_read_from_yaml() -> None:
     assert HARM_CATEGORY_TAXONOMY_VERSION == "v1.0.0"
 
 
-@pytest.mark.parametrize("data", [None, {}])
+@pytest.mark.parametrize("data", [None, {}, {"version": None, "definitions": None}])
 def test_parse_taxonomy_defaults_missing_values(data: object) -> None:
     assert _parse_taxonomy(data) == ("v1.0.0", {})
 
@@ -32,7 +32,7 @@ def test_parse_taxonomy_defaults_missing_values(data: object) -> None:
     [
         ([], "taxonomy must be a mapping"),
         ({"version": 1}, "version must be a string"),
-        ({"definitions": None}, "definitions must map strings to strings"),
+        ({"definitions": []}, "definitions must map strings to strings"),
         ({"definitions": {1: "definition"}}, "definitions must map strings to strings"),
         ({"definitions": {"OTHER": False}}, "definitions must map strings to strings"),
     ],

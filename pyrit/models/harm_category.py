@@ -34,12 +34,16 @@ def _parse_taxonomy(data: object) -> tuple[str, dict[str, str]]:
     if not isinstance(data, dict):
         raise ValueError("The harm category taxonomy must be a mapping.")
 
-    version = data.get("version", "v1.0.0")
+    version = data.get("version")
+    if version is None:
+        version = "v1.0.0"
     if not isinstance(version, str):
         raise ValueError("The harm category taxonomy version must be a string.")
 
     definitions: dict[str, str] = {}
-    raw_definitions = data.get("definitions", {})
+    raw_definitions = data.get("definitions")
+    if raw_definitions is None:
+        raw_definitions = {}
     if not isinstance(raw_definitions, dict):
         raise ValueError("The harm category definitions must map strings to strings.")
     for key, value in raw_definitions.items():
