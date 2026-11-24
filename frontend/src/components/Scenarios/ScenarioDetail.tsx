@@ -100,6 +100,7 @@ import {
   type ScenarioLaunchInput,
   scenarioDynamicParameters,
   linkedDatasetProblem,
+  omittedLinkedDatasetsMessage,
   minimumSelectionMessage,
   requiresDatasetSelection,
   supportsParameter,
@@ -603,6 +604,23 @@ function ScenarioLaunchForm({
   )
   const datasetMetadata = useScenarioDatasets(scenario.scenario_name,
     supportsDatasets || scenarioDatasetDefaults(scenario).sources.length > 0)
+  // A compatible-only listing names every stored dataset this scenario can use, so a linked name it omits
+  // can't run. Once the first listing succeeds, leave those names out and say why, rather than keep a row
+  // that only fails at launch. The picker is disabled until then, so no edit happens before this. Adjusted
+  // during render (React's "adjust state when props change" pattern) rather than in an effect.
+  const [omittedLinkedNames, setOmittedLinkedNames] = useState<string[] | null>(null)
+  const compatibleListingReady = runtime.ready && compatibleDatasetsOnly && takesLinkedDatasets
+    && !datasetMetadata.loading && datasetMetadata.error === null
+  if (omittedLinkedNames === null && compatibleListingReady && linkedNames.length > 0) {
+    const omitted = linkedNames.filter((name) => !datasetMetadata.items.some((item) => item.name === name))
+    setOmittedLinkedNames(omitted)
+    if (omitted.length > 0) {
+      setDatasetEdits({
+        ...datasetEdits,
+        sources: (datasetEdits.sources ?? []).filter((source) => !omitted.includes(source.name)),
+      })
+    }
+  }
   const runEstimate = useScenarioRunEstimate({
     scenarioName: scenario.scenario_name,
     request: estimateRequest,
@@ -899,6 +917,11 @@ function ScenarioLaunchForm({
                   {linkedDatasetError}{' '}
                   <Link to={pathWithoutDatasetLinks}>Open without the linked datasets</Link>
                 </MessageBarBody>
+              </MessageBar>
+            )}
+            {omittedLinkedNames !== null && omittedLinkedNames.length > 0 && (
+              <MessageBar intent="warning" data-testid="omitted-linked-datasets">
+                <MessageBarBody>{omittedLinkedDatasetsMessage(omittedLinkedNames)}</MessageBarBody>
               </MessageBar>
             )}
             {(staleSelection || (targetName && unavailableSelection)) && (

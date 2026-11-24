@@ -1391,12 +1391,14 @@ class Scenario(ABC):
         """
         Find the groups each selected technique and the baseline can use, with the checks execution applies.
 
+        The optional baseline only adds comparison units, so groups it can't use never fail the RAISE policy.
+
         Returns:
             PopulationCoverage: The groups a selected technique can use, and those the baseline can also use.
 
         Raises:
-            IncompatibleTechniqueError: If no selected technique can run, or a technique or the baseline
-                would skip groups under the RAISE policy. The message names each technique's reasons.
+            IncompatibleTechniqueError: If no selected technique can run, or a selected technique would
+                skip groups under the RAISE policy. The message names each technique's reasons.
         """
         usable_ids: set[int] = set()
         eligible_ids: set[int] = set()
@@ -1419,13 +1421,14 @@ class Scenario(ABC):
                 usable_ids.update(id(group) for group in usable)
                 reasons.extend(f"Dataset '{dataset_name}': {reason}" for reason in skipped)
         eligible_ids.update(usable_ids)
+        baseline_reasons: list[str] = []
         if self._include_baseline:
             for dataset_name, groups in population.items():
                 usable, skipped = assess_technique_groups(
                     name="baseline", groups=groups, requirements=self.get_baseline_dataset_requirements()
                 )
                 eligible_ids.update(id(group) for group in usable)
-                reasons.extend(f"Dataset '{dataset_name}': {reason}" for reason in skipped)
+                baseline_reasons.extend(f"Dataset '{dataset_name}': {reason}" for reason in skipped)
         if self._scenario_techniques and not usable_ids:
             summary = (
                 "No usable selected techniques. A usable baseline alone is not enough; select a suitable "
@@ -1433,6 +1436,7 @@ class Scenario(ABC):
             )
         elif not eligible_ids:
             summary = "No selected technique or baseline has usable inputs."
+            reasons.extend(baseline_reasons)
         elif reasons and self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
             summary = "The incompatible technique policy is 'raise', and some selected groups can't run."
         else:

@@ -257,15 +257,25 @@ async def test_strict_metadata_validation_precedes_sampling_and_cannot_be_bypass
 
 
 @pytest.mark.parametrize("policy", ["skip", "raise"])
-async def test_baseline_and_each_technique_follow_skip_or_raise_async(policy: str) -> None:
+async def test_each_selected_technique_follows_skip_or_raise_async(policy: str) -> None:
     scenario = _scenario(groups=_groups(), policy=policy)
     if policy == "skip":
         await scenario.get_run_size_estimate_async()
         return
     with pytest.raises(ValueError, match="policy is 'raise'") as error:
         await scenario.get_run_size_estimate_async()
-    assert all(f"'{name}' skips 1 group" in str(error.value) for name in ("user_prompt", "baseline"))
+    assert "'user_prompt' skips 1 group" in str(error.value)
     assert "'objective_only' skips 2 group" in str(error.value)
+    assert "'baseline'" not in str(error.value)
+
+
+async def test_optional_baseline_skips_cases_without_a_user_prompt_under_raise_async() -> None:
+    # The default package runs every case; only the baseline lacks the tester-only case's user prompt.
+    scenario = _package_scenario(groups=_groups())
+    scenario.set_params_from_args(args={**scenario.params, "incompatible_technique_policy": "raise"})
+    await scenario.get_run_size_estimate_async()
+    await scenario.initialize_async()
+    assert _units_by_technique(scenario) == {"assert_package": 3, "baseline": 2}
 
 
 async def test_sampling_retains_usable_technique_input_instead_of_only_baseline_cases_async() -> None:

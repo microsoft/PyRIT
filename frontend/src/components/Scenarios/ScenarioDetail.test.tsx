@@ -3532,6 +3532,53 @@ describe('ScenarioDetail', () => {
       expect(screen.queryByRole('switch', { name: 'Show incompatible' })).not.toBeInTheDocument()
     })
 
+    describe('on a compatible-only scenario', () => {
+      const ASSERT_PATH = '/scanner/launch/foundry.assert_policy'
+      beforeEach(() => {
+        mockGetScenario.mockResolvedValue(makeScenario({
+          scenario_name: 'foundry.assert_policy',
+          dataset_options: {
+            mode: 'any', allowed_names: [], per_dataset_limit: true, total_limit: true, supports_overrides: true,
+            filters: true, compatible_only: true,
+          },
+        }))
+      })
+
+      it('leaves out linked datasets the compatible listing omits and says why', async () => {
+        const user = userEvent.setup()
+        renderDetail(`${ASSERT_PATH}?dataset=ds_a&dataset=other_policy`)
+
+        expect(await screen.findByTestId('omitted-linked-datasets')).toHaveTextContent(
+          "The linked dataset other_policy isn't a stored dataset this scenario can use, so it wasn't selected.",
+        )
+        expect(screen.getByRole('button', { name: 'Remove ds_a' })).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Remove other_policy' })).not.toBeInTheDocument()
+        expect(screen.queryByText('Not in the compatible list')).not.toBeInTheDocument()
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+        await confirmRunPreview(user)
+
+        await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+        expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ sources: [{ name: 'ds_a' }] })
+      })
+
+      it('waits for a successful listing before leaving out linked datasets', async () => {
+        const user = userEvent.setup()
+        jest.mocked(scenariosApi.listCompatibleDatasets).mockRejectedValueOnce(new Error('Listing offline'))
+        renderDetail(`${ASSERT_PATH}?dataset=other_a&dataset=other_b`)
+
+        expect(await screen.findByText(/Listing offline/)).toBeInTheDocument()
+        expect(screen.queryByTestId('omitted-linked-datasets')).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Remove other_a' })).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Retry loading compatible datasets' }))
+
+        expect(await screen.findByTestId('omitted-linked-datasets')).toHaveTextContent(
+          "The linked datasets other_a, other_b aren't stored datasets this scenario can use, so they weren't selected.",
+        )
+        expect(screen.queryByRole('table', { name: 'Selected datasets' })).not.toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: 'Add dataset' })).toBeEnabled()
+      })
+    })
+
     it('keeps every linked dataset name, including unknown ones, for the server to validate', async () => {
       const user = userEvent.setup()
       renderDetail(`${SCENARIO_PATH}?dataset=ds_a&dataset=missing_set&dataset=ds_b&dataset=ds_a`)

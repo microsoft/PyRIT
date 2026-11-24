@@ -686,7 +686,9 @@ class AssertPolicy(Scenario):
         """
         Send each group's stored system and user prompts once, judged against that group's policy.
 
-        This is ASSERT's prompt case. Groups without a stored user prompt are skipped.
+        This is ASSERT's prompt case. Groups without a stored user prompt are skipped under either
+        incompatible technique policy: the baseline is an optional comparison, so the RAISE policy doesn't
+        apply to it.
 
         Returns:
             list[AtomicAttack]: One baseline unit per group with a stored user prompt.
@@ -698,7 +700,7 @@ class AssertPolicy(Scenario):
                 seed_technique=None,
                 technique_name="baseline",
                 dataset_name="selected datasets",
-                policy=context.incompatible_technique_policy,
+                policy=IncompatibleTechniquePolicy.SKIP,
             ),
             key=self._get_generation_order,
         )

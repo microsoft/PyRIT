@@ -85,6 +85,14 @@ export function linkedDatasetProblem(names: readonly string[], takesLinkedDatase
   return null
 }
 
+/** Why the form left out linked names that a compatible-only scenario's listing omits. */
+export function omittedLinkedDatasetsMessage(names: readonly string[]): string {
+  const labels = names.map(linkedDatasetLabel).join(', ')
+  return names.length === 1
+    ? `The linked dataset ${labels} isn't a stored dataset this scenario can use, so it wasn't selected.`
+    : `The linked datasets ${labels} aren't stored datasets this scenario can use, so they weren't selected.`
+}
+
 /** The scenario-specific parameters the launch form renders, without the common ones. */
 export function scenarioDynamicParameters(scenario: RegisteredScenario): Parameter[] {
   return scenario.supported_parameters.filter(
