@@ -745,6 +745,15 @@ export interface CreateTechniqueRequest {
   adversarial_prompt_template?: string
 }
 
+/** A technique to check before saving it, as a create request would give it. */
+export interface TechniqueSaveabilityRequest {
+  type: string
+  params: Record<string, unknown>
+  request_converters?: string[]
+  response_converters?: string[]
+  adversarial_chat?: string
+}
+
 export interface SimulationSettings {
   num_turns?: number | null
   adversarial_chat_system_prompt?: string | null

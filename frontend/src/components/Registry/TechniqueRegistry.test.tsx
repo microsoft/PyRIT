@@ -14,7 +14,7 @@ installAutoRefreshTimers()
 let mockRuntime = { generation: 1, ready: true }
 jest.mock('@/hooks/useRuntime', () => ({ useRuntime: () => mockRuntime }))
 jest.mock('@/services/api', () => ({
-  techniquesApi: { listTechniques: jest.fn(), listTypes: jest.fn(), createTechnique: jest.fn() },
+  techniquesApi: { listTechniques: jest.fn(), listTypes: jest.fn(), createTechnique: jest.fn(), checkSaveability: jest.fn() },
   targetsApi: { listTargets: jest.fn() },
   convertersApi: { listConverters: jest.fn() },
 }))
@@ -80,6 +80,7 @@ describe('TechniqueRegistry', () => {
     techniques.listTechniques.mockResolvedValue(techniquePage([technique('first'), technique('second', 'RedTeamingAttack', ['advanced'])]))
     techniques.listTypes.mockResolvedValue(metadata)
     techniques.createTechnique.mockResolvedValue(technique('created'))
+    techniques.checkSaveability.mockResolvedValue({ not_saveable_reason: null })
     targets.listTargets.mockResolvedValue({
       items: [makeTarget({ target_registry_name: 'local' })], pagination: { limit: 200, has_more: false },
     })
@@ -405,6 +406,11 @@ describe('TechniqueRegistry', () => {
       { converter_id: 'rot13', origin: 'temporary',
         identifier: { class_name: 'ROT13Converter', class_module: 'pyrit.converter', hash: 'rot13', pyrit_version: '1' } },
     ] })
+    techniques.checkSaveability.mockImplementation(async (request) => ({
+      not_saveable_reason: request.request_converters?.includes('rot13')
+        ? "Uses temporary converter 'rot13', which won't exist after a restart."
+        : null,
+    }))
     render(tree())
     const user = await openCreate()
     await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'encoded')
@@ -415,7 +421,7 @@ describe('TechniqueRegistry', () => {
     await user.click(screen.getByRole('combobox', { name: 'Request converters' }))
     await user.click(screen.getByTestId('converter-option-rot13'))
 
-    expect(screen.getByText("This technique can't be saved")).toBeInTheDocument()
+    expect(await screen.findByText("This technique can't be saved")).toBeInTheDocument()
     expect(screen.getByText(/Uses temporary converter 'rot13', which won't exist after a restart\. A Temporary technique is gone after the backend restarts or is reinitialized\./)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
     await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(1))
@@ -428,16 +434,49 @@ describe('TechniqueRegistry', () => {
     targets.listTargets.mockResolvedValue({
       items: [makeTarget({ target_registry_name: 'local', origin: 'temporary' })], pagination: { limit: 200, has_more: false },
     })
+    techniques.checkSaveability.mockImplementation(async (request) => ({
+      not_saveable_reason: request.adversarial_chat === 'local'
+        ? "Uses temporary target 'local', which won't exist after a restart."
+        : null,
+    }))
     render(tree())
     const user = await openCreate()
     await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'adversarial')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'RedTeamingAttack')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Adversarial target' }), 'local')
 
-    expect(screen.getByText(/Uses temporary target 'local', which won't exist after a restart\./)).toBeInTheDocument()
+    expect(await screen.findByText(/Uses temporary target 'local', which won't exist after a restart\./)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
     await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(1))
     expect(techniques.createTechnique.mock.calls[0][0]).toMatchObject({ adversarial_chat: 'local', persist: false })
+  })
+
+  it('asks the backend whether the technique can be saved', async () => {
+    render(tree())
+    const user = await openCreate()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
+    await user.click(screen.getByRole('combobox', { name: 'Request converters' }))
+    await user.click(screen.getByTestId('converter-option-b64'))
+
+    await waitFor(() => expect(techniques.checkSaveability).toHaveBeenLastCalledWith(
+      { type: 'PromptSendingAttack', params: {}, request_converters: ['b64'], response_converters: [] },
+      expect.anything(),
+    ))
+    expect(screen.getByRole('button', { name: 'Save technique' })).toBeInTheDocument()
+  })
+
+  it('keeps offering Save when the saveability check fails', async () => {
+    techniques.checkSaveability.mockRejectedValue(new Error('Network Error'))
+    render(tree())
+    const user = await openCreate()
+    await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'offline')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
+    await waitFor(() => expect(techniques.checkSaveability).toHaveBeenCalled())
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Save technique' }))
+    await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(1))
+    expect(techniques.createTechnique.mock.calls[0][0]).toMatchObject({ name: 'offline', persist: true })
   })
 
   it('offers a Temporary technique when the server refuses to save it, until a value changes', async () => {

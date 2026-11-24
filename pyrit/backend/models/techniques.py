@@ -81,10 +81,20 @@ class TechniqueEditResponse(BaseModel):
     override: TechniqueOverride
 
 
-class CreateTechniqueRequest(BaseModel):
-    """Construct a deferred factory using existing registry references."""
+class TechniqueParametersRequest(BaseModel):
+    """The attack type, its parameters, and the registered entries that a technique is built from."""
 
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+
+    type: str = Field(min_length=1, max_length=256)
+    params: dict[IdentifierStr, JsonValue] = Field(default_factory=dict, max_length=MAX_ITEMS)
+    request_converters: list[IdentifierStr] | None = Field(default=None, max_length=MAX_ITEMS)
+    response_converters: list[IdentifierStr] | None = Field(default=None, max_length=MAX_ITEMS)
+    adversarial_chat: IdentifierStr | None = None
+
+
+class CreateTechniqueRequest(TechniqueParametersRequest):
+    """Construct a deferred factory using existing registry references."""
 
     name: TechniqueSelector
     persist: bool = Field(
@@ -95,13 +105,8 @@ class CreateTechniqueRequest(BaseModel):
             "underscores, and can only use saved converters and targets or ones from the server's configuration."
         ),
     )
-    type: str = Field(min_length=1, max_length=256)
-    params: dict[IdentifierStr, JsonValue] = Field(default_factory=dict, max_length=MAX_ITEMS)
     description: TextStr | None = None
     tags: list[TechniqueSelector] = Field(default_factory=list, max_length=MAX_ITEMS)
-    request_converters: list[IdentifierStr] | None = Field(default=None, max_length=MAX_ITEMS)
-    response_converters: list[IdentifierStr] | None = Field(default=None, max_length=MAX_ITEMS)
-    adversarial_chat: IdentifierStr | None = None
     adversarial_system_prompt: str | None = None
     adversarial_seed_prompt: str | None = None
     adversarial_prompt_template: str | None = None
@@ -137,3 +142,7 @@ class CreateTechniqueRequest(BaseModel):
             if self.private:
                 raise ValueError("A private technique can't be saved; leave out persist or private")
         return self
+
+
+class TechniqueSaveabilityRequest(TechniqueParametersRequest):
+    """A technique to check, as a create request would give it, without building or saving it."""

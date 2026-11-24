@@ -8,10 +8,12 @@ from functools import lru_cache
 
 from pyrit.backend.mappers.technique_mappers import technique_to_instance
 from pyrit.backend.models import PaginationInfo
+from pyrit.backend.models.common import SaveabilityResponse
 from pyrit.backend.models.techniques import (
     CreateTechniqueRequest,
     TechniqueInstance,
     TechniqueListResponse,
+    TechniqueSaveabilityRequest,
     TechniqueTypeEntry,
     TechniqueTypeResponse,
 )
@@ -24,6 +26,7 @@ from pyrit.models.catalog import (
 from pyrit.registry import (
     AttackRegistry,
     AttackTechniqueRegistry,
+    NotSaveableError,
     SavedEntryConflictError,
     check_saved_technique_async,
     creator_metadata,
@@ -142,6 +145,30 @@ class TechniqueService:
         return self._registry.create_factory(
             name=request.name, attack_type=request.type, technique_tags=request.tags, strict_json=True, **args
         )
+
+    async def check_saveability_async(self, *, request: TechniqueSaveabilityRequest) -> SaveabilityResponse:
+        """
+        Say whether a technique could be saved as asked, without building or saving it.
+
+        Only the attack type, its parameters, and the entries the technique names are checked, by the checks saving
+        runs before the technique is built. The name and tags aren't checked, and the technique isn't built, so no
+        reason means the save checks pass, not that creating the technique succeeds.
+
+        Args:
+            request (TechniqueSaveabilityRequest): The technique to check.
+
+        Returns:
+            SaveabilityResponse: Why the technique can't be saved, or no reason when the save checks pass.
+
+        Raises:
+            ValueError: If the attack type isn't registered, or an address an attack parameter gives isn't a full
+                http(s) or ws(s) address.
+        """
+        try:
+            await check_saved_technique_async(recipe=TechniqueRecipe(**request.model_dump(exclude_unset=True)))
+        except NotSaveableError as error:
+            return SaveabilityResponse(not_saveable_reason=error.cause)
+        return SaveabilityResponse()
 
     async def _save_async(
         self, *, request: CreateTechniqueRequest, owner: SavedEntryOwner | None, recipes_source: str | None

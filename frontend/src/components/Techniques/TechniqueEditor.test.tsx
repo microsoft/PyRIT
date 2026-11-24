@@ -1,8 +1,9 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
+import { SAVEABILITY_DEBOUNCE_MS } from '@/hooks/useSaveability'
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { TechniqueConfiguration, TechniqueOverride } from '@/types'
@@ -10,7 +11,7 @@ import type { TechniqueConfiguration, TechniqueOverride } from '@/types'
 import TechniqueEditor from './TechniqueEditor'
 
 jest.mock('@/services/api', () => ({
-  techniquesApi: { validateEdit: jest.fn(), createTechnique: jest.fn(), listTypes: jest.fn() },
+  techniquesApi: { validateEdit: jest.fn(), createTechnique: jest.fn(), listTypes: jest.fn(), checkSaveability: jest.fn() },
   targetsApi: { listTargets: jest.fn() },
   convertersApi: {
     listConverters: jest.fn(),
@@ -61,6 +62,7 @@ describe('TechniqueEditor', () => {
       { converter_id: 'rot13', identifier: { class_name: 'ROT13Converter', hash: 'rot' } },
     ] })
     jest.mocked(convertersApi.checkSaveability).mockResolvedValue({ not_saveable_reason: null })
+    techniques.checkSaveability.mockResolvedValue({ not_saveable_reason: null })
   })
 
   it('should offer techniques with required nullable numeric parameters', async () => {
@@ -126,12 +128,17 @@ describe('TechniqueEditor', () => {
     const user = userEvent.setup()
     const onApplied = jest.fn()
     render(tree(configuration(), onApplied))
-    await user.click(await screen.findByRole('button', { name: 'Apply to run' }))
+    const apply = await screen.findByRole('button', { name: 'Apply to run' })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, SAVEABILITY_DEBOUNCE_MS + 50))
+    })
+    await user.click(apply)
     await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
     expect(techniques.validateEdit).toHaveBeenCalledWith({
       source_name: 'role_play_movie_script', source_identity: 'source-identity', changes: {}, dependencies: {},
     })
     expect(techniques.createTechnique).not.toHaveBeenCalled()
+    expect(techniques.checkSaveability).not.toHaveBeenCalled()
   })
 
   it('should edit one duplicate converter temporarily and retain settings through reorder and reopen', async () => {

@@ -727,6 +727,7 @@ IDs remain available through the single-node and saved-conversation APIs.
 | `GET /api/techniques/types` | Attack-class parameters and supported converter/adversarial controls |
 | `GET /api/techniques/{name}` | Safe settings for one factory; 404 if not registered |
 | `POST /api/techniques` | Validate and register a basic runtime technique, saving it with `persist`; 201 on success |
+| `POST /api/techniques/saveability` | Say whether a technique could be saved, without building or saving it |
 
 The list accepts `limit` (default 50, range 1-200) and `cursor` (the last returned
 registry name). Results use registry-name order. Follow `pagination.next_cursor`
@@ -763,6 +764,13 @@ is Temporary. A name or tag that clashes with a
 registered technique receives **409**, and storage that can't be written receives **503**. Each listed technique's
 `origin` is `saved`, `configuration` (registered by a startup script), or `temporary`, as for targets. Settings
 changed for a single run aren't saved.
+
+`POST /api/techniques/saveability` takes the create request's `type`, `params`, `request_converters`,
+`response_converters`, and `adversarial_chat`, and answers `{"not_saveable_reason": ...}` with only the cause, or null
+when the save checks pass. It runs the checks saving runs before the technique is built, through
+`check_saved_technique_async` in `pyrit.registry`, and an unknown attack type or an invalid address gets the same
+**400** as create. It doesn't check the name or tags, and the technique isn't built, so null doesn't mean the create
+succeeds.
 
 The basic GUI supports scalar inputs and one level of declared structured settings.
 It hides nested structured settings that the shared resolver cannot construct.

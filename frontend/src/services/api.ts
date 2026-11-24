@@ -26,6 +26,7 @@ import type {
   CreateTechniqueRequest,
   TechniqueInstance,
   TechniqueListResponse,
+  TechniqueSaveabilityRequest,
   TechniqueTypeResponse,
   TechniqueConfiguration,
   TechniqueOverride,
@@ -470,6 +471,11 @@ export const techniquesApi = {
     (await apiClient.get('/techniques/types')).data,
   createTechnique: async (request: CreateTechniqueRequest): Promise<TechniqueInstance> =>
     (await apiClient.post('/techniques', request)).data,
+  checkSaveability: async (
+    request: TechniqueSaveabilityRequest,
+    signal?: AbortSignal,
+  ): Promise<SaveabilityResponse> =>
+    (await apiClient.post('/techniques/saveability', request, { signal })).data,
   getConfiguration: async (name: string): Promise<TechniqueConfiguration> =>
     (await apiClient.get(`/techniques/${encodeURIComponent(name)}/configuration`)).data,
   validateEdit: async (request: TechniqueOverride): Promise<TechniqueEditResponse> =>

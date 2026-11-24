@@ -1192,6 +1192,28 @@ def test_rest_create_with_persist_saves_or_explains_why_it_cant(
     assert sorted(path.name for path in (tmp_path / "techniques").glob("*.json")) == ["base64_send.json"]
 
 
+def test_rest_saveability_answers_as_saving_would_without_registering_anything(
+    saving_catalog: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    before = saving_catalog.catalog_revision
+    body = {"type": "PromptSendingAttack", "request_converters": ["base64"]}
+
+    saveable = client.post("/api/techniques/saveability", json=body)
+    temporary = client.post("/api/techniques/saveability", json={**body, "request_converters": ["rot13"]})
+    unknown = client.post("/api/techniques/saveability", json={**body, "type": "MissingAttack"})
+    named = client.post("/api/techniques/saveability", json={**body, "name": "base64_send"})
+
+    assert (saveable.status_code, saveable.json()) == (200, {"not_saveable_reason": None})
+    assert (temporary.status_code, temporary.json()) == (
+        200,
+        {"not_saveable_reason": "Uses temporary converter 'rot13', which won't exist after a restart."},
+    )
+    assert (unknown.status_code, unknown.json()["detail"]) == (400, "'MissingAttack' is not a registered attack type.")
+    assert named.status_code == 422
+    assert saving_catalog.catalog_revision == before
+
+
 @pytest.mark.parametrize(
     ("error", "status_code"),
     [

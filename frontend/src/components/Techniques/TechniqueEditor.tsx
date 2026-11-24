@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
@@ -14,6 +14,7 @@ import ReferenceField from '@/components/Parameters/ReferenceField'
 import {
   buildParametersFromForm, getInitialFormValues, nonNullableTypeName, type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
+import { useSaveability } from '@/hooks/useSaveability'
 import { convertersApi, techniquesApi } from '@/services/api'
 import { isNotSaveableError, notSaveableReason, toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
@@ -21,7 +22,7 @@ import { validateRegistryName } from '@/utils/registryName'
 import type {
   CreateTechniqueRequest, Parameter, RegistryReferenceOption, TechniqueTypeEntry,
   TechniqueConfiguration, TechniqueChanges, TechniqueEditResponse, SimulationChanges,
-  ConverterInstance, ConverterSelection,
+  ConverterInstance, ConverterSelection, TechniqueSaveabilityRequest,
 } from '@/types'
 
 import { useTechniqueEditorStyles } from './TechniqueEditor.styles'
@@ -29,6 +30,24 @@ import { useTechniqueEditorStyles } from './TechniqueEditor.styles'
 const SCALAR_TYPES = new Set(['str', 'int', 'float', 'bool', 'list[str]', 'list[int]', 'list[float]', 'list[bool]'])
 const VALIDATION_DELAY_MS = 300
 const TEMPORARY_TECHNIQUE_NOTE = 'A Temporary technique is gone after the backend restarts or is reinitialized.'
+
+type TechniqueReferences = Pick<CreateTechniqueRequest, 'request_converters' | 'response_converters' | 'adversarial_chat'>
+
+/** The converters and adversarial target a new technique sends, as its attack type supports them. */
+function techniqueReferences(
+  selected: TechniqueTypeEntry,
+  requestConverters: ConverterSelection[],
+  responseConverters: ConverterSelection[],
+  adversarialTarget: string,
+): TechniqueReferences {
+  const references: TechniqueReferences = {}
+  if (selected.supports_converters && (requestConverters.length || responseConverters.length)) {
+    references.request_converters = requestConverters.filter((entry): entry is string => typeof entry === 'string')
+    references.response_converters = responseConverters.filter((entry): entry is string => typeof entry === 'string')
+  }
+  if (selected.supports_adversarial && adversarialTarget) references.adversarial_chat = adversarialTarget
+  return references
+}
 
 function canConfigure(parameter: Parameter, allowStructured = true): boolean {
   if (parameter.reference_type) return false
@@ -88,7 +107,6 @@ export default function TechniqueEditor({
   const configuration = initial ?? original
   const [types, setTypes] = useState<TechniqueTypeEntry[]>([])
   const [targetOptions, setTargetOptions] = useState<RegistryReferenceOption[]>([])
-  const [temporaryTargets, setTemporaryTargets] = useState<ReadonlySet<string>>(new Set())
   const [converters, setConverters] = useState<ConverterInstance[]>([])
   const converterOptions = converters.map((entry) => ({ name: entry.converter_id, type: entry.identifier.class_name }))
   const [selectedType, setSelectedType] = useState(configuration?.attack_type ?? '')
@@ -154,8 +172,6 @@ export default function TechniqueEditor({
         setTypes(original ? metadata.items : metadata.items.filter((entry) =>
           getAttackParameters(entry).every((parameter) => !parameter.required || canConfigure(parameter))))
         setTargetOptions(targets.map((entry) => ({ name: entry.target_registry_name, type: entry.identifier.class_name })))
-        setTemporaryTargets(new Set(targets.filter((entry) => entry.origin === 'temporary')
-          .map((entry) => entry.target_registry_name)))
         setConverters(converters.items)
       } catch (err) {
         if (!ignore) setError(toApiError(err).detail)
@@ -171,24 +187,28 @@ export default function TechniqueEditor({
   }, [error, submitError])
 
   const selected = types.find((entry) => entry.attack_type === selectedType)
-  const parameters = original ? original.parameters : guiParameters(getAttackParameters(selected))
+  const parameters = useMemo(
+    () => original ? original.parameters : guiParameters(getAttackParameters(selected)),
+    [original, selected],
+  )
   const editable = (field: string): boolean => !original || original.editable_fields.includes(field)
 
-  // A new technique is saved unless it uses a Temporary entry, which won't exist after a restart.
-  const chosenConverters = selected?.supports_converters
-    ? [...requestConverters, ...responseConverters].filter((entry): entry is string => typeof entry === 'string')
-    : []
-  const temporaryConverter = chosenConverters.find((entry) =>
-    converters.find((converter) => converter.converter_id === entry)?.origin === 'temporary')
-  const predictedTemporaryReason = temporaryConverter
-    ? `Uses temporary converter '${temporaryConverter}', which won't exist after a restart.`
-    : selected?.supports_adversarial && temporaryTargets.has(adversarialTarget)
-      ? `Uses temporary target '${adversarialTarget}', which won't exist after a restart.`
-      : null
+  // A new technique is saved unless the backend says restore couldn't bring it back.
+  const saveabilityRequest = useMemo((): TechniqueSaveabilityRequest | null => {
+    if (editing || !selected) return null
+    const result = buildParametersFromForm(parameters, values)
+    if (!result.ok) return null
+    return {
+      type: selected.attack_type,
+      params: result.parameters ?? {},
+      ...techniqueReferences(selected, requestConverters, responseConverters, adversarialTarget),
+    }
+  }, [editing, selected, parameters, values, requestConverters, responseConverters, adversarialTarget])
+  const checkedReason = useSaveability(saveabilityRequest, techniquesApi.checkSaveability)
   // A refused save only applies to the values it was refused for, so any edit lets the user try saving again.
   const formKey = JSON.stringify([selectedType, values, requestConverters, responseConverters, adversarialTarget])
   const refusedReason = saveRefusal?.formKey === formKey ? saveRefusal.reason : null
-  const temporaryReason = editing ? null : predictedTemporaryReason ?? refusedReason
+  const temporaryReason = editing ? null : checkedReason ?? refusedReason
   const nameConflictDetail = nameConflict?.name === name && nameConflict.tags === tags ? nameConflict.detail : null
   const nameMessage = editing ? null
     : nameConflictDetail ?? (temporaryReason === null && name ? validateRegistryName(name) : null)
@@ -276,13 +296,9 @@ export default function TechniqueEditor({
     const request: CreateTechniqueRequest = {
       name, description, tags: parsedTags, type: selectedType,
       params: result.ok ? result.parameters ?? {} : {},
-    }
-    if (selected.supports_converters && (requestConverters.length || responseConverters.length)) {
-      request.request_converters = requestConverters.filter((entry): entry is string => typeof entry === 'string')
-      request.response_converters = responseConverters.filter((entry): entry is string => typeof entry === 'string')
+      ...techniqueReferences(selected, requestConverters, responseConverters, adversarialTarget),
     }
     if (selected.supports_adversarial) {
-      if (adversarialTarget) request.adversarial_chat = adversarialTarget
       if (systemPrompt) request.adversarial_system_prompt = systemPrompt
       if (seedPrompt) request.adversarial_seed_prompt = seedPrompt
       if (turnPrompt) request.adversarial_prompt_template = turnPrompt
