@@ -336,6 +336,19 @@ class ViolatesAssertPolicy(Condition):
     target_instructions: str | None = None
 
 
+class FailsPromptfooRubric(Condition):
+    """
+    The evidence fails a promptfoo red-team grader's rubric.
+
+    ``plugin_id`` names the promptfoo plugin, such as ``hallucination``. ``rubric`` is the plugin's
+    grading rubric, already rendered with the application's purpose.
+    """
+
+    condition_type: Literal["fails_promptfoo_rubric"] = "fails_promptfoo_rubric"
+    plugin_id: str = Field(min_length=1)
+    rubric: str = Field(min_length=1)
+
+
 class ContentWritten(Condition):
     """
     The named location holds content that satisfies an optional text matcher.

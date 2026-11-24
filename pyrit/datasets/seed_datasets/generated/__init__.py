@@ -10,10 +10,16 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.datasets.seed_datasets.generated.assert_provider import AssertProvider
+    from pyrit.datasets.seed_datasets.generated.promptfoo_plugin_provider import (
+        PromptfooPlugin,
+        PromptfooPluginProvider,
+    )
     from pyrit.datasets.seed_datasets.generated.target_objective_provider import TargetObjectiveProvider
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AssertProvider": "pyrit.datasets.seed_datasets.generated.assert_provider",
+    "PromptfooPlugin": "pyrit.datasets.seed_datasets.generated.promptfoo_plugin_provider",
+    "PromptfooPluginProvider": "pyrit.datasets.seed_datasets.generated.promptfoo_plugin_provider",
     "TargetObjectiveProvider": "pyrit.datasets.seed_datasets.generated.target_objective_provider",
 }
 

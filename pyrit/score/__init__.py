@@ -151,6 +151,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.physics_consistency_scorer import PhysicsConsistencyScorer
     from pyrit.score.true_false.program_execution_scorer import ProgramExecutionScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
+    from pyrit.score.true_false.promptfoo_rubric_scorer import PromptfooRubricScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
     from pyrit.score.true_false.regex.agent_threat_rules_scorer import AgentThreatRulesScorer
     from pyrit.score.true_false.regex.ansi_escape_output_scorer import AnsiEscapeOutputScorer
@@ -324,6 +325,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PlagiarismMetric": "pyrit.score.float_scale.plagiarism_scorer",
     "PlagiarismScorer": "pyrit.score.float_scale.plagiarism_scorer",
     "PromptShieldScorer": "pyrit.score.true_false.prompt_shield_scorer",
+    "PromptfooRubricScorer": "pyrit.score.true_false.promptfoo_rubric_scorer",
     "QuestionAnswerScorer": "pyrit.score.true_false.question_answer_scorer",
     "RegexScorer": "pyrit.score.true_false.regex.regex_scorer",
     "RegistryUpdateBehavior": "pyrit.score.scorer_evaluation.metrics_type",
