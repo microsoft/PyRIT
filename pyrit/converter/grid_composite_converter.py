@@ -126,6 +126,7 @@ class GridCompositeConverter(_BaseImageTextConverter):
         self._payload_background = str(payload_background) if payload_background is not None else None
         self._font_name = str(font_name) if font_name is not None else None
         self._font_load_failed = font_name is None
+        self._load_font_at_size(self._font_size_max)
         self._color = color
         self._random_seed = random_seed
 

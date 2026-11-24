@@ -12,6 +12,8 @@ from typing import Any
 from pypdf import PageObject, PdfReader, PdfWriter
 from reportlab.lib.units import mm
 from reportlab.lib.utils import simpleSplit
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
 from pyrit.common.logger import logger
@@ -45,12 +47,21 @@ class PDFConverter(Converter):
 
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("binary_path",)
+    _FONT_ALIASES = {
+        "Arial": "Helvetica",
+        "Times": "Times-Roman",
+        "Courier": "Courier",
+        "Helvetica": "Helvetica",
+        "Symbol": "Symbol",
+        "ZapfDingbats": "ZapfDingbats",
+    }
 
     def __init__(
         self,
         *,
         prompt_template: SeedPrompt | None = None,
         font_type: str = "Helvetica",
+        font_path: Path | None = None,
         font_size: int = 12,
         font_color: tuple[int, int, int] | None = None,
         page_width: int = 210,
@@ -66,6 +77,8 @@ class PDFConverter(Converter):
         Args:
             prompt_template (SeedPrompt | None, optional): A ``SeedPrompt`` object representing a template.
             font_type (str): Font type for the PDF. Defaults to "Helvetica".
+            font_path (Path | None): Local TrueType font to embed, overriding font_type for generated text
+                and injection items without an explicit font. Choose a font covering the text's characters.
             font_size (int): Font size for the PDF. Defaults to 12.
             font_color (tuple[int, int, int] | None): Text color in RGB format (0-255). Generated PDFs use it,
                 or black when it isn't set. Injection items without their own ``font_color`` use it, or white
@@ -80,10 +93,17 @@ class PDFConverter(Converter):
 
         Raises:
             ValueError: If the font color is invalid or the injection items are not provided as a list of dictionaries.
-            FileNotFoundError: If the provided PDF file does not exist.
+            FileNotFoundError: If the provided PDF or font file does not exist.
+            TTFError: If font_path is not a valid TrueType font supported by ReportLab.
         """
         self._prompt_template = prompt_template
         self._font_type = font_type
+        self._font_path = str(font_path) if font_path is not None else None
+        self._registered_font: str | None = None
+        if font_path is not None:
+            font_data = Path(font_path).read_bytes()
+            self._registered_font = "PyRIT-" + hashlib.sha256(font_data).hexdigest()
+            pdfmetrics.registerFont(TTFont(self._registered_font, BytesIO(font_data)))
         self._font_size = font_size
         self._font_color = font_color
         self._page_width = page_width
@@ -143,6 +163,8 @@ class PDFConverter(Converter):
         return self._create_identifier(
             params={
                 "font_type": self._font_type,
+                "font_path": self._font_path,
+                "font_hash": self._registered_font,
                 "font_size": self._font_size,
                 "page_width": self._page_width,
                 "page_height": self._page_height,
@@ -249,15 +271,8 @@ class PDFConverter(Converter):
 
         c = canvas.Canvas(pdf_buffer, pagesize=(page_width_pt, page_height_pt))
 
-        font_map = {
-            "Arial": "Helvetica",
-            "Times": "Times-Roman",
-            "Courier": "Courier",
-            "Helvetica": "Helvetica",
-            "Symbol": "Symbol",
-            "ZapfDingbats": "ZapfDingbats",
-        }
-        reportlab_font = font_map.get(self._font_type, "Helvetica")
+        reportlab_font = self._resolve_font(self._registered_font or self._font_type)
+        self._warn_missing_glyphs(text=content, font_name=reportlab_font)
 
         c.setFont(reportlab_font, self._font_size)
         fill_color = self._font_color or _GENERATED_TEXT_COLOR
@@ -338,7 +353,7 @@ class PDFConverter(Converter):
                         x = item.get("x", 10)
                         y = item.get("y", 10)
                         text = item.get("text", "")
-                        font = item.get("font", self._font_type)
+                        font = item.get("font", self._registered_font or self._font_type)
                         font_size = item.get("font_size", self._font_size)
                         font_color = item.get("font_color", self._font_color or _INJECTED_TEXT_COLOR)
 
@@ -418,15 +433,8 @@ class PDFConverter(Converter):
         overlay_buffer = BytesIO()
         c = canvas.Canvas(overlay_buffer, pagesize=(page_width, page_height))
 
-        font_map = {
-            "Arial": "Helvetica",
-            "Times": "Times-Roman",
-            "Courier": "Courier",
-            "Helvetica": "Helvetica",
-            "Symbol": "Symbol",
-            "ZapfDingbats": "ZapfDingbats",
-        }
-        reportlab_font = font_map.get(font, "Helvetica")
+        reportlab_font = self._resolve_font(font)
+        self._warn_missing_glyphs(text=text, font_name=reportlab_font)
 
         c.setFont(reportlab_font, font_size)
 
@@ -444,6 +452,54 @@ class PDFConverter(Converter):
         overlay_page = overlay_reader.pages[0]
 
         return overlay_page, overlay_buffer
+
+    def _resolve_font(self, font_name: str) -> str:
+        """
+        Resolve the embedded font or an existing alias, retaining the Helvetica fallback.
+
+        Args:
+            font_name (str): The configured or per-item font name.
+
+        Returns:
+            str: The name to pass to ReportLab.
+        """
+        if font_name == self._registered_font:
+            return font_name
+        return self._FONT_ALIASES.get(font_name, "Helvetica")
+
+    @staticmethod
+    def _warn_missing_glyphs(*, text: str | bytes, font_name: str) -> None:
+        """
+        Warn when text cannot be represented by the selected font or its substitutions.
+
+        Args:
+            text (str | bytes): Text to render, with bytes interpreted as UTF-8.
+            font_name (str): The resolved ReportLab font name.
+        """
+        font = pdfmetrics.getFont(font_name)
+        characters = set(text.decode("utf-8") if isinstance(text, bytes) else text)
+        missing = set()
+        for char in characters:
+            if char.isspace():
+                continue
+            if isinstance(font, TTFont):
+                if not font.face.charToGlyph.get(ord(char), 0):
+                    missing.add(char)
+                continue
+            for substitute in [font, *font.substitutionFonts]:
+                try:
+                    char.encode(substitute.encName)
+                    break
+                except UnicodeEncodeError:
+                    continue
+            else:
+                missing.add(char)
+        if missing:
+            logger.warning(
+                "The PDF font cannot render %d distinct character(s). "
+                "Set font_path to a TrueType font that covers the text; otherwise characters may appear as boxes.",
+                len(missing),
+            )
 
     async def _serialize_pdf_async(self, pdf_bytes: bytes, content: str) -> DataTypeSerializer:
         """
