@@ -68,7 +68,7 @@ class ImageCompressionConverter(Converter):
 
         Args:
             output_format (str, optional): Output image format. Must be one of 'JPEG', 'PNG', or 'WEBP'.
-            If None, keeps original format (if supported).
+                If None, keeps original format (if supported).
             quality (int, optional): General quality setting for JPEG and WEBP formats (0-100).
                 For JPEG format, it represents the image quality, on a scale from 0 (worst) to 95 (best).
                 For WEBP format, the value ranges from 0 to 100; for lossy compression: 0-smallest file size and

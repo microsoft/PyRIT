@@ -1,0 +1,6 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["jest-import-meta-transformer.ts", "e2e/fixtures/*.tsx"],
+  "ignoreBinaries": ["python"],
+  "ignoreExportsUsedInFile": { "interface": true, "type": true }
+}

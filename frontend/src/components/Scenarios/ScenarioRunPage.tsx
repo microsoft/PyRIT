@@ -15,6 +15,8 @@ import type { ScenarioProgressResult, ScenarioRunPlanSeedGroup } from '@/types'
 import { routerPathParamValue } from '@/utils/routeParams'
 import { isTerminalRunState } from '@/utils/scenarioRunProgress'
 
+import AssertPolicyMetricsPanel from './AssertPolicyMetricsPanel'
+import { isAssertPolicyRun } from './assertPolicyRun'
 import AtomicAttackGroupsSection from './AtomicAttackGroupsSection'
 import AttackActivity from './AttackActivity'
 import AttackDetailsDialog from './AttackDetailsDialog'
@@ -149,6 +151,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
           onOpenAttack={attackDetails.open} />
         <ScenarioRunSavedConversations scenarioResultId={scenarioResultId} conversations={savedConversations}
           conversationState={location.state} />
+        {run.status === 'COMPLETED' && isAssertPolicyRun(run) && <AssertPolicyMetricsPanel scenarioResultId={scenarioResultId} />}
         {singleGroupId ? (
           <section className={styles.section} aria-label="Attack details">
             <ScenarioAttackDetails context={detailsContext} attempt={singleAttempt} atomicGroupId={singleGroupId}
