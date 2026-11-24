@@ -408,6 +408,7 @@ if TYPE_CHECKING:
         register_common_json_schema,
         unregister_common_json_schema,
     )
+    from pyrit.models.target.provider_trace_reference import ProviderTraceReference
     from pyrit.models.target.reasoning_content_metadata import ReasoningContentMetadata
     from pyrit.models.target.request_trace_context import RequestTraceContext
     from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
@@ -490,6 +491,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetSizeEstimate": "pyrit.models.scenario_dataset_size_estimate",
     "ScenarioDatasetSizeEstimateKind": "pyrit.models.scenario_dataset_size_estimate",
     "scenario_dataset_size_from_limit": "pyrit.models.scenario_dataset_size_estimate",
+    "ProviderTraceReference": "pyrit.models.target.provider_trace_reference",
     "ReasoningContentMetadata": "pyrit.models.target.reasoning_content_metadata",
     "RequestTraceContext": "pyrit.models.target.request_trace_context",
     "ToolExecutionMetadata": "pyrit.models.target.tool_execution_metadata",

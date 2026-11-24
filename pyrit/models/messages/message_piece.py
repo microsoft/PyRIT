@@ -24,6 +24,7 @@ from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydanti
 from pyrit.models.score import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ComponentIdentifierField,
 )
+from pyrit.models.target.provider_trace_reference import ProviderTraceReference
 from pyrit.models.target.request_trace_context import RequestTraceContext
 
 if TYPE_CHECKING:
@@ -137,6 +138,7 @@ class MessagePiece(BaseModel):
         self.prompt_metadata[self.PREPENDED_HISTORY_METADATA_KEY] = True
         self.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
         self.prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+        ProviderTraceReference.clear_metadata(self.prompt_metadata)
 
     def to_message(self) -> Message:
         """

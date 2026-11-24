@@ -25,6 +25,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    ProviderTraceReference,
 )
 from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.chat_completions_message_builder import (
@@ -50,11 +51,16 @@ from pyrit.prompt_target.common.target_capabilities import (
     get_known_capabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
+from pyrit.prompt_target.common.target_trace_config import (
+    TargetTraceConfig,
+    record_provider_trace_reference,
+    request_trace_headers,
+)
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES, parse_function_call
 from pyrit.prompt_target.common.tool_loop import (
     InvalidToolCallsError,
     PendingToolCall,
+    ToolDispatchResult,
     ToolFunction,
     dispatch_tool_call_async,
     run_tool_loop_async,
@@ -157,6 +163,30 @@ def _provider_specific_headers(provider_specific_header: Any) -> dict[str, str]:
     return headers
 
 
+def _provider_trace_reference(response: Any) -> ProviderTraceReference | None:
+    """
+    Read the response id LiteLLM returned for a completion.
+
+    The response id is the provider's id for the completion, the value OpenTelemetry's GenAI
+    conventions record as ``gen_ai.response.id``. A response id that is missing or not a usable
+    string records nothing rather than failing the send.
+
+    Returns:
+        ProviderTraceReference | None: The identifier, or None when the response carries none.
+    """
+    hidden = getattr(response, "_hidden_params", None)
+    hidden = hidden if isinstance(hidden, dict) else {}
+
+    def usable(value: Any) -> str | None:
+        return value if isinstance(value, str) and 0 < len(value) <= 256 else None
+
+    request_id = usable(getattr(response, "id", None))
+    if request_id is None:
+        return None
+    provider = usable(hidden.get("custom_llm_provider")) or "litellm"
+    return ProviderTraceReference(provider=provider[:128], request_id=request_id)
+
+
 class LiteLLMChatTarget(PromptTarget):
     """
     Chat target that uses the LiteLLM SDK to access 100+ LLM providers.
@@ -219,7 +249,10 @@ class LiteLLMChatTarget(PromptTarget):
         trace_config: Request tracing configuration. Tracing is disabled by default because a
             provider or gateway is not known to accept W3C trace context. Pass
             ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint; each request then
-            sends a fresh ``traceparent`` in ``extra_headers``.
+            sends a fresh ``traceparent`` in ``extra_headers``. Whatever this setting, each request
+            records the provider's response id and LiteLLM's provider route as a
+            ``ProviderTraceReference``. A send whose tool loop runs a local tool records none,
+            since one id cannot name the tool's run or the traces of later completions.
         tools: Executable tools advertised to the model.
         tool_providers: Providers discovered within each send's resource scope.
         execute_tools: Execute configured tools locally, or return calls to the caller.
@@ -553,23 +586,35 @@ class LiteLLMChatTarget(PromptTarget):
                     conversation=normalized_conversation, request=request, tools=tools
                 )
 
+            tool_dispatched = False
+
             async def send_async(conversation: Sequence[Message]) -> Message:
                 [reply] = await self._send_completion_async(
-                    conversation=list(conversation), request=request, tools=tools
+                    conversation=list(conversation),
+                    request=request,
+                    tools=tools,
+                    record_provider_trace=not tool_dispatched,
                 )
                 return reply
 
             async def resolve_tools_async() -> tuple[Sequence[Tool], Mapping[str, ToolFunction]]:
                 return tools, {}
 
+            async def dispatch_async(call: PendingToolCall) -> ToolDispatchResult:
+                # A local tool runs outside the provider's trace, and later completions get traces of
+                # their own, so one response id can no longer name this send. It stays unlinked.
+                nonlocal tool_dispatched
+                tool_dispatched = True
+                for piece in request.message_pieces:
+                    ProviderTraceReference.clear_metadata(piece.prompt_metadata)
+                return await dispatch_tool_call_async(call=call, resolve_tools_async=resolve_tools_async)
+
             return await run_tool_loop_async(
                 conversation=normalized_conversation,
                 request_piece=request.message_pieces[0],
                 send_async=send_async,
                 find_calls=self._tool_call_finder(normalized_conversation),
-                dispatch_async=lambda call: dispatch_tool_call_async(
-                    call=call, resolve_tools_async=resolve_tools_async
-                ),
+                dispatch_async=dispatch_async,
                 max_tool_rounds=self._max_tool_rounds,
             )
 
@@ -642,7 +687,12 @@ class LiteLLMChatTarget(PromptTarget):
 
     @limit_requests_per_minute
     async def _send_completion_async(
-        self, *, conversation: list[Message], request: Message, tools: Sequence[Tool]
+        self,
+        *,
+        conversation: list[Message],
+        request: Message,
+        tools: Sequence[Tool],
+        record_provider_trace: bool = True,
     ) -> list[Message]:
         litellm = self._import_litellm()
 
@@ -675,6 +725,8 @@ class LiteLLMChatTarget(PromptTarget):
             response = await litellm.acompletion(**body)
         except Exception as exc:
             return self._handle_litellm_exception(exc=exc, request=request_piece)
+        if record_provider_trace:
+            record_provider_trace_reference(request=message, reference=_provider_trace_reference(response))
 
         # Content filtering is red-team critical: surface it as an error Message (not an
         # exception) so attacks can continue and blocked-content scorers can still score.
