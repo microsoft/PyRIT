@@ -86,7 +86,7 @@ async def test_tools_initializer_registers_configured_technique_async() -> None:
     ids=["responses", "chat_completions", "no_local_tools"],
 )
 async def test_tools_initializer_registers_simulated_tool_priming_only_for_a_tool_running_chat_async(
-    build_chat, runs_tools: bool
+    build_chat, runs_tools: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     adversarial_chat = build_chat()
     TargetRegistry.get_registry_singleton().instances.register(adversarial_chat, name="adversarial_chat")
@@ -95,4 +95,5 @@ async def test_tools_initializer_registers_simulated_tool_priming_only_for_a_too
 
     factories = AttackTechniqueRegistry.get_registry_singleton().get_factories()
     assert ("tool_priming_simulated" in factories) is runs_tools
+    assert ("Skipping tool_priming_simulated" in caplog.text) is not runs_tools
     assert "tool_priming_simulated" not in {factory.name for factory in build_technique_factories()}

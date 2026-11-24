@@ -33,9 +33,8 @@ class ToolsInitializer(PyRITInitializer):
         adversarial_chat = TargetRegistry.get_registry_singleton().instances.get("adversarial_chat")
         runs_tools = adversarial_chat is not None and adversarial_chat.RUNS_TOOLS_LOCALLY
         if not runs_tools:
-            logger.info(
-                "Skipping tool_priming_simulated: the adversarial_chat target does not run tool calls locally "
-                "(RUNS_TOOLS_LOCALLY)."
+            logger.warning(
+                "Skipping tool_priming_simulated: no adversarial_chat that runs tool calls locally is registered."
             )
         if "tool_priming_simulated" not in registry.instances and runs_tools:
             registry.register_from_factories(
