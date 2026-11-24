@@ -237,6 +237,18 @@ async def test_chat_targets_report_declared_function_tools(build_target) -> None
     ]
 
 
+async def test_litellm_target_reports_configured_tools(patch_central_database) -> None:
+    provider = MagicMock(spec=ToolProvider)
+    provider.identifier = {"type": "test"}
+    provider.get_tools_async = AsyncMock(return_value=[add])
+
+    target = LiteLLMChatTarget(model_name="custom/model", tool_providers=[provider])
+
+    definitions = await target.get_tool_definitions_async()
+
+    assert [definition.name for definition in definitions] == ["add"]
+
+
 @pytest.mark.parametrize("from_provider", [False, True])
 @pytest.mark.parametrize("legacy_registration", ["callback", "declaration"])
 async def test_send_rejects_conflicting_tool_registrations(

@@ -35,8 +35,6 @@ from pyrit.models import (
     Message,
     SeedObjective,
     SeedPrompt,
-    SeedSimulatedConversation,
-    SimulatedConversationMode,
 )
 
 
@@ -625,33 +623,20 @@ class TestExecuteAttackFromSeedGroupsAsync:
             assert captured_kwargs.get("adversarial_chat") is mock_adversarial_chat
             assert captured_kwargs.get("objective_scorer") is mock_objective_scorer
 
-    async def test_passes_objective_target_only_for_tool_using_simulations(self):
+    async def test_passes_objective_target_to_parameter_building(self):
         attack = create_mock_attack()
         attack.execute_with_context_async.return_value = create_attack_result("Test")
         attack.get_objective_target.return_value = objective_target = MagicMock()
-        plain = create_seed_group("Plain objective")
-        primed = AttackSeedGroup(
-            seeds=[
-                SeedObjective(value="Primed objective"),
-                SeedSimulatedConversation(
-                    adversarial_chat_system_prompt=SeedPrompt(value="Write a history."),
-                    mode=SimulatedConversationMode.ONE_SHOT,
-                    use_target_tools=True,
-                ),
-            ]
-        )
         build_mock = AsyncMock(
             side_effect=lambda **kwargs: AttackParameters(objective=kwargs["seed_group"].objective.value)
         )
 
         with patch.object(AttackParameters, "from_seed_group_async", new=build_mock):
-            await AttackExecutor().execute_attack_from_seed_groups_async(attack=attack, seed_groups=[plain, primed])
+            await AttackExecutor().execute_attack_from_seed_groups_async(
+                attack=attack, seed_groups=[create_seed_group("Objective")]
+            )
 
-        kwargs_by_objective = {
-            build.kwargs["seed_group"].objective.value: build.kwargs for build in build_mock.call_args_list
-        }
-        assert "objective_target" not in kwargs_by_objective["Plain objective"]
-        assert kwargs_by_objective["Primed objective"]["objective_target"] is objective_target
+        assert build_mock.call_args.kwargs["objective_target"] is objective_target
 
     async def test_validates_explicit_empty_field_overrides_for_seed_groups(self):
         """Test that explicit empty field_overrides still validate seed group length."""

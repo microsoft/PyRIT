@@ -1429,15 +1429,73 @@ class TestSimulatedConversationWithTools:
         assert await stand_in.get_tool_definitions_async() == [_LOOKUP]
         assert await source.get_tool_definitions_async() == []
         assert result == "default"
-        assert len(writer.conversation_ids) == 1
+        assert writer.started
         request = json.loads(adversarial_chat.prompt_sent[-1])
         assert (request["tool"]["name"], request["arguments"]) == ("lookup_ticket", {"ticket_id": "SEC-1"})
         assert "Reset the admin password." in adversarial_chat.system_prompt
 
+    async def test_tool_results_share_one_writer_conversation_async(self) -> None:
+        adversarial_chat = MockPromptTarget()
+        adversarial_chat.set_system_prompt_async = AsyncMock()  # type: ignore[method-assign]
+        writer = _ToolResultWriter(objective="objective", adversarial_chat=adversarial_chat)
+        reply = Message.from_prompt(prompt="SEC-1 is approved.", role="assistant")
+
+        with patch.object(PromptNormalizer, "send_prompt_async", new_callable=AsyncMock, return_value=reply) as send:
+            await writer.write_async(tool=_LOOKUP, arguments={"ticket_id": "SEC-1"})
+            await writer.write_async(tool=_LOOKUP, arguments={"ticket_id": "SEC-2"})
+
+        assert {call.kwargs["conversation_id"] for call in send.call_args_list} == {writer.conversation_id}
+        adversarial_chat.set_system_prompt_async.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("reply", "kind"),
+        [
+            (
+                MessagePiece(role="assistant", original_value="filtered", response_error="blocked").to_message(),
+                AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+            ),
+            (
+                Message.from_prompt(prompt=" ", role="assistant"),
+                AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT,
+            ),
+        ],
+    )
+    async def test_unusable_tool_result_ends_the_conversation_as_a_preparation_failure_async(
+        self,
+        reply: Message,
+        kind: AttackPreparationFailureKind,
+        mock_objective_scorer: MagicMock,
+        adversarial_system_prompt: SeedPrompt,
+    ) -> None:
+        adversarial_chat = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key")
+
+        async def run_stand_in_async(**_: object) -> AttackResult:
+            stand_in = attack_class.call_args.kwargs["objective_target"]
+            await stand_in._tools[0].execute_async(arguments={"ticket_id": "SEC-1"})
+            raise AssertionError("the tool result should have failed")
+
+        with (
+            patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as attack_class,
+            patch.object(PromptNormalizer, "send_prompt_async", new_callable=AsyncMock, return_value=reply),
+        ):
+            attack_class.return_value.execute_async = AsyncMock(side_effect=run_stand_in_async)
+            result = await generate_simulated_conversation_async(
+                objective="objective",
+                adversarial_chat=adversarial_chat,
+                objective_scorer=mock_objective_scorer,
+                adversarial_chat_system_prompt=adversarial_system_prompt,
+                tools=[_LOOKUP],
+            )
+
+        assert result.seed_prompts == []
+        assert result.preparation_failure is not None
+        assert result.preparation_failure.kind is kind
+        assert [reference.description for reference in result.related_conversations] == ["simulated tool results"]
+
     async def test_tools_need_a_stand_in_that_runs_them_async(
         self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt
     ) -> None:
-        with pytest.raises(ValueError, match="needs an OpenAIResponseTarget"):
+        with pytest.raises(ValueError, match="needs a simulated target that runs tool calls"):
             await generate_simulated_conversation_async(
                 objective="objective",
                 adversarial_chat=MockPromptTarget(),
@@ -1488,13 +1546,15 @@ class TestSimulatedConversationWithTools:
     async def test_tools_and_a_custom_stand_in_cannot_be_combined_async(
         self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt
     ) -> None:
+        stand_in = MockPromptTarget()
+        stand_in.get_tool_definitions_async = AsyncMock(return_value=[_LOOKUP])  # type: ignore[method-assign]
         with pytest.raises(ValueError, match="not both"):
             await generate_simulated_conversation_async(
                 objective="objective",
                 adversarial_chat=MockPromptTarget(),
                 objective_scorer=mock_objective_scorer,
                 adversarial_chat_system_prompt=adversarial_system_prompt,
-                simulated_target=MockPromptTarget(),
+                simulated_target=stand_in,
                 tools=[_LOOKUP],
             )
 
@@ -1646,21 +1706,44 @@ class TestOneShotToolHistory:
         assert "'delete_ticket' is not an available tool. Available tools: ['lookup_ticket']." in feedback
 
     async def test_unparseable_responses_are_retried_without_spending_an_attempt_async(self) -> None:
-        blocked = MessagePiece(role="assistant", original_value="filtered", response_error="blocked").to_message()
+        prose = Message.from_prompt(prompt="Sure, here is a history.", role="assistant")
         wrapped = Message.from_prompt(prompt=f"Here it is: {json.dumps({'items': [_CALL, _OUTPUT]})}", role="assistant")
 
-        result, send = await _generate_one_shot_async(responses=[blocked, wrapped], num_turns=1, max_attempts=1)
+        result, send = await _generate_one_shot_async(responses=[prose, wrapped], num_turns=1, max_attempts=1)
 
         assert len(result.seed_prompts) == 2
         first, second = send.call_args_list
         assert first.kwargs["message"].get_value() == second.kwargs["message"].get_value()
 
+    async def test_blocked_response_ends_generation_without_retrying_async(self) -> None:
+        blocked = MessagePiece(role="assistant", original_value="filtered", response_error="blocked").to_message()
+
+        result, send = await _generate_one_shot_async(responses=[blocked], num_turns=1)
+
+        assert send.await_count == 1
+        assert result.preparation_failure is not None
+        assert result.preparation_failure.kind is AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED
+
+    async def test_remote_schema_references_are_never_retrieved_async(self) -> None:
+        remote_tool = ToolDefinition(
+            name="lookup_ticket",
+            parameters={"type": "object", "properties": {"ticket_id": {"$ref": "https://example.invalid/id.json"}}},
+        )
+        with patch("urllib.request.urlopen") as urlopen:
+            result, _ = await _generate_one_shot_async(
+                responses=[_history_response([_CALL, _OUTPUT])], tools=[remote_tool], num_turns=1
+            )
+
+        urlopen.assert_not_called()
+        assert result.preparation_failure is None
+
     @pytest.mark.parametrize(
         ("items", "problem"),
         [
             ([_CALL, {"type": "function_call_output", "call_id": "call_1"}], "not a valid history object"),
-            ([_CALL, _OUTPUT, {"type": "message", "role": "assistant", "content": "Done."}], "Write no assistant"),
-            ([_CALL, _OUTPUT, {"type": "message", "role": "user", "content": "Next."}], "Do not end with a user"),
+            ([_CALL, _OUTPUT, {"type": "message", "role": "assistant", "content": "Done."}], "write no assistant"),
+            ([_CALL, _OUTPUT, {"type": "message", "role": "user", "content": "Next."}], "only one user message"),
+            ([_CALL, _SECOND_CALL, _OUTPUT], "must be followed immediately by its output"),
         ],
     )
     async def test_exhausted_attempts_are_a_preparation_failure_async(

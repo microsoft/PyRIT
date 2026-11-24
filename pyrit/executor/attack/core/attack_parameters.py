@@ -201,10 +201,15 @@ class AttackParameters:
                 raise ValueError("objective_scorer is required when seed_group has a simulated conversation config")
 
             tools: list[ToolDefinition] | None = None
+            no_tools_reason = ""
             if simulated_conversation_config.use_target_tools:
                 if objective_target is None:
                     raise ValueError("objective_target is required when a simulated conversation uses target tools")
-                tools = await objective_target.get_tool_definitions_async() or []
+                reported_tools = await objective_target.get_tool_definitions_async()
+                tools = reported_tools or []
+                if not tools:
+                    detail = "reports no function tools" if reported_tools is not None else "cannot report its tools"
+                    no_tools_reason = f"{type(objective_target).__name__} {detail}."
 
             if tools == []:
                 kind = AttackPreparationFailureKind.OBJECTIVE_TARGET_HAS_NO_TOOLS
@@ -212,7 +217,7 @@ class AttackParameters:
                     seed_prompts=[],
                     related_conversations=frozenset(),
                     preparation_failure=AttackPreparationFailure(
-                        kind=kind, reason=f"{kind.default_reason} Target: {type(objective_target).__name__}."
+                        kind=kind, reason=f"{kind.default_reason} {no_tools_reason}"
                     ),
                 )
             else:

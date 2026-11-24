@@ -28,8 +28,8 @@
 # `OpenAIChatTarget` and `LiteLLMChatTarget` report the tools declared in `extra_body_parameters["tools"]`,
 # and accept tool-call history for models PyRIT recognizes or when declared with `custom_configuration`.
 #
-# The stand-in in `tool_priming_simulated` runs its tool calls, so the adversarial chat must be an
-# `OpenAIResponseTarget`. Here one is built from the `ADVERSARIAL_CHAT_*` environment variables and
+# The stand-in in `tool_priming_simulated` runs its tool calls, so the adversarial chat must be a target
+# that runs tools, such as `OpenAIResponseTarget` or `LiteLLMChatTarget`. Here one is built from the `ADVERSARIAL_CHAT_*` environment variables and
 # replaces the chat-completions `adversarial_chat` registered from them, so both techniques use it. The objective target uses
 # `OPENAI_RESPONSES_*`, and the scorer uses the default chat target.
 

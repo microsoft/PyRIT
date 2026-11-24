@@ -405,10 +405,12 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
             "num_turns": self.num_turns,
             "sequence": self.sequence,
             "adversarial_chat_system_prompt": _prompt_identity(self.adversarial_chat_system_prompt),
-            "simulated_target_system_prompt": _prompt_identity(self.simulated_target_system_prompt),
             "next_message_system_prompt": _prompt_identity(self.next_message_system_prompt),
             "pyrit_version": self.pyrit_version,
         }
+        # One-shot histories have no stand-in, so its prompt is not part of their identity.
+        if self.mode is SimulatedConversationMode.TURN_BY_TURN:
+            config["simulated_target_system_prompt"] = _prompt_identity(self.simulated_target_system_prompt)
         # Added only when set, so configurations that predate them keep their identity.
         if self.mode is not SimulatedConversationMode.TURN_BY_TURN:
             config["mode"] = self.mode.value
@@ -578,9 +580,11 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
         """
         The range of sequence numbers this simulated conversation will occupy.
 
-        Each turn generates 2 messages (user + assistant, or a tool call and its result in
-        ``ONE_SHOT`` mode), so num_turns generates at most num_turns * 2 messages. If
-        next_message_system_prompt is set, an additional user message is added at the end.
+        Each turn is expected to generate 2 messages (user + assistant, or a tool call and its result
+        in ``ONE_SHOT`` mode), so this reserves num_turns * 2 slots, plus one for a generated next
+        message. A conversation with tool calls can be longer (an opening user message in
+        ``ONE_SHOT`` mode, or several calls per turn); prompts that follow it are moved back when
+        attack parameters are built.
 
         Returns:
             A range object representing the sequence numbers.

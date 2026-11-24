@@ -25,7 +25,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, ParamSpec, TypeVar
 
 from pydantic import BaseModel
 
@@ -41,6 +41,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
     RedTeamingAttack,
 )
+from pyrit.executor.attack.multi_turn.simulated_conversation import runs_tools_locally
 from pyrit.models import (
     AttackTechniqueSeedGroup,
     ComponentIdentifier,
@@ -58,18 +59,11 @@ from pyrit.models import (
     load_simulated_target_prompt,
     resolve_prompt_source,
 )
-from pyrit.prompt_target import CapabilityName, OpenAIResponseTarget, TargetRequirements
+from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, TechniqueRequirements
-
-# A technique that writes calls to the objective target's tools needs a target that replays
-# tool-call history natively.
-_TOOL_HISTORY_TARGET_REQUIREMENTS = TargetRequirements(
-    native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY}),
-    required_input_modalities=frozenset({frozenset({"function_call"}), frozenset({"function_call_output"})}),
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -163,6 +157,12 @@ class AttackTechniqueFactory(Identifiable):
 
     _creation_calls: list[tuple[str, dict[str, Any]]]
     _OPAQUE_IDENTITY_SCOPE = uuid.uuid4().hex
+    #: A technique that writes calls to the objective target's tools needs a target that replays
+    #: tool-call history natively.
+    TOOL_HISTORY_TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements(
+        native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY}),
+        required_input_modalities=frozenset({frozenset({"function_call"}), frozenset({"function_call_output"})}),
+    )
 
     @_capture_creation
     def __init__(
@@ -412,9 +412,11 @@ class AttackTechniqueFactory(Identifiable):
             load_prompt=load_simulated_target_prompt,
         )
         if simulated_target_system_prompt is None:
+            # One-shot histories have no stand-in, so they keep the plain default, which is not part
+            # of their identity.
             simulated_target_system_prompt = load_simulated_target_prompt(
                 SimulatedTargetSystemPromptPaths.COMPLIANT_TOOL_USE.value
-                if use_target_tools
+                if use_target_tools and mode is SimulatedConversationMode.TURN_BY_TURN
                 else SimulatedTargetSystemPromptPaths.COMPLIANT.value
             )
 
@@ -473,7 +475,7 @@ class AttackTechniqueFactory(Identifiable):
             scorer_override_policy=scorer_override_policy,
             requirements=requirements
             or TechniqueRequirements(
-                objective_target=_TOOL_HISTORY_TARGET_REQUIREMENTS if use_target_tools else TargetRequirements(),
+                objective_target=cls.TOOL_HISTORY_TARGET_REQUIREMENTS if use_target_tools else TargetRequirements(),
                 seed_group=SeedGroupRequirements(objective_only=True),
             ),
         )
@@ -494,11 +496,12 @@ class AttackTechniqueFactory(Identifiable):
             if (
                 simulation.mode is SimulatedConversationMode.TURN_BY_TURN
                 and simulation.use_target_tools
-                and not isinstance(target, OpenAIResponseTarget)
+                and not runs_tools_locally(target)
             ):
                 errors.append(
-                    "A simulated conversation with tools needs an OpenAIResponseTarget adversarial chat, which "
-                    f"runs the stand-in target's tool calls; got {type(target).__name__}."
+                    "A simulated conversation with tools needs an adversarial chat that runs tool calls, such as "
+                    "OpenAIResponseTarget or LiteLLMChatTarget, to stand in for the target; "
+                    f"got {type(target).__name__}."
                 )
         return list(dict.fromkeys(errors))
 

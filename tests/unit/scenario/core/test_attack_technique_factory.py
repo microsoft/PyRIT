@@ -1680,7 +1680,7 @@ class TestSimulatedConversationWithTargetTools:
         assert "Use your tools actively" in config.simulated_target_system_prompt.value
         assert "tool results" in config.adversarial_chat_system_prompt.value
         assert any(
-            "needs an OpenAIResponseTarget" in error
+            "needs an adversarial chat that runs tool calls" in error
             for error in factory.check_adversarial_target(target=MockPromptTarget())
         )
         responses_target = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key")

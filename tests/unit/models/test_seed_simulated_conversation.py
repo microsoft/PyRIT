@@ -641,6 +641,17 @@ class TestSeedSimulatedConversationIdentity:
         assert not {"mode", "use_target_tools", "max_attempts"} & set(json.loads(default.value))
         assert len({default.value, with_tools.value, one_shot.value}) == 3
 
+    def test_one_shot_identity_ignores_the_unused_stand_in_prompt(self):
+        def one_shot(stand_in_prompt: str) -> SeedSimulatedConversation:
+            return SeedSimulatedConversation(
+                adversarial_chat_system_prompt=SeedPrompt(value="adversarial"),
+                simulated_target_system_prompt=SeedPrompt(value=stand_in_prompt),
+                mode=SimulatedConversationMode.ONE_SHOT,
+                use_target_tools=True,
+            )
+
+        assert one_shot("first").value == one_shot("second").value
+
     @pytest.mark.parametrize(
         ("kwargs", "problem"),
         [

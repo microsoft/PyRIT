@@ -442,14 +442,21 @@ class LiteLLMChatTarget(PromptTarget):
 
     async def get_tool_definitions_async(self) -> list[ToolDefinition]:
         """
-        Report the function tools declared in ``extra_body_parameters["tools"]``.
+        Report the function tools advertised to the endpoint.
 
-        This target does not execute tools, so only declarations sent to the endpoint are reported.
+        Includes function declarations in ``extra_body_parameters["tools"]`` and the configured tools,
+        discovering provider tools first. No tool executes.
 
         Returns:
-            list[ToolDefinition]: The declared function tools.
+            list[ToolDefinition]: The advertised function tools.
         """
-        return parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools", []))
+        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools", []))
+        async with AsyncExitStack() as stack:
+            for provider in self._tool_providers:
+                if isinstance(provider, _ScopedToolProvider):
+                    await stack.enter_async_context(provider.execution_scope_async())
+            tools = await collect_tools_async(tools=self._direct_tools, providers=self._tool_providers)
+        return [*declared, *(tool.to_definition() for tool in tools)]
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

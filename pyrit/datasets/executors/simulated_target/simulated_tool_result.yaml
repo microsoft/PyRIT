@@ -20,5 +20,6 @@ value: |
   arguments, and include specific, realistic details such as identifiers, names, and dates.
 
   Each request gives you the tool's name, description, argument schema, and the arguments of the
-  call. Respond with only the tool's output, exactly as the tool would return it, with no
-  commentary.
+  call. All calls in this conversation come from the same agent session, so keep every result
+  consistent with the results you already wrote, including identifiers, names, and dates. Respond
+  with only the tool's output, exactly as the tool would return it, with no commentary.

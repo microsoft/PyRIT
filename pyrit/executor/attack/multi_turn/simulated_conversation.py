@@ -14,16 +14,26 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 from uuid import uuid4
 
+import referencing
+import referencing.exceptions
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from pyrit.common.path import EXECUTOR_SIMULATED_TARGET_PATH
-from pyrit.exceptions import AdversarialChatResponseBlockedException, InvalidJsonException, remove_markdown_json
+from pyrit.exceptions import (
+    AdversarialChatResponseBlockedException,
+    EmptyResponseException,
+    InvalidJsonException,
+    remove_markdown_json,
+)
 from pyrit.executor.attack.component import (
     _AdversarialConversationManager,
 )
+from pyrit.executor.attack.component.adversarial_conversation_manager import _raise_for_adversarial_error
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -41,7 +51,6 @@ from pyrit.models import (
     ConversationType,
     JsonResponseConfig,
     Message,
-    SeedGroup,
     SeedPrompt,
     SimulatedConversationMode,
     ToolDefinition,
@@ -50,12 +59,13 @@ from pyrit.models import (
     warn_prompt_path_deprecated,
 )
 from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
-from pyrit.prompt_target import OpenAIResponseTarget, Tool
-from pyrit.prompt_target.common.tool_call_history import check_simulated_tool_history
+from pyrit.prompt_target import LiteLLMChatTarget, OpenAIResponseTarget, Tool
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
+
+    from jsonschema.protocols import Validator
 
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
@@ -187,14 +197,14 @@ async def generate_simulated_conversation_async(
         ValueError: If num_turns is not a positive integer, if no adversarial chat system prompt
             is supplied, if a prompt and its deprecated path input are both supplied, if
             ``ONE_SHOT`` mode has no tools or duplicate tool names, if both ``tools`` and
-            ``simulated_target`` are given, if an adversarial chat cannot
+            a ``simulated_target`` with its own tools are given, if an adversarial chat cannot
             hold a multi-turn conversation with a system prompt, if ``TURN_BY_TURN`` mode has no
             objective scorer, or if a simulated target with tools cannot run them.
     """
-    if simulated_target is not None and tools:
+    if simulated_target is not None and tools and await simulated_target.get_tool_definitions_async():
         raise ValueError(
-            "Pass either tools, which give the adversarial chat's stand-in tools whose results it writes, or a "
-            "simulated_target configured with its own tools, not both."
+            "The simulated_target already has its own tools; tools would replace them. Pass either tools, "
+            "whose results the adversarial chat writes, or a simulated_target with its own tools, not both."
         )
     # By default the same LLM plays both roles, with different system prompts.
     simulated_target = simulated_target or adversarial_chat
@@ -284,12 +294,19 @@ async def generate_simulated_conversation_async(
     if simulated_target_system_prompt_value:
         prepended_conversation.append(Message.from_system_prompt(simulated_target_system_prompt_value))
 
-    result = await attack.execute_async(
-        objective=objective,
-        prepended_conversation=prepended_conversation if prepended_conversation else None,
-        memory_labels=memory_labels,
-        persist_attack_result=False,
-    )
+    try:
+        result = await attack.execute_async(
+            objective=objective,
+            prepended_conversation=prepended_conversation if prepended_conversation else None,
+            memory_labels=memory_labels,
+            persist_attack_result=False,
+        )
+    except Exception:
+        if tool_result_writer is None or tool_result_writer.failure is None:
+            raise
+        return tool_result_writer.failed_result()
+    if tool_result_writer is not None and tool_result_writer.failure is not None:
+        return tool_result_writer.failed_result()
 
     # Extract the conversation from memory and filter for prepended_conversation use
     memory = CentralMemory.get_memory_instance()
@@ -307,15 +324,8 @@ async def generate_simulated_conversation_async(
         *result.related_conversations,
     }
 
-    if tool_result_writer is not None:
-        related_conversations.update(
-            ConversationReference(
-                conversation_id=conversation_id,
-                conversation_type=ConversationType.ADVERSARIAL,
-                description="simulated tool result",
-            )
-            for conversation_id in tool_result_writer.conversation_ids
-        )
+    if tool_result_writer is not None and tool_result_writer.started:
+        related_conversations.add(tool_result_writer.reference)
 
     preparation_failure = AttackPreparationFailure.from_result(result=result)
     # A stand-in whose tool loop stopped early (no rounds left, an invalid call, a tool error) leaves
@@ -523,8 +533,17 @@ async def _generate_one_shot_history_async(
             max_attempts=max_attempts,
             conversation_id=conversation_id,
         )
-    except (InvalidJsonException, _InvalidHistoryError) as error:
-        kind = AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT
+    except (
+        AdversarialChatResponseBlockedException,
+        EmptyResponseException,
+        InvalidJsonException,
+        _InvalidHistoryError,
+    ) as error:
+        kind = (
+            AttackPreparationFailureKind.from_exception(error)
+            if isinstance(error, AdversarialChatResponseBlockedException)
+            else AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT
+        )
         return SimulatedConversationResult(
             seed_prompts=[],
             related_conversations=frozenset({reference}),
@@ -550,7 +569,7 @@ async def _write_one_shot_history_async(
     Request a history and send validation feedback in the same conversation until it passes.
 
     Responses that are not JSON at all are retried on a clean turn through the shared JSON retry
-    policy instead of spending an attempt.
+    policy instead of spending an attempt. Blocked, refused, and empty responses end generation.
 
     Returns:
         list[SeedPrompt]: The validated history, numbered from sequence 0.
@@ -567,8 +586,10 @@ async def _write_one_shot_history_async(
         message.message_pieces[0].prompt_metadata = json_config.to_metadata()
         return message
 
+    validators = _build_argument_validators(tools=tools)
+
     def parse(response: Message) -> tuple[list[SeedPrompt], list[str]]:
-        return _read_one_shot_history(response=response, tools=tools, num_tool_calls=num_tool_calls)
+        return _read_one_shot_history(response=response, validators=validators, num_tool_calls=num_tool_calls)
 
     await adversarial_chat.set_system_prompt_async(system_prompt=system_prompt.value, conversation_id=conversation_id)
     normalizer = PromptNormalizer()
@@ -596,8 +617,7 @@ async def _write_one_shot_history_async(
         logger.info("One-shot tool history attempt %d failed validation: %s", attempt, issues)
         request = build_request(
             "Your history failed validation. Fix every problem below and return the complete corrected "
-            "history in the same JSON format. Message N refers to items[N].\n"
-            + "\n".join(f"- {issue}" for issue in issues)
+            "history in the same JSON format.\n" + "\n".join(f"- {issue}" for issue in issues)
         )
     raise _InvalidHistoryError(
         f"No valid history after {max_attempts} attempt(s) in conversation {conversation_id}. "
@@ -605,8 +625,31 @@ async def _write_one_shot_history_async(
     )
 
 
+#: Tool schemas resolve only their own references; remote references are never retrieved.
+_OFFLINE_SCHEMA_REGISTRY: referencing.Registry = referencing.Registry()
+
+
+def _build_argument_validators(*, tools: Sequence[ToolDefinition]) -> dict[str, Validator | None]:
+    """
+    Compile each tool's argument schema once.
+
+    Returns:
+        dict[str, Validator | None]: A validator per tool name, or None for a tool whose
+            schema is invalid, so its calls are checked by name only.
+    """
+    validators: dict[str, Validator | None] = {}
+    for tool in tools:
+        try:
+            Draft202012Validator.check_schema(tool.parameters)
+            validators[tool.name] = Draft202012Validator(tool.parameters, registry=_OFFLINE_SCHEMA_REGISTRY)
+        except SchemaError:
+            logger.warning("Tool '%s' has an invalid parameter schema; its arguments are not checked.", tool.name)
+            validators[tool.name] = None
+    return validators
+
+
 def _read_one_shot_history(
-    *, response: Message, tools: Sequence[ToolDefinition], num_tool_calls: int
+    *, response: Message, validators: dict[str, Validator | None], num_tool_calls: int
 ) -> tuple[list[SeedPrompt], list[str]]:
     """
     Parse and check one response.
@@ -615,12 +658,12 @@ def _read_one_shot_history(
         tuple[list[SeedPrompt], list[str]]: The history and the problems to send back for revision.
 
     Raises:
-        InvalidJsonException: If the response is blocked or is not a single JSON object, so the
-            shared JSON retry resends the request instead of spending an attempt.
+        InvalidJsonException: If the response is not a single JSON object, so the shared JSON retry
+            resends the request instead of spending an attempt.
     """
+    _raise_for_adversarial_error(response)
     texts = [piece.converted_value for piece in response.message_pieces if piece.converted_value_data_type == "text"]
-    blocked = any(piece.response_error != "none" for piece in response.message_pieces)
-    if blocked or len(texts) != 1:
+    if len(texts) != 1:
         raise InvalidJsonException(message="Expected one text response containing a history object.")
     payload = remove_markdown_json(texts[0])
     try:
@@ -635,53 +678,154 @@ def _read_one_shot_history(
         )
         return [], [f"The response is not a valid history object: {details}"]
     history = [item.to_seed_prompt(sequence=index) for index, item in enumerate(authored.items)]
-    messages = SeedGroup(seeds=[prompt.model_copy() for prompt in history]).user_messages
-    return history, [
-        *_check_one_shot_shape(history=history, num_tool_calls=num_tool_calls),
-        *check_simulated_tool_history(messages=messages, tools=tools),
-    ]
+    return history, _check_one_shot_items(items=authored.items, validators=validators, num_tool_calls=num_tool_calls)
 
 
-def _check_one_shot_shape(*, history: list[SeedPrompt], num_tool_calls: int) -> list[str]:
+def _check_one_shot_items(
+    *,
+    items: Sequence[_AuthoredMessage | _AuthoredCall | _AuthoredOutput],
+    validators: dict[str, Validator | None],
+    num_tool_calls: int,
+) -> list[str]:
     issues: list[str] = []
-    calls = sum(prompt.data_type == "function_call" for prompt in history)
+    pending: str | None = None
+    call_ids: set[str] = set()
+    for index, item in enumerate(items):
+        label = f"items[{index}]"
+        if isinstance(item, _AuthoredOutput):
+            if item.call_id != pending:
+                issues.append(f"{label}: this output does not answer the function_call right before it.")
+            pending = None
+            continue
+        if pending is not None:
+            issues.append(f"{label}: function_call '{pending}' must be followed immediately by its output.")
+            pending = None
+        if isinstance(item, _AuthoredMessage):
+            if item.role == "assistant":
+                issues.append(f"{label}: write no assistant messages; use only tool calls and their results.")
+            elif index != 0:
+                issues.append(f"{label}: only one user message is allowed, as the first item.")
+            continue
+        if item.call_id in call_ids:
+            issues.append(f"{label}: call_id '{item.call_id}' is reused; every call needs a unique call_id.")
+        call_ids.add(item.call_id)
+        pending = item.call_id
+        issues.extend(f"{label}: {issue}" for issue in _check_arguments(call=item, validators=validators))
+    if pending is not None:
+        issues.append(f"function_call '{pending}' is never answered by its output.")
+    calls = sum(isinstance(item, _AuthoredCall) for item in items)
     if calls != num_tool_calls:
         issues.append(
             f"The history has {calls} tool calls; write exactly {num_tool_calls}, each followed by its result."
         )
-    if history[-1].role == "user":
-        issues.append("Do not end with a user message; the objective is sent as the next user message.")
-    texts = [(index, prompt.role) for index, prompt in enumerate(history) if prompt.data_type == "text"]
-    if any(role == "assistant" for _, role in texts):
-        issues.append("Write no assistant messages; use only tool calls and their results.")
-    if any(role == "user" and index != 0 for index, role in texts):
-        issues.append("Only one user message is allowed, as the first item.")
     return issues
+
+
+def _check_arguments(*, call: _AuthoredCall, validators: dict[str, Validator | None]) -> list[str]:
+    if call.name not in validators:
+        return [f"'{call.name}' is not an available tool. Available tools: {sorted(validators)}."]
+    arguments = call.arguments
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError as error:
+            return [f"arguments for '{call.name}' are not valid JSON: {error}."]
+    if not isinstance(arguments, dict):
+        return [f"arguments for '{call.name}' must be a JSON object."]
+    validator = validators[call.name]
+    if validator is None:
+        return []
+    try:
+        errors = sorted(validator.iter_errors(arguments), key=lambda error: (error.json_path, error.message))
+    except referencing.exceptions.Unresolvable:
+        logger.warning("Tool '%s' has a schema reference that cannot be resolved offline.", call.name)
+        return []
+    return [f"arguments for '{call.name}' at {error.json_path}: {error.message}." for error in errors]
+
+
+class _ToolResultWriterError(RuntimeError):
+    """The adversarial chat could not write a tool result."""
 
 
 @dataclass
 class _ToolResultWriter:
-    """Has the adversarial chat write the result of each tool call a simulated target makes."""
+    """
+    Has the adversarial chat write the result of each tool call a simulated target makes.
+
+    All results of one simulated conversation are written in a single adversarial conversation, so
+    later results stay consistent with earlier ones. Calls are written one at a time.
+    """
 
     objective: str
     adversarial_chat: PromptTarget
-    conversation_ids: list[str] = field(default_factory=list)
+    conversation_id: str = field(default_factory=lambda: str(uuid4()))
+    failure: AttackPreparationFailure | None = None
+    started: bool = field(default=False, init=False)
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+
+    def failed_result(self) -> SimulatedConversationResult:
+        """
+        Report a conversation that could not be completed because a tool result failed.
+
+        Returns:
+            SimulatedConversationResult: No prompts, the writer conversation, and its failure.
+        """
+        return SimulatedConversationResult(
+            seed_prompts=[], related_conversations=frozenset({self.reference}), preparation_failure=self.failure
+        )
+
+    @property
+    def reference(self) -> ConversationReference:
+        """The adversarial conversation the tool results were written in."""
+        return ConversationReference(
+            conversation_id=self.conversation_id,
+            conversation_type=ConversationType.ADVERSARIAL,
+            description="simulated tool results",
+        )
 
     async def write_async(self, *, tool: ToolDefinition, arguments: dict[str, object]) -> str:
-        conversation_id = str(uuid4())
-        self.conversation_ids.append(conversation_id)
-        system_prompt = SeedPrompt.from_yaml_file(EXECUTOR_SIMULATED_TARGET_PATH / "simulated_tool_result.yaml")
-        await self.adversarial_chat.set_system_prompt_async(
-            system_prompt=system_prompt.render_template_value(objective=self.objective),
-            conversation_id=conversation_id,
-        )
-        request = json.dumps({"tool": tool.model_dump(mode="json"), "arguments": arguments}, indent=2)
-        response = await PromptNormalizer().send_prompt_async(
-            message=Message.from_prompt(prompt=request, role="user"),
-            target=self.adversarial_chat,
-            conversation_id=conversation_id,
-        )
-        return response.get_value() if response else ""
+        """
+        Write one tool result.
+
+        Returns:
+            str: The result the simulated target receives.
+
+        Raises:
+            _ToolResultWriterError: If the adversarial chat was blocked, refused, or returned nothing;
+                the reason is kept in ``failure``.
+        """
+        async with self._lock:
+            if not self.started:
+                system_prompt = await asyncio.to_thread(
+                    SeedPrompt.from_yaml_file, EXECUTOR_SIMULATED_TARGET_PATH / "simulated_tool_result.yaml"
+                )
+                await self.adversarial_chat.set_system_prompt_async(
+                    system_prompt=system_prompt.render_template_value(objective=self.objective),
+                    conversation_id=self.conversation_id,
+                )
+                self.started = True
+            request = json.dumps({"tool": tool.model_dump(mode="json"), "arguments": arguments}, indent=2)
+            response = await PromptNormalizer().send_prompt_async(
+                message=Message.from_prompt(prompt=request, role="user"),
+                target=self.adversarial_chat,
+                conversation_id=self.conversation_id,
+            )
+            if response is None or not response.get_value().strip():
+                return self._fail(
+                    kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT,
+                    details="The adversarial chat wrote an empty tool result.",
+                )
+            try:
+                _raise_for_adversarial_error(response)
+            except AdversarialChatResponseBlockedException as error:
+                return self._fail(kind=AttackPreparationFailureKind.from_exception(error), details=str(error))
+            except EmptyResponseException as error:
+                return self._fail(kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT, details=str(error))
+            return response.get_value()
+
+    def _fail(self, *, kind: AttackPreparationFailureKind, details: str) -> NoReturn:
+        self.failure = AttackPreparationFailure(kind=kind, reason=f"{kind.default_reason} Details: {details}")
+        raise _ToolResultWriterError(details)
 
 
 class _SimulatedTool(Tool):
@@ -696,6 +840,23 @@ class _SimulatedTool(Tool):
 
     async def execute_async(self, *, arguments: dict[str, object]) -> object:
         return await self._writer.write_async(tool=self._definition, arguments=arguments)
+
+
+#: Targets that run tool calls locally, so they can stand in for a tool-using objective target.
+_TOOL_RUNNING_TARGETS: tuple[type[PromptTarget], ...] = (OpenAIResponseTarget, LiteLLMChatTarget)
+
+
+def runs_tools_locally(target: PromptTarget) -> bool:
+    """
+    Check whether a target can stand in for a tool-using target in a simulated conversation.
+
+    Args:
+        target (PromptTarget): The candidate stand-in.
+
+    Returns:
+        bool: True if the target runs tool calls locally.
+    """
+    return isinstance(target, _TOOL_RUNNING_TARGETS)
 
 
 def _with_simulated_tools(
@@ -713,10 +874,10 @@ def _with_simulated_tools(
     # Import here to avoid circular imports
     from pyrit.registry import TargetRegistry
 
-    if not isinstance(target, OpenAIResponseTarget):
+    if not runs_tools_locally(target):
         raise ValueError(
-            "A simulated conversation with tools needs an OpenAIResponseTarget simulated target, which runs "
-            f"the tool calls; got {type(target).__name__}."
+            "A simulated conversation with tools needs a simulated target that runs tool calls "
+            f"({', '.join(cls.__name__ for cls in _TOOL_RUNNING_TARGETS)}); got {type(target).__name__}."
         )
     return TargetRegistry.get_registry_singleton().recreate_instance(
         source=target, params={"tools": [_SimulatedTool(definition=tool, writer=writer) for tool in tools]}
