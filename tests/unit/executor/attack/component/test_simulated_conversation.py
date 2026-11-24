@@ -1590,7 +1590,7 @@ async def _run_turn_by_turn_async(
     mock_objective_scorer: MagicMock,
     adversarial_system_prompt: SeedPrompt,
     **kwargs: object,
-) -> tuple[SimulatedConversationResult, MagicMock]:
+) -> tuple[SimulatedConversationResult, MagicMock | AsyncMock]:
     identifier = ComponentIdentifier(class_name="RedTeamingAttack", class_module="pyrit.executor.attack")
     with (
         patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as attack_class,
