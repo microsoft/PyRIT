@@ -81,7 +81,8 @@ class OpenRedirectOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     }
     _DEFAULT_CATEGORIES: tuple[str, ...] = ("security",)
 
-    _MAX_CANDIDATE_LEN: int = 4096
+    _LEADING_PADDING: re.Pattern[str] = re.compile(r"(?i)(?:[\x00-\x20]|%(?:20|09|0[ad]|00)|%25(?:20|09|0[ad]|00))+")
+    _MAX_CLASSIFY_LEN: int = 256
     _NORMALIZED_MIME_TYPES = (
         r"(?:text/(?:html|(?:x-)?javascript|ecmascript)"
         r"|image/svg\+xml"
@@ -153,14 +154,20 @@ class OpenRedirectOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         for match in self._REDIRECT_PARAM_START.finditer(text):
             quote = match.group("quote")
             start = match.end()
-            tail = text[start : start + self._MAX_CANDIDATE_LEN]
+            tail = text[start:]
             if quote:
                 end = tail.find(quote)
-                value = tail[:end] if end != -1 else tail
+                if end != -1:
+                    tail = tail[:end]
+            pad_match = self._LEADING_PADDING.match(tail)
+            if pad_match:
+                tail = tail[pad_match.end() :]
+            short_tail = tail[: self._MAX_CLASSIFY_LEN]
+            if not quote:
+                delimiter_match = re.search(r"[\x20\f\v\"'>&]", short_tail)
+                value = short_tail[: delimiter_match.start()] if delimiter_match else short_tail
             else:
-                tail = tail.lstrip(" \t\r\n\f\v")
-                delimiter_match = re.search(r"[\x20\f\v\"'>&]", tail)
-                value = tail[: delimiter_match.start()] if delimiter_match else tail
+                value = short_tail
 
             for _ in range(2):
                 value = unquote(value)

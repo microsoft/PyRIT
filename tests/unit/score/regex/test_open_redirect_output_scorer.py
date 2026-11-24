@@ -107,6 +107,8 @@ from pyrit.score import OpenRedirectOutputScorer
         "Location: https://example.com/?redirect=java%09script:alert(1)",
         "Location: https://example.com/?redirect=java\tscript:alert(1)",
         '?next=/home&url="data:text/html,<script>alert(1)</script>"',
+        "redirect=" + "%20" * 1400 + "javascript:alert(1)",
+        "redirect=" + "%2520" * 1000 + "javascript:alert(1)",
     ],
 )
 async def test_open_redirect_detected(text: str, patch_central_database):
@@ -167,7 +169,7 @@ async def test_open_redirect_detected(text: str, patch_central_database):
         "redirect=data:text/html,",
         "redirect=javaſcript:alert(1)",
         "redirect=\xa0javascript:alert(1)",
-        "url=data:text/html&other=1,2",
+        "url=data:text/html%3Bx&y=1,2",
     ],
 )
 async def test_open_redirect_not_detected(text: str, patch_central_database):
@@ -301,3 +303,14 @@ async def test_pseudo_protocol_padding_does_not_catastrophic_backtrack() -> None
     duration = time.perf_counter() - start
     assert score.get_value() is False
     assert duration < 0.5, f"Pseudo-protocol padding check took too long: {duration:.3f}s"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_candidate_extraction_linear_on_repeated_parameter_starts() -> None:
+    scorer = OpenRedirectOutputScorer()
+    payload = "url=%" * 5000
+    start = time.perf_counter()
+    score = (await scorer.score_text_async(payload))[0]
+    duration = time.perf_counter() - start
+    assert score.get_value() is False
+    assert duration < 1.0, f"Scanning repeated parameter starts took too long: {duration:.3f}s"
