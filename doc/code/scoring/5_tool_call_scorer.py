@@ -348,6 +348,122 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # spans for the named tool.
 
 # %% [markdown]
+# ## Link a provider that ignores trace context
+#
+# Some providers and gateways do not continue W3C context, but they return their
+# own id for each response. `LiteLLMChatTarget` stores that id on the request as a
+# `ProviderTraceReference`, apart from any propagation format, with LiteLLM's
+# provider route (here `openai`). At scoring time a `ProviderTraceResolver` maps it
+# to the trace that recorded it.
+#
+# `SpanAttributeTraceResolver` finds the captured span that carries the response id
+# as `gen_ai.response.id`, the attribute OpenTelemetry's GenAI conventions use for
+# a model response. Name other attributes if your framework records it elsewhere.
+# `MappingProviderTraceResolver` takes the mapping from your own logs instead.
+#
+# A request with a W3C link resolves through that link, so set `enabled=False` for
+# a provider that does not continue it. An id the resolver cannot find, or finds in
+# more than one trace, leaves the request unlinked, and a verdict that rests on
+# absence stays undetermined. So does a send whose tool loop runs a local tool,
+# since one response id cannot name the tool's run or later completions' traces.
+#
+# This cell stands a loopback gateway in for the provider. It ignores
+# `traceparent`, runs the tool under its own trace, records its response id on
+# the model span, and answers LiteLLM in the OpenAI format. It needs no model or
+# credentials.
+
+# %%
+import json
+import threading
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from pyrit.models import ProviderTraceReference
+from pyrit.prompt_target import LiteLLMChatTarget
+from pyrit.score import SpanAttributeTraceResolver
+
+await initialize_pyrit_async(  # type: ignore
+    memory_db_type=IN_MEMORY,
+    load_defaults=False,
+    env_files=[],
+    silent=True,
+)
+memory = CentralMemory.get_memory_instance()
+client = InMemoryTraceClient()
+provider = TracerProvider(sampler=ALWAYS_ON, span_limits=SpanLimits(max_span_attribute_length=SpanLimits.UNSET))
+provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_client=client)))
+tracer = provider.get_tracer("local-gateway")
+
+
+class LocalGateway(BaseHTTPRequestHandler):
+    """Answer chat completions under the gateway's own trace, ignoring any received context."""
+
+    def do_POST(self) -> None:
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        prompt = body["messages"][-1]["content"]
+        response_id = f"chatcmpl-{uuid.uuid4().hex}"
+        with tracer.start_as_current_span(
+            "chat", context=Context(), attributes={"gen_ai.response.id": response_id}
+        ) as root:
+            if prompt == "my_tool_call":
+                my_tool_call()
+        if not provider.force_flush():
+            raise RuntimeError("Local trace export did not finish.")
+        client.mark_complete(trace_ids=(f"{root.get_span_context().trace_id:032x}",))
+        reply = json.dumps(
+            {
+                "id": response_id,
+                "object": "chat.completion",
+                "created": 0,
+                "model": "gpt-4o",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "done"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(reply)))
+        self.end_headers()
+        self.wfile.write(reply)
+
+    def log_message(self, format: str, *args: object) -> None:
+        """Keep the notebook output quiet."""
+
+
+gateway = ThreadingHTTPServer(("127.0.0.1", 0), LocalGateway)
+threading.Thread(target=gateway.serve_forever, daemon=True).start()
+litellm_target = LiteLLMChatTarget(
+    model_name="openai/gpt-4o",
+    endpoint=f"http://127.0.0.1:{gateway.server_port}/v1",
+    api_key="local",
+    trace_config=TargetTraceConfig(enabled=False),
+)
+source = OtelTraceSource(trace_client=client)
+for resolver, outcomes in (
+    (SpanAttributeTraceResolver(trace_client=client), (AttackOutcome.SUCCESS, AttackOutcome.FAILURE)),
+    (None, (AttackOutcome.UNDETERMINED, AttackOutcome.UNDETERMINED)),
+):
+    provider_attack = PromptSendingAttack(
+        objective_target=litellm_target,
+        attack_scoring_config=AttackScoringConfig(
+            objective_scorer=OtelToolCallScorer(source=source, provider_trace_resolver=resolver)
+        ),
+        max_attempts_on_failure=0,
+    )
+    for prompt, expected in zip(("my_tool_call", "no tool"), outcomes, strict=True):
+        result = await provider_attack.execute_async(objective=prompt, expectation=expects("my_tool_call"))  # type: ignore
+        assert result.outcome is expected
+        print(f"{'With' if resolver else 'Without'} a resolver, {prompt}: {result.outcome.value}")
+
+request = (await memory.get_message_pieces_async(conversation_id=result.conversation_id, role="user"))[0]  # type: ignore
+reference = ProviderTraceReference.from_metadata(request.prompt_metadata)
+print(f"Stored identifiers: {sorted(reference.model_dump())}")
+gateway.shutdown()
+await asyncio.to_thread(provider.shutdown)  # type: ignore
+client.close()
+(await memory.dispose_engine_async())
+
+# %% [markdown]
 # ## Use another trace source
 #
 # A caller can provide a `TraceClient` that returns neutral spans for the
