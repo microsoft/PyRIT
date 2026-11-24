@@ -348,7 +348,6 @@ export default function TechniqueEditor({
               {!loading && types.length > 0 && (
                 <>
                   {!editing && <HelpField label="Registry name" required
-                    hint="Start with a lowercase letter. Use lowercase letters, digits, and underscores."
                     help="A unique name used to find and reuse this technique. Adding a technique does not run an attack."
                     validationMessage={nameMessage ?? undefined}>
                     <Input value={name} disabled={submitting} onChange={(_, data) => setName(data.value)} />

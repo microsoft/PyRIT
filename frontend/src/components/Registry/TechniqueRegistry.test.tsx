@@ -531,7 +531,11 @@ describe('TechniqueRegistry', () => {
     await user.type(name, 'First')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
 
-    expect(screen.getByText('Use lowercase letters, digits and underscores, starting with a letter (max 64 characters).')).toBeInTheDocument()
+    // The rule is given once, by the error, then the field's help.
+    expect(name).toHaveAccessibleDescription(
+      'Use lowercase letters, digits and underscores, starting with a letter (max 64 characters). '
+        + 'A unique name used to find and reuse this technique. Adding a technique does not run an attack.',
+    )
     expect(screen.getByRole('button', { name: 'Save technique' })).toBeDisabled()
     await user.clear(name)
     await user.type(name, 'first')
