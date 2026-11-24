@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Resolve the identifiers a provider returned for a request to the trace it recorded."""
+"""Resolve the response id a provider returned for a request to the trace it recorded."""
 
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ class ProviderTraceResolver(Protocol):
 
     A resolver answers only what it knows. An identifier it cannot map, or one that matches more
     than one trace, resolves to None, so the request stays unlinked and a verdict that rests on
-    absence stays undetermined instead of becoming a false negative.
+    absence stays undetermined instead of becoming a false negative. A resolver whose backend
+    cannot be read raises ``TraceAcquisitionError``, which leaves the requests unlinked; any other
+    error propagates and stops scoring.
     """
 
     def get_identifier(self) -> ComponentIdentifier:
@@ -68,7 +70,9 @@ class MappingProviderTraceResolver:
         Args:
             trace_id (str): The trace, as 32 lowercase hex digits.
             request_id (str): The provider's response id.
-            provider (str | None): Limit the match to this provider. None matches any provider.
+            provider (str | None): Limit the match to references with this provider, the route the
+                target stored (for ``LiteLLMChatTarget``, LiteLLM's provider such as ``"openai"``,
+                not a gateway's name). None matches any provider.
 
         Raises:
             ValueError: If the response id is empty or the trace id is malformed.
@@ -117,8 +121,10 @@ class SpanAttributeTraceResolver:
         Initialize over a capture that holds the provider's spans.
 
         Raises:
-            ValueError: If no attribute is named or a name is blank.
+            ValueError: If the attributes are a single string, none is named, or a name is blank.
         """
+        if isinstance(request_id_attributes, str):
+            raise ValueError("request_id_attributes must be a sequence of names, such as ('my.response_id',).")
         if not request_id_attributes or any(not name.strip() for name in request_id_attributes):
             raise ValueError("Name at least one attribute, and no blank names.")
         self._client = trace_client

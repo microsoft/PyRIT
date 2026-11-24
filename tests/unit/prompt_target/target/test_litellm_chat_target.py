@@ -1674,13 +1674,9 @@ def _identified_response(*, response_id: object = "chatcmpl-1", hidden: object =
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("enabled", [False, True])
-async def test_provider_identity_records_returned_ids_on_the_request_async(
-    litellm_stub: types.ModuleType, enabled: bool
-) -> None:
+async def test_send_records_the_response_id_on_the_request_async(litellm_stub: types.ModuleType, enabled: bool) -> None:
     litellm_stub.acompletion = AsyncMock(return_value=_identified_response())
-    target = LiteLLMChatTarget(
-        model_name="openai/gpt-4o", trace_config=TargetTraceConfig(enabled=enabled, provider_identity=True)
-    )
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o", trace_config=TargetTraceConfig(enabled=enabled))
     request = _user_message()
     responses = await target.send_prompt_async(message=request)
 
@@ -1697,16 +1693,24 @@ async def test_provider_identity_records_returned_ids_on_the_request_async(
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("trace_config", [None, TargetTraceConfig(enabled=True)])
-async def test_provider_identity_is_off_by_default_and_clears_stale_ids_async(
-    litellm_stub: types.ModuleType, trace_config: TargetTraceConfig | None
+@pytest.mark.parametrize(
+    ("response_id", "expected"),
+    [("chatcmpl-new", ProviderTraceReference(provider="openai", request_id="chatcmpl-new")), (None, None)],
+)
+async def test_every_send_replaces_stale_provider_ids_async(
+    litellm_stub: types.ModuleType,
+    trace_config: TargetTraceConfig | None,
+    response_id: str | None,
+    expected: ProviderTraceReference | None,
 ) -> None:
-    litellm_stub.acompletion = AsyncMock(return_value=_identified_response())
+    response = _identified_response(response_id=MagicMock() if response_id is None else response_id)
+    litellm_stub.acompletion = AsyncMock(return_value=response)
     target = LiteLLMChatTarget(model_name="openai/gpt-4o", trace_config=trace_config)
     request = _user_message()
     request.get_piece().prompt_metadata.update(ProviderTraceReference(provider="stale", request_id="old").to_metadata())
     await target.send_prompt_async(message=request)
 
-    assert ProviderTraceReference.METADATA_KEY not in request.get_piece().prompt_metadata
+    assert ProviderTraceReference.from_metadata(request.get_piece().prompt_metadata) == expected
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1730,7 +1734,7 @@ async def test_provider_identity_keeps_only_usable_ids_async(
 ) -> None:
     response = _identified_response(response_id=MagicMock() if response_id is None else response_id, hidden=hidden)
     litellm_stub.acompletion = AsyncMock(return_value=response)
-    target = LiteLLMChatTarget(model_name="openai/gpt-4o", trace_config=TargetTraceConfig(provider_identity=True))
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o")
     request = _user_message()
     await target.send_prompt_async(message=request)
 
@@ -1742,7 +1746,7 @@ async def test_provider_ids_reach_the_stored_request_when_normalization_copies_i
     litellm_stub: types.ModuleType,
 ) -> None:
     litellm_stub.acompletion = AsyncMock(return_value=_identified_response())
-    target = LiteLLMChatTarget(model_name="openai/gpt-4o", trace_config=TargetTraceConfig(provider_identity=True))
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o")
     request = _user_message()
     sent: list[Message] = []
 
@@ -1760,13 +1764,8 @@ async def test_provider_ids_reach_the_stored_request_when_normalization_copies_i
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("provider_identity", [False, True])
-async def test_rejected_resend_does_not_keep_the_earlier_provider_ids_async(
-    litellm_stub: types.ModuleType, provider_identity: bool
-) -> None:
-    target = LiteLLMChatTarget(
-        model_name="openai/gpt-4o", trace_config=TargetTraceConfig(provider_identity=provider_identity)
-    )
+async def test_rejected_resend_does_not_keep_the_earlier_provider_ids_async(litellm_stub: types.ModuleType) -> None:
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o")
     original = _user_message()
     original.get_piece().prompt_metadata.update(
         ProviderTraceReference(provider="openai", request_id="chatcmpl-earlier").to_metadata()
@@ -1787,7 +1786,7 @@ async def test_parse_failure_keeps_provider_ids_on_the_request_only_async(
     sqlite_instance: SQLiteMemory, patch_central_database, litellm_stub: types.ModuleType
 ) -> None:
     litellm_stub.acompletion = AsyncMock(return_value=_identified_response())
-    target = LiteLLMChatTarget(model_name="openai/gpt-4o", trace_config=TargetTraceConfig(provider_identity=True))
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o")
     with (
         patch.object(target, "_construct_message_from_response_async", side_effect=ValueError("unparseable")),
         pytest.raises(Exception, match="Error sending prompt"),
@@ -1805,7 +1804,7 @@ async def test_parse_failure_keeps_provider_ids_on_the_request_only_async(
 @pytest.mark.usefixtures("patch_central_database")
 async def test_failed_send_records_no_provider_ids_async(litellm_stub: types.ModuleType) -> None:
     litellm_stub.acompletion = AsyncMock(side_effect=litellm_stub.exceptions.BadRequestError("bad request"))
-    target = LiteLLMChatTarget(model_name="openai/gpt-4o", trace_config=TargetTraceConfig(provider_identity=True))
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o")
     request = _user_message()
     with pytest.raises(PyritException):
         await target.send_prompt_async(message=request)
@@ -1844,7 +1843,7 @@ async def test_attack_scores_tool_call_through_provider_identity_async(
             attack = PromptSendingAttack(
                 objective_target=LiteLLMChatTarget(
                     model_name="openai/gpt-4o",
-                    trace_config=TargetTraceConfig(enabled=False, provider_identity=True),
+                    trace_config=TargetTraceConfig(enabled=False),
                 ),
                 attack_scoring_config=AttackScoringConfig(
                     objective_scorer=OtelToolCallScorer(
@@ -1871,6 +1870,95 @@ async def test_attack_scores_tool_call_through_provider_identity_async(
     assert reference == ProviderTraceReference(provider="openai", request_id=f"chatcmpl-{tool}")
     observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     assert len(observation.scorable.trace_ids) == 1
+
+
+def _identified_tool_response(*, response_id: str, calls: list[tuple[str, str, str]]) -> Any:
+    response = _tool_response(calls=calls)
+    response.id = response_id
+    response._hidden_params = {"custom_llm_provider": "openai"}
+    return response
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_tool_loop_send_records_no_provider_ids_async(
+    litellm_stub: types.ModuleType, weather_tool: tuple[FunctionTool, list[str]]
+) -> None:
+    """One reference names one completion, so a send that makes several must stay unlinked."""
+    litellm_stub.acompletion = AsyncMock(
+        side_effect=[
+            _identified_tool_response(response_id="chatcmpl-1", calls=[("a", "weather_async", '{"location":"SF"}')]),
+            _identified_response(response_id="chatcmpl-2"),
+        ]
+    )
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o",
+        tools=[weather_tool[0]],
+        trace_config=TargetTraceConfig(enabled=False),
+    )
+    request = _user_message()
+    await target.send_prompt_async(message=request)
+
+    assert litellm_stub.acompletion.await_count == 2
+    assert weather_tool[1] == ["SF"]
+    assert ProviderTraceReference.METADATA_KEY not in request.get_piece().prompt_metadata
+
+
+async def test_tool_loop_attack_through_provider_identity_is_undetermined_async(
+    sqlite_instance: SQLiteMemory, patch_central_database, weather_tool: tuple[FunctionTool, list[str]]
+) -> None:
+    """A tool the gateway ran in the first completion must not be judged absent from the last one's trace."""
+    client = InMemoryTraceClient()
+    provider = TracerProvider(sampler=ALWAYS_ON, span_limits=SpanLimits(max_span_attribute_length=SpanLimits.UNSET))
+    provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_client=client)))
+    tracer = provider.get_tracer("provider-agent")
+    completions: list[str] = []
+
+    async def agent_async(**kwargs: object) -> object:
+        response_id = f"chatcmpl-{len(completions) + 1}"
+        completions.append(response_id)
+        with tracer.start_as_current_span("chat", attributes={"gen_ai.response.id": response_id}) as root:
+            if len(completions) == 1:
+                with tracer.start_as_current_span(
+                    "lookup", attributes={"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "lookup"}
+                ):
+                    pass
+        client.mark_complete(trace_ids=(f"{root.get_span_context().trace_id:032x}",))
+        if len(completions) == 1:
+            return _identified_tool_response(
+                response_id=response_id, calls=[("a", "weather_async", '{"location":"SF"}')]
+            )
+        return _identified_response(response_id=response_id, content="done")
+
+    litellm, _ = _make_litellm_stub()
+    litellm.acompletion = AsyncMock(side_effect=agent_async)
+    try:
+        with patch.object(LiteLLMChatTarget, "_import_litellm", return_value=litellm):
+            attack = PromptSendingAttack(
+                objective_target=LiteLLMChatTarget(
+                    model_name="openai/gpt-4o",
+                    tools=[weather_tool[0]],
+                    trace_config=TargetTraceConfig(enabled=False),
+                ),
+                attack_scoring_config=AttackScoringConfig(
+                    objective_scorer=OtelToolCallScorer(
+                        source=OtelTraceSource(trace_client=client),
+                        provider_trace_resolver=SpanAttributeTraceResolver(trace_client=client),
+                    )
+                ),
+                max_attempts_on_failure=0,
+            )
+            result = await attack.execute_async(
+                objective="use the lookup tool",
+                expectation=ScoringExpectation(conditions=(ToolsCalled(tools=(ToolCallRequirement(name="lookup"),)),)),
+            )
+    finally:
+        provider.shutdown()
+        client.close()
+
+    assert completions == ["chatcmpl-1", "chatcmpl-2"]
+    assert result.outcome is AttackOutcome.UNDETERMINED
+    assert result.automated_score is not None
+    assert result.automated_score.is_undetermined
 
 
 # ---------------------------------------------------------------------------

@@ -439,7 +439,7 @@ class PromptTarget(Identifiable):
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
             # A resent request must not keep the identifiers of its earlier send if this one is rejected.
-            piece.prompt_metadata.pop(ProviderTraceReference.METADATA_KEY, None)
+            ProviderTraceReference.clear_metadata(piece.prompt_metadata)
             RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
             piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()
@@ -514,13 +514,9 @@ class PromptTarget(Identifiable):
                     piece.prompt_metadata = {
                         key: value
                         for key, value in piece.prompt_metadata.items()
-                        if key
-                        not in (
-                            RequestTraceContext.METADATA_KEY,
-                            RequestTraceContext.REQUEST_METADATA_KEY,
-                            ProviderTraceReference.METADATA_KEY,
-                        )
+                        if key not in (RequestTraceContext.METADATA_KEY, RequestTraceContext.REQUEST_METADATA_KEY)
                     }
+                    ProviderTraceReference.clear_metadata(piece.prompt_metadata)
                     RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
                     RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
                     if generation_info is not None:

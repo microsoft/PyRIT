@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import json
+import logging
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -242,6 +243,11 @@ def test_span_resolver_requires_named_attributes(attributes: tuple[str, ...]) ->
         SpanAttributeTraceResolver(trace_client=InMemoryTraceClient(), request_id_attributes=attributes)
 
 
+def test_span_resolver_rejects_a_single_string_of_attributes() -> None:
+    with pytest.raises(ValueError, match="sequence of names"):
+        SpanAttributeTraceResolver(trace_client=InMemoryTraceClient(), request_id_attributes="my.response_id")
+
+
 def test_span_resolver_identity_includes_attributes_and_capture() -> None:
     client = InMemoryTraceClient(source_id="capture-1")
     default = SpanAttributeTraceResolver(trace_client=client).get_identifier()
@@ -321,7 +327,9 @@ async def test_no_provider_references_skips_the_resolver(sqlite_instance: SQLite
     assert resolver.calls == []
 
 
-async def test_a_backend_that_cannot_be_read_leaves_requests_unlinked(sqlite_instance: SQLiteMemory) -> None:
+async def test_a_backend_that_cannot_be_read_leaves_requests_unlinked(
+    sqlite_instance: SQLiteMemory, caplog: pytest.LogCaptureFixture
+) -> None:
     client = InMemoryTraceClient()
     client.add_span(_model_span(trace_id=_TRACE_A, response_id="chatcmpl-1"))
     client.add_span(_tool_span(trace_id=_TRACE_A, tool="lookup"))
@@ -336,10 +344,12 @@ async def test_a_backend_that_cannot_be_read_leaves_requests_unlinked(sqlite_ins
     resolver = SpanAttributeTraceResolver(trace_client=client)
     client.close()
 
-    links = await resolve_conversation_trace_links_async(
-        conversation_id=conversation, memory=sqlite_instance, provider_resolver=resolver
-    )
+    with caplog.at_level(logging.WARNING, logger="pyrit.score.observation.message_trace_resolver"):
+        links = await resolve_conversation_trace_links_async(
+            conversation_id=conversation, memory=sqlite_instance, provider_resolver=resolver
+        )
     assert [(link.trace_id, link.linked) for link in links] == [(None, False)]
+    assert "Local trace capture is closed." in caplog.text
 
     # Scoring reports that it cannot tell, instead of failing.
     scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client), provider_trace_resolver=resolver)

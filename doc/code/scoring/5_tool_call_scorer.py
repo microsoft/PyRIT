@@ -351,10 +351,10 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # ## Link a provider that ignores trace context
 #
 # Some providers and gateways do not continue W3C context, but they return their
-# own id for each response. Set `TargetTraceConfig(provider_identity=True)` and
-# PyRIT stores it on the request as a `ProviderTraceReference`, apart from any
-# propagation format. At scoring time a `ProviderTraceResolver` maps it to the
-# trace that recorded it.
+# own id for each response. `LiteLLMChatTarget` stores that id on the request as a
+# `ProviderTraceReference`, apart from any propagation format, with LiteLLM's
+# provider route (here `openai`). At scoring time a `ProviderTraceResolver` maps it
+# to the trace that recorded it.
 #
 # `SpanAttributeTraceResolver` finds the captured span that carries the response id
 # as `gen_ai.response.id`, the attribute OpenTelemetry's GenAI conventions use for
@@ -364,7 +364,8 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # A request with a W3C link resolves through that link, so set `enabled=False` for
 # a provider that does not continue it. An id the resolver cannot find, or finds in
 # more than one trace, leaves the request unlinked, and a verdict that rests on
-# absence stays undetermined.
+# absence stays undetermined. So does a send that runs several completions through
+# the tool loop, since one response id cannot name every completion's trace.
 #
 # This cell stands a loopback gateway in for the provider. It ignores
 # `traceparent`, runs the tool under its own trace, records its response id on
@@ -435,7 +436,7 @@ litellm_target = LiteLLMChatTarget(
     model_name="openai/gpt-4o",
     endpoint=f"http://127.0.0.1:{gateway.server_port}/v1",
     api_key="local",
-    trace_config=TargetTraceConfig(enabled=False, provider_identity=True),
+    trace_config=TargetTraceConfig(enabled=False),
 )
 source = OtelTraceSource(trace_client=client)
 for resolver, outcomes in (

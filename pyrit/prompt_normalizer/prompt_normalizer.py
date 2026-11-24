@@ -225,7 +225,7 @@ class PromptNormalizer:
             )
             error_response.get_piece().prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
             error_response.get_piece().prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
-            error_response.get_piece().prompt_metadata.pop(ProviderTraceReference.METADATA_KEY, None)
+            ProviderTraceReference.clear_metadata(error_response.get_piece().prompt_metadata)
             RequestGenerationConfig.clear_metadata(error_response.get_piece().prompt_metadata)
 
             await self._calc_hash_async(request=error_response)
@@ -247,7 +247,7 @@ class PromptNormalizer:
             )
             empty_response.get_piece().prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
             empty_response.get_piece().prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
-            empty_response.get_piece().prompt_metadata.pop(ProviderTraceReference.METADATA_KEY, None)
+            ProviderTraceReference.clear_metadata(empty_response.get_piece().prompt_metadata)
             RequestGenerationConfig.clear_metadata(empty_response.get_piece().prompt_metadata)
             await self._calc_hash_async(request=empty_response)
             (await self.memory.add_message_to_memory_async(request=empty_response))
@@ -264,7 +264,7 @@ class PromptNormalizer:
                 piece.conversation_id = conversation_id
                 piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
                 piece.prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
-                piece.prompt_metadata.pop(ProviderTraceReference.METADATA_KEY, None)
+                ProviderTraceReference.clear_metadata(piece.prompt_metadata)
                 RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
             is_last = i == len(responses) - 1
             if is_last:

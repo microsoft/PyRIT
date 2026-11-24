@@ -19,7 +19,9 @@ class ProviderTraceReference(BaseModel):
     back, with no propagation format, so a trace backend can resolve it to a trace.
 
     Attributes:
-        provider (str): The provider or gateway that returned the identifier.
+        provider (str): The provider route the target sent the request through. For
+            ``LiteLLMChatTarget`` this is LiteLLM's provider (``custom_llm_provider``, such as
+            ``"openai"`` for any OpenAI-compatible gateway), not a gateway's own name.
         request_id (str): The provider's id for the response, such as a completion id.
     """
 
@@ -37,6 +39,11 @@ class ProviderTraceReference(BaseModel):
             dict[str, str]: The reference as compact JSON under ``METADATA_KEY``.
         """
         return {self.METADATA_KEY: json.dumps(self.model_dump(), separators=(",", ":"))}
+
+    @classmethod
+    def clear_metadata(cls, metadata: dict[str, Any]) -> None:
+        """Remove the reference without touching unrelated metadata."""
+        metadata.pop(cls.METADATA_KEY, None)
 
     @classmethod
     def from_metadata(cls, metadata: dict[str, Any]) -> Self | None:

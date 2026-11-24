@@ -106,9 +106,9 @@ async def _link_through_providers_async(
         return tuple(links)
     try:
         resolved = await provider_resolver.resolve_trace_ids_async(references=list(pending.values()))
-    except TraceAcquisitionError:
+    except TraceAcquisitionError as error:
         # Like a failed trace query, a backend that cannot be read leaves the requests unlinked.
-        logger.warning("Provider trace resolution failed; the affected requests stay unlinked.")
+        logger.warning("Provider trace resolution failed; the affected requests stay unlinked: %s", error)
         return tuple(links)
     if len(resolved) != len(pending):
         raise ValueError("A provider trace resolver must answer each reference once.")

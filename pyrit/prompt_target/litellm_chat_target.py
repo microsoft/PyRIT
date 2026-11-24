@@ -246,9 +246,10 @@ class LiteLLMChatTarget(PromptTarget):
         trace_config: Request tracing configuration. Tracing is disabled by default because a
             provider or gateway is not known to accept W3C trace context. Pass
             ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint; each request then
-            sends a fresh ``traceparent`` in ``extra_headers``. Pass ``provider_identity=True`` to
-            record the provider's response id and the provider name with each
-            request instead of, or as well as, sending W3C context.
+            sends a fresh ``traceparent`` in ``extra_headers``. Whatever this setting, each request
+            records the provider's response id and LiteLLM's provider route as a
+            ``ProviderTraceReference``. A send that makes more than one completion through the
+            tool loop records none, since one id cannot name every completion's trace.
         tools: Executable tools advertised to the model.
         tool_providers: Providers discovered within each send's resource scope.
         execute_tools: Execute configured tools locally, or return calls to the caller.
@@ -533,9 +534,20 @@ class LiteLLMChatTarget(PromptTarget):
                     conversation=normalized_conversation, request=request, tools=tools
                 )
 
+            completions = 0
+
             async def send_async(conversation: Sequence[Message]) -> Message:
+                nonlocal completions
+                completions += 1
+                if completions > 1:
+                    # One response id names only one completion's trace, so the request stays unlinked.
+                    for piece in request.message_pieces:
+                        ProviderTraceReference.clear_metadata(piece.prompt_metadata)
                 [reply] = await self._send_completion_async(
-                    conversation=list(conversation), request=request, tools=tools
+                    conversation=list(conversation),
+                    request=request,
+                    tools=tools,
+                    record_provider_trace=completions == 1,
                 )
                 return reply
 
@@ -622,7 +634,12 @@ class LiteLLMChatTarget(PromptTarget):
 
     @limit_requests_per_minute
     async def _send_completion_async(
-        self, *, conversation: list[Message], request: Message, tools: Sequence[Tool]
+        self,
+        *,
+        conversation: list[Message],
+        request: Message,
+        tools: Sequence[Tool],
+        record_provider_trace: bool = True,
     ) -> list[Message]:
         litellm = self._import_litellm()
 
@@ -655,9 +672,8 @@ class LiteLLMChatTarget(PromptTarget):
             response = await litellm.acompletion(**body)
         except Exception as exc:
             return self._handle_litellm_exception(exc=exc, request=request_piece)
-        record_provider_trace_reference(
-            config=self._trace_config, request=message, reference=_provider_trace_reference(response)
-        )
+        if record_provider_trace:
+            record_provider_trace_reference(request=message, reference=_provider_trace_reference(response))
 
         # Content filtering is red-team critical: surface it as an error Message (not an
         # exception) so attacks can continue and blocked-content scorers can still score.
