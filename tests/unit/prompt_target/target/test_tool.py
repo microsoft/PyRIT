@@ -16,6 +16,7 @@ from pyrit.models import JsonResponseConfig, Message, MessagePiece, ToolExecutio
 from pyrit.prompt_target import (
     FunctionTool,
     LiteLLMChatTarget,
+    LiteLLMDecisionTarget,
     MCPToolProvider,
     OpenAIChatTarget,
     OpenAIResponseTarget,
@@ -711,7 +712,5 @@ def test_function_tool_rejects_unresolvable_local_annotation() -> None:
 
 
 def test_decision_target_does_not_run_tools_locally() -> None:
-    from pyrit.prompt_target.litellm_decision_target import LiteLLMDecisionTarget
-
     assert LiteLLMChatTarget.RUNS_TOOLS_LOCALLY
     assert not LiteLLMDecisionTarget.RUNS_TOOLS_LOCALLY
