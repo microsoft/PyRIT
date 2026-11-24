@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
 
 import {
   Badge,
@@ -36,12 +36,13 @@ import { toApiError } from '@/services/errors'
 import type {
   LaunchScenarioSuiteRequest,
   RegisteredComponentReference,
+  ScenarioReadiness,
   ScenarioSuiteEntryStatus,
+  ScenarioSuiteReadinessRequest,
   ScenarioSuiteResponse,
   ScorerInstance,
   TargetInstance,
 } from '@/types'
-import { findRegisteredScorer, scorerNameReference } from '@/utils/scorerPresentation'
 
 import { useLaunchSuiteDialogStyles } from './LaunchSuiteDialog.styles'
 import { suiteExecutionRoutePath } from './suiteRoutes'
@@ -63,26 +64,36 @@ interface LaunchSuiteDialogProps {
   onSuiteChanged: () => void
 }
 
+type EntryReadiness =
+  | { state: 'loading' }
+  | { state: 'error'; detail: string }
+  | { state: 'ready'; readiness: ScenarioReadiness }
+
 /**
- * Mirrors the server's precedence: a launch override, then the preset's scorer, then the scenario
- * default. A preset names its scorer, which resolves against this deployment's loaded scorers. A
- * scenario with a built-in scorer ignores the launch override.
+ * Present the library's resolution of one entry's objective scorer. The server owns precedence and
+ * binding; this only names the value behind the source it reports.
  */
 function entryScorerLabel(
   entry: ScenarioSuiteEntryStatus,
+  readiness: EntryReadiness,
   override: RegisteredComponentReference | null,
-  loadedScorers: ScorerInstance[] | null,
 ): string {
-  if (entry.supports_objective_scorer === false) {
-    return override ? 'Scenario default scorer (override not applicable)' : 'Scenario default scorer'
-  }
-  const reference = override ?? scorerNameReference(entry.launch_defaults?.objective_scorer, loadedScorers ?? [])
-  if (!reference) {
-    return 'Scenario default scorer'
-  }
-  const unavailable = loadedScorers !== null && findRegisteredScorer(reference, loadedScorers) === undefined
-  const name = unavailable ? `${reference.registry_name} (unavailable)` : reference.registry_name
-  return override ? `${name} (launch override)` : `${name} (from preset)`
+  if (readiness.state === 'loading') return 'Resolving...'
+  if (readiness.state === 'error') return `Could not resolve (${readiness.detail})`
+  const matches = (item: { entry_id?: string | null; role: string }) =>
+    item.entry_id === entry.entry_id && item.role === 'objective_scorer'
+  const binding = readiness.readiness.bindings.find(matches)
+  const issue = readiness.readiness.issues.find(matches)
+  const source = binding?.source ?? issue?.source
+  if (source === 'unsupported') return 'Scenario default scorer (selected scorer not applicable)'
+  const configured = source === 'launch'
+    ? { name: override?.registry_name, origin: 'launch override' }
+    : source === 'preset'
+      ? { name: entry.launch_defaults?.objective_scorer, origin: 'from preset' }
+      : null
+  const name = configured?.name ?? 'Scenario default scorer'
+  const details = [configured?.origin, issue ? `unavailable: ${issue.reason}` : undefined].filter(Boolean)
+  return details.length > 0 ? `${name} (${details.join('; ')})` : name
 }
 
 function initialTargetName(
@@ -136,14 +147,46 @@ export default function LaunchSuiteDialog({
   const [maxConcurrency, setMaxConcurrency] = useState(DEFAULT_MAX_CONCURRENCY)
   const [maxRetries, setMaxRetries] = useState(DEFAULT_MAX_RETRIES)
   const [scorerOverride, setScorerOverride] = useState<RegisteredComponentReference | null>(null)
-  // Availability is unknown until the registry has loaded; do not flag scorers as missing before then.
-  const loadedScorers = scorers && !scorersLoading && !scorersError ? scorers : null
+  const readinessRequest = useMemo<ScenarioSuiteReadinessRequest>(() => ({
+    expected_version: suite.version,
+    entries: suite.entry_statuses.map((entry) => ({
+      entry_id: entry.entry_id,
+      preset_name: entry.preset_name,
+      origin: entry.origin,
+      preset_version: entry.preset_version,
+    })),
+    ...(targetName === '' ? {} : { target_name: targetName }),
+    ...(adversarialTargetName === '' ? {} : { adversarial_target_name: adversarialTargetName }),
+    ...(scorerOverride ? { objective_scorer: scorerOverride } : {}),
+  }), [suite, targetName, adversarialTargetName, scorerOverride])
+  const [readinessResult, setReadinessResult] = useState<{
+    request: ScenarioSuiteReadinessRequest
+    result: EntryReadiness
+  } | null>(null)
+  // A result for an earlier selection is stale; show it as resolving until the current one arrives.
+  const readiness: EntryReadiness = readinessResult?.request === readinessRequest
+    ? readinessResult.result
+    : { state: 'loading' }
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (staleSelection) onDismiss()
   }, [staleSelection, onDismiss])
+
+  useEffect(() => {
+    if (staleSelection || !runtime.ready) return
+    const controller = new AbortController()
+    scenarioSuitesApi.getReadiness(suite.suite.name, readinessRequest, controller.signal)
+      .then((result: ScenarioReadiness) => {
+        setReadinessResult({ request: readinessRequest, result: { state: 'ready', readiness: result } })
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setReadinessResult({ request: readinessRequest, result: { state: 'error', detail: toApiError(err).detail } })
+      })
+    return () => controller.abort()
+  }, [staleSelection, runtime.ready, suite.suite.name, readinessRequest])
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
@@ -152,16 +195,8 @@ export default function LaunchSuiteDialog({
     }
 
     const request: LaunchScenarioSuiteRequest = {
-      expected_version: suite.version,
-      entries: suite.entry_statuses.map((entry) => ({
-        entry_id: entry.entry_id,
-        preset_name: entry.preset_name,
-        origin: entry.origin,
-        preset_version: entry.preset_version,
-      })),
+      ...readinessRequest,
       target_name: targetName,
-      ...(adversarialTargetName === '' ? {} : { adversarial_target_name: adversarialTargetName }),
-      ...(scorerOverride ? { objective_scorer: scorerOverride } : {}),
       max_concurrency: maxConcurrency,
       max_retries: maxRetries,
       ...(operationId ? { operation_id: operationId } : {}),
@@ -216,7 +251,7 @@ export default function LaunchSuiteDialog({
                         className={styles.summaryText}
                         data-testid={`launch-suite-entry-scorer-${entry.entry_id}`}
                       >
-                        Scorer: {entryScorerLabel(entry, scorerOverride, loadedScorers)}
+                        Scorer: {entryScorerLabel(entry, readiness, scorerOverride)}
                       </Text>
                     </li>
                   ))}

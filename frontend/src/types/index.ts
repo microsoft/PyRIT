@@ -1896,6 +1896,39 @@ export interface LaunchScenarioSuiteRequest {
   labels?: Record<string, string> | null
 }
 
+/** A suite readiness preview; roles not yet selected, such as the objective target, may be omitted. */
+export type ScenarioSuiteReadinessRequest = Omit<LaunchScenarioSuiteRequest, 'target_name'> & {
+  target_name?: string | null
+}
+
+/** Where a launch-owned value came from: the launch, a preset's launch defaults, or neither. */
+export type LaunchValueSource = 'launch' | 'preset' | 'scenario_default' | 'unsupported'
+
+/** An effective execution dependency, attributed to its suite entry and value source when known. */
+export interface ScenarioRoleBinding {
+  role: string
+  component: string
+  identifier: ComponentIdentifier
+  entry_id?: string | null
+  source?: LaunchValueSource | null
+}
+
+/** An actionable configuration problem, attributed to its suite entry and value source when known. */
+export interface ScenarioConfigurationIssue {
+  role: string
+  component: string
+  reason: string
+  remediation: string
+  entry_id?: string | null
+  source?: LaunchValueSource | null
+}
+
+/** Resolved dependencies and every discoverable configuration issue. */
+export interface ScenarioReadiness {
+  bindings: ScenarioRoleBinding[]
+  issues: ScenarioConfigurationIssue[]
+}
+
 export type ScenarioSuiteExecutionStatus =
   | 'QUEUING'
   | 'IN_PROGRESS'
