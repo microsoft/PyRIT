@@ -105,12 +105,12 @@ class EncodingTechnique(ScenarioTechnique):
     ALL = ("all", {"all"})
     DEFAULT = ("default", {"default"})
 
-    # Individual encoding techniques (the enum value is the encoding scheme name). Members tagged ``default``
-    # form the curated DEFAULT aggregate: a broad spread across encoding families so the default scan is a
-    # meaningful scanner run — base-N (Base64, Base2048, Base16, Base32, ASCII85, Hex), byte-encodings
-    # (QuotedPrintable, UUencode), substitution ciphers (ROT13, Atbash, LeetSpeak), and symbolic alphabets
-    # (MorseCode, NATO). The remaining niche/lossy schemes (Braille, Ecoji, Zalgo, AsciiSmuggler) are
-    # ALL-only.
+    # Individual encoding techniques (the enum value is the encoding scheme name). Each member's tag set
+    # drives the aggregates: members tagged ``default`` form the curated DEFAULT aggregate — a broad spread
+    # across encoding families (base-N, byte-encodings, substitution ciphers, symbolic alphabets) so the
+    # default scan is meaningful. Members with no ``default`` tag are ALL-only, run only by the exhaustive
+    # ``ALL`` aggregate (the niche or lossy schemes). The ALL-only set is defined by these tags, not listed
+    # here, so it stays correct as techniques are added.
     Base64 = ("base64", {"default"})
     Base2048 = ("base2048", {"default"})
     Base16 = ("base16", {"default"})
