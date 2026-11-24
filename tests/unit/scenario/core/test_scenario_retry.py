@@ -1171,6 +1171,31 @@ class TestRemainingAttackOrdering:
         row.outcome_reason = None
         return row
 
+    async def test_completed_namesake_does_not_demote_surviving_duplicate(self):
+        """A legacy name-only failure stays ambiguous when one same-name attack
+        has finished; it must not demote the surviving namesake that never failed."""
+        dup_a = create_mock_atomic_attack("dup", ["a1"])
+        dup_b = create_mock_atomic_attack("dup", ["b1"])
+        unstarted = create_mock_atomic_attack("unstarted", ["u1"])
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [dup_a, dup_b, unstarted]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+
+        completed = self._failure_row(name="dup", eval_hash=dup_a.technique_eval_hash)
+        completed.outcome = AttackOutcome.SUCCESS
+        completed.objective = "a1"
+        scenario._memory.get_attack_results_async.return_value = [
+            completed,
+            self._failure_row(name="dup"),  # legacy, no eval hash
+        ]
+
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+
+        assert remaining[0] is dup_b
+        assert [attack.atomic_attack_name for attack in remaining] == ["dup", "unstarted"]
+
     async def test_compound_child_error_does_not_demote_parent(self):
         """A persisted ERROR from a compound attack's child (FIRST_SUCCESS) carries its
         parent's linkage plus an attempt_index. That child failure belongs to one attempt,

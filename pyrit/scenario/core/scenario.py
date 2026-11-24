@@ -2663,7 +2663,10 @@ class Scenario(ABC):
         # A legacy failure row with no eval hash matches name-only. Only trust that fallback when
         # the name is unique among remaining attacks; with two attacks sharing a name but using
         # different techniques, a legacy row for one must not demote both.
-        attack_name_counts = Counter(attack.atomic_attack_name for attack in remaining_attacks)
+        # Count over all atomic attacks, not just the survivors: if one namesake
+        # completed, a legacy name-only failure must stay ambiguous for the
+        # other one instead of demoting an attack that never failed.
+        attack_name_counts = Counter(attack.atomic_attack_name for attack in self._atomic_attacks)
         remaining_attacks.sort(
             key=lambda attack: (
                 (attack.atomic_attack_name, attack.technique_eval_hash) in started_attack_keys
