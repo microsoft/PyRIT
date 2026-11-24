@@ -173,7 +173,7 @@ describe('ConfirmDialog', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Open dialog' })).toHaveFocus())
   })
 
-  it('should still close cleanly when the control that opened the dialog is gone', async () => {
+  it('should leave focus on the page when the control that opened the dialog is gone', async () => {
     const user = userEvent.setup()
     render(<TestWrapper><DialogWithVanishingOpener /></TestWrapper>)
 
@@ -183,6 +183,9 @@ describe('ConfirmDialog', () => {
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 
-    expect(await screen.findByRole('button', { name: 'Open dialog' })).toBeInTheDocument()
+    // The opener has already unmounted, so there is nothing to restore. The
+    // outcome must still be focus on the page, never inside the closed dialog.
+    await waitFor(() => expect(document.activeElement).toBe(document.body))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

@@ -73,10 +73,11 @@ interface PresetDraft {
   config: ScenarioConfigFormState | null
 }
 
-// Techniques, dataset sources and filter values are selections, and their
-// controls append in click order, so restoring a removed item must not read
-// as an edit. Only the comparison uses the sorted copies; the draft itself
-// keeps the order the operator produced.
+// Techniques, dataset sources, filter keys and filter values are selections,
+// and their controls append in click order, so restoring a removed item must
+// not read as an edit. The dataset table even drops a filter key while every
+// value is selected and re-adds it last. Only the comparison uses the sorted
+// copies; the draft itself keeps the order the operator produced.
 const presetDraftSignature = (draft: PresetDraft): string => {
   const { config } = draft
   if (!config) {
@@ -92,7 +93,9 @@ const presetDraftSignature = (draft: PresetDraft): string => {
         ...datasets,
         sources: [...(datasets.sources ?? [])].sort((first, second) => first.name.localeCompare(second.name)),
         filters: Object.fromEntries(
-          Object.entries(datasets.filters ?? {}).map(([key, values]) => [key, [...values].sort()]),
+          Object.entries(datasets.filters ?? {})
+            .sort(([firstKey], [secondKey]) => firstKey.localeCompare(secondKey))
+            .map(([key, values]) => [key, [...values].sort()]),
         ),
       },
     },

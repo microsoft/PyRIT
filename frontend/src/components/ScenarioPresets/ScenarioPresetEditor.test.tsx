@@ -877,6 +877,56 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
     }
   })
 
+  it('does not treat a re-selected filter group as an edit', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    // Three harm categories across the two stored datasets, and a preset that keeps
+    // two of them alongside a second filter key.
+    const listedDatasets = datasetsApi.listDatasets as jest.Mock
+    const { items } = await datasetsApi.listDatasets({ loaded_only: false })
+    const defaultListing = listedDatasets.getMockImplementation()
+    listedDatasets.mockResolvedValue({
+      items: items.map((item) => ({
+        ...item,
+        harm_categories: item.name === 'harmbench' ? ['hate', 'violence'] : ['toxicity'],
+      })),
+    })
+    mockGet.mockResolvedValue({
+      preset: {
+        ...STORED_PRESET,
+        datasets: {
+          sources: [{ name: 'harmbench' }, { name: 'xstest' }],
+          filters: { harm_categories: ['hate', 'violence'], data_types: ['text'] },
+        },
+      },
+      version: 'v1',
+      issues: [],
+    })
+    try {
+      renderEdit()
+
+      // Checking the last missing harm category deletes the key, because every
+      // value is selected, and unchecking it adds the key back at the end. The
+      // selection ends where it started, so neither step may read as an edit.
+      const toxicity = 'Filter harm category toxicity'
+      await screen.findByRole('button', { name: toxicity, pressed: false })
+      await user.click(screen.getByRole('button', { name: toxicity }))
+      await screen.findByRole('button', { name: toxicity, pressed: true })
+      await user.click(screen.getByRole('button', { name: toxicity }))
+      await screen.findByRole('button', { name: toxicity, pressed: false })
+
+      const event = new Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(false)
+      await user.click(screen.getByRole('button', { name: 'Leave editor' }))
+      expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
+    } finally {
+      listedDatasets.mockImplementation(defaultListing)
+    }
+  })
+
   it('does not apply replacement metadata after unmount', async () => {
     const user = userEvent.setup()
     const view = await renderSelectedCreate(user)
