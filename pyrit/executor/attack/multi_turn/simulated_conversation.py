@@ -155,8 +155,8 @@ async def generate_simulated_conversation_async(
 
     Args:
         objective: The objective for the adversarial chat to work toward.
-        adversarial_chat: The adversarial LLM that generates attack prompts.
-            This same LLM is also used as the simulated target.
+        adversarial_chat: The adversarial LLM that generates attack prompts. Unless
+            ``simulated_target`` is given, this same LLM also plays the simulated target.
         objective_scorer: Scorer to evaluate the final turn. Required for ``TURN_BY_TURN``.
         num_turns: Number of conversation turns to generate. In ``ONE_SHOT`` mode, the exact number
             of tool calls in the history, each followed by its result. Defaults to 3.
@@ -184,8 +184,9 @@ async def generate_simulated_conversation_async(
             Required for ``ONE_SHOT``.
         simulated_target: The target that plays the assistant side in ``TURN_BY_TURN`` mode.
             Defaults to ``adversarial_chat``. It can carry its own tools (real, stubbed, or from an
-            MCP server); their calls and results are kept in the generated history. Cannot be
-            combined with ``tools``.
+            MCP server); their calls and results are kept in the generated history. A
+            ``simulated_target`` with its own tools cannot be combined with ``tools``; one without
+            tools gets ``tools``, with results written by the adversarial chat.
         max_attempts: ``ONE_SHOT`` only. Writing attempts, including revisions after validation
             feedback. A runtime budget, not part of the seed's identity. Defaults to 5.
 
@@ -828,10 +829,10 @@ class _ToolResultWriter:
                 target=self.adversarial_chat,
                 conversation_id=self.conversation_id,
             )
-            if response is None or not response.get_value().strip():
+            if response is None:
                 return self._fail(
                     kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT,
-                    details="The adversarial chat wrote an empty tool result.",
+                    details="The adversarial chat returned no tool result.",
                 )
             try:
                 _raise_for_adversarial_error(response)
@@ -839,7 +840,16 @@ class _ToolResultWriter:
                 return self._fail(kind=AttackPreparationFailureKind.from_exception(error), details=str(error))
             except EmptyResponseException as error:
                 return self._fail(kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT, details=str(error))
-            return response.get_value()
+            # Reasoning models can return reasoning pieces too; only the text is the tool's output.
+            result = "\n".join(
+                piece.converted_value for piece in response.message_pieces if piece.converted_value_data_type == "text"
+            ).strip()
+            if not result:
+                return self._fail(
+                    kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT,
+                    details="The adversarial chat wrote an empty tool result.",
+                )
+            return result
 
     def _fail(self, *, kind: AttackPreparationFailureKind, details: str) -> NoReturn:
         self.failure = AttackPreparationFailure(kind=kind, reason=f"{kind.default_reason} Details: {details}")

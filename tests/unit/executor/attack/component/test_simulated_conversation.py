@@ -1445,6 +1445,25 @@ class TestSimulatedConversationWithTools:
         assert (request["tool"]["name"], request["arguments"]) == ("lookup_ticket", {"ticket_id": "SEC-1"})
         assert "Reset the admin password." in adversarial_chat.system_prompt
 
+    async def test_tool_result_is_the_text_of_a_reply_with_reasoning_async(self) -> None:
+        writer = _ToolResultWriter(objective="objective", adversarial_chat=MockPromptTarget())
+        reply = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="Plan the result.",
+                    original_value_data_type="reasoning",
+                    conversation_id="writer",
+                ),
+                MessagePiece(role="assistant", original_value="SEC-1 is approved.", conversation_id="writer"),
+            ]
+        )
+
+        with patch.object(PromptNormalizer, "send_prompt_async", new_callable=AsyncMock, return_value=reply):
+            result = await writer.write_async(tool=_LOOKUP, arguments={"ticket_id": "SEC-1"})
+
+        assert result == "SEC-1 is approved."
+
     async def test_chat_completions_target_can_stand_in_async(self) -> None:
         source = OpenAIChatTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key")
         writer = _ToolResultWriter(objective="objective", adversarial_chat=MockPromptTarget())
