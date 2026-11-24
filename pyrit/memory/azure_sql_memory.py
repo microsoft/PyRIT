@@ -675,7 +675,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     def _execute_get_unique_converter_class_names(self) -> list[str]:
         """
         Azure SQL implementation: extract unique converter class_name values
-        from the children.attack_technique.children.attack.children.request_converters array
+        from the request_converters array of either identifier layout
         in the atomic_attack_identifier JSON column.
 
         Returns:

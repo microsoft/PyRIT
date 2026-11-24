@@ -2949,8 +2949,9 @@ class MemoryInterface(abc.ABC):
         """
         Return sorted unique converter class names used across all attack results.
 
-        Extracts class_name values from the nested request_converters array
-        within the atomic_attack_identifier JSON column via a database-level query.
+        Extracts class_name values from the request_converters array of either
+        identifier layout within the atomic_attack_identifier JSON column via a
+        database-level query.
 
         Returns:
             Sorted list of unique converter class name strings.
@@ -10357,8 +10358,9 @@ class MemoryInterface(abc.ABC):
         """
         Return sorted unique converter class names used across all attack results.
 
-        Extracts class_name values from the nested request_converters array
-        within the atomic_attack_identifier JSON column via a database-level query.
+        Extracts class_name values from the request_converters array of either
+        identifier layout within the atomic_attack_identifier JSON column via a
+        database-level query.
 
         Returns:
             Sorted list of unique converter class name strings.
