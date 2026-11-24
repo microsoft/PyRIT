@@ -256,8 +256,8 @@ technique editor. The dialog suggests a name such as `base64_converter`. A
 converter type that needs an uploaded file, a converter with an uploaded file, or
 one that uses a Temporary target is created as **Temporary** instead, and the
 dialog says why.
-**Save to registry** on a converter's changed settings, in chat or in a technique
-edit, makes a Temporary copy. The Converters and Scorers tables use the same three
+**Add to registry** on a converter's changed settings, in chat or in a technique
+edit, adds a Temporary copy under a new name. The Converters and Scorers tables use the same three
 labels; scorers can be saved through the API.
 
 Techniques added only to the live registry must be recreated

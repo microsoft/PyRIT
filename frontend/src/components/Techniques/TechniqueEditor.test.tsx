@@ -240,7 +240,7 @@ describe('TechniqueEditor', () => {
       </FluentProvider>)
       const label = chain === 'request_converters' ? 'Request converters' : 'Response converters'
       await user.click(await screen.findByRole('button', { name: `Settings for converter base64, ${label} stage 2` }))
-      await user.click(screen.getByRole('menuitem', { name: 'Save to registry' }))
+      await user.click(screen.getByRole('menuitem', { name: 'Add to registry' }))
       await user.type(screen.getByRole('textbox', { name: /Registry name/ }), 'saved_base64{Enter}')
       await screen.findByRole('button', { name: `Settings for converter saved_base64, ${label} stage 2` })
       expect(screen.queryByText('Temporary')).not.toBeInTheDocument()
