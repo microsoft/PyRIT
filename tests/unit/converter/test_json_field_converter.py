@@ -173,11 +173,8 @@ async def test_rejects_documents_the_pointer_cannot_convert(prompt: str, json_po
 async def test_rejects_documents_too_deep_to_parse():
     converter = JsonFieldConverter(sub_converter=_UpperConverter(), json_pointer="/state")
 
-    with (
-        patch("pyrit.converter.json_field_converter.json.loads", side_effect=RecursionError("too deep")),
-        pytest.raises(ValueError, match="requires a JSON document: too deep"),
-    ):
-        await converter.convert_async(prompt=_REQUEST)
+    with pytest.raises(ValueError, match="requires a JSON document"):
+        await converter.convert_async(prompt="[" * 100_000 + "]" * 100_000)
 
 
 async def test_reports_the_escaped_path_of_a_missing_key():
