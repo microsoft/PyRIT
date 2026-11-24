@@ -4,6 +4,7 @@ import { generateClientId } from '@/utils/clientId'
 import { decodeBlobErrorAsync, toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
+import { MAX_SEED_SEARCH_LENGTH } from './seedSearch'
 import type {
   ApplyChatScorerRequest,
   ApplyChatScorerResponse,
@@ -94,13 +95,13 @@ import type {
   UpdateAttackRequest,
   SaveConversationRequest,
   Finding,
-  FindingCreate,
   FindingCreateRequest,
+  FindingFields,
   FindingListItem,
   FindingListParams,
   FindingListResponse,
-  FindingOptionsResponse,
   FindingPathsUpdateRequest,
+  FindingUpdateRequest,
   FindingEvidenceCreateRequest,
   FindingEvidenceAttachResponse,
   FindingEvidenceListResponse,
@@ -116,6 +117,18 @@ import type {
   AttackAnalyticsResults,
   AttackAnalyticsFacetQuery,
   AttackAnalyticsFacets,
+  AssertBehaviorPresetListResponse,
+  AssertSuitePresetListResponse,
+  PromptGenerationCreateRequest,
+  PromptGenerationDetail,
+  PromptGenerationEstimate,
+  PromptGenerationBatchRequest,
+  PromptGenerationBatchResponse,
+  PromptGenerationListResponse,
+  PromptGenerationPreflightResponse,
+  PromptGenerationRequestFromDataset,
+  PromptGenerationReview,
+  PromptGeneratorListResponse,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -129,8 +142,10 @@ export const mediaApi = {
 const operationPath = (operationId: string): string => `/operations/${encodeURIComponent(operationId)}`
 
 export const operationsApi = {
-  getFindingOptions: async (): Promise<FindingOptionsResponse> => {
-    return (await apiClient.get('/operations/finding-options')).data
+  /** Reads the deployment's finding fields, or the fields that label and check an operation's findings. */
+  getFindingFields: async (operationId?: string): Promise<FindingFields> => {
+    const path = operationId === undefined ? '/operations' : operationPath(operationId)
+    return (await apiClient.get(`${path}/finding-fields`)).data
   },
   list: async (): Promise<OperationListResponse> => {
     return (await apiClient.get('/operations')).data
@@ -153,7 +168,7 @@ export const operationsApi = {
   createFinding: async (operationId: string, request: FindingCreateRequest): Promise<Finding> => {
     return (await apiClient.post(`${operationPath(operationId)}/findings`, request)).data
   },
-  updateFinding: async (operationId: string, findingId: string, request: FindingCreate): Promise<Finding> => {
+  updateFinding: async (operationId: string, findingId: string, request: FindingUpdateRequest): Promise<Finding> => {
     return (await apiClient.put(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`, request)).data
   },
   replaceFindingPaths: async (
@@ -708,6 +723,12 @@ export const labelsApi = {
 }
 
 export const scenariosApi = {
+  listCompatibleDatasets: async (scenarioName: string, signal?: AbortSignal): Promise<DatasetListResponse> => {
+    const response = await apiClient.get(
+      `/scenarios/catalog/${encodeURIComponent(scenarioName)}/datasets`, { signal },
+    )
+    return response.data
+  },
   loadDatasets: async (
     scenarioName: string, request: ScenarioRunSizeEstimateRequest,
   ): Promise<ScenarioDatasetLoadResponse> => {
@@ -1005,8 +1026,6 @@ export const scenarioSuitesApi = {
   },
 }
 
-const MAX_SEED_SEARCH_LENGTH = 1_000
-
 function seedListQuery(params: SeedExampleListParams): Record<string, string | number | readonly string[]> {
   if (params.search != null && params.value_pattern != null) {
     throw new Error('Supply either literal search or value_pattern, not both.')
@@ -1076,6 +1095,93 @@ export const datasetsApi = {
       signal,
     })
     return response.data
+  },
+}
+
+export const promptGeneratorsApi = {
+  list: async (signal?: AbortSignal): Promise<PromptGeneratorListResponse> => {
+    return (await apiClient.get('/prompt-generators', { signal })).data
+  },
+
+  listAssertBehaviors: async (signal?: AbortSignal): Promise<AssertBehaviorPresetListResponse> => {
+    return (await apiClient.get('/prompt-generators/assert/behaviors', { signal })).data
+  },
+
+  listAssertSuites: async (signal?: AbortSignal): Promise<AssertSuitePresetListResponse> => {
+    return (await apiClient.get('/prompt-generators/assert/suites', { signal })).data
+  },
+}
+
+const promptGenerationPath = (generationId: string): string =>
+  `/prompt-generations/${encodeURIComponent(generationId)}`
+
+export const promptGenerationsApi = {
+  /** Lists generations newest first. */
+  list: async (signal?: AbortSignal): Promise<PromptGenerationListResponse> => {
+    return (await apiClient.get('/prompt-generations', { signal })).data
+  },
+
+  get: async (generationId: string, signal?: AbortSignal): Promise<PromptGenerationDetail> => {
+    return (await apiClient.get(promptGenerationPath(generationId), { signal })).data
+  },
+
+  /** Queues a generation. The server returns 409 when the dataset name is taken. */
+  create: async (request: PromptGenerationCreateRequest): Promise<PromptGenerationDetail> => {
+    return (await apiClient.post('/prompt-generations', request)).data
+  },
+
+  /** Queues several generations that share settings; they share a `group_id`. */
+  createBatch: async (request: PromptGenerationBatchRequest): Promise<PromptGenerationBatchResponse> => {
+    return (await apiClient.post('/prompt-generations/batch', request)).data
+  },
+
+  /** Validates a request and estimates its work without calling any target. */
+  preflight: async (
+    request: PromptGenerationCreateRequest,
+    signal?: AbortSignal,
+  ): Promise<PromptGenerationPreflightResponse> => {
+    return (await apiClient.post('/prompt-generations/preflight', request, { signal })).data
+  },
+
+  remove: async (generationId: string): Promise<void> => {
+    await apiClient.delete(promptGenerationPath(generationId))
+  },
+
+  /** Resumes a generation that is paused for review. */
+  continueAfterReview: async (generationId: string): Promise<PromptGenerationDetail> => {
+    return (await apiClient.post(`${promptGenerationPath(generationId)}/continue`)).data
+  },
+
+  cancel: async (generationId: string): Promise<PromptGenerationDetail> => {
+    return (await apiClient.post(`${promptGenerationPath(generationId)}/cancel`)).data
+  },
+
+  /** Resumes a failed, cancelled, or interrupted generation from its last checkpoint. */
+  retry: async (generationId: string): Promise<PromptGenerationDetail> => {
+    return (await apiClient.post(`${promptGenerationPath(generationId)}/retry`)).data
+  },
+
+  getReview: async (generationId: string, signal?: AbortSignal): Promise<PromptGenerationReview> => {
+    return (await apiClient.get(`${promptGenerationPath(generationId)}/review`, { signal })).data
+  },
+
+  saveReview: async (generationId: string, payload: Record<string, unknown>): Promise<PromptGenerationReview> => {
+    return (await apiClient.put(`${promptGenerationPath(generationId)}/review`, { payload })).data
+  },
+
+  getEstimate: async (generationId: string, signal?: AbortSignal): Promise<PromptGenerationEstimate> => {
+    return (await apiClient.get(`${promptGenerationPath(generationId)}/estimate`, { signal })).data
+  },
+
+  /** Reconstructs the request that produced a dataset. The server returns 404 for other datasets. */
+  getRequestFromDataset: async (
+    selectionKey: string,
+    signal?: AbortSignal,
+  ): Promise<PromptGenerationRequestFromDataset> => {
+    return (await apiClient.get('/prompt-generations/from-dataset', {
+      params: { selection_key: selectionKey },
+      signal,
+    })).data
   },
 }
 
