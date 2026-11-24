@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pyrit.models import (
     Acquisition,
@@ -65,7 +65,7 @@ def _keep_arguments(value: JsonValue | None, *, kept: tuple[str, ...]) -> dict[s
     """
     if isinstance(value, str):
         try:
-            value = json.loads(value)
+            value = cast("JsonValue", json.loads(value))
         except ValueError:
             return None
     if not isinstance(value, dict) or _has_non_finite_number(value):
