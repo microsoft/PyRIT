@@ -315,10 +315,34 @@ describe('LaunchSuiteDialog', () => {
   })
 
   it('shows the scenario default when the library binds no configured scorer', async () => {
-    mockGetReadiness.mockResolvedValue({ bindings: [scorerBinding(FIRST_ENTRY_ID, 'scenario_default')], issues: [] })
+    mockGetReadiness.mockResolvedValue({
+      bindings: [
+        scorerBinding(FIRST_ENTRY_ID, 'scenario_default'),
+        { ...scorerBinding(SECOND_ENTRY_ID, 'scenario_default'), role: 'objective_scorer_candidate:0', source: null },
+      ],
+      issues: [],
+    })
     renderDialog({ suite: suiteWithPresetScorer() })
     await waitFor(() => expect(scorerLabel(FIRST_ENTRY_ID)).toHaveTextContent('Scorer: Scenario default scorer'))
     expect(scorerLabel(SECOND_ENTRY_ID)).toHaveTextContent('Scorer: Scenario default scorer')
+  })
+
+  it('shows an entry readiness could not configure as unresolved, not the scenario default', async () => {
+    mockGetReadiness.mockResolvedValue({
+      bindings: [scorerBinding(FIRST_ENTRY_ID, 'preset')],
+      issues: [{
+        role: 'configuration',
+        component: 'Entry 2 (second_preset): garak.exploitation',
+        reason: 'garak.exploitation does not accept dataset overrides.',
+        remediation: 'Remove datasets from the preset.',
+        entry_id: SECOND_ENTRY_ID,
+      }],
+    })
+    renderDialog({ suite: suiteWithPresetScorer() })
+    await waitFor(() => expect(scorerLabel(FIRST_ENTRY_ID)).toHaveTextContent('Scorer: inverted_refusal (from preset)'))
+    expect(scorerLabel(SECOND_ENTRY_ID))
+      .toHaveTextContent('Scorer: Unresolved (garak.exploitation does not accept dataset overrides.)')
+    expect(scorerLabel(SECOND_ENTRY_ID)).not.toHaveTextContent('Scenario default scorer')
   })
 
   it('shows resolving and failure states instead of recomputing the scorer', async () => {

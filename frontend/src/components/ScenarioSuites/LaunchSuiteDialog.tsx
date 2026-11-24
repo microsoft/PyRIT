@@ -80,10 +80,22 @@ function entryScorerLabel(
 ): string {
   if (readiness.state === 'loading') return 'Resolving...'
   if (readiness.state === 'error') return `Could not resolve (${readiness.detail})`
+  const forEntry = (item: { entry_id?: string | null }) => item.entry_id === entry.entry_id
   const matches = (item: { entry_id?: string | null; role: string }) =>
-    item.entry_id === entry.entry_id && item.role === 'objective_scorer'
+    forEntry(item) && item.role === 'objective_scorer'
   const binding = readiness.readiness.bindings.find(matches)
   const issue = readiness.readiness.issues.find(matches)
+  if (!binding && !issue) {
+    // A scenario that picks from compatible scorers reports candidates instead of one scorer.
+    if (readiness.readiness.bindings.some(
+      (item) => forEntry(item) && item.role.startsWith('objective_scorer_candidate:'),
+    )) {
+      return 'Scenario default scorer'
+    }
+    // Readiness could not configure the entry far enough to resolve a scorer.
+    const reasons = readiness.readiness.issues.filter(forEntry).map((item) => item.reason)
+    return reasons.length > 0 ? `Unresolved (${reasons.join('; ')})` : 'Unresolved'
+  }
   const source = binding?.source ?? issue?.source
   if (source === 'unsupported') return 'Scenario default scorer (selected scorer not applicable)'
   const configured = source === 'launch'
