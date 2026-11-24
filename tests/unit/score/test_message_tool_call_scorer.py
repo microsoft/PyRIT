@@ -31,7 +31,7 @@ from pyrit.models import (
     ToolsCalled,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import HTTPTarget, OpenAIResponseTarget
+from pyrit.prompt_target import HTTPTarget, OpenAIResponseTarget, RoundRobinTarget
 from pyrit.score import (
     InMemoryTraceClient,
     MessageToolCallScorer,
@@ -987,6 +987,59 @@ async def test_hosted_tools_keep_a_missing_tool_undetermined_through_an_attack_a
         result = await attack.execute_async(objective="look it up", expectation=_expectation("lookup"))
 
     assert result.outcome is outcome
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+@pytest.mark.parametrize("exhaustive", [False, True])
+async def test_round_robin_discarded_attempt_keeps_absence_undetermined_async(
+    sqlite_instance: SQLiteMemory, fallback: bool, exhaustive: bool
+) -> None:
+    ran: list[dict[str, Any]] = []
+
+    async def lookup_async(args: dict[str, Any]) -> dict[str, bool]:
+        ran.append(args)
+        return {"ok": True}
+
+    first, second = [_response_target(custom_functions={"lookup": lookup_async}) for _ in range(2)]
+    target = RoundRobinTarget(targets=[first, second])
+    attack = PromptSendingAttack(
+        objective_target=target,
+        attack_scoring_config=AttackScoringConfig(objective_scorer=MessageToolCallScorer()),
+        max_attempts_on_failure=0,
+    )
+    condition = ToolsCalled(tools=() if exhaustive else (ToolCallRequirement(name="lookup"),), exhaustive=exhaustive)
+    first_responses = (
+        [_sdk_function_call("call_1", "lookup"), RuntimeError("endpoint down")] if fallback else [_sdk_text("done")]
+    )
+    with (
+        patch.object(first._async_client.responses, "create", new_callable=AsyncMock, side_effect=first_responses),
+        patch.object(second._async_client.responses, "create", new_callable=AsyncMock, side_effect=[_sdk_text("done")]),
+    ):
+        result = await attack.execute_async(
+            objective="look it up", expectation=ScoringExpectation(conditions=(condition,))
+        )
+
+    expected = AttackOutcome.SUCCESS if exhaustive else AttackOutcome.FAILURE
+    assert result.outcome is (AttackOutcome.UNDETERMINED if fallback else expected)
+    assert ran == ([{}] if fallback else [])
+    pieces = await sqlite_instance.get_message_pieces_async(conversation_id=result.last_response.conversation_id)
+    assert not any(piece.converted_value_data_type == "function_call_output" for piece in pieces)
+    replies = [piece for piece in pieces if piece.role == "assistant"]
+    assert replies
+    assert all(
+        ToolCaptureCoverage.from_metadata(metadata=piece.prompt_metadata)
+        == (None if fallback else ToolCaptureCoverage())
+        for piece in replies
+    )
+    score = result.automated_score
+    assert score is not None
+    (stored,) = await sqlite_instance.get_scores_async(score_ids=[score.id])
+    assert stored.status == (ScoreStatus.UNDETERMINED if fallback else ScoreStatus.COMPLETE)
+    assert stored.score_value == (None if fallback else str(exhaustive).lower())
+    assert stored.score_category == score.score_category
+    assert stored.score_metadata == score.score_metadata
+    assert stored.score_rationale == score.score_rationale
+    assert ("cannot rule out a call" if fallback else "rule out other calls") in stored.score_rationale
 
 
 # ---------------------------------------------------------------------------

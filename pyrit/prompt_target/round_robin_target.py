@@ -16,6 +16,7 @@ from pyrit.models import (
     RequestGenerationConfig,
     RequestGenerationInfo,
     TargetCapabilities,
+    ToolCaptureCoverage,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
@@ -315,6 +316,9 @@ class RoundRobinTarget(PromptTarget):
                 for response in responses:
                     for piece in response.message_pieces:
                         piece.prompt_metadata["inner_target_identifier"] = inner_id_hash
+                        # A failed child may have run tools before its messages were discarded.
+                        if last_exception is not None:
+                            piece.prompt_metadata.pop(ToolCaptureCoverage.METADATA_KEY, None)
 
                 return responses
             except Exception as ex:
