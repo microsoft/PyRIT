@@ -65,12 +65,7 @@ from pyrit.scenario.scenarios.adaptive import (
     TechniqueBundle,
 )
 from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
-from unit.async_utils import (
-    TEST_WATCHDOG_SECONDS,
-    get_defined_tasks,
-    wait_for_completion_async,
-    wait_for_event_async,
-)
+from unit.async_utils import get_defined_tasks
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
 
 
@@ -365,7 +360,7 @@ async def test_slow_metrics_read_does_not_block_other_progress_requests(cancel_r
         assert threading.get_ident() != loop_thread_id
         loop.call_soon_threadsafe(started.set)
         try:
-            if not release.wait(timeout=TEST_WATCHDOG_SECONDS):
+            if not release.wait(timeout=5):
                 raise TimeoutError("Test did not release the metrics read.")
             return None
         finally:
@@ -383,10 +378,8 @@ async def test_slow_metrics_read_does_not_block_other_progress_requests(cancel_r
             )
         )
         try:
-            await wait_for_event_async(event=started, tasks=[task])
-            other = await asyncio.wait_for(
-                _get_snapshot_async(read_model=read_model, run_id="other-run"), timeout=TEST_WATCHDOG_SECONDS
-            )
+            await asyncio.wait_for(started.wait(), timeout=5)
+            other = await asyncio.wait_for(_get_snapshot_async(read_model=read_model, run_id="other-run"), timeout=5)
             assert other.summary.overall.completed == 0
             assert not task.done()
             if cancel_request:
@@ -396,10 +389,10 @@ async def test_slow_metrics_read_does_not_block_other_progress_requests(cancel_r
                 assert "slow-run" not in read_model._refresh_states
             release.set()
             if not cancel_request:
-                await wait_for_completion_async(future=task)
+                await asyncio.wait_for(task, timeout=5)
         finally:
             release.set()
-            await asyncio.wait_for(finished.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            await asyncio.wait_for(finished.wait(), timeout=5)
             await asyncio.gather(task, return_exceptions=True)
 
 
@@ -486,7 +479,7 @@ async def test_interrupted_refresh_releases_lock_and_updates_partially_loaded_su
     memory.get_scenario_attack_result_deltas_async.side_effect = get_deltas_async
     task = asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id="run"))
     try:
-        await wait_for_event_async(event=blocked, tasks=[task])
+        await asyncio.wait_for(blocked.wait(), timeout=5)
         if interruption == "cancellation":
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -497,9 +490,7 @@ async def test_interrupted_refresh_releases_lock_and_updates_partially_loaded_su
         assert not read_model._refresh_states
 
         memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=([], False))
-        refreshed = await asyncio.wait_for(
-            _get_snapshot_async(read_model=read_model, run_id="run"), timeout=TEST_WATCHDOG_SECONDS
-        )
+        refreshed = await asyncio.wait_for(_get_snapshot_async(read_model=read_model, run_id="run"), timeout=5)
         assert refreshed.deltas == (first, second)
         assert [result.attack_result_id for result in refreshed.results] == [
             first.attack_result_id,
@@ -568,11 +559,11 @@ async def test_cancelled_waiter_preserves_run_lock_without_blocking_other_runs()
     waiter = None
     successor = None
     try:
-        await wait_for_event_async(event=entered, tasks=[owner])
+        await asyncio.wait_for(entered.wait(), timeout=5)
         state = read_model._refresh_states["owner"]
         waiter_started = asyncio.Event()
         waiter = asyncio.create_task(wait_for_snapshot_async(waiter_started))
-        await wait_for_event_async(event=waiter_started, tasks=[waiter])
+        await asyncio.wait_for(waiter_started.wait(), timeout=5)
         assert not waiter.done()
         assert state.callers == 2
         memory.get_scenario_attack_result_deltas_async.assert_awaited_once()
@@ -585,13 +576,13 @@ async def test_cancelled_waiter_preserves_run_lock_without_blocking_other_runs()
 
         successor_started = asyncio.Event()
         successor = asyncio.create_task(wait_for_snapshot_async(successor_started))
-        await wait_for_event_async(event=successor_started, tasks=[successor])
+        await asyncio.wait_for(successor_started.wait(), timeout=5)
         assert not successor.done()
         assert state.callers == 2
         memory.get_scenario_attack_result_deltas_async.assert_awaited_once()
 
         independent = await asyncio.wait_for(
-            _get_snapshot_async(read_model=read_model, run_id="independent"), timeout=TEST_WATCHDOG_SECONDS
+            _get_snapshot_async(read_model=read_model, run_id="independent"), timeout=5
         )
         assert independent.results[0].conversation_id == "conversation-independent-0"
         assert not owner.done()
@@ -599,7 +590,7 @@ async def test_cancelled_waiter_preserves_run_lock_without_blocking_other_runs()
         assert read_model._refresh_states["owner"] is state
 
         release.set()
-        snapshots = await asyncio.wait_for(asyncio.gather(owner, successor), timeout=TEST_WATCHDOG_SECONDS)
+        snapshots = await asyncio.wait_for(asyncio.gather(owner, successor), timeout=5)
         assert [snapshot.results[0].conversation_id for snapshot in snapshots] == [
             "conversation-owner-0",
             "conversation-owner-0",
@@ -753,9 +744,7 @@ async def test_storage_error_releases_refresh_lock() -> None:
 
     memory.get_scenario_attack_result_deltas_async.side_effect = None
     memory.get_scenario_attack_result_deltas_async.return_value = ([_make_delta(run_id="run")], False)
-    snapshot = await asyncio.wait_for(
-        _get_snapshot_async(read_model=read_model, run_id="run"), timeout=TEST_WATCHDOG_SECONDS
-    )
+    snapshot = await asyncio.wait_for(_get_snapshot_async(read_model=read_model, run_id="run"), timeout=5)
     assert snapshot.summary.overall.completed == 1
     assert not read_model._refresh_states
 
@@ -808,14 +797,14 @@ async def test_get_snapshot_protects_run_with_waiters_from_lru_eviction() -> Non
             await _get_snapshot_async(read_model=read_model, run_id="idle-a")
             await _get_snapshot_async(read_model=read_model, run_id="idle-b")
             owner = asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id="protected"))
-            await wait_for_event_async(event=entered, tasks=[owner])
+            await asyncio.wait_for(entered.wait(), timeout=5)
             state = read_model._refresh_states["protected"]
             entry = read_model._cache["protected"]
             assert list(read_model._cache) == ["idle-b", "protected"]
 
             waiter_started = asyncio.Event()
             waiter = asyncio.create_task(wait_for_snapshot_async(waiter_started))
-            await wait_for_event_async(event=waiter_started, tasks=[waiter])
+            await asyncio.wait_for(waiter_started.wait(), timeout=5)
             await _get_snapshot_async(read_model=read_model, run_id="idle-b")
             await _get_snapshot_async(read_model=read_model, run_id="idle-c")
             assert list(read_model._cache) == ["protected", "idle-c"]
@@ -823,14 +812,14 @@ async def test_get_snapshot_protects_run_with_waiters_from_lru_eviction() -> Non
 
             successor_started = asyncio.Event()
             successor = asyncio.create_task(wait_for_snapshot_async(successor_started))
-            await wait_for_event_async(event=successor_started, tasks=[successor])
+            await asyncio.wait_for(successor_started.wait(), timeout=5)
             assert read_model._refresh_states["protected"] is state
             assert state.callers == 3
             assert not waiter.done()
             assert not successor.done()
 
             release.set()
-            snapshots = await asyncio.wait_for(asyncio.gather(owner, waiter, successor), timeout=TEST_WATCHDOG_SECONDS)
+            snapshots = await asyncio.wait_for(asyncio.gather(owner, waiter, successor), timeout=5)
             delta = snapshots[0].deltas[0]
             cursor = AttackResultKeysetCursor(timestamp=delta.timestamp, attack_result_id=delta.attack_result_id)
             assert all(snapshot.deltas == (delta,) for snapshot in snapshots)
@@ -873,9 +862,7 @@ async def test_protected_cache_overflow_is_trimmed_when_callers_exit(first_exit:
     }
     try:
         with patch.object(ScenarioProgressReadModel, "_CACHE_MAX_RUNS", 1):
-            await asyncio.wait_for(
-                asyncio.gather(*(event.wait() for event in entered.values())), timeout=TEST_WATCHDOG_SECONDS
-            )
+            await asyncio.wait_for(asyncio.gather(*(event.wait() for event in entered.values())), timeout=5)
             assert len(read_model._cache) == 3
             assert set(read_model._refresh_states) == set(run_ids)
 
@@ -889,17 +876,17 @@ async def test_protected_cache_overflow_is_trimmed_when_callers_exit(first_exit:
                     with pytest.raises(RuntimeError, match="storage failed"):
                         await tasks["run-a"]
                 else:
-                    await wait_for_completion_async(future=tasks["run-a"])
+                    await asyncio.wait_for(tasks["run-a"], timeout=5)
             assert list(read_model._cache) == ["run-b", "run-c"]
             assert set(read_model._refresh_states) == {"run-b", "run-c"}
 
             release["run-b"].set()
-            await wait_for_completion_async(future=tasks["run-b"])
+            await asyncio.wait_for(tasks["run-b"], timeout=5)
             assert list(read_model._cache) == ["run-c"]
             assert set(read_model._refresh_states) == {"run-c"}
 
             release["run-c"].set()
-            await wait_for_completion_async(future=tasks["run-c"])
+            await asyncio.wait_for(tasks["run-c"], timeout=5)
             assert list(read_model._cache) == ["run-c"]
             assert not read_model._refresh_states
     finally:
@@ -964,16 +951,16 @@ async def test_get_snapshot_invalidates_cache_when_plan_changes_while_waiting() 
     owner = asyncio.create_task(read_plan_async("group-a"))
     waiter = None
     try:
-        await wait_for_event_async(event=entered, tasks=[owner])
+        await asyncio.wait_for(entered.wait(), timeout=5)
         state = read_model._refresh_states["run-plan"]
         waiter = asyncio.create_task(read_plan_async("group-b"))
-        await wait_for_event_async(event=waiter_started, tasks=[waiter])
+        await asyncio.wait_for(waiter_started.wait(), timeout=5)
         assert state.callers == 2
         assert not waiter.done()
         memory.get_scenario_attack_result_deltas_async.assert_awaited_once()
 
         release.set()
-        first, second = await asyncio.wait_for(asyncio.gather(owner, waiter), timeout=TEST_WATCHDOG_SECONDS)
+        first, second = await asyncio.wait_for(asyncio.gather(owner, waiter), timeout=5)
         assert first.results[0].atomic_group_id == "group-a"
         assert second.results[0].atomic_group_id == "group-b"
         assert [call.kwargs["cursor"] for call in memory.get_scenario_attack_result_deltas_async.call_args_list] == [
