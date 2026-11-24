@@ -84,5 +84,4 @@ async def send_json_with_retry_async(
             on_response(response)
         return parse(response)
 
-    result: T = await _attempt_async()
-    return result
+    return await _attempt_async()

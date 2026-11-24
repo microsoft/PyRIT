@@ -13,10 +13,18 @@ from unittest.mock import patch
 
 import pytest
 
+from pyrit.auth import caller_principal_scope
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.models.catalog import RegistryRecipeKind, RegistryRestoreReport, RestoreFailureReason
 from pyrit.prompt_target import GitHubCopilotTarget, OpenAIChatTarget
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    ScorerRegistry,
+    TargetRegistry,
+    get_entry_owner,
+    is_private_entry,
+)
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 
 _IDENTITY_TARGET = {
@@ -101,6 +109,18 @@ async def test_restores_each_kind_through_its_create(tmp_path: Path) -> None:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+async def test_a_target_named_like_the_saveability_route_is_restored(tmp_path: Path) -> None:
+    # POST /api/targets/saveability doesn't clash with GET /api/targets/{name}, so the name stays valid.
+    _save(tmp_path, RegistryRecipeKind.TARGETS, "saveability", _IDENTITY_TARGET)
+
+    report = await _restore(tmp_path)
+
+    assert report.failures == []
+    assert [ref.name for ref in report.restored] == ["saveability"]
+    assert isinstance(TargetRegistry.get_registry_singleton().instances.get("saveability"), OpenAIChatTarget)
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_a_target_its_create_refuses_fails_only_that_entry(tmp_path: Path) -> None:
     _save(
         tmp_path,
@@ -136,3 +156,16 @@ async def test_a_technique_its_create_request_refuses_is_invalid(tmp_path: Path)
     assert (failure.name, failure.reason) == ("types", RestoreFailureReason.INVALID_RECIPE)
     assert failure.message.startswith("Not a valid create request: name:")
     assert "types" not in AttackTechniqueRegistry.get_registry_singleton().instances.get_names()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_restore_runs_as_the_server_so_saved_entries_are_shared_and_unowned(tmp_path: Path) -> None:
+    _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
+
+    with caller_principal_scope("admin"):
+        await _restore(tmp_path)
+
+    with caller_principal_scope("bob"):
+        entry = TargetRegistry.get_registry_singleton().instances.get_entry("contoso_gpt4o")
+    assert entry is not None
+    assert (get_entry_owner(entry), is_private_entry(entry)) == (None, False)
