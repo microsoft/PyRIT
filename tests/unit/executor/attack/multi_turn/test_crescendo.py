@@ -616,11 +616,12 @@ class TestContextValidation:
                 next_message=next_message,
             )
 
-    async def test_prepended_conversation_using_every_turn_is_rejected(
+    async def test_prepended_conversation_using_every_turn_is_rejected_async(
         self,
+        *,
         mock_objective_target: MagicMock,
         mock_adversarial_chat: MagicMock,
-    ):
+    ) -> None:
         """Test that a prepended conversation with exactly max_turns turns is rejected (issue #4472)."""
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
 

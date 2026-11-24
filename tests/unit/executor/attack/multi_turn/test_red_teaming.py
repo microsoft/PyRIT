@@ -630,11 +630,12 @@ class TestContextValidation:
                 prepended_conversation=prepended,
             )
 
-    async def test_prepended_conversation_using_every_turn_is_rejected(
+    async def test_prepended_conversation_using_every_turn_is_rejected_async(
         self,
+        *,
         mock_objective_scorer: MagicMock,
         mock_adversarial_chat: MagicMock,
-    ):
+    ) -> None:
         """Test that a prepended conversation with exactly max_turns turns is rejected (issue #4472)."""
         # Create a separate chat target for objective since prepended_conversation requires PromptTarget
         mock_chat_objective_target = MagicMock(spec=PromptTarget)
