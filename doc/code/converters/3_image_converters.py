@@ -213,6 +213,23 @@ resize_img = Image.open(resize_result.output_text)
 display(resize_img)
 
 # %% [markdown]
+# ### ImageBlurConverter
+#
+# The `ImageBlurConverter` applies a Gaussian blur to an image, to check whether a target still reads text rendered into it, and whether image-based safety filtering still catches it. `radius` sets the blur radius in pixels (default `2.0`).
+
+# %%
+from pyrit.converter import ImageBlurConverter
+
+# Blur the image with a radius of 2 pixels
+blur_converter = ImageBlurConverter(radius=2.0)
+blur_result = await blur_converter.convert_async(prompt=image_location)  # type: ignore
+
+print(f"Blurred image saved to: {blur_result.output_text}")
+
+blur_img = Image.open(blur_result.output_text)
+display(blur_img)
+
+# %% [markdown]
 # ### ImageRotationConverter
 #
 # The `ImageRotationConverter` rotates an image by a given angle. The default is `90.0` (positive values rotate counter-clockwise).
