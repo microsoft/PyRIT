@@ -89,6 +89,10 @@ logger = logging.getLogger(__name__)
 _AUTH_MODE_PARAM = "auth_mode"
 
 
+class StaleTargetCursorError(ValueError):
+    """The pagination cursor no longer names a registered target."""
+
+
 class TargetService:
     """
     Service for managing target instances.
@@ -176,6 +180,14 @@ class TargetService:
                     try:
                         results.append(await self._probe_capabilities_async(source))
                     except (CapabilityDiscoveryError, ValueError) as exc:
+                        logger.warning(
+                            "Capability detection failed for target %r (child %d, %s): %s",
+                            target_registry_name,
+                            index + 1,
+                            type(source).__name__,
+                            exc,
+                            exc_info=exc,
+                        )
                         if isinstance(target, RoundRobinTarget):
                             error_type = (
                                 CapabilityDiscoveryError if isinstance(exc, CapabilityDiscoveryError) else ValueError
@@ -261,6 +273,9 @@ class TargetService:
 
         Returns:
             TargetListResponse containing paginated targets.
+
+        Raises:
+            ValueError: If the cursor does not name a registered target.
         """
         items = [self._build_instance_from_entry(entry) for entry in self._registry.instances.get_all_instances()]
         page, has_more = self._paginate(items=items, cursor=cursor, limit=limit)
@@ -282,6 +297,9 @@ class TargetService:
 
         Returns:
             Tuple of (paginated items, has_more flag).
+
+        Raises:
+            ValueError: If the cursor does not name a registered target.
         """
         start_idx = 0
         if cursor:
@@ -289,6 +307,10 @@ class TargetService:
                 if item.target_registry_name == cursor:
                     start_idx = i + 1
                     break
+            else:
+                # A cursor naming an entry that no longer exists must not silently
+                # restart at the first page, which would serve duplicate rows.
+                raise StaleTargetCursorError("The cursor is not valid for the target registry")
 
         page = items[start_idx : start_idx + limit]
         has_more = len(items) > start_idx + limit
