@@ -194,10 +194,27 @@ async def test_list_empty_and_terminal_pages_async(registry: AttackTechniqueRegi
     assert empty.pagination.next_cursor is None
 
 
-async def test_list_unknown_cursor_starts_at_first_page_like_targets_async(registry: AttackTechniqueRegistry) -> None:
-    page = await TechniqueService().list_async(limit=3, cursor="missing")
-    assert [item.name for item in page.items] == registry.instances.get_names()[:3]
-    assert page.pagination.prev_cursor == "missing"
+async def test_list_rejects_a_cursor_that_names_no_technique_async(registry: AttackTechniqueRegistry) -> None:
+    """A stale cursor must raise, not silently restart at the first page."""
+    service = TechniqueService()
+    names = registry.instances.get_names()
+    cursor = (await service.list_async(limit=1)).pagination.next_cursor
+    assert cursor == names[0]
+    assert [item.name for item in (await service.list_async(limit=1, cursor=cursor)).items] == [names[1]]
+
+    registry.instances.unregister(cursor)
+
+    with pytest.raises(ValueError, match="cursor is not valid for the technique registry"):
+        await service.list_async(limit=1, cursor=cursor)
+
+
+def test_rest_list_returns_400_for_a_cursor_that_names_no_technique(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    response = client.get("/api/techniques", params={"limit": 1, "cursor": "removed_technique"})
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "The cursor is not valid for the technique registry"
 
 
 def test_rest_list_follows_all_pages_with_default_limit(

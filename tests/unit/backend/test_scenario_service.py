@@ -1827,6 +1827,20 @@ class TestScenarioServiceListScenarios:
             assert result.items[1].scenario_name == "test.scenario_3"
             assert result.pagination.has_more is True
 
+    async def test_list_scenarios_rejects_a_cursor_naming_no_scenario(self) -> None:
+        """A stale cursor must not silently replay the first page."""
+        metadata_list = [
+            _make_scenario_metadata(registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}") for i in range(3)
+        ]
+
+        with patch.object(ScenarioService, "__init__", lambda self: None):
+            service = ScenarioService()
+            service._registry = MagicMock()
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
+
+            with pytest.raises(ValueError, match="not valid for the scenario catalog"):
+                await service.list_scenarios_async(limit=2, cursor="test.removed_scenario")
+
     async def test_list_scenarios_last_page_has_more_false(self) -> None:
         """Test that last page shows has_more=False."""
         metadata_list = [
@@ -2080,6 +2094,25 @@ class TestScenarioRoutes:
             data = response.json()
             assert data["items"] == []
             assert data["pagination"]["has_more"] is False
+
+    def test_list_scenarios_rejects_stale_cursor(self, client: TestClient) -> None:
+        """Test that a stale catalog cursor returns the standard 400 problem detail."""
+        message = "The cursor is not valid for the scenario catalog"
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_scenarios_async = AsyncMock(side_effect=ValueError(message))
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/scenarios/catalog", params={"cursor": "test.removed_scenario"})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {
+            "type": "/errors/bad-request",
+            "title": "Bad Request",
+            "status": 400,
+            "detail": message,
+            "instance": "/api/scenarios/catalog",
+        }
 
     def test_list_scenarios_with_items(self, client: TestClient) -> None:
         """Test that GET /api/scenarios/catalog returns scenario data."""
