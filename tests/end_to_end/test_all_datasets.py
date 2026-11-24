@@ -32,6 +32,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.remote import (
+    MMSafetyBenchCategory,
     VLGuardSubset,
     _AyaRedteamingDataset,
     _CategoricalHarmfulQADataset,
@@ -42,6 +43,7 @@ from pyrit.datasets.seed_datasets.remote import (
     _HarmEvalDataset,
     _HiXSTestDataset,
     _JailbreakV28KDataset,
+    _MMSafetyBenchDataset,
     _PromptIntelDataset,
     _SGXSTestDataset,
     _SIUODataset,
@@ -77,6 +79,12 @@ _LIMITED_EXAMPLES_PROVIDERS: set[type] = {
     _GarakNpmDataset,
     _GarakPypiDataset,
     _VLSUMultimodalDataset,
+}
+
+# Providers whose defaults download every category before any row-level filter applies.
+# MM-SafetyBench fetches two HF splits per category, so all 13 categories can exceed _TEST_TIMEOUT.
+_BOUNDED_PROVIDER_KWARGS: dict[type, dict[str, object]] = {
+    _MMSafetyBenchDataset: {"categories": [MMSafetyBenchCategory.ILLEGAL_ACTIVITY]},
 }
 
 # Providers backed by HuggingFace-gated datasets. They require both a HUGGINGFACE_TOKEN
@@ -336,8 +344,11 @@ class TestAllDatasets:
         logger.info(f"Testing provider: {name}")
 
         try:
-            # Limit examples for slow providers that would otherwise exceed _TEST_TIMEOUT
-            provider = provider_cls(max_examples=6) if provider_cls in _LIMITED_EXAMPLES_PROVIDERS else provider_cls()
+            # Bound slow providers that would otherwise exceed _TEST_TIMEOUT
+            if provider_cls in _LIMITED_EXAMPLES_PROVIDERS:
+                provider = provider_cls(max_examples=6)
+            else:
+                provider = provider_cls(**_BOUNDED_PROVIDER_KWARGS.get(provider_cls, {}))
 
             dataset = await _fetch_with_retry_async(provider)
         except Exception as e:

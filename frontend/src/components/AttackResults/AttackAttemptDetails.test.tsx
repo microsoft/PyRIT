@@ -3,12 +3,16 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 
-import { attacksApi } from '@/services/api'
+import { attacksApi, operationsApi } from '@/services/api'
+import { DEFAULT_FINDING_FIELDS_FIXTURE } from '@/test-utils/findingFieldsFixtures'
 import type { ScenarioObjectiveScorer, ScenarioProgressResult } from '@/types'
 
 import AttackAttemptDetails from './AttackAttemptDetails'
 
-jest.mock('@/services/api', () => ({ attacksApi: { getAttackFindings: jest.fn() } }))
+jest.mock('@/services/api', () => ({
+  attacksApi: { getAttackFindings: jest.fn() },
+  operationsApi: { getFindingFields: jest.fn() },
+}))
 
 function TestWrapper({ children }: { children: React.ReactNode }) {
   return <FluentProvider theme={webLightTheme}><MemoryRouter>{children}</MemoryRouter></FluentProvider>
@@ -30,6 +34,7 @@ describe('AttackAttemptDetails', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     jest.mocked(attacksApi.getAttackFindings).mockResolvedValue({ attack_result_id: attempt.attack_result_id, items: [] })
+    jest.mocked(operationsApi.getFindingFields).mockResolvedValue(DEFAULT_FINDING_FIELDS_FIXTURE)
   })
 
   it('should retain readable recorded metrics without registry lookup and keep individual attack score details', async () => {
@@ -60,7 +65,8 @@ describe('AttackAttemptDetails', () => {
     }).mockResolvedValueOnce({
       attack_result_id: attempt.attack_result_id, items: [{
         id: 'finding', operation_id: 'operation', operation_name: 'Recorded operation', evidence_id: 'evidence',
-        title: 'Recovered attached finding', description: 'Stored evidence', severity: 'low', created_at: attempt.timestamp,
+        title: 'Recovered attached finding', severity: 'low', field_values: { description: 'Stored evidence' },
+        created_at: attempt.timestamp,
       }],
     })
     render(<TestWrapper><AttackAttemptDetails attempt={attempt} conversationPath="/saved" /></TestWrapper>)
@@ -69,8 +75,32 @@ describe('AttackAttemptDetails', () => {
     const retry = screen.getByRole('button', { name: 'Retry findings' })
     retry.focus()
     await user.keyboard('{Enter}')
-    expect(await screen.findByRole('list', { name: 'Attached findings' })).toHaveTextContent('Recovered attached finding')
+    const findings = await screen.findByRole('list', { name: 'Attached findings' })
+    expect(findings).toHaveTextContent('Recovered attached finding')
+    // The badge shows the deployment's label for the stored severity key once the finding fields load.
+    expect(await within(findings).findByText('Low')).toBeVisible()
     expect(attacksApi.getAttackFindings).toHaveBeenCalledTimes(2)
     expect(screen.queryByText(/Could not load attached findings/)).not.toBeInTheDocument()
+  })
+
+  it('should report a failed finding fields read beside the attached findings and recover with a retry', async () => {
+    const user = userEvent.setup()
+    jest.mocked(attacksApi.getAttackFindings).mockResolvedValue({
+      attack_result_id: attempt.attack_result_id, items: [{
+        id: 'finding', operation_id: 'operation', operation_name: 'Recorded operation', evidence_id: 'evidence',
+        title: 'Rated attached finding', severity: 'low', field_values: {}, created_at: attempt.timestamp,
+      }],
+    })
+    jest.mocked(operationsApi.getFindingFields).mockRejectedValueOnce({
+      isAxiosError: true, response: { status: 503, data: { detail: 'Fields unavailable' } },
+    })
+    render(<TestWrapper><AttackAttemptDetails attempt={attempt} conversationPath="/saved" /></TestWrapper>)
+    expect(await screen.findByText(/Could not load finding fields: Fields unavailable/)).toBeVisible()
+    const findings = screen.getByRole('list', { name: 'Attached findings' })
+    expect(findings).toHaveTextContent('Rated attached finding')
+
+    await user.click(screen.getByRole('button', { name: 'Retry finding fields' }))
+    expect(await within(findings).findByText('Low')).toBeVisible()
+    expect(screen.queryByText(/Could not load finding fields/)).not.toBeInTheDocument()
   })
 })
