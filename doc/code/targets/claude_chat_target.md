@@ -72,8 +72,8 @@ function's typed keyword parameters. Automatic execution requires `n=1`.
 executing them. Declaring wire tools only through `extra_body_parameters` does
 not install executable implementations.
 
-Tools run through the same bounded loop as `OpenAIResponseTarget`, so a tool
-behaves identically on both targets. The loop handles multiple calls per
+Tools run through the same bounded loop as `OpenAIResponseTarget` and
+`OpenAIChatTarget`, so a tool behaves identically on each target. The loop handles multiple calls per
 completion and multiple rounds. `max_tool_rounds` defaults to 10; zero advertises tools without executing
 a returned batch. Each round counts one completion with user-tool calls, not
 each individual call or the terminal JSON formatter.

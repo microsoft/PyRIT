@@ -45,6 +45,7 @@ from pyrit.score import (
     MessageToolCallScorer,
     PlagiarismScorer,
     ScorerCandidate,
+    ScorerMismatchKind,
     ScorerRequirements,
     SubStringScorer,
 )
@@ -325,6 +326,29 @@ class TestPoolBaselines:
         assert baselines(("send", "tap")) == baselines(("tap", "send"))
         assert [name for name, scorer in baselines(("send", "tap")) if scorer is threshold] == ["baseline_d__1"]
 
+    @pytest.mark.parametrize("order", [("send", "tap"), ("tap", "send")])
+    def test_a_shared_baseline_keeps_every_technique_requirement(self, order: tuple[str, ...]) -> None:
+        threshold = _threshold_scorer()
+        pool = CompatibleScorers(candidates=[threshold, SubStringScorer(substring="x")])
+        factories = {
+            name: _factory(
+                name=name, attack_class=TreeOfAttacksWithPruningAttack if name == "tap" else PromptSendingAttack
+            )
+            for name in order
+        }
+        attacks = _builder(pool).build(
+            technique_factories=factories, dataset_groups={"d": [_group("o1")]}, include_baseline=True
+        )
+
+        (baseline,) = [a for a in attacks if a.group_kind is ScenarioRunPlanGroupKind.BASELINE]
+        tap = next(a for a in attacks if a.technique_name == "tap")
+        assert baseline.objective_scorer_selection.requirements == tap.objective_scorer_selection.requirements
+        assert (
+            ScorerCapabilityName.PRESERVES_FLOAT_SCALE_VALUE
+            in baseline.objective_scorer_selection.requirements.required
+        )
+        assert baseline.objective_scorer_binding == tap.objective_scorer_binding
+
     def test_single_scorer_keeps_the_legacy_baseline(self) -> None:
         scorer = SubStringScorer(substring="x")
         attacks = _builder(scorer).build(
@@ -482,3 +506,56 @@ class TestTechniqueConfigurationIdentity:
             "evaluation": None,
         }
         assert plain.get_configuration_identity() != ranked.get_configuration_identity()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestSelectionsOnAtomicGroups:
+    def test_pool_groups_keep_their_selection_and_derive_the_binding(self) -> None:
+        pool, _, _ = _pool()
+        attacks = _builder(pool).build(
+            technique_factories={"prompt_sending": _factory(name="prompt_sending")},
+            dataset_groups=DATASETS,
+            dataset_scorer_requirements=REQUIREMENTS,
+            include_baseline=True,
+        )
+
+        assert {atomic.group_kind for atomic in attacks} == {
+            ScenarioRunPlanGroupKind.ATTACK,
+            ScenarioRunPlanGroupKind.BASELINE,
+        }
+        for atomic in attacks:
+            selection = atomic.objective_scorer_selection
+            assert selection is not None
+            assert atomic.objective_scorer_binding == selection.to_run_plan_binding()
+        violence = [atomic for atomic in attacks if "violence" in atomic.atomic_attack_name]
+        assert violence
+        for atomic in violence:
+            (rejected,) = atomic.objective_scorer_selection.rejected
+            assert (rejected.candidate_index, rejected.kind) == (0, ScorerMismatchKind.EVALUATION)
+            assert atomic.objective_scorer_selection.requirements.evaluation == VIOLENCE
+
+    def test_single_scorer_groups_keep_no_selection(self) -> None:
+        attacks = _builder(SubStringScorer(substring="x")).build(
+            technique_factories={"prompt_sending": _factory(name="prompt_sending")},
+            dataset_groups=DATASETS,
+            include_baseline=True,
+        )
+
+        assert attacks
+        assert all(atomic.objective_scorer_selection is None for atomic in attacks)
+        assert all(atomic.objective_scorer_binding is None for atomic in attacks)
+
+    def test_groups_from_each_build_keep_their_own_selection(self) -> None:
+        pool, _, _ = _pool()
+        builder = _builder(pool)
+        attacks = [
+            atomic
+            for dataset in ("airt_hate", "airt_violence")
+            for atomic in builder.build(
+                technique_factories={"prompt_sending": _factory(name="prompt_sending")},
+                dataset_groups={dataset: DATASETS[dataset]},
+                dataset_scorer_requirements=REQUIREMENTS,
+            )
+        ]
+
+        assert [atomic.objective_scorer_selection.evaluation for atomic in attacks] == [HATE, VIOLENCE]
