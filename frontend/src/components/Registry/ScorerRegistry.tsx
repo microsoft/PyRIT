@@ -121,7 +121,7 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
                 <Tooltip content={scorerMetricDescription(name)} relationship="description">
                   <span className={scorerStyles.numeric}>
                     {name === 'f1_score' ? 'F1' : name === 'mean_absolute_error' ? 'MAE'
-                      : name === 'krippendorff_alpha_combined' ? 'Agreement' : scorerMetricLabel(name)}
+                      : name === 'krippendorff_alpha_combined' ? 'Combined alpha' : scorerMetricLabel(name)}
                   </span>
                 </Tooltip>
               </TableHeaderCell>
