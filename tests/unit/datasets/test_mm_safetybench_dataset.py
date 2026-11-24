@@ -1,10 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from datasets import DownloadMode, Features, Value
+from huggingface_hub.hf_file_system import HfFileSystemResolvedRepositoryPath
 
 from pyrit.datasets.seed_datasets.remote import (
     MMSafetyBenchCategory,
@@ -12,6 +15,10 @@ from pyrit.datasets.seed_datasets.remote import (
     _MMSafetyBenchDataset,
 )
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
+
+_MOD = "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset"
+_REPO = "PKU-Alignment/MM-SafetyBench"
+_HF_URL_PREFIX = f"hf://datasets/{_REPO}@rev1/"
 
 
 class _FakePILImage:
@@ -512,3 +519,206 @@ class TestMMSafetyBenchDataset:
             "mm_safetybench_HateSpeech_SD_3.jpg",
             "mm_safetybench_HateSpeech_SD_4.jpg",
         ]
+
+
+def _resolved_path(filename: str) -> HfFileSystemResolvedRepositoryPath:
+    return HfFileSystemResolvedRepositoryPath(
+        repo_type="dataset",
+        repo_id=_REPO,
+        revision="rev1",
+        path_in_repo=filename,
+    )
+
+
+def _fake_builder(*, data_files: dict[str, list[str]], features: Features | None) -> MagicMock:
+    builder = MagicMock()
+    builder.config.data_files = data_files
+    builder.info.features = features
+    return builder
+
+
+_FEATURES = Features({"id": Value("string"), "question": Value("string")})
+
+_DATA_FILES = {
+    "SD_TYPO": [
+        f"{_HF_URL_PREFIX}data/Fraud/SD_TYPO-00000.parquet",
+        f"{_HF_URL_PREFIX}data/Fraud/SD_TYPO-00001.parquet",
+    ],
+    "TYPO": [f"{_HF_URL_PREFIX}data/Fraud/TYPO.parquet"],
+    "Text_only": [f"{_HF_URL_PREFIX}data/Fraud/Text_only.parquet"],
+}
+
+
+class TestFetchSingleSplit:
+    """Tests for the selective-download helper ``_fetch_single_split_async`` itself."""
+
+    def _patches(self, *, builder_side_effect: Any):
+        """Patch the module-level HF entry points; returns the four mock handles."""
+        builder_patch = patch(f"{_MOD}.load_dataset_builder", side_effect=builder_side_effect)
+        fs_patch = patch(f"{_MOD}.HfFileSystem")
+        download_patch = patch(
+            f"{_MOD}.hf_hub_download",
+            side_effect=lambda *, filename, **_: f"/local/{filename}",
+        )
+        load_patch = patch(f"{_MOD}.load_dataset", return_value="sentinel-dataset")
+        return builder_patch, fs_patch, download_patch, load_patch
+
+    async def test_downloads_only_requested_split_files_and_forwards_metadata(self, tmp_path, monkeypatch):
+        """Only the requested split's (sharded) files are downloaded; revision/token/features forwarded."""
+        monkeypatch.setenv("HF_DATASETS_CACHE", str(tmp_path))
+        loader = _MMSafetyBenchDataset(token="hf-token")
+
+        builder = _fake_builder(data_files=_DATA_FILES, features=_FEATURES)
+        builder_patch, fs_patch, download_patch, load_patch = self._patches(builder_side_effect=[builder])
+
+        with (
+            builder_patch as mock_builder,
+            fs_patch as mock_fs,
+            download_patch as mock_download,
+            load_patch as (mock_load),
+        ):
+            mock_fs.return_value.resolve_path.side_effect = lambda url: _resolved_path(url.removeprefix(_HF_URL_PREFIX))
+            result = await loader._fetch_single_split_async(category_value="Fraud", split="SD_TYPO", cache=True)
+
+        assert result == "sentinel-dataset"
+
+        mock_builder.assert_called_once_with(
+            _REPO,
+            "Fraud",
+            cache_dir=str(tmp_path),
+            download_mode=DownloadMode.REUSE_DATASET_IF_EXISTS,
+            token="hf-token",
+        )
+        mock_fs.assert_called_once_with(token="hf-token")
+
+        # Only the two SD_TYPO shards are downloaded, in order, with resolved metadata forwarded.
+        assert [call.kwargs for call in mock_download.call_args_list] == [
+            {
+                "repo_id": _REPO,
+                "filename": f"data/Fraud/SD_TYPO-0000{i}.parquet",
+                "repo_type": "dataset",
+                "revision": "rev1",
+                "token": "hf-token",
+                "force_download": False,
+            }
+            for i in range(2)
+        ]
+
+        mock_load.assert_called_once_with(
+            "parquet",
+            data_files=[
+                "/local/data/Fraud/SD_TYPO-00000.parquet",
+                "/local/data/Fraud/SD_TYPO-00001.parquet",
+            ],
+            split="train",
+            features=_FEATURES,
+            cache_dir=str(tmp_path),
+            download_mode=DownloadMode.REUSE_DATASET_IF_EXISTS,
+        )
+
+        # A manifest for offline reuse is persisted alongside the datasets cache.
+        manifest_file = tmp_path / "pyrit_split_manifests" / "PKU-Alignment__MM-SafetyBench__Fraud__SD_TYPO.json"
+        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        assert [f["filename"] for f in manifest["files"]] == [
+            "data/Fraud/SD_TYPO-00000.parquet",
+            "data/Fraud/SD_TYPO-00001.parquet",
+        ]
+        assert Features.from_dict(manifest["features"]) == _FEATURES
+
+    async def test_cache_false_forces_redownload_and_writes_no_manifest(self, tmp_path, monkeypatch):
+        """cache=False force-redownloads, bypasses the datasets cache, and persists nothing."""
+        monkeypatch.setenv("HF_DATASETS_CACHE", str(tmp_path))
+        loader = _MMSafetyBenchDataset()
+
+        builder = _fake_builder(data_files=_DATA_FILES, features=_FEATURES)
+        builder_patch, fs_patch, download_patch, load_patch = self._patches(builder_side_effect=[builder])
+
+        with (
+            builder_patch as mock_builder,
+            fs_patch as mock_fs,
+            download_patch as mock_download,
+            load_patch as (mock_load),
+        ):
+            mock_fs.return_value.resolve_path.side_effect = lambda url: _resolved_path(url.removeprefix(_HF_URL_PREFIX))
+            await loader._fetch_single_split_async(category_value="Fraud", split="TYPO", cache=False)
+
+        assert mock_builder.call_args.kwargs["cache_dir"] is None
+        assert mock_builder.call_args.kwargs["download_mode"] == DownloadMode.FORCE_REDOWNLOAD
+        assert mock_download.call_args.kwargs["force_download"] is True
+        assert mock_load.call_args.kwargs["cache_dir"] is None
+        assert mock_load.call_args.kwargs["download_mode"] == DownloadMode.FORCE_REDOWNLOAD
+        assert not (tmp_path / "pyrit_split_manifests").exists()
+
+    async def test_missing_split_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HF_DATASETS_CACHE", str(tmp_path))
+        loader = _MMSafetyBenchDataset()
+
+        builder = _fake_builder(data_files={"Text_only": _DATA_FILES["Text_only"]}, features=_FEATURES)
+        builder_patch, fs_patch, download_patch, load_patch = self._patches(builder_side_effect=[builder])
+
+        with builder_patch, fs_patch, download_patch as mock_download, load_patch:
+            with pytest.raises(ValueError, match="No data files found for config 'Fraud' split 'SD_TYPO'"):
+                await loader._fetch_single_split_async(category_value="Fraud", split="SD_TYPO", cache=True)
+
+        mock_download.assert_not_called()
+
+    async def test_non_repository_data_file_path_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HF_DATASETS_CACHE", str(tmp_path))
+        loader = _MMSafetyBenchDataset()
+
+        builder = _fake_builder(data_files=_DATA_FILES, features=_FEATURES)
+        builder_patch, fs_patch, download_patch, load_patch = self._patches(builder_side_effect=[builder])
+
+        with builder_patch, fs_patch as mock_fs, download_patch as mock_download, load_patch:
+            mock_fs.return_value.resolve_path.return_value = object()  # not a repository path
+            with pytest.raises(ValueError, match="Unexpected non-repository data file path"):
+                await loader._fetch_single_split_async(category_value="Fraud", split="SD_TYPO", cache=True)
+
+        mock_download.assert_not_called()
+
+    async def test_offline_falls_back_to_persisted_manifest(self, tmp_path, monkeypatch, caplog):
+        """A warm cache stays usable offline: the manifest replaces remote metadata resolution."""
+        monkeypatch.setenv("HF_DATASETS_CACHE", str(tmp_path))
+        loader = _MMSafetyBenchDataset(token="hf-token")
+
+        # First fetch succeeds online and persists the manifest; the second
+        # fetch cannot reach the hub (as with HF_HUB_OFFLINE=1).
+        builder = _fake_builder(data_files=_DATA_FILES, features=_FEATURES)
+        builder_patch, fs_patch, download_patch, load_patch = self._patches(
+            builder_side_effect=[builder, ConnectionError("offline mode is enabled")]
+        )
+
+        with builder_patch, fs_patch as mock_fs, download_patch as mock_download, load_patch as mock_load:
+            mock_fs.return_value.resolve_path.side_effect = lambda url: _resolved_path(url.removeprefix(_HF_URL_PREFIX))
+            await loader._fetch_single_split_async(category_value="Fraud", split="SD_TYPO", cache=True)
+
+            with caplog.at_level("WARNING", logger=_MOD):
+                result = await loader._fetch_single_split_async(category_value="Fraud", split="SD_TYPO", cache=True)
+
+        assert result == "sentinel-dataset"
+        assert any("reusing the cached split manifest" in r.message for r in caplog.records)
+
+        # The offline call downloads the same files from the hub cache with the
+        # pinned revision, and restores the features from the manifest.
+        offline_download_calls = mock_download.call_args_list[2:]
+        assert [call.kwargs["filename"] for call in offline_download_calls] == [
+            "data/Fraud/SD_TYPO-00000.parquet",
+            "data/Fraud/SD_TYPO-00001.parquet",
+        ]
+        assert all(call.kwargs["revision"] == "rev1" for call in offline_download_calls)
+        assert mock_load.call_args.kwargs["features"] == _FEATURES
+
+    async def test_offline_without_manifest_raises(self, tmp_path, monkeypatch):
+        """With no manifest from a previous fetch, the connection error propagates."""
+        monkeypatch.setenv("HF_DATASETS_CACHE", str(tmp_path))
+        loader = _MMSafetyBenchDataset()
+
+        builder_patch, fs_patch, download_patch, load_patch = self._patches(
+            builder_side_effect=ConnectionError("offline mode is enabled")
+        )
+
+        with builder_patch, fs_patch, download_patch as mock_download, load_patch:
+            with pytest.raises(ConnectionError, match="offline mode is enabled"):
+                await loader._fetch_single_split_async(category_value="Fraud", split="SD_TYPO", cache=True)
+
+        mock_download.assert_not_called()
