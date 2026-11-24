@@ -1843,10 +1843,8 @@ export interface ScenarioSuiteEntryStatus {
   preset_version: string | null
   /** Advisory only. Missing or invalid preset references do not prevent saving the suite. */
   issues: PresetIssue[]
-  /** The preset's pinned launch values, or null when it pins none or is unavailable. */
+  /** The preset's fallbacks for launch-owned settings, or null when it sets none or is unavailable. */
   launch_defaults?: ScenarioPresetLaunchDefaults | null
-  /** Whether the entry's scenario accepts an objective scorer, or null when it cannot be resolved. */
-  supports_objective_scorer?: boolean | null
 }
 
 export interface ScenarioSuiteResponse {

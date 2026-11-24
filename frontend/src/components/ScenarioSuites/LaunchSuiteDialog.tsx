@@ -179,6 +179,8 @@ export default function LaunchSuiteDialog({
   const readiness: EntryReadiness = readinessResult?.request === readinessRequest
     ? readinessResult.result
     : { state: 'loading' }
+  // The library reports these for the current selection; launching would refuse them.
+  const blockingIssues = readiness.state === 'ready' ? readiness.readiness.issues : []
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -202,7 +204,7 @@ export default function LaunchSuiteDialog({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
-    if (staleSelection || !runtime.ready || targetName === '' || submitting || !defaultsReady) {
+    if (staleSelection || !runtime.ready || targetName === '' || submitting || !defaultsReady || blockingIssues.length > 0) {
       return
     }
 
@@ -260,7 +262,8 @@ export default function LaunchSuiteDialog({
                       <Text
                         as="p"
                         size={200}
-                        className={styles.summaryText}
+                        className={blockingIssues.some((issue) => issue.entry_id === entry.entry_id)
+                          ? styles.entryIssue : styles.summaryText}
                         data-testid={`launch-suite-entry-scorer-${entry.entry_id}`}
                       >
                         Scorer: {entryScorerLabel(entry, readiness, scorerOverride)}
@@ -269,6 +272,19 @@ export default function LaunchSuiteDialog({
                   ))}
                 </ol>
               </div>
+              {blockingIssues.length > 0 && (
+                <MessageBar intent="warning" aria-label="Suite configuration issues">
+                  <MessageBarBody>
+                    <ul className={styles.issueList}>
+                      {blockingIssues.map((issue) => (
+                        <li key={`${issue.entry_id ?? ''}:${issue.role}:${issue.component}`}>
+                          {issue.component}: {issue.reason} {issue.remediation}
+                        </li>
+                      ))}
+                    </ul>
+                  </MessageBarBody>
+                </MessageBar>
+              )}
               {error && (
                 <MessageBar intent="error">
                   <MessageBarBody>{error}</MessageBarBody>
@@ -336,7 +352,7 @@ export default function LaunchSuiteDialog({
               <Button
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || targetName === '' || submitting || !defaultsReady}
+                disabled={!runtime.ready || targetName === '' || submitting || !defaultsReady || blockingIssues.length > 0}
                 data-testid="confirm-launch-suite"
               >
                 {submitting ? 'Launching...' : 'Launch suite'}

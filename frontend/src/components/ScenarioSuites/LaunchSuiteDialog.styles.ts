@@ -14,6 +14,13 @@ export const useLaunchSuiteDialogStyles = makeStyles({
   summaryText: {
     color: tokens.colorNeutralForeground3,
   },
+  entryIssue: {
+    color: tokens.colorStatusDangerForeground1,
+  },
+  issueList: {
+    margin: 0,
+    paddingLeft: tokens.spacingHorizontalL,
+  },
   entryList: {
     display: 'flex',
     flexDirection: 'column',

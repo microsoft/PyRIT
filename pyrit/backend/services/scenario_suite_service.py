@@ -25,7 +25,7 @@ from pyrit.models import (
 from pyrit.models.catalog import (
     ScenarioSuiteRegistryEntry,
 )
-from pyrit.registry import ScenarioPresetRegistry, ScenarioRegistry, ScenarioSuiteRegistry
+from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
 from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,6 @@ class _PresetProjection:
     version: str | None
     issues: tuple[PresetIssue, ...]
     launch_defaults: ScenarioPresetLaunchDefaults | None = None
-    supports_objective_scorer: bool | None = None
 
 
 class ScenarioSuiteService:
@@ -196,7 +195,6 @@ class ScenarioSuiteService:
                 preset_version=projections[entry.preset_name].version,
                 issues=list(projections[entry.preset_name].issues),
                 launch_defaults=projections[entry.preset_name].launch_defaults,
-                supports_objective_scorer=projections[entry.preset_name].supports_objective_scorer,
             )
             for entry in entries
         ]
@@ -216,15 +214,11 @@ class ScenarioSuiteService:
         try:
             entry = registry.get_preset(name=preset_name)
             if entry is not None:
-                metadata = ScenarioRegistry.get_registry_singleton().get_registered_class_metadata(
-                    entry.preset.scenario_name
-                )
                 return _PresetProjection(
                     origin=entry.origin,
                     version=entry.version,
                     issues=tuple(registry.check_preset(preset=entry.preset)),
                     launch_defaults=entry.preset.launch_defaults,
-                    supports_objective_scorer=None if metadata is None else metadata.supports_objective_scorer,
                 )
 
             stored_version = registry.get_preset_version(name=preset_name)

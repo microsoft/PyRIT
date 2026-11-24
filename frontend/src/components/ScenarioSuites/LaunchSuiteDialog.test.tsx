@@ -345,6 +345,27 @@ describe('LaunchSuiteDialog', () => {
     expect(scorerLabel(SECOND_ENTRY_ID)).not.toHaveTextContent('Scenario default scorer')
   })
 
+  it('warns about and refuses to launch an entry the library reports a blocking issue for', async () => {
+    const reason = "Objective scorer 'deleted_scorer' is not registered in this deployment."
+    mockGetReadiness.mockResolvedValue({
+      bindings: [scorerBinding(FIRST_ENTRY_ID, 'preset')],
+      issues: [{
+        role: 'objective_scorer',
+        component: 'Entry 2 (second_preset): scenario',
+        reason,
+        remediation: 'Update the objective scorer in scenario preset \'second_preset\'.',
+        entry_id: SECOND_ENTRY_ID,
+        source: 'preset',
+      }],
+    })
+    renderDialog({ suite: suiteWithPresetScorer(), scorers: [REFUSAL_SCORER] })
+
+    const issues = await screen.findByLabelText('Suite configuration issues')
+    expect(issues).toHaveTextContent(`Entry 2 (second_preset): scenario: ${reason}`)
+    expect(issues).toHaveTextContent("Update the objective scorer in scenario preset 'second_preset'.")
+    expect(screen.getByTestId('confirm-launch-suite')).toBeDisabled()
+  })
+
   it('shows resolving and failure states instead of recomputing the scorer', async () => {
     let rejectReadiness: (reason: unknown) => void = () => undefined
     mockGetReadiness.mockReturnValue(new Promise((_, reject) => { rejectReadiness = reject }))

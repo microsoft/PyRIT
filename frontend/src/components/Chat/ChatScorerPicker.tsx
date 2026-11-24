@@ -32,12 +32,13 @@ export default function ChatScorerPicker({
 }: ChatScorerPickerProps) {
   const styles = useChatScorerPickerStyles()
   const selectedScorer = findRegisteredScorer(value ?? null, scorers, inherited)
-  const available = !value || selectedScorer !== undefined
+  // A saved value can only be judged unavailable once the registered scorers have loaded.
+  const available = !value || loading || selectedScorer !== undefined
   const eligibleScorers = scorers.filter((scorer: ScorerInstance) => usage === 'scenario'
     ? scorer.identifier.scorer_type === 'true_false' : isEligibleChatScorer(scorer))
   const selected = value === undefined && onUseLastUsed ? 'last-used'
     : selectedScorer && eligibleScorers.includes(selectedScorer)
-    ? `registered:${selectedScorer.scorer_registry_name}` : value ? 'unavailable' : ''
+    ? `registered:${selectedScorer.scorer_registry_name}` : value ? (loading ? 'loading' : 'unavailable') : ''
   return (
     <HelpField label={label} help={help ?? (usage === 'scenario'
       ? 'Evaluates whether the target response meets the objective. The attack decides what to do with the result.'
@@ -52,6 +53,7 @@ export default function ChatScorerPicker({
         }}>
         {onUseLastUsed && <option value="last-used">Use last used</option>}
         <option value="">{emptyOptionLabel ?? (usage === 'scenario' ? 'Use scenario default' : 'Off')}</option>
+        {selected === 'loading' && value && <option value="loading" hidden disabled>{value.registry_name}</option>}
         {selected === 'unavailable' && value && <option value="unavailable" hidden disabled>
           {selectedScorer ? scorerOptionLabel(selectedScorer) : `Unavailable: ${value.registry_name}`}
         </option>}

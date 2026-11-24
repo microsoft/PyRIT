@@ -6,6 +6,7 @@ import {
   Input,
   type LabelProps,
   MessageBar,
+  MessageBarActions,
   MessageBarBody,
   Option,
   Spinner,
@@ -251,6 +252,11 @@ function ScenarioPresetEditorContent({
     [loaded, scenario],
   )
   const techniqueIssues = loaded?.issues.filter((issue) => issue.field === 'techniques') ?? []
+  const storedScorer = loaded?.preset.launch_defaults?.objective_scorer ?? null
+  // A scenario without a scorer control keeps the stored scorer until the operator removes it.
+  const unsupportedScorer = scenario && !scenario.supports_objective_scorer && objectiveScorer === storedScorer
+    ? storedScorer : null
+  const scorerIssues = loaded?.issues.filter((issue) => issue.field === 'launch_defaults.objective_scorer') ?? []
   const builtConfig = useMemo(
     () => (scenario && config ? buildPresetScenarioConfig(scenario, config, loaded?.preset ?? null) : null),
     [config, loaded, scenario],
@@ -339,10 +345,7 @@ function ScenarioPresetEditorContent({
         scenarioName: scenario.scenario_name,
         description,
         showInScanner,
-        // With no scorer control rendered the operator cannot have cleared it, so keep what is stored.
-        objectiveScorer: scenario.supports_objective_scorer
-          ? objectiveScorer
-          : loaded?.preset.launch_defaults?.objective_scorer ?? null,
+        objectiveScorer: scenario.supports_objective_scorer ? objectiveScorer : unsupportedScorer,
       },
       builtConfig.config,
       { scenario, previous: loaded?.preset ?? null },
@@ -540,6 +543,18 @@ function ScenarioPresetEditorContent({
                       setValidationError(null)
                     }}
                   />
+                )}
+                {unsupportedScorer && (
+                  <MessageBar intent="warning" data-testid="unsupported-scorer-warning">
+                    <MessageBarBody>
+                      This preset stores objective scorer {unsupportedScorer}, which {scenario.scenario_name} cannot
+                      use. {scorerIssues.map((issue) => issue.message).join(' ')} Suite launches refuse this
+                      preset until you remove the scorer.
+                    </MessageBarBody>
+                    <MessageBarActions>
+                      <Button disabled={saving} onClick={() => setObjectiveScorer(null)}>Remove scorer</Button>
+                    </MessageBarActions>
+                  </MessageBar>
                 )}
                 {dynamicParameters.map((parameter) => (
                   <ParameterField

@@ -583,7 +583,9 @@ function ScenarioHistoryTable({
             </TableCell>
             <TableCell data-testid={`scenario-history-scorer-${run.scenario_result_id}`}>
               {run.scorer ? (
-                <Text className={styles.truncate} title={run.scorer.display_type}>{run.scorer.display_type}</Text>
+                <Text className={mergeClasses(styles.scorer, styles.truncate)} title={run.scorer.display_type}>
+                  {run.scorer.display_type}
+                </Text>
               ) : 'Unavailable'}
             </TableCell>
             <TableCell>

@@ -35,10 +35,9 @@ from pyrit.registry import (
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
     ScorerRegistry,
-    resolve_launch_defaults,
     resolve_scenario_preset_run_request,
 )
-from pyrit.registry.scenario_suite_resolver import _LAUNCH_DEFAULT_BINDINGS
+from pyrit.registry.scenario_suite_resolver import _LAUNCH_DEFAULT_BINDINGS, _resolve_launch_defaults
 
 ENTRY_ID = UUID("11111111-1111-4111-8111-111111111111")
 EXECUTION_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
@@ -442,12 +441,12 @@ def test_unregistered_scenario_keeps_the_launch_scorer_for_readiness_to_report(
 def test_unsupported_field_is_reported_only_when_set() -> None:
     """Test that an unsupported field left unset still reads as the scenario default."""
     preset = _preset(launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer="inverted_refusal"))
-    unset = resolve_launch_defaults(
+    unset = _resolve_launch_defaults(
         preset=_preset(),
         launch=ResolveScenarioPresetRequest(target_name="gpt4"),
         unsupported_fields=frozenset({"objective_scorer"}),
     )
-    named = resolve_launch_defaults(
+    named = _resolve_launch_defaults(
         preset=preset,
         launch=ResolveScenarioPresetRequest(target_name="gpt4"),
         unsupported_fields=frozenset({"objective_scorer"}),
@@ -462,7 +461,7 @@ def test_single_preset_resolution_binds_the_named_scorer_unless_overridden() -> 
     """Test that resolving one preset applies the same precedence as a suite entry."""
     preset = _preset(launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer="inverted_refusal"))
 
-    named = resolve_launch_defaults(preset=preset, launch=ResolveScenarioPresetRequest(target_name="gpt4"))
+    named = _resolve_launch_defaults(preset=preset, launch=ResolveScenarioPresetRequest(target_name="gpt4"))
     overridden = resolve_scenario_preset_run_request(
         preset=preset, launch=ResolveScenarioPresetRequest(target_name="gpt4", objective_scorer=OVERRIDE_SCORER)
     )

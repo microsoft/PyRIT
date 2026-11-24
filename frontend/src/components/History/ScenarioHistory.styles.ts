@@ -108,6 +108,10 @@ export const useScenarioHistoryStyles = makeStyles({
     flexDirection: 'column',
     maxWidth: '220px',
   },
+  scorer: {
+    display: 'block',
+    maxWidth: '180px',
+  },
   truncate: {
     overflow: 'hidden',
     textOverflow: 'ellipsis',

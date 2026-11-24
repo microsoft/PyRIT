@@ -92,7 +92,7 @@ _LAUNCH_DEFAULT_BINDINGS: Mapping[str, _LaunchDefaultBinding] = MappingProxyType
 
 
 @dataclass(frozen=True)
-class ResolvedLaunchDefaults:
+class _ResolvedLaunchDefaults:
     """
     Effective values for a preset's launch-default fields and where each came from.
 
@@ -105,12 +105,12 @@ class ResolvedLaunchDefaults:
     errors: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
 
-def resolve_launch_defaults(
+def _resolve_launch_defaults(
     *,
     preset: ScenarioPreset,
     launch: _LaunchSource,
     unsupported_fields: AbstractSet[str] = frozenset(),
-) -> ResolvedLaunchDefaults:
+) -> _ResolvedLaunchDefaults:
     """
     Apply launch, then preset, then scenario-default precedence to each launch-default field.
 
@@ -120,7 +120,7 @@ def resolve_launch_defaults(
     bound to this deployment here, once, so the same binding serves readiness and execution.
 
     Returns:
-        ResolvedLaunchDefaults: The effective value and source of every launch-default field.
+        _ResolvedLaunchDefaults: The effective value and source of every launch-default field.
     """
     preset_defaults = preset.launch_defaults
     values: dict[str, Any] = {}
@@ -142,7 +142,7 @@ def resolve_launch_defaults(
                 values[field_name], errors[field_name] = None, str(exc)
         else:
             values[field_name], sources[field_name] = None, "scenario_default"
-    return ResolvedLaunchDefaults(
+    return _ResolvedLaunchDefaults(
         values=MappingProxyType(values), sources=MappingProxyType(sources), errors=MappingProxyType(errors)
     )
 
@@ -159,14 +159,14 @@ def resolve_scenario_preset_run_request(*, preset: ScenarioPreset, launch: _Laun
     Raises:
         ValueError: If a preset launch default the launch does not override cannot be bound here.
     """
-    launch_defaults = resolve_launch_defaults(preset=preset, launch=launch)
+    launch_defaults = _resolve_launch_defaults(preset=preset, launch=launch)
     if launch_defaults.errors:
         raise ValueError(" ".join(launch_defaults.errors.values()))
     return _build_run_request(preset=preset, launch=launch, launch_defaults=launch_defaults)
 
 
 def _build_run_request(
-    *, preset: ScenarioPreset, launch: _LaunchSource, launch_defaults: ResolvedLaunchDefaults
+    *, preset: ScenarioPreset, launch: _LaunchSource, launch_defaults: _ResolvedLaunchDefaults
 ) -> RunScenarioRequest:
     """
     Build a run request from a preset, its launch, and the launch defaults already resolved for them.
@@ -317,7 +317,7 @@ class ScenarioSuiteLaunchResolver:
                     f"Entry {position} scenario preset '{suite_entry.preset_name}' is not runnable: {details}"
                 )
 
-            launch_defaults = resolve_launch_defaults(
+            launch_defaults = _resolve_launch_defaults(
                 preset=preset.preset,
                 launch=request,
                 unsupported_fields=self._unsupported_launch_fields(preset=preset.preset, launch=request),

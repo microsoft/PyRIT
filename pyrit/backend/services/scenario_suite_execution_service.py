@@ -90,8 +90,8 @@ def _entry_role_attribution(
     update["source"] = source
     if remediation is not None and source == "preset":
         update["remediation"] = (
-            f"Update launch_defaults.{field_name} in scenario preset '{entry.preset_name}', "
-            f"or choose a {field_name.replace('_', ' ')} for this launch to override it."
+            f"Update the {field_name.replace('_', ' ')} in scenario preset '{entry.preset_name}', "
+            "or override it for this launch."
         )
     return update
 

@@ -52,8 +52,10 @@ from pyrit.registry import (
     ScenarioSuiteStorage,
     ScorerRegistry,
 )
-from pyrit.scenario.scenarios.garak import ApiKey
-from pyrit.score import SubStringScorer
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
+from pyrit.scenario.scenarios.airt import RapidResponse
+from pyrit.scenario.scenarios.garak import ApiKey, PromptInject
+from pyrit.score import CompatibleScorers, ScorerCandidate, ScorerRequirements, SubStringScorer
 from unit.mocks import MockPromptTarget
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")
@@ -787,7 +789,7 @@ async def test_unresolved_preset_scorer_is_attributed_to_its_entry_and_preset_as
     [issue] = readiness.issues
     assert issue.entry_id == ENTRY_ONE
     assert issue.source == "preset"
-    assert "launch_defaults.objective_scorer" in issue.remediation
+    assert "objective scorer in scenario preset 'first'" in issue.remediation
     assert "'first'" in issue.remediation
     run_service.start_run_async.assert_not_awaited()
 
@@ -827,7 +829,7 @@ async def test_unregistered_preset_scorer_name_is_an_entry_issue_that_does_not_h
     scorer_issue, target_issue = readiness.issues
     assert (scorer_issue.entry_id, scorer_issue.role, scorer_issue.source) == (ENTRY_ONE, "objective_scorer", "preset")
     assert "'not_here' is not registered" in scorer_issue.reason
-    assert "launch_defaults.objective_scorer" in scorer_issue.remediation
+    assert "objective scorer in scenario preset 'first'" in scorer_issue.remediation
     assert (target_issue.entry_id, target_issue.role) == (ENTRY_TWO, "objective_target")
     run_service.start_run_async.assert_not_awaited()
 
@@ -921,6 +923,56 @@ async def test_launch_scorer_skips_entries_whose_scenario_uses_a_built_in_scorer
     ]
     assert [configured.objective_scorer for configured in configured_requests] == [override, None, override, None]
     assert [child.objective_scorer for child, _ in calls] == [override, None]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_preset_scorer_a_required_evaluation_rejects_is_attributed_to_the_preset_async(
+    execution_context,
+) -> None:
+    service, suite_registry, preset_registry, run_service, _, _ = execution_context
+    _pin_first_preset_scorer(preset_registry)
+    stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+    scorer_registry = ScorerRegistry()
+    scorer_registry.instances.register(SubStringScorer(substring="hate"), name="inverted_refusal")
+    default_pool = CompatibleScorers(
+        candidates=[ScorerCandidate(scorer=SubStringScorer(substring="default"), evaluation="harm.hate")]
+    )
+    hate_datasets = DatasetAttackConfiguration(
+        sources=[DatasetSource(name="airt_hate", scorer_requirements=ScorerRequirements(evaluation="harm.hate"))]
+    )
+    resolver = _execution_mod.ScenarioConfigurationResolver
+
+    def create_configured_scenario(*, scenario_name: str, request: RunScenarioRequest) -> RapidResponse:
+        kwargs = resolver.resolve_constructor_kwargs(
+            scenario_class=RapidResponse, objective_scorer=request.objective_scorer
+        )
+        scenario = RapidResponse(**(kwargs or {"objective_scorer": default_pool}))
+        scenario.set_params_from_args(args={"objective_target": MockPromptTarget(), "dataset_config": hate_datasets})
+        return scenario
+
+    with (
+        patch(
+            "pyrit.scenario.scenarios.airt.rapid_response._build_rapid_response_technique",
+            return_value=PromptInject()._technique_class,
+        ),
+        patch.object(resolver, "resolve_readiness", _REAL_RESOLVE_READINESS),
+        patch.object(resolver, "resolve_target", return_value=MockPromptTarget()),
+        patch.object(resolver, "resolve_scenario_class", return_value=RapidResponse),
+        patch.object(resolver, "create_configured_scenario", side_effect=create_configured_scenario),
+        patch.object(_configuration_mod, "validate_default_adversarial_target"),
+        patch.object(ScorerRegistry, "get_registry_singleton", return_value=scorer_registry),
+    ):
+        readiness = await service.get_readiness_async(
+            name="weekly", request=_launch_request(suite_version=stored.version)
+        )
+        with pytest.raises(ScenarioSuiteNotRunnableError, match="Entry 1 \\(first\\).*objective_scorer"):
+            await service.launch_async(name="weekly", request=_launch_request(suite_version=stored.version))
+
+    [issue] = readiness.issues
+    assert (issue.entry_id, issue.role, issue.source) == (ENTRY_ONE, "objective_scorer", "preset")
+    assert "'harm.hate'" in issue.reason
+    assert "scenario preset 'first'" in issue.remediation
+    run_service.start_run_async.assert_not_awaited()
 
 
 async def test_scenario_default_scorer_issue_keeps_the_generic_remediation_async(execution_context) -> None:

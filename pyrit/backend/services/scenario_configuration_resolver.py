@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness
 from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario.core import override_default_adversarial_target, resolve_technique_tokens
+from pyrit.scenario.core.scenario import ObjectiveScorerRequirementError
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 from pyrit.score import TrueFalseScorer
 
@@ -83,23 +84,30 @@ class ScenarioConfigurationResolver:
             ScenarioReadiness: Effective bindings and actionable issues.
         """
         issues, updates, target = cls.resolve_named_roles(scenario_name=scenario_name, request=request)
+        configured = request.model_copy(update=updates)
         with override_default_adversarial_target(target):
             try:
-                scenario = cls.create_configured_scenario(
-                    scenario_name=scenario_name, request=request.model_copy(update=updates)
-                )
+                scenario = cls.create_configured_scenario(scenario_name=scenario_name, request=configured)
                 readiness = scenario.get_readiness()
             except ValueError as exc:
-                readiness = ScenarioReadiness(
-                    issues=[
-                        ScenarioConfigurationIssue(
-                            role="configuration",
-                            component=scenario_name,
-                            reason=str(exc),
-                            remediation="Correct the selected scenario parameters, datasets, or techniques.",
-                        )
-                    ]
-                )
+                selected = configured.objective_scorer
+                if isinstance(exc, ObjectiveScorerRequirementError) and selected is not None:
+                    # The selected scorer, not the scenario configuration, is what the operator must change.
+                    issue = ScenarioConfigurationIssue(
+                        role=REQUEST_FIELD_ROLES["objective_scorer"],
+                        component=selected.registry_name,
+                        reason=str(exc),
+                        remediation="Select a scorer that serves the required evaluations, or use the scenario "
+                        "default scorer.",
+                    )
+                else:
+                    issue = ScenarioConfigurationIssue(
+                        role="configuration",
+                        component=scenario_name,
+                        reason=str(exc),
+                        remediation="Correct the selected scenario parameters, datasets, or techniques.",
+                    )
+                readiness = ScenarioReadiness(issues=[issue])
         invalid_roles = {issue.role for issue in issues}
         readiness.bindings = [binding for binding in readiness.bindings if binding.role not in invalid_roles]
         readiness.issues = issues + [issue for issue in readiness.issues if issue.role not in invalid_roles]

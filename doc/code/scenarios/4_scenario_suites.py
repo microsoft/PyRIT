@@ -231,13 +231,13 @@ else:
 # use the `inverted_refusal` true/false scorer while another uses
 # `scale_gpt4o_temp9_threshold_09`, a `FloatScaleThresholdScorer` that turns a 0-1 harm
 # scale into a true/false result at 0.9. A preset names its scorer by registry name:
-#
-# ```python
-# from pyrit.models import ScenarioPresetLaunchDefaults
-#
-# launch_defaults = ScenarioPresetLaunchDefaults(objective_scorer="scale_gpt4o_temp9_threshold_09")
-# ```
-#
+
+# %%
+from pyrit.models import ScenarioPresetLaunchDefaults
+
+launch_defaults = ScenarioPresetLaunchDefaults(objective_scorer="scale_gpt4o_temp9_threshold_09")
+
+# %% [markdown]
 # Pass `launch_defaults` to `ScenarioPreset`, or pick **Objective scorer** in the GUI preset
 # editor. Each suite entry uses the launch request's `objective_scorer` when one is given,
 # otherwise its preset's scorer, otherwise the scenario default. A launch-level scorer
