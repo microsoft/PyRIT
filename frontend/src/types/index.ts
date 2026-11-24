@@ -664,6 +664,12 @@ export type CreateConverterRequest = {
   persist?: never
 })
 
+/** A converter to check before saving it, as a create request would give it. */
+export interface ConverterSaveabilityRequest {
+  type: string
+  params: Record<string, unknown>
+}
+
 export interface SourceInstanceSpec {
   source_name: string
   source_hash: string

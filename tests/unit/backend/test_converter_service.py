@@ -30,6 +30,7 @@ from pyrit.backend.models import (
     ConverterPreviewRequest,
     CreateConverterRequest,
 )
+from pyrit.backend.models.converters import ConverterSaveabilityRequest
 from pyrit.backend.routes import converters as converter_routes
 from pyrit.backend.services import (
     ConverterService,
@@ -2769,6 +2770,53 @@ class TestPersistConverter:
         assert {item.converter_id: item.origin for item in listed.items} == expected
         assert {item.converter_id: item.origin for item in fetched if item is not None} == expected
         assert (saved.origin, temporary.origin) == (RegistryEntryOrigin.SAVED, RegistryEntryOrigin.TEMPORARY)
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_and_launch_targets")
+class TestConverterSaveability:
+    @pytest.mark.parametrize(
+        ("converter_type", "params", "reason"),
+        [
+            ("CaesarConverter", {"caesar_offset": 5}, None),
+            ("AddTextImageConverter", {"text_to_add": "hello", "font_name": ""}, None),
+            (
+                "AddImageTextConverter",
+                {"text_to_add": "hello"},
+                "It needs an uploaded file, which saved converters can't keep yet.",
+            ),
+            (
+                "AddTextImageConverter",
+                {"text_to_add": "hello", "font_name": _make_data_uri(mime_type="font/ttf", content=b"font")},
+                "Saved converters can't keep uploaded files yet ('font_name').",
+            ),
+            (
+                "TranslationConverter",
+                {"converter_target": "launch_chat", "language": "French"},
+                "Uses temporary target 'launch_chat', which won't exist after a restart.",
+            ),
+            (
+                "AzureSpeechTextToAudioConverter",
+                {"azure_speech_region": "eastus", "azure_speech_key": "typed-speech-key"},
+                "Saved entries can't hold credentials ('azure_speech_key').",
+            ),
+        ],
+    )
+    async def test_answers_with_the_checks_saving_runs_without_building_anything(
+        self, upload_service: ConverterService, converter_type: str, params: dict[str, Any], reason: str | None
+    ) -> None:
+        with patch.object(upload_service._registry, "create_instance_from_external_input") as build:
+            response = await upload_service.check_saveability_async(
+                request=ConverterSaveabilityRequest(type=converter_type, params=params)
+            )
+
+        assert response.not_saveable_reason == reason
+        build.assert_not_called()
+        assert upload_service._registry.instances.get_names() == []
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_refuses_an_unknown_type(self, upload_service: ConverterService) -> None:
+        with pytest.raises(ValueError, match="Converter type 'MissingConverter' not found"):
+            await upload_service.check_saveability_async(request=ConverterSaveabilityRequest(type="MissingConverter"))
 
 
 @pytest.fixture

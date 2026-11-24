@@ -20,8 +20,9 @@ from pyrit.backend.models import (
     CreateConverterRequest,
     ProblemDetail,
 )
-from pyrit.backend.models.common import IdentifierStr, NotSaveableProblemDetail
+from pyrit.backend.models.common import IdentifierStr, NotSaveableProblemDetail, SaveabilityResponse
 from pyrit.backend.models.converters import (
+    ConverterSaveabilityRequest,
     UnregisteredConverter,
 )
 from pyrit.backend.routes.common import (
@@ -67,6 +68,31 @@ async def list_converter_types() -> ConverterTypeResponse:  # pyrit-async-suffix
     """
     service = get_converter_service()
     return await service.list_converter_types_async()
+
+
+@router.post(
+    "/saveability",
+    response_model=SaveabilityResponse,
+    responses={400: {"model": ProblemDetail, "description": "Invalid converter type or parameters"}},
+)
+async def check_converter_saveability(  # pyrit-async-suffix-exempt
+    *,
+    body: ConverterSaveabilityRequest,
+) -> SaveabilityResponse:
+    """
+    Say whether a converter could be saved as asked, without building or saving it.
+
+    Only the type and parameters are checked, by the checks saving runs before the converter is built. The name isn't
+    checked, and the converter isn't built, so its constructor's own checks don't run: a null reason means the save
+    checks pass, not that creating the converter succeeds.
+
+    Returns:
+        SaveabilityResponse: Why the converter can't be saved, or no reason when the save checks pass.
+    """
+    try:
+        return await get_converter_service().check_saveability_async(request=body)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
 
 @router.post(

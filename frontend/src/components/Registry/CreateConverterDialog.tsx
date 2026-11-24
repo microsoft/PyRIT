@@ -26,6 +26,7 @@ import HelpField from '@/components/HelpField'
 import { convertersApi } from '@/services/api'
 import { isNotSaveableError, notSaveableReason, toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
+import { useSaveability } from '@/hooks/useSaveability'
 import { useTargetPreferences } from '@/hooks/useTargetPreferences'
 import { resolveDefaultAdversarialTarget } from '@/utils/targetIdentity'
 import { mapMediaUrl } from '@/utils/media'
@@ -33,7 +34,8 @@ import { formatFileSize } from '@/utils/formatFileSize'
 import { suggestRegistryName, validateRegistryName } from '@/utils/registryName'
 import { ORIGIN_LABELS } from '@/utils/registryOrigin'
 import type {
-  ConverterInstance, ConverterTypeEntry, Parameter, TargetInstance, SourceInstanceSpec, ConverterIdentifier,
+  ConverterInstance, ConverterSaveabilityRequest, ConverterTypeEntry, Parameter, TargetInstance, SourceInstanceSpec,
+  ConverterIdentifier,
 } from '@/types'
 import ParameterField from '@/components/Parameters/ParameterField'
 import FileDropZone from '@/components/Media/FileDropZone'
@@ -63,7 +65,8 @@ function getConverterNameLabel(converterType: string): string {
 
 /** Whether callers send the parameter as an uploaded file, as the backend's upload parameters are typed. */
 function isUploadParameter(parameter: Parameter): boolean {
-  return parameter.type_name === 'Path' || parameter.type_name === 'Path | str'
+  const typeName = nonNullableTypeName(parameter.type_name)
+  return typeName === 'Path' || typeName === 'Path | str'
 }
 
 function formatDataType(dataType: string): string {
@@ -202,6 +205,35 @@ function formValueIsSet(value: ParameterFormValue | undefined): boolean {
 function acceptsEmptySearchReplaceValue(converterType: string | undefined, parameterName: string): boolean {
   return converterType === 'SearchReplaceConverter'
     && (parameterName === 'pattern' || parameterName === 'replace')
+}
+
+type FormParams = { ok: true, params: Record<string, unknown> } | { ok: false, error: string }
+
+/** The parameters create sends for these form values, or why they can't be sent. */
+function buildFormParams(
+  converterType: string,
+  parameters: Parameter[],
+  values: Record<string, ParameterFormValue>,
+  editing: boolean,
+): FormParams {
+  const params: Record<string, unknown> = Object.fromEntries(
+    parameters
+      .filter((parameter) => !sendsTypedValue(parameter))
+      .flatMap((parameter) => {
+        const value = values[parameter.name]
+        // A file removed from a new converter means no file. Settings still send the empty value, since leaving it
+        // out would keep the source converter's file.
+        if (typeof value === 'string') {
+          return value === '' && !editing && isUploadParameter(parameter) ? [] : [[parameter.name, value]]
+        }
+        return acceptsEmptySearchReplaceValue(converterType, parameter.name)
+          ? [[parameter.name, '']]
+          : []
+      }),
+  )
+  const typed = buildParametersFromForm(parameters.filter(sendsTypedValue), values)
+  if (!typed.ok) return { ok: false, error: typed.error }
+  return { ok: true, params: { ...params, ...typed.parameters } }
 }
 
 function stringFormValue(value: ParameterFormValue | undefined): string {
@@ -561,25 +593,19 @@ export default function CreateConverterDialog({
     ?? (nameTaken ? `A converter named '${nameValue}' already exists.` : null)
     ?? (nameEdited ? validateRegistryName(nameValue) : null)
   const nameBlocked = nameConflictDetail !== null || nameTaken || validateRegistryName(nameValue) !== null
-  const predictedTemporaryReason: string | null = (() => {
-    if (editing || !selectedConverterType) return null
-    if (selectedConverterType.not_saveable_reason) return selectedConverterType.not_saveable_reason
-    const upload = selectedConverterType.parameters.find(
-      (parameter) => isUploadParameter(parameter) && formValueIsSet(parameterValues[parameter.name]),
-    )
-    if (upload) return `Saved converters can't keep uploaded files yet ('${upload.name}').`
-    const temporaryTarget = selectedConverterType.parameters
-      .filter((parameter) => parameter.reference_type === 'target')
-      .map((parameter) => stringFormValue(parameterValues[parameter.name]))
-      .find((name) => targets.find((target) => target.target_registry_name === name)?.origin === 'temporary')
-    if (temporaryTarget) return `Uses temporary target '${temporaryTarget}', which won't exist after a restart.`
-    return null
-  })()
+  // The catalog says when no converter of the type can be saved; otherwise the backend checks these values.
+  const typeTemporaryReason = editing ? null : selectedConverterType?.not_saveable_reason ?? null
+  const saveabilityRequest = useMemo((): ConverterSaveabilityRequest | null => {
+    if (!open || editing || !selectedConverterType || typeTemporaryReason !== null) return null
+    const formParams = buildFormParams(selectedConverterType.converter_type, editableParameters, parameterValues, false)
+    return formParams.ok ? { type: selectedConverterType.converter_type, params: formParams.params } : null
+  }, [open, editing, selectedConverterType, typeTemporaryReason, editableParameters, parameterValues])
+  const checkedReason = useSaveability(saveabilityRequest, convertersApi.checkSaveability)
   // A refused save only applies to the values it was refused for, so any edit lets the user try saving again. The key
   // holds any uploaded file's data, so it's only built when there's a refusal to compare it with.
   const formKey = (): string => JSON.stringify([selectedType, parameterValues])
   const refusedReason = saveRefusal !== null && saveRefusal.formKey === formKey() ? saveRefusal.reason : null
-  const temporaryReason = editing ? null : predictedTemporaryReason ?? refusedReason
+  const temporaryReason = editing ? null : typeTemporaryReason ?? checkedReason ?? refusedReason
 
   const reset = () => {
     fileReads.current.clear()
@@ -717,31 +743,14 @@ export default function CreateConverterDialog({
     const parameters = editableParameters.filter(
       (parameter) => !editing || changedParameters.has(parameter.name),
     )
-    const params: Record<string, unknown> = Object.fromEntries(
-      parameters
-        .filter((parameter) => !sendsTypedValue(parameter))
-        .flatMap((parameter) => {
-          const value = parameterValues[parameter.name]
-          // A file removed from a new converter means no file. Settings still send the empty value, since leaving it
-          // out would keep the source converter's file.
-          if (typeof value === 'string') {
-            return value === '' && !editing && isUploadParameter(parameter) ? [] : [[parameter.name, value]]
-          }
-          return acceptsEmptySearchReplaceValue(selectedType, parameter.name)
-            ? [[parameter.name, '']]
-            : []
-        }),
-    )
-    const typed = buildParametersFromForm(parameters.filter(sendsTypedValue), parameterValues)
-    if (!typed.ok) {
+    const formParams = buildFormParams(selectedType, parameters, parameterValues, Boolean(editing))
+    if (!formParams.ok) {
       // Not tagged as a submission failure: nothing was disabled, so the keyboard
       // is still on the primary action and has nothing to be restored from.
-      setError({ message: typed.error, fromSubmit: false })
+      setError({ message: formParams.error, fromSubmit: false })
       return
     }
-    if (typed.parameters) {
-      Object.assign(params, typed.parameters)
-    }
+    const { params } = formParams
 
     const epoch = openEpochRef.current
     const persist = temporaryReason === null

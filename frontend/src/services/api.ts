@@ -21,6 +21,7 @@ import type {
   ConverterListResponse,
   ConverterPreviewRequest,
   ConverterPreviewResponse,
+  ConverterSaveabilityRequest,
   CreateConverterRequest,
   CreateTechniqueRequest,
   TechniqueInstance,
@@ -493,6 +494,13 @@ export const convertersApi = {
 
   createConverter: async (request: CreateConverterRequest): Promise<ConverterInstance> => {
     const response = await apiClient.post('/converters', request)
+    return response.data
+  },
+  checkSaveability: async (
+    request: ConverterSaveabilityRequest,
+    signal?: AbortSignal,
+  ): Promise<SaveabilityResponse> => {
+    const response = await apiClient.post('/converters/saveability', request, { signal })
     return response.data
   },
   buildConverter: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredConverter> => {

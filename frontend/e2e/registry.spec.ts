@@ -379,6 +379,14 @@ async function installRegistryMocks(page: Page): Promise<void> {
       body: JSON.stringify(converter),
     });
   });
+  // Registered after the broad converter route, so the dialog's save check isn't passed on to a backend.
+  await page.route(/\/api\/converters\/saveability$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ not_saveable_reason: null }),
+    });
+  });
 }
 
 async function submitDuplicateName(page: Page): Promise<() => void> {

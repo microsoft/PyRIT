@@ -12,7 +12,13 @@ import TechniqueEditor from './TechniqueEditor'
 jest.mock('@/services/api', () => ({
   techniquesApi: { validateEdit: jest.fn(), createTechnique: jest.fn(), listTypes: jest.fn() },
   targetsApi: { listTargets: jest.fn() },
-  convertersApi: { listConverters: jest.fn(), listConverterTypes: jest.fn(), buildConverter: jest.fn(), createConverter: jest.fn() },
+  convertersApi: {
+    listConverters: jest.fn(),
+    listConverterTypes: jest.fn(),
+    buildConverter: jest.fn(),
+    createConverter: jest.fn(),
+    checkSaveability: jest.fn(),
+  },
 }))
 
 const techniques = jest.mocked(techniquesApi)
@@ -54,6 +60,7 @@ describe('TechniqueEditor', () => {
       { converter_id: 'base64', identifier: { class_name: 'Base64Converter', hash: 'b64' } },
       { converter_id: 'rot13', identifier: { class_name: 'ROT13Converter', hash: 'rot' } },
     ] })
+    jest.mocked(convertersApi.checkSaveability).mockResolvedValue({ not_saveable_reason: null })
   })
 
   it('should offer techniques with required nullable numeric parameters', async () => {
