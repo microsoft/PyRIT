@@ -41,6 +41,12 @@ from ambient environment variables. A configured deterministic objective scorer
 needs no scoring model; techniques without generation need no adversarial model.
 See [scan targets](../code/setup/0_setup.md#scan-targets) for setup options.
 
+Select named datasets with `--datasets <name> [<name> ...]`. For example,
+`foundry.assert_policy` has no default datasets: if it reports "Select a dataset.",
+pass the names of stored ASSERT datasets with `--datasets`. Create groups with
+`AssertGenerator` and store them with `AssertProvider` as shown in the
+[ASSERT generation guide](../code/executor/7_promptgen.ipynb).
+
 ### Connecting to CoPyRIT
 
 Point a local configuration file at the remote backend:
@@ -80,8 +86,10 @@ copilot mcp add --transport http pyrit http://localhost:8000/api/mcp
 
 Then ask, for example, "Which PyRIT targets are registered?" or "Summarize my latest scenario
 run." Each tool call is a request with the agent's credentials, so it gets the same validation
-and authentication as any other client. With Entra authentication, the MCP client must send a
-Microsoft Graph access token as a bearer token, for example with
+and authentication as any other client. With Entra authentication, GitHub Copilot CLI asks you to
+sign in through your browser the first time you start an interactive `copilot` session; `copilot -p`
+can't open a browser, so sign in that way first. MCP clients that can't sign in on their own can
+send a Microsoft Graph access token instead, for example with
 `--header "Authorization: Bearer <token>"`.
 
 PyRIT also includes agent skills, task guides that the agent follows when a request matches.

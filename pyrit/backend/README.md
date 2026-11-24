@@ -939,8 +939,18 @@ Or in VS Code's `mcp.json`:
 {"servers": {"pyrit": {"type": "http", "url": "http://localhost:8000/api/mcp"}}}
 ```
 
-With Entra authentication, the client must also send a Microsoft Graph access token as a
-bearer token, which each tool call forwards.
+With Entra authentication, clients that support MCP sign-in, such as GitHub Copilot CLI, sign
+you in themselves. A 401 from `/api/mcp` points to the public
+`/.well-known/oauth-protected-resource/api/mcp` document, which names the Entra tenant and the
+Microsoft Graph `User.Read` scope. The client then opens a browser the first time you start an
+interactive session and sends the token with each request, which each tool call forwards.
+`copilot -p` can't open a browser, so sign in from an interactive session first. Other clients
+can send a Microsoft Graph access token as a bearer token themselves.
+
+Clients use that document only when it names the exact URL they connected to. Behind a proxy
+that changes the scheme or host, such as Azure Container Apps or Front Door, the backend takes
+them from `X-Forwarded-Proto` and `X-Forwarded-Host` when the result is an origin listed in
+`PYRIT_CORS_ORIGINS`, as the deployment templates set it.
 
 ### Request Limits
 

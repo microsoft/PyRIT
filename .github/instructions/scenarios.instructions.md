@@ -199,6 +199,11 @@ Options:
   before overrides, validation, and preparation. Do not rewrite user selections in validators.
 - Declare `DATASET_OPTIONS` (or parameter-aware `get_dataset_options()`): `ANY` only for
   generic named populations, `SUBSET` for approved alternatives, `FIXED` for ingredients.
+  The base `get_dataset_options()` reports `FIXED` for inline `seeds` / `seed_groups`, since
+  named sources can't replace them; keep that in an override. Their limits and filters keep
+  the declared capabilities. Set `min_selected`
+  when a scenario has no default sources and can't run without one, so clients mark the
+  selection required instead of checking the scenario name.
   Disable limits that would truncate ingredients. Compound source edits are ambiguous;
   preserve child shaping/caps and allow only supported global edits.
 - Estimates expose `dataset_defaults`, `effective_datasets`, and `dataset_options`.
@@ -206,9 +211,14 @@ Options:
   The catalog reads options and defaults from registry metadata, never from an estimate.
 - Explicit `load_datasets_async()` remains missing-only, regardless of the scan's policy.
   It does not refresh or change that policy.
-- Resume replays the saved launch request; the stored run plan fixes the selected seed groups,
-  so caps and fetch policies cannot change a resumed run. Dataset names are checked by the
-  stored scenario identity. Resume never prepares datasets.
+- Resume replays the saved launch request with the seed groups stored when the run was planned;
+  later changes to the population do not change the stored seed content. Referenced media files
+  must still be available. Dataset names are checked by the stored identity.
+- Resume never prepares or resamples datasets and doesn't call the seed resolver. If your resolver
+  sets state the atomic attacks need, override `_prepare_resume_state_async(seed_groups_by_dataset=...)`
+  to restore it. Derive that state from the stored groups when they carry it (see `LatentInjection`).
+  Otherwise read only the datasets it needs, never the population the stored groups already hold
+  (see `PromptInject`, which reads its technique templates with `load_async(names=...)`).
 - Keep custom shaping in `_build_attack_groups()` or `_build_groups_by_dataset_async()`.
   Reads use `_collect_seeds_for_dataset_async()` and must not fetch.
 - Build synthesized prompts from those filtered seeds, not a second unfiltered memory query.
@@ -305,7 +315,7 @@ Scenario-specific scorers, selectors, and construction options stay on the scena
 
 On resume, `context.stored_run_plan` carries the original plan. Restore committed
 per-input technique choices from it instead of selecting again. The base restores
-the planned source population before builders check compatibility. Saved adaptive
+the stored planned population before builders check compatibility. Saved adaptive
 choices must identify the full technique, including its prompts, not only its inner attack.
 
 ### Zero-boilerplate matrix scenarios

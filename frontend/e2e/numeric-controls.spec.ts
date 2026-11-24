@@ -97,6 +97,7 @@ async function mockNumericControlApis(page: Page): Promise<void> {
       '/api/labels': { source: 'attacks', labels: {} },
       '/api/scorers': { items: [], pagination: { has_more: false } },
       '/api/datasets': { items: datasetItems },
+      '/api/prompt-generators': { items: [] },
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}`]: SCENARIO,
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}/estimate`]: SCENARIO.default_run_size,
     }
@@ -253,7 +254,8 @@ test('dataset sources and explicit loading are separate from Parameters', async 
   await section.getByRole('button', { name: 'Edit Maximum objectives' }).click()
   await total.fill('0')
   await total.press('Escape')
-  await section.getByRole('button', { name: 'Reset datasets' }).click()
+  // Reset clears only source and per-dataset edits, so a total-only edit doesn't offer it.
+  await expect(section.getByRole('button', { name: 'Reset datasets' })).toHaveCount(0)
   await expect(section.getByRole('alert')).toContainText('Maximum objectives must be a positive integer')
   await expect(page.getByRole('button', { name: 'Launch scan', exact: true })).toBeDisabled()
   await section.screenshot({ path: testInfo.outputPath('datasets-invalid.png') })
@@ -293,8 +295,8 @@ test('dataset rows add immediately, edit in place, share filters, and reset with
   await page.goto(`/scanner/launch/${SCENARIO.scenario_name}`)
   const section = page.getByRole('region', { name: 'Datasets', exact: true })
   await section.getByRole('combobox', { name: 'Add dataset' }).click()
-  await page.getByRole('option', { name: 'custom_objectives (user)', exact: true }).click()
-  await expect(section.getByText('custom_objectives (user)', { exact: true })).toBeVisible()
+  await page.getByRole('option', { name: 'custom_objectives (User)', exact: true }).click()
+  await expect(section.getByText('custom_objectives (User)', { exact: true })).toBeVisible()
   await section.getByRole('button', { name: 'Remove harmbench' }).click()
   await expect(section.getByRole('button', { name: 'Load datasets' })).toHaveCount(0)
   await section.getByRole('button', { name: 'Edit custom_objectives objective limit' }).click()
@@ -304,9 +306,10 @@ test('dataset rows add immediately, edit in place, share filters, and reset with
   await section.getByRole('button', { name: 'Filter data type Image' }).click()
   await expect(section.getByRole('button', { name: 'Filter data type Text' })).toHaveAttribute('aria-pressed', 'true')
   await expect(section.getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+  await expect(section.getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('target', '_blank')
   await expect(section.getByText('Filters:', { exact: true })).toHaveCount(0)
   await section.getByRole('button', { name: 'Reset datasets' }).click()
-  await expect(section.getByText('harmbench (unknown)', { exact: true })).toBeVisible()
+  await expect(section.getByText('harmbench (Unknown)', { exact: true })).toBeVisible()
   await expect(section.getByRole('button', { name: 'Load datasets' })).toBeVisible()
   await expect(section.getByRole('button', { name: 'Remove type filter text' })).toHaveCount(0)
 })
@@ -345,7 +348,7 @@ test('dataset refresh requires preview confirmation and warns before replacing u
   await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption('mock-target')
   const section = page.getByRole('region', { name: 'Datasets', exact: true })
   await section.getByRole('combobox', { name: 'Add dataset' }).click()
-  await page.getByRole('option', { name: 'custom_objectives (user)', exact: true }).click()
+  await page.getByRole('option', { name: 'custom_objectives (User)', exact: true }).click()
   await section.getByRole('button', { name: 'Remove harmbench' }).click()
   await section.getByRole('radio', { name: 'Refresh', exact: true }).check()
   await expect(section.getByRole('radio', { name: 'Refresh', exact: true })).toBeChecked()

@@ -782,7 +782,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         # When it wasn't, the attribute is left unset and ScenarioTechnique.default() owns
         # the single ALL fallback — so the "no default -> ALL" rule lives in one place.
         if default_member_names:
-            technique_cls._default_technique_value = "default"  # type: ignore[ty:unresolved-attribute]
+            technique_cls._default_technique_value = "default"  # type: ignore[ty:missing-attribute]
 
         return technique_cls
 
