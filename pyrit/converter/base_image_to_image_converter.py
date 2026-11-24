@@ -112,13 +112,16 @@ class BaseImageToImageConverter(Converter, ABC):
         """
         Convert an image to RGB, or RGBA when it has transparency, unless it already is one of them.
 
+        An RGB image with a transparent color key counts as having transparency: it is converted
+        to RGBA so the color key becomes an alpha channel that transforms cannot silently drop.
+
         Args:
             image (PIL.Image.Image): The image to convert.
 
         Returns:
             PIL.Image.Image: The image in RGB or RGBA mode.
         """
-        if image.mode in ("RGB", "RGBA"):
+        if image.mode == "RGBA" or (image.mode == "RGB" and not image.has_transparency_data):
             return image
         return image.convert("RGBA" if image.has_transparency_data else "RGB")
 
