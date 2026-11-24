@@ -421,6 +421,49 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
 
         assert refusals == []
 
+    @pytest.mark.parametrize(
+        "clash",
+        [
+            {"name": "custom"},
+            {"name": "Formal"},
+            {"name": "other", "technique_tags": ["formal"]},
+            {"name": "other", "technique_tags": ["Custom"]},
+        ],
+    )
+    def test_register_from_factories_refuses_to_stand_in_for_a_saved_technique(self, clash: dict[str, Any]) -> None:
+        saved = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+        first = AttackTechniqueFactory(name="first", attack_class=_StubAttack)
+
+        with record_saved_entry_refusals() as refusals:
+            with pytest.raises(SavedEntryReplacementError, match="Saved technique 'formal'"):
+                self.registry.register_from_factories(
+                    [first, AttackTechniqueFactory(attack_class=_StubAttack, **clash)]
+                )
+
+        assert refusals == [("techniques", "formal")]
+        assert self.registry.instances.get_names() == ["formal"]
+
+    def test_register_from_factories_shares_a_saved_techniques_tag(self) -> None:
+        saved = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+        sharing = AttackTechniqueFactory(name="casual", attack_class=_StubAttack, technique_tags=["custom"])
+
+        self.registry.register_from_factories([sharing])
+
+        assert self.registry.instances.get("casual") is sharing
+
+    def test_register_technique_refuses_to_stand_in_for_a_saved_technique(self) -> None:
+        saved = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+
+        with pytest.raises(SavedEntryReplacementError, match="Saved technique 'formal'"):
+            self.registry.register_technique(
+                name="custom", factory=AttackTechniqueFactory(name="custom", attack_class=_StubAttack)
+            )
+
+        assert self.registry.instances.get("custom") is None
+
     def test_register_from_factories_still_skips_an_existing_startup_technique(self):
         startup = AttackTechniqueFactory(name="startup", attack_class=_StubAttack)
         self.registry.register_from_factories([startup])

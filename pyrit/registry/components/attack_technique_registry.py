@@ -32,16 +32,17 @@ from pydantic import ValidationError
 from pyrit.models import AttackIdentifier, ComponentType
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
     DefaultInstanceRegistry,
     RegistryNameTakenError,
+    SavedEntryReplacementError,
     _record_saved_entry_refusal,
-    refuse_saved_entry,
 )
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable, Sequence
     from typing import Protocol
 
     from pyrit.models import Parameter
@@ -67,11 +68,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _record_saved_techniques_with_tag(*, entries: list[RegistryEntry[AttackTechniqueFactory]], folded_tag: str) -> None:
-    """Record each saved technique with a tag as a refused use, as a clash over the tag can leave it standing in."""
+def _saved_selector_clashes(
+    *, entries: Iterable[RegistryEntry[AttackTechniqueFactory]], name: str, tags: Iterable[str]
+) -> list[RegistryEntry[AttackTechniqueFactory]]:
+    """
+    List the saved techniques whose place a technique with this name and these tags would take.
+
+    Names and tags both select techniques, ignoring letter case. A name clashes with a saved technique's name or tag,
+    and a tag with its name or with its tag spelled differently; the exact same tag groups both techniques.
+
+    Returns:
+        list[RegistryEntry[AttackTechniqueFactory]]: The saved techniques that clash.
+    """
+    folded_name = name.casefold()
+    spellings = {tag.casefold(): tag for tag in tags}
+    clashes = []
     for entry in entries:
-        if folded_tag in {tag.casefold() for tag in entry.instance.technique_tags}:
-            _record_saved_entry_refusal(entry)
+        if SAVED_ENTRY_METADATA_KEY not in entry.metadata:
+            continue
+        saved_name = entry.name.casefold()
+        saved_spellings = {tag.casefold(): tag for tag in entry.instance.technique_tags}
+        if (
+            saved_name == folded_name
+            or folded_name in saved_spellings
+            or saved_name in spellings
+            or any(saved_spellings.get(folded, tag) != tag for folded, tag in spellings.items())
+        ):
+            clashes.append(entry)
+    return clashes
 
 
 def _attack_technique_factory_type() -> type[AttackTechniqueFactory]:
@@ -218,35 +242,35 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         visible_tags = {tag.casefold() for entry in entries for tag in entry.instance.technique_tags}
         hidden_names = names.keys() - visible_names
         hidden_tags = {folded: tag for folded, tag in tags.items() if folded not in visible_tags}
-        # A clash with a technique the caller can't see says only that the selector is taken.
-        folded_name = factory.name.casefold()
-        if folded_name in hidden_names or folded_name in hidden_tags:
-            raise TechniqueSelectorConflictError(f"The technique name or tag '{factory.name}' is taken.")
-        for tag in factory.technique_tags:
-            folded = tag.casefold()
-            if folded in hidden_names or hidden_tags.get(folded, tag) != tag:
-                raise TechniqueSelectorConflictError(f"The technique name or tag '{tag}' is taken.")
-        if folded_name in names:
-            # Code that catches this error would leave a saved technique standing in, so the clash is recorded.
-            _record_saved_entry_refusal(self._registry_items.get(names[folded_name]))
-            raise TechniqueSelectorConflictError(
-                f"Technique '{factory.name}' already exists (names are case-insensitive)"
-            )
-        if folded_name in tags:
-            # Code that catches this error would leave the saved techniques with that tag standing in, so they're
-            # recorded too.
-            _record_saved_techniques_with_tag(entries=entries, folded_tag=folded_name)
-            raise TechniqueSelectorConflictError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
-        for tag in factory.technique_tags:
-            folded = tag.casefold()
-            if folded == folded_name:
-                raise TechniqueAdmissionError(f"Tag '{tag}' repeats the technique's name")
-            if folded in names:
-                _record_saved_entry_refusal(self._registry_items.get(names[folded]))
-                raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name")
-            if folded in tags and tags[folded] != tag:
-                _record_saved_techniques_with_tag(entries=entries, folded_tag=folded)
-                raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
+        saved_clashes = _saved_selector_clashes(entries=entries, name=factory.name, tags=factory.technique_tags)
+        try:
+            # A clash with a technique the caller can't see says only that the selector is taken.
+            folded_name = factory.name.casefold()
+            if folded_name in hidden_names or folded_name in hidden_tags:
+                raise TechniqueSelectorConflictError(f"The technique name or tag '{factory.name}' is taken.")
+            for tag in factory.technique_tags:
+                folded = tag.casefold()
+                if folded in hidden_names or hidden_tags.get(folded, tag) != tag:
+                    raise TechniqueSelectorConflictError(f"The technique name or tag '{tag}' is taken.")
+            if folded_name in names:
+                raise TechniqueSelectorConflictError(
+                    f"Technique '{factory.name}' already exists (names are case-insensitive)"
+                )
+            if folded_name in tags:
+                raise TechniqueSelectorConflictError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
+            for tag in factory.technique_tags:
+                folded = tag.casefold()
+                if folded == folded_name:
+                    raise TechniqueAdmissionError(f"Tag '{tag}' repeats the technique's name")
+                if folded in names:
+                    raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name")
+                if folded in tags and tags[folded] != tag:
+                    raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
+        except TechniqueSelectorConflictError:
+            # Code that catches the error would leave a saved technique standing in, so the clash is recorded.
+            for entry in saved_clashes:
+                _record_saved_entry_refusal(entry)
+            raise
         try:
             _validate_generated_member_collisions(
                 class_name="ScenarioTechnique",
@@ -608,9 +632,45 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             tags (dict[str, str] | list[str] | None): Optional tags for categorisation.
                 Accepts a ``dict[str, str]`` or a ``list[str]`` (each string becomes a
                 key with value ``""``).
+
+        Raises:
+            SavedEntryReplacementError: If the name or one of the factory's technique tags would take the place of a
+                technique rebuilt from a saved recipe.
         """
+        self._refuse_saved_selector_clashes([(name, factory)])
+        self._register_technique(name=name, factory=factory, tags=tags)
+
+    def _register_technique(
+        self, *, name: str, factory: AttackTechniqueFactory, tags: dict[str, str] | list[str] | None
+    ) -> None:
         self.instances.register(factory, name=name, tags=tags)
         logger.debug(f"Registered attack technique factory: {name} ({factory.attack_class.__name__})")
+
+    def _refuse_saved_selector_clashes(self, techniques: Sequence[tuple[str, AttackTechniqueFactory]]) -> None:
+        """
+        Refuse techniques whose name or tags would take the place of a technique rebuilt from a saved recipe.
+
+        Every clash is recorded before the error is raised, since a launch script that catches the error would
+        otherwise leave the saved technique standing in for its own.
+
+        Args:
+            techniques (Sequence[tuple[str, AttackTechniqueFactory]]): The name and factory of each technique.
+
+        Raises:
+            SavedEntryReplacementError: If a technique clashes with a saved technique's name or tag.
+        """
+        entries = self.instances.get_all_instances_of_every_owner()
+        clashes = [
+            entry
+            for name, factory in techniques
+            for entry in _saved_selector_clashes(entries=entries, name=name, tags=factory.technique_tags)
+        ]
+        for entry in clashes:
+            _record_saved_entry_refusal(entry)
+        if clashes:
+            raise SavedEntryReplacementError(
+                kind=str(clashes[0].metadata[SAVED_ENTRY_METADATA_KEY]), name=clashes[0].name
+            )
 
     def get_factories(self) -> dict[str, AttackTechniqueFactory]:
         """
@@ -847,14 +907,14 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
                 used directly.
 
         Raises:
-            SavedEntryReplacementError: If a factory's name belongs to a technique rebuilt
-                from a saved recipe, which skipping would quietly use in its place.
+            SavedEntryReplacementError: If a factory's name or tag would take the place of a technique rebuilt from
+                a saved recipe, which skipping the factory would quietly use instead. No factory is registered then.
         """
+        self._refuse_saved_selector_clashes([(factory.name, factory) for factory in factories])
         for factory in factories:
-            refuse_saved_entry(self.instances.get_entry(factory.name))
             if factory.name not in self.instances:
                 tags: dict[str, str] = dict.fromkeys(factory.technique_tags, "")
-                self.register_technique(
+                self._register_technique(
                     name=factory.name,
                     factory=factory,
                     tags=tags,
