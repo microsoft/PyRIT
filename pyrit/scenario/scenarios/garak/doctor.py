@@ -80,7 +80,7 @@ def _build_doctor_technique() -> type[ScenarioTechnique]:
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-explicit-return]
         class_name="DoctorTechnique",
         factories=DOCTOR_FACTORIES,
         default_names={"policy_puppetry", "policy_puppetry_leet"},
@@ -105,6 +105,7 @@ class Doctor(Scenario):
     """
 
     VERSION: int = 2
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = True
 
     # Template-dominated like the Jailbreak scenario: baseline is supported but off
     # by default since the unmodified objective is a weak comparison point here.

@@ -527,6 +527,19 @@ class TestValidateConfig:
             await AssertGenerator(target=generation).advance_async(checkpoint=stopped)
         send.assert_not_called()
 
+    async def test_validate_checkpoint_checks_only_roles_with_stages_left_async(self) -> None:
+        generation, finished_research = await _stop_web_search_generation_async(
+            config=make_assert_config(web_search=True), stop_after=AssertGenerationStage.DIMENSIONS
+        )
+        _, research_left = await _stop_web_search_generation_async(
+            config=_described_config(web_search=True), stop_after=AssertGenerationStage.TAXONOMY
+        )
+        generator = AssertGenerator(target=generation)
+
+        generator.validate_checkpoint(checkpoint=finished_research)
+        with pytest.raises(ValueError, match="supports_web_search"):
+            generator.validate_checkpoint(checkpoint=research_left)
+
 
 async def _stop_web_search_generation_async(
     *, config: AssertGenerationConfig, stop_after: AssertGenerationStage

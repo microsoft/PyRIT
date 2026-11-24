@@ -87,8 +87,17 @@ export const useCreateTargetDialogStyles = makeStyles({
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
   },
-  warningMessage: {
-    width: '100%',
+  // DialogBody is a grid with the actions in its third row; while the warning shows, it takes that row and the
+  // actions move below it.
+  temporaryWarning: {
+    gridRowStart: 3,
+    gridRowEnd: 3,
+    gridColumnStart: 1,
+    gridColumnEnd: 4,
+  },
+  actionsBelowWarning: {
+    gridRowStart: 4,
+    gridRowEnd: 4,
   },
   warningMessageBody: {
     whiteSpace: 'normal',
