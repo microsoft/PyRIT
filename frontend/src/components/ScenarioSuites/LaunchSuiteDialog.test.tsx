@@ -369,9 +369,10 @@ describe('LaunchSuiteDialog', () => {
   })
 
   it('lists a launch-level issue once and colours only scorer issues on entries', async () => {
+    // The suite service prefixes each entry's issue with its position and preset.
     const targetIssue = (entryId: string) => ({
       role: 'objective_target',
-      component: 'Execute',
+      component: entryId === FIRST_ENTRY_ID ? 'Entry 1 (first_preset): Execute' : 'Entry 2 (second_preset): Execute',
       reason: 'objective_target is required; no target selected.',
       remediation: 'Create and select the target to scan.',
       entry_id: entryId,
@@ -385,6 +386,7 @@ describe('LaunchSuiteDialog', () => {
     const issues = await screen.findByLabelText('Suite configuration issues')
     expect(within(issues).getAllByRole('listitem')).toHaveLength(1)
     expect(issues).toHaveTextContent('Execute: objective_target is required; no target selected.')
+    expect(issues).not.toHaveTextContent('Entry 1')
     expect(scorerLabel(FIRST_ENTRY_ID)).not.toHaveStyle({ color: tokens.colorStatusDangerForeground1 })
     expect(scorerLabel(SECOND_ENTRY_ID)).not.toHaveStyle({ color: tokens.colorStatusDangerForeground1 })
   })
