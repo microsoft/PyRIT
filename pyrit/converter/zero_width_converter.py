@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pyrit.common.text_helper import graphemes
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import PromptDataType
 
@@ -8,6 +9,8 @@ from pyrit.models import PromptDataType
 class ZeroWidthConverter(Converter):
     """
     Injects zero-width spaces between characters in the provided text to bypass content safety mechanisms.
+
+    Characters are grapheme clusters, so combining marks, Indic vowel signs and emoji sequences stay whole.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
@@ -34,6 +37,6 @@ class ZeroWidthConverter(Converter):
             raise ValueError("Only 'text' input type is supported.")
 
         # Insert zero-width spaces between each character
-        modified_text = self.ZERO_WIDTH_SPACE.join(prompt)
+        modified_text = self.ZERO_WIDTH_SPACE.join(graphemes(prompt))
 
         return ConverterResult(output_text=modified_text, output_type="text")

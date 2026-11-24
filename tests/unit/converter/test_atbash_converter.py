@@ -39,6 +39,17 @@ async def test_atbash_converter_with_description():
     assert "svool" in result.output_text
 
 
+async def test_atbash_converter_description_digit_table_matches_encoding_async() -> None:
+    converter = AtbashConverter(append_description=True)
+    result = await converter.convert_async(prompt="hello", input_type="text")
+    lines = result.output_text.splitlines()
+    plain_index = lines.index("Plain: 0 1 2 3 4 5 6 7 8 9")
+    cipher_digits = lines[plain_index + 1].removeprefix("Cipher: ").replace(" ", "")
+
+    encoded = await AtbashConverter().convert_async(prompt="0123456789", input_type="text")
+    assert cipher_digits == encoded.output_text
+
+
 async def test_atbash_converter_empty_string():
     converter = AtbashConverter()
     result = await converter.convert_async(prompt="", input_type="text")

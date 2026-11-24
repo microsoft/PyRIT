@@ -17,6 +17,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
+from pyrit.auth import caller_principal_scope, get_caller_principal
 from pyrit.backend.main import app
 from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.routes.scenarios import estimate_scenario_run_size
@@ -40,7 +41,7 @@ from pyrit.models import (
 )
 from pyrit.models.catalog import RegisteredScenario
 from pyrit.prompt_target import TargetCapabilities
-from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry, TargetRegistry
+from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry, TargetRegistry, owner_metadata
 from pyrit.scenario import DatasetSource, Scenario
 from pyrit.scenario.core import (
     AttackTechniqueFactory,
@@ -54,6 +55,9 @@ from pyrit.scenario.scenarios.garak import Exploitation
 from pyrit.score import SubStringScorer
 from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks
 from unit.mocks import MockPromptTarget, make_technique_class
+
+# The estimate key's registry view when the caller sees no private entries.
+_SHARED_VIEW = (None, None, None)
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -668,6 +672,62 @@ class TestScenarioServiceListScenarios:
         assert result == estimate
         prepare.assert_not_awaited()
 
+    @pytest.mark.usefixtures("patch_central_database")
+    async def test_default_estimates_are_shared_only_by_callers_who_see_the_same_entries_async(self) -> None:
+        """An estimate that could use one caller's private target is never reused for a caller who can't see it."""
+        metadata = _make_scenario_metadata()
+        estimate = ScenarioRunSizeEstimate(
+            total_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        seen: list[str | None] = []
+
+        async def estimate_async() -> ScenarioRunSizeEstimate:
+            seen.append(get_caller_principal())
+            return estimate
+
+        scenario = MagicMock()
+        scenario.get_default_run_size_estimate_async = AsyncMock(side_effect=estimate_async)
+        TargetRegistry.reset_registry_singleton()
+        TargetRegistry.get_registry_singleton().instances.register(
+            MockPromptTarget(), name="mine", metadata=owner_metadata("alice", private=True)
+        )
+
+        try:
+            with patch.object(ScenarioService, "__init__", lambda self: None):
+                service = ScenarioService()
+                service._registry = MagicMock()
+                service._registry.create_instance.return_value = scenario
+
+                for caller in ("alice", "bob", "carol", "alice", None):
+                    with caller_principal_scope(caller):
+                        assert await service._get_default_run_size_estimate_async(metadata=metadata) == estimate
+        finally:
+            TargetRegistry.reset_registry_singleton()
+
+        assert seen == ["alice", "bob"]
+
+    @pytest.mark.usefixtures("patch_central_database")
+    def test_configured_estimates_are_keyed_by_what_the_caller_can_see(self) -> None:
+        """A configured estimate that names a private target is never reused for another caller."""
+        request = ScenarioRunSizeEstimateRequest(target_name="mine")
+        TargetRegistry.reset_registry_singleton()
+        TargetRegistry.get_registry_singleton().instances.register(
+            MockPromptTarget(), name="mine", metadata=owner_metadata("alice", private=True)
+        )
+
+        def key(caller: str | None) -> object:
+            with caller_principal_scope(caller):
+                return ScenarioService._build_configured_estimate_key(
+                    scenario_name="test.scenario", scenario_class=MagicMock, request=request
+                )
+
+        try:
+            assert key("bob") == key(None)
+            assert key("alice") != key("bob")
+        finally:
+            TargetRegistry.reset_registry_singleton()
+
     async def test_concurrent_estimate_reads_share_one_task_async(self, *, estimate_watchdog_seconds: float) -> None:
         """Concurrent catalog readers share one atomic single-flight estimate."""
         metadata = _make_scenario_metadata()
@@ -852,13 +912,14 @@ class TestScenarioServiceListScenarios:
         async def cancelled_estimate_async(
             *,
             scenario_name: str,
-            cache_key: tuple[str, int, tuple[object, int]],
+            cache_key: tuple[str, int, tuple[object, int, str | None], tuple[str | None, ...]],
         ) -> ScenarioRunSizeEstimate:
             assert scenario_name == metadata.registry_name
             assert cache_key == (
                 metadata.registry_name,
                 metadata.scenario_version,
                 AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+                _SHARED_VIEW,
             )
             started.set()
             await blocked.wait()
@@ -874,6 +935,7 @@ class TestScenarioServiceListScenarios:
                 metadata.registry_name,
                 metadata.scenario_version,
                 AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+                _SHARED_VIEW,
             )
         ].cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -1706,7 +1768,7 @@ class TestScenarioServiceListScenarios:
 
         assert service._registry.create_instance.call_count == 2
         assert list(service._estimate_cache) == [
-            ("test.scenario", 2, AttackTechniqueRegistry.get_registry_singleton().catalog_revision)
+            ("test.scenario", 2, AttackTechniqueRegistry.get_registry_singleton().catalog_revision, _SHARED_VIEW)
         ]
 
     async def test_list_scenarios_preserves_disabled_baseline_policy(self) -> None:
@@ -1764,6 +1826,20 @@ class TestScenarioServiceListScenarios:
             assert result.items[0].scenario_name == "test.scenario_2"
             assert result.items[1].scenario_name == "test.scenario_3"
             assert result.pagination.has_more is True
+
+    async def test_list_scenarios_rejects_a_cursor_naming_no_scenario(self) -> None:
+        """A stale cursor must not silently replay the first page."""
+        metadata_list = [
+            _make_scenario_metadata(registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}") for i in range(3)
+        ]
+
+        with patch.object(ScenarioService, "__init__", lambda self: None):
+            service = ScenarioService()
+            service._registry = MagicMock()
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
+
+            with pytest.raises(ValueError, match="not valid for the scenario catalog"):
+                await service.list_scenarios_async(limit=2, cursor="test.removed_scenario")
 
     async def test_list_scenarios_last_page_has_more_false(self) -> None:
         """Test that last page shows has_more=False."""
@@ -2018,6 +2094,25 @@ class TestScenarioRoutes:
             data = response.json()
             assert data["items"] == []
             assert data["pagination"]["has_more"] is False
+
+    def test_list_scenarios_rejects_stale_cursor(self, client: TestClient) -> None:
+        """Test that a stale catalog cursor returns the standard 400 problem detail."""
+        message = "The cursor is not valid for the scenario catalog"
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_scenarios_async = AsyncMock(side_effect=ValueError(message))
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/scenarios/catalog", params={"cursor": "test.removed_scenario"})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {
+            "type": "/errors/bad-request",
+            "title": "Bad Request",
+            "status": 400,
+            "detail": message,
+            "instance": "/api/scenarios/catalog",
+        }
 
     def test_list_scenarios_with_items(self, client: TestClient) -> None:
         """Test that GET /api/scenarios/catalog returns scenario data."""
