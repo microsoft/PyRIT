@@ -256,7 +256,7 @@ def _write_technique_metrics(*, result: ScenarioResult, output_dir: Path) -> Non
 async def _export_async(*, scenario_result_id: str, output_dir: Path) -> None:
     """Export all readable result views."""
     result = await _load_result_async(scenario_result_id=scenario_result_id)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(output_dir.mkdir, parents=True, exist_ok=True)
     await _write_overview_async(result=result, output_dir=output_dir)
     await _write_attacks_async(result=result, output_dir=output_dir)
     await asyncio.to_thread(_write_technique_metrics, result=result, output_dir=output_dir)

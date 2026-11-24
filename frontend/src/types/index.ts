@@ -495,6 +495,8 @@ export interface TargetCapabilities {
   supports_streaming_audio?: boolean
   supports_prefill?: boolean
   supports_temperature?: boolean
+  /** Whether the target can search the web while it answers, such as for research. */
+  supports_web_search?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
 }
@@ -1397,7 +1399,6 @@ export interface AddMessageRequest extends MessageRequest {
   send: boolean
   target_registry_name?: string
   target_binding?: TargetBinding
-  converter_ids?: string[]
   request_converter_configurations?: ConverterConfigurationRequest[]
   response_converter_configurations?: ConverterConfigurationRequest[]
   start_token?: string
@@ -2084,12 +2085,6 @@ export type ScenarioRunEstimateState =
     }
   | ScenarioRunEstimateResult
 
-export type ScenarioRunEstimator = (
-  scenarioName: string,
-  request: ScenarioRunSizeEstimateRequest,
-  signal?: AbortSignal,
-) => Promise<ScenarioRunSizeEstimateResponse>
-
 export interface AttackErrorSummary {
   atomic_attack_name: string
   objective: string
@@ -2629,7 +2624,6 @@ export interface RuntimeStatus {
   /** The saved entries that couldn't be restored; only administrators can read the runtime status. */
   restore_failures?: RestoreFailure[]
 }
-export type FindingSeverity = 'critical' | 'important' | 'moderate' | 'low' | 'informational' | 'other'
 
 export interface OperationCreate {
   name: string
@@ -2659,7 +2653,8 @@ export interface OperationDetail extends Operation {
 }
 
 export interface OperationListItem extends Operation {
-  finding_counts: Partial<Record<FindingSeverity, number>>
+  /** Finding counts by stored severity, including severities that match no current option. */
+  finding_counts: Record<string, number>
 }
 
 export interface OperationListResponse {
@@ -2668,11 +2663,10 @@ export interface OperationListResponse {
 
 export interface FindingCreate {
   title: string
-  description: string
-  severity: FindingSeverity
-  severity_other?: string | null
-  harm_type?: string | null
-  harm_type_other?: string | null
+  /** A severity option key, or Other text. */
+  severity: string
+  /** Values of the other fields and of every level, by key. Severity isn't one of them. */
+  field_values: Record<string, string>
   /** The finding this one is a sub-finding of, in the same Operation. Null or omitted for a top-level finding. */
   parent_finding_id?: string | null
   /** Whether the operator demonstrated it. A path is complete only when every step was. Defaults to true. */
@@ -2686,8 +2680,50 @@ export interface FindingCreateRequest extends FindingCreate {
   attack_result_id?: string
 }
 
-export interface FindingOptionsResponse {
-  harm_types: string[]
+/**
+ * A finding edit. A key in `keep_retired_keys` keeps that stored value, even if a live apply configured its field
+ * again, and a key in `remove_retired_keys` drops that retired value.
+ */
+export interface FindingUpdateRequest extends FindingCreate {
+  keep_retired_keys: string[]
+  remove_retired_keys: string[]
+}
+
+export type FindingFieldType = 'text' | 'multiline' | 'choice' | 'number'
+
+export type FindingSeverityColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'gray' | 'dark' | 'neutral'
+
+export interface FindingFieldOption {
+  key: string
+  label: string
+  /** The options of the next dropdown when this option is chosen. */
+  children: FindingFieldOption[]
+}
+
+/** One field of the finding dialog, as the deployment defines it. */
+export interface FindingField {
+  key: string
+  label: string
+  type: FindingFieldType
+  required: boolean
+  options: FindingFieldOption[]
+  /** The `[key, label]` of each dropdown under a cascade's first one. */
+  levels: Array<[string, string]>
+  default: string | null
+  /** Whether a single-level choice also accepts typed text. */
+  allow_other: boolean
+  /** The severity slot's badge color for each top-level option. */
+  colors: Record<string, FindingSeverityColor>
+  hint: string | null
+  /** A heading, such as "Reproduction", shown above this field when the field before it has a different section. */
+  section: string | null
+}
+
+/** The active finding fields: the severity slot and the fields shown after it. */
+export interface FindingFields {
+  /** Its options run from highest to lowest severity; findings sort in that order. */
+  severity: FindingField
+  fields: FindingField[]
 }
 
 /** One ordered chain of a finding's direct sub-findings that together demonstrate it. */
@@ -2729,11 +2765,24 @@ export interface FindingListResponse {
   next_offset: number | null
 }
 
+/** One filled value of a finding, labelled by the active finding fields. */
+export interface FindingValueRow {
+  key: string
+  label: string
+  /** The option label of a matching choice value, otherwise the stored text. */
+  value: string
+  multiline: boolean
+}
+
 export interface FindingListItem extends Finding {
   evidence_count: number
   /** The number of direct sub-findings. */
   child_count: number
   paths: FindingPathItem[]
+  /** The filled values in configured order, labelled by the active finding fields. */
+  rows: FindingValueRow[]
+  /** The `[key, value]` of each stored value that no active field or level uses, in stored order. */
+  retired: Array<[string, string]>
 }
 
 /** Optional filters for listing findings. Without one, findings at every depth are listed. */
@@ -2872,4 +2921,279 @@ export interface AssertPolicyMetrics {
   total: number
   scored_total: number
   techniques: Record<string, AssertTechniqueMetrics>
+}
+
+// --- Prompt generation ---
+
+/** Lifecycle of a generation job. Active statuses are queued, running, and saving. */
+export type PromptGenerationStatus =
+  | 'queued'
+  | 'running'
+  | 'awaiting_review'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+
+export interface PromptGeneratorStage {
+  name: string
+  label: string
+  /** Whether generation can pause after this stage for review. */
+  reviewable: boolean
+}
+
+export interface PromptGeneratorTargetRole {
+  role: string
+  label: string
+  description: string
+  required: boolean
+}
+
+/** A registered generator from `GET /api/prompt-generators`. */
+export interface PromptGeneratorDescriptor {
+  name: string
+  display_name: string
+  description: string
+  stages: PromptGeneratorStage[]
+  target_roles: PromptGeneratorTargetRole[]
+  /** A scenario that runs datasets from this generator, preselected after completion. */
+  follow_up_scenario: string | null
+}
+
+export interface PromptGeneratorListResponse {
+  items: PromptGeneratorDescriptor[]
+}
+
+export interface PromptGenerationProgress {
+  completed_stages: string[]
+  /** The next or running stage, or null when every stage is done. */
+  current_stage: string | null
+  items_completed: number
+  items_total: number
+}
+
+export interface PromptGenerationSummary {
+  id: string
+  generator: string
+  dataset_name: string
+  status: PromptGenerationStatus
+  pause_for_review: boolean
+  group_id: string | null
+  group_label: string | null
+  progress: PromptGenerationProgress
+  error: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  completed_at: string | null
+}
+
+/** A generation with its generator-specific request and result summary. */
+export interface PromptGenerationDetail extends PromptGenerationSummary {
+  request: Record<string, unknown>
+  /** Target registry name for each target role. */
+  targets: Record<string, string>
+  review_completed: boolean
+  summary: Record<string, unknown> | null
+  started_at: string | null
+}
+
+export interface PromptGenerationListResponse {
+  items: PromptGenerationSummary[]
+}
+
+export interface PromptGenerationCreateRequest {
+  generator: string
+  dataset_name: string
+  request: Record<string, unknown>
+  targets: Record<string, string>
+  pause_for_review: boolean
+}
+
+export interface PromptGenerationStageEstimate {
+  stage: string
+  target_role: string
+  min_calls: number
+  max_calls: number
+  min_tokens: number
+  max_tokens: number
+}
+
+/** Provider-call-free estimate of the remaining work. Tokens are approximate. */
+export interface PromptGenerationEstimate {
+  stages: PromptGenerationStageEstimate[]
+  exact_calls: boolean
+  notes: string[]
+  min_calls: number
+  max_calls: number
+  low_tokens: number
+  high_tokens: number
+}
+
+export interface PromptGenerationPreflightResponse {
+  valid: boolean
+  errors: string[]
+  dataset_name_available: boolean
+  estimate: PromptGenerationEstimate | null
+}
+
+/** Output awaiting review, in the generator's review shape. */
+export interface PromptGenerationReview {
+  generation_id: string
+  stage: string
+  payload: Record<string, unknown>
+}
+
+export interface PromptGenerationBatchItem {
+  dataset_name: string
+  request: Record<string, unknown>
+}
+
+/** Several generations that share a generator, targets, and settings, such as an ASSERT suite. */
+export interface PromptGenerationBatchRequest {
+  generator: string
+  label: string
+  items: PromptGenerationBatchItem[]
+  targets: Record<string, string>
+  pause_for_review: boolean
+}
+
+/** The created generations; they share a `group_id` and `group_label`. */
+export interface PromptGenerationBatchResponse {
+  items: PromptGenerationSummary[]
+}
+
+/** A generator request reconstructed from a stored dataset. */
+export interface PromptGenerationRequestFromDataset {
+  generator: string
+  request: Record<string, unknown>
+  source_dataset_name: string
+}
+
+/** A ready-made behavior from the bundled ASSERT library; `description` is markdown policy text. */
+export interface AssertBehaviorPreset {
+  name: string
+  version: string
+  tags: string[]
+  applicable_to: string[]
+  summary: string
+  description: string
+  suggested_judge_presets: string[]
+}
+
+export interface AssertBehaviorPresetListResponse {
+  items: AssertBehaviorPreset[]
+}
+
+/** An application context and the library behaviors to evaluate in it, one dataset per behavior. */
+export interface AssertSuitePreset {
+  name: string
+  version: string
+  tags: string[]
+  applicable_to: string[]
+  summary: string
+  context: string
+  behaviors: string[]
+  suggested_judge_presets: string[]
+}
+
+export interface AssertSuitePresetListResponse {
+  items: AssertSuitePreset[]
+}
+
+export interface AssertDimensionLevel {
+  name: string
+  definition: string
+}
+
+/** A coverage dimension: explicit levels, or a description from which levels are generated. */
+export interface AssertDimension {
+  name: string
+  description: string
+  levels: AssertDimensionLevel[]
+}
+
+export type AssertSamplingMethod = 'pairwise' | 'stratified' | 'full_factorial' | 'random'
+export type AssertReplication = 'balanced' | 'none'
+
+export interface AssertSamplingConfig {
+  method: AssertSamplingMethod
+  stratify_by: string[]
+  replication: AssertReplication
+  with_replacement: boolean
+}
+
+/** The `request` of an `assert` generation (`AssertGenerationConfig`). */
+export interface AssertGenerationRequest {
+  behavior_name: string
+  behavior_description: string
+  context: string
+  group_count: number
+  include_user_prompt: boolean
+  include_adversarial_prompt: boolean
+  behavior_category_count: number
+  dimensions: AssertDimension[]
+  dimension_level_count: number
+  sampling: AssertSamplingConfig
+  random_seed: number
+  web_search: boolean
+  target_system_prompt: string | null
+  target_owns_instructions: boolean
+  /** A reviewed taxonomy to reuse; generation then skips the research stages. */
+  taxonomy?: AssertTaxonomy
+}
+
+export interface AssertTerm {
+  term: string
+  definition: string
+  examples: string[]
+}
+
+export interface AssertBehaviorCategory {
+  name: string
+  definition: string
+  examples: string[]
+  permissible: boolean
+}
+
+export interface AssertTaxonomy {
+  behavior: { name: string; definition: string }
+  definition_of_terms: AssertTerm[]
+  behavior_categories: AssertBehaviorCategory[]
+}
+
+/** The read-only research summary shown during ASSERT review. */
+export interface AssertSystematizationSummary {
+  scope: string
+  reasoning_summary: string
+}
+
+export interface AssertReviewPayload {
+  systematization: AssertSystematizationSummary | null
+  taxonomy: AssertTaxonomy
+  dimensions: AssertDimension[]
+}
+
+export interface AssertCoverage {
+  sample_size: number
+  unique_assignments: number
+  total_levels: number
+  covered_levels: number
+  total_pairs: number
+  covered_pairs: number
+}
+
+/** The `summary` of a completed `assert` generation. */
+export interface AssertGenerationResultSummary {
+  group_count: number
+  coverage: AssertCoverage | null
+  categories: Array<{ name: string; permissible: boolean; groups: number }>
+  edited_stages: string[]
+}
+
+/** The `request` of a `target_objective` generation. */
+export interface TargetObjectiveGenerationRequest {
+  instructions: string
+  count: number
+  harm_categories: string[]
 }

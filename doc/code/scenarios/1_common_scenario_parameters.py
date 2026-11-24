@@ -54,9 +54,10 @@ dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="harmben
 # For more control, use `SeedDatasetProvider` to fetch datasets and pass explicit `seed_groups`.
 # This is useful when you need to filter, combine, or inspect the prompts before running.
 #
-# The default techniques below include `AsciiSmugglerConverter`, which only accepts printable
-# ASCII (0x20-0x7E). Filter out seed groups containing newlines, other control characters, or
-# non-ASCII text before sampling. This preserves the original text of the selected objectives.
+# The default techniques below include `AsciiSmugglerConverter`. It replaces newlines and common
+# punctuation such as curly quotes and dashes with ASCII equivalents, and rejects text that has no
+# ASCII equivalent, such as CJK or emoji. Filtering to printable-ASCII seed groups before sampling
+# avoids rejected objectives and sends the selected objectives unchanged.
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
@@ -257,6 +258,18 @@ harm_dataset_config = DatasetAttackConfiguration(
 
 pool_scenario = RapidResponse(objective_scorer=scorers)
 pool_scenario.set_params_from_args(args={"objective_target": objective_target, "dataset_config": harm_dataset_config})
+
+# %% [markdown]
+# To check a pool against the datasets before a run, read the selection report after initializing. It
+# lists each planned atomic group with the scorer it will use and, for every candidate passed over,
+# the reason. Building it sends nothing to the target and calls no judge model:
+#
+# ```python
+# from pyrit.output import output_scorer_selection_report_async
+#
+# await pool_scenario.initialize_async()
+# await output_scorer_selection_report_async(pool_scenario.get_scorer_selection_report())
+# ```
 
 # %% [markdown]
 # Each dataset is judged by the candidate bound to the evaluation it names, and a dataset without
