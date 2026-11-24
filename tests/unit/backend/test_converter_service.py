@@ -2582,10 +2582,8 @@ class TestPersistConverter:
                 request=_persist("uploads", converter_type, params), recipes_source=str(tmp_path)
             )
 
-        assert str(refusal.value) == (
-            f"'{converter_type}' can't be saved. It needs an uploaded file, which saved converters can't keep yet. "
-            "It can still be created without saving it."
-        )
+        assert refusal.value.cause == "It needs an uploaded file, which saved converters can't keep yet."
+        assert str(refusal.value).endswith("It can still be created without saving it.")
         assert list(upload_service._upload_path.iterdir()) == []
         assert not (tmp_path / "converters").exists()
 

@@ -606,9 +606,7 @@ class ConverterService:
             str | None: The reason, or None when the type needs no uploaded file.
         """
         if any(parameter.required for parameter in self._upload_params(converter_type=converter_type).values()):
-            return (
-                f"'{converter_type}' can't be saved. It needs an uploaded file, which saved converters can't keep yet."
-            )
+            return "It needs an uploaded file, which saved converters can't keep yet."
         return None
 
     async def _persist_data_uri_params_async(
