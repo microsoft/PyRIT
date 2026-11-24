@@ -47,6 +47,7 @@ from pyrit.output.finding_report.report import (
     plain_text,
 )
 from pyrit.output.finding_report.word import add_word_paths
+from pyrit.setup.finding_fields import get_active_finding_fields
 
 _MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
 _DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -144,6 +145,7 @@ async def _build_report_async(*, operation_id: UUID, request: FindingExportReque
     return build_finding_report(
         operation_name=operation.name,
         findings=included,
+        fields=get_active_finding_fields(),
         evidence=evidence,
         part_of=part_of,
     )
