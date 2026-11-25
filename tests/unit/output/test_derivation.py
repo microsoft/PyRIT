@@ -4,7 +4,9 @@
 import uuid
 from types import SimpleNamespace
 
+import pytest
 from unit.mocks import (
+    judged_attack_identifier,
     make_scenario_result,
     make_sequential_attack_results,
     make_suite_execution,
@@ -20,8 +22,11 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     MessagePiece,
+    ScenarioObjectiveScorerAttribution,
+    ScenarioObjectiveScorerStatistics,
     ScenarioProducerCategoryCounts,
     ScenarioProducerCounts,
+    ScenarioProgressCounts,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
@@ -34,6 +39,7 @@ from pyrit.output._derivation import (
     attack_objective_scorer_identifier,
     attack_score_display,
     attack_technique_label,
+    objective_scorer_label,
     resolve_scorer_name,
     resolve_target_info,
     scenario_overview,
@@ -410,3 +416,40 @@ def test_attack_objective_scorer_identifier_falls_back_to_the_run_scorer():
     no_identity = SimpleNamespace(get_attack_strategy_identifier=lambda: None)
     assert attack_objective_scorer_identifier(attack=unrecorded, run_scorer_identifier=_OBJECTIVE) == _OBJECTIVE
     assert attack_objective_scorer_identifier(attack=no_identity, run_scorer_identifier=None) is None
+
+
+@pytest.mark.parametrize(
+    ("identifier", "scorer_hash", "attribution", "label"),
+    [
+        (ComponentIdentifier(class_name="JudgeA", class_module="tests"), "a" * 64, "recorded", f"JudgeA ({'a' * 12})"),
+        (None, "b" * 64, "planned", f"Scorer {'b' * 12}"),
+        (None, None, "conflict", "Conflicting scorer records"),
+        (None, None, "unknown", "Unknown scorer"),
+    ],
+)
+def test_judge_label_describes_how_much_is_known_about_the_scorer(identifier, scorer_hash, attribution, label):
+    objective_scorer = ScenarioObjectiveScorerStatistics(
+        attribution=ScenarioObjectiveScorerAttribution(attribution),
+        scorer_hash=scorer_hash,
+        scorer_identifier=identifier,
+        overall=ScenarioProgressCounts(completed=0, succeeded=0, errors=0, retries=0),
+    )
+
+    assert objective_scorer_label(objective_scorer) == label
+
+
+def test_mixed_compound_label_does_not_claim_its_scorers_were_unrecorded() -> None:
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="attack",
+        envelope_outcome=AttackOutcome.SUCCESS,
+        child_outcomes=[AttackOutcome.SUCCESS, AttackOutcome.FAILURE],
+    )
+    envelope.metadata["completion_policy"] = "exhaustive"
+    for child, scorer in zip(children, [_REFUSAL, _OBJECTIVE], strict=True):
+        child.atomic_attack_identifier = judged_attack_identifier(scorer)
+    result = make_scenario_result(attack_results={"attack": [*children, envelope]})
+
+    [population] = scenario_overview(result).objective_scorers
+
+    assert population.attribution == ScenarioObjectiveScorerAttribution.UNKNOWN
+    assert objective_scorer_label(population) == "Unknown scorer"

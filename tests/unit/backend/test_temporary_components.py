@@ -72,7 +72,9 @@ from pyrit.models import (
 )
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import (
+    ClaudeChatTarget,
     HuggingFaceChatTarget,
+    LiteLLMChatTarget,
     OpenAIChatTarget,
     OpenAICompletionTarget,
     OpenAIResponseTarget,
@@ -84,6 +86,7 @@ from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 from unit.async_utils import TEST_WATCHDOG_SECONDS, drain_tasks_async, wait_for_event_async
 from unit.backend.mocks import _settle_send_async
 from unit.mocks import openai_chat_response_json_dict
+from unit.prompt_target.target.test_litellm_chat_target import _make_litellm_stub
 
 
 @pytest.fixture(autouse=True)
@@ -97,6 +100,13 @@ def isolated_registries() -> Iterator[None]:
         factory.cache_clear()
     for registry in (TargetRegistry, ConverterRegistry, ScorerRegistry):
         registry.reset_registry_singleton()
+
+
+@pytest.fixture
+def litellm_sdk() -> Iterator[None]:
+    sdk, exceptions = _make_litellm_stub()
+    with patch.dict(sys.modules, {"litellm": sdk, "litellm.exceptions": exceptions}):
+        yield
 
 
 def source_target() -> OpenAIChatTarget:
@@ -1040,6 +1050,36 @@ class TestTemporaryComponents:
                 )
         finally:
             await source.cleanup_target_async()
+
+    @pytest.mark.usefixtures("litellm_sdk")
+    async def test_litellm_source_copy_is_private_and_shares_pacing_async(self) -> None:
+        source = ClaudeChatTarget(
+            model_name="claude-sonnet-4-6", api_key="test-only-key", temperature=0.2, max_requests_per_minute=30
+        )
+        registry = TargetRegistry.get_registry_singleton()
+        registry.instances.register(source, name="source")
+        private = await TargetService().build_from_source_async(
+            SourceInstanceSpec(
+                source_name="source", source_hash=source.get_identifier().hash, params={"temperature": 0.8}
+            )
+        )
+        assert private.get_identifier().temperature == 0.8
+        assert private._api_key == "test-only-key"
+        assert _get_rate_limit_lock(private) is _get_rate_limit_lock(source)
+        assert source._temperature == 0.2
+        assert registry.instances.get_names() == ["source"]
+
+    @pytest.mark.usefixtures("litellm_sdk")
+    @pytest.mark.parametrize(
+        "params", [{"model_name": "openai/gpt-4o"}, {"endpoint": "https://other.test"}, {"api_key": "other-key"}]
+    )
+    async def test_litellm_source_copy_keeps_connection_settings_async(self, params: dict[str, str]) -> None:
+        source = LiteLLMChatTarget(model_name="anthropic/claude-sonnet-4-6", api_key="test-only-key")
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        with pytest.raises(ValueError, match=f"can't set {next(iter(params))}"):
+            await TargetService().build_from_source_async(
+                SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params=params)
+            )
 
     async def test_runtime_temperature_preserves_saved_variant_binding_async(
         self, sqlite_instance: SQLiteMemory

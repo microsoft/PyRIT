@@ -38,6 +38,14 @@ jest.mock('@/services/api', () => ({
     update: jest.fn(),
   },
   scenariosApi: {
+    listCompatibleDatasets: jest.fn().mockResolvedValue({
+      items: ['harmbench', 'xstest'].map((name) => ({
+        name, selection_key: `dataset:named:${name}`, loaded: true, provider_available: true,
+        logical_examples: 8, modalities: ['text'], harm_categories: ['violence'],
+        has_unlabeled_harm_categories: false,
+      })),
+    }),
+    loadDatasets: jest.fn(),
     listCatalog: jest.fn(),
     getScenario: jest.fn(),
     estimateRun: jest.fn(),
@@ -1741,5 +1749,30 @@ describe('ScenarioPresetEditor dynamic parameters', () => {
       expect.objectContaining({ scenario_params: { goals: [' Next, goal '] } }),
       'v1',
     ))
+  })
+})
+
+
+describe('ScenarioPresetEditor compatible-only datasets', () => {
+  const POLICY = makeScenario({
+    dataset_defaults: { sources: [], max_per_dataset: 'all', max_total: 'all', fetch: 'if_missing', filters: {} },
+    dataset_options: {
+      mode: 'any', allowed_names: [], per_dataset_limit: true, total_limit: true, supports_overrides: true,
+      filters: true, compatible_only: true,
+    },
+  })
+  const listing = scenariosApi.listCompatibleDatasets as jest.Mock
+
+  it('shows the launch form\'s failure Retry and empty state for a scenario that checks stored contents', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(POLICY)
+    listing.mockRejectedValueOnce(apiError(503, 'Compatible listing unavailable.')).mockResolvedValueOnce({ items: [] })
+    renderEdit()
+
+    expect(await screen.findByText('Compatible listing unavailable.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry loading compatible datasets' }))
+    expect(await screen.findByText('No compatible datasets available.')).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Add dataset' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('radiogroup', { name: 'Dataset loading' })).not.toBeInTheDocument()
   })
 })

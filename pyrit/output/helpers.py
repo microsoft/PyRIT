@@ -134,7 +134,8 @@ async def output_scenario_async(
         format (OutputFormat): Output format. Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
         sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted so
-            that the group with the highest success rate appears first. Defaults to False,
+            that the group with the highest success rate appears first, unless different objective
+            scorers judged the groups, which then stay unsorted with a notice. Defaults to False,
             which preserves the original insertion order.
 
     Raises:
