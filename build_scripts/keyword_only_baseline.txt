@@ -68,7 +68,6 @@ pyrit.common.singleton:Singleton.__new__
 pyrit.common.text_helper:write_txt
 pyrit.common.utils:combine_dict
 pyrit.common.utils:combine_list
-pyrit.converter.audio_speed_converter:AudioSpeedConverter._resample_channel
 pyrit.converter.azure_speech_audio_to_text_converter:AzureSpeechAudioToTextConverter.stop_cb
 pyrit.converter.azure_speech_audio_to_text_converter:AzureSpeechAudioToTextConverter.transcript_cb
 pyrit.converter.base_image_to_image_converter:BaseImageToImageConverter._transform_image
@@ -94,8 +93,6 @@ pyrit.datasets.seed_datasets.seed_dataset_provider:SeedDatasetProvider.fetch_dat
 pyrit.exceptions.exception_classes:_DynamicWaitRandomExponential.__init__
 pyrit.exceptions.exception_classes:handle_bad_request_exception
 pyrit.exceptions.exception_classes:pyrit_custom_result_retry
-pyrit.executor.attack.core.attack_executor:AttackExecutor._execute_with_params_list_async.<locals>.run_one_async
-pyrit.executor.attack.core.attack_executor:AttackExecutor.execute_attack_from_seed_groups_async.<locals>.build_params_async
 pyrit.executor.attack.multi_turn.crescendo:CrescendoAttack._check_refusal_async
 pyrit.executor.benchmark.fairness_bias:FairnessBiasBenchmark._format_experiment_results_async
 pyrit.executor.core.strategy:StrategyLogAdapter.process

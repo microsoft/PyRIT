@@ -197,8 +197,8 @@ export default function AttackHistory({
     if (!runtime.ready || !hasLabelOptionFilters) return
     let cancelled = false
     labelsApi.getLabels('attacks', {
-      operator: filters.operator.length > 0 ? filters.operator : undefined,
-      label: filters.otherLabels.length > 0 ? filters.otherLabels : undefined,
+      ...(filters.operator.length > 0 ? { operator: filters.operator } : {}),
+      ...(filters.otherLabels.length > 0 ? { label: filters.otherLabels } : {}),
     })
       .then(resp => {
         if (cancelled) return
