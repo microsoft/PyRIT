@@ -3,6 +3,7 @@
 
 import json
 import re
+from functools import partial
 
 import pytest
 
@@ -257,3 +258,83 @@ async def test_codechameleon_converter_decryption_execution_async(
     assert decryption(encrypted_problem) == expected_prompt
     if encrypt_type == "length":
         assert decryption(json.loads(encrypted_problem)) == expected_prompt
+
+
+def _reverse_text(text: str) -> str:
+    return text[::-1]
+
+
+def _upper_text(text: str) -> str:
+    return text.upper()
+
+
+def _make_suffixer(suffix: str):
+    def _add_suffix(text: str) -> str:
+        return text + suffix
+
+    return _add_suffix
+
+
+def _custom_unique_name(*, encrypt_function, decrypt_function) -> str:
+    converter = CodeChameleonConverter(
+        encrypt_type="custom", encrypt_function=encrypt_function, decrypt_function=decrypt_function
+    )
+    return converter.get_identifier().unique_name
+
+
+def test_codechameleon_custom_functions_change_identifier() -> None:
+    """Regression for #3761: different custom functions must not share an identifier."""
+    reverse_name = _custom_unique_name(encrypt_function=_reverse_text, decrypt_function=_reverse_text)
+    upper_name = _custom_unique_name(encrypt_function=_upper_text, decrypt_function=_upper_text)
+    assert reverse_name != upper_name
+
+
+def test_codechameleon_custom_identifier_tracks_each_function_separately() -> None:
+    base = _custom_unique_name(encrypt_function=_reverse_text, decrypt_function=_reverse_text)
+    assert _custom_unique_name(encrypt_function=_upper_text, decrypt_function=_reverse_text) != base
+    assert _custom_unique_name(encrypt_function=_reverse_text, decrypt_function=_upper_text) != base
+    assert _custom_unique_name(encrypt_function=_reverse_text, decrypt_function=["import re", _reverse_text]) != base
+
+
+def test_codechameleon_custom_identifier_is_stable_for_same_functions() -> None:
+    first = _custom_unique_name(encrypt_function=_reverse_text, decrypt_function=_reverse_text)
+    second = _custom_unique_name(encrypt_function=_reverse_text, decrypt_function=_reverse_text)
+    assert first == second
+
+
+def test_codechameleon_custom_identifier_includes_closure_values() -> None:
+    """Functions sharing a qualified name and source differ by their closure."""
+    exclaim = _custom_unique_name(encrypt_function=_make_suffixer("!"), decrypt_function=_reverse_text)
+    question = _custom_unique_name(encrypt_function=_make_suffixer("?"), decrypt_function=_reverse_text)
+    assert exclaim != question
+    assert exclaim == _custom_unique_name(encrypt_function=_make_suffixer("!"), decrypt_function=_reverse_text)
+
+
+def test_codechameleon_custom_identifier_includes_partial_arguments() -> None:
+    def _join(text: str, separator: str) -> str:
+        return separator.join(text)
+
+    dashes = _custom_unique_name(encrypt_function=partial(_join, separator="-"), decrypt_function=_reverse_text)
+    dots = _custom_unique_name(encrypt_function=partial(_join, separator="."), decrypt_function=_reverse_text)
+    assert dashes != dots
+
+
+def test_codechameleon_custom_identifier_unstable_function_is_unique_per_instance() -> None:
+    """A function whose configuration cannot be captured never shares an identifier."""
+    marker = object()
+
+    def _uses_object(text: str) -> str:
+        return text if marker else ""
+
+    first = _custom_unique_name(encrypt_function=_uses_object, decrypt_function=_reverse_text)
+    second = _custom_unique_name(encrypt_function=_uses_object, decrypt_function=_reverse_text)
+    assert first != second
+
+
+@pytest.mark.parametrize("encrypt_type", ["reverse", "binary_tree", "odd_even", "length"])
+def test_codechameleon_builtin_identifier_params_unchanged(encrypt_type: str) -> None:
+    converter = CodeChameleonConverter(encrypt_type=encrypt_type)
+    params = converter.get_identifier().params
+    assert params["encrypt_type"] == encrypt_type
+    assert "encrypt_function" not in params
+    assert "decrypt_function_sha256" not in params
