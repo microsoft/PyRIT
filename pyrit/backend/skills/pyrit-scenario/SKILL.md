@@ -59,11 +59,12 @@ as a note instead; call again with a smaller `limit` or fewer `response_fields`.
    `components` are the parts of that run, and each one's `factors` multiply to its count: seed
    groups (objectives), techniques, and others such as languages. Keep the baseline: results
    are compared with it. Keep the default techniques when the default run is about 20 attacks
-   or fewer. Otherwise keep a first run to about 20 attacks unless the user wants more: cap the
-   objectives with `datasets.max_total` when `dataset_options.total_limit` is true, and choose
-   fewer `techniques` from `technique_summaries`. Work out the new size by scaling only the seed
-   group and technique factors and keeping the others. A component without `factors` can't be
-   scaled, so then you can't tell the size.
+   or fewer, even if they need an attacker model. Otherwise keep a first run to about 20 attacks
+   unless the user wants more: cap the objectives with `datasets.max_total` when
+   `dataset_options.total_limit` is true, and choose fewer `techniques` from
+   `technique_summaries`. Work out the new size by scaling only the seed group and technique
+   factors and keeping the others. A component without `factors` can't be scaled, so then you
+   can't tell the size.
 5. Keep the scenario's default datasets unless the user names others. Find exact names with
    `list_datasets` and `response_fields: ["items.name"]`. When `dataset_options.mode` is
    `subset`, choose from `dataset_options.allowed_names`; when it's `fixed`, keep the defaults.
