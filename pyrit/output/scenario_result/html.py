@@ -46,8 +46,16 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
   {% if report.overview.scenario.description %}<p>{{ report.overview.scenario.description }}</p>{% endif %}
 
   <div class="cards">
-    <div class="card"><div class="label">Success rate</div>
-      <div class="value">{{ report.overview.stats.overall_success_rate }}%</div></div>
+    <div class="card"><div class="label">
+      {%- if report.overview.stats.objective_scorer_scope == "mixed_scorers" %}Aggregate success rate
+      ({{ report.overview.objective_scorers | selectattr("num_objective_executions") | list | length }}
+      objective scorers, descriptive)
+      {%- else %}Success rate{% endif %}</div>
+      <div class="value">{{ report.overview.stats.overall_success_rate }}%</div>
+      {%- if report.overview.stats.objective_scorer_scope in ("single_scorer", "unknown_scorer") %}
+      {%- set objective_scorer = report.overview.objective_scorers | selectattr("num_objective_executions") | first %}
+      <div class="muted">Objective Scorer: {{ objective_scorer.label }} ({{ objective_scorer.attribution }})</div>
+      {%- endif %}</div>
     <div class="card"><div class="label">Techniques</div>
       <div class="value">{{ report.overview.stats.total_techniques }}</div></div>
     <div class="card"><div class="label">Objective executions</div>
@@ -74,6 +82,32 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
     <tr><th>Model</th><td>{{ report.overview.target.model or "Unknown" }}</td></tr>
     <tr><th>Endpoint</th><td>{{ report.overview.target.endpoint or "Unknown" }}</td></tr>
   </table>
+
+  {% if report.overview.objective_scorers | length > 1 %}
+  <h2>Results by Objective Scorer</h2>
+  <p class="muted">Each row contains only executions attributed to that scorer,
+    not every execution rescored by every scorer.</p>
+  {% if report.overview.stats.objective_scorer_scope == "mixed_scorers" %}
+  <p class="muted">Scorers apply different rubrics; compare success rates only within one objective scorer.</p>
+  {% endif %}
+  <table>
+    <tr>
+      <th>Objective Scorer</th>
+      <th>Attribution</th>
+      <th>Objective executions</th>
+      <th>Success rate (decided)</th>
+      <th>Success rate (all completed)</th>
+      <th>Atomic attacks</th>
+    </tr>
+    {% for j in report.overview.objective_scorers %}
+    <tr><td>{{ j.label }}</td><td>{{ j.attribution }}</td>
+      <td>{{ j.num_objective_executions }}{% if j.planned is not none %}/{{ j.planned }}{% endif %}</td>
+      <td>{{ "%.1f%%" | format(j.success_rate_decided * 100) if j.success_rate_decided is not none else "N/A" }}</td>
+      <td>{{ "%.1f%%" | format(j.success_rate_all * 100) if j.success_rate_all is not none else "N/A" }}</td>
+      <td>{{ j.atomic_attacks | join(", ") }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
 
   <h2>Per-group breakdown</h2>
   <table>

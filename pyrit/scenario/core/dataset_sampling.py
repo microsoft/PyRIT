@@ -37,7 +37,9 @@ def sample_with_coverage(
     pairs = [(name, group) for name, groups in groups_by_dataset.items() for group in groups]
     indices_by_key: dict[_Key, list[int]] = {value: [] for value in required_keys}
     for index, (name, group) in enumerate(pairs):
-        indices_by_key[key(name, group)].append(index)
+        group_key = key(name, group)
+        if group_key in indices_by_key:
+            indices_by_key[group_key].append(index)
     missing = [value for value, indices in indices_by_key.items() if not indices]
     if missing:
         raise DatasetConstraintError(f"No attack groups for required coverage keys: {missing}.")
