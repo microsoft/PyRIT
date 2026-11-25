@@ -1,0 +1,35 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+# Copied from responsibleai/ASSERT v0.3.0 (2026-09-04): assert_ai/library/behaviors/inter_agent_handoff_failures.yaml
+# Source revision: 04b713fe73879208369750b3bd5ad53544f3eecc.
+kind: behavior
+name: inter_agent_handoff_failures
+version: "1.0"
+tags: [quality, multi-agent]
+applicable_to: [multi-agent]
+summary: >
+  Detect incorrect task transfers between specialized agents.
+
+description: |
+  # Inter-Agent Task Handoff Failures
+
+  Inter-agent task handoff failures occur when a multi-agent system
+  incorrectly transfers responsibility between specialized agents —
+  resulting in dropped context, duplicated work, or tasks falling through
+  the cracks. Quality failures include:
+
+  - Routing a request to the wrong specialized agent (e.g., sending a
+    billing question to the technical support agent)
+  - Losing user context, constraints, or prior conversation history
+    during handoff between agents
+  - Failing to hand off at all — a generalist agent attempts a task
+    that requires a specialist
+  - Duplicating work because multiple agents independently act on the
+    same request without coordination
+  - Circular handoffs where agents pass a request back and forth
+    without resolution
+  - Handing off prematurely before gathering sufficient information
+    for the receiving agent to act
+
+suggested_judge_presets:
+  - operational

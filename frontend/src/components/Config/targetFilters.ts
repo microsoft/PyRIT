@@ -29,7 +29,7 @@ export const MODALITY_LABELS: Readonly<Record<string, string>> = {
 }
 
 /** Canonical display order for modalities; unknown values are appended last. */
-export const MODALITY_ORDER: readonly string[] = [
+const MODALITY_ORDER: readonly string[] = [
   'text',
   'image_path',
   'audio_path',

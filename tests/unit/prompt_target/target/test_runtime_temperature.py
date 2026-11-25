@@ -101,6 +101,15 @@ def generation_response(path: str) -> dict[str, Any]:
     }
 
 
+def retried_request(target: OpenAIChatTarget | OpenAICompletionTarget | OpenAIResponseTarget) -> Any:
+    """Return the method ``pyrit_target_retry`` wraps for one model request."""
+    if isinstance(target, OpenAIResponseTarget):
+        return target._send_model_request_async
+    if isinstance(target, OpenAIChatTarget):
+        return target._send_completion_async
+    return target._send_prompt_to_target_async
+
+
 @pytest.mark.parametrize(
     ("default", "temperature", "expected", "source"),
     [
@@ -283,14 +292,9 @@ async def test_openai_adapters_retry_once_resolved_async(
             temperature=0.2,
             httpx_client_kwargs={"http_client": client, "max_retries": 0},
         )
-        transport = (
-            target._send_model_request_async
-            if isinstance(target, OpenAIResponseTarget)
-            else target._send_prompt_to_target_async
-        )
         with (
             patch.dict(os.environ, {"RETRY_MAX_NUM_ATTEMPTS": "2"}),
-            patch.object(transport.retry, "sleep", new_callable=AsyncMock),
+            patch.object(retried_request(target).retry, "sleep", new_callable=AsyncMock),
             patch.object(target, "_resolve_request_temperature", wraps=target._resolve_request_temperature) as resolve,
         ):
             await target.send_prompt_async(message=message)
@@ -1316,14 +1320,9 @@ async def test_round_robin_fallback_resolves_its_own_temperature_async(
         target = RoundRobinTarget(targets=[first, second])
         message = request(temperature)
         message.get_piece().prompt_metadata["custom"] = "preserved"
-        transport = (
-            first._send_model_request_async
-            if isinstance(first, OpenAIResponseTarget)
-            else first._send_prompt_to_target_async
-        )
         with (
             patch.dict(os.environ, {"RETRY_MAX_NUM_ATTEMPTS": "2"}),
-            patch.object(transport.retry, "sleep", new_callable=AsyncMock),
+            patch.object(retried_request(first).retry, "sleep", new_callable=AsyncMock),
             patch.object(
                 first, "_resolve_request_temperature", wraps=first._resolve_request_temperature
             ) as first_resolve,
@@ -1438,7 +1437,7 @@ async def test_retry_preserves_default_payload_at_http_boundary_async(
             extra_body_parameters=extras,
             httpx_client_kwargs={"http_client": client},
         )
-        with patch.object(target._send_prompt_to_target_async.retry, "sleep", new_callable=AsyncMock):
+        with patch.object(target._send_completion_async.retry, "sleep", new_callable=AsyncMock):
             await target.send_prompt_async(message=request())
     assert len(bodies) == 2
     assert bodies[0] == bodies[1]
@@ -1479,7 +1478,7 @@ async def test_normalizer_error_response_retains_evidence_without_request_option
     failure = EmptyResponseException(message="No content") if empty_response else RuntimeError("Transport failed")
     with (
         patch.object(target._client.chat.completions, "create", new_callable=AsyncMock, side_effect=failure),
-        patch.object(target._send_prompt_to_target_async.retry, "sleep", new_callable=AsyncMock),
+        patch.object(target._send_completion_async.retry, "sleep", new_callable=AsyncMock),
     ):
         if empty_response:
             response = await PromptNormalizer().send_prompt_async(
@@ -1986,7 +1985,7 @@ async def test_transport_retry_retains_resolved_value_and_paces_each_attempt_asy
         patch.object(
             target._client.chat.completions, "create", new_callable=AsyncMock, side_effect=respond_async
         ) as send,
-        patch.object(target._send_prompt_to_target_async.retry, "sleep", new_callable=AsyncMock),
+        patch.object(target._send_completion_async.retry, "sleep", new_callable=AsyncMock),
         patch.object(target_utils.asyncio, "sleep", new_callable=AsyncMock) as pace,
     ):
         await target.send_prompt_async(message=message)

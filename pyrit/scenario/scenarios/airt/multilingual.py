@@ -151,6 +151,7 @@ class Multilingual(Scenario):
     """
 
     VERSION: int = 1
+    _SKIPS_TECHNIQUES_THE_SCORER_CANNOT_JUDGE: ClassVar[bool] = True
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
     # Default language list
