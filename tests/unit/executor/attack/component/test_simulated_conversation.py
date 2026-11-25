@@ -1870,6 +1870,8 @@ class TestOneShotToolHistory:
             ([_CALL, _OUTPUT, {"type": "message", "role": "user", "content": "Next."}], "only one user message"),
             ([_CALL, _SECOND_CALL, _OUTPUT], "must be followed immediately by its output"),
             ([_CALL, _OUTPUT, _CALL, _OUTPUT], "call_id 'call_1' is reused"),
+            ([{**_CALL, "call_id": " "}, {**_OUTPUT, "call_id": " "}], "function_call.call_id: String should match"),
+            ([_CALL, {**_OUTPUT, "call_id": ""}], "function_call_output.call_id: String should have at least 1"),
         ],
     )
     async def test_exhausted_attempts_are_a_preparation_failure_async(

@@ -484,7 +484,7 @@ class _AuthoredMessage(BaseModel):
 class _AuthoredCall(BaseModel):
     model_config = ConfigDict(extra="ignore")
     type: Literal["function_call"]
-    call_id: str
+    call_id: str = Field(min_length=1, pattern=r"\S")
     name: str
     arguments: dict[str, JsonValue] | str
 
@@ -497,7 +497,7 @@ class _AuthoredCall(BaseModel):
 class _AuthoredOutput(BaseModel):
     model_config = ConfigDict(extra="ignore")
     type: Literal["function_call_output"]
-    call_id: str
+    call_id: str = Field(min_length=1, pattern=r"\S")
     output: JsonValue
 
     def to_seed_prompt(self, *, sequence: int) -> SeedPrompt:
