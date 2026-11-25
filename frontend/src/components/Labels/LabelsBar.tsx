@@ -22,6 +22,7 @@ import { getOperationWarning } from '@/utils/operationWarnings'
 import OperationPicker from './OperationPicker'
 import { useLabelsBarStyles } from './LabelsBar.styles'
 import { DEFAULT_GLOBAL_LABELS } from './labelDefaults'
+import { fluentRef } from '@/utils/fluentRef'
 
 
 const validateValue = (value: string): string | null => {
@@ -35,15 +36,15 @@ const validateValue = (value: string): string | null => {
 const METADATA_KEYS = new Set(['operator', 'operation'])
 
 export interface OperationControlProps {
-  operation?: OperationSelectionState
-  onOperationChange?: (operation: Operation | null) => void
-  onRetryOperation?: () => void
+  operation?: OperationSelectionState | undefined
+  onOperationChange?: ((operation: Operation | null) => void) | undefined
+  onRetryOperation?: (() => void) | undefined
 }
 
 interface LabelsBarProps extends OperationControlProps {
   labels: Record<string, string>
   onLabelsChange: (labels: Record<string, string>) => void
-  operatorReadOnly?: boolean
+  operatorReadOnly?: boolean | undefined
 }
 
 const NO_OPERATION: OperationSelectionState = { status: 'empty' }
@@ -287,7 +288,7 @@ export default function LabelsBar({
       <>
         <Text size={200} weight="semibold">{key}:</Text>
         <Input
-          ref={editInputRef}
+          ref={fluentRef(editInputRef)}
           size="small"
           value={editValue}
           onChange={(_, d) => { setEditValue(d.value.toLowerCase()); setError('') }}

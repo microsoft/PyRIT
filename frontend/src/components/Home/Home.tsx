@@ -56,7 +56,7 @@ interface RecentItem {
   readonly id: string
   readonly kind: 'Attack' | 'Scan'
   readonly title: string
-  readonly operationName?: string | null
+  readonly operationName?: string | null | undefined
   readonly updatedAt: string
   readonly badge: ReactNode
   readonly open: () => void

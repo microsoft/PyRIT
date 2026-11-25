@@ -215,7 +215,7 @@ interface LoadedAttack {
   /** The scan run that produced this attack. */
   scenarioResultId?: string | null
   /** Verified SDK provenance for interrupted evidence that has no saved attack result. */
-  recordedConversations?: ScenarioActiveConversation[]
+  recordedConversations?: ScenarioActiveConversation[] | undefined
   manualContinuation?: ManualContinuation | null
   lastResponseMessagePieceId: string | null
   status: AttackLoadStatus
@@ -803,7 +803,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           endpoint: targetEndpoint(createdTarget),
           model_name: targetModelName(createdTarget),
           identifier_hash: targetIdentifierHash(createdTarget),
-          binding: createdTarget.binding,
+          ...(createdTarget.binding !== undefined ? { binding: createdTarget.binding } : {}),
         }
       : null
     skipNextLoadForAttackId.current = arId
@@ -820,7 +820,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       operator: null,
       target,
       targetUnbound: createdTarget === null,
-      createdTarget: createdTarget ?? undefined,
+      ...(createdTarget ? { createdTarget } : {}),
       knownConversationIds: [convId],
       relatedConversationCount: 0,
       objective: objective ?? '',

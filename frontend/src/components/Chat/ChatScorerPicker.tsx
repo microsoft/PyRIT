@@ -13,8 +13,8 @@ interface ChatScorerPickerProps {
   onUseLastUsed?: () => void
   label?: string
   disabled?: boolean
-  loading?: boolean
-  error?: string | null
+  loading?: boolean | undefined
+  error?: string | null | undefined
   inherited?: boolean
   usage?: 'chat' | 'scenario'
 }
