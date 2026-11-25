@@ -28,6 +28,7 @@ from pyrit.analytics import (
     calibrate_outcome_statistics,
     compute_outcome_statistics,
 )
+from pyrit.analytics.calibration import _calibration_decimal_context
 from pyrit.models import ComponentIdentifier, OutcomeStatistics
 from pyrit.score import ObjectiveScorerMetrics, ScorerMetricsWithIdentity, SubStringScorer, get_all_objective_metrics
 from pyrit.score.scorer_evaluation.scorer_metrics_io import add_evaluation_results
@@ -672,8 +673,9 @@ def test_large_cohort_precision_scaling_avoids_cancellation() -> None:
     )
     assert tiny_youden.youden_index == pytest.approx(1e-100, rel=1e-12)
 
-    # Exceeds Python's default int_max_str_digits (4300) without triggering string conversion.
-    huge_n = 10**5000
+    # Keep OutcomeStatistics integer fields below Python's default int_max_str_digits (4300)
+    # while still exercising >50-digit precision scaling and subnormal float64 outward rounding.
+    huge_n = 10**1000
     huge_profile = JudgeCalibrationProfile(
         true_positive=huge_n,
         false_positive=0,
@@ -697,6 +699,9 @@ def test_large_cohort_precision_scaling_avoids_cancellation() -> None:
     huge_result = calibrate_outcome_statistics(huge_zero, judge_profile=huge_profile)
     assert huge_result.is_reliable is True
     assert huge_result.calibrated_ci_upper == 5e-324
+
+    # Verify the precision helper itself scales via bit_length without string conversion above 4300 digits.
+    assert _calibration_decimal_context(10**5000).prec >= 10050
 
 
 def test_five_thousand_point_grid_preserves_interval_invariants() -> None:
