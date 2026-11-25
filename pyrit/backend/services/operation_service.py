@@ -18,6 +18,7 @@ from pyrit.backend.models.operations import (
     FindingListResponse,
     FindingPathItem,
     FindingPathsUpdateRequest,
+    FindingUpdateRequest,
     OperationDetail,
     OperationListItem,
     OperationUpdateRequest,
@@ -30,10 +31,12 @@ from pyrit.models import (
     Finding,
     FindingCreate,
     FindingEvidence,
+    FindingFields,
     Operation,
     OperationCreate,
     is_finding_path_complete,
 )
+from pyrit.setup.finding_fields import get_active_finding_fields
 
 # Keeps every ID list a batch reads within SQL Server's 2100-parameter limit.
 _EVIDENCE_BATCH_SIZE = 500
@@ -176,8 +179,10 @@ class OperationService:
         Raises:
             FindingNotFoundError: If the parent finding is not in the operation.
             FindingConflictError: If the ID already belongs to a different finding, or the parent was just deleted.
+            FindingValuesError: If the values do not fit the active finding fields.
         """
         await self.get_async(operation_id)
+        get_active_finding_fields().check_values(severity=request.severity, field_values=request.field_values)
         if request.parent_finding_id is not None:
             await self._require_parent_async(operation_id=operation_id, parent_id=request.parent_finding_id)
         finding = Finding(
@@ -229,6 +234,7 @@ class OperationService:
             FindingNotFoundError: If the parent finding is not in the operation.
         """
         await self.get_async(operation_id)
+        fields = get_active_finding_fields()
         if parent_finding_id is not None:
             await self._require_parent_async(operation_id=operation_id, parent_id=parent_finding_id)
         findings = await CentralMemory.get_memory_instance().get_findings_async(
@@ -236,13 +242,14 @@ class OperationService:
             limit=limit + 1,
             offset=offset,
             title_query=title_query,
+            severity_order=fields.severity_order,
             title_pattern=title_pattern,
             parent_finding_id=parent_finding_id,
             top_level_only=top_level_only,
         )
         has_more = len(findings) > limit
         return FindingListResponse(
-            items=await self._list_items_async(operation_id=operation_id, findings=findings[:limit]),
+            items=await self._list_items_async(operation_id=operation_id, findings=findings[:limit], fields=fields),
             has_more=has_more,
             next_offset=offset + limit if has_more else None,
         )
@@ -269,11 +276,15 @@ class OperationService:
             raise FindingNotFoundError(str(exc)) from exc
         except FindingHierarchyError as exc:
             raise FindingConflictError(str(exc)) from exc
-        return (await self._list_items_async(operation_id=operation_id, findings=[saved]))[0]
+        fields = get_active_finding_fields()
+        return (await self._list_items_async(operation_id=operation_id, findings=[saved], fields=fields))[0]
 
-    async def _list_items_async(self, *, operation_id: UUID, findings: Sequence[Finding]) -> list[FindingListItem]:
+    async def _list_items_async(
+        self, *, operation_id: UUID, findings: Sequence[Finding], fields: FindingFields
+    ) -> list[FindingListItem]:
         """
-        Add each finding's evidence and sub-finding counts, and derive whether each of its paths is complete.
+        Add each finding's evidence and sub-finding counts, derive whether each of its paths is complete, and label
+        its values with ``fields``.
 
         Returns:
             list[FindingListItem]: The findings, in input order.
@@ -285,20 +296,26 @@ class OperationService:
         step_ids = list({step for finding in findings for path in finding.paths for step in path.steps})
         steps = await memory.get_findings_by_ids_async(operation_id=operation_id, finding_ids=step_ids)
         demonstrated = {step.id: step.demonstrated for step in steps}
-        return [
-            FindingListItem(
-                **finding.model_dump(exclude={"paths"}),
-                evidence_count=evidence_counts.get(finding.id, 0),
-                child_count=child_counts.get(finding.id, 0),
-                paths=tuple(
-                    FindingPathItem(
-                        **path.model_dump(), complete=is_finding_path_complete(path=path, demonstrated=demonstrated)
-                    )
-                    for path in finding.paths
-                ),
+        items = []
+        for finding in findings:
+            described = fields.describe_values(severity=finding.severity, field_values=finding.field_values)
+            items.append(
+                FindingListItem(
+                    **finding.model_dump(exclude={"paths"}),
+                    evidence_count=evidence_counts.get(finding.id, 0),
+                    child_count=child_counts.get(finding.id, 0),
+                    paths=tuple(
+                        FindingPathItem(
+                            **path.model_dump(),
+                            complete=is_finding_path_complete(path=path, demonstrated=demonstrated),
+                        )
+                        for path in finding.paths
+                    ),
+                    rows=described.rows,
+                    retired=described.retired,
+                )
             )
-            for finding in findings
-        ]
+        return items
 
     async def attach_finding_evidence_async(
         self, *, operation_id: UUID, finding_id: UUID, request: FindingEvidenceCreateRequest
@@ -357,7 +374,9 @@ class OperationService:
         """
         await self.get_async(operation_id)
         findings = await CentralMemory.get_memory_instance().get_finding_subtrees_async(
-            operation_id=operation_id, finding_ids=finding_ids
+            operation_id=operation_id,
+            finding_ids=finding_ids,
+            severity_order=get_active_finding_fields().severity_order,
         )
         found = {finding.id for finding in findings}
         missing = next((finding_id for finding_id in finding_ids if finding_id not in found), None)
@@ -393,7 +412,11 @@ class OperationService:
         """
         await self.get_async(operation_id)
         memory = CentralMemory.get_memory_instance()
-        findings = await memory.get_findings_by_ids_async(operation_id=operation_id, finding_ids=finding_ids)
+        findings = await memory.get_findings_by_ids_async(
+            operation_id=operation_id,
+            finding_ids=finding_ids,
+            severity_order=get_active_finding_fields().severity_order,
+        )
         found = {finding.id for finding in findings}
         missing = next((finding_id for finding_id in finding_ids if finding_id not in found), None)
         if missing is not None:
@@ -530,7 +553,9 @@ class OperationService:
             AttackFindingListResponse: The linked findings with their Operation names and evidence links.
         """
         memory = CentralMemory.get_memory_instance()
-        linked = await memory.get_findings_for_attack_result_async(attack_result_id=attack_result_id)
+        linked = await memory.get_findings_for_attack_result_async(
+            attack_result_id=attack_result_id, severity_order=get_active_finding_fields().severity_order
+        )
         operation_ids = list({finding.operation_id for finding, _ in linked})
         operations = await memory.get_operations_async(operation_ids=operation_ids) if operation_ids else []
         names = {operation.id: operation.name for operation in operations}
@@ -589,9 +614,16 @@ class OperationService:
         if not any(stat.message_count > 0 for stat in stats.values()):
             raise FindingEvidenceNotFoundError("The attack result has no saved messages.")
 
-    async def update_finding_async(self, *, operation_id: UUID, finding_id: UUID, request: FindingCreate) -> Finding:
+    async def update_finding_async(
+        self, *, operation_id: UUID, finding_id: UUID, request: FindingUpdateRequest
+    ) -> Finding:
         """
-        Replace a finding's editable fields within an existing operation. A finding moves with its sub-findings.
+        Replace a finding's current field values within an existing operation. A finding moves with its sub-findings.
+
+        A current field left out is cleared. Values of fields that are no longer configured are kept and can't
+        change; list them in ``remove_retired_keys`` to delete them. A value listed in ``keep_retired_keys`` is
+        kept even if its field is configured again. Values that haven't changed may use options that no longer
+        exist.
 
         Returns:
             Finding: The updated finding.
@@ -600,13 +632,22 @@ class OperationService:
             FindingNotFoundError: If the finding or its new parent is missing or belongs to another operation.
             FindingConflictError: If the finding would move while its parent's paths use it, or under itself or one
                 of its sub-findings.
+            FindingValuesError: If ``remove_retired_keys`` lists a key that isn't a retired value of the finding
+                or that is also sent, or the values do not fit the active finding fields.
         """
         await self.get_async(operation_id)
+        stored = await self._require_finding_async(operation_id=operation_id, finding_id=finding_id)
+        replacement = get_active_finding_fields().apply_edit(
+            stored=stored,
+            edit=request,
+            keep_retired_keys=request.keep_retired_keys,
+            remove_retired_keys=request.remove_retired_keys,
+        )
         if request.parent_finding_id is not None:
             await self._require_parent_async(operation_id=operation_id, parent_id=request.parent_finding_id)
         try:
             return await CentralMemory.get_memory_instance().update_finding_async(
-                operation_id=operation_id, finding_id=finding_id, request=request
+                operation_id=operation_id, finding_id=finding_id, request=replacement
             )
         except LookupError as exc:
             raise FindingNotFoundError(str(exc)) from exc
