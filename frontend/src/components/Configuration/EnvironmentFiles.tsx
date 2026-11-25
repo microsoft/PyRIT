@@ -53,6 +53,9 @@ export default function EnvironmentFiles({
 
   useEffect(() => () => { recoveryEpoch.current++ }, [generation, selectedId])
 
+  // The drafts leave with this editor, so the page must not go on guarding them once it closes.
+  useEffect(() => () => onUnsavedChangesChange(false), [onUnsavedChangesChange])
+
   useEffect(() => {
     if (hasUnsavedChanges || saving || recovering) return
     if (loadedSnapshot.current?.generation === generation && loadedSnapshot.current.reloadCount === reloadCount) return
