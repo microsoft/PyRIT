@@ -105,12 +105,12 @@ class EncodingTechnique(ScenarioTechnique):
     ALL = ("all", {"all"})
     DEFAULT = ("default", {"default"})
 
-    # Individual encoding techniques (the enum value is the encoding scheme name). Members tagged ``default``
-    # form the curated DEFAULT aggregate: a broad spread across encoding families so the default scan is a
-    # meaningful scanner run — base-N (Base64, Base2048, Base16, Base32, ASCII85, Hex), byte-encodings
-    # (QuotedPrintable, UUencode), substitution ciphers (ROT13, Atbash, LeetSpeak), and symbolic alphabets
-    # (MorseCode, NATO). The remaining niche/lossy schemes (Braille, Ecoji, Zalgo, AsciiSmuggler) are
-    # ALL-only.
+    # Individual encoding techniques (the enum value is the encoding scheme name). Each member's tag set
+    # drives the aggregates: members tagged ``default`` form the curated DEFAULT aggregate — a broad spread
+    # across encoding families (base-N, byte-encodings, substitution ciphers, symbolic alphabets) so the
+    # default scan is meaningful. Members with no ``default`` tag are ALL-only, run only by the exhaustive
+    # ``ALL`` aggregate (the niche or lossy schemes). The ALL-only set is defined by these tags, not listed
+    # here, so it stays correct as techniques are added.
     Base64 = ("base64", {"default"})
     Base2048 = ("base2048", {"default"})
     Base16 = ("base16", {"default"})
@@ -130,6 +130,7 @@ class EncodingTechnique(ScenarioTechnique):
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
+    Disemvowel = ("disemvowel", set[str]())
     UbbiDubbi = ("ubbi_dubbi", set[str]())
 
     @classmethod
@@ -319,6 +320,9 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
+            # "disemvowel": remove all vowels ("disemvoweling"), a comment-moderation technique
+            # popularized on the Making Light blog (https://nielsenhayden.com/makinglight/).
+            ([SearchReplaceConverter(pattern="[AEIOUaeiou]", replace="")], "disemvowel", "disemvowel"),
             # "ubbi_dubbi": a language game that prefixes each vowel run with "ub", popularized by
             # the PBS children's show Zoom (1972). https://en.wikipedia.org/wiki/Ubbi_dubbi
             ([SearchReplaceConverter(pattern=r"([aeiouAEIOU]+)", replace=r"ub\1")], "ubbi_dubbi", "ubbi_dubbi"),

@@ -264,6 +264,23 @@ mirror_img = Image.open(mirror_result.output_text)
 display(mirror_img)
 
 # %% [markdown]
+# ### ImageNoiseConverter
+#
+# The `ImageNoiseConverter` adds random Gaussian pixel noise to an image, to check how robust a target's image understanding and image-based safety filtering are. `standard_deviation` sets the noise level on the 0-255 scale (default `25.0`). The noise follows PyRIT's seeded randomness, so a configured seed gives the same noise for the same image.
+
+# %%
+from pyrit.converter import ImageNoiseConverter
+
+# Add Gaussian noise with a standard deviation of 25 to every color channel
+noise_converter = ImageNoiseConverter(standard_deviation=25.0)
+noise_result = await noise_converter.convert_async(prompt=image_location)  # type: ignore
+
+print(f"Noisy image saved to: {noise_result.output_text}")
+
+noise_img = Image.open(noise_result.output_text)
+display(noise_img)
+
+# %% [markdown]
 # ### TransparencyAttackConverter
 #
 # The `TransparencyAttackConverter` creates dual-perception PNG images based on the research paper "Transparency Attacks" [@mckee2024transparency].
