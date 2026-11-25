@@ -44,6 +44,7 @@ import { routerPathParamValue } from '@/utils/routeParams'
 
 import ScannerVisibilityLabel from './ScannerVisibilityLabel'
 import { useScenarioPresetEditorStyles } from './ScenarioPresetEditor.styles'
+import { presetDraftSignature, type PresetDraft } from './presetDraftSignature'
 import { PRESETS_ROUTE } from './presetRoutes'
 import {
   buildPresetScenarioConfig,
@@ -63,43 +64,6 @@ interface DatasetProjectionResult {
   request: ScenarioRunSizeEstimateRequest
   scenarioName: string
   error: string | null
-}
-
-interface PresetDraft {
-  name: string
-  description: string
-  showInScanner: boolean
-  scenarioName: string
-  config: ScenarioConfigFormState | null
-}
-
-// Techniques, dataset sources, filter keys and filter values are selections,
-// and their controls append in click order, so restoring a removed item must
-// not read as an edit. The dataset table even drops a filter key while every
-// value is selected and re-adds it last. Only the comparison uses the sorted
-// copies; the draft itself keeps the order the operator produced.
-const presetDraftSignature = (draft: PresetDraft): string => {
-  const { config } = draft
-  if (!config) {
-    return JSON.stringify(draft)
-  }
-  const { datasets } = config
-  return JSON.stringify({
-    ...draft,
-    config: {
-      ...config,
-      techniques: [...config.techniques].sort(),
-      datasets: {
-        ...datasets,
-        sources: [...(datasets.sources ?? [])].sort((first, second) => first.name.localeCompare(second.name)),
-        filters: Object.fromEntries(
-          Object.entries(datasets.filters ?? {})
-            .sort(([firstKey], [secondKey]) => firstKey.localeCompare(secondKey))
-            .map(([key, values]) => [key, [...values].sort()]),
-        ),
-      },
-    },
-  })
 }
 
 export default function ScenarioPresetEditor({ mode }: { mode: 'create' | 'edit' }) {

@@ -13,6 +13,7 @@ import { makeScenario } from '@/test-utils/scenarioFixtures'
 import type {
   Parameter,
   RegisteredScenario,
+  ScenarioDatasetRequest,
   ScenarioDatasetSettings,
   ScenarioPreset,
   ScenarioPresetResponse,
@@ -78,6 +79,18 @@ const STORED_PRESET: ScenarioPreset = {
   include_baseline: false,
 }
 
+/** What the API returns for a preset that pinned two datasets: every field is present, each unset one as its default. */
+const API_DATASETS: ScenarioDatasetRequest = {
+  sources: [
+    { name: 'harmbench', max_size: 'default', fetch: null },
+    { name: 'xstest', max_size: 'default', fetch: null },
+  ],
+  max_per_dataset: 'default',
+  max_total: 'default',
+  fetch: null,
+  filters: null,
+}
+
 function apiError(status: number, detail: string): unknown {
   return {
     isAxiosError: true,
@@ -131,7 +144,7 @@ function AppShell(): ReactNode {
   )
 }
 
-function buildPresetRouter(initialPath: string) {
+function buildPresetRouter(initialPath: string, parentPath?: string) {
   return createMemoryRouter([
     {
       path: '/registry/scenario-presets/new',
@@ -159,7 +172,7 @@ function buildPresetRouter(initialPath: string) {
       path: '/other',
       element: <><h1>Other page</h1><RouterProbe /></>,
     },
-  ], { initialEntries: [initialPath] })
+  ], { initialEntries: parentPath ? [parentPath, initialPath] : [initialPath] })
 }
 
 function renderCreate() {
@@ -186,6 +199,28 @@ function renderEdit(name = 'nightly_probe') {
       </FluentProvider>,
     ),
   }
+}
+
+async function listThreeHarmCategories(): Promise<() => void> {
+  const listing = scenariosApi.listCompatibleDatasets as jest.Mock
+  const { items } = await listing('probe')
+  const original = listing.getMockImplementation()
+  listing.mockResolvedValue({
+    items: items.map((item) => ({
+      ...item,
+      harm_categories: item.name === 'harmbench' ? ['hate', 'violence'] : ['toxicity'],
+    })),
+  })
+  return () => listing.mockImplementation(original)
+}
+
+/** A clean editor neither objects to unloading nor asks before an in-app navigation. */
+async function expectToLeaveWithoutPrompt(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  const event = new Event('beforeunload', { cancelable: true })
+  window.dispatchEvent(event)
+  expect(event.defaultPrevented).toBe(false)
+  await user.click(screen.getByRole('button', { name: 'Leave editor' }))
+  expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
 }
 
 let restoreRouterRequest: (() => void) | null = null
@@ -820,7 +855,7 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
       jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
     )
     mockGet.mockResolvedValue({
-      preset: { ...STORED_PRESET, datasets: { sources: [{ name: 'harmbench' }, { name: 'xstest' }] } },
+      preset: { ...STORED_PRESET, datasets: API_DATASETS },
       version: 'v1',
       issues: [],
     })
@@ -858,7 +893,7 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
       preset: {
         ...STORED_PRESET,
         datasets: {
-          sources: [{ name: 'harmbench' }, { name: 'xstest' }],
+          ...API_DATASETS,
           filters: { harm_categories: ['hate', 'violence'] },
         },
       },
@@ -905,7 +940,7 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
       preset: {
         ...STORED_PRESET,
         datasets: {
-          sources: [{ name: 'harmbench' }, { name: 'xstest' }],
+          ...API_DATASETS,
           filters: { harm_categories: ['hate', 'violence'], data_types: ['text'] },
         },
       },
@@ -933,6 +968,115 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
     } finally {
       listedDatasets.mockImplementation(defaultListing)
     }
+  })
+
+  it('does not treat a toggled filter chip as an edit when the stored preset has no filters', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    const restoreListing = await listThreeHarmCategories()
+    // The API returns null for a preset that stored no filters, and the table drops the
+    // key again once every value is selected, so the request ends without it.
+    mockGet.mockResolvedValue({ preset: { ...STORED_PRESET, datasets: API_DATASETS }, version: 'v1', issues: [] })
+    try {
+      renderEdit()
+
+      const hate = 'Filter harm category hate'
+      await screen.findByRole('button', { name: hate, pressed: true })
+      await user.click(screen.getByRole('button', { name: hate }))
+      await screen.findByRole('button', { name: hate, pressed: false })
+      await user.click(screen.getByRole('button', { name: hate }))
+      await screen.findByRole('button', { name: hate, pressed: true })
+
+      await expectToLeaveWithoutPrompt(user)
+    } finally {
+      restoreListing()
+    }
+  })
+
+  it('does not treat a retyped total as an edit', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, datasets: { ...API_DATASETS, max_total: 20 } },
+      version: 'v1',
+      issues: [],
+    })
+    renderEdit()
+
+    // A reset drops max_total from the request, so typing it again appends the key after
+    // the fields the API had returned ahead of it.
+    await editLimit(user, 'Maximum objectives', '30')
+    await user.click(screen.getByRole('button', { name: /^Reset to / }))
+    await user.click(screen.getByRole('button', { name: 'Done' }))
+    await editLimit(user, 'Maximum objectives', '20')
+
+    await expectToLeaveWithoutPrompt(user)
+  })
+
+  it('does not treat a reset total as an edit when the preset stored the default', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    mockGet.mockResolvedValue({ preset: { ...STORED_PRESET, datasets: API_DATASETS }, version: 'v1', issues: [] })
+    renderEdit()
+
+    // The API spells an unset total out as 'default', and the table writes nothing instead.
+    await editLimit(user, 'Maximum objectives', '20')
+    await user.click(screen.getByRole('button', { name: /^Reset to / }))
+
+    await expectToLeaveWithoutPrompt(user)
+  })
+
+  it('does not treat a reset dataset limit as an edit', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    mockGet.mockResolvedValue({ preset: { ...STORED_PRESET, datasets: API_DATASETS }, version: 'v1', issues: [] })
+    renderEdit()
+
+    await user.click(await screen.findByRole('button', { name: 'Remove harmbench' }))
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    await user.click(await screen.findByRole('option', { name: 'harmbench (Unknown)', exact: true }))
+    // The picker adds the dataset back without its unset fields, and resetting its limit
+    // leaves an explicit 'default' behind.
+    await editLimit(user, 'harmbench objective limit', '10')
+    await user.click(screen.getByRole('button', { name: /^Reset to / }))
+
+    await expectToLeaveWithoutPrompt(user)
+  })
+
+  it('asks before the browser back button leaves unsaved edits, and stays when kept', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    const router = buildPresetRouter(
+      '/registry/scenario-presets/nightly_probe/edit', '/registry/scenario-presets',
+    )
+    render(
+      <FluentProvider theme={webLightTheme}>
+        <AppShell />
+        <RouterProvider router={router} />
+      </FluentProvider>,
+    )
+    await user.type(await screen.findByTestId('preset-description-input'), ' Updated.')
+
+    // Back is a POP, which the router handles on another path than a link or a navigate call.
+    await act(async () => { void router.navigate(-1) })
+    expect(await screen.findByRole('dialog', { name: /discard/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await screen.findByLabelText('Current URL')).toHaveTextContent(
+      '/registry/scenario-presets/nightly_probe/edit',
+    )
+    expect(await screen.findByTestId('preset-description-input')).toHaveValue('Nightly smoke test. Updated.')
   })
 
   it('does not apply replacement metadata after unmount', async () => {
@@ -1774,5 +1918,23 @@ describe('ScenarioPresetEditor compatible-only datasets', () => {
     expect(await screen.findByText('No compatible datasets available.')).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'Add dataset' })).not.toBeInTheDocument()
     expect(screen.queryByRole('radiogroup', { name: 'Dataset loading' })).not.toBeInTheDocument()
+  })
+
+  it('does not treat adding and removing the only dataset as an edit', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    mockGetScenario.mockResolvedValue(POLICY)
+    renderEdit()
+    const picker = await screen.findByRole('combobox', { name: 'Add dataset' })
+    await waitFor(() => expect(picker).toBeEnabled())
+
+    await user.click(picker)
+    await user.click(await screen.findByRole('option', { name: 'harmbench (Unknown)', exact: true }))
+    await user.click(await screen.findByRole('button', { name: 'Remove harmbench' }))
+
+    // Removing the last dataset leaves an empty list where the stored preset had no sources at all.
+    await expectToLeaveWithoutPrompt(user)
   })
 })
