@@ -59,6 +59,33 @@ describe('RegistryLayout', () => {
     expect(screen.getByRole('tab', { name: 'Converters' })).toBeInTheDocument()
   })
 
+  it('keeps the tabs when a tab fails to load and clears the error on another tab', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    const user = userEvent.setup()
+    const FailingTab = () => { throw new Error('Failed to fetch dynamically imported module') }
+    render(
+      <FluentProvider theme={webLightTheme}>
+        <MemoryRouter initialEntries={['/registry/converters']}>
+          <Routes>
+            <Route path="/registry" element={<RegistryLayout />}>
+              <Route path="targets" element={<div>Target registry content</div>} />
+              <Route path="converters" element={<FailingTab />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </FluentProvider>,
+    )
+
+    expect(screen.getByTestId('error-boundary-fallback')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Converters' })).toHaveAttribute('aria-selected', 'true')
+
+    await user.click(screen.getByRole('tab', { name: 'Targets' }))
+
+    expect(screen.queryByTestId('error-boundary-fallback')).not.toBeInTheDocument()
+    expect(screen.getByText('Target registry content')).toBeInTheDocument()
+    consoleSpy.mockRestore()
+  })
+
   it('shows target, converter, and scenario preset registry tabs', () => {
     renderLayout()
 

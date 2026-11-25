@@ -2,6 +2,7 @@ import { Suspense } from 'react'
 import { Spinner, Tab, TabList, Tooltip } from '@fluentui/react-components'
 import { Outlet, useLocation, useNavigate } from 'react-router'
 
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 
 import { useRegistryLayoutStyles } from './Registry.styles'
@@ -63,10 +64,12 @@ export default function RegistryLayout() {
         </Tooltip>
       </TabList>
       <div className={styles.content}>
-        {/* Tabs load on first visit; keep the tab list in place while one does. */}
-        <Suspense key={selectedTab} fallback={<Spinner label="Loading..." />}>
-          <Outlet />
-        </Suspense>
+        {/* Tabs load on first visit; keep the tab list in place while one does, or if one fails. */}
+        <ErrorBoundary variant="section" resetKeys={[selectedTab]}>
+          <Suspense key={selectedTab} fallback={<Spinner label="Loading..." />}>
+            <Outlet />
+          </Suspense>
+        </ErrorBoundary>
       </div>
     </div>
   )
