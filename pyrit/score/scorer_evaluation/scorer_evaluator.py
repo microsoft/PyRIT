@@ -517,10 +517,13 @@ class ScorerEvaluator(abc.ABC):
             messages (list[Message]): The dataset's conversation messages, in order.
         """
         memory = self.scorer._memory
-        piece_ids = [str(piece.id) for message in messages for piece in message.message_pieces]
+        # Memory never stores pieces marked not_in_memory, so they cannot show that a message is stored.
+        piece_ids = [
+            str(piece.id) for message in messages for piece in message.message_pieces if not piece.not_in_memory
+        ]
         stored = {str(piece.id) for piece in await memory.get_message_pieces_async(prompt_ids=piece_ids)}
         for message in messages:
-            message_ids = {str(piece.id) for piece in message.message_pieces}
+            message_ids = {str(piece.id) for piece in message.message_pieces if not piece.not_in_memory}
             if message_ids <= stored:
                 continue
             await memory.add_message_to_memory_async(request=message)
