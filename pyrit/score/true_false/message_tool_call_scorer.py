@@ -10,15 +10,24 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from pyrit.models import MessageScorable, Score, ToolExecutionMetadata, ToolsCalled
+from pyrit.models import (
+    MessagePiece,
+    MessageScorable,
+    RequestTraceContext,
+    Score,
+    ToolCaptureCoverage,
+    ToolExecutionMetadata,
+    ToolsCalled,
+)
 from pyrit.models.messages.tool_content import FunctionCallContent, FunctionOutputContent
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
+from pyrit.score.tool_argument_matching import describe_tool_requirement, match_tool_requirement
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping, Sequence
 
-    from pyrit.models import ComponentIdentifier, MessagePiece, Scorable, ScoringExpectation
+    from pyrit.models import ComponentIdentifier, Scorable, ScoringExpectation, ToolCallRequirement
 
 # Legacy outputs have no dispatch metadata. Matching payloads remain ambiguous and cannot prove invocation.
 _DISPATCH_ERRORS = {
@@ -31,6 +40,13 @@ _INCOMPLETE_EVIDENCE_REASON = (
     "Stored messages cannot rule out a call: hosted tools and several response section types are not "
     "persisted, and targets that execute tools themselves store no outputs."
 )
+_UNREADABLE_ARGUMENTS_REASON = (
+    "The stored arguments of an executed call could not be read, so the stored messages cannot show whether it matches."
+)
+_COMPLETE_EVIDENCE_REASON = (
+    "The target recorded that every tool run for each response through this message is stored, so "
+    "the stored messages rule out other calls."
+)
 
 
 def _json_object(value: str) -> dict[str, Any] | None:
@@ -41,22 +57,39 @@ def _json_object(value: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _requested_call(piece: MessagePiece) -> tuple[str, str] | None:
+def _requested_call(piece: MessagePiece) -> tuple[str, str, dict[str, Any] | None] | None:
     """
-    Read the call id and function name from a model-authored function_call piece.
+    Read the call id, function name, and arguments from a model-authored function_call piece.
 
     Simulated history is skipped: an injected call is not a request this run made.
 
     Returns:
-        tuple[str, str] | None: The call id and name, or None if the piece is not a readable call.
+        tuple[str, str, dict[str, Any] | None] | None: The call id, name, and arguments, or None if
+            the piece is not a readable call. Arguments that are not a JSON object are None.
     """
     if piece.role != "assistant" or piece.converted_value_data_type != "function_call":
         return None
     try:
         # The shared model reads both the Chat Completions and the Responses shapes.
         content = FunctionCallContent.model_validate_json(piece.converted_value)
-        return content.validated_call_id(), content.validated_function().name
+        function = content.validated_function()
+        return content.validated_call_id(), function.name, _json_object(function.arguments)
     except (ValidationError, ValueError):
+        return None
+
+
+def _dispatch_result(piece: MessagePiece) -> FunctionOutputContent | None:
+    """
+    Read a function_call_output piece, whether or not its function ran.
+
+    Returns:
+        FunctionOutputContent | None: The dispatch result, or None for other or unreadable pieces.
+    """
+    if piece.role != "tool" or piece.converted_value_data_type != "function_call_output":
+        return None
+    try:
+        return FunctionOutputContent.model_validate_json(piece.converted_value)
+    except ValidationError:
         return None
 
 
@@ -67,11 +100,8 @@ def _executed_call_id(piece: MessagePiece) -> str | None:
     Returns:
         str | None: The call id, or None for other pieces and for dispatch failures.
     """
-    if piece.role != "tool" or piece.converted_value_data_type != "function_call_output":
-        return None
-    try:
-        content = FunctionOutputContent.model_validate_json(piece.converted_value)
-    except ValidationError:
+    content = _dispatch_result(piece)
+    if content is None:
         return None
     execution = ToolExecutionMetadata.from_metadata(metadata=piece.prompt_metadata)
     if execution is not None:
@@ -85,6 +115,81 @@ def _executed_call_id(piece: MessagePiece) -> str | None:
     return content.call_id
 
 
+def _executed_message_tool_calls(*, pieces: Iterable[MessagePiece]) -> list[tuple[str, dict[str, Any] | None]]:
+    """
+    Return each function call that ran, pairing each request with its output by call id.
+
+    Returns:
+        list[tuple[str, dict[str, Any] | None]]: The name and requested arguments of each execution.
+    """
+    requested: dict[str, tuple[str, dict[str, Any] | None]] = {}
+    executed: list[tuple[str, dict[str, Any] | None]] = []
+    # Walking in sequence order means an output only pairs with a request made before it.
+    for piece in sorted(pieces, key=lambda piece: piece.sequence):
+        if (call := _requested_call(piece)) is not None:
+            call_id, name, arguments = call
+            requested.setdefault(call_id, (name, arguments))
+        elif (call_id := _executed_call_id(piece)) is not None and call_id in requested:
+            executed.append(requested[call_id])
+    return executed
+
+
+def message_tool_capture_gaps(*, pieces: Iterable[MessagePiece]) -> tuple[str, ...]:
+    """
+    Return why the stored messages may not show every tool that ran, or nothing when they do.
+
+    Capture is complete only when each outbound request has a stored response, the target
+    recorded complete ``ToolCaptureCoverage`` on every model response, and every function call
+    the model made has its dispatch result in scope, whether or not the function ran. Simulated
+    and prepended history are not requests or responses of this run.
+
+    Args:
+        pieces (Iterable[MessagePiece]): The conversation pieces in scope.
+
+    Returns:
+        tuple[str, ...]: The gaps, sorted; empty when the stored messages show every tool that ran.
+    """
+    by_sequence: dict[int, list[MessagePiece]] = {}
+    requested: set[str] = set()
+    answered: set[str] = set()
+    for piece in pieces:
+        by_sequence.setdefault(piece.sequence, []).append(piece)
+        if (call := _requested_call(piece)) is not None:
+            requested.add(call[0])
+        elif (result := _dispatch_result(piece)) is not None:
+            answered.add(result.call_id)
+    gaps: set[str] = set()
+    if requested - answered:
+        # A response that asked for a call says nothing about whether it ran until its result is in scope.
+        gaps.add("unanswered_tool_call")
+    awaiting_response = False
+    for sequence in sorted(by_sequence):
+        turn = by_sequence[sequence]
+        if any(_is_live_request(piece) for piece in turn):
+            if awaiting_response:
+                gaps.add("unanswered_request")
+            awaiting_response = True
+        elif any(piece.role == "assistant" for piece in turn):
+            awaiting_response = False
+            coverage = [ToolCaptureCoverage.from_metadata(metadata=piece.prompt_metadata) for piece in turn]
+            recorded = [entry for entry in coverage if entry is not None]
+            if not recorded:
+                gaps.add("capture_not_recorded")
+            gaps.update(gap.value for entry in recorded for gap in entry.gaps)
+    if awaiting_response:
+        gaps.add("unanswered_request")
+    if not by_sequence:
+        gaps.add("no_messages")
+    return tuple(sorted(gaps))
+
+
+def _is_live_request(piece: MessagePiece) -> bool:
+    return bool(
+        piece.prompt_metadata.get(RequestTraceContext.REQUEST_METADATA_KEY) == 1
+        or (piece.role == "user" and not piece.prompt_metadata.get(MessagePiece.PREPENDED_HISTORY_METADATA_KEY))
+    )
+
+
 def match_message_tool_calls(*, pieces: Iterable[MessagePiece]) -> set[str]:
     """
     Return the names of functions that ran, pairing each request with its output by call id.
@@ -95,31 +200,37 @@ def match_message_tool_calls(*, pieces: Iterable[MessagePiece]) -> set[str]:
     Returns:
         set[str]: Names of functions with an execution attempt in the given pieces.
     """
-    requested: dict[str, str] = {}
-    executed: set[str] = set()
-    # Walking in sequence order means an output only pairs with a request made before it.
-    for piece in sorted(pieces, key=lambda piece: piece.sequence):
-        if (call := _requested_call(piece)) is not None:
-            requested.setdefault(*call)
-        elif (call_id := _executed_call_id(piece)) is not None and call_id in requested:
-            executed.add(requested[call_id])
-    return executed
+    return {name for name, _ in _executed_message_tool_calls(pieces=pieces)}
 
 
 class MessageToolCallScorer(TrueFalseScorer):
     """
     Score tool invocations recorded as function_call and function_call_output message pieces.
 
-    This scorer needs no trace pipeline. Stored messages are partial evidence, so it reports true
-    when every required tool ran and undetermined otherwise; it never reports false. Compose it
-    with ``OtelToolCallScorer`` under an OR aggregator when trace evidence is also available.
+    This scorer needs no trace pipeline. Stored messages are usually partial evidence, so it reports
+    true when every required tool ran and undetermined otherwise. Compose it with
+    ``OtelToolCallScorer`` under an OR aggregator when trace evidence is also available.
+
+    Absence counts only when the stored messages are complete: every outbound request through the
+    scored message has a stored response, and the target recorded complete ``ToolCaptureCoverage``
+    on every model response. ``OpenAIResponseTarget`` records it when it runs the model's function
+    calls itself and the provider ran no tool of its own. Then a required tool with no stored
+    execution makes the score false.
+
+    An exhaustive condition is false when a stored execution of a tool the condition does not name
+    exists. It is true only from complete stored messages, and otherwise undetermined.
+
+    A requirement with argument constraints needs one execution whose requested arguments, as
+    stored in its function_call piece, satisfy every constraint.
     """
 
     SUPPORTED_SCORABLE_TYPES = (MessageScorable,)
     CONDITION_TYPE = ToolsCalled
 
     def _build_identifier(self) -> ComponentIdentifier:
-        return self._create_identifier(params={"matching_version": 2, "message_scope_version": 1})
+        return self._create_identifier(
+            params={"matching_version": 2, "message_scope_version": 1, "capture_coverage_version": 1}
+        )
 
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
         if not isinstance(scorable, MessageScorable):
@@ -130,15 +241,59 @@ class MessageToolCallScorer(TrueFalseScorer):
         if not piece.conversation_id or piece.sequence < 0:
             raise ValueError("Message tool-call scoring requires a stored conversation and message sequence.")
         conversation = await self._memory.get_message_pieces_async(conversation_id=piece.conversation_id)
-        executed = match_message_tool_calls(pieces=(p for p in conversation if p.sequence <= piece.sequence))
-        missing = [tool.name for tool in condition.tools if tool.name not in executed]
+        in_scope = [p for p in conversation if p.sequence <= piece.sequence]
+        calls: dict[str, list[Mapping[str, Any] | None]] = {}
+        for name, arguments in _executed_message_tool_calls(pieces=in_scope):
+            calls.setdefault(name, []).append(arguments)
+        complete = not message_tool_capture_gaps(pieces=in_scope)
+        verdicts = [
+            (tool, match_tool_requirement(requirement=tool, calls=calls.get(tool.name, []))) for tool in condition.tools
+        ]
+        unmet = [tool for tool, verdict in verdicts if verdict is not True]
+        # Complete messages refute a requirement only when every execution of its tool is refuted.
+        # An execution whose stored arguments cannot be read leaves it unknown.
+        refuted = [tool for tool, verdict in verdicts if verdict is False]
         piece_id = self._piece_id_from_scorable(scorable)
-        names = ", ".join(tool.name for tool in condition.tools)
-        if missing:
+        names = ", ".join(describe_tool_requirement(tool) for tool in condition.tools)
+        if condition.exhaustive:
+            return [
+                self._score_exhaustive(
+                    condition=condition,
+                    executed=set(calls),
+                    unmet=unmet,
+                    refuted=refuted,
+                    complete=complete,
+                    scorable=scorable,
+                )
+            ]
+        if unmet:
+            # A tool that ran with other arguments did run, so say so rather than report no execution.
+            not_run = [describe_tool_requirement(tool) for tool in unmet if tool.name not in calls]
+            unmatched = [describe_tool_requirement(tool) for tool in unmet if tool.name in calls]
+            reasons = []
+            if not_run:
+                reasons.append(f"Stored messages show no execution of: {', '.join(not_run)}.")
+            if unmatched:
+                reasons.append(
+                    f"Stored messages show execution of {', '.join(unmatched)}, but no stored call matches "
+                    "the required arguments."
+                )
+            if complete and refuted:
+                return [
+                    Score(
+                        score_value="false",
+                        score_type="true_false",
+                        score_rationale=" ".join([*reasons, _COMPLETE_EVIDENCE_REASON]),
+                        score_value_description="Tool invocation; successful completion is not required.",
+                        scorer_class_identifier=self.get_identifier(),
+                        scorable=scorable,
+                        message_piece_id=piece_id,
+                    )
+                ]
             return [
                 self._build_undetermined_score(
-                    rationale=(
-                        f"Stored messages show no execution of: {', '.join(missing)}. {_INCOMPLETE_EVIDENCE_REASON}"
+                    rationale=" ".join(
+                        [*reasons, _UNREADABLE_ARGUMENTS_REASON if complete else _INCOMPLETE_EVIDENCE_REASON]
                     ),
                     description="Tool invocation; successful completion is not required.",
                     scorable=scorable,
@@ -156,3 +311,64 @@ class MessageToolCallScorer(TrueFalseScorer):
                 message_piece_id=piece_id,
             )
         ]
+
+    def _score_exhaustive(
+        self,
+        *,
+        condition: ToolsCalled,
+        executed: set[str],
+        unmet: Sequence[ToolCallRequirement],
+        refuted: Sequence[ToolCallRequirement],
+        complete: bool,
+        scorable: MessageScorable,
+    ) -> Score:
+        """
+        Decide an exact match from stored executions and whether they are complete.
+
+        Returns:
+            Score: False when an unnamed tool ran, or when complete messages refute a required
+                execution; true when complete messages show exactly the required tools; otherwise
+                undetermined, including when an executed call's stored arguments cannot be read.
+        """
+        piece_id = self._piece_id_from_scorable(scorable)
+        description = "Tool invocation; successful completion is not required."
+        extra = sorted(executed - {tool.name for tool in condition.tools})
+        if extra:
+            return Score(
+                score_value="false",
+                score_type="true_false",
+                score_rationale=(
+                    "Stored function call outputs show execution of tools outside the required set: "
+                    f"{', '.join(extra)}."
+                ),
+                score_value_description=description,
+                scorer_class_identifier=self.get_identifier(),
+                scorable=scorable,
+                message_piece_id=piece_id,
+            )
+        names = ", ".join(tool.name for tool in condition.tools)
+        expected = f"exactly the required tools ({names}) ran" if names else "no tool ran"
+        if complete and (refuted or not unmet):
+            missing = ", ".join(describe_tool_requirement(tool) for tool in refuted)
+            return Score(
+                score_value="false" if refuted else "true",
+                score_type="true_false",
+                score_rationale=(
+                    f"Stored messages show no matching execution of: {missing}. {_COMPLETE_EVIDENCE_REASON}"
+                    if refuted
+                    else f"Stored messages show that {expected}. {_COMPLETE_EVIDENCE_REASON}"
+                ),
+                score_value_description=description,
+                scorer_class_identifier=self.get_identifier(),
+                scorable=scorable,
+                message_piece_id=piece_id,
+            )
+        return self._build_undetermined_score(
+            rationale=(
+                f"Stored messages cannot establish that {expected}. "
+                f"{_UNREADABLE_ARGUMENTS_REASON if complete else _INCOMPLETE_EVIDENCE_REASON}"
+            ),
+            description=description,
+            scorable=scorable,
+            message_piece_id=piece_id,
+        )

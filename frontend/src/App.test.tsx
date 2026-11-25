@@ -1487,9 +1487,23 @@ describe("App", () => {
         labels: {}, objective: "", outcome: "undetermined",
         related_conversation_count: 0, selected_conversation_id: "source", selected_conversation_valid: false,
       });
-      renderApp(`${routePrefix}/owner/conversations/source?scenarioResultId=123e4567-e89b-12d3-a456-426614174000&findingEvidenceId=123e4567-e89b-12d3-a456-426614174000`);
+      const user = userEvent.setup();
+      renderApp(
+        `${routePrefix}/owner/conversations/source?scenarioResultId=123e4567-e89b-12d3-a456-426614174000&findingEvidenceId=123e4567-e89b-12d3-a456-426614174000`,
+        { fromScan: true },
+      );
       expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
+      expect(screen.getByText(/The requested evidence conversation/)).toBeInTheDocument();
+      expect(screen.getByText("source")).toBeInTheDocument();
+      expect(screen.getByText("owner")).toBeInTheDocument();
+      expect(screen.queryByText(/No attack matches the id/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "View parent attack" })).toBeInTheDocument();
       expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "View parent attack" }));
+      expect(await screen.findByTestId("chat-window")).toBeInTheDocument();
+      expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("123e4567-e89b-12d3-a456-426614174000");
+      expect(screen.getByTestId("route-location")).toHaveAttribute("data-navigation-state", JSON.stringify({ fromScan: true }));
     },
   );
 
@@ -2860,7 +2874,12 @@ describe("App", () => {
     await user.click(screen.getByTestId("nav-datasets"));
     await waitFor(() => expect(screen.getByTestId("dataset-catalog")).toBeInTheDocument());
     expect(screen.getByTestId("dataset-location")).toHaveTextContent("/datasets?filter=harmful");
-    expect(screen.getByTestId("dataset-state")).toHaveTextContent('{"catalogPath":"/datasets?filter=harmful","cursors":["cur-1"]}');
+    expect(JSON.parse(screen.getByTestId("dataset-state").textContent ?? '{}')).toEqual(expect.objectContaining({
+      catalogPath: "/datasets?filter=harmful", cursors: ["cur-1"],
+      chatOrigin: expect.objectContaining({
+        path: "/attack/chat/ar-nav-1/conversations/conv-nav-1", attackId: "ar-nav-1", conversationId: "conv-nav-1",
+      }),
+    }));
   });
 
   it("clearing draft text stays cleared after another round trip to datasets", async () => {

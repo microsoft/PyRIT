@@ -40,13 +40,14 @@ function expectOnlyLoadedDatasetGets(): void {
   expect(catalogCalls.length).toBeGreaterThan(0)
   for (const call of catalogCalls) {
     expect(call[1]).toEqual(expect.objectContaining({
-      params: { loaded_only: true },
+      params: { loaded_only: false },
     }))
   }
   for (const call of mockGet.mock.calls) {
     const url = String(call[0])
     if (url === '/datasets') continue
-    expect(url === '/datasets/seeds' || url.startsWith('/datasets/seeds/')).toBe(true)
+    const regenerateLookup = url === '/prompt-generations/from-dataset'
+    expect(url === '/datasets/seeds' || url.startsWith('/datasets/seeds/') || regenerateLookup).toBe(true)
     const params = (call[1] as { params?: Record<string, unknown> } | undefined)?.params
     expect(typeof params?.selection_key).toBe('string')
     expect(params?.selection_key).not.toBe('')
@@ -130,6 +131,9 @@ describe('DatasetSelection', () => {
       if (url === '/datasets/seeds' || url.startsWith('/datasets/seeds/')) {
         return Promise.resolve({ data: EMPTY_SEED_PAGE })
       }
+      if (url === '/prompt-generations/from-dataset') {
+        return Promise.reject(new Error('Not generated'))
+      }
       return Promise.resolve({ data: { items: [LOADED] } })
     })
   })
@@ -154,6 +158,63 @@ describe('DatasetSelection', () => {
     expect(screen.queryByRole('link', { name: 'harmbench' })).not.toBeInTheDocument()
     const summary = screen.getByRole('article', { name: 'harmbench' })
     expect(within(summary).queryByRole('heading')).not.toBeInTheDocument()
+  })
+
+  it('shows an unloaded provider on its detail route without requesting seeds', async () => {
+    const available = makeDataset({
+      name: 'public-provider', selection_key: 'dataset:named:public-provider', loaded: false,
+      logical_examples: null, seed_pieces: null, objectives: null,
+      provider: {
+        description: 'Default public dataset description', source_url: 'https://example.com/dataset',
+        license_url: 'https://example.com/license', access_url: 'https://example.com/access',
+        required_environment_variables: ['HUGGINGFACE_TOKEN'],
+        modalities: ['text'], harm_categories: [], size: ['medium'], load_time: [], unavailable_reason: null,
+      },
+    })
+    mockGet.mockResolvedValue({ data: { items: [available] } })
+    renderSelection(datasetDetailPath(available.selection_key))
+    expect(await screen.findByText('Default public dataset description')).toBeInTheDocument()
+    for (const [label, url] of [
+      ['Source', 'https://example.com/dataset'],
+      ['License', 'https://example.com/license'],
+      ['Access', 'https://example.com/access'],
+    ]) {
+      const link = screen.getByRole('link', { name: `${label}: ${url}` })
+      expect(link).toHaveTextContent(url)
+      expect(link).toHaveAttribute('href', url)
+    }
+    expect(screen.getByText(/Access may require HUGGINGFACE_TOKEN/)).toBeInTheDocument()
+    expect(seedCalls()).toEqual([])
+  })
+
+  it('links to a pre-filled generation form when a generator made the dataset', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/prompt-generations/from-dataset') {
+        return Promise.resolve({ data: { generator: 'assert', request: {}, source_dataset_name: 'harmbench' } })
+      }
+      if (url.startsWith('/datasets/seeds')) return Promise.resolve({ data: EMPTY_SEED_PAGE })
+      return Promise.resolve({ data: { items: [LOADED] } })
+    })
+    renderSelection(datasetDetailPath(LOADED.selection_key))
+
+    const link = await screen.findByRole('link', { name: /edit & regenerate/i })
+    expect(link).toHaveAttribute(
+      'href',
+      '/datasets/generate/new?generator=assert&selection_key=dataset%3Anamed%3Aharmbench',
+    )
+    expect(mockGet).toHaveBeenCalledWith('/prompt-generations/from-dataset', expect.objectContaining({
+      params: { selection_key: LOADED.selection_key },
+    }))
+  })
+
+  it('offers no regeneration for a dataset no generator made', async () => {
+    renderSelection(datasetDetailPath(LOADED.selection_key))
+
+    await screen.findByRole('heading', { level: 1, name: 'harmbench' })
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith('/prompt-generations/from-dataset', expect.anything())
+    })
+    expect(screen.queryByRole('link', { name: /regenerate/i })).not.toBeInTheDocument()
   })
 
   it('shows not-found for an unknown key and renders that key as text', async () => {
@@ -227,6 +288,29 @@ describe('DatasetSelection', () => {
     })
 
     expect(await screen.findByRole('link', { name: 'Back to datasets' })).toHaveAttribute('href', '/datasets')
+  })
+
+  it('offers a return to the originating chat and carries its route state', async () => {
+    const chatState = { fromScenarioHistory: true, scenarioHistorySearch: '?target=local' }
+    renderSelection(datasetDetailPath(LOADED.selection_key), {
+      chatOrigin: {
+        path: '/attack/chat/attack-1/conversations/conversation-1',
+        state: chatState,
+        attackId: 'attack-1',
+        conversationId: 'conversation-1',
+      },
+    })
+
+    await screen.findByRole('heading', { level: 1, name: 'harmbench' })
+    const returnLink = screen.getByRole('link', { name: 'Return to Chat' })
+    expect(returnLink).toHaveAttribute('href', '/attack/chat/attack-1/conversations/conversation-1')
+  })
+
+  it('does not expose an unrelated chat destination for direct dataset entry', async () => {
+    renderSelection(datasetDetailPath(LOADED.selection_key))
+
+    await screen.findByRole('heading', { level: 1, name: 'harmbench' })
+    expect(screen.queryByRole('link', { name: 'Return to Chat' })).not.toBeInTheDocument()
   })
 
   it('does not send catalog name search or sort to the seed API', async () => {

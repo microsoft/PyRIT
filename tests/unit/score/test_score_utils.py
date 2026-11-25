@@ -9,8 +9,11 @@ which is critical for multi-turn attacks like TAP and Crescendo. These attacks n
 to provide numerical feedback to adversarial chats regardless of score type.
 """
 
+import math
 import uuid
 from unittest.mock import MagicMock
+
+import pytest
 
 from pyrit.models import ComponentIdentifier, Score
 from pyrit.score.score_utils import (
@@ -174,6 +177,19 @@ class TestNormalizeScoreToFloat:
         result = normalize_score_to_float(score)
 
         assert result == 0.5
+
+    @pytest.mark.parametrize("value", ["invalid", "0.5", math.nan, math.inf, -0.1, 1.5, 10**400])
+    def test_ignores_unusable_legacy_float_metadata(self, value) -> None:
+        score = Score(
+            score_type="true_false",
+            score_value="true",
+            score_value_description="",
+            score_rationale="",
+            score_metadata={ORIGINAL_FLOAT_VALUE_KEY: value, "model": "judge"},
+        )
+
+        assert normalize_score_to_float(score) == 1.0
+        assert score.score_metadata["model"] == "judge"
 
 
 class TestCombineMetadataAndCategories:

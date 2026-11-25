@@ -121,8 +121,8 @@ def main(*, args: list[str] | None = None) -> int:
     Returns:
         int: Exit code (0 for success, 1 for error).
     """
-    sys.stdout.reconfigure(errors="replace")  # type: ignore[ty:unresolved-attribute]
-    sys.stderr.reconfigure(errors="replace")  # type: ignore[ty:unresolved-attribute]
+    sys.stdout.reconfigure(errors="replace")  # type: ignore[ty:missing-union-attribute]
+    sys.stderr.reconfigure(errors="replace")  # type: ignore[ty:missing-union-attribute]
 
     try:
         parsed_args = parse_args(args=args)

@@ -24,6 +24,7 @@ from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydanti
 from pyrit.models.score import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ComponentIdentifierField,
 )
+from pyrit.models.target.provider_trace_reference import ProviderTraceReference
 from pyrit.models.target.request_trace_context import RequestTraceContext
 
 if TYPE_CHECKING:
@@ -137,6 +138,7 @@ class MessagePiece(BaseModel):
         self.prompt_metadata[self.PREPENDED_HISTORY_METADATA_KEY] = True
         self.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
         self.prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+        ProviderTraceReference.clear_metadata(self.prompt_metadata)
 
     def to_message(self) -> Message:
         """
@@ -182,6 +184,20 @@ class MessagePiece(BaseModel):
             ``True`` if the response was blocked by the target / content filter.
         """
         return self.response_error == "blocked"
+
+    def is_blocked_error(self) -> bool:
+        """
+        Return ``True`` when this is an error piece for a content-filtered response.
+
+        A blocked turn is a real provider round trip that stays in conversation history
+        (``filter_non_replayable_messages`` keeps it), so targets replay it as a text
+        part when rebuilding provider payloads. Error pieces with any other
+        ``response_error`` represent failed exchanges and are never replayed.
+
+        Returns:
+            ``True`` if the piece is an ``error`` piece with ``response_error == "blocked"``.
+        """
+        return self.converted_value_data_type == "error" and self.is_blocked()
 
     def mark_as_structured_refusal(self, *, refusal: str) -> None:
         """
