@@ -58,7 +58,7 @@ def _message_piece_digest(piece: MessagePiece, *, include_id: bool) -> str:
     Returns:
         str: The lowercase SHA-256 digest.
     """
-    value: dict[str, object] = piece.model_dump(mode="json")
+    value = dict[str, object](piece.model_dump(mode="json"))
     value["not_in_memory"] = piece.not_in_memory
     if not include_id:
         value.pop("id")
