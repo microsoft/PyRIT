@@ -527,7 +527,7 @@ def test_image_compression_identifier_is_stable_for_equal_settings() -> None:
     )
 
 
-async def test_image_compression_runs_off_the_event_loop_async(sample_image_bytes):
+async def test_image_compression_converter_runs_off_the_event_loop(sample_image_bytes):
     loop_thread_id = threading.get_ident()
     compress_thread_ids: list[int] = []
     converter = ImageCompressionConverter(
