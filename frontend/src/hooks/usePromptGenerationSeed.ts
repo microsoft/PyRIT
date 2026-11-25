@@ -58,7 +58,10 @@ export function usePromptGenerationSeed(params: NewGenerationParams): PromptGene
     setAttempt((value) => value + 1)
   }, [])
 
-  const templates = { template, suite }
+  const templates: PromptGenerationFormSeed = {
+    ...(template !== undefined ? { template } : {}),
+    ...(suite !== undefined ? { suite } : {}),
+  }
   if (from) {
     const current = loaded?.attempt === attempt ? loaded : null
     if (current === null) return { loading: true, error: null, seed: templates, retry: retryGeneration }

@@ -2191,7 +2191,9 @@ class Scenario(ABC):
         atomic_groups: list[ScenarioRunPlanAtomicGroup] = []
         for atomic_attack in self._atomic_attacks:
             technique_name = atomic_attack.technique_name
-            if not isinstance(technique_name, str):
+            baseline = atomic_attack.group_kind is ScenarioRunPlanGroupKind.BASELINE
+            # A baseline runs no technique, even when its display group shares a technique's name.
+            if not isinstance(technique_name, str) and not baseline:
                 technique_name = atomic_attack.display_group
             technique = next(
                 (candidate for candidate in self._technique_class if candidate.value == technique_name),

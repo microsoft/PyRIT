@@ -37,7 +37,7 @@ export default function GenerationTargetFields({
         const unregistered = selected !== '' && !targets.some((target) => target.target_registry_name === selected)
         const validation = error && targets.length === 0
           ? error
-          : unregistered ? `"${selected}" is not a registered target.` : undefined
+          : unregistered ? `"${selected}" is not a registered target.` : null
         return (
           <Field
             key={role.role}
