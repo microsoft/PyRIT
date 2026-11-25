@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import re
 import unicodedata
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import unquote, urlsplit
 
 from pyrit.models.catalog import RestoreFailureReason, normalized_endpoint
@@ -144,9 +144,11 @@ def check_saveable_class(cls: type) -> tuple[str, ...]:
     """
     _check_class(cls)
     _check_server_headers(cls)
-    fallbacks: Mapping[str, str | None] = getattr(cls, "server_fallback_parameters", {})
+    fallbacks = get_server_fallback_parameters(cls)
     turned_off = {name: value for name, value in fallbacks.items() if value is not None}
-    supported_auth_modes: tuple[str, ...] = tuple(getattr(cls, "supported_auth_modes", None) or ("api_key",))
+    # PromptTarget declares the supported auth modes; non-target components may not declare any.
+    declared_auth_modes = cast("tuple[str, ...] | None", getattr(cls, "supported_auth_modes", None))
+    supported_auth_modes = tuple(declared_auth_modes or ("api_key",))
     saveable_modes: list[str] = []
     for auth_mode in supported_auth_modes:
         try:
@@ -163,6 +165,17 @@ def check_saveable_class(cls: type) -> tuple[str, ...]:
             "from this server yet.",
         )
     return tuple(saveable_modes)
+
+
+def get_server_fallback_parameters(cls: type) -> Mapping[str, str | None]:
+    """
+    Read the credential fallback policy a class declares.
+
+    Returns:
+        Mapping[str, str | None]: The fallback policy, or an empty mapping for classes without one.
+    """
+    # PromptTarget declares this mapping; a registry can also supply a non-target class without it.
+    return cast("Mapping[str, str | None]", getattr(cls, "server_fallback_parameters", {}))
 
 
 def _check_class(cls: type) -> None:
@@ -238,7 +251,7 @@ def _check_server_fallbacks(
             reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
             message=f"'{cls.__name__}' only supports auth_mode {modes}.",
         )
-    fallbacks: Mapping[str, str | None] = getattr(cls, "server_fallback_parameters", {})
+    fallbacks = get_server_fallback_parameters(cls)
     for name, turned_off in fallbacks.items():
         value = params.get(name)
         if value in (None, ""):
@@ -263,7 +276,8 @@ def _check_destinations(*, cls: type, params: Mapping[str, Any]) -> None:
         SavedEntryRefusedError: If a destination that would take this server's setting is empty or isn't an
             http(s) or ws(s) address, or a destination can carry a credential.
     """
-    destinations: Mapping[str, bool] = getattr(cls, "destination_parameters", {})
+    # PromptTarget declares this mapping; a registry can also supply a non-target class without it.
+    destinations = cast("Mapping[str, bool]", getattr(cls, "destination_parameters", {}))
     for name, takes_server_setting in destinations.items():
         value = params.get(name)
         if value is None or (isinstance(value, str) and not value.strip()):

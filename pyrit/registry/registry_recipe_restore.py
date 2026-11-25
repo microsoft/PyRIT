@@ -11,7 +11,7 @@ import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from pyrit.common.azure_storage import redact_urls
 from pyrit.models import ComponentType
@@ -49,6 +49,8 @@ _FailureKey = tuple[RegistryRecipeKind, str | None]
 
 # Builds one saved entry and registers it under its name.
 RecipeBuilder = Callable[[StoredRecipe], Awaitable[None]]
+_ComponentT = TypeVar("_ComponentT")
+_MetadataT = TypeVar("_MetadataT", bound="RegistryMetadata")
 
 
 @dataclass(frozen=True)
@@ -84,8 +86,7 @@ class RegistryRecipeRestorer:
     this server or send requests where this server's settings say. Entries that can't come back are
     reported with the reason instead of being skipped.
 
-    Stored files are otherwise trusted the way configuration is. Converters and scorers don't
-    declare the credentials they read from server settings yet, so those rules cover targets only.
+    Stored files are otherwise trusted the way configuration is.
     """
 
     _KIND_BY_COMPONENT_TYPE: ClassVar[dict[ComponentType, RegistryRecipeKind]] = {
@@ -370,14 +371,16 @@ class RegistryRecipeRestorer:
         return references + self._parameter_references(parameters=parameters, params=recipe.params)
 
     @staticmethod
-    def _class_parameters(*, registry: Registry[Any, Any], name: str, cls: type) -> tuple[Parameter, ...]:
+    def _class_parameters(
+        *, registry: Registry[_ComponentT, _MetadataT], name: str, cls: type[_ComponentT]
+    ) -> tuple[Parameter, ...]:
         """
         Get a registered class's constructor parameters from the registry's cached metadata.
 
         Returns:
             tuple[Parameter, ...]: The parameters the class declares.
         """
-        metadata: RegistryMetadata = registry.get_registered_class_metadata(name) or registry.get_class_metadata(cls)
+        metadata = registry.get_registered_class_metadata(name) or registry.get_class_metadata(cls)
         return metadata.parameters
 
     def _parameter_references(
