@@ -22,6 +22,7 @@ from pyrit.executor.promptgen.gcg.default_implementations import (
     CrossEntropyLoss,
     LengthPreservingFilter,
     StandardGCGSampling,
+    decode_control_tokens,
 )
 from pyrit.executor.promptgen.gcg.extension_protocols import CandidateFilter, LossFunction, SamplingStrategy
 
@@ -231,10 +232,13 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         filter_cand: bool,
     ) -> list[str]:
         candidate_filter = self._resolve_candidate_filter(filter_cand=filter_cand)
+        tokenizer = self.workers[worker_index].tokenizer
         return candidate_filter.filter_candidates(
             candidate_tokens=control_cand,
-            tokenizer=self.workers[worker_index].tokenizer,
-            current_control=self.control_str,
+            tokenizer=tokenizer,
+            current_control=decode_control_tokens(
+                tokenizer=tokenizer, control_tokens=self.prompts[worker_index].control_toks
+            ),
         )
 
     def _get_control_length(self, *, control: str) -> int | None:
@@ -327,7 +331,9 @@ class GCGMultiPromptAttack(MultiPromptAttack):
             temp=temp,
             allow_non_ascii=allow_non_ascii,
             filter_cand=filter_cand,
-            current_control_str=self.control_str,
+            current_control_str=decode_control_tokens(
+                tokenizer=self.workers[0].tokenizer, control_tokens=self.prompts[0].control_toks
+            ),
         )
         evaluator = GCGCandidateEvaluator(
             workers=self.workers,
