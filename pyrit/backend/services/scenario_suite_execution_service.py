@@ -10,13 +10,17 @@ import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
+from pyrit.backend.services.scenario_configuration_resolver import (
+    REQUEST_FIELD_ROLES,
+    ScenarioConfigurationResolver,
+)
 from pyrit.backend.services.scenario_run_service import ScenarioRunService, get_scenario_run_service
 from pyrit.models import (
     LaunchScenarioSuiteRequest,
+    ScenarioPresetLaunchDefaults,
     ScenarioRunState,
     ScenarioSuiteExecutionEntryState,
     ScenarioSuiteExecutionEntrySummary,
@@ -24,10 +28,11 @@ from pyrit.models import (
     ScenarioSuiteExecutionSummary,
     ScenarioSuiteSubmissionState,
 )
-from pyrit.models.scenario_readiness import ScenarioReadiness
+from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness
 from pyrit.registry import (
     ResolvedScenarioSuiteEntry,
     ScenarioPresetRegistry,
+    ScenarioRegistry,
     ScenarioSuiteLaunchResolver,
     ScenarioSuiteNotRunnableError,
     ScenarioSuiteRegistry,
@@ -54,6 +59,41 @@ _TERMINAL_EXECUTION_STATUSES = frozenset(
 
 class ScenarioSuiteExecutionCapacityError(RuntimeError):
     """Active suite executions fill the transient coordinator capacity."""
+
+
+_LAUNCH_DEFAULT_FIELD_BY_ROLE = {
+    role: field_name
+    for field_name, role in REQUEST_FIELD_ROLES.items()
+    if field_name in ScenarioPresetLaunchDefaults.model_fields
+}
+
+
+def _entry_role_attribution(
+    *, entry: ResolvedScenarioSuiteEntry, role: str, remediation: str | None = None
+) -> dict[str, Any]:
+    """
+    Attribute a readiness role to its suite entry and, for launch defaults, to its value's source.
+
+    A broken value the preset supplied is repaired by editing that preset or overriding it at
+    launch, so the remediation names both instead of the generic one.
+
+    Returns:
+        dict[str, Any]: Field updates for a readiness issue or binding.
+    """
+    update: dict[str, Any] = {"entry_id": entry.entry_id}
+    field_name = _LAUNCH_DEFAULT_FIELD_BY_ROLE.get(role)
+    if field_name is None:
+        return update
+    source = entry.launch_value_sources.get(field_name)
+    if source is None:
+        return update
+    update["source"] = source
+    if remediation is not None and source == "preset":
+        update["remediation"] = (
+            f"Update the {field_name.replace('_', ' ')} in scenario preset '{entry.preset_name}', "
+            "or override it for this launch."
+        )
+    return update
 
 
 @dataclass
@@ -122,12 +162,14 @@ class ScenarioSuiteExecutionService:
         *,
         suite_registry: ScenarioSuiteRegistry | None = None,
         preset_registry: ScenarioPresetRegistry | None = None,
+        scenario_registry: ScenarioRegistry | None = None,
         run_service: ScenarioRunService | None = None,
     ) -> None:
         """Initialize the coordinator with injectable registries and run service."""
         self._resolver = ScenarioSuiteLaunchResolver(
             suite_registry=suite_registry,
             preset_registry=preset_registry,
+            scenario_registry=scenario_registry,
         )
         self._run_service = run_service
         self._executions: OrderedDict[UUID, _ExecutionState] = OrderedDict()
@@ -166,6 +208,8 @@ class ScenarioSuiteExecutionService:
         )
         if request.initializers:
             await self._get_run_service()._run_initializers_async(request=resolved_launch.entries[0].request)
+            # Initializers can register a scorer a preset names, so bind preset values after they run.
+            resolved_launch = await asyncio.to_thread(self._resolver.resolve, name=name, request=request)
         readiness, references = await self._resolve_roles_async(entries=resolved_launch.entries)
         if readiness.issues:
             raise ScenarioSuiteNotRunnableError(
@@ -226,13 +270,41 @@ class ScenarioSuiteExecutionService:
                 request=entry.request,
             )
             prefix = f"Entry {entry.entry_position} ({entry.preset_name})"
+            # A preset value this deployment could not bind replaces what readiness found for its role.
+            unbound_roles = {REQUEST_FIELD_ROLES[field_name] for field_name in entry.launch_default_errors}
             result.issues.extend(
-                issue.model_copy(update={"component": f"{prefix}: {issue.component}"}) for issue in readiness.issues
+                ScenarioConfigurationIssue.model_validate(
+                    {
+                        "role": REQUEST_FIELD_ROLES[field_name],
+                        "component": f"{prefix}: {entry.request.scenario_name}",
+                        "reason": reason,
+                        "remediation": "",
+                        **_entry_role_attribution(entry=entry, role=REQUEST_FIELD_ROLES[field_name], remediation=""),
+                    }
+                )
+                for field_name, reason in entry.launch_default_errors.items()
             )
-            result.bindings.extend(binding.model_copy(update={"component": prefix}) for binding in readiness.bindings)
-            references[entry.entry_id] = {
-                f"{binding.role}_hash": binding.identifier.hash for binding in readiness.bindings
-            }
+            result.issues.extend(
+                issue.model_copy(
+                    update={
+                        "component": f"{prefix}: {issue.component}",
+                        **_entry_role_attribution(entry=entry, role=issue.role, remediation=issue.remediation),
+                    }
+                )
+                for issue in readiness.issues
+                if issue.role not in unbound_roles
+            )
+            bindings = [binding for binding in readiness.bindings if binding.role not in unbound_roles]
+            result.bindings.extend(
+                binding.model_copy(
+                    update={
+                        "component": prefix,
+                        **_entry_role_attribution(entry=entry, role=binding.role),
+                    }
+                )
+                for binding in bindings
+            )
+            references[entry.entry_id] = {f"{binding.role}_hash": binding.identifier.hash for binding in bindings}
         return result, references
 
     async def get_execution_async(self, *, execution_id: UUID) -> ScenarioSuiteExecutionSummary | None:

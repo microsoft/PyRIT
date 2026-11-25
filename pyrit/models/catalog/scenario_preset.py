@@ -14,6 +14,11 @@ Every configurable field is tri-state. ``None`` means "not set by this preset, u
 the scenario's own default", which is distinct from an explicit value that happens
 to equal that default. Collapsing the two would silently pin a scenario default at
 the moment a preset was saved and stop it tracking upstream changes.
+
+``launch_defaults`` is the one place a preset touches launch-owned settings. Those
+values are fallbacks: a launch that sets the same setting wins. Like the rest of a
+preset they are portable: registered names and plain values, never a target or a
+deployment-bound identity.
 """
 
 from typing import Literal
@@ -41,13 +46,37 @@ PRESET_SCHEMA_VERSION = 1
 _NON_BEHAVIORAL_FIELDS = frozenset({"name", "schema_version", "description", "author", "show_in_scanner"})
 
 
+class ScenarioPresetLaunchDefaults(BaseModel):
+    """
+    Launch-owned settings a preset supplies as fallbacks.
+
+    Each field holds a portable value, a registered name or a plain value, so the preset
+    runs unchanged in any deployment that registers the same names. The effective value
+    is the launch's, then this preset's, then the scenario default. The launch resolver
+    binds each field to the deployment through one explicit entry in its binding table;
+    a field added here needs that entry too.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    objective_scorer: _RequestName | None = Field(
+        None,
+        min_length=1,
+        description=(
+            "Registered objective scorer name, bound to this deployment's registration at launch; "
+            "None uses the launch scorer or the scenario default"
+        ),
+    )
+
+
 class ScenarioPreset(BaseModel, Identifiable):
     """
     A named, reusable, target-agnostic scenario configuration.
 
     Presets own *what to test*; a launch owns *how and where* — target, concurrency,
     retries, and labels — so those fields are absent here by design and the two sets are
-    combined by union rather than by precedence.
+    combined by union rather than by precedence. ``launch_defaults`` is the exception: it
+    holds launch-owned fallbacks that any launch value overrides.
 
     Unknown keys are rejected rather than ignored: these documents are hand-edited, and
     because an absent field is a meaningful state, a misspelled key would otherwise parse
@@ -94,6 +123,24 @@ class ScenarioPreset(BaseModel, Identifiable):
     scenario_params: _RequestParams | None = Field(
         None, description="Scenario-declared parameters such as template names and attempt counts"
     )
+    launch_defaults: ScenarioPresetLaunchDefaults | None = Field(
+        None, description="Fallbacks for launch-owned settings; a value supplied at launch wins"
+    )
+
+    @field_validator("launch_defaults")
+    @classmethod
+    def _normalize_empty_launch_defaults(
+        cls, value: ScenarioPresetLaunchDefaults | None
+    ) -> ScenarioPresetLaunchDefaults | None:
+        """
+        Store an all-unset section as absent so it cannot change the preset's identity.
+
+        Returns:
+            ScenarioPresetLaunchDefaults | None: The section, or None when nothing is set.
+        """
+        if value is None or not value.model_dump(exclude_none=True):
+            return None
+        return value
 
     @field_validator("name")
     @classmethod

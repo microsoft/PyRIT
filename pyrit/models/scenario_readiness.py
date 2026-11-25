@@ -3,11 +3,22 @@
 
 """Configuration readiness shared by scenario entry points."""
 
+from typing import Literal
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
 SCENARIO_ROLE_REFERENCES_METADATA_KEY = "scenario_role_references_v1"
+
+LaunchValueSource = Literal["launch", "preset", "scenario_default", "unsupported"]
+"""
+Where a launch-owned value came from: the launch, a preset's launch defaults, or neither.
+
+``"unsupported"`` means a value was set but the scenario does not accept one, so it was
+not applied and the scenario uses its own.
+"""
 
 
 class ScenarioConfigurationIssue(BaseModel):
@@ -17,6 +28,10 @@ class ScenarioConfigurationIssue(BaseModel):
     component: str
     reason: str
     remediation: str
+    entry_id: UUID | None = Field(None, description="Scenario suite entry the issue belongs to, if any")
+    source: LaunchValueSource | None = Field(
+        None, description="Where the role's configured value came from, for launch-default roles"
+    )
 
 
 class ScenarioRoleBinding(BaseModel):
@@ -25,6 +40,10 @@ class ScenarioRoleBinding(BaseModel):
     role: str
     component: str
     identifier: ComponentIdentifier
+    entry_id: UUID | None = Field(None, description="Scenario suite entry the binding belongs to, if any")
+    source: LaunchValueSource | None = Field(
+        None, description="Where the role's configured value came from, for launch-default roles"
+    )
 
 
 class ScenarioReadiness(BaseModel):

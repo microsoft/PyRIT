@@ -6,6 +6,7 @@ import {
   Input,
   type LabelProps,
   MessageBar,
+  MessageBarActions,
   MessageBarBody,
   Option,
   Spinner,
@@ -16,6 +17,7 @@ import {
 } from '@fluentui/react-components'
 import { useNavigate, useParams } from 'react-router'
 
+import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
 import ParameterField from '@/components/Parameters/ParameterField'
 import type { ParameterFormValue } from '@/components/Parameters/parameterForm'
 import DatasetActions from '@/components/Scenarios/DatasetActions'
@@ -37,9 +39,11 @@ import type {
   ScenarioPresetResponse,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunSizeEstimateResponse,
+  ScorerInstance,
 } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 import { routerPathParamValue } from '@/utils/routeParams'
+import { scorerNameReference } from '@/utils/scorerPresentation'
 
 import ScannerVisibilityLabel from './ScannerVisibilityLabel'
 import { useScenarioPresetEditorStyles } from './ScenarioPresetEditor.styles'
@@ -64,19 +68,40 @@ interface DatasetProjectionResult {
   error: string | null
 }
 
-export default function ScenarioPresetEditor({ mode }: { mode: 'create' | 'edit' }) {
+interface ScorerOptions {
+  scorers: ScorerInstance[]
+  scorersLoading?: boolean
+  scorersError?: string | null
+}
+
+interface ScenarioPresetEditorProps extends Partial<ScorerOptions> {
+  mode: 'create' | 'edit'
+}
+
+export default function ScenarioPresetEditor({ mode, scorers = [], scorersLoading, scorersError }: ScenarioPresetEditorProps) {
   const { presetName } = useParams<{ presetName: string }>()
   // Remount on navigation between two presets so every field resets to the
   // newly loaded document rather than retaining the previous one's edits.
-  return <ScenarioPresetEditorContent key={presetName ?? 'new'} mode={mode} presetName={presetName} />
+  return (
+    <ScenarioPresetEditorContent
+      key={presetName ?? 'new'}
+      mode={mode}
+      presetName={presetName}
+      scorers={scorers}
+      scorersLoading={scorersLoading}
+      scorersError={scorersError}
+    />
+  )
 }
 
-interface ScenarioPresetEditorContentProps {
+interface ScenarioPresetEditorContentProps extends ScorerOptions {
   mode: 'create' | 'edit'
   presetName: string | undefined
 }
 
-function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorContentProps) {
+function ScenarioPresetEditorContent({
+  mode, presetName, scorers, scorersLoading, scorersError,
+}: ScenarioPresetEditorContentProps) {
   const styles = useScenarioPresetEditorStyles()
   const navigate = useNavigate()
   const decodedName = presetName === undefined ? '' : routerPathParamValue(presetName)
@@ -89,6 +114,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   const [name, setName] = useState(mode === 'edit' ? decodedName : '')
   const [description, setDescription] = useState('')
   const [showInScanner, setShowInScanner] = useState(true)
+  const [objectiveScorer, setObjectiveScorer] = useState<string | null>(null)
   const [selectedScenarioName, setSelectedScenarioName] = useState('')
   const [scenario, setScenario] = useState<RegisteredScenario | null>(null)
   const [scenarioLoading, setScenarioLoading] = useState(false)
@@ -128,6 +154,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
         setName(response.preset.name)
         setDescription(response.preset.description ?? '')
         setShowInScanner(response.preset.show_in_scanner !== false)
+        setObjectiveScorer(response.preset.launch_defaults?.objective_scorer ?? null)
         setSelectedScenarioName(response.preset.scenario_name)
         setScenarioLoading(true)
         setStatus('ready')
@@ -225,6 +252,11 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     [loaded, scenario],
   )
   const techniqueIssues = loaded?.issues.filter((issue) => issue.field === 'techniques') ?? []
+  const storedScorer = loaded?.preset.launch_defaults?.objective_scorer ?? null
+  // A scenario without a scorer control keeps the stored scorer until the operator removes it.
+  const unsupportedScorer = scenario && !scenario.supports_objective_scorer && objectiveScorer === storedScorer
+    ? storedScorer : null
+  const scorerIssues = loaded?.issues.filter((issue) => issue.field === 'launch_defaults.objective_scorer') ?? []
   const builtConfig = useMemo(
     () => (scenario && config ? buildPresetScenarioConfig(scenario, config, loaded?.preset ?? null) : null),
     [config, loaded, scenario],
@@ -308,7 +340,13 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     setValidationError(null)
 
     const preset = configToPreset(
-      { name: trimmedName, scenarioName: scenario.scenario_name, description, showInScanner },
+      {
+        name: trimmedName,
+        scenarioName: scenario.scenario_name,
+        description,
+        showInScanner,
+        objectiveScorer: scenario.supports_objective_scorer ? objectiveScorer : unsupportedScorer,
+      },
       builtConfig.config,
       { scenario, previous: loaded?.preset ?? null },
     )
@@ -491,6 +529,33 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                 Parameters
               </Text>
               <div className={styles.dynamicParameters}>
+                {scenario.supports_objective_scorer && (
+                  <ChatScorerPicker
+                    label="Objective scorer"
+                    usage="scenario"
+                    value={scorerNameReference(objectiveScorer, scorers)}
+                    scorers={scorers}
+                    loading={scorersLoading}
+                    error={scorersError}
+                    disabled={saving}
+                    onChange={(value) => {
+                      setObjectiveScorer(value?.registry_name ?? null)
+                      setValidationError(null)
+                    }}
+                  />
+                )}
+                {unsupportedScorer && (
+                  <MessageBar intent="warning" data-testid="unsupported-scorer-warning">
+                    <MessageBarBody>
+                      This preset stores objective scorer {unsupportedScorer}, which {scenario.scenario_name} cannot
+                      use. {scorerIssues.map((issue) => issue.message).join(' ')} Suite launches refuse this
+                      preset until you remove the scorer.
+                    </MessageBarBody>
+                    <MessageBarActions>
+                      <Button disabled={saving} onClick={() => setObjectiveScorer(null)}>Remove scorer</Button>
+                    </MessageBarActions>
+                  </MessageBar>
+                )}
                 {dynamicParameters.map((parameter) => (
                   <ParameterField
                     key={parameter.name}

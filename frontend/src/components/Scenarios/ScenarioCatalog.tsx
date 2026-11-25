@@ -39,6 +39,7 @@ import type {
   ScenarioDatasetSummary,
   ScenarioPresetResponse,
   ScenarioSuiteResponse,
+  ScorerInstance,
   TargetInstance,
 } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
@@ -81,6 +82,9 @@ interface ScenarioCatalogProps {
   operationId: string | null
   /** False while server defaults or the global Operation selection are unresolved. */
   defaultsReady: boolean
+  scorers?: ScorerInstance[]
+  scorersLoading?: boolean
+  scorersError?: string | null
 }
 
 function matchesQuery(terms: SearchTerm[], query: string): boolean {
@@ -520,6 +524,9 @@ export default function ScenarioCatalog({
   labels,
   operationId,
   defaultsReady,
+  scorers,
+  scorersLoading,
+  scorersError,
 }: ScenarioCatalogProps) {
   const { generation } = useRuntime()
   const styles = useScenarioCatalogStyles()
@@ -792,6 +799,9 @@ export default function ScenarioCatalog({
               labels={labels}
               operationId={operationId}
               defaultsReady={defaultsReady}
+              scorers={scorers}
+              scorersLoading={scorersLoading}
+              scorersError={scorersError}
               onSuiteChanged={handleSuiteChanged}
             />
           )}

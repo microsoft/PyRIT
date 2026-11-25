@@ -25,6 +25,7 @@ from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     Conversation,
     Finding,
     FindingEvidence,
@@ -115,6 +116,23 @@ def _make_scenario(
         attack_results={},
         objective_target_identifier=get_mock_target_identifier(),
     )
+
+
+async def test_history_page_projects_recorded_objective_scorer(sqlite_instance: MemoryInterface) -> None:
+    scorer = ComponentIdentifier(class_name="SelfAskRefusalScorer", class_module="tests")
+    scenario = make_scenario_result(
+        id=uuid.UUID(int=7),
+        scenario_name="Scored",
+        attack_results={},
+        objective_target_identifier=get_mock_target_identifier(),
+        objective_scorer_identifier=scorer,
+    )
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario])
+
+    page, _, _ = await sqlite_instance.get_scenario_run_history_page_async(limit=1)
+
+    assert page[0].objective_scorer_identifier is not None
+    assert ComponentIdentifier.model_validate(page[0].objective_scorer_identifier).hash == scorer.hash
 
 
 async def test_history_pages_descending_equal_timestamps_by_id(sqlite_instance: MemoryInterface) -> None:

@@ -335,6 +335,11 @@ describe("api service", () => {
       });
       await expect(scenarioSuitesApi.launch("a/b", launch)).resolves.toEqual(execution);
       expect(apiClient.post).toHaveBeenCalledWith("/scenario-suites/a%2Fb/launch", launch);
+      const readinessRequest = { expected_version: launch.expected_version, entries: launch.entries };
+      await scenarioSuitesApi.getReadiness("a/b", readinessRequest, controller.signal);
+      expect(apiClient.post).toHaveBeenCalledWith("/scenario-suites/a%2Fb/readiness", readinessRequest, {
+        signal: controller.signal,
+      });
       await expect(scenarioSuitesApi.getExecution("execution/id", controller.signal)).resolves.toEqual(execution);
       expect(apiClient.get).toHaveBeenCalledWith("/scenario-suites/executions/execution%2Fid", {
         signal: controller.signal,

@@ -73,6 +73,11 @@ const RUN: ScenarioRunListItem = {
     endpoint: 'https://example.test/v1',
     identifier_hash: 'safe-hash',
   },
+  scorer: {
+    scorer_type: 'TrueFalseInverterScorer',
+    display_type: 'TrueFalseInverterScorer(SelfAskRefusalScorer)',
+    identifier_hash: 'scorer-hash',
+  },
 }
 
 const defaultProps = {
@@ -396,6 +401,8 @@ describe('ScenarioHistory', () => {
     expect(screen.getByText('foundry.red_team')).toBeInTheDocument()
     expect(screen.getByText('RedTeamScenario · v3')).toBeInTheDocument()
     expect(screen.getByText('gpt-4o')).toBeInTheDocument()
+    expect(screen.getByTestId('scenario-history-scorer-run-1'))
+      .toHaveTextContent('TrueFalseInverterScorer(SelfAskRefusalScorer)')
     expect(screen.getByText('1/2 (50%)')).toBeInTheDocument()
     expect(screen.getAllByRole('columnheader').map((header) => header.textContent)).toEqual([
       'Scenario',
@@ -403,6 +410,7 @@ describe('ScenarioHistory', () => {
       'Operator',
       'Operation',
       'Target',
+      'Scorer',
       'Timing',
       'Attack Success',
       'Errors / retries',
@@ -492,6 +500,7 @@ describe('ScenarioHistory', () => {
           endpoint: null,
           model_name: null,
         },
+        scorer: null,
       }],
       pagination: { limit: 25, has_more: false },
     })
@@ -507,7 +516,8 @@ describe('ScenarioHistory', () => {
     expect(screen.getByText('0/0 attacks complete')).toBeInTheDocument()
     expect(screen.getByText('0/0')).toBeInTheDocument()
     expect(screen.getByText('1 / 0')).toBeInTheDocument()
-    expect(screen.getAllByText('Unavailable')).toHaveLength(2)
+    expect(screen.getAllByText('Unavailable')).toHaveLength(3)
+    expect(screen.getByTestId('scenario-history-scorer-run-1')).toHaveTextContent('Unavailable')
   })
 
   it('does not display queue wait as execution elapsed time', async () => {

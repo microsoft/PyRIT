@@ -1774,6 +1774,17 @@ export interface ScenarioPreset {
   datasets?: ScenarioDatasetRequest | null
   include_baseline?: boolean | null
   scenario_params?: Record<string, unknown> | null
+  /** Launch values this preset supplies when the launch leaves them unset. Omit to use the scenario defaults. */
+  launch_defaults?: ScenarioPresetLaunchDefaults | null
+}
+
+/**
+ * Launch-owned values a preset may set, in portable form. A value chosen at launch replaces the
+ * preset's value, and an absent value falls back to the scenario default.
+ */
+export interface ScenarioPresetLaunchDefaults {
+  /** Registered objective scorer name, bound to this deployment's scorer of that name at launch. */
+  objective_scorer?: string | null
 }
 
 /** One advisory problem found checking a preset against this deployment's registry. */
@@ -1834,6 +1845,8 @@ export interface ScenarioSuiteEntryStatus {
   preset_version: string | null
   /** Advisory only. Missing or invalid preset references do not prevent saving the suite. */
   issues: PresetIssue[]
+  /** The preset's fallbacks for launch-owned settings, or null when it sets none or is unavailable. */
+  launch_defaults?: ScenarioPresetLaunchDefaults | null
 }
 
 export interface ScenarioSuiteResponse {
@@ -1881,6 +1894,39 @@ export interface LaunchScenarioSuiteRequest {
   max_retries?: number | null
   operation_id?: string | null
   labels?: Record<string, string> | null
+}
+
+/** A suite readiness preview; roles not yet selected, such as the objective target, may be omitted. */
+export type ScenarioSuiteReadinessRequest = Omit<LaunchScenarioSuiteRequest, 'target_name'> & {
+  target_name?: string | null
+}
+
+/** Where a launch-owned value came from: the launch, a preset's launch defaults, or neither. */
+export type LaunchValueSource = 'launch' | 'preset' | 'scenario_default' | 'unsupported'
+
+/** An effective execution dependency, attributed to its suite entry and value source when known. */
+export interface ScenarioRoleBinding {
+  role: string
+  component: string
+  identifier: ComponentIdentifier
+  entry_id?: string | null
+  source?: LaunchValueSource | null
+}
+
+/** An actionable configuration problem, attributed to its suite entry and value source when known. */
+export interface ScenarioConfigurationIssue {
+  role: string
+  component: string
+  reason: string
+  remediation: string
+  entry_id?: string | null
+  source?: LaunchValueSource | null
+}
+
+/** Resolved dependencies and every discoverable configuration issue. */
+export interface ScenarioReadiness {
+  bindings: ScenarioRoleBinding[]
+  issues: ScenarioConfigurationIssue[]
 }
 
 export type ScenarioSuiteExecutionStatus =
@@ -2165,6 +2211,13 @@ export interface ScenarioTargetSummary {
   identifier_hash?: string | null
 }
 
+/** Display metadata for the objective scorer a run recorded. */
+export interface ScenarioScorerSummary {
+  scorer_type: string
+  display_type: string
+  identifier_hash: string
+}
+
 export interface ScenarioRunListItem {
   scenario_result_id: string
   scenario_name: string
@@ -2188,6 +2241,8 @@ export interface ScenarioRunListItem {
   completed_at?: string | null
   pyrit_version?: string | null
   target?: ScenarioTargetSummary | null
+  /** Objective scorer the run recorded, or null when unavailable. */
+  scorer?: ScenarioScorerSummary | null
   datasets_used: string[]
   scenario_parameters: Record<string, unknown>
   planned_total_available: boolean

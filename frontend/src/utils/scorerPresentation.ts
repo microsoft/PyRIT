@@ -10,6 +10,18 @@ export function findRegisteredScorer(
     ?? (inherited ? scorers.find((scorer: ScorerInstance) => scorer.identifier.hash === reference.identifier_hash) : undefined)
 }
 
+/**
+ * Bind a preset's portable scorer name to this deployment's current registration, as a launch does.
+ * An unregistered name keeps an empty hash, so it matches no scorer and reads as unavailable.
+ */
+export function scorerNameReference(
+  name: string | null | undefined, scorers: ScorerInstance[],
+): RegisteredComponentReference | null {
+  if (!name) return null
+  const scorer = scorers.find((item: ScorerInstance) => item.scorer_registry_name === name)
+  return { registry_name: name, identifier_hash: scorer?.identifier.hash ?? '' }
+}
+
 export function isEligibleChatScorer(scorer: ScorerInstance): boolean {
   return scorer.identifier.scorer_type === 'true_false' && !scorer.chat_scoring_disabled_reason
 }

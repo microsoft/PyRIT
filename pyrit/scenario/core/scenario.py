@@ -154,6 +154,10 @@ logger = logging.getLogger(__name__)
 _RESERVED_SCENARIO_PARAM_NAMES: frozenset[str] = frozenset({"version"})
 
 
+class ObjectiveScorerRequirementError(ValueError):
+    """The configured objective scorer cannot serve an evaluation the scenario or a dataset requires."""
+
+
 class BaselineAttackPolicy(Enum):
     """
     Declares how a scenario type treats the default baseline atomic attack.
@@ -1598,9 +1602,9 @@ class Scenario(ABC):
         an unbound candidate. Both fail here, before any dataset is read.
 
         Raises:
-            ValueError: If an evaluation the scenario or a dataset requires has no bound candidate,
-                if a dataset requires no evaluation and every candidate is bound, or if the scenario
-                and a dataset require different evaluations.
+            ObjectiveScorerRequirementError: If an evaluation the scenario or a dataset requires has no bound
+                candidate, or if a dataset requires no evaluation and every candidate is bound.
+            ValueError: If the scenario and a dataset require different evaluations.
         """
         if not type(self).SUPPORTS_OBJECTIVE_SCORER_POOL:
             return
@@ -1615,7 +1619,7 @@ class Scenario(ABC):
                 if name not in dataset_requirements or dataset_requirements[name].evaluation is None
             )
             if undeclared:
-                raise ValueError(
+                raise ObjectiveScorerRequirementError(
                     "Every objective scorer candidate is bound to an evaluation, but these datasets require none: "
                     f"{', '.join(repr(name) for name in undeclared)}. Declare scorer_requirements on them, or add "
                     "a candidate without an evaluation."
@@ -1633,12 +1637,12 @@ class Scenario(ABC):
             return
         required = "; ".join(f"{key!r} (required by {', '.join(names)})" for key, names in sorted(missing.items()))
         if pool is None:
-            raise ValueError(
+            raise ObjectiveScorerRequirementError(
                 f"A single objective scorer is not bound to any evaluation, but these are required: {required}. "
                 "Pass a CompatibleScorers pool with a ScorerCandidate bound to each."
             )
         known = ", ".join(repr(key) for key in sorted(available)) or "none"
-        raise ValueError(
+        raise ObjectiveScorerRequirementError(
             f"No objective scorer candidate is bound to these required evaluations: {required}. "
             f"Evaluations in the pool: {known}. Check the key for a typo, or add a candidate bound to it."
         )

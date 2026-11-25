@@ -148,6 +148,8 @@ class ScenarioPresetService:
         Raises:
             ScenarioPresetConflictError: If the stored version no longer matches the version
                 the caller supplied.
+            ValueError: If the preset names a launch default, such as an objective scorer, that
+                this deployment does not register and the launch does not override.
         """
         stored = await asyncio.to_thread(
             ScenarioPresetRegistry.get_registry_singleton().resolve_preset,

@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { FluentProvider, tokens, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter } from 'react-router'
 
 import { scenarioSuitesApi } from '@/services/api'
@@ -8,18 +8,27 @@ import { useRuntime } from '@/hooks/useRuntime'
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import { readUserPreferences } from '@/utils/userPreferences'
 import { makeTarget } from '@/test-utils/targetFixtures'
-import type { ScenarioSuiteResponse, TargetInstance } from '@/types'
+import type {
+  LaunchValueSource,
+  ScenarioReadiness,
+  ScenarioSuiteReadinessRequest,
+  ScenarioSuiteResponse,
+  ScorerInstance,
+  TargetInstance,
+} from '@/types'
 
 import LaunchSuiteDialog from './LaunchSuiteDialog'
 
 jest.mock('@/services/api', () => ({
   scenarioSuitesApi: {
     launch: jest.fn(),
+    getReadiness: jest.fn(),
   },
 }))
 jest.mock('@/hooks/useRuntime', () => ({ useRuntime: jest.fn() }))
 
 const mockLaunch = scenarioSuitesApi.launch as jest.Mock
+const mockGetReadiness = scenarioSuitesApi.getReadiness as jest.Mock
 const mockUseRuntime = jest.mocked(useRuntime)
 const mockNavigate = jest.fn()
 
@@ -43,6 +52,16 @@ const ADVERSARIAL_TARGET: TargetInstance = makeTarget({
     supported_output_modalities: ['text'],
   },
 })
+
+function makeScorer(name: string, hash: string): ScorerInstance {
+  return {
+    scorer_registry_name: name,
+    identifier: { class_name: 'SubStringScorer', class_module: 'pyrit.score', hash, scorer_type: 'true_false' },
+  }
+}
+
+const REFUSAL_SCORER = makeScorer('inverted_refusal', 'refusal-hash')
+const OVERRIDE_SCORER = makeScorer('override_scorer', 'override-hash')
 
 function makeSuite({
   origin = 'stored',
@@ -93,6 +112,7 @@ interface RenderOptions {
   labels?: Record<string, string>
   operationId?: string | null
   defaultsReady?: boolean
+  scorers?: ScorerInstance[]
 }
 
 const onDismiss = jest.fn()
@@ -106,6 +126,7 @@ function renderDialog({
   operationId = null,
   defaultsReady = true,
   targets = [OBJECTIVE_TARGET, ADVERSARIAL_TARGET],
+  scorers,
 }: RenderOptions = {}) {
   return render(
     <FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
@@ -118,6 +139,7 @@ function renderDialog({
           labels={labels}
           operationId={operationId}
           defaultsReady={defaultsReady}
+          scorers={scorers}
           onDismiss={onDismiss}
           onSuiteChanged={onSuiteChanged}
         />
@@ -131,14 +153,16 @@ beforeEach(() => {
   window.localStorage.clear()
   mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
   mockLaunch.mockResolvedValue({ suite_execution_id: 'execution-1' })
+  mockGetReadiness.mockResolvedValue({ bindings: [], issues: [] })
 })
 
 describe('LaunchSuiteDialog', () => {
   it('keeps the original suite controls without inline component creation or readiness fields', () => {
     renderDialog()
-    expect(screen.getAllByRole('combobox')).toHaveLength(2)
+    expect(screen.getAllByRole('combobox')).toHaveLength(3)
     expect(screen.getByRole('combobox', { name: 'Target' })).toHaveValue('objective-target')
     expect(screen.getByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: 'Objective scorer override' })).toHaveValue('')
     expect(screen.getByRole('option', { name: 'Use server default' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Create/i })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Suite configuration issues')).not.toBeInTheDocument()
@@ -240,6 +264,195 @@ describe('LaunchSuiteDialog', () => {
     expect(entries[1]).toHaveTextContent('second_preset')
   })
 
+  function suiteWithPresetScorer(): ScenarioSuiteResponse {
+    const suite = makeSuite()
+    suite.entry_statuses[0].launch_defaults = { objective_scorer: 'inverted_refusal' }
+    suite.entry_statuses[1].launch_defaults = { objective_scorer: 'deleted_scorer' }
+    return suite
+  }
+
+  function scorerBinding(entryId: string, source: LaunchValueSource): ScenarioReadiness['bindings'][number] {
+    return {
+      role: 'objective_scorer',
+      component: entryId,
+      identifier: { class_name: 'SubStringScorer', class_module: 'pyrit.score', hash: `${entryId}-hash` },
+      entry_id: entryId,
+      source,
+    }
+  }
+
+  function scorerLabel(entryId: string): HTMLElement {
+    return screen.getByTestId(`launch-suite-entry-scorer-${entryId}`)
+  }
+
+  it('shows each entry scorer and source from the library readiness preview', async () => {
+    mockGetReadiness.mockResolvedValue({
+      bindings: [scorerBinding(FIRST_ENTRY_ID, 'preset')],
+      issues: [{
+        role: 'objective_scorer',
+        component: 'Entry 2 (second_preset): scenario',
+        reason: "Objective scorer 'deleted_scorer' is not registered in this deployment.",
+        remediation: '',
+        entry_id: SECOND_ENTRY_ID,
+        source: 'preset',
+      }],
+    })
+    renderDialog({ suite: suiteWithPresetScorer(), scorers: [REFUSAL_SCORER] })
+
+    await waitFor(() => expect(scorerLabel(FIRST_ENTRY_ID)).toHaveTextContent('Scorer: inverted_refusal (from preset)'))
+    expect(scorerLabel(SECOND_ENTRY_ID)).toHaveTextContent(
+      "Scorer: deleted_scorer (from preset; unavailable: Objective scorer 'deleted_scorer' is not registered in this deployment.)",
+    )
+    expect(mockGetReadiness).toHaveBeenCalledWith('nightly_suite', expect.objectContaining({
+      expected_version: 'suite-v1',
+      target_name: 'objective-target',
+      entries: [
+        expect.objectContaining({ entry_id: FIRST_ENTRY_ID }),
+        expect.objectContaining({ entry_id: SECOND_ENTRY_ID }),
+      ],
+    }), expect.any(AbortSignal))
+    expect(mockGetReadiness.mock.calls[0][1]).not.toHaveProperty('objective_scorer')
+  })
+
+  it('shows the scenario default when the library binds no configured scorer', async () => {
+    mockGetReadiness.mockResolvedValue({
+      bindings: [
+        scorerBinding(FIRST_ENTRY_ID, 'scenario_default'),
+        { ...scorerBinding(SECOND_ENTRY_ID, 'scenario_default'), role: 'objective_scorer_candidate:0', source: null },
+      ],
+      issues: [],
+    })
+    renderDialog({ suite: suiteWithPresetScorer() })
+    await waitFor(() => expect(scorerLabel(FIRST_ENTRY_ID)).toHaveTextContent('Scorer: Scenario default scorer'))
+    expect(scorerLabel(SECOND_ENTRY_ID)).toHaveTextContent('Scorer: Scenario default scorer')
+  })
+
+  it('shows an entry readiness could not configure as unresolved, not the scenario default', async () => {
+    mockGetReadiness.mockResolvedValue({
+      bindings: [scorerBinding(FIRST_ENTRY_ID, 'preset')],
+      issues: [{
+        role: 'configuration',
+        component: 'Entry 2 (second_preset): garak.exploitation',
+        reason: 'garak.exploitation does not accept dataset overrides.',
+        remediation: 'Remove datasets from the preset.',
+        entry_id: SECOND_ENTRY_ID,
+      }],
+    })
+    renderDialog({ suite: suiteWithPresetScorer() })
+    await waitFor(() => expect(scorerLabel(FIRST_ENTRY_ID)).toHaveTextContent('Scorer: inverted_refusal (from preset)'))
+    expect(scorerLabel(SECOND_ENTRY_ID))
+      .toHaveTextContent('Scorer: Unresolved (garak.exploitation does not accept dataset overrides.)')
+    expect(scorerLabel(SECOND_ENTRY_ID)).not.toHaveTextContent('Scenario default scorer')
+  })
+
+  it('warns about and refuses to launch an entry the library reports a blocking issue for', async () => {
+    const reason = "Objective scorer 'deleted_scorer' is not registered in this deployment."
+    mockGetReadiness.mockResolvedValue({
+      bindings: [scorerBinding(FIRST_ENTRY_ID, 'preset')],
+      issues: [{
+        role: 'objective_scorer',
+        component: 'Entry 2 (second_preset): scenario',
+        reason,
+        remediation: 'Update the objective scorer in scenario preset \'second_preset\'.',
+        entry_id: SECOND_ENTRY_ID,
+        source: 'preset',
+      }],
+    })
+    renderDialog({ suite: suiteWithPresetScorer(), scorers: [REFUSAL_SCORER] })
+
+    const issues = await screen.findByLabelText('Suite configuration issues')
+    expect(issues).toHaveTextContent(`Entry 2 (second_preset): scenario: ${reason}`)
+    expect(issues).toHaveTextContent("Update the objective scorer in scenario preset 'second_preset'.")
+    expect(scorerLabel(SECOND_ENTRY_ID)).toHaveStyle({ color: tokens.colorStatusDangerForeground1 })
+    expect(scorerLabel(FIRST_ENTRY_ID)).not.toHaveStyle({ color: tokens.colorStatusDangerForeground1 })
+    expect(screen.getByTestId('confirm-launch-suite')).toBeDisabled()
+  })
+
+  it('lists a launch-level issue once and colours only scorer issues on entries', async () => {
+    // The suite service prefixes each entry's issue with its position and preset.
+    const targetIssue = (entryId: string) => ({
+      role: 'objective_target',
+      component: entryId === FIRST_ENTRY_ID ? 'Entry 1 (first_preset): Execute' : 'Entry 2 (second_preset): Execute',
+      reason: 'objective_target is required; no target selected.',
+      remediation: 'Create and select the target to scan.',
+      entry_id: entryId,
+    })
+    mockGetReadiness.mockResolvedValue({
+      bindings: [scorerBinding(FIRST_ENTRY_ID, 'preset'), scorerBinding(SECOND_ENTRY_ID, 'preset')],
+      issues: [targetIssue(FIRST_ENTRY_ID), targetIssue(SECOND_ENTRY_ID)],
+    })
+    renderDialog({ suite: suiteWithPresetScorer(), defaultObjectiveTarget: null })
+
+    const issues = await screen.findByLabelText('Suite configuration issues')
+    expect(within(issues).getAllByRole('listitem')).toHaveLength(1)
+    expect(issues).toHaveTextContent('Execute: objective_target is required; no target selected.')
+    expect(issues).not.toHaveTextContent('Entry 1')
+    expect(scorerLabel(FIRST_ENTRY_ID)).not.toHaveStyle({ color: tokens.colorStatusDangerForeground1 })
+    expect(scorerLabel(SECOND_ENTRY_ID)).not.toHaveStyle({ color: tokens.colorStatusDangerForeground1 })
+  })
+
+  it('shows resolving and failure states instead of recomputing the scorer', async () => {
+    let rejectReadiness: (reason: unknown) => void = () => undefined
+    mockGetReadiness.mockReturnValue(new Promise((_, reject) => { rejectReadiness = reject }))
+    renderDialog({ suite: suiteWithPresetScorer(), scorers: [REFUSAL_SCORER] })
+    expect(scorerLabel(FIRST_ENTRY_ID)).toHaveTextContent('Scorer: Resolving...')
+
+    rejectReadiness(new Error('readiness unavailable'))
+    await waitFor(() => expect(scorerLabel(FIRST_ENTRY_ID)).toHaveTextContent('Scorer: Could not resolve'))
+    expect(scorerLabel(FIRST_ENTRY_ID)).not.toHaveTextContent('inverted_refusal')
+  })
+
+  function readinessBySource(
+    sources: (request: ScenarioSuiteReadinessRequest) => Record<string, LaunchValueSource>,
+  ) {
+    mockGetReadiness.mockImplementation(async (_name: string, request: ScenarioSuiteReadinessRequest) => ({
+      bindings: Object.entries(sources(request)).map(([entryId, source]) => scorerBinding(entryId, source)),
+      issues: [],
+    }))
+  }
+
+  it('sends a launch scorer override that replaces every entry scorer', async () => {
+    const user = userEvent.setup()
+    readinessBySource((request) => request.objective_scorer
+      ? { [FIRST_ENTRY_ID]: 'launch', [SECOND_ENTRY_ID]: 'launch' }
+      : { [FIRST_ENTRY_ID]: 'preset', [SECOND_ENTRY_ID]: 'preset' })
+    renderDialog({ suite: suiteWithPresetScorer(), scorers: [REFUSAL_SCORER, OVERRIDE_SCORER] })
+    await waitFor(() => expect(scorerLabel(FIRST_ENTRY_ID)).toHaveTextContent('(from preset)'))
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Objective scorer override' }),
+      'registered:override_scorer',
+    )
+    for (const entryId of [FIRST_ENTRY_ID, SECOND_ENTRY_ID]) {
+      await waitFor(() => expect(scorerLabel(entryId)).toHaveTextContent('Scorer: override_scorer (launch override)'))
+    }
+    expect(mockGetReadiness).toHaveBeenLastCalledWith('nightly_suite', expect.objectContaining({
+      objective_scorer: { registry_name: 'override_scorer', identifier_hash: 'override-hash' },
+    }), expect.any(AbortSignal))
+    await user.click(screen.getByTestId('confirm-launch-suite'))
+
+    await waitFor(() => expect(mockLaunch).toHaveBeenCalledWith('nightly_suite', expect.objectContaining({
+      objective_scorer: { registry_name: 'override_scorer', identifier_hash: 'override-hash' },
+    })))
+  })
+
+  it('marks the launch scorer override as not applicable to a scenario with a built-in scorer', async () => {
+    const user = userEvent.setup()
+    readinessBySource((request) => request.objective_scorer
+      ? { [FIRST_ENTRY_ID]: 'launch', [SECOND_ENTRY_ID]: 'unsupported' }
+      : { [FIRST_ENTRY_ID]: 'scenario_default', [SECOND_ENTRY_ID]: 'scenario_default' })
+    renderDialog({ suite: makeSuite(), scorers: [OVERRIDE_SCORER] })
+    await waitFor(() => expect(scorerLabel(SECOND_ENTRY_ID)).toHaveTextContent('Scorer: Scenario default scorer'))
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Objective scorer override' }),
+      'registered:override_scorer',
+    )
+
+    await waitFor(() => expect(scorerLabel(FIRST_ENTRY_ID)).toHaveTextContent('Scorer: override_scorer (launch override)'))
+    expect(scorerLabel(SECOND_ENTRY_ID))
+      .toHaveTextContent('Scorer: Scenario default scorer (selected scorer not applicable)')
+  })
   it('launches the reviewed suite and navigates to grouped progress', async () => {
     const user = userEvent.setup()
     renderDialog({ labels: { team: 'purple' }, operationId: OPERATION_ID })

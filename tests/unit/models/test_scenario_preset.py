@@ -5,7 +5,16 @@
 
 import pytest
 
-from pyrit.models import DatasetSourceInput, ScenarioDatasetRequest, ScenarioPreset
+from pyrit.models import (
+    DatasetSourceInput,
+    LaunchScenarioSuiteRequest,
+    ScenarioDatasetRequest,
+    ScenarioLaunchConfiguration,
+    ScenarioPreset,
+    ScenarioPresetLaunchDefaults,
+    ScenarioSuiteReadinessRequest,
+)
+from pyrit.models.catalog import RunScenarioRequest
 from pyrit.models.catalog.scenario_preset import PRESET_SCHEMA_VERSION
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
 
@@ -241,3 +250,63 @@ def test_identity_params_are_json_safe_for_nested_configuration() -> None:
     assert params["datasets"]["filters"] == {"harm_categories": ["violence"]}
     assert params["scenario_params"] == {"max_turns": 3}
     assert "name" not in params
+
+
+def test_launch_defaults_round_trip_through_json() -> None:
+    """Test that a preset scorer name survives the stored document shape."""
+    preset = ScenarioPreset(
+        name="refuse",
+        scenario_name="foundry.red_team_agent",
+        launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer="refusal"),
+    )
+
+    restored = ScenarioPreset.model_validate_json(preset.model_dump_json())
+
+    assert restored.launch_defaults == preset.launch_defaults
+
+
+def test_empty_launch_defaults_normalize_to_unset_with_unchanged_identity() -> None:
+    """Test that an all-unset section is the same preset as omitting it."""
+    omitted = ScenarioPreset(name="nightly", scenario_name="foundry.red_team_agent")
+    empty = ScenarioPreset(
+        name="nightly", scenario_name="foundry.red_team_agent", launch_defaults=ScenarioPresetLaunchDefaults()
+    )
+
+    assert empty.launch_defaults is None
+    assert empty.get_identifier().unique_name == omitted.get_identifier().unique_name
+
+
+def test_identity_covers_the_preset_scorer() -> None:
+    """Test that naming a different scorer is a behavioral change."""
+    refusal = ScenarioPreset(
+        name="nightly",
+        scenario_name="foundry.red_team_agent",
+        launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer="refusal"),
+    )
+    inverted = refusal.model_copy(
+        update={"launch_defaults": ScenarioPresetLaunchDefaults(objective_scorer="inverted_refusal")}
+    )
+
+    assert refusal.get_identifier().unique_name != inverted.get_identifier().unique_name
+
+
+def test_launch_defaults_reject_unknown_field() -> None:
+    """Test that a field not yet enabled as a launch default fails loudly."""
+    with pytest.raises(ValueError, match="target_name"):
+        ScenarioPreset.model_validate(
+            {
+                "name": "nightly",
+                "scenario_name": "foundry.red_team_agent",
+                "launch_defaults": {"target_name": "gpt4"},
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "launch_model", [ScenarioLaunchConfiguration, LaunchScenarioSuiteRequest, ScenarioSuiteReadinessRequest]
+)
+def test_every_launch_default_is_a_launch_override_and_run_request_field(launch_model: type) -> None:
+    """Test that each launch default can be overridden at launch and forwarded to the child run."""
+    for field_name in ScenarioPresetLaunchDefaults.model_fields:
+        assert field_name in launch_model.model_fields
+        assert field_name in RunScenarioRequest.model_fields

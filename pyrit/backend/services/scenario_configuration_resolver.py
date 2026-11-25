@@ -5,15 +5,19 @@
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness
 from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario.core import override_default_adversarial_target, resolve_technique_tokens
+from pyrit.scenario.core.scenario import ObjectiveScorerRequirementError
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from pyrit.converter import Converter
     from pyrit.models import ScenarioDatasetRequest, ScenarioRunSizeEstimateRequest
     from pyrit.models.catalog import RunScenarioRequest
@@ -21,6 +25,19 @@ if TYPE_CHECKING:
     from pyrit.models.technique_edit import TechniqueOverride
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario import Scenario
+
+_TARGET_FIELD_ROLES: Mapping[str, str] = MappingProxyType(
+    {
+        "target_name": "objective_target",
+        "scoring_target_name": "scoring_target",
+        "adversarial_target_name": "adversarial_target",
+    }
+)
+
+REQUEST_FIELD_ROLES: Mapping[str, str] = MappingProxyType(
+    {**_TARGET_FIELD_ROLES, "objective_scorer": "objective_scorer"}
+)
+"""Run-request fields that explicitly select a readiness role, keyed by field name."""
 
 
 class ScenarioConfigurationResolver:
@@ -67,23 +84,30 @@ class ScenarioConfigurationResolver:
             ScenarioReadiness: Effective bindings and actionable issues.
         """
         issues, updates, target = cls.resolve_named_roles(scenario_name=scenario_name, request=request)
+        configured = request.model_copy(update=updates)
         with override_default_adversarial_target(target):
             try:
-                scenario = cls.create_configured_scenario(
-                    scenario_name=scenario_name, request=request.model_copy(update=updates)
-                )
+                scenario = cls.create_configured_scenario(scenario_name=scenario_name, request=configured)
                 readiness = scenario.get_readiness()
             except ValueError as exc:
-                readiness = ScenarioReadiness(
-                    issues=[
-                        ScenarioConfigurationIssue(
-                            role="configuration",
-                            component=scenario_name,
-                            reason=str(exc),
-                            remediation="Correct the selected scenario parameters, datasets, or techniques.",
-                        )
-                    ]
-                )
+                selected = configured.objective_scorer
+                if isinstance(exc, ObjectiveScorerRequirementError) and selected is not None:
+                    # The selected scorer, not the scenario configuration, is what the operator must change.
+                    issue = ScenarioConfigurationIssue(
+                        role=REQUEST_FIELD_ROLES["objective_scorer"],
+                        component=selected.registry_name,
+                        reason=str(exc),
+                        remediation="Select a scorer that serves the required evaluations, or use the scenario "
+                        "default scorer.",
+                    )
+                else:
+                    issue = ScenarioConfigurationIssue(
+                        role="configuration",
+                        component=scenario_name,
+                        reason=str(exc),
+                        remediation="Correct the selected scenario parameters, datasets, or techniques.",
+                    )
+                readiness = ScenarioReadiness(issues=[issue])
         invalid_roles = {issue.role for issue in issues}
         readiness.bindings = [binding for binding in readiness.bindings if binding.role not in invalid_roles]
         readiness.issues = issues + [issue for issue in readiness.issues if issue.role not in invalid_roles]
@@ -102,11 +126,7 @@ class ScenarioConfigurationResolver:
         issues: list[ScenarioConfigurationIssue] = []
         updates: dict[str, Any] = {}
         target = None
-        for field, role in (
-            ("target_name", "objective_target"),
-            ("scoring_target_name", "scoring_target"),
-            ("adversarial_target_name", "adversarial_target"),
-        ):
+        for field, role in _TARGET_FIELD_ROLES.items():
             name = getattr(request, field)
             if name is None:
                 continue
@@ -126,18 +146,22 @@ class ScenarioConfigurationResolver:
                 )
                 updates[field] = None
         if request.objective_scorer is not None:
+            remediation = "Select the current registered scorer and review its identity."
             try:
+                scenario_class = cls.resolve_scenario_class(scenario_name=scenario_name)
+                if not ScenarioRegistry.supports_objective_scorer(scenario_class):
+                    remediation = "Clear the objective scorer; this scenario always uses its built-in scorer."
                 cls.resolve_constructor_kwargs(
-                    scenario_class=cls.resolve_scenario_class(scenario_name=scenario_name),
+                    scenario_class=scenario_class,
                     objective_scorer=request.objective_scorer,
                 )
             except ValueError as exc:
                 issues.append(
                     ScenarioConfigurationIssue(
-                        role="objective_scorer",
+                        role=REQUEST_FIELD_ROLES["objective_scorer"],
                         component=request.objective_scorer.registry_name,
                         reason=str(exc),
-                        remediation="Select the current registered scorer and review its identity.",
+                        remediation=remediation,
                     )
                 )
                 updates["objective_scorer"] = None

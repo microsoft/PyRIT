@@ -16,6 +16,7 @@ import type {
   ScenarioPreset,
   ScenarioPresetResponse,
   ScenarioRunSizeEstimateResponse,
+  ScorerInstance,
 } from '@/types'
 
 import ScenarioPresetEditor from './ScenarioPresetEditor'
@@ -121,13 +122,13 @@ function renderCreate() {
   )
 }
 
-function renderEdit(name = 'nightly_probe') {
+function renderEdit(name = 'nightly_probe', scorers?: ScorerInstance[], { scorersLoading = false } = {}) {
   return render(
     <MemoryRouter initialEntries={[`/registry/scenario-presets/${name}/edit`]}>
       <Routes>
         <Route
           path="/registry/scenario-presets/:presetName/edit"
-          element={<ScenarioPresetEditor mode="edit" />}
+          element={<ScenarioPresetEditor mode="edit" scorers={scorers} scorersLoading={scorersLoading} />}
         />
       </Routes>
     </MemoryRouter>,
@@ -841,6 +842,131 @@ describe('ScenarioPresetEditor edit mode', () => {
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
     expect(mockUpdate.mock.calls.at(-1)?.[1]).not.toHaveProperty('show_in_scanner')
+  })
+
+  describe('objective scorer', () => {
+    const REFUSAL: ScorerInstance = {
+      scorer_registry_name: 'inverted_refusal',
+      identifier: { class_name: 'TrueFalseInverterScorer', class_module: 'pyrit.score', hash: 'refusal-hash', scorer_type: 'true_false' },
+    }
+    const ALLOW: ScorerInstance = {
+      scorer_registry_name: 'refusal',
+      identifier: { class_name: 'SelfAskRefusalScorer', class_module: 'pyrit.score', hash: 'allow-hash', scorer_type: 'true_false' },
+    }
+
+    beforeEach(() => {
+      mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: true }))
+      mockListCatalog.mockResolvedValue({
+        items: [makeScenario({ supports_objective_scorer: true })],
+        pagination: { has_more: false, next_cursor: null },
+      })
+    })
+
+    it('loads the named scorer and saves a newly picked one by name in launch defaults', async () => {
+      const user = userEvent.setup()
+      mockGet.mockResolvedValue({
+        preset: {
+          ...STORED_PRESET,
+          launch_defaults: { objective_scorer: 'inverted_refusal' },
+        },
+        version: 'v1',
+        issues: [],
+      })
+      renderEdit('nightly_probe', [REFUSAL, ALLOW])
+
+      const picker = await screen.findByRole('combobox', { name: 'Objective scorer' })
+      expect(picker).toHaveValue('registered:inverted_refusal')
+      await user.selectOptions(picker, 'registered:refusal')
+      await user.click(screen.getByTestId('save-preset-btn'))
+
+      await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
+        'nightly_probe',
+        expect.objectContaining({
+          launch_defaults: { objective_scorer: 'refusal' },
+        }),
+        'v1',
+      ))
+    })
+
+    it('drops launch defaults when the operator returns to the scenario default scorer', async () => {
+      const user = userEvent.setup()
+      mockGet.mockResolvedValue({
+        preset: {
+          ...STORED_PRESET,
+          launch_defaults: { objective_scorer: 'inverted_refusal' },
+        },
+        version: 'v1',
+        issues: [],
+      })
+      renderEdit('nightly_probe', [REFUSAL])
+
+      await user.selectOptions(await screen.findByRole('combobox', { name: 'Objective scorer' }), '')
+      await user.click(screen.getByTestId('save-preset-btn'))
+
+      await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+      expect(mockUpdate.mock.calls.at(-1)?.[1]).not.toHaveProperty('launch_defaults')
+    })
+
+    it('keeps the stored scorer when the scenario renders no scorer control', async () => {
+      const user = userEvent.setup()
+      const scenario = makeScenario({ supports_objective_scorer: false })
+      mockGetScenario.mockResolvedValue(scenario)
+      mockListCatalog.mockResolvedValue({ items: [scenario], pagination: { has_more: false, next_cursor: null } })
+      mockGet.mockResolvedValue({
+        preset: { ...STORED_PRESET, launch_defaults: { objective_scorer: 'inverted_refusal' } },
+        version: 'v1',
+        issues: [],
+      })
+      renderEdit('nightly_probe', [REFUSAL])
+
+      const description = await screen.findByTestId('preset-description-input')
+      expect(screen.queryByRole('combobox', { name: 'Objective scorer' })).not.toBeInTheDocument()
+      await user.type(description, ' Edited.')
+      await user.click(screen.getByTestId('save-preset-btn'))
+
+      await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+      expect(mockUpdate.mock.calls.at(-1)?.[1]).toHaveProperty('launch_defaults', { objective_scorer: 'inverted_refusal' })
+    })
+
+    it('shows a stored scorer the scenario cannot use and removes it only when asked', async () => {
+      const user = userEvent.setup()
+      const scenario = makeScenario({ supports_objective_scorer: false })
+      mockGetScenario.mockResolvedValue(scenario)
+      mockListCatalog.mockResolvedValue({ items: [scenario], pagination: { has_more: false, next_cursor: null } })
+      mockGet.mockResolvedValue({
+        preset: { ...STORED_PRESET, launch_defaults: { objective_scorer: 'inverted_refusal' } },
+        version: 'v1',
+        issues: [{
+          field: 'launch_defaults.objective_scorer',
+          message: 'This scenario does not support a custom objective scorer.',
+        }],
+      })
+      renderEdit('nightly_probe', [REFUSAL])
+
+      const warning = await screen.findByTestId('unsupported-scorer-warning')
+      expect(warning).toHaveTextContent('inverted_refusal')
+      expect(warning).toHaveTextContent('This scenario does not support a custom objective scorer.')
+      await user.click(screen.getByRole('button', { name: 'Remove scorer' }))
+      expect(screen.queryByTestId('unsupported-scorer-warning')).not.toBeInTheDocument()
+      await user.click(screen.getByTestId('save-preset-btn'))
+
+      await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+      expect(mockUpdate.mock.calls.at(-1)?.[1]).not.toHaveProperty('launch_defaults')
+    })
+
+    it('does not report a stored scorer as unavailable while scorers load', async () => {
+      mockGet.mockResolvedValue({
+        preset: { ...STORED_PRESET, launch_defaults: { objective_scorer: 'inverted_refusal' } },
+        version: 'v1',
+        issues: [],
+      })
+      renderEdit('nightly_probe', [], { scorersLoading: true })
+
+      const picker = await screen.findByRole('combobox', { name: 'Objective scorer' })
+      expect(picker).toHaveDisplayValue('inverted_refusal')
+      expect(screen.queryByText(/Unavailable:/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/The saved scorer is unavailable/)).not.toBeInTheDocument()
+    })
   })
 
   it('associates the unavailable baseline with its scenario-owned explanation', async () => {

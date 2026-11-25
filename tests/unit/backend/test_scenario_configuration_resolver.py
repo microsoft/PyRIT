@@ -70,6 +70,42 @@ def test_scorer_override_preserves_defaults_and_rejects_stale_or_unsupported_sel
             resolver.resolve_constructor_kwargs(scenario_class=ApiKey, objective_scorer=reference)
 
 
+class _BuiltInScorerScenario(ApiKey):
+    def __init__(self) -> None:
+        super().__init__()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("scenario_class", "expected_remediation"),
+    [
+        pytest.param(
+            _BuiltInScorerScenario,
+            "Clear the objective scorer; this scenario always uses its built-in scorer.",
+            id="built_in_scorer",
+        ),
+        pytest.param(ApiKey, "Select the current registered scorer and review its identity.", id="stale_scorer"),
+    ],
+)
+def test_named_role_scorer_issue_tells_the_user_how_to_fix_it(
+    scenario_class: type[Scenario], expected_remediation: str
+) -> None:
+    request = RunScenarioRequest(
+        scenario_name="s",
+        target_name="t",
+        objective_scorer=RegisteredComponentReference(registry_name="missing", identifier_hash="0" * 64),
+    )
+    with (
+        patch.object(ScorerRegistry, "get_registry_singleton", return_value=ScorerRegistry()),
+        patch.object(ScenarioConfigurationResolver, "resolve_scenario_class", return_value=scenario_class),
+        patch.object(ScenarioConfigurationResolver, "resolve_target", return_value=MockPromptTarget()),
+    ):
+        issues, updates, _ = ScenarioConfigurationResolver.resolve_named_roles(scenario_name="s", request=request)
+
+    assert [(issue.role, issue.remediation) for issue in issues] == [("objective_scorer", expected_remediation)]
+    assert updates == {"objective_scorer": None}
+
+
 def _datasets(**fields: object) -> ScenarioDatasetRequest | None:
     return RunScenarioRequest.model_validate({"scenario_name": "s", "target_name": "t", **fields}).dataset_request
 

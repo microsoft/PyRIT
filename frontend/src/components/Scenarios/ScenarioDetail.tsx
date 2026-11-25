@@ -61,7 +61,7 @@ import type {
   ScorerInstance,
   TargetInstance,
 } from '@/types'
-import { findRegisteredScorer } from '@/utils/scorerPresentation'
+import { findRegisteredScorer, scorerNameReference } from '@/utils/scorerPresentation'
 import { newDraftMessage, toConversationDraft } from '@/utils/conversationDraft'
 import {
   DATASET_QUERY_PARAM, datasetNamesFromSearchParams, routerPathParamValue, scenarioRunRoutePath,
@@ -382,7 +382,19 @@ function ScenarioLaunchForm({
   const { rememberScanTargets } = useUserPreferences()
   const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
   const staleSelection = selectionGeneration !== runtime.generation
-  const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(initialRun?.objective_scorer ?? null)
+  const presetScorerName = preset?.preset.launch_defaults?.objective_scorer ?? null
+  // Undefined until the operator picks: a preset names its scorer, bound to whichever registration loads.
+  const [selectedObjectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null | undefined>(
+    scenario.supports_objective_scorer
+      ? initialRun?.objective_scorer ?? (presetScorerName ? undefined : null)
+      : null,
+  )
+  // Keyed on the bound hash, not the scorer list, so an unchanged binding keeps one reference.
+  const presetScorerHash = scorerNameReference(presetScorerName, scorers)?.identifier_hash ?? ''
+  const objectiveScorer = useMemo<RegisteredComponentReference | null>(() => {
+    if (selectedObjectiveScorer !== undefined) return selectedObjectiveScorer
+    return presetScorerName ? { registry_name: presetScorerName, identifier_hash: presetScorerHash } : null
+  }, [presetScorerHash, presetScorerName, selectedObjectiveScorer])
   const scoringTargetName = initialRun?.scoring_target_name ?? ''
   const scorerError = objectiveScorer && (
     scorersLoading || scorersError || !findRegisteredScorer(objectiveScorer, scorers)

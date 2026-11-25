@@ -47,7 +47,9 @@ const IDENTITY = {
   scenarioName: 'foundry.red_team_agent',
   description: '',
   showInScanner: true,
+  objectiveScorer: null,
 }
+const REFUSAL_SCORER = 'inverted_refusal'
 const ITERATION_PARAMETER: Parameter = {
   name: 'max_turns',
   type_name: 'int',
@@ -409,6 +411,39 @@ describe('configToPreset', () => {
     )
 
     expect(preset.show_in_scanner).toBe(false)
+  })
+
+  it('writes the objective scorer only when the operator picked one', () => {
+    const scenario = makeScenario()
+
+    expect(configToPreset(IDENTITY, buildConfig(), { scenario, previous: null }))
+      .not.toHaveProperty('launch_defaults')
+    expect(configToPreset(
+      { ...IDENTITY, objectiveScorer: REFUSAL_SCORER },
+      buildConfig(),
+      { scenario, previous: null },
+    ).launch_defaults).toEqual({ objective_scorer: REFUSAL_SCORER })
+  })
+
+  it('drops the launch defaults section when the scorer is cleared', () => {
+    const scenario = makeScenario()
+    const preset = configToPreset(
+      IDENTITY,
+      buildConfig(),
+      { scenario, previous: makePreset({ launch_defaults: { objective_scorer: REFUSAL_SCORER } }) },
+    )
+
+    expect(preset).not.toHaveProperty('launch_defaults')
+  })
+
+  it('preserves launch defaults this editor has no control for', () => {
+    const scenario = makeScenario()
+    const previous = makePreset({
+      launch_defaults: { objective_scorer: REFUSAL_SCORER, future_field: 3 } as ScenarioPreset['launch_defaults'],
+    })
+    const preset = configToPreset(IDENTITY, buildConfig(), { scenario, previous })
+
+    expect(preset.launch_defaults).toEqual({ future_field: 3 })
   })
 
   it('carries only the fields the operator moved off the scenario default', () => {

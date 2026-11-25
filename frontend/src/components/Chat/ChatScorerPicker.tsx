@@ -17,6 +17,9 @@ interface ChatScorerPickerProps {
   error?: string | null
   inherited?: boolean
   usage?: 'chat' | 'scenario'
+  /** Label of the no-selection option, when the default wording does not describe it. */
+  emptyOptionLabel?: string
+  help?: string
 }
 
 function scorerOptionLabel(scorer: ScorerInstance): string {
@@ -25,19 +28,21 @@ function scorerOptionLabel(scorer: ScorerInstance): string {
 
 export default function ChatScorerPicker({
   value, scorers, onChange, onUseLastUsed, label = 'Chat scorer', disabled, loading, error, inherited = false, usage = 'chat',
+  emptyOptionLabel, help,
 }: ChatScorerPickerProps) {
   const styles = useChatScorerPickerStyles()
   const selectedScorer = findRegisteredScorer(value ?? null, scorers, inherited)
-  const available = !value || selectedScorer !== undefined
+  // A saved value can only be judged unavailable once the registered scorers have loaded.
+  const available = !value || loading || selectedScorer !== undefined
   const eligibleScorers = scorers.filter((scorer: ScorerInstance) => usage === 'scenario'
     ? scorer.identifier.scorer_type === 'true_false' : isEligibleChatScorer(scorer))
   const selected = value === undefined && onUseLastUsed ? 'last-used'
     : selectedScorer && eligibleScorers.includes(selectedScorer)
-    ? `registered:${selectedScorer.scorer_registry_name}` : value ? 'unavailable' : ''
+    ? `registered:${selectedScorer.scorer_registry_name}` : value ? (loading ? 'loading' : 'unavailable') : ''
   return (
-    <HelpField label={label} help={usage === 'scenario'
+    <HelpField label={label} help={help ?? (usage === 'scenario'
       ? 'Evaluates whether the target response meets the objective. The attack decides what to do with the result.'
-      : 'Evaluates the latest target response against your objective. Off disables automatic scoring.'}>
+      : 'Evaluates the latest target response against your objective. Off disables automatic scoring.')}>
       <Select className={styles.select} aria-label={label} value={selected} disabled={disabled || loading}
         title={selectedScorer ? scorerOptionLabel(selectedScorer) : undefined}
         onChange={(_event, data) => {
@@ -47,7 +52,8 @@ export default function ChatScorerPicker({
           if (scorer) onChange({ registry_name: scorer.scorer_registry_name, identifier_hash: scorer.identifier.hash })
         }}>
         {onUseLastUsed && <option value="last-used">Use last used</option>}
-        <option value="">{usage === 'scenario' ? 'Use scenario default' : 'Off'}</option>
+        <option value="">{emptyOptionLabel ?? (usage === 'scenario' ? 'Use scenario default' : 'Off')}</option>
+        {selected === 'loading' && value && <option value="loading" hidden disabled>{value.registry_name}</option>}
         {selected === 'unavailable' && value && <option value="unavailable" hidden disabled>
           {selectedScorer ? scorerOptionLabel(selectedScorer) : `Unavailable: ${value.registry_name}`}
         </option>}

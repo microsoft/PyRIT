@@ -64,6 +64,8 @@ import type {
   ScenarioPresetResponse,
   ScenarioSuite,
   LaunchScenarioSuiteRequest,
+  ScenarioReadiness,
+  ScenarioSuiteReadinessRequest,
   ScenarioSuiteExecutionSummary,
   ScenarioSuiteListResponse,
   ScenarioSuiteResponse,
@@ -998,6 +1000,20 @@ export const scenarioSuitesApi = {
     const response = await apiClient.post(
       `/scenario-suites/${encodeURIComponent(name)}/launch`,
       request,
+    )
+    return response.data
+  },
+
+  /** Previews every entry's effective roles, their sources, and issues without launching. */
+  getReadiness: async (
+    name: string,
+    request: ScenarioSuiteReadinessRequest,
+    signal?: AbortSignal,
+  ): Promise<ScenarioReadiness> => {
+    const response = await apiClient.post(
+      `/scenario-suites/${encodeURIComponent(name)}/readiness`,
+      request,
+      { signal },
     )
     return response.data
   },
