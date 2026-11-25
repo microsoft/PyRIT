@@ -348,9 +348,10 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 # - **`SelfAskGeneralTrueFalseScorer`** — bring your own system prompt and JSON schema when
 #   the built-in templates don't fit. See
 #   [Combining & stacking scorers](3_combining_scorers.ipynb) for how custom scorers slot in.
-# - **`PromptfooRubricScorer`** — grades a response with the promptfoo red-team rubric carried by
-#   the objective's `FailsPromptfooRubric` condition, using promptfoo's own grading prompts. `True`
-#   means the response failed the rubric. It backs the promptfoo scenarios.
+# - **`PromptfooRubricScorer`** — grades a response against the rubric carried by the objective's
+#   `SatisfiesRubric` condition, using promptfoo's own grading prompts. `True` means the response
+#   satisfies the rubric. The promptfoo scenarios wrap it in `TrueFalseInverterScorer`, so a failed
+#   rubric is a success.
 #
 # %% [markdown]
 # ### ASSERT policy scoring

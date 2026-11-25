@@ -167,6 +167,17 @@ class MatchesObjective(Condition):
     condition_type: Literal["matches_objective"] = "matches_objective"
 
 
+class SatisfiesRubric(Condition):
+    """
+    The evidence satisfies a natural-language rubric, as a judge reads it.
+
+    ``rubric`` is the complete grading text, already rendered with any per-test values.
+    """
+
+    condition_type: Literal["satisfies_rubric"] = "satisfies_rubric"
+    rubric: str = Field(min_length=1, pattern=r"\S")
+
+
 class ToolArgumentRequirement(BaseModel):
     """
     One argument a tool call must have been made with, compared by a text matcher.
@@ -334,19 +345,6 @@ class ViolatesAssertPolicy(Condition):
     taxonomy: AssertTaxonomy
     application_context: str = ""
     target_instructions: str | None = None
-
-
-class FailsPromptfooRubric(Condition):
-    """
-    The evidence fails a promptfoo red-team grader's rubric.
-
-    ``plugin_id`` names the promptfoo plugin, such as ``hallucination``. ``rubric`` is the plugin's
-    grading rubric, already rendered with the application's purpose.
-    """
-
-    condition_type: Literal["fails_promptfoo_rubric"] = "fails_promptfoo_rubric"
-    plugin_id: str = Field(min_length=1)
-    rubric: str = Field(min_length=1)
 
 
 class ContentWritten(Condition):

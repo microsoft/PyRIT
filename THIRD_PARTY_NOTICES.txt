@@ -244,9 +244,10 @@ Copyright (c) Promptfoo 2025
 PyRIT includes prompts from promptfoo at revision
 825929e64f3eec83e376df98f0b3abad5e7ccee6:
 
-- pyrit/datasets/score/promptfoo/llm_rubric_system_prompt.yaml: the llm-rubric
-  grading system prompt (src/prompts/grading.ts), unchanged.
-- pyrit/datasets/score/promptfoo/response_attribution_guidance.yaml: the red-team
+- pyrit/datasets/score/promptfoo/llm_rubric_system_prompt.yaml and
+  llm_rubric_user_prompt.yaml: the llm-rubric grading system and user prompts
+  (src/prompts/grading.ts), unchanged.
+- pyrit/datasets/promptfoo/response_attribution_guidance.yaml: the red-team
   grader's response attribution guidance (src/redteam/plugins/base.ts), unchanged.
 - pyrit/datasets/promptfoo/plugins/: plugin generation templates and grading
   rubrics (src/redteam/plugins/), with descriptions from

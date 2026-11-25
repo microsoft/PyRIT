@@ -14,7 +14,7 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 from pyrit.executor.promptgen import TargetObjectiveGenerator
-from pyrit.models import FailsPromptfooRubric, SeedDataset, SeedObjective, SeedOrigin, SeedPrompt
+from pyrit.models import SatisfiesRubric, SeedDataset, SeedObjective, SeedOrigin, SeedPrompt
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -32,6 +32,9 @@ class PromptfooPlugin(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     PLUGINS_PATH: ClassVar[Path] = DATASETS_PATH / "promptfoo" / "plugins"
+    RESPONSE_ATTRIBUTION_GUIDANCE_PATH: ClassVar[Path] = (
+        DATASETS_PATH / "promptfoo" / "response_attribution_guidance.yaml"
+    )
 
     id: str = Field(min_length=1)
     display_name: str = Field(min_length=1)
@@ -90,24 +93,29 @@ class PromptfooPlugin(BaseModel):
 
     def render_rubric(self, *, purpose: str) -> str:
         """
-        Render the grading rubric for an application.
+        Render the grading rubric for an application, as promptfoo's red-team grader builds it.
+
+        promptfoo places its response attribution guidance before every plugin rubric, so the
+        rubric is the guidance followed by the plugin's rubric rendered with the purpose. promptfoo
+        also appends the current timestamp; it is left out so a stored rubric stays stable.
 
         Args:
             purpose (str): What the application under test does.
 
         Returns:
-            str: The rubric text.
+            str: The complete rubric text.
         """
+        guidance = SeedPrompt.from_yaml_file(self.RESPONSE_ATTRIBUTION_GUIDANCE_PATH).value
         template = SeedPrompt(value=self.rubric, data_type="text", name=f"promptfoo:{self.id}:rubric")
-        return template.render_template_value(purpose=purpose)
+        return f"{guidance}\n\n{template.render_template_value(purpose=purpose)}"
 
 
 class PromptfooPluginProvider(SeedDatasetProvider):
     """
     Generate one promptfoo plugin's tests for an application and attach the plugin's rubric to each.
 
-    Each test is a ``SeedObjective`` whose ``FailsPromptfooRubric`` condition carries the rubric rendered
-    with the application's purpose, so ``PromptfooRubricScorer`` can grade the target's response.
+    Each test is a ``SeedObjective`` whose ``SatisfiesRubric`` condition carries the plugin's rubric,
+    rendered with the application's purpose, so ``PromptfooRubricScorer`` can grade the target's response.
     Every fetch generates a new batch.
 
     Reference: [@promptfoo2025redteam]
@@ -149,6 +157,7 @@ class PromptfooPluginProvider(SeedDatasetProvider):
         self._plugin = plugin
         self._purpose = purpose
         self._count = count
+        self._condition = SatisfiesRubric(rubric=plugin.render_rubric(purpose=purpose))
         self._generator = TargetObjectiveGenerator(
             target=target,
             system_prompt=plugin.render_generation_prompt(purpose=purpose, count=count),
@@ -171,9 +180,6 @@ class PromptfooPluginProvider(SeedDatasetProvider):
             SeedDataset: One objective per test, each carrying the plugin's rendered rubric.
         """
         result = await self._generator.execute_async(instructions=self._purpose, count=self._count)
-        condition = FailsPromptfooRubric(
-            plugin_id=self._plugin.id, rubric=self._plugin.render_rubric(purpose=self._purpose)
-        )
         return SeedDataset(
             dataset_name=self._dataset_name,
             seeds=[
@@ -184,12 +190,8 @@ class PromptfooPluginProvider(SeedDatasetProvider):
                     is_jinja_template=False,
                     harm_categories=[self._plugin.id],
                     source=self._plugin.source,
-                    conditions=(condition,),
-                    metadata={
-                        "promptfoo_plugin": self._plugin.id,
-                        "purpose": self._purpose,
-                        "generation_conversation_id": result.conversation_id,
-                    },
+                    conditions=(self._condition,),
+                    metadata={"generation_conversation_id": result.conversation_id},
                 )
                 for value in result.objectives
             ],

@@ -18,8 +18,9 @@
 # - An adversarial chat generates the tests from your application's `purpose`, using the plugin's
 #   promptfoo generation prompt.
 # - `PromptfooRubricScorer` grades each response on the scoring target with promptfoo's grading
-#   prompts and the plugin's rubric. A result is a success when the response fails the rubric, so the
-#   vulnerability was found.
+#   prompts and the plugin's rubric. A result is a success when the response fails the rubric and is
+#   not a refusal, so the vulnerability was found. promptfoo passes a refusal or an empty response, so
+#   the default objective scorer also checks for refusals with `SelfAskRefusalScorer`.
 #
 # Every promptfoo scenario takes these parameters:
 #

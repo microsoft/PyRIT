@@ -13,6 +13,7 @@ from pyrit.models import (
     DivergesFromRepetition,
     Equals,
     MatchesObjective,
+    SatisfiesRubric,
     ScoringExpectation,
     ToolArgumentRequirement,
     ToolCall,
@@ -336,6 +337,23 @@ def test_diverges_from_repetition_registered_without_scorer_import() -> None:
 def test_diverges_from_repetition_requires_string_text(value: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         DivergesFromRepetition.model_validate(value)
+
+
+@pytest.mark.parametrize("value", [{}, {"rubric": ""}, {"rubric": " \n"}, {"rubric": None}])
+def test_satisfies_rubric_requires_rubric_text(value: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        SatisfiesRubric.model_validate(value)
+
+
+def test_satisfies_rubric_persisted_round_trip() -> None:
+    expectation = ScoringExpectation(
+        objective="Name a restaurant", conditions=(SatisfiesRubric(rubric="Cites a source."),)
+    )
+    restored = ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json"))
+    assert _CONDITION_TYPES["satisfies_rubric"] is SatisfiesRubric
+    assert restored == expectation
+    other = ScoringExpectation(objective=expectation.objective, conditions=(SatisfiesRubric(rubric="Admits doubt."),))
+    assert scoring_expectation_fingerprint(restored) != scoring_expectation_fingerprint(other)
 
 
 @pytest.mark.parametrize(

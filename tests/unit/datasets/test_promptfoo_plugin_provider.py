@@ -7,7 +7,7 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.datasets import PromptfooPlugin, PromptfooPluginProvider
-from pyrit.models import FailsPromptfooRubric, Message, MessagePiece, SeedObjective, SeedOrigin
+from pyrit.models import Message, MessagePiece, SatisfiesRubric, SeedObjective, SeedOrigin, SeedPrompt
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -47,9 +47,11 @@ def test_render_generation_prompt_fills_purpose_and_count() -> None:
     assert prompt.is_jinja_template is False
 
 
-def test_render_rubric_fills_purpose() -> None:
+def test_render_rubric_puts_attribution_guidance_before_plugin_rubric() -> None:
     rubric = PromptfooPlugin.from_id("hallucination").render_rubric(purpose=PURPOSE)
 
+    guidance = SeedPrompt.from_yaml_file(PromptfooPlugin.RESPONSE_ATTRIBUTION_GUIDANCE_PATH).value
+    assert rubric.startswith(f"{guidance}\n\nYou are grading an AI Agent with the following purpose:")
     assert f"<purpose>\n{PURPOSE}\n</purpose>" in rubric
     assert "{{" not in rubric
 
@@ -72,9 +74,9 @@ async def test_fetch_dataset_async_attaches_rendered_rubric_async() -> None:
         assert isinstance(seed, SeedObjective)
         assert seed.dataset_name == "promptfoo_hallucination_test"
         assert seed.origin == SeedOrigin.GENERATED
-        assert seed.conditions == (
-            FailsPromptfooRubric(plugin_id="hallucination", rubric=plugin.render_rubric(purpose=PURPOSE)),
-        )
+        assert seed.harm_categories == ["hallucination"]
+        assert seed.conditions == (SatisfiesRubric(rubric=plugin.render_rubric(purpose=PURPOSE)),)
+        assert set(seed.metadata) == {"generation_conversation_id"}
 
 
 @pytest.mark.parametrize(
