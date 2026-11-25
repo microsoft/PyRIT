@@ -8,12 +8,12 @@ import {
   EXPORT_MIME_TYPES,
   MAX_TOTAL_INLINE_CHARACTERS,
 } from "./conversationExport";
-import type { Message, MessageAttachment, BackendMessage } from "../types";
+import type { Message, MessageAttachment, BackendMessage, BackendMessagePiece } from "../types";
 import { backendMessageToFrontend } from "./messageMapper";
 
 const FIXED_NOW = new Date("2026-07-22T02:34:01.059Z");
 
-function textPiece(id: string, value: string) {
+function textPiece(id: string, value: string): BackendMessagePiece {
   return {
     id,
     original_value_data_type: "text",
@@ -25,7 +25,7 @@ function textPiece(id: string, value: string) {
   };
 }
 
-function mediaPiece(id: string, value: string, filename: string) {
+function mediaPiece(id: string, value: string, filename: string): BackendMessagePiece {
   return {
     id,
     original_value_data_type: "image_path",
@@ -346,40 +346,27 @@ describe("conversationExport", () => {
       expect(md).not.toContain("base64");
     });
 
-    it("falls back to flat content and attachments list when displayPieces is absent", () => {
-      const img = attachment({ name: "fallback.png", mimeType: "image/png", type: "image" });
-      const md = conversationToMarkdown(
-        [
-          message({
-            content: "Flat message text",
-            attachments: [img],
-            displayPieces: undefined,
-          }),
+    it("keeps a backend message in Markdown piece order end to end", () => {
+      const backend: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        created_at: "2026-07-22T02:30:07.000Z",
+        message_pieces: [
+          textPiece("p1", "MAPPER_BEFORE"),
+          mediaPiece("p2", "data:image/png;base64,AAAA", "mapper-one.png"),
+          textPiece("p3", "MAPPER_BETWEEN"),
+          mediaPiece("p4", "data:image/png;base64,BBBB", "mapper-two.png"),
+          textPiece("p5", "MAPPER_AFTER"),
         ],
-        "conv-1",
-        FIXED_NOW,
-      );
-      expect(md).toContain("```\nFlat message text\n```");
-      expect(md).toContain("**Attachments:**");
-      expect(md).toContain("- image: fallback.png (image/png)");
-    });
-
-    it("falls back to flat content and attachments when displayPieces is empty", () => {
-      const img = attachment({ name: "empty-pieces.png", mimeType: "image/png", type: "image" });
-      const md = conversationToMarkdown(
-        [
-          message({
-            content: "Empty pieces text",
-            attachments: [img],
-            displayPieces: [],
-          }),
-        ],
-        "conv-1",
-        FIXED_NOW,
-      );
-      expect(md).toContain("```\nEmpty pieces text\n```");
-      expect(md).toContain("**Attachments:**");
-      expect(md).toContain("- image: empty-pieces.png (image/png)");
+      };
+      const md = conversationToMarkdown([backendMessageToFrontend(backend)], "conv-1", FIXED_NOW);
+      const markers = ["MAPPER_BEFORE", "mapper-one.png", "MAPPER_BETWEEN", "mapper-two.png", "MAPPER_AFTER"];
+      let previousIndex = -1;
+      for (const marker of markers) {
+        const index = md.indexOf(marker);
+        expect(index).toBeGreaterThan(previousIndex);
+        previousIndex = index;
+      }
     });
 
     it("falls back to flat content and attachments when media count in displayPieces is inconsistent", () => {
