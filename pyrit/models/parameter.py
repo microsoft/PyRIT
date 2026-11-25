@@ -56,7 +56,7 @@ class ComponentType(StrEnum):
     SOURCE = "source"
 
 
-class ParameterDestination(str, Enum):
+class ParameterDestination(StrEnum):
     """Where a declarative parameter is consumed at build time."""
 
     CONSTRUCTOR = "constructor"

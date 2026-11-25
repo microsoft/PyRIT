@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class OpenAIToolType(str, Enum):
+class OpenAIToolType(StrEnum):
     """Enum defining available OpenAI tool types for the Responses API."""
 
     WEB_SEARCH_PREVIEW = "web_search_preview"

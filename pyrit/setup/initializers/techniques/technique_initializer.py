@@ -19,7 +19,7 @@ not overwritten.
 
 import asyncio
 import logging
-from enum import Enum
+from enum import StrEnum
 
 from pyrit.models import Parameter
 from pyrit.registry import (
@@ -32,7 +32,7 @@ from pyrit.setup.pyrit_initializer import PyRITInitializer
 logger = logging.getLogger(__name__)
 
 
-class TechniqueInitializerTags(str, Enum):
+class TechniqueInitializerTags(StrEnum):
     """Technique groups selectable by TechniqueInitializer."""
 
     CORE = "core"

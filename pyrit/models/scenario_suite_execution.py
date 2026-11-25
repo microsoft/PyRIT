@@ -4,7 +4,7 @@
 """Shared ScenarioSuite launch, execution, and child-attribution contracts."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal, Self, TypeAlias
 from uuid import UUID
 
@@ -69,7 +69,7 @@ class ScenarioSuiteReadinessRequest(_ScenarioSuiteConfiguration):
     target_name: _RequestName | None = Field(None, min_length=1, description="Optional objective target selection")
 
 
-class ScenarioSuiteExecutionStatus(str, Enum):
+class ScenarioSuiteExecutionStatus(StrEnum):
     """Process-local lifecycle of one accepted suite execution."""
 
     QUEUING = "QUEUING"
@@ -79,7 +79,7 @@ class ScenarioSuiteExecutionStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
-class ScenarioSuiteSubmissionState(str, Enum):
+class ScenarioSuiteSubmissionState(StrEnum):
     """Suite-owned state before a child becomes an ordinary scenario run."""
 
     PENDING = "PENDING"

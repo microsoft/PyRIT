@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -14,7 +14,7 @@ from pyrit.models.scenario_progress import ScenarioRunPlanGroupKind
 from pyrit.models.score.scorer_capabilities import ScorerCapabilityName  # noqa: TC001 (runtime-required by Pydantic)
 
 
-class ScorerMismatchKind(str, Enum):
+class ScorerMismatchKind(StrEnum):
     """Why a candidate cannot judge a population."""
 
     #: The scorer does not accept the evidence family the attack supplies.
@@ -27,7 +27,7 @@ class ScorerMismatchKind(str, Enum):
     CONDITION = "condition"
 
 
-class ScorerVerdictStatus(str, Enum):
+class ScorerVerdictStatus(StrEnum):
     """What scorer selection concluded about one candidate."""
 
     #: The candidate judges the group.

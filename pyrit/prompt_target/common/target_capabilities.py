@@ -3,7 +3,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from types import MappingProxyType
 from typing import NoReturn, cast
 
@@ -19,7 +19,7 @@ __all__ = [
 ]
 
 
-class UnsupportedCapabilityBehavior(str, Enum):
+class UnsupportedCapabilityBehavior(StrEnum):
     """
     Defines what happens when a caller requires a capability the target does not support.
 

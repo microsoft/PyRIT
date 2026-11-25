@@ -4,7 +4,7 @@
 """Canonical models for durable scenario run plans and incremental progress."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal, Self
 from uuid import UUID
 
@@ -29,7 +29,7 @@ SCENARIO_RUN_STARTED_AT_METADATA_KEY = "started_at"
 SCENARIO_RUN_PLAN_VERSION = 1
 
 
-class ScenarioRunPlanGroupKind(str, Enum):
+class ScenarioRunPlanGroupKind(StrEnum):
     """What a planned atomic group runs, recorded by the code that builds the group."""
 
     #: An ordinary technique attack.
@@ -289,7 +289,7 @@ class ScenarioExecutionUnit(BaseModel):
     seed_group_id: str
 
 
-class ScenarioObjectiveScorerAttribution(str, Enum):
+class ScenarioObjectiveScorerAttribution(StrEnum):
     """How a report knows which objective scorer judged a set of execution units."""
 
     #: The unit's effective result recorded the objective scorer it ran with.
@@ -304,7 +304,7 @@ class ScenarioObjectiveScorerAttribution(str, Enum):
     UNKNOWN = "unknown"
 
 
-class ScenarioObjectiveScorerScope(str, Enum):
+class ScenarioObjectiveScorerScope(StrEnum):
     """Whether a scenario's completed results come from one identified objective scorer."""
 
     #: One identified scorer judged every completed unit.

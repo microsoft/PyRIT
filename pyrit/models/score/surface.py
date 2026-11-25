@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 
-class SurfaceMatch(str, Enum):
+class SurfaceMatch(StrEnum):
     """How a surface locator selects files."""
 
     EXACT = "exact"

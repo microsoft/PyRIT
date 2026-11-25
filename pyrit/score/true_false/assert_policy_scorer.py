@@ -13,7 +13,7 @@ import json
 import logging
 import unicodedata
 from copy import deepcopy
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
 from jsonschema import Draft202012Validator, ValidationError
@@ -63,14 +63,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AssertScoringDimension(str, Enum):
+class AssertScoringDimension(StrEnum):
     """Independent failures evaluated against an ASSERT taxonomy."""
 
     POLICY_VIOLATION = "policy_violation"
     OVERREFUSAL = "overrefusal"
 
 
-class AssertJudgmentMode(str, Enum):
+class AssertJudgmentMode(StrEnum):
     """The response structure and consistency checks used by the ASSERT judge."""
 
     DIRECT = "direct"

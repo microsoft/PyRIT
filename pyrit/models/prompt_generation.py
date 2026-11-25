@@ -12,7 +12,7 @@ and result summary.
 import uuid
 from collections.abc import Mapping
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, ValidationError
@@ -27,7 +27,7 @@ TargetRoleStr = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,63}
 TargetNameStr = Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)]
 
 
-class PromptGenerationStatus(str, Enum):
+class PromptGenerationStatus(StrEnum):
     """Where a generation is in its lifecycle."""
 
     QUEUED = "queued"

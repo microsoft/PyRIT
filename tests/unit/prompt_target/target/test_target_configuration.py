@@ -359,7 +359,7 @@ def test_ensure_can_handle_dispatch_type_exhaustiveness(
         "\n".join(
             [
                 "from collections.abc import Mapping",
-                "from enum import Enum",
+                "from enum import StrEnum",
                 "from typing import TYPE_CHECKING, assert_never",
                 "from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities",
                 (

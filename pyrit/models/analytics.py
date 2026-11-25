@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import MAX_EMAX, MIN_EMIN, ROUND_HALF_EVEN, Context, Decimal, localcontext
-from enum import Enum
+from enum import StrEnum
 from math import isclose, isfinite, nextafter
 from typing import Annotated, Any, ClassVar, Self
 
@@ -251,7 +251,7 @@ class AttackAnalyticsStatistics(AttackStats):
 OutcomeStatistics = AttackAnalyticsStatistics
 
 
-class AttackResultSelection(str, Enum):
+class AttackResultSelection(StrEnum):
     """
     The identity used when selecting persisted results.
 
@@ -265,7 +265,7 @@ class AttackResultSelection(str, Enum):
     LATEST_PER_CONVERSATION = "latest_per_conversation"
 
 
-class AttackAnalyticsDimensionName(str, Enum):
+class AttackAnalyticsDimensionName(StrEnum):
     """
     Supported dimensions from saved result metadata, not current registry state.
 
@@ -289,21 +289,21 @@ class AttackAnalyticsDimensionName(str, Enum):
     LABEL = "label"
 
 
-class AttackAnalyticsConverterDirection(str, Enum):
+class AttackAnalyticsConverterDirection(StrEnum):
     """The converter pipeline recorded on an attack."""
 
     REQUEST = "request"
     RESPONSE = "response"
 
 
-class AttackAnalyticsMatchMode(str, Enum):
+class AttackAnalyticsMatchMode(StrEnum):
     """How values within one dimension predicate are combined."""
 
     ANY = "any"
     ALL = "all"
 
 
-class AttackAnalyticsValueKind(str, Enum):
+class AttackAnalyticsValueKind(StrEnum):
     """Disambiguate real metadata from missing values, empty pipelines, and legacy Operation names."""
 
     VALUE = "value"

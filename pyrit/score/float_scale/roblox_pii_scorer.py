@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import math
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-class RobloxPiiCategory(str, Enum):
+class RobloxPiiCategory(StrEnum):
     """PII behaviors classified by Roblox PII Classifier v2."""
 
     ASKING_FOR_PII = "privacy_asking_for_pii"

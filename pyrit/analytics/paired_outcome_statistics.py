@@ -11,7 +11,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from pyrit.analytics.scenario_statistics import (
@@ -70,7 +70,7 @@ class PairedOutcomeStatistics:
     unattributed_attempts: int
 
 
-class PairedOutcomeTransition(str, Enum):
+class PairedOutcomeTransition(StrEnum):
     """One decided baseline-to-attack outcome transition."""
 
     FAILURE_TO_SUCCESS = "failure_to_success"

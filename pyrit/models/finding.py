@@ -3,7 +3,7 @@
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, NamedTuple, Self
 from uuid import UUID, uuid4
 
@@ -17,7 +17,7 @@ from pyrit.models.harm_category import HarmCategory
 _REMOVED_IN = "1.5.0"
 
 
-class _FindingSeverity(str, Enum):
+class _FindingSeverity(StrEnum):
     """The PyRIT 1.2 severities, highest first. Deprecated: use the option keys of ``FindingFields.severity``."""
 
     CRITICAL = "critical"

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -37,7 +37,7 @@ class ToolExecutionMetadata(BaseModel):
         return cls.model_validate(metadata[cls.METADATA_KEY])
 
 
-class ToolLoopStopReason(str, Enum):
+class ToolLoopStopReason(StrEnum):
     """Why a target's tool loop ended a turn before the model gave its answer."""
 
     MAX_TOOL_ROUNDS_EXHAUSTED = "max_tool_rounds_exhausted"
@@ -73,7 +73,7 @@ class ToolLoopStop(BaseModel):
         return cls(reason=ToolLoopStopReason(metadata[cls.METADATA_KEY]))
 
 
-class ToolCaptureGap(str, Enum):
+class ToolCaptureGap(StrEnum):
     """Why the stored messages for a model response may not show every tool that ran for it."""
 
     HOSTED_TOOL_CALL = "hosted_tool_call"

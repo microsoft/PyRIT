@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import TYPE_CHECKING
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
@@ -60,7 +60,7 @@ _GROUPS: list[str] = [
 ]
 
 
-class XLSafetyBenchCountry(str, Enum):
+class XLSafetyBenchCountry(StrEnum):
     """Country-language pairs covered by XL-SafetyBench."""
 
     FRANCE = "france"
@@ -75,7 +75,7 @@ class XLSafetyBenchCountry(str, Enum):
     UNITED_STATES = "united_states"
 
 
-class XLSafetyBenchJailbreakCategory(str, Enum):
+class XLSafetyBenchJailbreakCategory(StrEnum):
     """Harm categories used by the XL-SafetyBench Jailbreak track."""
 
     CRIMINAL_ACTIVITIES = "Criminal Activities"
@@ -85,7 +85,7 @@ class XLSafetyBenchJailbreakCategory(str, Enum):
     POLITICAL_AND_MISINFORMATION = "Political & Misinformation"
 
 
-class XLSafetyBenchCulturalCategory(str, Enum):
+class XLSafetyBenchCulturalCategory(StrEnum):
     """Cultural categories used by the XL-SafetyBench Cultural track."""
 
     SYMBOLIC_TABOOS_AND_GIFT_GIVING = "Symbolic Taboos & Gift-Giving"
@@ -96,7 +96,7 @@ class XLSafetyBenchCulturalCategory(str, Enum):
     LEGAL_LANDMINES = "Legal Landmines"
 
 
-class XLSafetyBenchLanguageMode(str, Enum):
+class XLSafetyBenchLanguageMode(StrEnum):
     """Which version of a per-row scenario text to use as the SeedPrompt value."""
 
     LOCAL = "local"

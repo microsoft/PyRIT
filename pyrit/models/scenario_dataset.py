@@ -3,7 +3,7 @@
 
 """Shared scenario dataset inputs and selection capabilities."""
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
@@ -24,7 +24,7 @@ DatasetLimitInputValue = Annotated[
 ]
 
 
-class DatasetFetchPolicy(str, Enum):
+class DatasetFetchPolicy(StrEnum):
     """When scenario preparation may load a dataset."""
 
     NEVER = "never"
@@ -38,7 +38,7 @@ def _normalize_fetch(value: object) -> object:
     return None if value in (None, "", "default") else value
 
 
-class DatasetSelectionMode(str, Enum):
+class DatasetSelectionMode(StrEnum):
     """The permitted named-dataset selection."""
 
     ANY = "any"

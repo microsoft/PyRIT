@@ -361,7 +361,7 @@ def test_option_dispatch_type_exhaustiveness(tmp_path: Path, extend_enum: bool) 
         "\n".join(
             [
                 "from dataclasses import dataclass",
-                "from enum import Enum",
+                "from enum import StrEnum",
                 "from typing import assert_never",
                 "from pyrit.models import AttackAnalyticsDimension, AttackAnalyticsDimensionName",
                 enum_source,

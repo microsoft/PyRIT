@@ -16,7 +16,7 @@ import logging
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
@@ -43,7 +43,7 @@ from pyrit.setup.pyrit_initializer import PyRITInitializer
 logger = logging.getLogger(__name__)
 
 
-class TargetInitializerTags(str, Enum):
+class TargetInitializerTags(StrEnum):
     """Tags used by TargetInitializer for filtering which targets to register."""
 
     DEFAULT = "default"

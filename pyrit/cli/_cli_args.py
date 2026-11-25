@@ -20,7 +20,7 @@ import json
 import logging
 import shlex
 import sys
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
 from uuid import UUID
@@ -50,14 +50,14 @@ AZURE_SQL = "AzureSQL"
 # ---------------------------------------------------------------------------
 
 
-class ScenarioResultView(str, Enum):
+class ScenarioResultView(StrEnum):
     """
     Granularity of a ``scenario-results`` render.
 
     Defined here (a lightweight, parse-time-safe module) rather than alongside
     the Pydantic payload models in ``pyrit.cli._results`` so the argument parsers
     can reference it without importing ``pydantic`` on the ``--help`` path.
-    Inherits from ``str`` so the value round-trips cleanly through argparse.
+    A ``StrEnum``, so the value round-trips cleanly through argparse.
     """
 
     #: Scenario-level aggregate (totals + per-group success rates).

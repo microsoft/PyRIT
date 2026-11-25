@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 
-class WebSearchMode(str, Enum):
+class WebSearchMode(StrEnum):
     """Whether a request preserves, disables, or requires target-hosted search."""
 
     DEFAULT = "default"

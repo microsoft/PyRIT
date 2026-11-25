@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.models import Acquisition, ExecutionStep, ExecutionTraceObservationPayload, Observation, TraceSpanStatus
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from pyrit.score.observation.provider_trace_resolver import ProviderTraceResolver
 
 
-class TraceEvidenceRequirement(str, Enum):
+class TraceEvidenceRequirement(StrEnum):
     """
     The execution evidence a conversation judgment requires before its judge is called.
 

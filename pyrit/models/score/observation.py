@@ -7,7 +7,7 @@ import hashlib
 import json
 import uuid
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -137,7 +137,7 @@ def _resolved_scored_evidence_digest(
     raise ValueError(f"Scorable type {type(scorable).__name__} cannot reference scorer target response evidence.")
 
 
-class Acquisition(str, Enum):
+class Acquisition(StrEnum):
     """Whether evidence was acquired and the selected scope was completely covered."""
 
     COMPLETE = "complete"

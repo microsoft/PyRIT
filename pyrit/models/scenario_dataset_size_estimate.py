@@ -3,7 +3,7 @@
 
 """Scenario dataset size estimates: selected seed groups before technique expansion."""
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pyrit.models.dataset_limit import ResolvedDatasetLimit
 
 
-class ScenarioDatasetSizeEstimateKind(str, Enum):
+class ScenarioDatasetSizeEstimateKind(StrEnum):
     """Meaning of a population budget."""
 
     Bounded = "bounded"
@@ -54,7 +54,7 @@ def scenario_dataset_size_from_limit(limit: ResolvedDatasetLimit) -> BoundedData
     return AllAvailableDatasetSize() if limit == "all" else BoundedDatasetSize(value=limit)
 
 
-class DatasetLimitState(str, Enum):
+class DatasetLimitState(StrEnum):
     """How the dataset-limit control obtains its initial value."""
 
     Value = "value"

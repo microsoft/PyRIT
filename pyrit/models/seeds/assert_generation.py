@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from enum import Enum, StrEnum
+from enum import StrEnum
 from itertools import combinations
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Self
 
@@ -39,7 +39,7 @@ class _AssertModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
 
-class AssertSamplingMethod(str, Enum):
+class AssertSamplingMethod(StrEnum):
     """Assignment-selection methods supported by ASSERT."""
 
     PAIRWISE = "pairwise"
@@ -48,7 +48,7 @@ class AssertSamplingMethod(str, Enum):
     RANDOM = "random"
 
 
-class AssertReplication(str, Enum):
+class AssertReplication(StrEnum):
     """Replication policy for full-factorial assignments."""
 
     BALANCED = "balanced"
@@ -219,7 +219,7 @@ class AssertSlot(_AssertModel):
     nested_slot_components: tuple[AssertSlot, ...] = ()
 
 
-class AssertPatternRole(str, Enum):
+class AssertPatternRole(StrEnum):
     """The policy stance of an observable concept pattern."""
 
     ACCEPTABLE = "acceptable"

@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, model_validator
@@ -94,7 +94,7 @@ def _require(values: dict[str, Any], *keys: str) -> None:
         raise ValueError(f"Score metadata is missing {', '.join(missing)}.")
 
 
-class AssertSkipReason(str, Enum):
+class AssertSkipReason(StrEnum):
     """Why an ASSERT scenario didn't judge a conversation."""
 
     TARGET_INPUT_REFUSED = "target_input_refused"
@@ -252,7 +252,7 @@ class AssertCategoryJudgment(_AssertScoreMetadata):
         return metadata
 
 
-class AssertSampleVote(str, Enum):
+class AssertSampleVote(StrEnum):
     """One judge sample's answer in a repeated ASSERT judgment."""
 
     TRUE = "true"

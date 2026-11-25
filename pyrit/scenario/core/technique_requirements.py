@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from pyrit.models import AttackSeedGroup, SeedGroupRequirements
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class IncompatibleTechniquePolicy(str, Enum):
+class IncompatibleTechniquePolicy(StrEnum):
     """Scenario action when a technique cannot use a target or dataset group."""
 
     SKIP = "skip"
