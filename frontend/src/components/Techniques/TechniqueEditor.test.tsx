@@ -12,7 +12,13 @@ import TechniqueEditor from './TechniqueEditor'
 jest.mock('@/services/api', () => ({
   techniquesApi: { validateEdit: jest.fn(), createTechnique: jest.fn(), listTypes: jest.fn() },
   targetsApi: { listTargets: jest.fn() },
-  convertersApi: { listConverters: jest.fn(), listConverterTypes: jest.fn(), buildConverter: jest.fn(), createConverter: jest.fn() },
+  convertersApi: {
+    listConverters: jest.fn(),
+    listConverterTypes: jest.fn(),
+    buildConverter: jest.fn(),
+    createConverter: jest.fn(),
+    checkSaveability: jest.fn(),
+  },
 }))
 
 const techniques = jest.mocked(techniquesApi)
@@ -54,6 +60,7 @@ describe('TechniqueEditor', () => {
       { converter_id: 'base64', identifier: { class_name: 'Base64Converter', hash: 'b64' } },
       { converter_id: 'rot13', identifier: { class_name: 'ROT13Converter', hash: 'rot' } },
     ] })
+    jest.mocked(convertersApi.checkSaveability).mockResolvedValue({ not_saveable_reason: null })
   })
 
   it('should offer techniques with required nullable numeric parameters', async () => {
@@ -182,7 +189,7 @@ describe('TechniqueEditor', () => {
     await user.click(screen.getByRole('option', { name: /^New converter/ }))
     await user.click(await screen.findByRole('combobox', { name: /Converter Type/i }))
     await user.click(screen.getByRole('option', { name: /Base64Converter/ }))
-    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    await user.click(screen.getByRole('button', { name: 'Save Converter' }))
     await waitFor(() => expect(convertersApi.createConverter).toHaveBeenCalledTimes(1))
     await user.click(within(screen.getByRole('dialog', { name: 'Add Converter' })).getByRole('button', { name: 'Cancel' }))
     await user.click(await screen.findByRole('button', { name: 'Remove converter base64, Request converters stage 1' }))
@@ -233,11 +240,13 @@ describe('TechniqueEditor', () => {
       </FluentProvider>)
       const label = chain === 'request_converters' ? 'Request converters' : 'Response converters'
       await user.click(await screen.findByRole('button', { name: `Settings for converter base64, ${label} stage 2` }))
-      await user.click(screen.getByRole('menuitem', { name: 'Save to registry' }))
+      await user.click(screen.getByRole('menuitem', { name: 'Add to registry' }))
       await user.type(screen.getByRole('textbox', { name: /Registry name/ }), 'saved_base64{Enter}')
       await screen.findByRole('button', { name: `Settings for converter saved_base64, ${label} stage 2` })
       expect(screen.queryByText('Temporary')).not.toBeInTheDocument()
-      expect(convertersApi.createConverter).toHaveBeenCalledWith({ name: 'saved_base64', type: 'Base64Converter', source })
+      expect(convertersApi.createConverter).toHaveBeenCalledWith({
+        name: 'saved_base64', type: 'Base64Converter', source, persist: true,
+      })
       await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
       expect(onApplied.mock.calls[0][0].override.changes[chain]).toEqual(['base64', 'saved_base64'])
     },
@@ -261,7 +270,7 @@ describe('TechniqueEditor', () => {
     await user.click(screen.getByRole('option', { name: /CaesarConverter/ }))
     await user.type(screen.getByRole('textbox', { name: /Registry Name/i }), 'new_caesar')
     await user.type(screen.getByLabelText(/caesar_offset/i), '3')
-    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    await user.click(screen.getByRole('button', { name: 'Save Converter' }))
     await screen.findByText('new_caesar')
     await user.click(await screen.findByRole('button', { name: 'Apply to run' }))
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())

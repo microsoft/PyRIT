@@ -106,9 +106,27 @@ export const useCreateConverterDialogStyles = makeStyles({
     maxWidth: '560px',
     maxHeight: 'calc(100vh - 32px)',
   },
+  // The surface's height less its padding and border, so a long form scrolls instead of pushing the actions out.
+  body: {
+    minHeight: 0,
+    maxHeight: 'calc(100vh - 32px - 50px)',
+  },
   content: {
+    minHeight: 0,
     maxHeight: '70vh',
     overflowY: 'auto',
+  },
+  // DialogBody is a grid with the actions in its third row; while the warning shows, it takes that row and the
+  // actions move below it.
+  temporaryWarning: {
+    gridRowStart: 3,
+    gridRowEnd: 3,
+    gridColumnStart: 1,
+    gridColumnEnd: 4,
+  },
+  actionsBelowWarning: {
+    gridRowStart: 4,
+    gridRowEnd: 4,
   },
   form: {
     display: 'flex',

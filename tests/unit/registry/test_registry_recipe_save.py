@@ -7,13 +7,14 @@ import os
 import threading
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from azure.core.exceptions import AzureError
 
-from pyrit.converter import Base64Converter
+from pyrit.converter import Base64Converter, ToneConverter
 from pyrit.models import ComponentType, Parameter, RegistryReference
 from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind
 from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget, TextTarget
@@ -25,6 +26,7 @@ from pyrit.registry import (
     ScorerRegistry,
     TargetRegistry,
     get_class_saveability,
+    prepare_saved_copy_params_async,
     prepare_saved_params_async,
     save_then_register_async,
 )
@@ -380,3 +382,41 @@ def test_refuse_temporary_references_refuses_a_kind_that_saved_entries_cant_use(
     assert str(refusal.value) == (
         "Uses scenario 'nightly', which saved entries can't use yet. It can still be created without saving it."
     )
+
+
+async def test_prepare_saved_copy_params_async_refuses_a_change_restore_cant_pass() -> None:
+    with pytest.raises(ValueError, match="Unknown parameter 'not_a_parameter'") as refusal:
+        await prepare_saved_copy_params_async(
+            registry=ConverterRegistry.get_registry_singleton(),
+            type_name="ToneConverter",
+            cls=ToneConverter,
+            params={"not_a_parameter": "x"},
+        )
+
+    assert not isinstance(refusal.value, NotSaveableError)
+    assert str(refusal.value).startswith("Saved entries are rebuilt from what the API accepts.")
+
+
+async def test_prepare_saved_copy_params_async_refuses_a_credential_even_one_its_class_lets_copies_change() -> None:
+    registry = MagicMock()
+    registry.get_registered_class_metadata.return_value = SimpleNamespace(
+        parameters=[
+            Parameter(name="token", description="token", param_type=str, sensitive=True),
+            Parameter(name="tone", description="tone", param_type=str),
+        ]
+    )
+
+    with pytest.raises(NotSaveableError) as refusal:
+        await prepare_saved_copy_params_async(
+            registry=registry,
+            type_name="ToneConverter",
+            cls=ToneConverter,
+            params={"token": "typed-key", "tone": "formal"},
+        )
+
+    assert str(refusal.value) == (
+        "Saved entries can't hold credentials ('token'). It can still be created without saving it."
+    )
+    assert await prepare_saved_copy_params_async(
+        registry=registry, type_name="ToneConverter", cls=ToneConverter, params={"tone": "formal"}
+    ) == {"tone": "formal"}

@@ -214,7 +214,9 @@ Expand a target, scorer, technique, or converter name to inspect its identity
 JSON. Target identity inspection is independent of expanding composite target
 members; defaults, visibility, and the target's configuration columns remain
 available. Converter inputs and outputs stay visible in the table. Use the small
-red X to remove a converter from the live registry; confirmation is required.
+red X to remove a converter from the live registry; confirmation is required. A
+saved converter can't be removed there yet: delete its file
+(`converters/<name>.json`) in `registry_recipes_source`, then restart the backend.
 
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
@@ -250,7 +252,19 @@ A Temporary target is gone after the backend restarts or is reinitialized.
 The Targets table labels each target **Saved**, **From configuration**
 (registered by an initializer at startup), or **Temporary**.
 
-Converters and techniques added only to the live registry must be recreated
+New converters are saved the same way, wherever you add one: **New Converter** in
+the Converters tab, the converter panel in chat, or **New converter** in the
+technique editor. The dialog suggests a name such as `base64_converter`. A
+converter type that needs an uploaded file, a converter with an uploaded file, or
+one that uses a Temporary target is created as **Temporary** instead, and the
+dialog says why.
+**Add to registry** on a converter's changed settings, in chat or in a technique
+edit, saves a copy under a new name that comes back after a restart, rebuilt from the original
+converter with your changes; a copy of a Temporary converter is created as
+**Temporary** instead, and the dialog says why. The Converters and Scorers tables use the same three
+labels; scorers can be saved through the API.
+
+Techniques added only to the live registry must be recreated
 after a backend restart or reinitialization. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
 

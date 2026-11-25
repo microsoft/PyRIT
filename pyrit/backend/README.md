@@ -201,7 +201,14 @@ PUT /api/targets/my-claude/credentials
 
 ### Converters and scorers
 
+- `GET /api/converters/types` - List the converter types that can be created, with their parameters, and why a
+  type can't be saved at all (`not_saveable_reason`)
 - `POST /api/converters` - Create a converter
+- `POST /api/converters/saveability` - Say whether a converter could be saved, without building or saving it. Send the
+  create request's `type` and `params`; the answer is `{"not_saveable_reason": ...}`, which gives only the cause, or
+  null when the save checks pass. It runs the checks saving runs before the converter is built, and an unknown type or
+  a parameter those checks refuse gets the same **400** as create. It doesn't check the name, and the converter's own
+  constructor checks don't run, so null doesn't mean the create succeeds.
 - `DELETE /api/converters/{converter_id}` - Remove a converter
 - `POST /api/scorers` - Create a scorer
 
@@ -214,9 +221,11 @@ Temporary target, converter, or scorer, be of a type that only a scan's launch s
 or keep an uploaded file. A saved converter or scorer can use this server's keys and Azure identity, as the ones from
 the configuration do. A target left out of the
 request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
-converter copy made with `source` can't be saved yet, and a private converter or scorer can't be saved (**422**). A
-taken converter name receives **409** with or without `persist`, a taken scorer name receives **409** when saving
-and **400** otherwise, and storage that can't be written receives **503**. Each listed converter's and scorer's
+converter copy made with `source` is saved as its changes and the name of the converter it copies, which can't be
+Temporary (otherwise **400** as above); it's rebuilt from that converter at every start, so it keeps where that
+converter sends requests and how it signs in. A private converter or scorer can't be saved (**422**). A taken
+converter name receives **409** with or without `persist`, a taken scorer name receives **409** when saving and
+**400** otherwise, and storage that can't be written receives **503**. Each listed converter's and scorer's
 `origin` is `saved`, `configuration`, or
 `temporary`, as for targets. A saved converter can't be removed through the API yet (**409**): delete its file under
 `registry_recipes_source` and restart the backend.

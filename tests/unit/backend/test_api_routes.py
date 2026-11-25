@@ -52,16 +52,18 @@ from pyrit.backend.models.targets import TargetTypeResponse
 from pyrit.backend.routes import version as version_routes
 from pyrit.backend.routes.common import parse_label_query_params, saved_entry_owner_from_request
 from pyrit.backend.routes.scores import _get_user_identifier
-from pyrit.backend.services import AttackService
+from pyrit.backend.services import AttackService, get_converter_service
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError
 from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.saved_entries import SavedEntryRemovalError
+from pyrit.converter import SearchReplaceConverter
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
-from pyrit.models.catalog import SavedEntryOwner, TargetInstance
-from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
+from pyrit.models.catalog import RegistryEntryOrigin, SavedEntryOwner, TargetInstance
+from pyrit.registry import ConverterRegistry, NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
+from pyrit.registry.instance_registry import registration_origin
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -1947,6 +1949,42 @@ class TestConverterRoutes:
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_check_converter_saveability_answers_with_the_save_checks(self, client: TestClient) -> None:
+        saveable = client.post("/api/converters/saveability", json={"type": "Base64Converter", "params": {}})
+        needs_file = client.post(
+            "/api/converters/saveability", json={"type": "AddImageTextConverter", "params": {"text_to_add": "x"}}
+        )
+
+        assert saveable.status_code == status.HTTP_200_OK
+        assert saveable.json() == {"not_saveable_reason": None}
+        assert needs_file.json() == {
+            "not_saveable_reason": "It needs an uploaded file, which saved converters can't keep yet."
+        }
+
+    def test_check_converter_saveability_refuses_an_unknown_type(self, client: TestClient) -> None:
+        response = client.post("/api/converters/saveability", json={"type": "MissingConverter", "params": {}})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {"detail": "Converter type 'MissingConverter' not found"}
+
+    def test_get_converter_named_saveability_reaches_the_lookup(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_converter_async = AsyncMock(
+                return_value=ConverterInstance(
+                    converter_id="saveability",
+                    identifier=ConverterIdentifier(
+                        class_name="Base64Converter", class_module="pyrit.converter.base64_converter"
+                    ),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/converters/saveability")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["converter_id"] == "saveability"
+
     def test_delete_converter_success(self, client: TestClient) -> None:
         with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
             mock_service = MagicMock()
@@ -2076,6 +2114,39 @@ class TestConverterRoutes:
             True,
         )
 
+    def test_create_converter_saves_a_copy_through_the_api(
+        self, client: TestClient, patch_central_database: None, tmp_path: Path
+    ) -> None:
+        # The cached service holds the registry it was made with, so both start from this test's state.
+        get_converter_service.cache_clear()
+        ConverterRegistry.reset_registry_singleton()
+        source = SearchReplaceConverter(pattern="cat", replace="dog")
+        instances = ConverterRegistry.get_registry_singleton().instances
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            instances.register(source, name="startup_replace")
+        body = {
+            "name": "bird_replace",
+            "type": "SearchReplaceConverter",
+            "persist": True,
+            "source": {
+                "source_name": "startup_replace",
+                "source_hash": source.get_identifier().hash,
+                "params": {"replace": "bird"},
+            },
+        }
+
+        try:
+            with patch.object(client.app.state, "registry_recipes_source", str(tmp_path), create=True):
+                response = client.post("/api/converters", json=body)
+        finally:
+            get_converter_service.cache_clear()
+            ConverterRegistry.reset_registry_singleton()
+
+        assert response.status_code == status.HTTP_201_CREATED, response.text
+        assert response.json()["origin"] == "saved"
+        saved = json.loads((tmp_path / "converters" / "bird_replace.json").read_text())
+        assert (saved["source"], saved["params"]) == ("startup_replace", {"replace": "bird"})
+
     def test_create_converter_records_no_owner_when_not_saving(self, client: TestClient) -> None:
         with (
             patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service,
@@ -2094,10 +2165,6 @@ class TestConverterRoutes:
             ({}, "name is required when register=true"),
             ({"name": "Shift-Two"}, "Invalid registry name"),
             ({"name": "shift", "register": False}, "persist requires register=true"),
-            (
-                {"name": "shift", "source": {"source_name": "caesar", "source_hash": "a" * 64, "params": {}}},
-                "persist can't be used with source",
-            ),
         ],
     )
     def test_create_converter_checks_what_persist_needs(

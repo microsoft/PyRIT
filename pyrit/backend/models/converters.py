@@ -54,6 +54,13 @@ class ConverterTypeEntry(BaseModel):
     )
     is_llm_based: bool = Field(False, description="Whether this converter requires an LLM target")
     description: str | None = Field(None, description="Short description of the converter from its docstring")
+    not_saveable_reason: str | None = Field(
+        None,
+        description=(
+            "Why a converter of this type can't be saved, or None when it can be. The values a converter is given "
+            "are checked when it's saved"
+        ),
+    )
 
 
 class ConverterTypeResponse(BaseModel):
@@ -99,7 +106,18 @@ class ConverterInstanceListResponse(BaseModel):
     items: list[ConverterInstance] = Field(..., description="List of converter instances")
 
 
-class CreateConverterRequest(RegistrationRequest):
+class ConverterParametersRequest(BaseModel):
+    """The converter type and constructor parameters that a converter is built from."""
+
+    type: IdentifierStr = Field(..., description="Converter type (e.g., 'Base64Converter')")
+    params: dict[IdentifierStr, Any] = Field(
+        default_factory=dict,
+        max_length=MAX_ITEMS,
+        description="Converter constructor parameters",
+    )
+
+
+class CreateConverterRequest(ConverterParametersRequest, RegistrationRequest):
     """Request to create a new converter instance."""
 
     name: str | None = Field(
@@ -113,16 +131,11 @@ class CreateConverterRequest(RegistrationRequest):
         description=(
             "Save the converter so it comes back after the backend restarts or is reinitialized (true), or keep it "
             "only until then (false). A saved converter needs a name of lowercase letters, digits, and underscores, "
-            "can't hold a key or use an uploaded file, and can't be a copy made with source or private."
+            "can't hold a key or use an uploaded file, or be private. A copy made with source is saved as its "
+            "changes and is rebuilt from the converter it copies, which must not be Temporary."
         ),
     )
     source: SourceInstanceSpec | None = None
-    type: IdentifierStr = Field(..., description="Converter type (e.g., 'Base64Converter')")
-    params: dict[IdentifierStr, Any] = Field(
-        default_factory=dict,
-        max_length=MAX_ITEMS,
-        description="Converter constructor parameters",
-    )
     private: bool | None = Field(
         None,
         description=(
@@ -148,12 +161,14 @@ class CreateConverterRequest(RegistrationRequest):
         if self.name is None:
             raise ValueError("persist requires a name")
         validate_registry_name(self.name)
-        if self.source is not None:
-            raise ValueError("persist can't be used with source: a copy of a converter can't be saved yet")
         # A saved converter is restored with no caller, so it would come back shared.
         if self.private:
             raise ValueError("A private converter can't be saved; leave out persist or private")
         return self
+
+
+class ConverterSaveabilityRequest(ConverterParametersRequest):
+    """A converter to check, as a create request would give it, without building or saving it."""
 
 
 class UnregisteredConverter(BaseModel):

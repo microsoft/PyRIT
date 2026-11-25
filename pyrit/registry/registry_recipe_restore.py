@@ -27,7 +27,11 @@ from pyrit.models.catalog import (
 )
 from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import RegistryNameTakenError, saved_entry_registration
-from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
+from pyrit.registry.registry_recipe_rules import (
+    SavedEntryRefusedError,
+    check_saved_copy_params,
+    check_saved_entry_params,
+)
 from pyrit.registry.registry_recipe_storage import RecipeListing, RegistryRecipeStorage, safe_failure_text
 
 if TYPE_CHECKING:
@@ -291,7 +295,11 @@ class RegistryRecipeRestorer:
             )
             raise RecipeRejectedError(reason=RestoreFailureReason.MODULE_MISMATCH, message=message)
         parameters = self._class_parameters(registry=registry, name=recipe.class_name, cls=cls)
-        check_saved_entry_params(cls=cls, parameters=parameters, params=recipe.params, auth_mode=recipe.auth_mode)
+        if recipe.source is None:
+            check_saved_entry_params(cls=cls, parameters=parameters, params=recipe.params, auth_mode=recipe.auth_mode)
+        else:
+            # A copy takes everything else, including where it sends requests and how it signs in, from its source.
+            check_saved_copy_params(parameters=parameters, params=recipe.params)
         # As in the target API, a target may let callers set some path parameters, such as a working folder.
         allowed_paths = (
             getattr(cls, "caller_path_parameters", frozenset())
@@ -317,7 +325,10 @@ class RegistryRecipeRestorer:
             raise RecipeRejectedError(reason=RestoreFailureReason.NAME_CLASH, message=str(error)) from error
         except ValueError as error:  # A reserved name, which no entry of this kind can have.
             raise RecipeRejectedError(reason=RestoreFailureReason.INVALID_RECIPE, message=str(error)) from error
-        return self._parameter_references(parameters=parameters, params=recipe.params)
+        references = self._parameter_references(parameters=parameters, params=recipe.params)
+        if recipe.source is not None:
+            references.insert(0, SavedEntryRef(kind=ref.kind, name=recipe.source))
+        return references
 
     def _technique_references(self, *, ref: SavedEntryRef, recipe: TechniqueRecipe) -> list[SavedEntryRef]:
         """
