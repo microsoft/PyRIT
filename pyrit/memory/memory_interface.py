@@ -107,6 +107,7 @@ from pyrit.memory.memory_models import (
     ComponentIdentifierEntry,
     ConversationEntry,
     ConverterIdentifierEntry,
+    CustomUUID,
     EmbeddingDataEntry,
     FindingEntry,
     FindingEvidenceEntry,
@@ -3216,9 +3217,17 @@ class MemoryInterface(abc.ABC):
             return results
 
         filtered_results: list[Model] = list(results)
-        for _col, vals, attr_name in other_large_params:
-            vals_set = set(vals)
-            filtered_results = [e for e in filtered_results if getattr(e, attr_name, None) in vals_set]
+        for col, vals, attr_name in other_large_params:
+            # UUID columns load as uuid.UUID, but callers pass their string form, so compare those as strings.
+            # As with SQL IN, NULL matches nothing, on either side.
+            uuid_column = isinstance(col.type, CustomUUID)
+            vals_set = {str(value) if uuid_column else value for value in vals if value is not None}
+            filtered_results = [
+                e
+                for e in filtered_results
+                if (value := getattr(e, attr_name, None)) is not None
+                and (str(value) if uuid_column else value) in vals_set
+            ]
 
         return filtered_results
 
