@@ -10,9 +10,9 @@ import FindingPathsDialog from './FindingPathsDialog'
 jest.mock('@/services/api', () => ({ operationsApi: { replaceFindingPaths: jest.fn() } }))
 
 const BASE: FindingListItem = {
-  id: 'parent', operation_id: 'op-1', title: 'Data theft', description: '', severity: 'critical',
+  id: 'parent', operation_id: 'op-1', title: 'Data theft', severity: 'critical', field_values: {},
   created_at: '2026-11-06T12:00:00Z', evidence_count: 0, parent_finding_id: null, demonstrated: true,
-  paths: [], child_count: 2,
+  paths: [], child_count: 2, rows: [], retired: [],
 }
 const RECON: FindingListItem = { ...BASE, id: 'recon', title: 'Recon', parent_finding_id: 'parent', child_count: 0 }
 const CREDS: FindingListItem = { ...RECON, id: 'creds', title: 'Obtain creds', demonstrated: false }

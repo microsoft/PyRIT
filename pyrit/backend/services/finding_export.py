@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from io import BytesIO
+from typing import cast
 from urllib.parse import quote, urlencode
 from uuid import UUID
 
@@ -46,6 +47,7 @@ from pyrit.output.finding_report.report import (
     plain_text,
 )
 from pyrit.output.finding_report.word import add_word_paths
+from pyrit.setup.finding_fields import get_active_finding_fields
 
 _MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
 _DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -143,6 +145,7 @@ async def _build_report_async(*, operation_id: UUID, request: FindingExportReque
     return build_finding_report(
         operation_name=operation.name,
         findings=included,
+        fields=get_active_finding_fields(),
         evidence=evidence,
         part_of=part_of,
     )
@@ -309,7 +312,8 @@ def _add_word_evidence(*, cell: _Cell, evidence: tuple[FindingReportEvidence, ..
 
 
 def _indented_paragraph(cell: _Cell) -> Paragraph:
-    paragraph: Paragraph = cell.add_paragraph()
+    # python-docx leaves _Cell.add_paragraph unannotated, but it always returns the new Paragraph.
+    paragraph = cast("Paragraph", cell.add_paragraph())
     paragraph.paragraph_format.left_indent = _WORD_BULLET_TEXT_INDENT
     paragraph.paragraph_format.space_after = Pt(2)
     return paragraph

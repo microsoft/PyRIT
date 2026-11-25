@@ -7,7 +7,8 @@ import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-rou
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
-import { attacksApi, scenariosApi } from '@/services/api'
+import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
+import { DEFAULT_FINDING_FIELDS_FIXTURE } from '@/test-utils/findingFieldsFixtures'
 import type {
   AttackFindingItem, ScenarioActiveConversation, ScenarioHierarchyNode, ScenarioHierarchyProjection,
   ScenarioProgressResult, ScenarioProgressSummary, ScenarioRunPlan, ScenarioRunSummary,
@@ -22,7 +23,10 @@ jest.mock('@/hooks/useScenarioQueue', () => ({ useScenarioQueue: jest.fn() }))
 jest.mock('@/hooks/useAssertPolicyMetrics', () => ({
   useAssertPolicyMetrics: () => ({ status: 'loading', metrics: null, error: null, retry: jest.fn() }),
 }))
-jest.mock('@/services/api', () => ({ attacksApi: { getAttackFindings: jest.fn() }, scenariosApi: {
+jest.mock('@/services/api', () => ({
+  attacksApi: { getAttackFindings: jest.fn() },
+  operationsApi: { getFindingFields: jest.fn() },
+  scenariosApi: {
   cancelRun: jest.fn(), resumeRun: jest.fn(), getLaunchConfiguration: jest.fn(), startRun: jest.fn(), getQueue: jest.fn(),
   getRunHierarchy: jest.fn(() => new Promise(() => {})), getRunHierarchyNode: jest.fn(),
   getPairedOutcomes: jest.fn(), getPairedOutcomeDetails: jest.fn(),
@@ -135,6 +139,7 @@ beforeEach(() => {
     retry: queueRetry,
   })
   jest.mocked(attacksApi.getAttackFindings).mockImplementation(async (id: string) => ({ attack_result_id: id, items: [] }))
+  jest.mocked(operationsApi.getFindingFields).mockResolvedValue(DEFAULT_FINDING_FIELDS_FIXTURE)
   state = makeState()
   jest.mocked(useScenarioRunProgress).mockImplementation(() => ({ state, retry, applyRunSummary }))
 })
@@ -362,8 +367,8 @@ describe('ScenarioRunPage', () => {
   it('shows findings linked to the attack only when there are some', async () => {
     const finding: AttackFindingItem = {
       id: 'finding-1', operation_id: RUN.operation_id, operation_name: 'Review operation', evidence_id: 'evidence-1',
-      title: 'Protected instructions disclosed', description: 'Review the saved response.', severity: 'important',
-      created_at: RUN.created_at,
+      title: 'Protected instructions disclosed', severity: 'important',
+      field_values: { description: 'Review the saved response.' }, created_at: RUN.created_at,
     }
     jest.mocked(attacksApi.getAttackFindings).mockResolvedValue({ attack_result_id: ATTEMPT.attack_result_id, items: [finding] })
     render(<Wrapper path={scenarioRunAttackRoutePath(RUN_ID, ATTEMPT.attack_result_id)} />)
@@ -420,7 +425,7 @@ describe('ScenarioRunPage', () => {
     await waitFor(() => expect(objective).toHaveFocus())
   })
 
-  it('restores focus to the attack row when attack details are dismissed with Escape', async () => {
+  it('restores focus to the attack row after Escape and on reopening', async () => {
     const user = userEvent.setup()
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     await expand(user)
@@ -428,6 +433,12 @@ describe('ScenarioRunPage', () => {
     await user.click(details)
     await screen.findByRole('dialog')
     await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(details).toHaveFocus())
+    await user.click(details)
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await waitFor(() => expect(details).toHaveFocus())
   })
 
