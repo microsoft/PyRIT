@@ -12,6 +12,7 @@ from typing import Any
 from pyrit.models import (
     Message,
     MessagePiece,
+    ToolCaptureCoverage,
     ToolExecutionMetadata,
     ToolLoopStop,
     ToolLoopStopReason,
@@ -166,13 +167,16 @@ def tool_loop_error(*, request_piece: MessagePiece, detail: str, reason: ToolLoo
         An error response, which history replay skips.
     """
     logger.error(detail)
-    return construct_response_from_request(
+    error = construct_response_from_request(
         request=request_piece,
         response_text_pieces=[detail],
         response_type="error",
         prompt_metadata=ToolLoopStop(reason=reason).to_metadata(),
         error="processing",
     )
+    # Every call is answered with its dispatch status before the turn ends, so nothing ran unstored.
+    error.message_pieces[0].prompt_metadata.update(ToolCaptureCoverage().to_metadata())
+    return error
 
 
 async def run_tool_loop_async(
