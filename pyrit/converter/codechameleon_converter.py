@@ -7,6 +7,7 @@ import inspect
 import json
 import pathlib
 import textwrap
+import types
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -15,23 +16,61 @@ from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 
-_JSON_SCALARS = (str, int, float, bool, type(None))
+_EXACT_SCALARS = {bool: "bool", int: "int", float: "float", str: "str", type(None): "none"}
 
 
-def _is_stable_value(value: Any) -> bool:
+class _UnrepresentableValueError(ValueError):
+    """Raised when a value cannot be encoded faithfully for a fingerprint."""
+
+
+def _encode_value(value: Any) -> Any:
     """
-    Report whether a value is plain JSON data whose repr fully describes it.
+    Encode plain data with explicit types and preserved order.
+
+    Lists, tuples and dicts stay distinct and dict insertion order is kept, so two values
+    encode equally only when they are the same data. Subclasses (an ``IntEnum``, a ``str``
+    subclass, an ``OrderedDict``) are rejected, since their behavior can differ from the base type.
 
     Returns:
-        bool: True for JSON scalars and lists, tuples or str-keyed dicts of them.
+        Any: A JSON-serializable, type-tagged encoding of ``value``.
+
+    Raises:
+        _UnrepresentableValueError: If ``value`` is not exactly plain data.
     """
-    if isinstance(value, _JSON_SCALARS):
-        return True
-    if isinstance(value, (list, tuple)):
-        return all(_is_stable_value(item) for item in value)
-    if isinstance(value, dict):
-        return all(isinstance(key, str) and _is_stable_value(item) for key, item in value.items())
-    return False
+    value_type = type(value)
+    if value_type in _EXACT_SCALARS:
+        return [_EXACT_SCALARS[value_type], repr(value) if value_type is float else value]
+    if value_type in (list, tuple):
+        return [value_type.__name__, [_encode_value(item) for item in value]]
+    if value_type is dict:
+        return ["dict", [[_encode_value(key), _encode_value(item)] for key, item in value.items()]]
+    raise _UnrepresentableValueError(value_type.__name__)
+
+
+def _lambda_body_span(function: types.FunctionType) -> list[int]:
+    """
+    Locate a lambda's body within its source lines.
+
+    Lines are relative to the lambda's first line, so the span survives the code moving up or
+    down the file, and it separates lambdas that share a line.
+
+    Returns:
+        list[int]: ``[start_line, start_column, end_line, end_column]`` of the body.
+    """
+    code = function.__code__
+    first_line = code.co_firstlineno
+    spans: list[tuple[int, int, int, int]] = []
+    for line, end_line, column, end_column in code.co_positions():
+        if line is None or end_line is None or column is None or end_column is None:
+            continue
+        if (column, end_column) == (0, 0):  # the frame setup, not the body
+            continue
+        spans.append((line - first_line, column, end_line - first_line, end_column))
+    if not spans:
+        return []
+    start = min((line, column) for line, column, _, _ in spans)
+    end = max((end_line, end_column) for _, _, end_line, end_column in spans)
+    return [*start, *end]
 
 
 def _callable_fingerprint(function: Callable[..., Any]) -> str:
@@ -40,9 +79,11 @@ def _callable_fingerprint(function: Callable[..., Any]) -> str:
 
     A qualified name alone is not enough: two functions can share one with different code,
     closures or partial arguments. The fingerprint covers the module, qualified name, source,
-    defaults, closure values and ``functools.partial`` arguments. When any of these cannot be
-    captured as plain data (no source, a closure over an object, a bound method), a random
-    per-instance token is returned so distinct converters never share an identifier.
+    defaults, closure values and ``functools.partial`` arguments, with values encoded by type
+    and in order; for a lambda it also covers where its body sits on the source line. When the
+    function cannot be identified faithfully this way (no source, a closure over an arbitrary
+    object, a bound method), a random per-instance token is returned so distinct converters
+    never share an identifier.
 
     Returns:
         str: ``sha256:<hex>`` for a reproducible fingerprint, otherwise ``unstable:<hex>``.
@@ -68,24 +109,28 @@ def _callable_fingerprint(function: Callable[..., Any]) -> str:
         )
     except ValueError:  # an empty closure cell
         return unstable
-    configuration = {
-        "partial_args": list(partial_args),
-        "partial_keywords": partial_keywords,
-        "defaults": list(function.__defaults__ or ()),
-        "kwdefaults": function.__kwdefaults__ or {},
-        "closure": closure,
-    }
-    if not _is_stable_value(configuration):
+    try:
+        configuration = _encode_value(
+            {
+                "partial_args": partial_args,
+                "partial_keywords": partial_keywords,
+                "defaults": function.__defaults__ or (),
+                "kwdefaults": function.__kwdefaults__ or {},
+                "closure": closure,
+            }
+        )
+    except _UnrepresentableValueError:
         return unstable
 
-    payload = json.dumps(
-        {
-            "function": f"{function.__module__}.{function.__qualname__}",
-            "source": source,
-            "configuration": configuration,
-        },
-        sort_keys=True,
-    )
+    identity: dict[str, Any] = {
+        "function": f"{function.__module__}.{function.__qualname__}",
+        "source": source,
+        "configuration": configuration,
+    }
+    if function.__name__ == "<lambda>":
+        # inspect.getsource returns whole lines, so lambdas sharing a line share their source.
+        identity["body_span"] = _lambda_body_span(function)
+    payload = json.dumps(identity, sort_keys=True)
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
