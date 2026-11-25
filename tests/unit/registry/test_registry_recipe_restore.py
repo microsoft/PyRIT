@@ -113,7 +113,7 @@ async def _build_async(stored: StoredRecipe) -> None:
     recipe = stored.recipe
     if isinstance(recipe, TechniqueRecipe):
         techniques = AttackTechniqueRegistry.get_registry_singleton()
-        args = recipe.model_dump(exclude_unset=True, exclude={"schema_version", "type", "tags"})
+        args = recipe.model_dump(exclude_unset=True, exclude={"schema_version", "type", "tags", "owner"})
         factory = techniques.create_factory(
             name=stored.ref.name, attack_type=recipe.type, technique_tags=recipe.tags, strict_json=True, **args
         )
@@ -293,9 +293,9 @@ class TestRestoreOrderAndRebuild:
         assert isinstance(TargetRegistry.get_registry_singleton().instances.get("a_pool"), RoundRobinTarget)
 
     def test_technique_recipe_matches_the_create_request(self) -> None:
-        recipe_fields = set(TechniqueRecipe.model_fields) - {"schema_version"}
+        recipe_fields = set(TechniqueRecipe.model_fields) - {"schema_version", "owner"}
         # A saved technique is never private: it has no creator.
-        request_fields = set(CreateTechniqueRequest.model_fields) - {"name", "private"}
+        request_fields = set(CreateTechniqueRequest.model_fields) - {"name", "persist", "private"}
         request = CreateTechniqueRequest.model_validate({"name": "formal_red_team", **_TECHNIQUE})
         recipe = TechniqueRecipe.model_validate(_TECHNIQUE)
 
@@ -308,7 +308,9 @@ class TestRestoreOrderAndRebuild:
         recipe = TechniqueRecipe.model_validate({"type": "RedTeamingAttack"})
         request = CreateTechniqueRequest.model_validate({"name": "formal_red_team", "type": "RedTeamingAttack"})
 
-        assert recipe.model_dump(exclude={"schema_version"}) == request.model_dump(exclude={"name", "private"})
+        assert recipe.model_dump(exclude={"schema_version", "owner"}) == request.model_dump(
+            exclude={"name", "persist", "private"}
+        )
 
     @pytest.mark.parametrize(
         "changes",

@@ -30,6 +30,7 @@ from pyrit.backend.models import (
     ConverterPreviewRequest,
     CreateConverterRequest,
 )
+from pyrit.backend.models.converters import ConverterSaveabilityRequest
 from pyrit.backend.routes import converters as converter_routes
 from pyrit.backend.services import (
     ConverterService,
@@ -2842,6 +2843,53 @@ class TestPersistConverter:
         assert (saved.origin, temporary.origin) == (RegistryEntryOrigin.SAVED, RegistryEntryOrigin.TEMPORARY)
 
 
+@pytest.mark.usefixtures("patch_central_database", "startup_and_launch_targets")
+class TestConverterSaveability:
+    @pytest.mark.parametrize(
+        ("converter_type", "params", "reason"),
+        [
+            ("CaesarConverter", {"caesar_offset": 5}, None),
+            ("AddTextImageConverter", {"text_to_add": "hello", "font_name": ""}, None),
+            (
+                "AddImageTextConverter",
+                {"text_to_add": "hello"},
+                "It needs an uploaded file, which saved converters can't keep yet.",
+            ),
+            (
+                "AddTextImageConverter",
+                {"text_to_add": "hello", "font_name": _make_data_uri(mime_type="font/ttf", content=b"font")},
+                "Saved converters can't keep uploaded files yet ('font_name').",
+            ),
+            (
+                "TranslationConverter",
+                {"converter_target": "launch_chat", "language": "French"},
+                "Uses temporary target 'launch_chat', which won't exist after a restart.",
+            ),
+            (
+                "AzureSpeechTextToAudioConverter",
+                {"azure_speech_region": "eastus", "azure_speech_key": "typed-speech-key"},
+                "Saved entries can't hold credentials ('azure_speech_key').",
+            ),
+        ],
+    )
+    async def test_answers_with_the_checks_saving_runs_without_building_anything(
+        self, upload_service: ConverterService, converter_type: str, params: dict[str, Any], reason: str | None
+    ) -> None:
+        with patch.object(upload_service._registry, "create_instance_from_external_input") as build:
+            response = await upload_service.check_saveability_async(
+                request=ConverterSaveabilityRequest(type=converter_type, params=params)
+            )
+
+        assert response.not_saveable_reason == reason
+        build.assert_not_called()
+        assert upload_service._registry.instances.get_names() == []
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_refuses_an_unknown_type(self, upload_service: ConverterService) -> None:
+        with pytest.raises(ValueError, match="Converter type 'MissingConverter' not found"):
+            await upload_service.check_saveability_async(request=ConverterSaveabilityRequest(type="MissingConverter"))
+
+
 @pytest.fixture
 def default_converter_target(startup_and_launch_targets: None) -> Iterator[None]:
     yield
@@ -2981,3 +3029,38 @@ def _register_own_target_converter(service: ConverterService) -> PromptTarget:
         class_type=OwnTargetTranslationConverter, parameter_name="converter_target", value=targets.get("launch_chat")
     )
     return own_target
+
+
+async def test_types_say_why_a_converter_type_cant_be_saved() -> None:
+    types = await ConverterService().list_converter_types_async()
+    reasons = {item.converter_type: item.not_saveable_reason for item in types.items}
+
+    assert reasons["AzureSpeechTextToAudioConverter"] is None
+    assert reasons["ImageOverlayConverter"] == "It needs an uploaded file, which saved converters can't keep yet."
+    assert reasons["AddTextImageConverter"] is None
+    assert reasons["CaesarConverter"] is None
+    assert {name for name, reason in reasons.items() if reason is not None} == {
+        "AddImageTextConverter",
+        "AddImageVideoConverter",
+        "ImageOverlayConverter",
+        "TransparencyAttackConverter",
+    }
+
+
+class _LaunchScriptCaesarConverter(CaesarConverter):
+    """A converter class that only a scan's launch script registers."""
+
+
+async def test_types_say_a_converter_type_a_launch_script_added_cant_be_saved() -> None:
+    service = ConverterService()
+    with registration_origin(RegistryEntryOrigin.TEMPORARY):
+        service._registry.register_class(_LaunchScriptCaesarConverter)
+
+    types = await service.list_converter_types_async()
+
+    reasons = {item.converter_type: item.not_saveable_reason for item in types.items}
+    assert reasons["_LaunchScriptCaesarConverter"] == (
+        "'_LaunchScriptCaesarConverter' was added by a scan's launch script, so a saved entry of it couldn't be "
+        "restored after a restart."
+    )
+    assert reasons["CaesarConverter"] is None

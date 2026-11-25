@@ -12,6 +12,7 @@ import {
   Input,
   MessageBar,
   MessageBarBody,
+  MessageBarTitle,
   Option,
   OptionGroup,
   Select,
@@ -23,14 +24,18 @@ import {
 
 import HelpField from '@/components/HelpField'
 import { convertersApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
+import { isNotSaveableError, notSaveableReason, toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
+import { useSaveability } from '@/hooks/useSaveability'
 import { useTargetPreferences } from '@/hooks/useTargetPreferences'
 import { resolveDefaultAdversarialTarget } from '@/utils/targetIdentity'
 import { mapMediaUrl } from '@/utils/media'
 import { formatFileSize } from '@/utils/formatFileSize'
+import { suggestRegistryName, validateRegistryName } from '@/utils/registryName'
+import { ORIGIN_LABELS } from '@/utils/registryOrigin'
 import type {
-  ConverterInstance, ConverterTypeEntry, Parameter, TargetInstance, SourceInstanceSpec, ConverterIdentifier,
+  ConverterInstance, ConverterSaveabilityRequest, ConverterTypeEntry, Parameter, TargetInstance, SourceInstanceSpec,
+  ConverterIdentifier,
 } from '@/types'
 import ParameterField from '@/components/Parameters/ParameterField'
 import FileDropZone from '@/components/Media/FileDropZone'
@@ -50,6 +55,19 @@ import { useCreateConverterDialogStyles } from './Registry.styles'
 const EDITABLE_PARAMETER_TYPES = new Set([
   'str', 'int', 'float', 'bool', 'Path', 'list[str]', 'list[int]', 'list[float]', 'list[bool]',
 ])
+
+const TEMPORARY_CONVERTER_NOTE = 'A Temporary converter is gone after the backend restarts or is reinitialized.'
+
+/** A label for a converter class that splits a digit run from the next word, so "Base64Converter" reads "base64 converter". */
+function getConverterNameLabel(converterType: string): string {
+  return converterType.replace(/([0-9])([A-Z])/g, '$1_$2')
+}
+
+/** Whether callers send the parameter as an uploaded file, as the backend's upload parameters are typed. */
+function isUploadParameter(parameter: Parameter): boolean {
+  const typeName = nonNullableTypeName(parameter.type_name)
+  return typeName === 'Path' || typeName === 'Path | str'
+}
 
 function formatDataType(dataType: string): string {
   const value = dataType.replace('_path', '').replace(/_/g, ' ')
@@ -84,9 +102,21 @@ interface CreateConverterDialogProps {
   allowUploads?: boolean
 }
 
+/** A save the backend refused, for the form values it refused. */
+interface SaveRefusal {
+  readonly formKey: string
+  readonly reason: string
+}
+
+/** A name the backend said is taken. */
+interface NameConflict {
+  readonly name: string
+  readonly detail: string
+}
+
 interface ParameterInputProps {
   parameter: Parameter
-  referenceOptions: Array<{ name: string; type: string; isDefault?: boolean }>
+  referenceOptions: Array<{ name: string; type: string; isDefault?: boolean; isTemporary?: boolean }>
   value: string
   showError: boolean
   onChange: (value: string) => void
@@ -177,6 +207,35 @@ function acceptsEmptySearchReplaceValue(converterType: string | undefined, param
     && (parameterName === 'pattern' || parameterName === 'replace')
 }
 
+type FormParams = { ok: true, params: Record<string, unknown> } | { ok: false, error: string }
+
+/** The parameters create sends for these form values, or why they can't be sent. */
+function buildFormParams(
+  converterType: string,
+  parameters: Parameter[],
+  values: Record<string, ParameterFormValue>,
+  editing: boolean,
+): FormParams {
+  const params: Record<string, unknown> = Object.fromEntries(
+    parameters
+      .filter((parameter) => !sendsTypedValue(parameter))
+      .flatMap((parameter) => {
+        const value = values[parameter.name]
+        // A file removed from a new converter means no file. Settings still send the empty value, since leaving it
+        // out would keep the source converter's file.
+        if (typeof value === 'string') {
+          return value === '' && !editing && isUploadParameter(parameter) ? [] : [[parameter.name, value]]
+        }
+        return acceptsEmptySearchReplaceValue(converterType, parameter.name)
+          ? [[parameter.name, '']]
+          : []
+      }),
+  )
+  const typed = buildParametersFromForm(parameters.filter(sendsTypedValue), values)
+  if (!typed.ok) return { ok: false, error: typed.error }
+  return { ok: true, params: { ...params, ...typed.parameters } }
+}
+
 function stringFormValue(value: ParameterFormValue | undefined): string {
   return typeof value === 'string' ? value : ''
 }
@@ -236,6 +295,7 @@ function ParameterInput({
           {referenceOptions.map((option) => (
             <option key={option.name} value={option.name}>
               {option.name} ({option.type}){option.isDefault ? ' (default)' : ''}
+              {option.isTemporary ? ` · ${ORIGIN_LABELS.temporary}` : ''}
             </option>
           ))}
         </Select>
@@ -373,7 +433,10 @@ export default function CreateConverterDialog({
   const [error, setError] = useState<DialogError | null>(null)
   const [fileNotice, setFileNotice] = useState<string | null>(null)
   const [selectedFiles, setSelectedFiles] = useState<Record<string, SelectedFile>>({})
+  const [saveRefusal, setSaveRefusal] = useState<SaveRefusal | null>(null)
+  const [nameConflict, setNameConflict] = useState<NameConflict | null>(null)
   const errorRef = useRef<HTMLDivElement>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
   // The dialog instance is reused across openings, so a create response can
   // land after the opening that started it has gone.
   const openEpochRef = useRef(0)
@@ -497,12 +560,15 @@ export default function CreateConverterDialog({
       }))
   }, [converterTypes])
 
-  const referenceOptions = (parameter: Parameter): Array<{ name: string; type: string; isDefault?: boolean }> => {
+  const referenceOptions = (
+    parameter: Parameter,
+  ): Array<{ name: string; type: string; isDefault?: boolean; isTemporary?: boolean }> => {
     if (parameter.reference_type === 'target') {
       return targets.map((target) => ({
         name: target.target_registry_name,
         type: target.identifier.class_name,
         isDefault: target.target_registry_name === adversarialTarget?.target_registry_name,
+        isTemporary: target.origin === 'temporary',
       }))
     }
     if (parameter.reference_type === 'converter') {
@@ -513,6 +579,33 @@ export default function CreateConverterDialog({
     }
     return []
   }
+
+  const takenNames = useMemo(() => new Set(converters.map((converter) => converter.converter_id)), [converters])
+  // Until edited, the name follows the type. Its `_converter` ending leaves names such as `base64` to the startup
+  // initializers, whose converter would otherwise stop a saved one of that name restoring.
+  const suggestedName = selectedType ? suggestRegistryName(getConverterNameLabel(selectedType), takenNames) : ''
+  const nameValue = nameEdited ? registryName : suggestedName
+  // The server stays authoritative; this only catches names already in the list the dialog has.
+  const nameTaken = takenNames.has(nameValue)
+  // A conflict applies only to the name it was reported for, so editing the name lets the user save again.
+  const nameConflictDetail = nameConflict?.name === nameValue ? nameConflict.detail : null
+  const nameMessage = nameConflictDetail
+    ?? (nameTaken ? `A converter named '${nameValue}' already exists.` : null)
+    ?? (nameEdited ? validateRegistryName(nameValue) : null)
+  const nameBlocked = nameConflictDetail !== null || nameTaken || validateRegistryName(nameValue) !== null
+  // The catalog says when no converter of the type can be saved; otherwise the backend checks these values.
+  const typeTemporaryReason = editing ? null : selectedConverterType?.not_saveable_reason ?? null
+  const saveabilityRequest = useMemo((): ConverterSaveabilityRequest | null => {
+    if (!open || editing || !selectedConverterType || typeTemporaryReason !== null) return null
+    const formParams = buildFormParams(selectedConverterType.converter_type, editableParameters, parameterValues, false)
+    return formParams.ok ? { type: selectedConverterType.converter_type, params: formParams.params } : null
+  }, [open, editing, selectedConverterType, typeTemporaryReason, editableParameters, parameterValues])
+  const checkedReason = useSaveability(saveabilityRequest, convertersApi.checkSaveability)
+  // A refused save only applies to the values it was refused for, so any edit lets the user try saving again. The key
+  // holds any uploaded file's data, so it's only built when there's a refusal to compare it with.
+  const formKey = (): string => JSON.stringify([selectedType, parameterValues])
+  const refusedReason = saveRefusal !== null && saveRefusal.formKey === formKey() ? saveRefusal.reason : null
+  const temporaryReason = editing ? null : typeTemporaryReason ?? checkedReason ?? refusedReason
 
   const reset = () => {
     fileReads.current.clear()
@@ -525,6 +618,8 @@ export default function CreateConverterDialog({
     setError(null)
     setFileNotice(null)
     setSelectedFiles({})
+    setSaveRefusal(null)
+    setNameConflict(null)
   }
 
   const close = () => {
@@ -535,7 +630,6 @@ export default function CreateConverterDialog({
   const selectType = (converterType: string) => {
     fileReads.current.clear()
     setSelectedType(converterType)
-    if (!nameEdited) setRegistryName(converterType)
     const typeEntry = converterTypes.find((item) => item.converter_type === converterType)
     const parameters = typeEntry?.parameters ?? []
     setParameterValues({
@@ -612,6 +706,21 @@ export default function CreateConverterDialog({
     input.click()
   }
 
+  const handleCreateError = (err: unknown, persist: boolean) => {
+    const apiError = toApiError(err)
+    if (persist && isNotSaveableError(apiError)) {
+      setSaveRefusal({ formKey: formKey(), reason: notSaveableReason(apiError) ?? apiError.detail })
+      return
+    }
+    // A taken name is a 409 without a problem type; a typed 409 is the build-identity mismatch the client handles.
+    if (!editing && apiError.status === 409 && apiError.type === undefined) {
+      setNameConflict({ name: nameValue, detail: apiError.detail })
+      nameInputRef.current?.focus()
+      return
+    }
+    setError({ message: apiError.detail, fromSubmit: true })
+  }
+
   const submit = async () => {
     const missingParameters = editableParameters.some(
       (parameter) => parameter.required
@@ -619,37 +728,32 @@ export default function CreateConverterDialog({
         && !acceptsEmptySearchReplaceValue(selectedType, parameter.name)
         && !formValueIsSet(parameterValues[parameter.name]),
     )
-    if (!selectedType || (!editing && (!registryName.trim() || missingParameters))) {
+    if (!selectedType || (!editing && missingParameters)) {
       setShowValidation(true)
+      return
+    }
+    if (!editing && nameBlocked) {
+      // Keep the name shown, a suggestion included, so its message stays with it, and move there so it's read out.
+      setRegistryName(nameValue)
+      setNameEdited(true)
+      nameInputRef.current?.focus()
       return
     }
 
     const parameters = editableParameters.filter(
       (parameter) => !editing || changedParameters.has(parameter.name),
     )
-    const params: Record<string, unknown> = Object.fromEntries(
-      parameters
-        .filter((parameter) => !sendsTypedValue(parameter))
-        .flatMap((parameter) => {
-          const value = parameterValues[parameter.name]
-          if (typeof value === 'string') return [[parameter.name, value]]
-          return acceptsEmptySearchReplaceValue(selectedType, parameter.name)
-            ? [[parameter.name, '']]
-            : []
-        }),
-    )
-    const typed = buildParametersFromForm(parameters.filter(sendsTypedValue), parameterValues)
-    if (!typed.ok) {
+    const formParams = buildFormParams(selectedType, parameters, parameterValues, Boolean(editing))
+    if (!formParams.ok) {
       // Not tagged as a submission failure: nothing was disabled, so the keyboard
       // is still on the primary action and has nothing to be restored from.
-      setError({ message: typed.error, fromSubmit: false })
+      setError({ message: formParams.error, fromSubmit: false })
       return
     }
-    if (typed.parameters) {
-      Object.assign(params, typed.parameters)
-    }
+    const { params } = formParams
 
     const epoch = openEpochRef.current
+    const persist = temporaryReason === null
     setSubmitting(true)
     setError(null)
     try {
@@ -669,11 +773,7 @@ export default function CreateConverterDialog({
         if (openEpochRef.current === epoch) onTemporary(spec, response.identifier)
         return
       }
-      const response = await convertersApi.createConverter({
-        name: registryName.trim(),
-        type: selectedType,
-        params,
-      })
+      const response = await convertersApi.createConverter({ name: nameValue, type: selectedType, params, persist })
       // Only the opening this request was submitted from is cleared: a response
       // that outlived its opening must not wipe the form the user is filling in
       // now. onCreated stays ungated so a late success still refreshes the list.
@@ -685,7 +785,7 @@ export default function CreateConverterDialog({
       // A failure from an opening the user has already left stays out of the
       // one in front of them, and out of its focus.
       if (openEpochRef.current === epoch) {
-        setError({ message: toApiError(err).detail, fromSubmit: true })
+        handleCreateError(err, persist)
       }
     } finally {
       if (openEpochRef.current === epoch) {
@@ -704,7 +804,7 @@ export default function CreateConverterDialog({
   return (
     <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) close() }}>
       <DialogSurface className={styles.surface}>
-        <DialogBody>
+        <DialogBody className={styles.body}>
           <DialogTitle>{editing ? 'Converter Settings' : 'Add Converter'}</DialogTitle>
           <DialogContent className={styles.content}>
             <form
@@ -806,14 +906,13 @@ export default function CreateConverterDialog({
                   {!editing && <HelpField
                     label="Registry name"
                     required
-                    help="A unique name used to select this configured converter in chats and techniques."
-                    validationMessage={
-                      showValidation && !registryName.trim() ? 'Enter a registry name' : undefined
-                    }
+                    help="A unique name used to select this converter in chats and techniques: lowercase letters, digits, and underscores, starting with a letter."
+                    validationMessage={nameMessage ?? undefined}
                   >
                     <Input
                       readOnly={submitting}
-                      value={registryName}
+                      input={{ ref: nameInputRef }}
+                      value={nameValue}
                       onChange={(_, data) => {
                         setRegistryName(data.value)
                         setNameEdited(true)
@@ -877,7 +976,16 @@ export default function CreateConverterDialog({
               )}
             </form>
           </DialogContent>
-          <DialogActions>
+          {/* Outside the scrolling form, so it shows next to the button it explains without moving the fields. */}
+          {temporaryReason && (
+            <MessageBar intent="warning" className={styles.temporaryWarning} role="status">
+              <MessageBarBody>
+                <MessageBarTitle>This converter can&apos;t be saved</MessageBarTitle>
+                {temporaryReason} {TEMPORARY_CONVERTER_NOTE}
+              </MessageBarBody>
+            </MessageBar>
+          )}
+          <DialogActions className={temporaryReason ? styles.actionsBelowWarning : undefined}>
             <Button appearance="secondary" onClick={close}>Cancel</Button>
             <Button
               appearance="primary"
@@ -885,7 +993,9 @@ export default function CreateConverterDialog({
               disabledFocusable={submitDisabled}
               onClick={() => void submit()}
             >
-              {submitting ? editing ? 'Saving...' : 'Adding...' : editing ? 'Apply Settings' : 'Add Converter'}
+              {submitting
+                ? editing ? 'Saving...' : 'Adding...'
+                : editing ? 'Apply Settings' : temporaryReason === null ? 'Save Converter' : 'Create as Temporary'}
             </Button>
           </DialogActions>
         </DialogBody>

@@ -5,21 +5,26 @@
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 
-from pyrit.backend.models import ProblemDetail
-from pyrit.backend.models.common import CursorStr, IdentifierStr
+from pyrit.backend.models import FieldError, ProblemDetail
+from pyrit.backend.models.common import CursorStr, IdentifierStr, SaveabilityResponse
 from pyrit.backend.models.techniques import (
     CreateTechniqueRequest,
     TechniqueConfiguration,
+    TechniqueConflictResponse,
     TechniqueEditResponse,
     TechniqueInstance,
     TechniqueListResponse,
+    TechniqueSaveabilityRequest,
     TechniqueTypeResponse,
 )
+from pyrit.backend.routes.common import NOT_SAVEABLE_PROBLEM_TYPE, not_saveable_response, saved_entry_owner_from_request
 from pyrit.backend.services.technique_edit_service import TechniqueEditService
 from pyrit.backend.services.technique_service import get_technique_service
 from pyrit.models.technique_edit import TechniqueOverride
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 router = APIRouter(prefix="/techniques", tags=["techniques"])
 
@@ -48,6 +53,31 @@ async def technique_types_async() -> TechniqueTypeResponse:
         TechniqueTypeResponse: Declared construction inputs.
     """
     return await get_technique_service().types_async()
+
+
+@router.post(
+    "/saveability",
+    response_model=SaveabilityResponse,
+    responses={400: {"model": ProblemDetail, "description": "Unknown attack type or invalid attack parameters"}},
+)
+async def check_technique_saveability(  # pyrit-async-suffix-exempt
+    *,
+    body: TechniqueSaveabilityRequest,
+) -> SaveabilityResponse:
+    """
+    Say whether a technique could be saved as asked, without building or saving it.
+
+    Only the attack type, its parameters, and the entries the technique names are checked, by the checks saving runs
+    before the technique is built. The name and tags aren't checked, and the technique isn't built: a null reason
+    means the save checks pass, not that creating the technique succeeds.
+
+    Returns:
+        SaveabilityResponse: Why the technique can't be saved, or no reason when the save checks pass.
+    """
+    try:
+        return await get_technique_service().check_saveability_async(request=body)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/{name}", response_model=TechniqueInstance, responses={404: {"model": ProblemDetail}})
@@ -95,17 +125,48 @@ async def validate_technique_edit_async(name: IdentifierStr, request: TechniqueO
 
 
 @router.post(
-    "", response_model=TechniqueInstance, status_code=status.HTTP_201_CREATED, responses={400: {"model": ProblemDetail}}
+    "",
+    response_model=TechniqueInstance,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {
+            "model": ProblemDetail,
+            "description": (
+                f"Invalid technique, or (type {NOT_SAVEABLE_PROBLEM_TYPE}) a technique that can't be saved as asked "
+                "but can be created without saving it"
+            ),
+        },
+        409: {
+            "model": TechniqueConflictResponse,
+            "description": "A technique to save has the name or a tag of a registered technique",
+        },
+        503: {"model": ProblemDetail, "description": "Saved techniques can't be written right now"},
+    },
 )
-async def create_technique_async(request: CreateTechniqueRequest) -> TechniqueInstance:
+async def create_technique_async(*, body: CreateTechniqueRequest, request: Request) -> TechniqueInstance | JSONResponse:
     """
     Create a runtime factory; execution inputs remain deferred.
 
     Returns:
-        TechniqueInstance: The admitted factory.
+        TechniqueInstance | JSONResponse: The admitted factory, or the problem response for a technique that can't
+            be saved as asked or whose name or tag conflicts with a registered technique.
     """
     try:
-        return await get_technique_service().create_async(request)
+        return await get_technique_service().create_async(
+            request=body,
+            owner=saved_entry_owner_from_request(request) if body.persist else None,
+            recipes_source=getattr(request.app.state, "registry_recipes_source", None),
+        )
+    except NotSaveableError as exc:
+        return not_saveable_response(error=exc, request=request)
+    except SavedEntryConflictError as exc:
+        # Says whether the name or a tag conflicts, so the editor can show it on that field.
+        conflict = TechniqueConflictResponse(
+            detail=str(exc), errors=[FieldError(field=f"body.{exc.field}", message=str(exc))]
+        )
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=conflict.model_dump(exclude_none=True))
+    except SavedEntryStorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except (ValueError, TypeError) as exc:

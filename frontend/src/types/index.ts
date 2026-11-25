@@ -465,6 +465,8 @@ export interface ScorerInstance {
   evaluation_identifier?: ComponentIdentifier | null
   metrics?: ScorerEvaluationMetrics | null
   chat_scoring_disabled_reason?: string | null
+  /** Saved, from the server's configuration, or Temporary. */
+  origin?: RegistryEntryOrigin | null
 }
 
 export type ScorerEvaluationMetrics = Record<string, number | string | null | undefined>
@@ -517,13 +519,13 @@ export interface TargetIdentifier {
   [key: string]: unknown
 }
 
-/** Where a registered target comes from, and so whether it is still there after a restart. */
-export type TargetOrigin = 'saved' | 'configuration' | 'temporary'
+/** Where a registered target, converter, or scorer comes from, and so whether it is still there after a restart. */
+export type RegistryEntryOrigin = 'saved' | 'configuration' | 'temporary'
 
 export interface TargetInstance {
   target_registry_name: string
   /** Saved, from the server's configuration, or Temporary. Absent for inner targets. */
-  origin?: TargetOrigin | null
+  origin?: RegistryEntryOrigin | null
   binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
@@ -640,6 +642,8 @@ export interface ConverterInstance {
   identifier: ConverterIdentifier
   is_llm_based?: boolean
   description?: string | null
+  /** Saved, from the server's configuration, or Temporary. */
+  origin?: RegistryEntryOrigin | null
 }
 
 export interface ConverterListResponse {
@@ -652,10 +656,19 @@ export type CreateConverterRequest = {
 } & ({
   params?: Record<string, unknown>
   source?: never
+  /** Save the converter so it comes back after a restart; a copy made with `source` can't be saved yet. */
+  persist?: boolean
 } | {
   source: SourceInstanceSpec
   params?: never
+  persist?: never
 })
+
+/** A converter to check before saving it, as a create request would give it. */
+export interface ConverterSaveabilityRequest {
+  type: string
+  params: Record<string, unknown>
+}
 
 export interface SourceInstanceSpec {
   source_name: string
@@ -695,6 +708,8 @@ export interface TechniqueInstance {
   identifier: ComponentIdentifier
   /** Supplied factory creation inputs, with live component credentials omitted. */
   creation_statement: string
+  /** Whether the technique comes back after a restart. */
+  origin?: RegistryEntryOrigin | null
 }
 
 export interface TechniqueTypeEntry {
@@ -716,6 +731,8 @@ export interface TechniqueTypeResponse {
 
 export interface CreateTechniqueRequest {
   name: string
+  /** Save the technique so it comes back after the backend restarts or is reinitialized. */
+  persist?: boolean
   description?: string
   tags: string[]
   type: string
@@ -726,6 +743,15 @@ export interface CreateTechniqueRequest {
   adversarial_system_prompt?: string
   adversarial_seed_prompt?: string
   adversarial_prompt_template?: string
+}
+
+/** A technique to check before saving it, as a create request would give it. */
+export interface TechniqueSaveabilityRequest {
+  type: string
+  params: Record<string, unknown>
+  request_converters?: string[]
+  response_converters?: string[]
+  adversarial_chat?: string
 }
 
 export interface SimulationSettings {
@@ -818,6 +844,8 @@ export interface ConverterTypeEntry {
   parameters: Parameter[]
   is_llm_based: boolean
   description?: string | null
+  /** Why a converter of this type can't be saved, or null when it can be. */
+  not_saveable_reason?: string | null
 }
 
 export interface ConverterTypeListResponse {
