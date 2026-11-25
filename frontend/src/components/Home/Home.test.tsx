@@ -353,6 +353,18 @@ describe('Home', () => {
     expect(screen.queryByText('Attack service unavailable')).not.toBeInTheDocument()
   })
 
+  it('should back off automatic refreshes while a source keeps failing', async () => {
+    mockScans.mockRejectedValue(new Error('Scan history unavailable'))
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    await screen.findByText('Scan history unavailable')
+    await advanceAutoRefresh()
+    await waitFor(() => expect(mockScans).toHaveBeenCalledTimes(2))
+    await advanceAutoRefresh()
+    expect(mockScans).toHaveBeenCalledTimes(2)
+    await advanceAutoRefresh()
+    await waitFor(() => expect(mockScans).toHaveBeenCalledTimes(3))
+  })
+
   it('should show an identical source error only once', async () => {
     mockAttacks.mockRejectedValueOnce(new Error('Recent service unavailable'))
     mockScans.mockRejectedValueOnce(new Error('Recent service unavailable'))

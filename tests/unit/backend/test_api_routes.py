@@ -6,8 +6,6 @@ Tests for backend API routes.
 """
 
 import json
-import os
-import tempfile
 import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
@@ -2212,77 +2210,24 @@ class TestVersionRoutes:
 
     @pytest.mark.parametrize("commit", ["abc123", None])
     def test_get_version_with_build_info(self, *, client: TestClient, commit: str | None) -> None:
-        """Test getting version with build info from Docker."""
-        build_info: dict[str, str | bool | None] = {
-            "source": "git" if commit is not None else "pypi",
-            "commit": commit,
-            "modified": False,
-            "display": "1.0.0-test",
-        }
-        # Create a temp file to simulate Docker build info
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(build_info, f)
-            temp_path = f.name
-
-        try:
-            to_thread_mock = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
-            with (
-                patch("pyrit.backend.routes.version.Path") as mock_path_class,
-                patch("pyrit.backend.routes.version.asyncio.to_thread", new=to_thread_mock),
-            ):
-                mock_path_instance = MagicMock()
-                mock_path_instance.exists.return_value = True
-                mock_path_class.return_value = mock_path_instance
-
-                # Mock open to return our temp file content
-                with patch("builtins.open", create=True) as mock_open:
-                    mock_open.return_value.__enter__.return_value.read.return_value = json.dumps(build_info)
-
-                    response = client.get("/api/version")
-
-            assert response.status_code == status.HTTP_200_OK
-            data = response.json()
-            for key, value in build_info.items():
-                assert data[key] == value
-            to_thread_mock.assert_any_await(version_routes._load_build_info, mock_path_instance)
-        finally:
-            os.unlink(temp_path)
-
-    def test_get_version_build_info_load_failure(self, client: TestClient) -> None:
-        """Test getting version when build_info.json exists but fails to load."""
-        with patch("pyrit.backend.routes.version.Path") as mock_path_class:
-            mock_path_instance = MagicMock()
-            mock_path_instance.exists.return_value = True
-            mock_path_class.return_value = mock_path_instance
-
-            with patch("builtins.open", side_effect=OSError("permission denied")):
-                response = client.get("/api/version")
+        """Build info read at startup is served without using a worker thread."""
+        build_info = version_routes.BuildInfo(
+            source="git" if commit is not None else "pypi", commit=commit, modified=False, display="1.0.0-test"
+        )
+        with (
+            patch.object(app.state, "build_info", build_info, create=True),
+            patch("asyncio.to_thread", side_effect=AssertionError("version must not use the default executor")),
+        ):
+            response = client.get("/api/version")
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        # Falls back to default values when load fails
-        assert "version" in data
-        assert data["source"] is None
-        assert data["commit"] is None
-
-    def test_build_info_keys_are_not_required(self) -> None:
-        """Every build-info key may be absent and defaults to None."""
-        assert version_routes.BuildInfo() == version_routes.BuildInfo(
-            source=None, commit=None, modified=None, display=None
-        )
+        for key, value in build_info.model_dump().items():
+            assert data[key] == value
 
     def test_get_version_build_info_absent_display_falls_back(self, client: TestClient) -> None:
         """A build-info file without `display` falls back to the package version."""
-        to_thread_mock = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
-        with (
-            patch("pyrit.backend.routes.version.Path") as mock_path_class,
-            patch("pyrit.backend.routes.version.asyncio.to_thread", new=to_thread_mock),
-            patch.object(version_routes, "_load_build_info", return_value=version_routes.BuildInfo(source="git")),
-        ):
-            mock_path_instance = MagicMock()
-            mock_path_instance.exists.return_value = True
-            mock_path_class.return_value = mock_path_instance
-
+        with patch.object(app.state, "build_info", version_routes.BuildInfo(source="git"), create=True):
             response = client.get("/api/version")
 
         assert response.status_code == status.HTTP_200_OK
@@ -2291,6 +2236,23 @@ class TestVersionRoutes:
         assert data["commit"] is None
         assert data["modified"] is None
         assert data["display"] == data["version"]
+
+    def test_build_info_keys_are_not_required(self) -> None:
+        """Every build-info key may be absent and defaults to None."""
+        assert version_routes.BuildInfo() == version_routes.BuildInfo(
+            source=None, commit=None, modified=None, display=None
+        )
+
+    def test_read_build_info_absent_file_is_empty(self, tmp_path: Path) -> None:
+        assert version_routes.read_build_info(tmp_path / "build_info.json") == version_routes.BuildInfo()
+
+    @pytest.mark.parametrize("content", [json.dumps({"source": "git", "commit": 123, "display": "abc"}), "{not json"])
+    def test_read_build_info_ignores_invalid_file(self, *, tmp_path: Path, content: str) -> None:
+        """An unreadable build-info file falls back to defaults instead of failing startup."""
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(content)
+
+        assert version_routes.read_build_info(build_info_path) == version_routes.BuildInfo()
 
     def test_load_build_info_reads_known_keys(self, tmp_path: Path) -> None:
         """Known keys are returned as written and extra keys from the Docker build are dropped."""
@@ -2330,20 +2292,6 @@ class TestVersionRoutes:
 
         with pytest.raises(ValidationError, match=key):
             version_routes._load_build_info(build_info_path)
-
-    def test_get_version_ignores_malformed_build_info(self, *, client: TestClient, tmp_path: Path) -> None:
-        """A wrongly typed build-info value falls back to defaults instead of failing the response."""
-        build_info_path = tmp_path / "build_info.json"
-        build_info_path.write_text(json.dumps({"source": "git", "commit": 123, "display": "abc"}))
-
-        with patch("pyrit.backend.routes.version.Path", return_value=build_info_path):
-            response = client.get("/api/version")
-
-        assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert data["source"] is None
-        assert data["commit"] is None
-        assert data["display"] == data["version"]
 
 
 class TestScoreRoutes:

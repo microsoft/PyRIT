@@ -8,6 +8,7 @@ export function CompatibilityGate({ children }: { children: ReactNode }) {
   const [admitted, setAdmitted] = useState(false)
   const notice = useRef<HTMLDialogElement>(null)
   const { modalAttributes } = useModalAttributes({ trapFocus: true })
+  const failed = snapshot.status === 'blocked' || snapshot.status === 'unavailable'
 
   useEffect(() => {
     let active = true
@@ -18,15 +19,15 @@ export function CompatibilityGate({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (snapshot.status === 'blocked' && notice.current && !notice.current.open) {
+    if (failed && notice.current && !notice.current.open) {
       notice.current.showModal()
     }
-  }, [snapshot.status])
+  }, [failed])
 
   return (
     <>
       {snapshot.status === 'checking' && <div role="status">Checking frontend and backend compatibility...</div>}
-      {snapshot.status === 'blocked' && (
+      {failed && (
         <dialog
           {...modalAttributes}
           ref={notice}
@@ -35,11 +36,20 @@ export function CompatibilityGate({ children }: { children: ReactNode }) {
           onCancel={(event) => event.preventDefault()}
           style={{ padding: '2rem', maxWidth: 'min(42rem, calc(100vw - 2rem))', overflowWrap: 'anywhere' }}
         >
-          <h1 id="compatibility-notice-title">PyRIT compatibility blocked</h1>
+          <h1 id="compatibility-notice-title">
+            {snapshot.status === 'unavailable' ? 'PyRIT backend unavailable' : 'PyRIT compatibility blocked'}
+          </h1>
           <p>{snapshot.reason}</p>
-          {snapshot.expected && <p>Backend expected: <code>{snapshot.expected}</code></p>}
-          {snapshot.actual && <p>Frontend sent: <code>{snapshot.actual}</code></p>}
-          <p>Deploy the frontend and backend from the same version and full Git commit, then reload this page.</p>
+          {snapshot.status === 'blocked' && (
+            <>
+              {snapshot.expected && <p>Backend expected: <code>{snapshot.expected}</code></p>}
+              {snapshot.actual && <p>Frontend sent: <code>{snapshot.actual}</code></p>}
+              <p>Deploy the frontend and backend from the same version and full Git commit, then reload this page.</p>
+            </>
+          )}
+          {snapshot.status === 'unavailable' && (
+            <p>This does not indicate a version mismatch. Wait a few minutes, then reload this page.</p>
+          )}
           <p>Further business requests are disabled. No failed operation will be replayed automatically.</p>
           {admitted && <p>Your existing UI state is retained in this page. Reloading will discard unsaved work.</p>}
           <button type="button" onClick={() => window.location.reload()}>Reload page</button>

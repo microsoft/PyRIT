@@ -59,9 +59,12 @@ describe('CompatibilityStore', () => {
     expect(store.getSnapshot().status).toBe('blocked')
   })
 
-  it('blocks a failed authenticated handshake', async () => {
+  it('reports a failed or timed-out handshake as unavailable rather than a build mismatch', async () => {
     const store = new CompatibilityStore(bundledId)
-    await store.verify(async () => { throw new Error('401') })
-    expect(store.getSnapshot().status).toBe('blocked')
+    await store.verify(async () => { throw new Error('timeout of 30000ms exceeded') })
+    expect(store.getSnapshot()).toMatchObject({ status: 'unavailable', reason: expect.stringMatching(/did not answer/) })
+    expect(() => store.assertReady()).toThrow()
+    store.block('Deployment changed')
+    expect(store.getSnapshot().status).toBe('unavailable')
   })
 })

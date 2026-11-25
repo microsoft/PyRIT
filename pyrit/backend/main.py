@@ -71,6 +71,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     3. ``PYRIT_CONFIG_FILE`` local path or Azure Blob URI when set
     """
     app.state.compatibility_id = await asyncio.to_thread(_compatibility.get_compatibility_id)
+    app.state.build_info = await asyncio.to_thread(version.read_build_info)
     app.state.authentication_policy = resolve_authentication_policy()
     if app.state.authentication_policy.enabled and not app.state.authentication_policy.admin_group_id:
         logger.warning("ENTRA_ADMIN_GROUP_ID is not set; authenticated users cannot access administrator routes.")

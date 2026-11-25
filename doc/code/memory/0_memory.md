@@ -52,3 +52,4 @@ The `MemoryDatabaseType` is a `Literal` with 3 options: IN_MEMORY, SQLITE, AZURE
    - To configure AzureSQLMemory without an extra argument list, these keys should be in your `.env` file:
      - `AZURE_SQL_DB_CONNECTION_STRING`
      - `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL`
+   - Statements that run longer than `AZURE_SQL_DB_QUERY_TIMEOUT_SECONDS` (default 300; `0` disables the limit) are cancelled on the server and raise an error. Schema migrations are not limited.

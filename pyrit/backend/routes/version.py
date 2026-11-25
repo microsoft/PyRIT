@@ -3,7 +3,6 @@
 
 """API routes for version information."""
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import cast
@@ -47,6 +46,25 @@ def _load_build_info(build_info_path: Path) -> BuildInfo:
         return BuildInfo.model_validate_json(file.read())
 
 
+def read_build_info(build_info_path: Path = Path("/app/build_info.json")) -> BuildInfo:
+    """
+    Read Docker build metadata once at startup, so version requests never touch the disk or a thread pool.
+
+    Args:
+        build_info_path (Path): Path to the build metadata JSON file. Defaults to the Docker image location.
+
+    Returns:
+        BuildInfo: Parsed build metadata, or an empty ``BuildInfo`` when the file is absent or invalid.
+    """
+    if not build_info_path.exists():
+        return BuildInfo()
+    try:
+        return _load_build_info(build_info_path)
+    except Exception as e:
+        logger.warning(f"Failed to load build info: {e}")
+        return BuildInfo()
+
+
 class VersionResponse(BaseModel):
     """Version information response model."""
 
@@ -66,29 +84,15 @@ async def get_version_async(request: Request) -> VersionResponse:
     """
     Get version information for the PyRIT installation.
 
-    Returns version from pyrit.__version__ and additional build info
-    if running in Docker (from /app/build_info.json).
+    Returns version from pyrit.__version__ and the Docker build info that the app
+    lifespan read from /app/build_info.json at startup.
 
     Returns:
         VersionResponse: Version information including build metadata.
     """
     version = pyrit.__version__
-    display = version
-    source = None
-    commit = None
-    modified = None
-
-    # Try to load build info from Docker
-    build_info_path = Path("/app/build_info.json")
-    if await asyncio.to_thread(build_info_path.exists):
-        try:
-            build_info = await asyncio.to_thread(_load_build_info, build_info_path)
-            source = build_info.source
-            commit = build_info.commit
-            modified = build_info.modified
-            display = build_info.display or version
-        except Exception as e:
-            logger.warning(f"Failed to load build info: {e}")
+    # The app lifespan publishes a BuildInfo; it is unset before startup.
+    build_info = cast("BuildInfo | None", getattr(request.app.state, "build_info", None)) or BuildInfo()
 
     # Detect current database backend
     database_info: str | None = None
@@ -110,10 +114,10 @@ async def get_version_async(request: Request) -> VersionResponse:
     return VersionResponse(
         version=version,
         compatibility_id=request.app.state.compatibility_id,
-        source=source,
-        commit=commit,
-        modified=modified,
-        display=display,
+        source=build_info.source,
+        commit=build_info.commit,
+        modified=build_info.modified,
+        display=build_info.display or version,
         database_info=database_info,
         default_labels=default_labels,
         default_operation=default_operation,

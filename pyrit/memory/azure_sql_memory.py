@@ -51,6 +51,7 @@ from pyrit.memory.storage import AzureBlobStorageIO
 from pyrit.models import AttackResultRole, ConversationStats
 
 if TYPE_CHECKING:
+    import pyodbc
     from azure.core.credentials import AccessToken
     from sqlalchemy.sql import SQLColumnExpression
 
@@ -81,6 +82,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     # Optional environment variable for production connection string to prevent accidental schema migrations on prod
     AZURE_SQL_DB_CONNECTION_STRING_PROD: str = "AZURE_SQL_DB_CONNECTION_STRING_PROD"
 
+    AZURE_SQL_DB_QUERY_TIMEOUT_SECONDS: str = "AZURE_SQL_DB_QUERY_TIMEOUT_SECONDS"
+    DEFAULT_QUERY_TIMEOUT_SECONDS: int = 300
+
     def __init__(
         self,
         *,
@@ -90,6 +94,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         verbose: bool = False,
         skip_schema_migration: bool = True,
         silent: bool = False,
+        query_timeout_seconds: int | None = None,
         _defer_initialization: bool = False,
     ) -> None:
         """
@@ -106,7 +111,15 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             skip_schema_migration (bool): Whether to skip schema migration. Defaults to True.
                 Set to False to explicitly migrate a non-production database during initialization.
             silent (bool): If True, suppresses schema migration console output. Defaults to False.
+            query_timeout_seconds (int | None): Seconds after which the driver cancels a statement on the
+                server and raises, releasing its connection; 0 disables the limit. Applies to the async engine,
+                not to schema migrations. If not provided, it falls back to the
+                'AZURE_SQL_DB_QUERY_TIMEOUT_SECONDS' environment variable, then to 300.
+
+        Raises:
+            ValueError: If the query timeout is not a non-negative integer.
         """
+        self._query_timeout_seconds = self._resolve_query_timeout_seconds(query_timeout_seconds)
         self._connection_string = default_values.get_required_value(
             env_var_name=self.AZURE_SQL_DB_CONNECTION_STRING, passed_value=connection_string
         )
@@ -191,7 +204,13 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             attrs = dict(params.pop("attrs_before", {}))
             attrs[self.SQL_COPT_SS_ACCESS_TOKEN] = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
             # aioodbc ships no type information; connect() returns an aioodbc.Connection.
-            return cast("aioodbc.Connection", await aioodbc.connect(dsn=dsn, attrs_before=attrs, **params))
+            connection = cast("aioodbc.Connection", await aioodbc.connect(dsn=dsn, attrs_before=attrs, **params))
+            # aioodbc runs each driver call in an executor thread, so cancelling the awaiting task leaves
+            # the statement running on the server and its connection checked out. The pyodbc query
+            # timeout makes the driver cancel the statement server-side. aioodbc exposes no setter, so
+            # set it on the wrapped pyodbc connection, as SQLAlchemy's aioodbc adapter does for autocommit.
+            cast("pyodbc.Connection", connection._conn).timeout = self._query_timeout_seconds
+            return connection
 
         engine = create_async_engine(
             url,
@@ -248,6 +267,34 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             return cast("str", value)
         except ValueError:
             return None
+
+    @classmethod
+    def _resolve_query_timeout_seconds(cls, passed_value: int | None) -> int:
+        """
+        Resolve the per-statement timeout from the argument, the environment, or the default.
+
+        Args:
+            passed_value (int | None): An explicitly passed timeout in seconds.
+
+        Returns:
+            int: The timeout in seconds; 0 disables it.
+
+        Raises:
+            ValueError: If the resolved value is not a non-negative integer.
+        """
+        value: int | str = (
+            passed_value
+            if passed_value is not None
+            else default_values.get_non_required_value(env_var_name=cls.AZURE_SQL_DB_QUERY_TIMEOUT_SECONDS)
+        )
+        if value == "":
+            return cls.DEFAULT_QUERY_TIMEOUT_SECONDS
+        if not str(value).isdecimal():
+            raise ValueError(
+                f"Azure SQL query timeout must be a non-negative integer number of seconds (0 disables it); "
+                f"got {value!r} from query_timeout_seconds or {cls.AZURE_SQL_DB_QUERY_TIMEOUT_SECONDS}."
+            )
+        return int(value)
 
     def _init_storage_io(self) -> None:
         # Handle for Azure Blob Storage when using Azure SQL memory.

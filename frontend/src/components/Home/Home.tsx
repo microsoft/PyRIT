@@ -163,8 +163,9 @@ export default function Home({
     .sort((first: RecentItem, second: RecentItem) => activityTime(second.updatedAt) - activityTime(first.updatedAt))
     .slice(0, RECENT_WORK_LIMIT)
   const refresh = (): void => { setRevision((value: number) => value + 1) }
+  const refreshFailed = Boolean(attackResult?.error || scanResult?.error || operationResult?.error)
   useAutoRefresh(refresh, ready && attackResult?.key === requestKey
-    && scanResult?.key === requestKey && operationResult?.key === requestKey)
+    && scanResult?.key === requestKey && operationResult?.key === requestKey, refreshFailed)
 
   return (
     <div className={styles.root} data-testid="home-view">
