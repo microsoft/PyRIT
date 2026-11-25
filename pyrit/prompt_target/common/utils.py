@@ -3,7 +3,7 @@
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar
 
@@ -89,6 +89,27 @@ def validate_frequency_penalty(frequency_penalty: float | None) -> None:
     """
     if frequency_penalty is not None and not -2 <= frequency_penalty <= 2:
         raise PyritException(message="frequency_penalty must be between -2 and 2 (inclusive).")
+
+
+def without_tool_settings(extra_body_parameters: Mapping[str, Any] | None) -> dict[str, Any]:
+    """
+    Copy passthrough request parameters without their tool settings.
+
+    Tool declarations and tool-calling options, including the legacy ``functions`` and ``function_call``,
+    are removed at the top level and in a nested ``extra_body``, which the request applies last.
+
+    Args:
+        extra_body_parameters (Mapping[str, Any] | None): The passthrough request parameters.
+
+    Returns:
+        dict[str, Any]: A copy without tool settings. The input is not modified.
+    """
+    tool_settings = {"tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"}
+    parameters = {key: value for key, value in (extra_body_parameters or {}).items() if key not in tool_settings}
+    nested = parameters.get("extra_body")
+    if isinstance(nested, Mapping):
+        parameters["extra_body"] = {key: value for key, value in nested.items() if key not in tool_settings}
+    return parameters
 
 
 def limit_requests_per_minute(

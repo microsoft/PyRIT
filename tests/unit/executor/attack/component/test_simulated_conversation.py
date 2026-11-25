@@ -48,7 +48,7 @@ from pyrit.models import (
     load_simulated_target_prompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, PromptTarget
+from pyrit.prompt_target import LiteLLMChatTarget, OpenAIChatTarget, OpenAIResponseTarget, PromptTarget, Tool
 from pyrit.score import TrueFalseScorer
 
 
@@ -1414,6 +1414,13 @@ _LOOKUP = ToolDefinition(
 )
 
 
+class _SourceToolProvider:
+    identifier = {"provider": "source"}
+
+    async def get_tools_async(self) -> list[Tool]:
+        raise AssertionError("A stand-in must not use the source's tool providers.")
+
+
 @pytest.mark.usefixtures("patch_central_database")
 class TestSimulatedConversationWithTools:
     async def test_stand_in_gets_tools_whose_results_the_adversarial_chat_writes_async(self) -> None:
@@ -1445,15 +1452,36 @@ class TestSimulatedConversationWithTools:
         assert (request["tool"]["name"], request["arguments"]) == ("lookup_ticket", {"ticket_id": "SEC-1"})
         assert "Reset the admin password." in adversarial_chat.system_prompt
 
-    async def test_chat_completions_target_can_stand_in_async(self) -> None:
-        source = OpenAIChatTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key")
+    @pytest.mark.parametrize(
+        ("target_type", "tool_providers"),
+        # Chat targets reject tools in a nested extra_body when a tool provider is configured.
+        [(OpenAIChatTarget, None), (LiteLLMChatTarget, None), (OpenAIResponseTarget, [_SourceToolProvider()])],
+    )
+    async def test_stand_in_drops_the_source_tool_settings_async(
+        self, target_type: type[PromptTarget], tool_providers: list[_SourceToolProvider] | None
+    ) -> None:
+        settings = {
+            "tools": [{"type": "function", "name": "send_email"}],
+            "tool_choice": "required",
+            "parallel_tool_calls": False,
+            "functions": [{"name": "send_email"}],
+            "function_call": {"name": "send_email"},
+        }
+        source = target_type(
+            model_name="gpt-4",
+            endpoint="https://mock.azure.com",
+            api_key="key",
+            tool_providers=tool_providers,
+            execute_tools=False,
+            extra_body_parameters={**settings, "metadata": {"keep": "yes"}, "extra_body": {**settings, "user": "rt"}},
+        )
         writer = _ToolResultWriter(objective="objective", adversarial_chat=MockPromptTarget())
 
         stand_in = _with_simulated_tools(target=source, tools=[_LOOKUP], writer=writer)
 
-        assert stand_in is not source
         assert await stand_in.get_tool_definitions_async() == [_LOOKUP]
-        assert await source.get_tool_definitions_async() == []
+        assert stand_in._extra_body_parameters == {"metadata": {"keep": "yes"}, "extra_body": {"user": "rt"}}
+        assert stand_in._execute_tools
 
     async def test_tool_results_share_one_writer_conversation_async(self) -> None:
         adversarial_chat = MockPromptTarget()

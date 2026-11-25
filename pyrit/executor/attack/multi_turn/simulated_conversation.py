@@ -60,6 +60,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
 from pyrit.prompt_target import Tool
+from pyrit.prompt_target.common.utils import without_tool_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -882,13 +883,11 @@ def _with_simulated_tools(
             f"{type(target).__name__} does not."
         )
     registry = TargetRegistry.get_registry_singleton()
-    # The copy offers only the simulated tools: none of the source's own tools, providers, callbacks,
-    # or declared and hosted tools carry over.
+    # The copy offers only the simulated tools: none of the source's own tools (configured, declared, hosted, or
+    # from providers), tool settings, or callbacks carry over.
     source_parameters = registry.get_reconstruction_parameters(target)
     source_body = source_parameters.get("extra_body_parameters")
-    extra_body_parameters = dict(source_body) if isinstance(source_body, dict) else {}
-    extra_body_parameters.pop("tools", None)
-    extra_body_parameters.pop("tool_choice", None)
+    extra_body_parameters = without_tool_settings(source_body if isinstance(source_body, dict) else None)
     params: dict[str, object] = {
         "tools": [_SimulatedTool(definition=tool, writer=writer) for tool in tools],
         "tool_providers": None,
