@@ -28,6 +28,7 @@ from pyrit.models import (
     ScenarioResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanScorerBinding,
     ScenarioRunPlanSeedGroup,
     ScenarioRunState,
     ScenarioSuiteExecutionEntrySummary,
@@ -69,7 +70,7 @@ def make_technique_class(*, techniques: Sequence[str], aggregates: Sequence[str]
     members += [(name.upper(), (name, set())) for name in techniques]
     # The functional Enum API builds a new enum class, but the overload ty selects is the
     # member-lookup form, so it infers an instance rather than the class this returns.
-    return ScenarioTechnique("MockTechnique", members)  # ty: ignore[invalid-return-type]
+    return ScenarioTechnique("MockTechnique", members)  # ty: ignore[invalid-explicit-return]
 
 
 def make_scenario_identifier(
@@ -253,6 +254,83 @@ def make_suite_scenario_result(
     )
 
 
+def judged_attack_identifier(scorer: ComponentIdentifier) -> ComponentIdentifier:
+    """Build an atomic attack identifier whose attack recorded ``scorer`` as its objective scorer."""
+    attack = ComponentIdentifier(
+        class_name="PromptSendingAttack", class_module="tests", children={"objective_scorer": scorer}
+    )
+    technique = ComponentIdentifier(class_name="AttackTechnique", class_module="tests", children={"attack": attack})
+    return ComponentIdentifier(
+        class_name="AtomicAttack", class_module="tests", children={"attack_technique": technique}
+    )
+
+
+def make_judged_scenario_result(
+    *,
+    groups: Sequence[tuple[str, ComponentIdentifier | None, ComponentIdentifier | None, Sequence[AttackOutcome]]],
+    objective_scorer_identifier: ComponentIdentifier | None = None,
+    display_group_map: dict[str, str] | None = None,
+    planned_seed_groups: int | None = None,
+) -> ScenarioResult:
+    """
+    Build a planned scenario result whose atomic groups may be judged by different objective scorers.
+
+    Each group is ``(atomic_attack_name, bound_scorer, recorded_scorer, outcomes)``. ``bound_scorer``
+    becomes the plan's pool binding for the group (None for single-scorer plans), and each outcome is
+    one result, for seed group ``i`` with objective ``objective-i``, that records ``recorded_scorer``
+    (None records no scorer). Groups share objective text, as a benchmark matrix does.
+    """
+    seed_count = planned_seed_groups or max((len(outcomes) for *_, outcomes in groups), default=0)
+    seed_groups = [
+        ScenarioRunPlanSeedGroup(
+            id=f"seed-{i}", objective_sha256=to_sha256(f"objective-{i}"), objective=f"objective-{i}"
+        )
+        for i in range(seed_count)
+    ]
+    plan = ScenarioRunPlan(
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id=f"group-{name}",
+                atomic_attack_name=name,
+                display_group=(display_group_map or {}).get(name, name),
+                technique_eval_hash=f"eval-{name}",
+                seed_group_ids=[group.id for group in seed_groups],
+                objective_scorer_binding=(
+                    ScenarioRunPlanScorerBinding(candidate_index=index, scorer_hash=bound.hash)
+                    if bound is not None
+                    else None
+                ),
+            )
+            for index, (name, bound, _, _) in enumerate(groups)
+        ],
+        seed_groups=seed_groups,
+    )
+    return make_scenario_result(
+        objective_target_identifier=ComponentIdentifier(class_name="MockTarget", class_module="tests"),
+        objective_scorer_identifier=objective_scorer_identifier,
+        display_group_map=display_group_map or {},
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")},
+        attack_results={
+            name: [
+                AttackResult(
+                    conversation_id=str(uuid.uuid4()),
+                    objective=f"objective-{i}",
+                    outcome=outcome,
+                    timestamp=SUITE_TIMESTAMP + timedelta(seconds=i),
+                    atomic_attack_identifier=judged_attack_identifier(recorded) if recorded is not None else None,
+                    attribution_data={
+                        "parent_collection": name,
+                        "parent_eval_hash": f"eval-{name}",
+                        "seed_group_id": f"seed-{i}",
+                    },
+                )
+                for i, outcome in enumerate(outcomes)
+            ]
+            for name, _, recorded, outcomes in groups
+        },
+    )
+
+
 def make_sequential_attack_results(
     *,
     atomic_attack_name: str,
@@ -368,6 +446,32 @@ def get_mock_target(name: str = "MockTarget") -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = get_mock_target_identifier(name)
     return target
+
+
+def accept_scenario_scoring(factory: MagicMock) -> MagicMock:
+    """
+    Make a mocked ``AttackTechniqueFactory`` accept the scenario's scoring config.
+
+    Its ``check_objective_scorer`` still applies the mock's ``requirements`` and ``attack_class``
+    to any scorer passed in.
+
+    Args:
+        factory: A ``MagicMock(spec=AttackTechniqueFactory)`` with ``requirements`` and ``attack_class`` set.
+
+    Returns:
+        The same mock, for chaining.
+    """
+
+    def check_objective_scorer(*, scorer: Any = None) -> list[str]:
+        if scorer is None:
+            return []
+        problems: list[str] = factory.requirements.objective_scorer_for(attack_class=factory.attack_class).check(
+            scorer=scorer
+        )
+        return problems
+
+    factory.check_objective_scorer.side_effect = check_objective_scorer
+    return factory
 
 
 class MockHttpPostAsync(AbstractAsyncContextManager):

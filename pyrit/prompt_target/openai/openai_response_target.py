@@ -14,6 +14,7 @@ from typing import (
     Any,
     ClassVar,
     Literal,
+    assert_never,
     cast,
 )
 
@@ -36,20 +37,24 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
     PromptResponseError,
-    ToolExecutionMetadata,
-    ToolLoopStop,
-    ToolLoopStopReason,
+    ToolCaptureCoverage,
+    ToolCaptureGap,
     WebSearchConfig,
     WebSearchMode,
-    construct_response_from_request,
 )
 from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.tool_call_history import parse_function_call, parse_function_call_output
+from pyrit.prompt_target.common.tool_loop import (
+    PendingToolCall,
+    ToolDispatchResult,
+    dispatch_tool_call_async,
+    make_tool_result_piece,
+    run_tool_loop_async,
+)
 from pyrit.prompt_target.common.tool_provider import (
     Tool,
-    ToolInfrastructureError,
     ToolProvider,
     _ScopedToolProvider,
     collect_tools_async,
@@ -80,12 +85,6 @@ class _SerializedPiece:
     placement: Literal["inline", "top_level"]
 
 
-@dataclass(frozen=True)
-class _ToolDispatchResult:
-    output: object
-    invoked: bool
-
-
 class MessagePieceType(str, Enum):
     """Enumeration of different types of message pieces."""
 
@@ -102,6 +101,20 @@ class MessagePieceType(str, Enum):
     MCP_LIST_TOOLS = "mcp_list_tools"
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
 
+
+# Output sections that run no tool, or whose function calls PyRIT runs and stores itself.
+_CAPTURED_SECTION_TYPES = frozenset(
+    {
+        MessagePieceType.MESSAGE.value,
+        MessagePieceType.REASONING.value,
+        MessagePieceType.FUNCTION_CALL.value,
+        "custom_tool_call",
+    }
+)
+# Tools the provider runs itself. Their results never reach PyRIT as function_call_output pieces.
+_HOSTED_TOOL_SECTION_TYPES = frozenset(
+    piece_type.value for piece_type in MessagePieceType if piece_type.value not in _CAPTURED_SECTION_TYPES
+)
 
 # Fields of a web_search_call input item (all required); the output item has the same ones.
 _WEB_SEARCH_CALL_INPUT_FIELDS: tuple[str, ...] = ("id", "type", "status", "action")
@@ -129,7 +142,6 @@ class OpenAIResponseTarget(OpenAITarget):
 
     _SUPPORTS_TOOL_CALL_HISTORY = True
     _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset({CapabilityName.TEMPERATURE})
-    _MAX_ERROR_MESSAGE_CHARS = 2_000
     _WEB_SEARCH_TOOL_TYPES = frozenset({"web_search", "web_search_preview"})
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
@@ -276,8 +288,8 @@ class OpenAIResponseTarget(OpenAITarget):
         # https://platform.openai.com/docs/guides/function-calling#context-free-grammars
         self._grammar_name: str | None = None
         if extra_body_parameters:
-            tools = extra_body_parameters.get("tools", [])
-            for tool in tools:
+            extra_tools = extra_body_parameters.get("tools", [])
+            for tool in extra_tools:
                 if tool.get("type") == "custom" and tool.get("format", {}).get("type") == "grammar":
                     if self._grammar_name is not None:
                         raise ValueError("Multiple grammar tools detected; only one is supported.")
@@ -598,6 +610,8 @@ class OpenAIResponseTarget(OpenAITarget):
             search_tool = next(tool for tool in tools if tool.get("type") in self._WEB_SEARCH_TOOL_TYPES)
             body["tool_choice"] = {"type": search_tool["type"]}
             return
+        if TYPE_CHECKING and config.mode is not WebSearchMode.DISABLED:  # pragma: no cover
+            assert_never(config.mode)
         body["tools"] = [tool for tool in tools if tool.get("type") not in self._WEB_SEARCH_TOOL_TYPES]
         choice = body.get("tool_choice")
         if isinstance(choice, dict) and choice.get("type") in self._WEB_SEARCH_TOOL_TYPES:
@@ -752,11 +766,45 @@ class OpenAIResponseTarget(OpenAITarget):
         # there, since the whole budget may have been spent on hidden reasoning with no visible
         # answer.
         self._capture_response_metadata(response=response, pieces=extracted_response_pieces)
+        extracted_response_pieces[0].prompt_metadata.update(self._tool_capture_coverage(response).to_metadata())
 
         if truncated and extracted_response_pieces:
             extracted_response_pieces[0].mark_as_truncated()
 
         return Message(message_pieces=extracted_response_pieces)
+
+    @staticmethod
+    def _tool_capture_coverage(response: Response) -> ToolCaptureCoverage:
+        """
+        Record whether the stored messages will show every tool that ran for this response.
+
+        Function calls are run and stored by this target. A tool the provider runs itself, or an
+        output section PyRIT does not model, may have run without a stored output.
+
+        Returns:
+            ToolCaptureCoverage: The coverage, with a gap for each kind of unstored section.
+        """
+        gaps: list[ToolCaptureGap] = []
+        for section in response.output or []:
+            section_type = str(getattr(section, "type", ""))
+            if section_type in _CAPTURED_SECTION_TYPES:
+                continue
+            gap = (
+                ToolCaptureGap.HOSTED_TOOL_CALL
+                if section_type in _HOSTED_TOOL_SECTION_TYPES
+                else ToolCaptureGap.UNRECOGNIZED_OUTPUT
+            )
+            if gap not in gaps:
+                gaps.append(gap)
+        return ToolCaptureCoverage(gaps=tuple(gaps))
+
+    @staticmethod
+    def _add_tool_capture_gap(*, response: Message, gap: ToolCaptureGap) -> None:
+        """Add a gap to the coverage recorded on a model response."""
+        metadata = response.message_pieces[0].prompt_metadata
+        recorded = ToolCaptureCoverage.from_metadata(metadata=metadata) or ToolCaptureCoverage()
+        if gap not in recorded.gaps:
+            metadata.update(ToolCaptureCoverage(gaps=(*recorded.gaps, gap)).to_metadata())
 
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
@@ -803,165 +851,42 @@ class OpenAIResponseTarget(OpenAITarget):
 
     async def _run_tool_call_loop_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         message = normalized_conversation[-1]
-        message_piece: MessagePiece = message.message_pieces[0]
         last_piece = message.message_pieces[-1]
         json_config = self._get_json_response_config(message_piece=last_piece)
         web_search_config = self._get_web_search_config(message)
 
-        working_conversation: MutableSequence[Message] = list(normalized_conversation)
-
-        # Track all responses generated during this interaction
-        responses_to_return: list[Message] = []
-        rounds = 0
-
-        while True:
-            logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
-
+        async def send_async(conversation: Sequence[Message]) -> Message:
             body = await self._construct_request_body_async(
-                conversation=working_conversation, json_config=json_config, web_search_config=web_search_config
+                conversation=list(conversation), json_config=json_config, web_search_config=web_search_config
             )
+            response: Message = await self._send_model_request_async(body=body, request=message)
+            return response
 
-            result = await self._send_model_request_async(body=body, request=message)
-            if not self._execute_tools:
-                return [result]
+        if not self._execute_tools:
+            result = await send_async(normalized_conversation)
+            if self._find_pending_tool_calls(result):
+                self._add_tool_capture_gap(response=result, gap=ToolCaptureGap.CALLS_NOT_EXECUTED)
+            return [result]
 
-            # Add result to conversation and responses list
-            working_conversation.append(result)
-            responses_to_return.append(result)
-
-            tool_call_sections = self._find_pending_tool_calls(result)
-
-            if not tool_call_sections:
-                break
-
-            if rounds >= self._max_tool_rounds:
-                responses_to_return.extend(
-                    self._answer_calls_without_running(
-                        sections=tool_call_sections,
-                        output={"error": "max_tool_rounds_exhausted"},
-                        reference_piece=message_piece,
-                    )
+        def find_calls(reply: Message) -> list[PendingToolCall]:
+            return [
+                PendingToolCall(
+                    call_id=section["call_id"],
+                    name=section.get("name"),
+                    arguments=section.get("arguments", "{}"),
+                    section=section,
                 )
-                detail = f"max_tool_rounds={self._max_tool_rounds} exhausted."
-                stop = ToolLoopStopReason.MAX_TOOL_ROUNDS_EXHAUSTED
-                responses_to_return.append(
-                    self._tool_loop_error(request_piece=message_piece, detail=detail, reason=stop)
-                )
-                return responses_to_return
-            rounds += 1
+                for section in self._find_pending_tool_calls(reply)
+            ]
 
-            tool_messages, failure = await self._execute_tool_round_async(
-                sections=tool_call_sections, reference_piece=message_piece
-            )
-            working_conversation.extend(tool_messages)
-            responses_to_return.extend(tool_messages)
-            if failure is not None:
-                stop = ToolLoopStopReason.TOOL_INFRASTRUCTURE_ERROR
-                responses_to_return.append(
-                    self._tool_loop_error(request_piece=message_piece, detail=failure, reason=stop)
-                )
-                return responses_to_return
-
-        # Return all responses (normalizer will persist all of them to memory)
-        return responses_to_return
-
-    async def _execute_tool_round_async(
-        self, *, sections: list[dict[str, Any]], reference_piece: MessagePiece
-    ) -> tuple[list[Message], str | None]:
-        """
-        Run one response's tool calls in order, stopping at a tool infrastructure failure.
-
-        Args:
-            sections: The response's function calls.
-            reference_piece: A piece to copy conversation context from.
-
-        Returns:
-            One result message per call, and why the turn must end, or None to continue. After a
-            failure, the calls not yet run get error results, so every call is answered.
-        """
-        messages: list[Message] = []
-        for index, section in enumerate(sections):
-            try:
-                result = await self._execute_call_section_async(section)
-            except ToolInfrastructureError as error:
-                logger.error("Tool %r could not run; ending the turn: %s", section.get("name"), error)
-                # The model sees this result again on later turns, so it gets no infrastructure details;
-                # they stay in the error response, which history replay skips.
-                failed = _ToolDispatchResult(
-                    output={"error": "tool_infrastructure_error", "message": "The tool's infrastructure failed."},
-                    invoked=error.invoked,
-                )
-                messages.append(
-                    self._make_tool_message(result=failed, section=section, reference_piece=reference_piece)
-                )
-                messages.extend(
-                    self._answer_calls_without_running(
-                        sections=sections[index + 1 :],
-                        output={"error": "tool_not_executed", "message": "An earlier tool call failed."},
-                        reference_piece=reference_piece,
-                    )
-                )
-                return messages, f"Tool {section.get('name')!r} could not run: {error}"
-            messages.append(self._make_tool_message(result=result, section=section, reference_piece=reference_piece))
-        return messages, None
-
-    def _answer_calls_without_running(
-        self, *, sections: Sequence[dict[str, Any]], output: dict[str, str], reference_piece: MessagePiece
-    ) -> list[Message]:
-        """
-        Give calls that will not run an error result, so the history keeps every call answered.
-
-        Args:
-            sections: The calls.
-            output: The error result each call gets.
-            reference_piece: A piece to copy conversation context from.
-
-        Returns:
-            One result message per call, recorded as not invoked.
-        """
-        result = _ToolDispatchResult(output=output, invoked=False)
-        return [
-            self._make_tool_message(result=result, section=section, reference_piece=reference_piece)
-            for section in sections
-        ]
-
-    def _make_tool_message(
-        self, *, result: _ToolDispatchResult, section: dict[str, Any], reference_piece: MessagePiece
-    ) -> Message:
-        """
-        Wrap a call's result in a message.
-
-        Args:
-            result: The dispatch result to record.
-            section: The function call it answers.
-            reference_piece: A piece to copy conversation context from.
-
-        Returns:
-            A message with one function_call_output piece.
-        """
-        piece = self._make_tool_piece(result=result, call_id=section["call_id"], reference_piece=reference_piece)
-        return Message(message_pieces=[piece])
-
-    @staticmethod
-    def _tool_loop_error(*, request_piece: MessagePiece, detail: str, reason: ToolLoopStopReason) -> Message:
-        """
-        Build the error response that ends a turn whose tools could not continue.
-
-        Args:
-            request_piece: The request the turn answers.
-            detail: Why the turn ended.
-            reason: The machine-readable reason, recorded in the response's metadata.
-
-        Returns:
-            An error response, which history replay skips.
-        """
-        logger.error(detail)
-        return construct_response_from_request(
-            request=request_piece,
-            response_text_pieces=[detail],
-            response_type="error",
-            prompt_metadata=ToolLoopStop(reason=reason).to_metadata(),
-            error="processing",
+        # The normalizer persists every response and tool result returned here.
+        return await run_tool_loop_async(
+            conversation=normalized_conversation,
+            request_piece=message.message_pieces[0],
+            send_async=send_async,
+            find_calls=find_calls,
+            dispatch_async=lambda call: self._execute_call_section_async(call.section),
+            max_tool_rounds=self._max_tool_rounds,
         )
 
     @pyrit_target_retry
@@ -1181,7 +1106,7 @@ class OpenAIResponseTarget(OpenAITarget):
                     calls.append(cast("dict[str, Any]", section))
         return calls
 
-    async def _execute_call_section_async(self, tool_call_section: dict[str, Any]) -> _ToolDispatchResult:
+    async def _execute_call_section_async(self, tool_call_section: dict[str, Any]) -> ToolDispatchResult:
         """
         Execute a function call using the matching tool.
 
@@ -1191,80 +1116,26 @@ class OpenAIResponseTarget(OpenAITarget):
         Returns:
             The output payload and whether the tool was invoked. Tolerant dispatch failures
             retain their error payload with invoked=False.
-
-        Raises:
-            ValueError: If the function call section is missing a 'name' field.
-            ValueError: If the function arguments are malformed.
-            KeyError: If the function name is not registered.
         """
-        name = tool_call_section.get("name")
-        if not name:
-            if self._fail_on_missing_function:
-                raise ValueError("Function call section missing 'name' field")
-            return _ToolDispatchResult(
-                output={"error": "missing_function_name", "tool_call_section": tool_call_section},
-                invoked=False,
-            )
 
-        args_json = tool_call_section.get("arguments", "{}")
-        try:
-            args = json.loads(args_json)
-        except Exception:
-            # If arguments are not valid JSON, surface a structured error (or raise)
-            if self._fail_on_missing_function:
-                raise ValueError(f"Malformed arguments for function '{name}': {args_json}") from None
-            logger.warning("Malformed arguments for function '%s': %s", name, args_json)
-            return _ToolDispatchResult(
-                output={"error": "malformed_arguments", "function": name, "raw_arguments": args_json},
-                invoked=False,
-            )
-        await self._initialize_tools_async()
-        configured_tool = next((tool for tool in self._tools if tool.name == name), None)
-        custom_function = self._custom_functions.get(name)
-        if (configured_tool is not None or custom_function is not None) and not isinstance(args, dict):
-            if self._fail_on_missing_function:
-                raise ValueError(f"Arguments for function '{name}' must be a JSON object")
-            return _ToolDispatchResult(
-                output={"error": "malformed_arguments", "function": name, "raw_arguments": args_json},
-                invoked=False,
-            )
+        async def resolve_tools_async() -> tuple[Sequence[Tool], dict[str, ToolExecutor]]:
+            await self._initialize_tools_async()
+            return self._tools, self._custom_functions
 
-        if configured_tool is not None:
-            try:
-                configured_tool.validate_arguments(arguments=args)
-            except ValueError as exc:
-                if self._fail_on_missing_function:
-                    raise
-                logger.warning("Invalid arguments for function '%s': %s", name, exc)
-                return _ToolDispatchResult(
-                    output={
-                        "error": "malformed_arguments",
-                        "function": name,
-                        "raw_arguments": args_json,
-                        "message": str(exc)[: self._MAX_ERROR_MESSAGE_CHARS],
-                    },
-                    invoked=False,
-                )
-            return _ToolDispatchResult(output=await configured_tool.execute_async(arguments=args), invoked=True)
-
-        if custom_function is not None:
-            return _ToolDispatchResult(output=await custom_function(args), invoked=True)
-
-        if self._fail_on_missing_function:
-            raise KeyError(f"Function '{name}' is not registered")
-        available_functions = sorted({*(tool.name for tool in self._tools), *self._custom_functions})
-        logger.warning("Function '%s' not registered. Available: %s", name, available_functions)
-        return _ToolDispatchResult(
-            output={
-                "error": "function_not_found",
-                "missing_function": name,
-                "available_functions": available_functions,
-            },
-            invoked=False,
+        call = PendingToolCall(
+            call_id=str(tool_call_section.get("call_id", "")),
+            name=tool_call_section.get("name"),
+            arguments=tool_call_section.get("arguments", "{}"),
+            section=tool_call_section,
+        )
+        return await dispatch_tool_call_async(
+            call=call,
+            resolve_tools_async=resolve_tools_async,
+            fail_on_missing_function=self._fail_on_missing_function,
         )
 
     def _make_tool_piece(
-        self, *, result: _ToolDispatchResult, call_id: str, reference_piece: MessagePiece
+        self, *, result: ToolDispatchResult, call_id: str, reference_piece: MessagePiece
     ) -> MessagePiece:
         """
         Create a function_call_output MessagePiece.
@@ -1277,15 +1148,4 @@ class OpenAIResponseTarget(OpenAITarget):
         Returns:
             A MessagePiece containing the function call output.
         """
-        output = result.output
-        output_str = output if isinstance(output, str) else json.dumps(output, separators=(",", ":"))
-        return MessagePiece(
-            role="tool",
-            original_value=json.dumps(
-                {"type": "function_call_output", "call_id": call_id, "output": output_str},
-                separators=(",", ":"),
-            ),
-            original_value_data_type="function_call_output",
-            conversation_id=reference_piece.conversation_id,
-            prompt_metadata=ToolExecutionMetadata(invoked=result.invoked).to_metadata(),
-        )
+        return make_tool_result_piece(result=result, call_id=call_id, reference_piece=reference_piece)

@@ -146,6 +146,39 @@ class TestBatchingScale:
 
         assert len(results) == num_scores, f"Expected {num_scores} results, got {len(results)}"
 
+    async def test_get_prompt_scores_json_batches_stay_capped_with_large_bind_limit(
+        self, sqlite_instance: MemoryInterface
+    ):
+        """
+        Test that JSON batches stay small when a backend allows many bind variables.
+
+        Azure SQL uses a larger _MAX_BIND_VARS (2000) and binds two parameters per JSON term, so uncapped
+        batches would exceed SQL Server's 2100-parameter limit. On SQLite the same sizing exceeds the
+        expression depth limit, so this runs the full query with the larger limit.
+        """
+        num_pieces = 1500
+        pieces = [_create_message_piece() for _ in range(num_pieces)]
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+        scores = [_create_score(str(pieces[i].id)) for i in range(0, num_pieces, 3)]
+        await sqlite_instance.add_scores_to_memory_async(scores=scores)
+
+        batch_sizes: list[int] = []
+        original = sqlite_instance._get_condition_json_array_match
+
+        def record_batch(**kwargs):
+            batch_sizes.append(len(kwargs["array_to_match"]))
+            return original(**kwargs)
+
+        with (
+            patch.object(type(sqlite_instance), "_MAX_BIND_VARS", 2000),
+            patch.object(sqlite_instance, "_get_condition_json_array_match", side_effect=record_batch),
+        ):
+            results = await sqlite_instance.get_prompt_scores_async(prompt_ids=[piece.id for piece in pieces])
+
+        assert len(results) == len(scores)
+        assert len(batch_sizes) > 1
+        assert max(batch_sizes) <= 499, f"JSON batch of {max(batch_sizes)} terms would exceed SQL Server's limit"
+
     async def test_get_message_pieces_batching_preserves_other_filters(self, sqlite_instance: MemoryInterface):
         """Test that batching still applies other filter conditions correctly."""
         # Create pieces with different roles

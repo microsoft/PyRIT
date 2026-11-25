@@ -23,6 +23,7 @@ from pyrit.models import (
     AttackOutcome,
     Parameter,
     RetryEvent,
+    ScenarioDatasetOptions,
     ScenarioRunListItem,
     ScenarioRunState,
     TargetCapabilities,
@@ -246,6 +247,13 @@ def test_print_scenario_list_minimal_fields(capsys):
     captured = capsys.readouterr()
     assert "min" in captured.out
     assert "MinScenario" in captured.out
+
+
+@pytest.mark.parametrize(("min_selected", "suffix"), [(None, ""), (1, "; at least 1 required")])
+def test_print_scenario_list_shows_the_dataset_minimum(capsys, min_selected, suffix):
+    options = ScenarioDatasetOptions(min_selected=min_selected)
+    _output.print_scenario_list(items=[_make_scenario(dataset_options=options)])
+    assert f"Dataset selection: any; overrides: True{suffix}\n" in capsys.readouterr().out
 
 
 def test_print_scenario_list_no_max_dataset_size(capsys):
