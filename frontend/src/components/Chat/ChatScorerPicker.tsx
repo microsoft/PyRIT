@@ -10,13 +10,13 @@ interface ChatScorerPickerProps {
   value: RegisteredComponentReference | null | undefined
   scorers: ScorerInstance[]
   onChange: (value: RegisteredComponentReference | null) => void
-  onUseLastUsed?: (() => void) | undefined
-  label?: string | undefined
-  disabled?: boolean | undefined
+  onUseLastUsed?: () => void
+  label?: string
+  disabled?: boolean
   loading?: boolean | undefined
   error?: string | null | undefined
-  inherited?: boolean | undefined
-  usage?: 'chat' | 'scenario' | undefined
+  inherited?: boolean
+  usage?: 'chat' | 'scenario'
 }
 
 function scorerOptionLabel(scorer: ScorerInstance): string {

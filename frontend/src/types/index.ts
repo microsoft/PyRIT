@@ -79,7 +79,7 @@ export interface ConverterInputPiece {
 }
 
 export interface PieceConversion {
-  manuallyEdited?: boolean | undefined
+  manuallyEdited?: boolean
   pieceId: string
   pieceType: string
   converterInstanceIds: string[]
@@ -116,21 +116,21 @@ export interface ChatConverterSnapshot {
 
 export interface PendingComposerDraft {
   text: string
-  attachments?: MessageAttachment[] | undefined
+  attachments?: MessageAttachment[]
   textMetadata?: Record<string, unknown> | undefined
 }
 
 export interface ConversationEditState {
   messages: ConversationDraftMessage[]
   baselineMessages?: ConversationDraftMessage[] | undefined
-  baselineTargetKey?: string | null | undefined
+  baselineTargetKey?: string | null
   converters?: ChatConverterSnapshot | undefined
-  objective?: string | undefined
-  initialObjective?: string | undefined
-  sourceConversationId?: string | null | undefined
-  sourceAttackId?: string | null | undefined
+  objective?: string
+  initialObjective?: string
+  sourceConversationId?: string | null
+  sourceAttackId?: string | null
   sourcePieceIds?: string[] | undefined
-  target?: TargetReference | null | undefined
+  target?: TargetReference | null
   pendingPromptId?: string | undefined
   unsavedImport?: boolean | undefined
 }
@@ -154,7 +154,7 @@ export interface ChatDraftContent {
 
 export interface AcceptedSendHistory {
   /** Turn the backend assigned to the request, when known before leaving Chat. */
-  requestTurnNumber?: number | undefined
+  requestTurnNumber?: number
   /** User piece IDs saved before the send; new pieces only prompt an exact status check. */
   priorUserPieceIds: string[]
 }
@@ -182,18 +182,18 @@ export interface PendingImportPayload {
   id: string
   sequence: number
   destinationType: ImportDestinationType
-  targetAttackId?: string | null | undefined
-  targetConversationId?: string | null | undefined
+  targetAttackId?: string | null
+  targetConversationId?: string | null
   content: {
     text: string
-    attachments?: MessageAttachment[] | undefined
+    attachments?: MessageAttachment[]
     textMetadata?: Record<string, unknown> | undefined
   }
   conversation?: PendingImportConversation | undefined
   objective?: string | undefined
   setup?: ChatDraftContent | undefined
-  replaceDirty?: boolean | undefined
-  focus?: boolean | undefined
+  replaceDirty?: boolean
+  focus?: boolean
   stagedAt: number
 }
 
@@ -300,12 +300,12 @@ export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayP
 
 /** Provider-neutral options for one outbound send, not target defaults. */
 export interface RequestGenerationConfig {
-  readonly temperature?: number | null | undefined
+  readonly temperature?: number | null
 }
 
 /** Editable text is validated and converted to numeric request options at submission. */
 export type RequestGenerationDraft = {
-  readonly [Field in keyof RequestGenerationConfig]?: string | undefined
+  readonly [Field in keyof RequestGenerationConfig]?: string
 }
 
 export interface ParameterResolution {
@@ -322,8 +322,8 @@ export interface RequestGenerationInfo {
 
 export interface Message {
   /** Saved sequence used to keep a split turn stable across piece pages. */
-  sequence?: number | undefined
-  isPartial?: boolean | undefined
+  sequence?: number
+  isPartial?: boolean
   role: 'user' | 'assistant' | 'simulated_assistant' | 'tool' | 'simulated_tool' | 'system' | 'developer'
   content: string
   timestamp: string
@@ -331,14 +331,14 @@ export interface Message {
    * Legacy scores for messages created directly by the frontend. Backend
    * messages keep scores on their corresponding `displayPieces` entry.
    */
-  scores?: DisplayScore[] | undefined
+  scores?: DisplayScore[]
   attachments?: MessageAttachment[] | undefined
   /** Converted text and media pieces in backend order, with piece-local scores. */
   displayPieces?: MessageDisplayPiece[] | undefined
   /** If the backend returned an error for this message */
   error?: MessageError | undefined
   /** True while waiting for the backend response */
-  isLoading?: boolean | undefined
+  isLoading?: boolean
   /** Reasoning summaries from model thinking (e.g. OpenAI reasoning tokens) */
   reasoningSummaries?: string[] | undefined
   /**
@@ -349,8 +349,8 @@ export interface Message {
   /** Original media attachments before conversion (when different from converted). */
   originalAttachments?: MessageAttachment[] | undefined
   /** Saved provider parameter evidence, not a new request option. */
-  generationDescription?: string | undefined
-  generationDetails?: string | undefined
+  generationDescription?: string
+  generationDetails?: string
 }
 
 export interface MessageError {
@@ -409,8 +409,8 @@ export interface EnvironmentFileContent {
   content: string
   exists: boolean
   version?: string | null | undefined
-  read_only?: boolean | undefined
-  read_only_reason?: string | null | undefined
+  read_only?: boolean
+  read_only_reason?: string | null
 }
 
 export interface AuthAccess {
@@ -438,16 +438,16 @@ export type OperationSelection = { readonly id: string } | { readonly name: stri
 
 export interface UserPreferences {
   readonly targets: Pick<TargetPreferences, 'adversarial'>
-  readonly lastUsedTargets?: TargetPreferences | undefined
-  readonly lastUsedChatScorer?: RegisteredComponentReference | null | undefined
+  readonly lastUsedTargets?: TargetPreferences
+  readonly lastUsedChatScorer?: RegisteredComponentReference | null
   readonly hiddenTargetRegistryNames: string[]
   readonly labels: Record<string, string | null>
   /** Omitted to use the server default; null when the user cleared the selection. */
-  readonly operation?: OperationSelection | null | undefined
+  readonly operation?: OperationSelection | null
   readonly theme: ThemeMode
   readonly chatMarkdown: boolean
   readonly chatScorer?: RegisteredComponentReference | null | undefined
-  readonly sidebarExpanded?: boolean | undefined
+  readonly sidebarExpanded?: boolean
 }
 
 export interface RegisteredComponentReference {
@@ -524,24 +524,24 @@ export interface TargetInstance {
   target_registry_name: string
   /** Saved, from the server's configuration, or Temporary. Absent for inner targets. */
   origin?: TargetOrigin | null
-  binding?: TargetBinding | undefined
+  binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
-  capabilities?: TargetCapabilities | null | undefined
+  capabilities?: TargetCapabilities | null
   /** Inclusive runtime bounds by option; missing entries mean unknown bounds, not lack of support. */
   generation_ranges?: Partial<Record<keyof RequestGenerationConfig, readonly [number, number]>> | undefined
   /** Effective replay support, including configured adapters and provider restoration. */
   supports_history_replay?: boolean | undefined
   /** Non-promoted constructor params, curated for display (e.g., RoundRobin weights). */
-  target_specific_params?: Record<string, unknown> | null | undefined
+  target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */
-  inner_targets?: TargetInstance[] | null | undefined
+  inner_targets?: TargetInstance[] | null
   /** True when only the requesting user, who created it, can see and use the target. */
-  private?: boolean | undefined
+  private?: boolean
   /** True when the target's API key or request headers can be updated in place. */
-  allow_credential_updates?: boolean | undefined
+  allow_credential_updates?: boolean
   /** Whether the provider rejected the target's credentials on the last request; null until it is used. */
-  credentials_rejected?: boolean | null | undefined
+  credentials_rejected?: boolean | null
 }
 
 export interface TargetListResponse {
@@ -729,7 +729,7 @@ export interface CreateTechniqueRequest {
 }
 
 export interface SimulationSettings {
-  num_turns?: number | null | undefined
+  num_turns?: number | null
   adversarial_chat_system_prompt?: string | null | undefined
   simulated_target_system_prompt?: string | null | undefined
   next_message_system_prompt?: string | null | undefined
@@ -739,14 +739,14 @@ export interface SimulationSettings {
 export type SimulationChanges = Partial<SimulationSettings>
 
 interface TechniqueSettingFields {
-  description?: string | null | undefined
-  params?: Record<string, unknown> | undefined
-  request_converters?: ConverterSelection[] | null | undefined
-  response_converters?: ConverterSelection[] | null | undefined
-  adversarial_chat?: string | null | undefined
-  adversarial_system_prompt?: string | null | undefined
-  adversarial_seed_prompt?: string | null | undefined
-  adversarial_prompt_template?: string | null | undefined
+  description?: string | null
+  params?: Record<string, unknown>
+  request_converters?: ConverterSelection[] | null
+  response_converters?: ConverterSelection[] | null
+  adversarial_chat?: string | null
+  adversarial_system_prompt?: string | null
+  adversarial_seed_prompt?: string | null
+  adversarial_prompt_template?: string | null
 }
 
 export interface TechniqueSettings extends TechniqueSettingFields {
@@ -874,14 +874,14 @@ export interface TargetTypeListResponse {
 
 export interface TargetInfo {
   target_type: string
-  target_registry_name?: string | null | undefined
-  identifier?: TargetIdentifier | null | undefined
-  endpoint?: string | null | undefined
-  model_name?: string | null | undefined
+  target_registry_name?: string | null
+  identifier?: TargetIdentifier | null
+  endpoint?: string | null
+  model_name?: string | null
   identifier_hash: string
-  binding?: TargetBinding | null | undefined
-  capabilities?: TargetCapabilities | null | undefined
-  supports_history_replay?: boolean | null | undefined
+  binding?: TargetBinding | null
+  capabilities?: TargetCapabilities | null
+  supports_history_replay?: boolean | null
 }
 
 export type AttackTargetResolutionStatus =
@@ -974,13 +974,13 @@ export interface OutcomeStatistics {
 export type AttackAnalyticsStatistics = OutcomeStatistics
 
 export interface AttackAnalyticsQuery {
-  readonly filters?: AttackAnalyticsFilters | undefined
-  readonly group_by?: AttackAnalyticsDimension | undefined
-  readonly compare_by?: AttackAnalyticsDimension | null | undefined
+  readonly filters?: AttackAnalyticsFilters
+  readonly group_by?: AttackAnalyticsDimension
+  readonly compare_by?: AttackAnalyticsDimension | null
   readonly group_limit?: number | undefined
   readonly group_offset?: number | undefined
-  readonly axis_limit?: number | undefined
-  readonly result_limit?: number | undefined
+  readonly axis_limit?: number
+  readonly result_limit?: number
 }
 
 export interface AttackAnalyticsResultsQuery {
@@ -1144,19 +1144,19 @@ export interface AttackMetadata extends Pick<AttackSummary,
 
 export interface CreateAttackRequest {
   target_registry_name?: string | undefined
-  target_binding?: TargetBinding | undefined
+  target_binding?: TargetBinding
   /** The attack goal, independent of the ManualAttack strategy type. */
   objective?: string | null | undefined
   /** @deprecated Use objective. Non-null name and objective must match if both are supplied. */
-  name?: string | undefined
-  chat_scorer?: RegisteredComponentReference | null | undefined
-  operator?: string | undefined
-  operation_id?: string | undefined
+  name?: string
+  chat_scorer?: RegisteredComponentReference | null
+  operator?: string
+  operation_id?: string
   labels?: Record<string, string> | undefined
-  source_conversation_id?: string | undefined
-  cutoff_index?: number | undefined
-  system_prompt?: string | undefined
-  prepended_conversation?: PrependedMessageRequest[] | undefined
+  source_conversation_id?: string
+  cutoff_index?: number
+  system_prompt?: string
+  prepended_conversation?: PrependedMessageRequest[]
 }
 
 export interface UpdateAttackRequest {
@@ -1196,9 +1196,9 @@ export interface NewAttackContext {
   generation: string
   ready: boolean
   labels?: Record<string, string> | undefined
-  operationId?: string | null | undefined
+  operationId?: string | null
   chatScorer?: RegisteredComponentReference | null | undefined
-  chatScorerExplicit?: boolean | undefined
+  chatScorerExplicit?: boolean
 }
 
 export interface ConvertedFileChip {
@@ -1215,8 +1215,8 @@ export interface ConversationDraftMessage extends MessageRequest {
 
 export interface SaveConversationRequest {
   save_id: string
-  chat_scorer?: RegisteredComponentReference | null | undefined
-  default_chat_scorer?: RegisteredComponentReference | null | undefined
+  chat_scorer?: RegisteredComponentReference | null
+  default_chat_scorer?: RegisteredComponentReference | null
   destination: 'same_attack' | 'new_attack'
   attack_result_id?: string | undefined
   source_attack_result_id?: string | undefined
@@ -1224,13 +1224,13 @@ export interface SaveConversationRequest {
   expected_objective?: string | undefined
   objective?: string | undefined
   target_registry_name?: string | undefined
-  target_binding?: TargetBinding | undefined
+  target_binding?: TargetBinding
   operator?: string | undefined
   operation_id?: string | undefined
   labels?: Record<string, string> | undefined
   messages: MessageRequest[]
-  reuse_unsent_conversation?: boolean | undefined
-  expected_source_piece_ids?: string[] | undefined
+  reuse_unsent_conversation?: boolean
+  expected_source_piece_ids?: string[]
 }
 
 export interface CreateAttackResponse {
@@ -1372,7 +1372,7 @@ export interface MessagePieceRequest {
   applied_converter_ids?: string[] | undefined
   applied_converter_provenance?: Array<string | null> | undefined
   mime_type?: string | undefined
-  original_prompt_id?: string | undefined
+  original_prompt_id?: string
   source_piece_id?: string | undefined
   prompt_metadata?: Record<string, unknown> | undefined
 }
@@ -1647,14 +1647,14 @@ export interface SeedExampleDetailResponse extends SeedExampleSummary {
 /** Query for `GET /api/datasets/seeds`. Facet arrays are repeated singular parameters. */
 export interface SeedExampleListParams {
   selection_key: string
-  limit?: number | undefined
-  cursor?: string | undefined
-  search?: string | undefined
+  limit?: number
+  cursor?: string
+  search?: string
   /** Full LIKE pattern instead of literal search (% and _, / escaping). */
-  value_pattern?: string | undefined
-  modality?: readonly string[] | undefined
-  seed_type?: readonly SeedType[] | undefined
-  harm_category?: readonly string[] | undefined
+  value_pattern?: string
+  modality?: readonly string[]
+  seed_type?: readonly SeedType[]
+  harm_category?: readonly string[]
 }
 
 // --- Scenarios ---
@@ -1929,26 +1929,26 @@ export interface ScenarioSuiteExecutionSummary {
 }
 
 export interface RunScenarioRequest {
-  scoring_target_name?: string | null | undefined
-  objective_scorer?: RegisteredComponentReference | null | undefined
+  scoring_target_name?: string | null
+  objective_scorer?: RegisteredComponentReference | null
   scenario_name: string
-  target_name?: string | null | undefined
-  adversarial_target_name?: string | null | undefined
-  initializers?: string[] | null | undefined
-  techniques?: string[] | null | undefined
-  technique_override?: TechniqueOverride | null | undefined
-  dataset_names?: string[] | null | undefined
-  max_dataset_size?: number | 'all' | 'default' | '' | null | undefined
-  dataset_filters?: Record<string, string[]> | null | undefined
-  datasets?: ScenarioDatasetRequest | undefined
-  max_concurrency?: number | undefined
-  max_retries?: number | undefined
-  include_baseline?: boolean | null | undefined
-  labels?: Record<string, string> | null | undefined
-  operation_id?: string | null | undefined
-  scenario_params?: Record<string, unknown> | null | undefined
-  initializer_args?: Record<string, Record<string, unknown>> | null | undefined
-  scenario_result_id?: string | null | undefined
+  target_name?: string | null
+  adversarial_target_name?: string | null
+  initializers?: string[] | null
+  techniques?: string[] | null
+  technique_override?: TechniqueOverride | null
+  dataset_names?: string[] | null
+  max_dataset_size?: number | 'all' | 'default' | '' | null
+  dataset_filters?: Record<string, string[]> | null
+  datasets?: ScenarioDatasetRequest
+  max_concurrency?: number
+  max_retries?: number
+  include_baseline?: boolean | null
+  labels?: Record<string, string> | null
+  operation_id?: string | null
+  scenario_params?: Record<string, unknown> | null
+  initializer_args?: Record<string, Record<string, unknown>> | null
+  scenario_result_id?: string | null
 }
 
 export interface ScenarioRunSizeComponent {
@@ -1984,34 +1984,34 @@ export type DatasetLimitInput =
   | { state: 'scenario_default' | 'not_applicable'; value?: null }
 
 export interface ScenarioRunSizeEstimateResponse {
-  status?: 'exact' | 'approximate' | 'conditional' | 'unavailable' | undefined
+  status?: 'exact' | 'approximate' | 'conditional' | 'unavailable'
   dataset_size: ScenarioDatasetSizeEstimate
   dataset_limit: DatasetLimitInput
-  dataset_options?: ScenarioDatasetOptions | undefined
-  dataset_defaults?: ScenarioDatasetSettings | undefined
+  dataset_options?: ScenarioDatasetOptions
+  dataset_defaults?: ScenarioDatasetSettings
   effective_datasets?: ScenarioDatasetSettings | undefined
   estimated_attack_count: number | null
-  minimum_attack_count?: number | null | undefined
-  maximum_attack_count?: number | null | undefined
+  minimum_attack_count?: number | null
+  maximum_attack_count?: number | null
   components: ScenarioRunSizeComponent[]
   datasets: ScenarioDatasetSummary[]
-  effective_parameters?: Record<string, boolean | number | string | string[]> | undefined
+  effective_parameters?: Record<string, boolean | number | string | string[]>
   note: string | null
 }
 
 export interface ScenarioRunSizeEstimateRequest {
-  scoring_target_name?: string | null | undefined
-  objective_scorer?: RegisteredComponentReference | null | undefined
-  target_name?: string | null | undefined
-  adversarial_target_name?: string | null | undefined
-  techniques?: string[] | null | undefined
-  technique_override?: TechniqueOverride | null | undefined
-  dataset_names?: string[] | null | undefined
-  max_dataset_size?: number | 'all' | 'default' | '' | null | undefined
-  dataset_filters?: Record<string, string[]> | null | undefined
-  datasets?: ScenarioDatasetRequest | undefined
-  include_baseline?: boolean | null | undefined
-  scenario_params?: Record<string, unknown> | null | undefined
+  scoring_target_name?: string | null
+  objective_scorer?: RegisteredComponentReference | null
+  target_name?: string | null
+  adversarial_target_name?: string | null
+  techniques?: string[] | null
+  technique_override?: TechniqueOverride | null
+  dataset_names?: string[] | null
+  max_dataset_size?: number | 'all' | 'default' | '' | null
+  dataset_filters?: Record<string, string[]> | null
+  datasets?: ScenarioDatasetRequest
+  include_baseline?: boolean | null
+  scenario_params?: Record<string, unknown> | null
 }
 
 export interface ScenarioRunEstimateComponent {
@@ -2128,14 +2128,14 @@ export interface ScenarioOverloadSummary {
 export interface ScenarioRunSummary {
   scenario_result_id: string
   scenario_name: string
-  scenario_registry_name?: string | null | undefined
+  scenario_registry_name?: string | null
   scenario_version: number
   status: ScenarioRunState
   created_at: string
-  started_at?: string | null | undefined
+  started_at?: string | null
   updated_at: string
-  error?: string | null | undefined
-  error_type?: string | null | undefined
+  error?: string | null
+  error_type?: string | null
   techniques_used: string[]
   total_attacks: number
   completed_attacks: number
@@ -2144,50 +2144,50 @@ export interface ScenarioRunSummary {
   attack_retries: AttackRetrySummary[]
   total_retries: number
   labels: Record<string, string>
-  completed_at?: string | null | undefined
-  pyrit_version?: string | null | undefined
-  target?: ScenarioTargetSummary | null | undefined
-  datasets_used?: string[] | undefined
-  scenario_parameters?: Record<string, unknown> | undefined
-  planned_total_available?: boolean | undefined
-  successful_attacks?: number | undefined
-  error_attacks?: number | undefined
-  attack_details_available?: boolean | undefined
-  queue_position?: number | null | undefined
-  active_scenario_result_id?: string | null | undefined
-  overload_summaries?: ScenarioOverloadSummary[] | undefined
+  completed_at?: string | null
+  pyrit_version?: string | null
+  target?: ScenarioTargetSummary | null
+  datasets_used?: string[]
+  scenario_parameters?: Record<string, unknown>
+  planned_total_available?: boolean
+  successful_attacks?: number
+  error_attacks?: number
+  attack_details_available?: boolean
+  queue_position?: number | null
+  active_scenario_result_id?: string | null
+  overload_summaries?: ScenarioOverloadSummary[]
 }
 
 export interface ScenarioTargetSummary {
   target_type: string
-  endpoint?: string | null | undefined
-  model_name?: string | null | undefined
-  identifier_hash?: string | null | undefined
+  endpoint?: string | null
+  model_name?: string | null
+  identifier_hash?: string | null
 }
 
 export interface ScenarioRunListItem {
   scenario_result_id: string
   scenario_name: string
-  scenario_registry_name?: string | null | undefined
+  scenario_registry_name?: string | null
   scenario_version: number
   status: ScenarioRunState
   created_at: string
-  started_at?: string | null | undefined
+  started_at?: string | null
   updated_at: string
-  error?: string | null | undefined
-  error_type?: string | null | undefined
+  error?: string | null
+  error_type?: string | null
   techniques_used: string[]
   total_attacks: number | null
   completed_attacks: number
   objective_achieved_rate: number
   total_retries: number
   labels: Record<string, string>
-  operation_id?: string | null | undefined
+  operation_id?: string | null
   /** The saved Operation's current name, or the historical name of a legacy run. */
-  operation_name?: string | null | undefined
+  operation_name?: string | null
   completed_at?: string | null | undefined
-  pyrit_version?: string | null | undefined
-  target?: ScenarioTargetSummary | null | undefined
+  pyrit_version?: string | null
+  target?: ScenarioTargetSummary | null
   datasets_used: string[]
   scenario_parameters: Record<string, unknown>
   planned_total_available: boolean
@@ -2207,10 +2207,10 @@ export interface ScenarioProgressHeader {
   scenario_name: string
   scenario_registry_name?: string | null | undefined
   scenario_version: number
-  description?: string | null | undefined
-  operation_id?: string | null | undefined
-  operation_name?: string | null | undefined
-  scenario_identity?: ScenarioComponentIdentity | null | undefined
+  description?: string | null
+  operation_id?: string | null
+  operation_name?: string | null
+  scenario_identity?: ScenarioComponentIdentity | null
   status: ScenarioRunState
   created_at: string
   started_at?: string | null | undefined
@@ -2219,13 +2219,13 @@ export interface ScenarioProgressHeader {
   error_type?: string | null | undefined
   pyrit_version?: string | null | undefined
   target?: ScenarioTargetSummary | null | undefined
-  techniques_used?: string[] | undefined
-  datasets_used?: string[] | undefined
-  scenario_parameters?: Record<string, unknown> | undefined
-  labels?: Record<string, string> | undefined
+  techniques_used?: string[]
+  datasets_used?: string[]
+  scenario_parameters?: Record<string, unknown>
+  labels?: Record<string, string>
   queue_position?: number | null | undefined
   active_scenario_result_id?: string | null | undefined
-  overload_summaries?: ScenarioOverloadSummary[] | undefined
+  overload_summaries?: ScenarioOverloadSummary[]
 }
 
 export interface ScenarioQueueEntry {
@@ -2670,16 +2670,16 @@ export interface FindingCreate {
   /** Values of the other fields and of every level, by key. Severity isn't one of them. */
   field_values: Record<string, string>
   /** The finding this one is a sub-finding of, in the same Operation. Null or omitted for a top-level finding. */
-  parent_finding_id?: string | null | undefined
+  parent_finding_id?: string | null
   /** Whether the operator demonstrated it. A path is complete only when every step was. Defaults to true. */
-  demonstrated?: boolean | undefined
+  demonstrated?: boolean
 }
 
 /** Resending the same id and content returns the finding an earlier, unanswered request saved. */
 export interface FindingCreateRequest extends FindingCreate {
-  id?: string | undefined
+  id?: string
   /** A saved attack result to link as evidence in the same request. */
-  attack_result_id?: string | undefined
+  attack_result_id?: string
 }
 
 /**

@@ -46,22 +46,22 @@ function outcomeLabel(outcome: AttackDisplayOutcome, labelStyle: OutcomeLabelSty
 
 interface OutcomeBadgeProps {
   readonly outcome?: AttackDisplayOutcome | null | undefined
-  readonly testId?: string | undefined
-  readonly className?: string | undefined
-  readonly appearance?: BadgeProps['appearance'] | undefined
-  readonly size?: BadgeProps['size'] | undefined
+  readonly testId?: string
+  readonly className?: string
+  readonly appearance?: BadgeProps['appearance']
+  readonly size?: BadgeProps['size']
   readonly label?: string | undefined
-  readonly labelStyle?: OutcomeLabelStyle | undefined
+  readonly labelStyle?: OutcomeLabelStyle
   /** Opens the score behind the outcome from the badge. */
-  readonly score?: ScoreSummary | null | undefined
+  readonly score?: ScoreSummary | null
   /** Shown in the score popover when no score was saved; also enables the popover without a score. */
-  readonly scoreFallback?: string | undefined
+  readonly scoreFallback?: string
   /** Score action label, combined with the displayed outcome in the button's accessible name. */
-  readonly scoreButtonLabel?: string | undefined
+  readonly scoreButtonLabel?: string
 }
 
 interface OutcomeIconProps {
-  readonly outcome?: AttackDisplayOutcome | null | undefined
+  readonly outcome?: AttackDisplayOutcome | null
 }
 
 export function OutcomeIcon({ outcome }: OutcomeIconProps) {

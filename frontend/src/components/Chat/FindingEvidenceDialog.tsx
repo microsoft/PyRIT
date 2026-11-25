@@ -15,6 +15,7 @@ import { toApiError } from '@/services/errors'
 import type { FindingCreate, FindingListItem, FindingListResponse, Operation } from '@/types'
 
 import { useFindingEvidenceDialogStyles } from './FindingEvidenceDialog.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 const PAGE_SIZE = 20
 // The findings list API rejects longer title searches.
@@ -24,11 +25,11 @@ interface FindingEvidenceDialogProps {
   attackResultId: string
   disabled: boolean
   /** The Operation selected for new activity, used when the attack has no Operation of its own. */
-  defaultOperationId?: string | null | undefined
+  defaultOperationId?: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Receives focus when the dialog closes, such as the control that opened it. */
-  returnFocusRef?: React.RefObject<HTMLElement | null> | undefined
+  returnFocusRef?: React.RefObject<HTMLElement | null>
   /** Called after the attack is linked to a finding, new or existing. */
   onAttached?: (() => void) | undefined
 }
@@ -209,7 +210,7 @@ export default function FindingEvidenceDialog({
                   {operations.map(item => <Option key={item.id} value={item.id}>{item.name}</Option>)}
                 </Dropdown>
               </Field>
-              <Button ref={newFindingRef as never} className={styles.button} icon={<AddRegular />}
+              <Button ref={fluentRef(newFindingRef)} className={styles.button} icon={<AddRegular />}
                 disabled={submitting || disabled || !operation || fields === null}
                 onClick={() => {
                   if (operation) {

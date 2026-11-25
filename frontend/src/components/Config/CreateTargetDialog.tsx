@@ -55,6 +55,7 @@ import {
   isMetadataDrivenTargetParameter,
 } from './targetParameterPolicy'
 import { MAX_WEIGHT, parseWeight } from './weightValidation'
+import { fluentRef } from '@/utils/fluentRef'
 
 const FALLBACK_TARGET_TYPES = [
   'GitHubCopilotTarget',
@@ -1012,7 +1013,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 validationState={nameMessage ? 'error' : 'none'}
               >
                 <Input
-                  ref={nameInputRef as never}
+                  ref={fluentRef(nameInputRef)}
                   value={nameValue}
                   onChange={(_, data) => {
                     setRegistryName(data.value)

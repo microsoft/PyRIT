@@ -14,6 +14,7 @@ import type { AttackOutcome, BackendScore, FindingEvidence, FindingEvidenceListR
 import { attackConversationRoutePath } from '@/utils/routeParams'
 
 import { useFindingEvidenceListStyles } from './FindingEvidenceList.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 const PAGE_SIZE = 20
 
@@ -23,7 +24,7 @@ interface FindingEvidenceListProps {
   count: number
   onDetached: () => void
   /** Finding-level actions, shown at the far end of the Evidence toggle's row. */
-  actions?: React.ReactNode | undefined
+  actions?: React.ReactNode
 }
 
 /** The attack's outcome with the score behind it, the same result Chat shows for the attack. */
@@ -41,7 +42,7 @@ function EvidenceResult({ outcome, score }: { outcome: AttackOutcome; score?: Ba
 }
 
 /** An attack that no longer exists has no objective or outcome, so its ID stands in for it. */
-function evidenceLabel(item: FindingEvidence, outcome?: AttackOutcome | null | undefined, objective?: string | null | undefined): string {
+function evidenceLabel(item: FindingEvidence, outcome?: AttackOutcome | null, objective?: string | null): string {
   if (!outcome) return item.attack_result_id
   return objective?.trim() || 'No objective'
 }
@@ -108,7 +109,7 @@ export default function FindingEvidenceList({
   return (
     <div className={styles.root}>
       <div className={styles.header}>
-        <Button ref={triggerRef as never} className={styles.button} aria-expanded={expanded}
+        <Button ref={fluentRef(triggerRef)} className={styles.button} aria-expanded={expanded}
           icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
           onClick={() => { setExpanded(value => !value) }}>Evidence ({count})</Button>
         {actions && <div className={styles.headerActions}>{actions}</div>}

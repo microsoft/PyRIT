@@ -56,21 +56,21 @@ interface ValuePreviewProps {
   dataType: string
   emptyText: string
   label?: string | undefined
-  sectionTestId?: string | undefined
+  sectionTestId?: string
   testId?: string | undefined
   value?: string | undefined
-  editorLabel?: string | undefined
-  allowSelection?: boolean | undefined
-  edited?: boolean | undefined
+  editorLabel?: string
+  allowSelection?: boolean
+  edited?: boolean
   onChange?: ((value: string) => void) | undefined
 }
 
 interface ConverterPanelProps {
   onClose: () => void
   controller: ChatConverterController
-  selectedMessageCount?: number | undefined
-  onApply?: ((updates: PieceConversionUpdates) => void) | undefined
-  resizeBoundaryRef?: RefObject<HTMLDivElement | null> | undefined
+  selectedMessageCount?: number
+  onApply?: (updates: PieceConversionUpdates) => void
+  resizeBoundaryRef?: RefObject<HTMLDivElement | null>
 }
 
 interface SelectedConverter extends ConverterInstance {

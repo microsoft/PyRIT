@@ -10,7 +10,7 @@ import type { SaveConversationRequest } from '@/types'
 import { useSaveConversationDialogStyles } from './SaveConversationDialog.styles'
 
 interface SaveConversationDialogProps {
-  initialDestination?: SaveConversationRequest['destination'] | undefined
+  initialDestination?: SaveConversationRequest['destination']
   sameAttackDisabledReason?: string | undefined
   newAttackDisabledReason?: string | undefined
   objectiveChanged: boolean

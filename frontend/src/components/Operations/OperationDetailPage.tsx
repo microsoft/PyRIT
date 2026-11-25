@@ -18,6 +18,7 @@ import FindingTreeItem, { type FindingTreeActions } from './FindingTreeItem'
 import OperationDeleteDialog from './OperationDeleteDialog'
 import OperationEditDialog from './OperationEditDialog'
 import { useOperationsStyles } from './Operations.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 const PAGE_SIZE = 20
 
@@ -245,7 +246,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
             }} />
           {fields !== null && <FindingExportDialog key={current.operation.id} operation={current.operation}
             fields={fields} fieldsRevision={fieldsRevision} />}
-          <Button ref={newFindingRef as never} appearance="primary" className={styles.button} icon={<AddRegular />}
+          <Button ref={fluentRef(newFindingRef)} appearance="primary" className={styles.button} icon={<AddRegular />}
             disabled={fields === null} onClick={event => {
               returnFocusRef.current = event.currentTarget
               setDialog({ editing: null, parent: null })

@@ -8,9 +8,9 @@ import { useContextualHelpLabelStyles } from './ContextualHelpLabel.styles'
 interface HelpFieldProps extends Omit<FieldProps, 'label' | 'hint' | 'validationMessage' | 'validationState'> {
   readonly label: string
   readonly help?: string | undefined
-  readonly hint?: ReactNode | undefined
-  readonly validationMessage?: FieldProps['validationMessage'] | undefined
-  readonly validationState?: FieldProps['validationState'] | undefined
+  readonly hint?: ReactNode
+  readonly validationMessage?: FieldProps['validationMessage']
+  readonly validationState?: FieldProps['validationState']
 }
 
 /** Keeps the field description available to assistive technology even when its help is closed. */

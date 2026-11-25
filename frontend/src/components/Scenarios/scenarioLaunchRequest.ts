@@ -109,7 +109,7 @@ export interface ScenarioLaunchInput {
   scenario: RegisteredScenario
   targetName: string
   adversarialTargetName: string
-  scoringTargetName?: string | undefined
+  scoringTargetName?: string
   techniques: string[]
   dynamicParameters: Parameter[]
   scenarioParamValues: Record<string, ParameterFormValue>
@@ -117,7 +117,7 @@ export interface ScenarioLaunchInput {
    * Preset values sent verbatim over the built form values: parameters the form has no
    * control for, and rendered ones whose field is untouched.
    */
-  presetScenarioParams?: Record<string, unknown> | undefined
+  presetScenarioParams?: Record<string, unknown>
   datasetEdits: ScenarioDatasetRequest
   datasetError: string | null
   /** Why the linked dataset names can't launch; see `linkedDatasetProblem`. */
@@ -125,9 +125,9 @@ export interface ScenarioLaunchInput {
   includeBaseline: boolean
   techniqueOverride?: TechniqueOverride | undefined
   techniqueEditError?: string | undefined
-  supportsPrependedConversation?: boolean | undefined
-  supportsPrompt?: boolean | undefined
-  objectiveScorer?: RegisteredComponentReference | null | undefined
+  supportsPrependedConversation?: boolean
+  supportsPrompt?: boolean
+  objectiveScorer?: RegisteredComponentReference | null
   scorerError?: string | undefined
   operationId: string | null
   maxConcurrency: number

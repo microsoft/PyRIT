@@ -173,29 +173,29 @@ interface LoadedAttack {
   id: string
   loadSequence: number
   targetSource: 'persisted' | 'created'
-  targetGeneration?: string | undefined
+  targetGeneration?: string
   mainConversationId: string | null
   labels: Record<string, string> | null
   operator: string | null
   target: TargetInfo | null
-  targetUnbound?: boolean | undefined
-  createdTarget?: TargetInstance | undefined
+  targetUnbound?: boolean
+  createdTarget?: TargetInstance
   knownConversationIds: string[]
   relatedConversationCount: number
   objective: string
   outcome: NonNullable<AttackSummary['outcome']>
   automatedScore: BackendScore | null
   humanScore: BackendScore | null
-  chatScorer?: RegisteredComponentReference | null | undefined
-  chatScorerInherited?: boolean | undefined
-  executionReadOnly?: boolean | undefined
+  chatScorer?: RegisteredComponentReference | null
+  chatScorerInherited?: boolean
+  executionReadOnly?: boolean
   /** A scan is still running this attack; it is read from the live run until its result is saved. */
-  inProgress?: boolean | undefined
+  inProgress?: boolean
   /** The scan run that produced this attack. */
-  scenarioResultId?: string | null | undefined
+  scenarioResultId?: string | null
   /** Verified SDK provenance for interrupted evidence that has no saved attack result. */
   recordedConversations?: ScenarioActiveConversation[] | undefined
-  manualContinuation?: ManualContinuation | null | undefined
+  manualContinuation?: ManualContinuation | null
   lastResponseMessagePieceId: string | null
   status: AttackLoadStatus
 }
@@ -782,7 +782,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           endpoint: targetEndpoint(createdTarget),
           model_name: targetModelName(createdTarget),
           identifier_hash: targetIdentifierHash(createdTarget),
-          binding: createdTarget.binding,
+          ...(createdTarget.binding !== undefined ? { binding: createdTarget.binding } : {}),
         }
       : null
     skipNextLoadForAttackId.current = arId
@@ -799,7 +799,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       operator: null,
       target,
       targetUnbound: createdTarget === null,
-      createdTarget: createdTarget ?? undefined,
+      ...(createdTarget ? { createdTarget } : {}),
       knownConversationIds: [convId],
       relatedConversationCount: 0,
       objective: objective ?? '',

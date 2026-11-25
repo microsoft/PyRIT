@@ -21,7 +21,7 @@ interface RegistryResolution {
   attackLoadSequence: number
   generation: string
   status: 'idle' | 'resolved' | 'unavailable' | 'ambiguous' | 'error'
-  target?: TargetInstance | undefined
+  target?: TargetInstance
 }
 
 interface UseAttackTargetResolutionOptions {

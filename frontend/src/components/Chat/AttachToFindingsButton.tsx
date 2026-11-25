@@ -5,15 +5,16 @@ import { AttachRegular } from '@fluentui/react-icons'
 
 import { useAttachToFindingsButtonStyles } from './AttachToFindingsButton.styles'
 import FindingEvidenceDialog from './FindingEvidenceDialog'
+import { fluentRef } from '@/utils/fluentRef'
 
 interface AttachToFindingsButtonProps {
   readonly attackResultId: string
   /** The Operation offered first when the attack has no Operation of its own. */
   readonly defaultOperationId?: string | null | undefined
   /** Running attacks cannot be attached until they are saved. */
-  readonly disabled?: boolean | undefined
+  readonly disabled?: boolean
   /** Called after the attack is attached, such as to refresh `useAttackFindings`. */
-  readonly onAttached?: (() => void) | undefined
+  readonly onAttached?: () => void
 }
 
 /** Opens the finding picker to attach one attack as evidence, returning focus to the button. */
@@ -25,7 +26,7 @@ export default function AttachToFindingsButton({
   const trigger = useRef<HTMLButtonElement>(null)
   return (
     <>
-      <Button ref={trigger as never} className={styles.button} icon={<AttachRegular />} disabled={disabled}
+      <Button ref={fluentRef(trigger)} className={styles.button} icon={<AttachRegular />} disabled={disabled}
         title={disabled ? 'Available after the attack finishes' : 'Attach this attack as evidence to a finding'}
         onClick={() => { setOpen(true) }}>
         Attach to findings

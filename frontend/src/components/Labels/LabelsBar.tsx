@@ -22,6 +22,7 @@ import { getOperationWarning } from '@/utils/operationWarnings'
 import OperationPicker from './OperationPicker'
 import { useLabelsBarStyles } from './LabelsBar.styles'
 import { DEFAULT_GLOBAL_LABELS } from './labelDefaults'
+import { fluentRef } from '@/utils/fluentRef'
 
 
 const validateValue = (value: string): string | null => {
@@ -287,7 +288,7 @@ export default function LabelsBar({
       <>
         <Text size={200} weight="semibold">{key}:</Text>
         <Input
-          ref={editInputRef as never}
+          ref={fluentRef(editInputRef)}
           size="small"
           value={editValue}
           onChange={(_, d) => { setEditValue(d.value.toLowerCase()); setError('') }}

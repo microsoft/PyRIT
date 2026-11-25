@@ -5,6 +5,7 @@ import {
 } from '@fluentui/react-components'
 
 import { useRetiredFieldValuesStyles } from './RetiredFieldValues.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 interface RetiredFieldValuesProps {
   /** Retired values from the stored finding, in stored order. */
@@ -65,7 +66,7 @@ export default function RetiredFieldValues({
                 <code className={styles.key} translate="no">{key}</code>
                 <Text as="p" className={styles.value}>{value}</Text>
               </div>
-              <Button {...restoreFocusTarget} ref={(index === 0 ? firstRemoveRef : undefined) as never} size="small"
+              <Button {...restoreFocusTarget} ref={fluentRef(index === 0 ? firstRemoveRef : undefined)} size="small"
                 className={styles.button} disabled={disabled} aria-label={`Remove retired value ${key}`}
                 onClick={() => { setConfirming({ key, open: true }) }}>Remove</Button>
             </li>
@@ -74,7 +75,7 @@ export default function RetiredFieldValues({
       </div>}
       {removed.size > 0 && <div className={styles.note}>
         <Text>{removalNote(removed.size)}</Text>
-        <Link ref={undoRef as never} as="button" className={styles.button} disabled={disabled} onClick={() => {
+        <Link ref={fluentRef(undoRef)} as="button" className={styles.button} disabled={disabled} onClick={() => {
           focusAfterChange.current = firstRemoveRef
           onUndo()
         }}>Undo</Link>

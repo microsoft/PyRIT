@@ -111,7 +111,7 @@ const COLUMN_TOOLTIPS = {
 } as const
 
 /** Composite icon: f(x) with a small return-arrow badge for function call outputs. */
-const FunctionCallOutputIcon = forwardRef<HTMLSpanElement, React.HTMLAttributes<HTMLSpanElement> & { className?: string | undefined }>(
+const FunctionCallOutputIcon = forwardRef<HTMLSpanElement, React.HTMLAttributes<HTMLSpanElement> & { className?: string }>(
   function FunctionCallOutputIcon({ className, ...rest }, ref) {
     const styles = useTargetTableStyles()
     return (

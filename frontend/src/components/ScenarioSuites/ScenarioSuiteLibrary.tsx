@@ -34,6 +34,7 @@ import type { ScenarioSuiteResponse } from '@/types'
 
 import { useScenarioSuiteLibraryStyles } from './ScenarioSuiteLibrary.styles'
 import { NEW_SUITE_ROUTE, suiteEditorRoutePath } from './suiteRoutes'
+import { fluentRef } from '@/utils/fluentRef'
 
 const DEFINED_IN_CODE_HINT = 'Defined in code, so it cannot be edited or deleted here.'
 
@@ -162,7 +163,7 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
         </div>
         <div className={styles.headerActions}>
           <Button
-            ref={newSuiteButton as never}
+            ref={fluentRef(newSuiteButton)}
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}

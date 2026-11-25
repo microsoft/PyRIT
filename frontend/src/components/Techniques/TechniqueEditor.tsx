@@ -24,6 +24,7 @@ import type {
 } from '@/types'
 
 import { useTechniqueEditorStyles } from './TechniqueEditor.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 const SCALAR_TYPES = new Set(['str', 'int', 'float', 'bool', 'list[str]', 'list[int]', 'list[float]', 'list[bool]'])
 const VALIDATION_DELAY_MS = 300
@@ -66,15 +67,15 @@ function referenceValue(value: ParameterFormValue | undefined): string | string[
 }
 
 interface TechniqueEditorProps {
-  onClose?: (() => void) | undefined
-  onCreated?: (() => void) | undefined
+  onClose?: () => void
+  onCreated?: () => void
   /** Both configurations remain source-pinned. The initial value can include applied run-local edits. */
-  original?: TechniqueConfiguration | undefined
+  original?: TechniqueConfiguration
   initial?: TechniqueConfiguration | undefined
-  onApplied?: ((result: TechniqueEditResponse) => void) | undefined
-  autoApply?: boolean | undefined
-  onPending?: (() => void) | undefined
-  disabled?: boolean | undefined
+  onApplied?: (result: TechniqueEditResponse) => void
+  autoApply?: boolean
+  onPending?: () => void
+  disabled?: boolean
 }
 
 /** Shared creation and run-local editor. Edit mode never registers a technique. */
@@ -291,7 +292,7 @@ export default function TechniqueEditor({
                 && event.currentTarget.contains(event.target)) event.preventDefault()
             }}>
               {loading && <Spinner label="Loading technique types..." />}
-              {displayedError && <MessageBar intent="error" role="alert" ref={errorRef as never} tabIndex={-1}><MessageBarBody>{displayedError}</MessageBarBody></MessageBar>}
+              {displayedError && <MessageBar intent="error" role="alert" ref={fluentRef(errorRef)} tabIndex={-1}><MessageBarBody>{displayedError}</MessageBarBody></MessageBar>}
               {!loading && types.length === 0 && <Button onClick={() => setRetry(retry + 1)}>Retry metadata</Button>}
               {!loading && types.length > 0 && (
                 <>

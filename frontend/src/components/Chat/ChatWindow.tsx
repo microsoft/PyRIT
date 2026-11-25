@@ -113,6 +113,7 @@ import { LIVE_ATTACK_POLL_INTERVAL_MS } from '@/hooks/useLiveAttackMetadata'
 import AttackInProgressBar from './AttackInProgressBar'
 import type { ViewName } from '../Sidebar/Navigation'
 import { CHAT_NOTICE_FADE_DURATION_MS, useChatWindowStyles } from './ChatWindow.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 const CHAT_NOTICE_VISIBLE_DURATION_MS = 5_000
 const SAVED_MESSAGE_PAGE_SIZE = 100
@@ -154,11 +155,11 @@ function conversationScoringOf(conversationId: string, response: ConversationMes
 
 interface ChatWindowProps {
   /** Shared layout slot; standalone chat renders its toolbar inline. */
-  toolbarContainer?: HTMLElement | null | undefined
+  toolbarContainer?: HTMLElement | null
   activeTarget: TargetInstance | null
   draftTargetReference?: TargetReference | null | undefined
   /** Route identity is available before the attack's metadata has loaded. */
-  draftContext?: Pick<ChatDraftContextState, 'originatingAttackId' | 'originatingConversationId'> | undefined
+  draftContext?: Pick<ChatDraftContextState, 'originatingAttackId' | 'originatingConversationId'>
   availableTargets: TargetInstance[]
   targetsLoading: boolean
   targetsError: string | null
@@ -175,32 +176,32 @@ interface ChatWindowProps {
     target?: TargetInstance | null,
   ) => void
   onSelectConversation: (conversationId: string) => void
-  onObjectiveChange?: ((objective: string) => void) | undefined
-  onHumanScoreChange?: ((score: BackendScore | null, outcome: AttackOutcome) => void) | undefined
-  onAttackChange?: ((attack: AttackSummary) => void) | undefined
-  labels?: Record<string, string> | undefined
+  onObjectiveChange?: (objective: string) => void
+  onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
+  onAttackChange?: (attack: AttackSummary) => void
+  labels?: Record<string, string>
   /** The saved Operation that new attacks join, or null for none. */
-  operationId?: string | null | undefined
+  operationId?: string | null
   /** False while the current generation's server defaults or Operation selection are not ready; launching is gated. */
-  defaultsReady?: boolean | undefined
-  scorerDefaultsReady?: boolean | undefined
+  defaultsReady?: boolean
+  scorerDefaultsReady?: boolean
   /** Why new attacks are unavailable when the defaults have loaded but the Operation selection is not ready. */
   newActivityBlockedReason?: string | undefined
-  onNavigate?: ((view: ViewName) => void) | undefined
+  onNavigate?: (view: ViewName) => void
   /** Operator from the loaded attack (for operator locking). Null for new attacks. */
-  attackOperator?: string | null | undefined
+  attackOperator?: string | null
   /** Target info that the current attack was started with (for cross-target guard). */
-  attackTarget?: TargetInfo | null | undefined
+  attackTarget?: TargetInfo | null
   /** Result of resolving the persisted attack target against the current registry. */
-  targetResolutionStatus?: AttackTargetResolutionStatus | undefined
+  targetResolutionStatus?: AttackTargetResolutionStatus
   /** Re-run target registry resolution after a transient or unavailable result. */
-  onRetryTargetResolution?: (() => void) | undefined
+  onRetryTargetResolution?: () => void
   /** True while a historical attack is being loaded from the history view. */
-  isLoadingAttack?: boolean | undefined
+  isLoadingAttack?: boolean
   /** Number of related (non-main) conversations in the loaded attack. */
-  relatedConversationCount?: number | undefined
+  relatedConversationCount?: number
   /** The loaded attack's objective (empty for new/manual attacks). */
-  objective?: string | undefined
+  objective?: string
   /** The loaded attack's current outcome. */
   outcome?: AttackOutcome | undefined
   automatedScore?: BackendScore | null | undefined
@@ -213,15 +214,15 @@ interface ChatWindowProps {
   attackScenarioResultId?: string | null | undefined
   manualContinuation?: ManualContinuation | null | undefined
   defaultChatScorer?: RegisteredComponentReference | null | undefined
-  availableScorers?: ScorerInstance[] | undefined
-  scorersLoading?: boolean | undefined
-  scorersError?: string | null | undefined
+  availableScorers?: ScorerInstance[]
+  scorersLoading?: boolean
+  scorersError?: string | null
   humanScore?: BackendScore | null | undefined
   lastResponseMessagePieceId?: string | null | undefined
   /** Validated scenario-run provenance for attacks opened from a run dashboard. */
-  scenarioResultId?: string | null | undefined
-  onReturnToScan?: (() => void) | undefined
-  findingEvidenceId?: string | null | undefined
+  scenarioResultId?: string | null
+  onReturnToScan?: () => void
+  findingEvidenceId?: string | null
   /** Verified scan-scoped readers for recorded evidence without a saved attack result. */
   readConversationById?: ((conversationId: string) => Promise<ConversationMessagesResponse>) | undefined
   readConversations?: ReadAttackConversationReferences | undefined
@@ -2201,7 +2202,7 @@ export default function ChatWindow({
               </MessageBarBody></MessageBar>
             )}
             <div className={styles.savedTranscriptActions}>
-              <Text ref={transcriptStatusRef as never} tabIndex={-1} id={transcriptStatusId} role="status" aria-live="polite" size={200}>
+              <Text ref={fluentRef(transcriptStatusRef)} tabIndex={-1} id={transcriptStatusId} role="status" aria-live="polite" size={200}>
                 {isLoadingMessages || awaitingConversationLoad ? 'Loading saved transcript... '
                   : isLoadingMoreMessages ? 'Loading more message pieces... ' : ''}
                 {isTranscriptIncomplete

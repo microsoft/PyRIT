@@ -10,8 +10,8 @@ interface DatasetLimitControlProps {
   label: string
   value: ScenarioDatasetLimit | null | undefined
   defaultValue: number | 'all'
-  text?: string | undefined
-  showLabel?: boolean | undefined
+  text?: string
+  showLabel?: boolean
   hint?: string | undefined
   draft?: string | undefined
   disabled: boolean

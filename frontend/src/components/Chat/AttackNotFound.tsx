@@ -12,8 +12,8 @@ interface AttackNotFoundProps {
    * 'error' for a transient attack load failure;
    * 'evidence-missing' when the parent attack exists but the requested evidence conversation is unavailable.
    */
-  variant?: 'not-found' | 'error' | 'evidence-missing' | undefined
-  findingEvidenceId?: string | null | undefined
+  variant?: 'not-found' | 'error' | 'evidence-missing'
+  findingEvidenceId?: string | null
 }
 
 export default function AttackNotFound({

@@ -57,12 +57,12 @@ interface ConversionScope {
   pieceType?: string
   pieceId?: string
   afterStageId?: string
-  includeIncomplete?: boolean | undefined
+  includeIncomplete?: boolean
 }
 
 interface PieceConverterOptions {
   initialSnapshot?: ChatConverterSnapshot | undefined
-  selectedIds?: ReadonlySet<string> | undefined
+  selectedIds?: ReadonlySet<string>
 }
 
 function omitPieces<T>(values: Record<string, T>, ids: Set<string>): Record<string, T> {

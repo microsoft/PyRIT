@@ -136,8 +136,8 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 function withConfig(opts: {
   signal?: AbortSignal | undefined
   params?: unknown
-  responseType?: 'blob' | 'json' | 'text' | 'arraybuffer' | 'stream' | undefined
-  paramsSerializer?: AxiosRequestConfig['paramsSerializer'] | undefined
+  responseType?: 'blob' | 'json' | 'text' | 'arraybuffer' | 'stream'
+  paramsSerializer?: AxiosRequestConfig['paramsSerializer']
 }): AxiosRequestConfig {
   const config: AxiosRequestConfig = {}
   if (opts.signal !== undefined) config.signal = opts.signal
@@ -802,14 +802,14 @@ export const scenariosApi = {
 
   /** Lists scenario runs by creation time by default or by activity when requested. */
   listRuns: async (params?: {
-    limit?: number | undefined
+    limit?: number
     cursor?: string | undefined
     scenario_names?: string[] | undefined
     run_statuses?: ScenarioRunState[] | undefined
     label?: string[] | undefined
     operation_id?: string[] | undefined
     reference_id?: string | undefined
-    sort_by?: ('created_at' | 'activity') | undefined
+    sort_by?: 'created_at' | 'activity'
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,

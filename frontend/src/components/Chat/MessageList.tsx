@@ -36,33 +36,34 @@ import { scoreSummaryFromBackendScore, scoreSummaryValue } from '@/utils/scoreSu
 import { useMessageListStyles } from './MessageList.styles'
 import { formatStructuredMessage, getRenderMessagePieces } from './messageViewModel'
 import ScoreDetails from './ScoreDetails'
+import { fluentRef } from '@/utils/fluentRef'
 
 interface MessageListProps {
   onEditConversation?: (() => void) | undefined
   /** Stable identity for the conversation; isolates transient download errors across switches. */
-  conversationId?: string | null | undefined
+  conversationId?: string | null
   messages: Message[]
   /** Copy this message to the input box of the current conversation */
-  onCopyToInput?: ((messageIndex: number) => void) | undefined
+  onCopyToInput?: (messageIndex: number) => void
   copyToInputDisabledReason?: string | undefined
-  onCopyToNewConversation?: ((messageIndex: number) => void) | undefined
+  onCopyToNewConversation?: (messageIndex: number) => void
   onCopyToNewAttack?: ((messageIndex: number) => void) | undefined
   onUseInTechnique?: ((messageIndex: number) => void) | undefined
-  copyConversationDisabled?: boolean | undefined
+  copyConversationDisabled?: boolean
   copyConversationDisabledReason?: string | undefined
   newConversationDisabledReason?: string | undefined
-  getBranchConversationDisabledReason?: ((messageIndex: number) => string | undefined) | undefined
-  getBranchConversationDescription?: ((messageIndex: number) => string | undefined) | undefined
+  getBranchConversationDisabledReason?: (messageIndex: number) => string | undefined
+  getBranchConversationDescription?: (messageIndex: number) => string | undefined
   /** True while loading a historical attack's messages */
-  isLoading?: boolean | undefined
+  isLoading?: boolean
   /** Saved evidence uses one scroll surface with its controls on narrow screens. */
-  savedEvidence?: boolean | undefined
+  savedEvidence?: boolean
   /** Announce new live/manual messages, not an initial page of historical evidence. */
-  announceUpdates?: boolean | undefined
+  announceUpdates?: boolean
   /** Only show temperature evidence when the viewed target supports runtime temperature. */
-  showGenerationInfo?: boolean | undefined
+  showGenerationInfo?: boolean
   /** Conversation-wide default: render message text as Markdown. */
-  globalMarkdown?: boolean | undefined
+  globalMarkdown?: boolean
 }
 
 function scoreDisplayValue(score: DisplayScore): string {
@@ -368,7 +369,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
                     withArrow
                   >
                     <Tab
-                      {...(score.id === selectedScore.id ? { ref: selectedTabRef as never } : {})}
+                      ref={fluentRef(score.id === selectedScore.id ? selectedTabRef : undefined)}
                       value={score.id}
                       id={`message-score-tab-${groupId}-${scoreIndex}`}
                       aria-label={scoreContext}

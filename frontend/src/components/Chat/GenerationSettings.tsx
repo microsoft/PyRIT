@@ -11,6 +11,7 @@ import type { RequestGenerationDraft, TargetInstance } from '@/types'
 import { generationFieldError, generationFieldRange } from '@/utils/requestGeneration'
 
 import { useGenerationSettingsStyles } from './GenerationSettings.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 interface GenerationSettingsProps {
   readonly value: RequestGenerationDraft
@@ -81,7 +82,7 @@ function TemperatureControl({ value, onChange, target, disabled }: GenerationSet
       }}>
       <Tooltip content={editable ? `Adjust temperature. ${description}` : description} relationship="description">
         <PopoverTrigger disableButtonEnhancement>
-          <Button ref={triggerRef as never} size="small" appearance={editable ? 'secondary' : 'subtle'}
+          <Button ref={fluentRef(triggerRef)} size="small" appearance={editable ? 'secondary' : 'subtle'}
             icon={<TemperatureRegular />} disabled={disabled} disabledFocusable={!disabled && !editable}
             className={mergeClasses(styles.button, supported && hasOverride && styles.override, supported && !!error && styles.invalid)}
             aria-label={label} aria-invalid={!!error} data-testid="temperature-control">

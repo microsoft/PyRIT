@@ -33,13 +33,13 @@ interface FindingDialogProps {
   fields: FindingFields
   /** An edit's finding, with the retired values the findings list sets apart. */
   initialValues?: (FindingCreate & Pick<FindingListItem, 'retired'>) | undefined
-  editing?: boolean | undefined
-  context?: React.ReactNode | undefined
+  editing?: boolean
+  context?: React.ReactNode
   /** The title of the finding this one is a sub-finding of. The parent is shown, not edited. */
   parentTitle?: string | undefined
   /** Shows an optional attack ID to link as evidence. */
-  evidenceField?: boolean | undefined
-  saveDisabled?: boolean | undefined
+  evidenceField?: boolean
+  saveDisabled?: boolean
   onSave: (draft: FindingDraft, attempt: FindingSaveAttempt) => Promise<void>
   onClose: () => void
 }

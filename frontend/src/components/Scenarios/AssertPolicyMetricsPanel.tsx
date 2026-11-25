@@ -225,7 +225,7 @@ function CategoryTable({ techniques }: { techniques: AssertTechniqueMetrics[] })
 interface RateCellProps {
   rate: AssertBinaryRate | null
   grades?: AssertGradeDistribution[] | undefined
-  noVerdict?: number | undefined
+  noVerdict?: number
 }
 
 function RateCell({ rate, grades, noVerdict = 0 }: RateCellProps) {

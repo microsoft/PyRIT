@@ -108,6 +108,7 @@ import {
 } from './scenarioLaunchRequest'
 import ScenarioDatasetTable from './ScenarioDatasetTable'
 import DatasetActions from './DatasetActions'
+import { fluentRef } from '@/utils/fluentRef'
 
 function targetOptionLabel(target: TargetInstance): string {
   const modelName = targetModelName(target)
@@ -141,9 +142,9 @@ interface ScenarioDetailProps extends ScorerPickerData {
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
   /** The saved Operation that new runs join, or null for none. */
-  operationId?: string | null | undefined
+  operationId?: string | null
   /** False while the current generation's server defaults are still loading. */
-  defaultsReady?: boolean | undefined
+  defaultsReady?: boolean
   onNavigate: (view: ViewName) => void
 }
 
@@ -346,7 +347,7 @@ interface ScenarioLaunchFormProps extends ScorerPickerData {
   sourceRunId?: string | undefined
   scenario: RegisteredScenario
   /** Seeds the initial form state only; edits are never written back to the preset. */
-  preset?: ScenarioPresetResponse | null | undefined
+  preset?: ScenarioPresetResponse | null
   initialConversationId: string
   /** Explicit dataset names from a link; when the scenario takes datasets they replace the preset's sources. */
   linkedDatasetNames?: readonly string[]
@@ -356,7 +357,7 @@ interface ScenarioLaunchFormProps extends ScorerPickerData {
   labels: Record<string, string>
   operationId: string | null
   /** False while the current generation's server defaults are still loading. */
-  defaultsReady?: boolean | undefined
+  defaultsReady?: boolean
   onNavigate: (view: ViewName) => void
 }
 
@@ -937,7 +938,7 @@ function ScenarioLaunchForm({
               </MessageBar>
             )}
             {apiError && (
-              <MessageBar intent="error" ref={apiErrorRef as never} tabIndex={-1}>
+              <MessageBar intent="error" ref={fluentRef(apiErrorRef)} tabIndex={-1}>
                 <MessageBarBody role="alert">{apiError}</MessageBarBody>
               </MessageBar>
             )}
@@ -1154,7 +1155,7 @@ function ScenarioLaunchForm({
 
             <section className={styles.launchSection} aria-label="Launch scan">
               <Button
-                ref={launchButtonRef as never}
+                ref={fluentRef(launchButtonRef)}
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"

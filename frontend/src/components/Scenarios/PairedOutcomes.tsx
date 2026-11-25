@@ -294,7 +294,7 @@ interface DetailState {
 function TransitionDetails({ label, transition, count, scenarioResultId, baselineId, attackId }: TransitionRowProps) {
   const styles = usePairedOutcomesStyles()
   const [state, setState] = useState<DetailState>({ pairs: [], pageStart: 0, nextCursor: null, status: 'loading' })
-  const [request, setRequest] = useState<{ cursor?: string | undefined; version: number }>({ version: 0 })
+  const [request, setRequest] = useState<{ cursor?: string; version: number }>({ version: 0 })
   const detailsRegion = useRef<HTMLElement>(null)
   const firstNewPair = useRef<HTMLElement>(null)
 

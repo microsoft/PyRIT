@@ -48,8 +48,8 @@ interface ScanStatusBadgeProps {
   /** Mark terminal states with an icon as well as color. */
   readonly withIcon?: boolean
   /** Replaces the standard status label, such as a suite's wording for a running entry. */
-  readonly label?: string | undefined
-  readonly testId?: string | undefined
+  readonly label?: string
+  readonly testId?: string
 }
 
 /** The lifecycle state of a scan, suite, or suite entry, with one color per state everywhere. */

@@ -17,6 +17,7 @@ import {
   parseJsonObjectFormValue,
   type ParameterFormValue,
 } from './parameterForm'
+import { fluentRef } from '@/utils/fluentRef'
 
 export interface ParameterFieldProps {
   parameter: Parameter
@@ -24,15 +25,15 @@ export interface ParameterFieldProps {
   disabled: boolean
   onChange: (name: string, value: ParameterFormValue) => void
   /** Optional presentation label when the parameter name should remain unchanged for submission. */
-  label?: string | undefined
+  label?: string
   /** Present the declared default as guidance while keeping the field unset. */
-  showDefaultHint?: boolean | undefined
+  showDefaultHint?: boolean
   /** Let a list field distinguish an explicit empty list from an omitted value. */
-  allowEmptyList?: boolean | undefined
+  allowEmptyList?: boolean
   /** Show required validation for a structured input whose variant is unset. */
-  showRequiredError?: boolean | undefined
+  showRequiredError?: boolean
   /** Prefix for `data-testid` attributes. Defaults to `'param'` (e.g. `param-<name>`). */
-  testIdPrefix?: string | undefined
+  testIdPrefix?: string
   /** Extra guidance appended to the field's hint, e.g. explaining why it's disabled. */
   extraHint?: string | undefined
   /** Associate a server-side validation error with this field's control. */
@@ -279,7 +280,7 @@ export default function ParameterField({
         validationState={externalValidationMessage ? 'error' : 'none'}
       >
         <Textarea
-          ref={controlRef as never}
+          ref={fluentRef(controlRef)}
           className={styles.control}
           value={stringValue}
           placeholder={placeholder}

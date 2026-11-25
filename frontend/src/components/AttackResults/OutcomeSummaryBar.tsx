@@ -8,11 +8,11 @@ import { useOutcomeSummaryBarStyles } from './OutcomeSummaryBar.styles'
 interface OutcomeSummaryBarProps {
   readonly statistics: OutcomeStatistics | null
   readonly label: string
-  readonly showBar?: boolean | undefined
-  readonly disabled?: boolean | undefined
-  readonly disabledReason?: string | null | undefined
+  readonly showBar?: boolean
+  readonly disabled?: boolean
+  readonly disabledReason?: string | null
   readonly describedBy?: string | undefined
-  readonly onOutcome?: ((outcome: AttackOutcome) => void) | undefined
+  readonly onOutcome?: (outcome: AttackOutcome) => void
 }
 
 /** Presentation only: callers supply SDK statistics, never paginated result rows. */

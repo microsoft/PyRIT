@@ -8,15 +8,15 @@ import { isFileDrag } from '@/utils/fileDrag'
 import { useFileDropZoneStyles } from './FileDropZone.styles'
 
 interface FileDropZoneProps {
-  ref?: Ref<HTMLDivElement> | undefined
+  ref?: Ref<HTMLDivElement>
   children: ReactNode
   onFiles: (files: File[]) => void
-  disabled?: boolean | undefined
+  disabled?: boolean
   disabledReason?: string | undefined
-  enabled?: boolean | undefined
-  className?: string | undefined
-  label?: string | undefined
-  testId?: string | undefined
+  enabled?: boolean
+  className?: string
+  label?: string
+  testId?: string
 }
 
 export default function FileDropZone({

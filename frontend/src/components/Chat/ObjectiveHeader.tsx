@@ -47,39 +47,40 @@ import { toApiError } from '@/services/errors'
 
 import { useObjectiveHeaderStyles } from './ObjectiveHeader.styles'
 import ChatScorerPicker from './ChatScorerPicker'
+import { fluentRef } from '@/utils/fluentRef'
 
 const OBJECTIVE_HELP = 'The behavior you are testing for. An objective gives the scorer a goal; it is not automatically sent as a user message.'
 
 interface ObjectiveHeaderProps {
   objective: string
-  draftMode?: boolean | undefined
+  draftMode?: boolean
   outcome?: AttackOutcome | undefined
   automatedScore?: BackendScore | null | undefined
   humanScore?: BackendScore | null | undefined
-  canUpdateOutcome?: boolean | undefined
-  canRemoveHumanScore?: boolean | undefined
-  onUpdateHumanScore?: ((value: boolean, rationale: string) => Promise<void>) | undefined
-  onRemoveHumanScore?: (() => Promise<void>) | undefined
-  canAdd?: boolean | undefined
-  onAdd?: ((objective: string, expectedObjective: string) => Promise<void>) | undefined
+  canUpdateOutcome?: boolean
+  canRemoveHumanScore?: boolean
+  onUpdateHumanScore?: (value: boolean, rationale: string) => Promise<void>
+  onRemoveHumanScore?: () => Promise<void>
+  canAdd?: boolean
+  onAdd?: (objective: string, expectedObjective: string) => Promise<void>
   /** Opens the finding dialog for the viewed conversation from Attack Result Details. */
-  onAddFinding?: (() => void) | undefined
-  canAddFinding?: boolean | undefined
+  onAddFinding?: () => void
+  canAddFinding?: boolean
   /** Receives the outcome badge button, so a dialog opened from its details can return focus to it. */
-  outcomeButtonRef?: React.Ref<HTMLButtonElement> | undefined
-  chatScorer?: RegisteredComponentReference | null | undefined
-  chatScorerInherited?: boolean | undefined
-  scoringFailure?: ScoringFailure | null | undefined
-  scorers?: ScorerInstance[] | undefined
-  scorersLoading?: boolean | undefined
+  outcomeButtonRef?: React.Ref<HTMLButtonElement>
+  chatScorer?: RegisteredComponentReference | null
+  chatScorerInherited?: boolean
+  scoringFailure?: ScoringFailure | null
+  scorers?: ScorerInstance[]
+  scorersLoading?: boolean
   scorersError?: string | null | undefined
-  canUpdateScorer?: boolean | undefined
-  onUpdateScorer?: ((reference: RegisteredComponentReference | null) => Promise<void>) | undefined
-  canApplyScorer?: boolean | undefined
+  canUpdateScorer?: boolean
+  onUpdateScorer?: (reference: RegisteredComponentReference | null) => Promise<void>
+  canApplyScorer?: boolean
   onApplyScorer?: (() => Promise<void>) | undefined
   /** True while the selected scorer is applied to this conversation's latest response. */
-  applyingScorer?: boolean | undefined
-  applyStatus?: ApplyScorerStatus | null | undefined
+  applyingScorer?: boolean
+  applyStatus?: ApplyScorerStatus | null
 }
 
 /** The only score type whose value answers "was the objective met?". */
@@ -296,7 +297,7 @@ export default function ObjectiveHeader({
       >
         <PopoverTrigger disableButtonEnhancement>
           <Button
-            ref={outcomeButtonRef as never}
+            ref={fluentRef(outcomeButtonRef)}
             appearance="transparent"
             size="small"
             className={styles.outcomeButton}

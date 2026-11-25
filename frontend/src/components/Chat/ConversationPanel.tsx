@@ -23,6 +23,7 @@ import { attacksApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { AttackConversationReferencesView, ConversationReferenceView, ReadAttackConversationReferences } from '@/types'
 import { useConversationPanelStyles } from './ConversationPanel.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 interface SavedReferencePage {
   attackResultId: string
@@ -62,7 +63,7 @@ interface ConversationPanelProps {
   /** When set, disables mutating actions (new conversation, promote to main) and explains why. */
   lockedReason?: string | undefined
   /** Increment to trigger a conversation list refresh (e.g. after sending a message) */
-  refreshKey?: number | undefined
+  refreshKey?: number
   /** Saved evidence pages references independently from the selected transcript. */
   referencePageSize?: number | undefined
   /** Re-reads the unpaged list at this interval, keeping its rows, such as while a scan runs the attack. */
@@ -397,7 +398,7 @@ export default function ConversationPanel({
               {continuationIssue.detail} Loaded references are still available.
             </MessageBarBody></MessageBar>
           )}
-          <Text ref={pagingStatusRef as never} tabIndex={-1} size={200} role="status" aria-live="polite">
+          <Text ref={fluentRef(pagingStatusRef)} tabIndex={-1} size={200} role="status" aria-live="polite">
             {isLoading ? 'Loading saved conversation references... ' : isLoadingMore ? 'Loading more conversations... ' : ''}
             {conversations.length} of {currentPage.response.total_count} saved conversations loaded.{' '}
             {currentPage.response.pagination?.has_more ? 'More references are available.' : 'End of saved conversation references.'}

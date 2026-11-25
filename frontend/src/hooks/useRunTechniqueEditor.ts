@@ -6,15 +6,15 @@ import type { TechniqueConfiguration, TechniqueEditResponse, TechniqueOverride }
 
 interface TechniqueResource {
   key: string
-  original?: TechniqueConfiguration | undefined
+  original?: TechniqueConfiguration
   applied?: TechniqueEditResponse | undefined
-  pending?: boolean | undefined
-  revision?: number | undefined
-  error?: string | undefined
+  pending?: boolean
+  revision?: number
+  error?: string
 }
 
 /** One form-local edit. Neither loading nor applying settings changes the registry. */
-export function useRunTechniqueEditor(source: string | undefined, generation: string | null, ready: boolean, initialOverride?: TechniqueOverride | undefined) {
+export function useRunTechniqueEditor(source: string | undefined, generation: string | null, ready: boolean, initialOverride?: TechniqueOverride) {
   const key = JSON.stringify([source, generation, initialOverride])
   const [resource, setResource] = useState<TechniqueResource | null>(null)
   const [retry, setRetry] = useState(0)

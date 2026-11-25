@@ -91,9 +91,9 @@ interface InitialFormInput {
   dynamicParameters: Parameter[]
   initialConversationId: string
   /** The preset pre-filling the form, or null for none. Seeds initial state only. */
-  preset?: ScenarioPresetResponse | null | undefined
+  preset?: ScenarioPresetResponse | null
   /** Techniques already resolved from the preset; falls back to the scenario defaults. */
-  seededTechniques?: string[] | undefined
+  seededTechniques?: string[]
   /** A saved run to start from. Its values win over the preset's. Seeds initial state only. */
   initialRun?: RunScenarioRequest | undefined
   /**

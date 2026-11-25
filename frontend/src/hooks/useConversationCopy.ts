@@ -62,7 +62,7 @@ export interface UseConversationCopyOptions {
   objective: string
   labels?: Record<string, string> | undefined
   defaultChatScorer?: RegisteredComponentReference | null | undefined
-  newAttackContext?: NewAttackContext | undefined
+  newAttackContext?: NewAttackContext
   runtimeGeneration: string
   runtimeReady: boolean
   defaultsReady: boolean
@@ -74,7 +74,7 @@ export interface UseConversationCopyOptions {
   recoverableSend?: CopyRecoverableSend | undefined
   firstPromptSend?: CopyFirstPromptSend | undefined
   converters: ChatConverterController
-  promptRestoreDisabledReason: (snapshot?: ChatConverterSnapshot | undefined) => string | undefined
+  promptRestoreDisabledReason: (snapshot?: ChatConverterSnapshot) => string | undefined
   /** Live reads used to detect that the user moved on while the copy was loading. */
   getViewedConversationId: () => string | null
   getViewedAttackId: () => string | null
@@ -99,7 +99,7 @@ export interface UseConversationCopyOptions {
   ) => void
   onAttackChange?: ((attack: AttackSummary) => void) | undefined
   /** Claims the destination before navigation transfers a restored composer draft. */
-  onRestoreDestination?: ((attackId: string, conversationId: string) => void) | undefined
+  onRestoreDestination?: (attackId: string, conversationId: string) => void
 }
 
 export interface ConversationCopy {

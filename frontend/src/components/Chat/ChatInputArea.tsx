@@ -19,14 +19,14 @@ const DISABLED_WARNING_HOVER_DELAY_MS = 700
 interface StatusBannerProps {
   icon: React.ReactElement
   text: string
-  buttonText?: string | undefined
-  buttonIcon?: React.ReactElement | undefined
+  buttonText?: string
+  buttonIcon?: React.ReactElement
   onButtonClick?: (() => void) | undefined
   testId: string
   className: string
   textClassName: string
-  buttonTestId?: string | undefined
-  buttonClassName?: string | undefined
+  buttonTestId?: string
+  buttonClassName?: string
 }
 
 function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testId, className, textClassName, buttonTestId, buttonClassName }: StatusBannerProps) {
@@ -112,8 +112,8 @@ export interface ChatInputAreaHandle {
 }
 
 interface ChatInputAreaProps {
-  generationDraft?: RequestGenerationDraft | undefined
-  onGenerationDraftChange?: ((value: RequestGenerationDraft) => void) | undefined
+  generationDraft?: RequestGenerationDraft
+  onGenerationDraftChange?: (value: RequestGenerationDraft) => void
   undoLastSend?: UndoLastSendAction | undefined
   repeatDisabledReason?: string | undefined
   onSend: (
@@ -122,43 +122,43 @@ interface ChatInputAreaProps {
     attachments: MessageAttachment[],
     options?: MultiSendOptions,
   ) => Promise<ChatSendOutcome>
-  conversionRevisionKey?: string | undefined
-  disabled?: boolean | undefined
-  fileDropEnabled?: boolean | undefined
-  disabledReasons?: string[] | undefined
-  sendDisabled?: boolean | undefined
-  sendDisabledReasons?: string[] | undefined
-  activeTarget?: TargetInstance | null | undefined
-  operatorLocked?: boolean | undefined
-  crossTargetLocked?: boolean | undefined
-  targetResolutionStatus?: AttackTargetResolutionStatus | undefined
+  conversionRevisionKey?: string
+  disabled?: boolean
+  fileDropEnabled?: boolean
+  disabledReasons?: string[]
+  sendDisabled?: boolean
+  sendDisabledReasons?: string[]
+  activeTarget?: TargetInstance | null
+  operatorLocked?: boolean
+  crossTargetLocked?: boolean
+  targetResolutionStatus?: AttackTargetResolutionStatus
   onRetryTargetResolution?: (() => void) | undefined
-  onUseAsTemplate?: (() => void) | undefined
+  onUseAsTemplate?: () => void
   attackOperator?: string | undefined
-  onConfigureTarget?: (() => void) | undefined
-  onBrowseSeedPrompts?: (() => void) | undefined
-  showSeedInspiration?: boolean | undefined
+  onConfigureTarget?: () => void
+  onBrowseSeedPrompts?: () => void
+  showSeedInspiration?: boolean
   onToggleConverterPanel: () => void
   isConverterPanelOpen: boolean
   onInputChange: (value: string) => void
   onAttachmentsChange: (attachments: MessageAttachment[]) => void
-  convertedValue?: string | null | undefined
-  originalValue?: string | null | undefined
+  convertedValue?: string | null
+  originalValue?: string | null
   onClearConversion: () => void
-  onClearAllConversions?: (() => void) | undefined
+  onClearAllConversions?: () => void
   onConvertedValueChange: (value: string) => void
-  converterOutputDataTypes?: string[] | undefined
-  mediaConversions?: Array<Pick<PieceConversion, 'pieceId' | 'convertedValue' | 'convertedDataType'>> | undefined
+  converterOutputDataTypes?: string[]
+  mediaConversions?: Array<Pick<PieceConversion, 'pieceId' | 'convertedValue' | 'convertedDataType'>>
   onClearMediaConversion: (pieceId: string) => void
-  convertedFileChip?: ConvertedFileChip | null | undefined
-  onClearConvertedFileChip?: (() => void) | undefined
-  showSystemPrompt?: boolean | undefined
-  supportsSystemPrompt?: boolean | undefined
-  systemPrompt?: string | undefined
-  onSystemPromptChange?: ((value: string) => void) | undefined
-  initialText?: string | undefined
-  initialAttachments?: MessageAttachment[] | undefined
-  initialTextMetadata?: Record<string, unknown> | undefined
+  convertedFileChip?: ConvertedFileChip | null
+  onClearConvertedFileChip?: () => void
+  showSystemPrompt?: boolean
+  supportsSystemPrompt?: boolean
+  systemPrompt?: string
+  onSystemPromptChange?: (value: string) => void
+  initialText?: string
+  initialAttachments?: MessageAttachment[]
+  initialTextMetadata?: Record<string, unknown>
 }
 
 const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({

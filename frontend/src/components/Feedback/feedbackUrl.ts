@@ -19,7 +19,7 @@ export type FeedbackCategory = 'bug' | 'feature' | 'doc' | 'praise' | 'other'
 
 export interface FeedbackContext {
   app_version?: string | undefined
-  current_view?: string | undefined
+  current_view?: string
   target_type?: string | undefined
 }
 

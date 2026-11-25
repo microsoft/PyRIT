@@ -11,7 +11,7 @@ const SCORER_METRICS_DOCUMENTATION_URL = 'https://microsoft.github.io/PyRIT/late
 
 interface ScorerEvaluationDetailsProps {
   readonly name: string
-  readonly metrics?: ScorerEvaluationMetrics | null | undefined
+  readonly metrics?: ScorerEvaluationMetrics | null
   readonly scoreType?: string | null | undefined
 }
 

@@ -43,10 +43,10 @@ interface AttackExecutionTableProps {
   readonly seedObjectives: ReadonlyMap<string, string>
   readonly onOpenDetails: (result: AttackExecution, trigger: HTMLElement) => void
   /** Technique shorthand per atomic group, shown under each objective instead of the attack class. */
-  readonly techniqueNames?: ReadonlyMap<string, string> | undefined
-  readonly showTimestamp?: boolean | undefined
-  readonly showConversationLink?: boolean | undefined
-  readonly booleanOutcome?: boolean | undefined
+  readonly techniqueNames?: ReadonlyMap<string, string>
+  readonly showTimestamp?: boolean
+  readonly showConversationLink?: boolean
+  readonly booleanOutcome?: boolean
 }
 
 /** How every row in one table renders, shared by top-level and child rows. */

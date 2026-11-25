@@ -18,6 +18,7 @@ import { fetchAllPages } from '@/utils/fetchAllPages'
 import CreateTechniqueDialog from './CreateTechniqueDialog'
 import RegistryIdentityRow from './RegistryIdentityRow'
 import { useTechniqueRegistryStyles } from './TechniqueRegistry.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 interface TechniqueRegistryPageProps {
   ready: boolean
@@ -123,7 +124,7 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
           <Text size={300} className={styles.subtitle}>Named configurations of existing attack techniques</Text>
         </div>
         <div className={styles.headerActions}>
-          <Button {...restoreFocusTarget} className={styles.headerAction} ref={newButton as never} appearance="primary" icon={<AddRegular />} disabled={!ready}
+          <Button {...restoreFocusTarget} className={styles.headerAction} ref={fluentRef(newButton)} appearance="primary" icon={<AddRegular />} disabled={!ready}
             onClick={() => setCreateOpen(true)}>New technique</Button>
         </div>
       </div>

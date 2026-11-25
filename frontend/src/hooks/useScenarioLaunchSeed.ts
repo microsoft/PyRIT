@@ -7,9 +7,9 @@ import { UUID_PATTERN } from '@/utils/routeParams'
 
 interface LaunchSeedResource {
   readonly key: string
-  readonly initialRequest?: RunScenarioRequest | undefined
-  readonly request?: RunScenarioRequest | undefined
-  readonly error?: string | undefined
+  readonly initialRequest?: RunScenarioRequest
+  readonly request?: RunScenarioRequest
+  readonly error?: string
 }
 
 interface ScenarioLaunchSeed {

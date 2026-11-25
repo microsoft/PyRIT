@@ -34,7 +34,7 @@ export interface RecoverableSendDraft {
   attachments: MessageAttachment[]
   conversions: Record<string, PieceConversion>
   source: 'live' | 'persisted'
-  converterGeneration?: string | undefined
+  converterGeneration?: string
   pipelines?: Record<string, ConverterPipelineStage[]> | undefined
 }
 
@@ -43,7 +43,7 @@ export interface PendingSend {
   readonly generationDraft: RequestGenerationDraft
   readonly submissionId: string
   readonly controller: AbortController
-  readonly draftRevision?: number | undefined
+  readonly draftRevision: number | undefined
   readonly originalValue: string
   readonly textMetadata?: Record<string, unknown> | undefined
   readonly attachments: MessageAttachment[]
@@ -55,7 +55,7 @@ export interface PendingSend {
   readonly target: TargetReference
   readonly chatScorerExplicit: boolean
   chatScorerChoice?: RegisteredComponentReference | null | undefined
-  observation?: MessageSendObservation | undefined
+  observation?: MessageSendObservation
   readonly converterSnapshot?: ChatConverterSnapshot | undefined
   readonly pipelines?: Record<string, ConverterPipelineStage[]> | undefined
   attackResultId: string | null
@@ -63,7 +63,7 @@ export interface PendingSend {
   needsRefresh: boolean
   responseReadId?: number | undefined
   progress?: MessageSendStatus | undefined
-  repeatGroup?: RepeatSendGroup | undefined
+  repeatGroup?: RepeatSendGroup
   preservedDraft?: Pick<ChatDraftContextState, 'originatingAttackId' | 'originatingConversationId' | 'sequence'> | undefined
 }
 
@@ -96,7 +96,7 @@ export interface RepeatSendView {
 export interface SendIssue {
   description: string
   blocking: boolean
-  draft?: PendingSend | undefined
+  draft?: PendingSend
 }
 
 /** Rendered send state. The synchronous per-conversation locks live beside it in `useChatSendState`. */

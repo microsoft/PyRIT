@@ -65,12 +65,9 @@ export function useAttackAnalytics(query: AttackAnalyticsQuery | null) {
   const reportRetryAt = useRef(0)
   const resultsRetryAt = useRef(0)
   // Group pages share a report scope, but each page/refresh is a distinct request.
-  const unpagedQuery: AttackAnalyticsQuery | null = enabledQuery
-    ? (({ group_offset: _go, group_limit: _gl, ...rest }) => rest)(enabledQuery)
-    : null
   const scopeKey = JSON.stringify([
     runtime.generation,
-    analyticsQueryKey(unpagedQuery),
+    analyticsQueryKey(enabledQuery && { ...enabledQuery, group_offset: undefined, group_limit: undefined }),
   ])
   const requestKey = JSON.stringify([analyticsQueryKey(enabledQuery), refreshVersion, runtime.generation])
   // Equal consecutive keys reuse one identity. A -> B -> A creates a new one:

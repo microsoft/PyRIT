@@ -27,10 +27,10 @@ interface AttackAttemptDetailsProps {
   /** A saved result or hierarchy node, a running attack, or null before the attack starts. */
   readonly attempt: ScenarioProgressResult | ScenarioActiveConversation | ScenarioHierarchyNode | null
   /** The attack has not started yet but will; otherwise a missing attempt is unavailable. */
-  readonly preparing?: boolean | undefined
-  readonly objective?: string | null | undefined
+  readonly preparing?: boolean
+  readonly objective?: string | null
   readonly atomicGroup?: ScenarioRunPlanAtomicGroup | null | undefined
-  readonly techniqueDetails?: ScenarioAttackTechniqueDetails | null | undefined
+  readonly techniqueDetails?: ScenarioAttackTechniqueDetails | null
   readonly objectiveScorer?: ScenarioObjectiveScorer | null | undefined
   /** Route to the attempt's conversation. Supplied by the host so this stays route-agnostic. */
   readonly conversationPath: string | null
@@ -38,7 +38,7 @@ interface AttackAttemptDetailsProps {
   /** Offered first when attaching this attack to a finding. */
   readonly findingOperationId?: string | null | undefined
   /** Frame the details as a standalone card when they are shown inline on a page. */
-  readonly framed?: boolean | undefined
+  readonly framed?: boolean
 }
 
 /** One attack's objective and outcome, the components it ran with, its findings, and its conversation. */

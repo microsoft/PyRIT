@@ -27,11 +27,11 @@ interface ScenarioAttackDetailsProps {
   readonly context: ScenarioRunDetailsContext
   readonly attempt: ScenarioRunAttempt | null
   /** The planned group to describe while the attack has no attempt yet. */
-  readonly atomicGroupId?: string | null | undefined
+  readonly atomicGroupId?: string | null
   /** The hierarchy node the details were opened from, which may carry the objective. */
-  readonly hierarchySelection?: ScenarioHierarchyNode | null | undefined
-  readonly preparing?: boolean | undefined
-  readonly framed?: boolean | undefined
+  readonly hierarchySelection?: ScenarioHierarchyNode | null
+  readonly preparing?: boolean
+  readonly framed?: boolean
 }
 
 /** One scan attack's details, resolved from the run's plan, progress, and saved hierarchy. */

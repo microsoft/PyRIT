@@ -10,6 +10,7 @@ import AttackExecutionTable from './AttackExecutionTable'
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
 import ScenarioResultHierarchy from './ScenarioResultHierarchy'
 import { hierarchyDisplayGroups, runExecutionCount } from './scenarioHierarchy'
+import { fluentRef } from '@/utils/fluentRef'
 
 const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
 const AUTO_EXPAND_GROUP_LIMIT = 20
@@ -75,7 +76,7 @@ export default function AtomicAttackGroupsSection({
             aria-controls="atomic-groups-panel"
             aria-label={`${sectionExpanded ? 'Collapse' : 'Expand'} atomic attack groups`}
             data-testid="toggle-atomic-groups-btn"
-            ref={toggleRef as never}
+            ref={fluentRef(toggleRef)}
             onClick={() => setSectionExpandedChoice(!sectionExpanded)}
           >
           </Button>

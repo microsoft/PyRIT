@@ -57,7 +57,7 @@ function mergeTranscriptPage(
 }
 
 export interface UseConversationMessagesOptions {
-  readConversation?: ((attackResultId: string, conversationId: string) => Promise<ConversationMessagesResponse>) | undefined
+  readConversation?: (attackResultId: string, conversationId: string) => Promise<ConversationMessagesResponse>
   readConversationById?: ((conversationId: string) => Promise<ConversationMessagesResponse>) | undefined
   pollIntervalMs?: number | undefined
   attackResultId: string | null
@@ -71,9 +71,9 @@ export interface UseConversationMessagesOptions {
   /** Synchronous send ownership check used by the reload guard. */
   isSendInFlight: (conversationId: string) => boolean
   /** Records state from a current load and returns the transcript to show, e.g. with an in-flight send. */
-  onConversationLoaded?: ((
+  onConversationLoaded?: (
     conversationId: string, response: ConversationMessagesResponse, messages: Message[],
-  ) => Message[]) | undefined
+  ) => Message[]
 }
 
 export interface ConversationMessages {

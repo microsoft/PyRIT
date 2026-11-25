@@ -48,6 +48,7 @@ import {
 } from './seedExampleQuery'
 import { singleSeedExampleChoice } from './seedExampleSelection'
 import { useSeedExampleBrowserState, type SeedExampleBrowserState } from './useSeedExampleBrowserState'
+import { fluentRef } from '@/utils/fluentRef'
 
 const NOT_LABELED_LABEL = 'Not labeled'
 const SEARCH_HELP = 'Search looks through stored text prompts and objectives. Simulated-conversation JSON is not included; choose that seed type to find those examples. ASCII letters ignore case.'
@@ -472,7 +473,7 @@ export function SeedExampleBrowserView({
             </MessageBarBody>
           </MessageBar>
           <Button
-            ref={listRetryRef as never}
+            ref={fluentRef(listRetryRef)}
             className={styles.touchTarget}
             appearance="primary"
             icon={<ArrowSyncRegular />}
@@ -495,7 +496,7 @@ export function SeedExampleBrowserView({
         <div>
           <p className={styles.message}>Choose one page link, or start again from the first page.</p>
           <Button
-            ref={cursorButtonRef as never}
+            ref={fluentRef(cursorButtonRef)}
             className={styles.touchTarget}
             appearance="primary"
             onClick={restartFromFirstPage}
@@ -604,7 +605,7 @@ export function SeedExampleBrowserView({
       {query.exampleId && detailState.error && (
         <div>
           <MessageBar intent="error"><MessageBarBody>{detailState.error.detail}</MessageBarBody></MessageBar>
-          <Button ref={detailRetryRef as never} className={styles.touchTarget} appearance="primary" onClick={detailState.retry}>
+          <Button ref={fluentRef(detailRetryRef)} className={styles.touchTarget} appearance="primary" onClick={detailState.retry}>
             Retry example
           </Button>
         </div>

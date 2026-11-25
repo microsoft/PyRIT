@@ -39,6 +39,7 @@ import ScannerVisibilityLabel from './ScannerVisibilityLabel'
 import { useScenarioPresetLibraryStyles } from './ScenarioPresetLibrary.styles'
 import { NEW_PRESET_ROUTE, presetEditorRoutePath } from './presetRoutes'
 import { estimatePresetRunSizes, retainPresetRunSizes } from './presetRunSizes'
+import { fluentRef } from '@/utils/fluentRef'
 
 const DEFINED_IN_CODE_HINT = 'Defined in code, so it cannot be edited or deleted here.'
 
@@ -232,7 +233,7 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
         </div>
         <div className={styles.headerActions}>
           <Button
-            ref={newPresetButton as never}
+            ref={fluentRef(newPresetButton)}
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
