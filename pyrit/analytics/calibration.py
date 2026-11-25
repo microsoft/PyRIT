@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import MAX_EMAX, MIN_EMIN, ROUND_HALF_EVEN, Context, Decimal, localcontext
+from decimal import MAX_EMAX, MAX_PREC, MIN_EMIN, ROUND_HALF_EVEN, Context, Decimal, localcontext
 from enum import Enum
 from math import isclose, isfinite, nextafter
 from statistics import NormalDist
@@ -18,18 +18,34 @@ if TYPE_CHECKING:
     from pyrit.models import OutcomeStatistics
     from pyrit.score import ObjectiveScorerMetrics, ScorerMetricsWithIdentity
 
-_CALIBRATION_DECIMAL_CONTEXT = Context(
-    prec=50,
-    rounding=ROUND_HALF_EVEN,
-    Emin=MIN_EMIN,
-    Emax=MAX_EMAX,
-    capitals=1,
-    clamp=0,
-    flags=[],
-    traps=[],
-)
 _Z_95 = Decimal("1.959963984540054")
 _DECIDED_SHARE_WARNING_THRESHOLD = 0.80
+
+
+def _calibration_decimal_context(*magnitudes: int) -> Context:
+    """
+    Build an isolated Decimal context scaled to prevent cancellation on large integer counts.
+
+    Uses ``int.bit_length`` rather than string conversion so inputs exceeding Python's
+    ``int_max_str_digits`` limit remain supported.
+
+    Returns:
+        Context: Isolated ``ROUND_HALF_EVEN`` context with all traps disabled.
+    """
+    max_value = max((abs(value) for value in magnitudes), default=1)
+    # Upper bound on decimal digits: ceil(bit_length * log10(2)) <= bit_length * 302 // 1000 + 1.
+    decimal_digits = (max_value.bit_length() * 302) // 1000 + 1
+    prec = min(MAX_PREC, max(50, decimal_digits * 2 + 50))
+    return Context(
+        prec=prec,
+        rounding=ROUND_HALF_EVEN,
+        Emin=MIN_EMIN,
+        Emax=MAX_EMAX,
+        capitals=1,
+        clamp=0,
+        flags=[],
+        traps=[],
+    )
 
 
 class CalibrationCountsSource(str, Enum):
@@ -142,10 +158,10 @@ class JudgeCalibrationProfile:
     @property
     def youden_index(self) -> float:
         """Empirical Youden's J statistic ``sensitivity + specificity - 1``."""
-        with localcontext(_CALIBRATION_DECIMAL_CONTEXT):
+        with localcontext(_calibration_decimal_context(self.num_gold_positive, self.num_gold_negative)):
             se = Decimal(self.true_positive) / Decimal(self.num_gold_positive)
-            sp = Decimal(self.true_negative) / Decimal(self.num_gold_negative)
-            return float(se + sp - Decimal(1))
+            fpr = Decimal(self.false_positive) / Decimal(self.num_gold_negative)
+            return float(se - fpr)
 
     @classmethod
     def from_objective_metrics(
@@ -446,11 +462,14 @@ def _validate_calibration_inputs(
         or not 0.0 <= min_youden_index < 1.0
     ):
         raise ValueError("min_youden_index must be a finite float in [0, 1).")
-    if expected_eval_hash is not None and judge_profile.eval_hash != expected_eval_hash:
-        raise ValueError(
-            f"judge_profile.eval_hash ({judge_profile.eval_hash!r}) does not match "
-            f"expected_eval_hash ({expected_eval_hash!r})."
-        )
+    if expected_eval_hash is not None:
+        if not isinstance(expected_eval_hash, str) or not expected_eval_hash.strip():
+            raise ValueError("expected_eval_hash must be a non-empty string when provided.")
+        if judge_profile.eval_hash != expected_eval_hash:
+            raise ValueError(
+                f"judge_profile.eval_hash ({judge_profile.eval_hash!r}) does not match "
+                f"expected_eval_hash ({expected_eval_hash!r})."
+            )
 
 
 def _normal_quantile_decimal(confidence_level: float) -> Decimal:
@@ -514,7 +533,7 @@ def _observed_wilson_ci(
         if statistics.success_rate_ci_lower is not None and statistics.success_rate_ci_upper is not None:
             return statistics.success_rate_ci_lower, statistics.success_rate_ci_upper
         return compute_wilson_ci(successes=statistics.successes, total=statistics.total_decided)
-    with localcontext(_CALIBRATION_DECIMAL_CONTEXT):
+    with localcontext(_calibration_decimal_context(statistics.total_decided)):
         lower_dec, upper_dec = _wilson_bounds_decimal(
             successes=statistics.successes,
             total=statistics.total_decided,
@@ -530,15 +549,16 @@ def _mover_youden_lower_bound(*, profile: JudgeCalibrationProfile, z: Decimal) -
     Returns:
         float: Two-sided lower confidence bound on Youden's J.
     """
-    with localcontext(_CALIBRATION_DECIMAL_CONTEXT):
+    with localcontext(_calibration_decimal_context(profile.num_gold_positive, profile.num_gold_negative)):
         m1 = Decimal(profile.num_gold_positive)
         m0 = Decimal(profile.num_gold_negative)
         se = Decimal(profile.true_positive) / m1
         sp = Decimal(profile.true_negative) / m0
+        fpr = Decimal(profile.false_positive) / m0
         se_lower, _ = _wilson_bounds_decimal(successes=profile.true_positive, total=profile.num_gold_positive, z=z)
         sp_lower, _ = _wilson_bounds_decimal(successes=profile.true_negative, total=profile.num_gold_negative, z=z)
         radius = ((se - se_lower) ** 2 + (sp - sp_lower) ** 2).sqrt()
-        return float(se + sp - Decimal(1) - radius)
+        return float(se - fpr - radius)
 
 
 def _collect_scope_warnings(
@@ -651,15 +671,15 @@ def _lang_reiczigel_interval(
     Returns:
         tuple[float, float, float, bool]: ``(point, ci_lower, ci_upper, was_clipped)``.
     """
-    with localcontext(_CALIBRATION_DECIMAL_CONTEXT):
+    with localcontext(_calibration_decimal_context(total, profile.num_gold_positive, profile.num_gold_negative)):
         m1 = Decimal(profile.num_gold_positive)
         m0 = Decimal(profile.num_gold_negative)
         se = Decimal(profile.true_positive) / m1
-        sp = Decimal(profile.true_negative) / m0
-        j = se + sp - Decimal(1)
+        fpr = Decimal(profile.false_positive) / m0
+        j = se - fpr
         p_hat = Decimal(successes) / Decimal(total)
 
-        raw_pi = (p_hat + sp - Decimal(1)) / j
+        raw_pi = (p_hat - fpr) / j
         was_clipped = raw_pi < Decimal(0) or raw_pi > Decimal(1)
         clipped_pi = min(Decimal(1), max(Decimal(0), raw_pi))
 
@@ -667,20 +687,24 @@ def _lang_reiczigel_interval(
         m1_p = m1 + Decimal(2)
         m0_p = m0 + Decimal(2)
         se_p = (Decimal(profile.true_positive) + Decimal(1)) / m1_p
+        fnr_p = (Decimal(profile.false_negative) + Decimal(1)) / m1_p
         sp_p = (Decimal(profile.true_negative) + Decimal(1)) / m0_p
-        j_p = se_p + sp_p - Decimal(1)
+        fpr_p = (Decimal(profile.false_positive) + Decimal(1)) / m0_p
+        j_p = se_p - fpr_p
         if j_p <= Decimal(0):
             return float(clipped_pi), 0.0, 1.0, was_clipped
 
         n_p = Decimal(total) + z2
         p_p = (Decimal(successes) + Decimal("0.5") * z2) / n_p
-        pi_p = (p_p + sp_p - Decimal(1)) / j_p
-        var_se_p = se_p * (Decimal(1) - se_p) / m1_p
-        var_sp_p = sp_p * (Decimal(1) - sp_p) / m0_p
-        d_pi = Decimal(2) * z2 * (pi_p * var_se_p - (Decimal(1) - pi_p) * var_sp_p)
-        var_pi_p = (
-            p_p * (Decimal(1) - p_p) / n_p + (pi_p * pi_p) * var_se_p + ((Decimal(1) - pi_p) ** 2) * var_sp_p
-        ) / (j_p * j_p)
+        q_p = (Decimal(total - successes) + Decimal("0.5") * z2) / n_p
+        pi_p = (p_p - fpr_p) / j_p
+        one_minus_pi_p = (se_p - p_p) / j_p
+        var_se_p = se_p * fnr_p / m1_p
+        var_sp_p = sp_p * fpr_p / m0_p
+        d_pi = Decimal(2) * z2 * (pi_p * var_se_p - one_minus_pi_p * var_sp_p)
+        var_pi_p = (p_p * q_p / n_p + (pi_p * pi_p) * var_se_p + (one_minus_pi_p * one_minus_pi_p) * var_sp_p) / (
+            j_p * j_p
+        )
         half_width = z * max(Decimal(0), var_pi_p).sqrt()
         center = pi_p + d_pi
         lower_dec = min(Decimal(1), max(Decimal(0), center - half_width))
@@ -709,7 +733,7 @@ def _recover_confusion_counts(metrics: ObjectiveScorerMetrics) -> tuple[int, int
     ):
         return None
 
-    with localcontext(_CALIBRATION_DECIMAL_CONTEXT):
+    with localcontext(_calibration_decimal_context(n)):
         acc_d = Decimal(str(acc))
         prec_d = Decimal(str(prec))
         rec_d = Decimal(str(rec))

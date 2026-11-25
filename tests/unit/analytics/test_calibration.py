@@ -16,6 +16,7 @@ from decimal import (
     Underflow,
     localcontext,
 )
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -28,7 +29,11 @@ from pyrit.analytics import (
     compute_outcome_statistics,
 )
 from pyrit.models import ComponentIdentifier, OutcomeStatistics
-from pyrit.score import ObjectiveScorerMetrics, ScorerMetricsWithIdentity, get_all_objective_metrics
+from pyrit.score import ObjectiveScorerMetrics, ScorerMetricsWithIdentity, SubStringScorer, get_all_objective_metrics
+from pyrit.score.scorer_evaluation.scorer_metrics_io import add_evaluation_results
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _reference_lang_reiczigel(
@@ -171,6 +176,8 @@ def test_all_shipped_objective_scorer_metrics_recover_and_calibrate_cleanly() ->
     for entry in shipped_entries:
         profile = JudgeCalibrationProfile.from_scorer_metrics_with_identity(entry)
         assert profile is not None
+        assert entry.scorer_identifier.eval_hash is not None
+        assert len(entry.scorer_identifier.eval_hash) > 0
         assert profile.eval_hash == entry.scorer_identifier.eval_hash
         assert profile.scorer_class_name == entry.scorer_identifier.class_name
         assert profile.num_evaluated_responses == entry.metrics.num_responses
@@ -387,6 +394,9 @@ def test_input_and_eval_hash_validation_errors() -> None:
     with pytest.raises(ValueError, match="expected_eval_hash"):
         calibrate_outcome_statistics(outcomes, judge_profile=profile, expected_eval_hash="scorer_hash_2")
 
+    with pytest.raises(ValueError, match="non-empty string"):
+        calibrate_outcome_statistics(outcomes, judge_profile=profile, expected_eval_hash="   ")
+
     with pytest.raises(ValueError, match="confidence_level"):
         calibrate_outcome_statistics(outcomes, judge_profile=profile, confidence_level=1.0)
 
@@ -570,6 +580,112 @@ def test_calibration_ignores_caller_decimal_traps_and_handles_subnormal_bounds()
     assert under_traps.observed_ci_upper == 5e-324
     assert under_traps.calibrated_ci_lower == 0.0
     assert under_traps.calibrated_ci_upper == 5e-324
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_registry_loaded_profile_preserves_eval_hash_and_binds_to_live_scorer(tmp_path: Path) -> None:
+    live_scorer = SubStringScorer(substring="target_marker")
+    live_identifier = live_scorer.get_identifier()
+    assert live_identifier.eval_hash is not None
+
+    registry_file = tmp_path / "objective_metrics.jsonl"
+    metrics = ObjectiveScorerMetrics(
+        num_responses=200,
+        num_human_raters=1,
+        accuracy=0.92,
+        accuracy_standard_error=0.019,
+        f1_score=0.92,
+        precision=0.92,
+        recall=0.92,
+        specificity=0.92,
+        true_positive=92,
+        false_positive=8,
+        true_negative=92,
+        false_negative=8,
+    )
+    add_evaluation_results(
+        file_path=registry_file,
+        scorer_identifier=live_identifier,
+        eval_hash=live_identifier.eval_hash,
+        metrics=metrics,
+    )
+
+    loaded = get_all_objective_metrics(file_path=registry_file)
+    assert len(loaded) == 1
+    profile = JudgeCalibrationProfile.from_scorer_metrics_with_identity(loaded[0])
+    assert profile is not None
+    assert profile.eval_hash == live_identifier.eval_hash
+    assert profile.counts_source == CalibrationCountsSource.STORED
+
+    outcomes = compute_outcome_statistics({"success": 25, "failure": 75})
+    calibrated = calibrate_outcome_statistics(
+        outcomes,
+        judge_profile=profile,
+        expected_eval_hash=live_identifier.eval_hash,
+    )
+    assert calibrated.is_reliable is True
+    assert calibrated.judge_profile.eval_hash == live_identifier.eval_hash
+
+    with pytest.raises(ValueError, match="expected_eval_hash"):
+        calibrate_outcome_statistics(outcomes, judge_profile=profile, expected_eval_hash="different_live_hash")
+
+
+def test_large_cohort_precision_scaling_avoids_cancellation() -> None:
+    large_n = 10**100
+    perfect_profile = JudgeCalibrationProfile(
+        true_positive=large_n,
+        false_positive=0,
+        true_negative=large_n,
+        false_negative=0,
+    )
+    one_success = compute_outcome_statistics({"success": 1, "failure": large_n - 1})
+    result = calibrate_outcome_statistics(one_success, judge_profile=perfect_profile)
+
+    assert result.is_reliable is True
+    assert result.was_clipped is False
+    assert result.calibrated_success_rate == pytest.approx(1e-100, rel=1e-12)
+    assert result.calibrated_ci_lower == 0.0
+    assert result.calibrated_ci_upper == pytest.approx(5.802e-100, rel=1e-3)
+
+    near_one = compute_outcome_statistics({"success": large_n - 1, "failure": 1})
+    near_one_result = calibrate_outcome_statistics(near_one, judge_profile=perfect_profile, confidence_level=0.90)
+    assert near_one_result.is_reliable is True
+    assert near_one_result.calibrated_success_rate == pytest.approx(1.0, rel=1e-12)
+    assert near_one_result.calibrated_ci_upper == 1.0
+
+    tiny_youden = JudgeCalibrationProfile(
+        true_positive=1,
+        false_positive=0,
+        true_negative=large_n,
+        false_negative=large_n - 1,
+    )
+    assert tiny_youden.youden_index == pytest.approx(1e-100, rel=1e-12)
+
+    # Exceeds Python's default int_max_str_digits (4300) without triggering string conversion.
+    huge_n = 10**5000
+    huge_profile = JudgeCalibrationProfile(
+        true_positive=huge_n,
+        false_positive=0,
+        true_negative=huge_n,
+        false_negative=0,
+    )
+    huge_zero = OutcomeStatistics(
+        successes=0,
+        failures=huge_n,
+        undetermined=0,
+        errors=0,
+        total_decided=huge_n,
+        total_results=huge_n,
+        success_rate=0.0,
+        success_rate_all=0.0,
+        success_rate_ci_lower=0.0,
+        success_rate_ci_upper=5e-324,
+        decided_share=1.0,
+        outcome_shares={"success": 0.0, "failure": 1.0, "undetermined": 0.0, "error": 0.0},  # type: ignore[arg-type]
+    )
+    huge_result = calibrate_outcome_statistics(huge_zero, judge_profile=huge_profile)
+    assert huge_result.is_reliable is True
+    assert huge_result.calibrated_ci_upper == 5e-324
 
 
 def test_five_thousand_point_grid_preserves_interval_invariants() -> None:

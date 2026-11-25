@@ -380,6 +380,7 @@ def test_get_all_objective_metrics_from_file(tmp_path):
     assert isinstance(results[0], ScorerMetricsWithIdentity)
     assert results[0].metrics.accuracy == 0.92
     assert results[0].scorer_identifier.class_name == "Scorer1"
+    assert results[0].scorer_identifier.eval_hash == "h1"
 
 
 def test_get_all_objective_metrics_empty_file(tmp_path):
