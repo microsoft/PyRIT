@@ -482,6 +482,10 @@ class ScorerEvaluator(abc.ABC):
             for response in assistant_responses
         ]
 
+        # Transpose human scores so each row is a complete set of scores across all responses.
+        # Built before scoring, so ragged human scores fail before any scoring call is paid for.
+        all_human_scores = np.array(human_scores_list).T
+
         harm_category = None
         if labeled_dataset.metrics_type == MetricsType.HARM and labeled_dataset.entries:
             first_entry = labeled_dataset.entries[0]
@@ -502,7 +506,7 @@ class ScorerEvaluator(abc.ABC):
         )
         return self._compute_trial_metrics(
             trials=trials,
-            all_human_scores=np.array(human_scores_list).T,
+            all_human_scores=all_human_scores,
             labeled_dataset=labeled_dataset,
             harm_category=harm_category,
         )

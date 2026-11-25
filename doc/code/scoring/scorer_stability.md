@@ -160,7 +160,9 @@ comparing more presentations does not raise the chance of a false finding.
   instead of being counted as false. Each comparison uses the responses that reached a verdict
   in every run of both the reference and that presentation (`num_items`), and the reference's
   own figures use the responses it reached a verdict on in every run. One presentation's
-  failures therefore change no other figure. `num_undetermined_items` and
+  failures therefore change no other comparison's counts, rates or unadjusted p-values, nor the
+  reference's figures. The Holm-adjusted p-values do depend on every presentation's p-value, so
+  they can move. `num_undetermined_items` and
   `reference_num_undetermined_items` count the responses each lost, so a presentation that makes
   the judge fail more often is visible.
 

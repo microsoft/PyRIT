@@ -37,6 +37,7 @@ from pyrit.score import (
     ScorerStabilityEvaluator,
     SelfAskRefusalScorer,
     SubStringScorer,
+    TrueFalseInverterScorer,
     compute_scorer_stability,
 )
 
@@ -188,13 +189,15 @@ def test_p_values_are_holm_adjusted_across_presentations() -> None:
 
 
 def test_run_without_a_verdict_is_left_out_instead_of_counted_as_false() -> None:
-    # Counted as false, the third response would look like a flip from true.
-    metrics, effect = _effect([[T, F, T], [T, F, T]], [[T, F, None], [T, F, np.nan]])
+    # Counted as false, the third response would look like a flip from true. The reference
+    # misses its fourth response, which leaves the reference figures and the comparison.
+    metrics, effect = _effect([[T, F, T, T], [T, F, T, None]], [[T, F, None, T], [T, F, np.nan, T]])
 
     assert effect.num_items == 2
     assert effect.num_undetermined_items == 1
     assert effect.flip_rate == 0.0
     assert effect.positive_rate == 0.5
+    assert metrics.reference_num_undetermined_items == 1
     assert metrics.reference_positive_rate == pytest.approx(2 / 3)
     assert np.isnan(metrics.verdicts["other"][0, 2])
 
@@ -250,13 +253,11 @@ def test_malformed_input_is_rejected(verdicts: dict, kwargs: dict, message: str)
         compute_scorer_stability(verdicts=verdicts, **kwargs)
 
 
-def test_another_presentation_can_be_the_reference() -> None:
-    metrics = compute_scorer_stability(verdicts={"a": [[T, T]], "b": [[T, F]]}, reference="b")
+def test_get_effect_rejects_a_name_without_an_effect() -> None:
+    metrics, _ = _effect([[T, F]], [[T, T]])
 
-    assert metrics.reference == "b"
-    assert metrics.get_effect(name="a").positive_rate_shift == 0.5
-    with pytest.raises(KeyError, match="No presentation named 'b'"):
-        metrics.get_effect(name="b")
+    with pytest.raises(KeyError, match="No presentation named 'reference'"):
+        metrics.get_effect(name="reference")
 
 
 def test_json_writes_missing_values_as_null() -> None:
@@ -613,6 +614,31 @@ class TestEvaluator:
             await _evaluator().evaluate_dataset_async(labeled_dataset=_dataset([("a", [T])]), num_permutations=0)
         assert await sqlite_instance.get_message_pieces_async() == []
 
+    async def test_ragged_human_scores_fail_before_any_scoring(self) -> None:
+        scorer = _RuleScorer(rule=_always(True), label="reference")
+
+        with pytest.raises(ValueError, match="inhomogeneous"):
+            await _evaluator(reference=scorer).evaluate_dataset_async(
+                labeled_dataset=_dataset([("a", [T]), ("b", [T, F])])
+            )
+        assert scorer.shown == []
+
+    async def test_settings_reach_the_computation(self, sqlite_instance: MemoryInterface) -> None:
+        reference = _RuleScorer(rule=lambda text, seen: (len(text) + seen) % 2 == 0, label="reference")
+        other = _RuleScorer(rule=lambda text, seen: (len(text) * (seen + 1)) % 3 == 0, label="other")
+        conversations = await _stored_conversations(sqlite_instance, ["a", "bb", "ccc", "dddd", "eeeee", "ffffff"])
+
+        metrics = await _evaluator(reference=reference, other=other).evaluate_conversations_async(
+            conversations=conversations, expectations=[OBJECTIVE] * 6, num_permutations=50, seed=4
+        )
+
+        # The recorded verdicts give these p-values only with the same permutations and seed.
+        assert metrics.num_permutations == 50
+        recomputed = compute_scorer_stability(verdicts=metrics.verdicts, num_permutations=50, seed=4)
+        default_seed = compute_scorer_stability(verdicts=metrics.verdicts, num_permutations=50)
+        assert metrics.effects[0].presentation_effect_p_value == recomputed.effects[0].presentation_effect_p_value
+        assert recomputed.effects[0].presentation_effect_p_value != default_seed.effects[0].presentation_effect_p_value
+
     @pytest.mark.parametrize("assistant_messages", [0, 2])
     async def test_conversation_needs_exactly_one_response(self, assistant_messages: int) -> None:
         conversation = [MessagePiece(role="user", original_value="request").to_message()] + [
@@ -678,14 +704,16 @@ class TestEvaluatorConstruction:
         with pytest.raises(ValueError, match="'reference' and 'copy' have the same scorer configuration"):
             _evaluator(reference=SubStringScorer(substring="x"), copy=SubStringScorer(substring="x"))
 
-    def test_presentation_with_other_judge_settings_is_rejected(self) -> None:
+    @pytest.mark.parametrize("wrapped", [False, True], ids=["bare", "wrapped"])
+    def test_presentation_with_other_judge_settings_is_rejected(self, wrapped: bool) -> None:
+        warmer = SelfAskRefusalScorer(
+            chat_target=_judge(temperature=1.0), prompt_format_string="response: {response}\nobjective: {objective}"
+        )
+
         with pytest.raises(ValueError, match="'warmer' uses different judge settings"):
             _evaluator(
                 reference=SelfAskRefusalScorer(chat_target=_judge()),
-                warmer=SelfAskRefusalScorer(
-                    chat_target=_judge(temperature=1.0),
-                    prompt_format_string="response: {response}\nobjective: {objective}",
-                ),
+                warmer=TrueFalseInverterScorer(scorer=warmer) if wrapped else warmer,
             )
 
 

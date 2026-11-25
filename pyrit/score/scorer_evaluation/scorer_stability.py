@@ -94,7 +94,8 @@ class PresentationEffect:
 
     Every rate is over the responses that reached a verdict in every run of both this
     presentation and the reference, so another presentation's missing verdicts do not change
-    it. The p-values are Holm-adjusted across the presentations of one evaluation.
+    it. The p-values are Holm-adjusted across the presentations of one evaluation, so they also
+    depend on every other presentation's p-value.
 
     Attributes:
         name (str): The presentation.
@@ -445,7 +446,6 @@ def _validate_settings(*, num_repeats: int, num_permutations: int, seed: int) ->
 def compute_scorer_stability(
     *,
     verdicts: Mapping[str, Any],
-    reference: str = _REFERENCE_PRESENTATION,
     num_permutations: int = 2000,
     seed: int = 0,
 ) -> ScorerStabilityMetrics:
@@ -454,13 +454,12 @@ def compute_scorer_stability(
 
     Use this to analyse verdicts recorded earlier, such as those ``ScorerStabilityMetrics.to_json``
     writes, or by another tool. Each presentation maps to its runs, one row per run and one column
-    per response, in the same response order for every presentation. Every presentation must have
-    the same number of runs.
+    per response, in the same response order for every presentation. The scorer under test is
+    named "reference". Every presentation must have the same number of runs.
 
     Args:
         verdicts (Mapping[str, Any]): Runs by presentation name. A verdict is true, false, or
             None / NaN when the run reached no verdict.
-        reference (str): The presentation the others are compared with. Defaults to "reference".
         num_permutations (int): Random reassignments for each p-value. Defaults to 2000.
         seed (int): Non-negative seed for the reassignments, so the p-values can be reproduced.
             Defaults to 0.
@@ -473,6 +472,7 @@ def compute_scorer_stability(
             up, a setting is out of range, or a comparison has no response with a verdict in
             every run.
     """
+    reference = _REFERENCE_PRESENTATION
     if reference not in verdicts:
         raise ValueError(f"The reference presentation '{reference}' has no verdicts.")
     if len(verdicts) < 2:
@@ -609,6 +609,8 @@ class ScorerStabilityEvaluator:
         _validate_settings(num_repeats=num_repeats, num_permutations=num_permutations, seed=seed)
         reference = self._evaluators[_REFERENCE_PRESENTATION]
         responses, human_scores, objectives = await reference._validate_and_extract_data_async(labeled_dataset)
+        # Built before scoring, so ragged human scores fail before any scoring call is paid for.
+        all_human_scores = np.array(human_scores).T
         trials = await self._score_rounds_async(
             responses=responses,
             expectations=[ScoringExpectation(objective=objective) for objective in objectives or []],
@@ -616,7 +618,6 @@ class ScorerStabilityEvaluator:
             max_concurrency=max_concurrency,
         )
         metrics = self._compute_stability(trials=trials, num_permutations=num_permutations, seed=seed)
-        all_human_scores = np.array(human_scores).T
         scorer_metrics = {
             name: cast(
                 "ObjectiveScorerMetrics",
