@@ -829,10 +829,10 @@ class _ToolResultWriter:
                 target=self.adversarial_chat,
                 conversation_id=self.conversation_id,
             )
-            if response is None:
+            if response is None or not response.get_value().strip():
                 return self._fail(
                     kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT,
-                    details="The adversarial chat returned no tool result.",
+                    details="The adversarial chat wrote an empty tool result.",
                 )
             try:
                 _raise_for_adversarial_error(response)
@@ -840,16 +840,7 @@ class _ToolResultWriter:
                 return self._fail(kind=AttackPreparationFailureKind.from_exception(error), details=str(error))
             except EmptyResponseException as error:
                 return self._fail(kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT, details=str(error))
-            # Reasoning models can return reasoning pieces too; only the text is the tool's output.
-            result = "\n".join(
-                piece.converted_value for piece in response.message_pieces if piece.converted_value_data_type == "text"
-            ).strip()
-            if not result:
-                return self._fail(
-                    kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT,
-                    details="The adversarial chat wrote an empty tool result.",
-                )
-            return result
+            return response.get_value()
 
     def _fail(self, *, kind: AttackPreparationFailureKind, details: str) -> NoReturn:
         self.failure = AttackPreparationFailure(kind=kind, reason=f"{kind.default_reason} Details: {details}")
