@@ -469,6 +469,8 @@ class SeedDatasetProvider(ABC):
         ]
 
         # A failed fetch cancels the others instead of leaving them running after this method raises.
+        # The raise waits for the cancelled fetches to drain, and a download already running in a
+        # thread cannot be interrupted, so a failure surfaces only after in-flight downloads finish.
         try:
             results = await gather_with_cleanup_async(fetches)
         finally:
