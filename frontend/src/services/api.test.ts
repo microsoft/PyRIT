@@ -91,7 +91,7 @@ describe("api service", () => {
     });
     it("nests finding requests under an encoded operation ID", async () => {
       const request = { title: "Assessment", severity: "low", field_values: { description: "Notes" } };
-      const update = { ...request, keep_retired_keys: ["retired_owner"], remove_retired_keys: ["contoso_ticket"] };
+      const update = { ...request, version: 3, keep_retired_keys: ["retired_owner"], remove_retired_keys: ["contoso_ticket"] };
       (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: { name: "Case" } });
       await operationsApi.create({ name: " Case / α% " });
       expect(apiClient.post).toHaveBeenCalledWith("/operations", { name: " Case / α% " });

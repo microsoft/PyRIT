@@ -21,6 +21,7 @@ jest.mock('@/services/api', () => ({
 jest.mock('@/hooks/useRuntime', () => ({ ...jest.requireActual('@/hooks/useRuntime'), useRuntime: jest.fn() }))
 
 const FINDING: FindingListItem = {
+  version: 1,
   id: 'finding', operation_id: 'saved', title: 'Proof', severity: 'low', field_values: {},
   created_at: '2026-10-08T12:00:00Z', evidence_count: 0, rows: [], retired: [],
   parent_finding_id: null, demonstrated: true, paths: [], child_count: 0,

@@ -4,6 +4,8 @@
 from collections.abc import Sequence
 from uuid import UUID, uuid4
 
+from sqlalchemy.orm.exc import StaleDataError
+
 from pyrit.backend.models import ScoreView
 from pyrit.backend.models.operations import (
     AttackFindingItem,
@@ -199,7 +201,7 @@ class OperationService:
         except FindingHierarchyError as exc:
             raise FindingConflictError(str(exc)) from exc
         # Paths are set after a finding is created, so a retry still matches a finding that has paths by then.
-        unchanged = {"created_at", "paths"}
+        unchanged = {"created_at", "paths", "version"}
         if saved.model_dump(exclude=unchanged) != finding.model_dump(exclude=unchanged) or (
             evidence is not None
             and await memory.get_finding_evidence_by_source_async(
@@ -623,7 +625,7 @@ class OperationService:
         A current field left out is cleared. Values of fields that are no longer configured are kept and can't
         change; list them in ``remove_retired_keys`` to delete them. A value listed in ``keep_retired_keys`` is
         kept even if its field is configured again. Values that haven't changed may use options that no longer
-        exist.
+        exist. The request must carry the version read when editing began.
 
         Returns:
             Finding: The updated finding.
@@ -631,12 +633,17 @@ class OperationService:
         Raises:
             FindingNotFoundError: If the finding or its new parent is missing or belongs to another operation.
             FindingConflictError: If the finding would move while its parent's paths use it, or under itself or one
-                of its sub-findings.
+                of its sub-findings, or the edited version is stale.
             FindingValuesError: If ``remove_retired_keys`` lists a key that isn't a retired value of the finding
                 or that is also sent, or the values do not fit the active finding fields.
         """
         await self.get_async(operation_id)
         stored = await self._require_finding_async(operation_id=operation_id, finding_id=finding_id)
+        if stored.version != request.version:
+            raise FindingConflictError(
+                "This finding has changed since you opened it. Your edits have not been saved. "
+                "Copy your changes, then refresh and reopen the finding to review its latest values."
+            )
         replacement = get_active_finding_fields().apply_edit(
             stored=stored,
             edit=request,
@@ -647,11 +654,11 @@ class OperationService:
             await self._require_parent_async(operation_id=operation_id, parent_id=request.parent_finding_id)
         try:
             return await CentralMemory.get_memory_instance().update_finding_async(
-                operation_id=operation_id, finding_id=finding_id, request=replacement
+                operation_id=operation_id, finding_id=finding_id, request=replacement, expected_version=request.version
             )
         except LookupError as exc:
             raise FindingNotFoundError(str(exc)) from exc
-        except FindingHierarchyError as exc:
+        except (FindingHierarchyError, StaleDataError) as exc:
             raise FindingConflictError(str(exc)) from exc
 
     async def delete_finding_async(self, *, operation_id: UUID, finding_id: UUID) -> None:

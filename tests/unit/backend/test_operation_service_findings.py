@@ -2,17 +2,29 @@
 # Licensed under the MIT license.
 
 import re
+from unittest.mock import patch
 
 import pytest
 
 from pyrit.backend.models.operations import FindingUpdateRequest
-from pyrit.backend.services.operation_service import OperationService
+from pyrit.backend.services.operation_service import FindingConflictError, OperationService
 from pyrit.memory import SQLiteMemory
 from pyrit.models import Finding, FindingValuesError
 from pyrit.models.finding_fields import FindingValueRow
 from unit.backend.mocks import read_finding_async
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
+
+
+async def test_finding_changed_between_service_read_and_write_is_rejected(
+    sqlite_instance: SQLiteMemory, retired_value_finding_async: Finding
+) -> None:
+    finding = retired_value_finding_async
+    saved = await _update_async(finding=finding, field_values={"steps": "New steps"})
+    with patch.object(OperationService, "_require_finding_async", return_value=finding):
+        with pytest.raises(FindingConflictError, match="Your edits have not been saved"):
+            await _update_async(finding=finding, field_values={"steps": "Stale edit"})
+    assert await read_finding_async(memory=sqlite_instance, finding=finding) == saved
 
 
 @pytest.mark.parametrize(("title_query", "title_pattern"), [("leak", None), (None, "Le_k%")])
@@ -63,7 +75,11 @@ async def _update_async(
     severity: str = "sev1",
 ) -> Finding:
     request = FindingUpdateRequest(
-        title="Leak", severity=severity, field_values=field_values, remove_retired_keys=remove_retired_keys or []
+        version=finding.version,
+        title="Leak",
+        severity=severity,
+        field_values=field_values,
+        remove_retired_keys=remove_retired_keys or [],
     )
     return await OperationService().update_finding_async(
         operation_id=finding.operation_id, finding_id=finding.id, request=request

@@ -159,10 +159,16 @@ async def test_update_finding_never_changes_paths(sqlite_instance: SQLiteMemory)
     await sqlite_instance.replace_finding_paths_async(operation_id=operation.id, finding_id=root.id, paths=paths)
 
     updated = await sqlite_instance.update_finding_async(
-        operation_id=operation.id, finding_id=root.id, request=_edit(root, title="Renamed", demonstrated=False)
+        expected_version=root.version,
+        operation_id=operation.id,
+        finding_id=root.id,
+        request=_edit(root, title="Renamed", demonstrated=False),
     )
     marked = await sqlite_instance.update_finding_async(
-        operation_id=operation.id, finding_id=step.id, request=_edit(step, demonstrated=False)
+        expected_version=step.version,
+        operation_id=operation.id,
+        finding_id=step.id,
+        request=_edit(step, demonstrated=False),
     )
 
     assert (updated.title, updated.demonstrated, updated.paths) == ("Renamed", False, paths)
@@ -185,11 +191,17 @@ async def test_move_keeps_sub_findings_and_rejects_cycles(sqlite_instance: SQLit
     ]:
         with pytest.raises(FindingHierarchyError, match=message):
             await sqlite_instance.update_finding_async(
-                operation_id=operation.id, finding_id=child.id, request=_edit(child, parent_finding_id=parent_id)
+                expected_version=child.version,
+                operation_id=operation.id,
+                finding_id=child.id,
+                request=_edit(child, parent_finding_id=parent_id),
             )
 
     moved = await sqlite_instance.update_finding_async(
-        operation_id=operation.id, finding_id=child.id, request=_edit(child, parent_finding_id=second.id)
+        expected_version=child.version,
+        operation_id=operation.id,
+        finding_id=child.id,
+        request=_edit(child, parent_finding_id=second.id),
     )
 
     assert moved.parent_finding_id == second.id
@@ -197,7 +209,10 @@ async def test_move_keeps_sub_findings_and_rejects_cycles(sqlite_instance: SQLit
     assert await sqlite_instance.get_finding_child_counts_async(finding_ids=[first.id, second.id]) == {second.id: 1}
 
     promoted = await sqlite_instance.update_finding_async(
-        operation_id=operation.id, finding_id=child.id, request=_edit(moved, parent_finding_id=None)
+        expected_version=moved.version,
+        operation_id=operation.id,
+        finding_id=child.id,
+        request=_edit(moved, parent_finding_id=None),
     )
 
     assert promoted.parent_finding_id is None
@@ -220,7 +235,10 @@ async def test_a_path_step_cannot_move_or_be_deleted_until_the_paths_change(sqli
 
     with pytest.raises(FindingHierarchyError, match="'Only way'.*moved"):
         await sqlite_instance.update_finding_async(
-            operation_id=operation.id, finding_id=step.id, request=_edit(step, parent_finding_id=other_root.id)
+            expected_version=step.version,
+            operation_id=operation.id,
+            finding_id=step.id,
+            request=_edit(step, parent_finding_id=other_root.id),
         )
     with pytest.raises(FindingHierarchyError, match="'Only way'.*deleted"):
         await sqlite_instance.delete_finding_async(operation_id=operation.id, finding_id=step.id)

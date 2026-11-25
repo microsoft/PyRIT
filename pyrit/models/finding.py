@@ -266,6 +266,7 @@ class Finding(FindingCreate):
     operation_id: UUID
     id: UUID = Field(default_factory=uuid4)
     created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
+    version: int = Field(default=1, ge=1, description="Revision to supply when updating the finding's fields")
     paths: tuple[DecompositionPath, ...] = ()
 
     @property

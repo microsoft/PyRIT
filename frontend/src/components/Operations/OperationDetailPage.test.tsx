@@ -27,6 +27,7 @@ jest.mock('@/hooks/useRuntime', () => ({ ...jest.requireActual('@/hooks/useRunti
 const SAVED: Operation = { id: 'op-1', name: 'Red team / α%', created_at: '2026-10-06T20:00:00Z' }
 const OPERATION: OperationDetail = { ...SAVED, usage: { findings: 0, attacks: 0, scenario_runs: 0 } }
 const FINDING: FindingListItem = {
+  version: 1,
   id: 'finding-1', operation_id: 'op-1', title: 'Human assessment',
   severity: 'informational', field_values: {}, created_at: '2026-10-06T20:00:00Z', evidence_count: 0,
   rows: [], retired: [], parent_finding_id: null, demonstrated: true, paths: [], child_count: 0,
@@ -376,6 +377,7 @@ it('prefills edit fields and saves only editable values', async () => {
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
   await waitFor(() => { expect(screen.getByRole('heading', { name: edited.title })).toBeInTheDocument() })
   expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
+    version: FINDING.version,
     title: edited.title, severity: 'critical', field_values: { description: 'Notes' }, demonstrated: true,
     parent_finding_id: null, keep_retired_keys: [], remove_retired_keys: [],
   })
@@ -402,6 +404,7 @@ it('displays and preserves both custom classifications when editing a finding', 
   await user.click(screen.getByRole('button', { name: 'Save finding' }))
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
+    version: FINDING.version,
     title: FINDING.title, severity: 'Team severity', field_values: { harm_type: 'Team harm' }, demonstrated: true,
     parent_finding_id: null, keep_retired_keys: [], remove_retired_keys: [],
   })
@@ -441,9 +444,34 @@ it('retains an edited draft on update failure and shows why the backend rejected
   expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue(`${FINDING.title} changed`)
   expect(within(dialog).getByRole('textbox', { name: 'Other value for Severity' })).toHaveValue('Critical')
   expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
+    version: FINDING.version,
     title: `${FINDING.title} changed`, severity: 'Critical', field_values: {}, demonstrated: true,
     parent_finding_id: null, keep_retired_keys: [], remove_retired_keys: [],
   })
+})
+
+it('keeps the draft and original version after a stale finding conflict', async () => {
+  const user = userEvent.setup()
+  const detail = 'This finding has changed since you opened it. Your edits have not been saved.'
+  const opening = { ...FINDING, version: 7, field_values: { description: 'Original description' } }
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [opening] })
+  jest.mocked(operationsApi.updateFinding).mockRejectedValue({
+    isAxiosError: true, response: { status: 409, data: { detail } },
+  })
+  renderPage()
+  await user.click(await screen.findByRole('button', { name: `Edit finding: ${FINDING.title}` }))
+  const dialog = screen.getByRole('dialog', { name: 'Edit finding' })
+  await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), ' changed')
+  await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
+  expect(await within(dialog).findByText(detail)).toBeInTheDocument()
+  expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue(`${FINDING.title} changed`)
+  expect(within(dialog).getByRole('textbox', { name: 'Description' })).toHaveValue('Original description')
+  expect(operationsApi.updateFinding).toHaveBeenCalledTimes(1)
+  expect(operationsApi.updateFinding).toHaveBeenLastCalledWith('op-1', FINDING.id, expect.objectContaining({ version: 7 }))
+  await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
+  await waitFor(() => expect(operationsApi.updateFinding).toHaveBeenCalledTimes(2))
+  expect(operationsApi.updateFinding).toHaveBeenLastCalledWith('op-1', FINDING.id, expect.objectContaining({ version: 7 }))
+  expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue(`${FINDING.title} changed`)
 })
 
 it('shows configured rows and retired values on a finding card', async () => {
@@ -508,6 +536,7 @@ it('lists the kept and removed retired values by key, and sends none for a new f
   await user.click(within(await findRemovalConfirmation()).getByRole('button', { name: 'Remove' }))
   await user.click(await screen.findByRole('button', { name: 'Save finding' }))
   await waitFor(() => expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
+    version: FINDING.version,
     title: FINDING.title, severity: 'informational', field_values: { harm_type: 'Malware' }, demonstrated: true,
     parent_finding_id: null, keep_retired_keys: ['retired_owner'], remove_retired_keys: ['contoso_ticket'],
   }))

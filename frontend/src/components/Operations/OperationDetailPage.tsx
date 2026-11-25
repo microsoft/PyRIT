@@ -130,7 +130,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
     const { editing, parent } = dialog
     const saved = editing
       ? await operationsApi.updateFinding(operationId, editing.id, {
-        ...draft, parent_finding_id: editing.parent_finding_id,
+        ...draft, version: editing.version, parent_finding_id: editing.parent_finding_id,
         keep_retired_keys: draft.keep_retired_keys ?? [], remove_retired_keys: draft.remove_retired_keys ?? [],
       })
       : await operationsApi.createFinding(operationId, {

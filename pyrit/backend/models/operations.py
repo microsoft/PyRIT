@@ -172,9 +172,10 @@ class FindingUpdateRequest(_FindingRequestFields):
     A finding's new editable values, replacing the saved ones, and the retired values to keep or remove.
 
     An omitted ``parent_finding_id`` makes the finding top-level. A finding moves with its sub-findings, and paths
-    are replaced separately.
+    are replaced separately. Supply the version read when the edit began; a stale version returns 409.
     """
 
+    version: int = Field(ge=1, strict=True, description="Version of the finding being edited; stale edits return 409")
     keep_retired_keys: list[IdentifierStr] = Field(
         default_factory=list,
         max_length=MAX_ITEMS,
