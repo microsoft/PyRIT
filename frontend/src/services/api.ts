@@ -737,6 +737,12 @@ export const labelsApi = {
 }
 
 export const scenariosApi = {
+  listCompatibleDatasets: async (scenarioName: string, signal?: AbortSignal): Promise<DatasetListResponse> => {
+    const response = await apiClient.get(
+      `/scenarios/catalog/${encodeURIComponent(scenarioName)}/datasets`, { signal },
+    )
+    return response.data
+  },
   loadDatasets: async (
     scenarioName: string, request: ScenarioRunSizeEstimateRequest,
   ): Promise<ScenarioDatasetLoadResponse> => {

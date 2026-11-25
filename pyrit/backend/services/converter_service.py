@@ -459,9 +459,8 @@ class ConverterService:
             raise NotSaveableError(refusal)
         upload_params = self._upload_params(converter_type=converter_type)
         # An optional file left empty means no file, so the converter is saved without it, as restore builds it.
-        requested = {
-            name: value for name, value in params.items() if name not in upload_params or value not in (None, "")
-        }
+        left_empty = self._optional_uploads_left_empty(upload_params=upload_params, params=params)
+        requested = {name: value for name, value in params.items() if name not in left_empty}
         uploads = [parameter for parameter in upload_params if parameter in requested]
         if uploads:
             raise NotSaveableError(f"Saved converters can't keep uploaded files yet ('{uploads[0]}').")
@@ -673,6 +672,27 @@ class ConverterService:
             return "It needs an uploaded file, which saved converters can't keep yet."
         return None
 
+    @staticmethod
+    def _optional_uploads_left_empty(*, upload_params: dict[str, Parameter], params: dict[str, Any]) -> frozenset[str]:
+        """
+        Return the optional upload parameters that ``params`` leaves empty, as None or ``''``, which means no file.
+
+        Saving and the Temporary create both use this, so an empty optional file means the same on both. An empty
+        required upload isn't included, so it's refused as before.
+
+        Args:
+            upload_params (dict[str, Parameter]): The converter's upload parameters by name.
+            params (dict[str, Any]): The constructor parameters from the request.
+
+        Returns:
+            frozenset[str]: The names of the optional upload parameters left empty.
+        """
+        return frozenset(
+            name
+            for name, parameter in upload_params.items()
+            if not parameter.required and name in params and params[name] in (None, "")
+        )
+
     async def _persist_data_uri_params_async(
         self,
         *,
@@ -691,7 +711,8 @@ class ConverterService:
         ``Path | str`` parameters also accept Azure Blob URLs, which pass through
         unchanged; with Azure Blob results storage they must name a file in the
         results container's media subdirectories. Their data-URI uploads use the
-        same local storage.
+        same local storage. An optional file left empty (None or ``''``) means no
+        file, as when saving, and is passed as None.
 
         Inputs remain local until converter deletion or backend shutdown, even with
         Azure-backed memory. Converter outputs still use the configured result storage.
@@ -713,8 +734,10 @@ class ConverterService:
                 is outside the results container's media subdirectories.
         """
         path_params = self._upload_params(converter_type=converter_type)
+        # None, not a left-out key, so a copy doesn't keep its source's file.
+        left_empty = self._optional_uploads_left_empty(upload_params=path_params, params=params)
 
-        result = dict(params)
+        result = {name: None if name in left_empty else value for name, value in params.items()}
         owned_paths: list[Path] = []
         try:
             for name, value in result.items():
