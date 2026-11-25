@@ -195,8 +195,12 @@ export default function Configuration() {
     setSearchParams(nextSearchParams)
   }
 
-  const handleDiscardChanges = (): void => {
-    setContent(savedContent)
+  const handleConfirmLeave = (): void => {
+    // A save in flight is already sending the draft, so the draft stays: if that save fails,
+    // the operator finds their edits on this tab instead of a reverted editor.
+    if (!saving) {
+      setContent(savedContent)
+    }
     if (blocker.state === 'blocked') {
       blocker.proceed()
     }
@@ -293,13 +297,15 @@ export default function Configuration() {
       )}
       <ConfirmDialog
         open={blocker.state === 'blocked'}
-        title="Discard unsaved changes?"
-        confirmLabel="Discard changes"
-        cancelLabel="Keep editing"
-        onConfirm={handleDiscardChanges}
+        title={saving ? 'Leave while saving?' : 'Discard unsaved changes?'}
+        confirmLabel={saving ? 'Leave' : 'Discard changes'}
+        cancelLabel={saving ? 'Stay' : 'Keep editing'}
+        onConfirm={handleConfirmLeave}
         onCancel={handleKeepEditing}
       >
-        Your unsaved configuration changes will be lost if you continue.
+        {saving
+          ? 'The save is still running and continues after you leave. You will only be told about a failure on this tab.'
+          : 'Your unsaved configuration changes will be lost if you continue.'}
       </ConfirmDialog>
       <ConfirmDialog
         open={confirmRecovery}
