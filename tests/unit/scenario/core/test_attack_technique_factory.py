@@ -32,8 +32,10 @@ from pyrit.models import (
     SeedGroupRequirements,
     SeedObjective,
     SeedPrompt,
+    SeedSimulatedConversation,
     SimulatedConversationMode,
     ToolDefinition,
+    config_hash,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import (
@@ -1750,6 +1752,19 @@ class TestSimulatedConversationWithTargetTools:
         assert config is not None
         assert config.adversarial_chat_system_prompt.value.startswith("Shared guidance.")
         assert config.mode is mode
+
+    def test_default_simulated_conversation_keeps_its_legacy_fingerprint(self) -> None:
+        seed = SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt(value="Attack."),
+            simulated_target_system_prompt=SeedPrompt(value="Comply."),
+            pyrit_version="0.0.0",
+        )
+
+        # Computed before mode and use_target_tools existed; techniques saved then must still resolve.
+        assert (
+            config_hash(AttackTechniqueFactory._configuration_value(seed))
+            == "102cc8e26ac9c9b8bbeaa4893841cbd7fafd4f3feb6f4a3903d24d7551f997fb"
+        )
 
     async def test_atomic_attack_writes_history_for_target_tools_before_each_objective(self) -> None:
         target = _ApprovalCheckingTarget()

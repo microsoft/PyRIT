@@ -996,11 +996,18 @@ class AttackTechniqueFactory(Identifiable):
         if isinstance(value, SeedGroupRequirements):
             return value.to_identity()
         if isinstance(value, BaseModel):
-            return {
+            configuration = {
                 name: cls._configuration_value(getattr(value, name))
                 for name in type(value).model_fields
                 if name not in {"id", "prompt_group_id", "value_sha256", "date_added"}
             }
+            # Left out at their defaults, so simulated conversations that predate them keep their fingerprint.
+            if isinstance(value, SeedSimulatedConversation):
+                if value.mode is SimulatedConversationMode.TURN_BY_TURN:
+                    configuration.pop("mode")
+                if not value.use_target_tools:
+                    configuration.pop("use_target_tools")
+            return configuration
         if is_dataclass(value) and not isinstance(value, type):
             return {field.name: cls._configuration_value(getattr(value, field.name)) for field in fields(value)}
         if isinstance(value, dict):
