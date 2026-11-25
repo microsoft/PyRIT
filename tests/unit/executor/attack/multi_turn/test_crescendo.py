@@ -22,7 +22,7 @@ from pyrit.executor.attack import (
     CrescendoAttackContext,
     CrescendoAttackResult,
 )
-from pyrit.memory import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,
     AttackOutcome,
@@ -609,7 +609,7 @@ class TestContextValidation:
         next_message = Message.from_prompt(prompt="Continue conversation", role="user")
 
         # Should raise RuntimeError wrapping ValueError because prepended turns (2) exceed max_turns (1)
-        with pytest.raises(RuntimeError, match="exceeding max_turns"):
+        with pytest.raises(RuntimeError, match="exceeds max_turns"):
             await attack.execute_async(
                 objective="Test objective",
                 prepended_conversation=prepended,
@@ -647,6 +647,9 @@ class TestContextValidation:
                 prepended_conversation=prepended,
                 next_message=next_message,
             )
+
+        # The check runs before the prepended messages are converted, so none of them reach memory
+        assert await CentralMemory.get_memory_instance().get_message_pieces_async() == []
 
 
 @pytest.mark.usefixtures("patch_central_database")

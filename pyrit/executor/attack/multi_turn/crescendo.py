@@ -15,6 +15,7 @@ from pyrit.executor.attack.component import (
     ConversationManager,
     PrependedConversationConfig,
     _AdversarialConversationManager,
+    get_prepended_turn_count,
 )
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
@@ -355,6 +356,16 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Raises:
             ValueError: If the prepended conversation already uses every turn allowed by max_turns.
         """
+        # A prepended conversation that already uses every turn would leave no turn to send, and the
+        # attack would report FAILURE without contacting the objective target. Check it before the
+        # prepended messages go through the converters and are written to memory.
+        prepended_turns = get_prepended_turn_count(context.prepended_conversation)
+        if prepended_turns >= self._max_turns:
+            raise ValueError(
+                f"Prepended conversation has {prepended_turns} turns, which equals or exceeds "
+                f"max_turns={self._max_turns}. Reduce prepended turns or increase max_turns."
+            )
+
         # Ensure the context has a session
         context.session = ConversationSession()
 
@@ -379,14 +390,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             max_turns=self._max_turns,
             memory_labels=self._memory_labels,
         )
-
-        # A prepended conversation that already uses every turn would leave no turn to send, and the
-        # attack would report FAILURE without contacting the objective target.
-        if context.executed_turns >= self._max_turns:
-            raise ValueError(
-                f"Prepended conversation has {context.executed_turns} turns, which equals or exceeds "
-                f"max_turns={self._max_turns}. Reduce prepended turns or increase max_turns."
-            )
 
         self._initialize_seed_state(context=context)
 

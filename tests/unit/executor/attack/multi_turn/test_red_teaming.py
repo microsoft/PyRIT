@@ -624,7 +624,7 @@ class TestContextValidation:
         ]
 
         # Should raise RuntimeError wrapping ValueError because prepended turns (2) exceed max_turns (1)
-        with pytest.raises(RuntimeError, match="exceeding max_turns"):
+        with pytest.raises(RuntimeError, match="exceeds max_turns"):
             await attack.execute_async(
                 objective="Test objective",
                 prepended_conversation=prepended,
@@ -669,6 +669,9 @@ class TestContextValidation:
                 objective="Test objective",
                 prepended_conversation=prepended,
             )
+
+        # The check runs before the prepended messages are converted, so none of them reach memory
+        assert await CentralMemory.get_memory_instance().get_message_pieces_async() == []
 
 
 @pytest.mark.usefixtures("patch_central_database")
