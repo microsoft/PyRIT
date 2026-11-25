@@ -333,25 +333,49 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         assert params.preparation_failure.reason == failure_reason
         assert params.source_conversations == frozenset({reference})
 
+    @pytest.mark.parametrize(
+        ("kind", "error", "match"),
+        [
+            (
+                AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+                AdversarialChatResponseBlockedException,
+                "Preparation failed",
+            ),
+            (
+                AttackPreparationFailureKind.ADVERSARIAL_CHAT_REFUSED,
+                AdversarialChatResponseBlockedException,
+                "Preparation failed",
+            ),
+            (
+                AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT,
+                ValueError,
+                r"\(adversarial_chat_invalid_output\): Preparation failed",
+            ),
+            (
+                AttackPreparationFailureKind.SIMULATED_TARGET_ERROR,
+                ValueError,
+                r"\(simulated_target_error\): Preparation failed",
+            ),
+        ],
+    )
     @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
-    async def test_unsupported_params_preserve_preparation_failure(
+    async def test_unsupported_params_raise_the_preparation_failure(
         self,
         mock_generate: AsyncMock,
+        kind: AttackPreparationFailureKind,
+        error: type[Exception],
+        match: str,
         seed_group_with_simulated_conv: AttackSeedGroup,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
     ) -> None:
-        failure_reason = "Adversarial chat blocked the attack."
         mock_generate.return_value = SimulatedConversationResult(
             seed_prompts=[],
             related_conversations=frozenset(),
-            preparation_failure=AttackPreparationFailure(
-                kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
-                reason=failure_reason,
-            ),
+            preparation_failure=AttackPreparationFailure(kind=kind, reason="Preparation failed."),
         )
 
-        with pytest.raises(AdversarialChatResponseBlockedException, match=failure_reason):
+        with pytest.raises(error, match=match):
             await AttackParameters.from_seed_group_async(
                 seed_group=seed_group_with_simulated_conv,
                 adversarial_chat=mock_adversarial_chat,

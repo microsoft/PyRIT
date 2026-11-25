@@ -131,13 +131,14 @@ class AttackParameters:
             An instance of this AttackParameters type.
 
         Raises:
-            AdversarialChatResponseBlockedException: If simulated-conversation preparation was
-                blocked and this parameter type cannot represent a completed preparation failure.
+            AdversarialChatResponseBlockedException: If the adversarial chat was blocked or refused
+                while preparing a simulated conversation, and this parameter type cannot represent a
+                preparation failure.
             TypeError: If ``seed_group`` is not a ``AttackSeedGroup``.
             ValueError: If overrides contain invalid fields, if seed_group has a simulated
-                conversation but a required dependency is not provided, or if its simulated
-                conversation uses target tools, the objective target reports none, and this
-                parameter type cannot represent a preparation failure.
+                conversation but a required dependency is not provided, or if preparing its simulated
+                conversation failed for another reason, which the message names, and this parameter
+                type cannot represent a preparation failure.
         """
         # Import here to avoid circular imports
         from pyrit.executor.attack.multi_turn.simulated_conversation import (
@@ -236,12 +237,18 @@ class AttackParameters:
             simulated_prompts = simulated_result.seed_prompts
             if "source_conversations" in valid_fields:
                 params["source_conversations"] = frozenset(simulated_result.related_conversations)
-            if simulated_result.preparation_failure is not None:
+            failure = simulated_result.preparation_failure
+            if failure is not None:
                 if "preparation_failure" not in valid_fields:
-                    if tools == []:
-                        raise ValueError(simulated_result.preparation_failure.reason)
-                    raise AdversarialChatResponseBlockedException(message=simulated_result.preparation_failure.reason)
-                params["preparation_failure"] = simulated_result.preparation_failure
+                    if failure.kind in (
+                        AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+                        AttackPreparationFailureKind.ADVERSARIAL_CHAT_REFUSED,
+                    ):
+                        raise AdversarialChatResponseBlockedException(message=failure.reason)
+                    raise ValueError(
+                        f"Simulated conversation preparation failed ({failure.kind.value}): {failure.reason}"
+                    )
+                params["preparation_failure"] = failure
 
             # A conversation with tool calls can run past its reserved range; later static prompts
             # move back so they still follow it.
