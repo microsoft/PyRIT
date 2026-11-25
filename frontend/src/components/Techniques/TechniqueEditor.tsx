@@ -1,8 +1,8 @@
-import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
-  Input, MessageBar, MessageBarBody, Select, Spinner, Text, Textarea,
+  Input, MessageBar, MessageBarBody, MessageBarTitle, Select, Spinner, Text, Textarea,
 } from '@fluentui/react-components'
 
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
@@ -14,19 +14,40 @@ import ReferenceField from '@/components/Parameters/ReferenceField'
 import {
   buildParametersFromForm, getInitialFormValues, nonNullableTypeName, type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
+import { useSaveability } from '@/hooks/useSaveability'
 import { convertersApi, techniquesApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
+import { isNotSaveableError, notSaveableReason, toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
+import { validateRegistryName } from '@/utils/registryName'
 import type {
   CreateTechniqueRequest, Parameter, RegistryReferenceOption, TechniqueTypeEntry,
   TechniqueConfiguration, TechniqueChanges, TechniqueEditResponse, SimulationChanges,
-  ConverterInstance, ConverterSelection,
+  ConverterInstance, ConverterSelection, TechniqueSaveabilityRequest,
 } from '@/types'
 
 import { useTechniqueEditorStyles } from './TechniqueEditor.styles'
 
 const SCALAR_TYPES = new Set(['str', 'int', 'float', 'bool', 'list[str]', 'list[int]', 'list[float]', 'list[bool]'])
 const VALIDATION_DELAY_MS = 300
+const TEMPORARY_TECHNIQUE_NOTE = 'A Temporary technique is gone after the backend restarts or is reinitialized.'
+
+type TechniqueReferences = Pick<CreateTechniqueRequest, 'request_converters' | 'response_converters' | 'adversarial_chat'>
+
+/** The converters and adversarial target a new technique sends, as its attack type supports them. */
+function techniqueReferences(
+  selected: TechniqueTypeEntry,
+  requestConverters: ConverterSelection[],
+  responseConverters: ConverterSelection[],
+  adversarialTarget: string,
+): TechniqueReferences {
+  const references: TechniqueReferences = {}
+  if (selected.supports_converters && (requestConverters.length || responseConverters.length)) {
+    references.request_converters = requestConverters.filter((entry): entry is string => typeof entry === 'string')
+    references.response_converters = responseConverters.filter((entry): entry is string => typeof entry === 'string')
+  }
+  if (selected.supports_adversarial && adversarialTarget) references.adversarial_chat = adversarialTarget
+  return references
+}
 
 function canConfigure(parameter: Parameter, allowStructured = true): boolean {
   if (parameter.reference_type) return false
@@ -111,6 +132,10 @@ export default function TechniqueEditor({
   const [submitError, setSubmitError] = useState(false)
   const [revision, setRevision] = useState(0)
   const [validating, setValidating] = useState(false)
+  const [saveRefusal, setSaveRefusal] = useState<{ formKey: string, reason: string } | null>(null)
+  const [selectorConflict, setSelectorConflict] = useState<{
+    name: string, tags: string, field: 'name' | 'tags', detail: string,
+  } | null>(null)
 
   function update<Value>(setter: Dispatch<SetStateAction<Value>>, value: Value): void {
     if (autoApply) {
@@ -164,8 +189,34 @@ export default function TechniqueEditor({
   }, [error, submitError])
 
   const selected = types.find((entry) => entry.attack_type === selectedType)
-  const parameters = original ? original.parameters : guiParameters(getAttackParameters(selected))
+  const parameters = useMemo(
+    () => original ? original.parameters : guiParameters(getAttackParameters(selected)),
+    [original, selected],
+  )
   const editable = (field: string): boolean => !original || original.editable_fields.includes(field)
+
+  // A new technique is saved unless the backend says restore couldn't bring it back.
+  const saveabilityRequest = useMemo((): TechniqueSaveabilityRequest | null => {
+    if (editing || !selected) return null
+    const result = buildParametersFromForm(parameters, values)
+    if (!result.ok) return null
+    return {
+      type: selected.attack_type,
+      params: result.parameters ?? {},
+      ...techniqueReferences(selected, requestConverters, responseConverters, adversarialTarget),
+    }
+  }, [editing, selected, parameters, values, requestConverters, responseConverters, adversarialTarget])
+  const checkedReason = useSaveability(saveabilityRequest, techniquesApi.checkSaveability)
+  // A refused save only applies to the values it was refused for, so any edit lets the user try saving again.
+  const formKey = JSON.stringify([selectedType, values, requestConverters, responseConverters, adversarialTarget])
+  const refusedReason = saveRefusal?.formKey === formKey ? saveRefusal.reason : null
+  const temporaryReason = editing ? null : checkedReason ?? refusedReason
+  // A taken name or tag only applies to the name and tags it was refused for, so changing either lets the user retry.
+  const conflict = selectorConflict?.name === name && selectorConflict.tags === tags ? selectorConflict : null
+  const nameMessage = editing ? null
+    : (conflict?.field === 'name' ? conflict.detail : null)
+      ?? (temporaryReason === null && name ? validateRegistryName(name) : null)
+  const tagsMessage = conflict?.field === 'tags' ? conflict.detail : null
 
   const editChanges = (): TechniqueChanges => {
     if (!original) throw new Error('A source technique is required for editing.')
@@ -250,13 +301,9 @@ export default function TechniqueEditor({
     const request: CreateTechniqueRequest = {
       name, description, tags: parsedTags, type: selectedType,
       params: result.ok ? result.parameters ?? {} : {},
-    }
-    if (selected.supports_converters && (requestConverters.length || responseConverters.length)) {
-      request.request_converters = requestConverters.filter((entry): entry is string => typeof entry === 'string')
-      request.response_converters = responseConverters.filter((entry): entry is string => typeof entry === 'string')
+      ...techniqueReferences(selected, requestConverters, responseConverters, adversarialTarget),
     }
     if (selected.supports_adversarial) {
-      if (adversarialTarget) request.adversarial_chat = adversarialTarget
       if (systemPrompt) request.adversarial_system_prompt = systemPrompt
       if (seedPrompt) request.adversarial_seed_prompt = seedPrompt
       if (turnPrompt) request.adversarial_prompt_template = turnPrompt
@@ -272,11 +319,23 @@ export default function TechniqueEditor({
         })
         if (active.current) onApplied?.(response)
       } else {
-        await techniquesApi.createTechnique(request)
+        await techniquesApi.createTechnique({ ...request, persist: temporaryReason === null })
         if (active.current) onCreated?.()
       }
     } catch (err) {
-      if (active.current) fail(toApiError(err).detail)
+      if (active.current) {
+        const apiError = toApiError(err)
+        if (!original && temporaryReason === null && isNotSaveableError(apiError)) {
+          setSaveRefusal({ formKey, reason: notSaveableReason(apiError) ?? apiError.detail })
+        } else if (!original && apiError.status === 409 && apiError.type === undefined
+          && apiError.fieldErrors.some((fieldError) => fieldError.field === 'body.name' || fieldError.field === 'body.tags')) {
+          // A taken name or tag is a 409 without a problem type that says which field is taken.
+          const field = apiError.fieldErrors.some((fieldError) => fieldError.field === 'body.tags') ? 'tags' : 'name'
+          setSelectorConflict({ name, tags, field, detail: apiError.detail })
+        } else {
+          fail(apiError.detail)
+        }
+      }
     } finally {
       if (active.current) setSubmitting(false)
     }
@@ -295,8 +354,9 @@ export default function TechniqueEditor({
               {!loading && types.length === 0 && <Button onClick={() => setRetry(retry + 1)}>Retry metadata</Button>}
               {!loading && types.length > 0 && (
                 <>
-                  {!editing && <HelpField label="Registry name" required hint="Start with a letter. Use letters, digits, and underscores."
-                    help="A unique name used to find and reuse this technique. Adding a technique does not run an attack.">
+                  {!editing && <HelpField label="Registry name" required
+                    help="A unique name used to find and reuse this technique. Adding a technique does not run an attack."
+                    validationMessage={nameMessage ?? undefined}>
                     <Input value={name} disabled={submitting} onChange={(_, data) => setName(data.value)} />
                   </HelpField>}
                   {editing
@@ -332,7 +392,8 @@ export default function TechniqueEditor({
                     </div>
                   )}
                   {!editing && <><HelpField label="Tags" hint="Comma-separated tags."
-                    help="Labels used to find and group techniques, such as single_turn or simulation. Tags do not change the attack algorithm.">
+                    help="Labels used to find and group techniques, such as single_turn or simulation. Tags do not change the attack algorithm."
+                    validationMessage={tagsMessage ?? undefined}>
                     <Input value={tags} disabled={submitting} onChange={(_, data) => setTags(data.value)} />
                   </HelpField>
                   <HelpField label="Attack type" required help="The algorithm this technique configures. It manages how prompts are sent and how the attack conversation proceeds.">
@@ -399,15 +460,29 @@ export default function TechniqueEditor({
   return (
     <Dialog open onOpenChange={(_, data) => { if (!data.open) onClose?.() }}>
       <DialogSurface className={styles.surface}>
-        <DialogBody>
+        <DialogBody className={styles.body}>
           <DialogTitle>{editing ? 'Edit technique' : 'New technique'}</DialogTitle>
           <DialogContent className={styles.content}>
             {content}
           </DialogContent>
-          <DialogActions>
+          {/* Outside the scrolling form, so it shows next to the button it explains without moving the fields. */}
+          {!editing && temporaryReason && (
+            <MessageBar intent="warning" className={styles.temporaryWarning} role="status">
+              <MessageBarBody>
+                <MessageBarTitle>This technique can&apos;t be saved</MessageBarTitle>
+                {temporaryReason} {TEMPORARY_TECHNIQUE_NOTE}
+              </MessageBarBody>
+            </MessageBar>
+          )}
+          <DialogActions className={!editing && temporaryReason ? styles.actionsBelowWarning : undefined}>
             <Button className={styles.action} onClick={onClose}>Cancel</Button>
-            <Button className={styles.action} appearance="primary" disabled={loading || submitting || !name.trim() || !selected}
-              onClick={() => { void submit() }}>{submitting ? editing ? 'Applying...' : 'Adding...' : editing ? 'Apply to run' : 'Add technique'}</Button>
+            <Button className={styles.action} appearance="primary"
+              disabled={loading || submitting || !name.trim() || !selected || nameMessage !== null || tagsMessage !== null}
+              onClick={() => { void submit() }}>
+              {submitting
+                ? editing ? 'Applying...' : temporaryReason === null ? 'Saving...' : 'Adding...'
+                : editing ? 'Apply to run' : temporaryReason === null ? 'Save technique' : 'Create as Temporary'}
+            </Button>
           </DialogActions>
         </DialogBody>
       </DialogSurface>

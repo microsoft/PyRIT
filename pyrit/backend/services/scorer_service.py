@@ -15,6 +15,7 @@ from pyrit.backend.models import (
     ScorerTypeResponse,
 )
 from pyrit.backend.models.scorers import UnregisteredScorer
+from pyrit.backend.services.saved_entries import save_then_register_locked_async
 from pyrit.models import ScorerEvaluationIdentifier, ScorerIdentifier, project_behavioral_identity
 from pyrit.models.catalog import (
     ComponentRecipe,
@@ -31,7 +32,6 @@ from pyrit.registry import (
     creator_metadata,
     prepare_saved_params_async,
     record_private_references,
-    save_then_register_async,
 )
 from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin
 from pyrit.score import Scorer, TrueFalseScorer
@@ -297,7 +297,7 @@ class ScorerService:
             return scorer, self._build_instance(name=name, scorer=scorer, origin=RegistryEntryOrigin.SAVED), creator
 
         scorer, instance, creator = await asyncio.to_thread(build)
-        await save_then_register_async(
+        await save_then_register_locked_async(
             kind=RegistryRecipeKind.SCORERS,
             name=name,
             recipe=ComponentRecipe(

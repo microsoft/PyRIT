@@ -5,10 +5,11 @@
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from pyrit.backend.models.common import IdentifierStr, PaginationInfo, TextStr
-from pyrit.models import ComponentIdentifier, Parameter
+from pyrit.backend.models.common import FieldError, IdentifierStr, PaginationInfo, TextStr
+from pyrit.models import ComponentIdentifier, Parameter, validate_registry_name
+from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.models.request_limits import MAX_ITEMS
 from pyrit.models.technique_edit import TechniqueOverride, TechniqueSettings
 
@@ -26,6 +27,13 @@ class TechniqueInstance(BaseModel):
     uses_default_adversarial_target: bool
     identifier: ComponentIdentifier
     creation_statement: str
+    origin: RegistryEntryOrigin | None = Field(
+        None,
+        description=(
+            "Where the technique comes from: 'saved' (restored at every start), 'configuration' (the server's "
+            "startup scripts), or 'temporary' (gone after a restart or reinitialization)"
+        ),
+    )
 
 
 class TechniqueListResponse(BaseModel):
@@ -73,19 +81,32 @@ class TechniqueEditResponse(BaseModel):
     override: TechniqueOverride
 
 
-class CreateTechniqueRequest(BaseModel):
-    """Construct a deferred factory using existing registry references."""
+class TechniqueParametersRequest(BaseModel):
+    """The attack type, its parameters, and the registered entries that a technique is built from."""
 
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
 
-    name: TechniqueSelector
     type: str = Field(min_length=1, max_length=256)
     params: dict[IdentifierStr, JsonValue] = Field(default_factory=dict, max_length=MAX_ITEMS)
-    description: TextStr | None = None
-    tags: list[TechniqueSelector] = Field(default_factory=list, max_length=MAX_ITEMS)
     request_converters: list[IdentifierStr] | None = Field(default=None, max_length=MAX_ITEMS)
     response_converters: list[IdentifierStr] | None = Field(default=None, max_length=MAX_ITEMS)
     adversarial_chat: IdentifierStr | None = None
+
+
+class CreateTechniqueRequest(TechniqueParametersRequest):
+    """Construct a deferred factory using existing registry references."""
+
+    name: TechniqueSelector
+    persist: bool = Field(
+        False,
+        description=(
+            "Save the technique so it comes back after the backend restarts or is reinitialized (true), or keep "
+            "it only until then (false). A saved technique needs a name of lowercase letters, digits, and "
+            "underscores, and can only use saved converters and targets or ones from the server's configuration."
+        ),
+    )
+    description: TextStr | None = None
+    tags: list[TechniqueSelector] = Field(default_factory=list, max_length=MAX_ITEMS)
     adversarial_system_prompt: str | None = None
     adversarial_seed_prompt: str | None = None
     adversarial_prompt_template: str | None = None
@@ -112,3 +133,29 @@ class CreateTechniqueRequest(BaseModel):
         if {"all", "default"} & {tag.casefold() for tag in value}:
             raise ValueError("all and default are reserved selectors")
         return value
+
+    @model_validator(mode="after")
+    def _validate_persist(self) -> "CreateTechniqueRequest":
+        if self.persist:
+            validate_registry_name(self.name)
+            # A saved technique is restored with no caller, so it would come back shared.
+            if self.private:
+                raise ValueError("A private technique can't be saved; leave out persist or private")
+        return self
+
+
+class TechniqueSaveabilityRequest(TechniqueParametersRequest):
+    """A technique to check, as a create request would give it, without building or saving it."""
+
+
+class TechniqueConflictResponse(BaseModel):
+    """A technique to save whose name or tag is taken, with the field that clashes."""
+
+    detail: str = Field(..., description="What clashes")
+    errors: list[FieldError] | None = Field(
+        None,
+        description=(
+            "The field that clashes: body.name or body.tags. Left out when an entry the technique names was deleted "
+            "while it was being saved."
+        ),
+    )

@@ -42,6 +42,8 @@ import {
 
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
+import DeleteSavedEntryButton from '@/components/Registry/DeleteSavedEntryButton'
+import OriginBadge from '@/components/Registry/OriginBadge'
 import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import type { TargetCapabilityDetection } from '@/hooks/useTargetCapabilityDetection'
@@ -66,7 +68,6 @@ import {
   type TargetFilters,
 } from './targetFilters'
 import TargetFiltersBar from './TargetFiltersBar'
-import TargetOriginBadge from './TargetOriginBadge'
 import { useTargetTableStyles } from './TargetTable.styles'
 import TargetSelect from './TargetSelect'
 
@@ -75,6 +76,8 @@ interface TargetTableProps {
   targets: TargetInstance[]
   defaultAdversarialTarget: TargetInstance | null
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
+  /** Called after a saved target's file is deleted, so the list can be loaded again. */
+  onTargetDeleted?: () => void
   detection: TargetCapabilityDetection
 }
 
@@ -350,6 +353,7 @@ export default function TargetTable({
   targets,
   defaultAdversarialTarget,
   onSetDefaultAdversarialTarget,
+  onTargetDeleted,
   detection,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
@@ -635,20 +639,27 @@ export default function TargetTable({
                       >
                         {hidden ? 'Show' : 'Hide'}
                       </Button>
+                      {target.origin === 'saved' && onTargetDeleted && (
+                        <DeleteSavedEntryButton
+                          kind="targets"
+                          name={target.target_registry_name}
+                          className={styles.rowAction}
+                          onDeleted={onTargetDeleted}
+                        />
+                      )}
                     </TableCell>
                   </>
                 }
-                nameCellClassName={styles.registryNameCell}
                 nameContent={
                   (target.origin || isDefaultAdversarial(target)) && (
-                    <div className={styles.defaultIndicators}>
-                      {target.origin && <TargetOriginBadge origin={target.origin} />}
+                    <>
+                      {target.origin && <OriginBadge origin={target.origin} />}
                       {isDefaultAdversarial(target) && (
                         <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
                           Adversarial
                         </Badge>
                       )}
-                    </div>
+                    </>
                   )
                 }
                 rowClassName={mergeClasses(

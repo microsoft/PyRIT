@@ -1,4 +1,4 @@
-import { makeStyles } from '@fluentui/react-components'
+import { makeStyles, tokens } from '@fluentui/react-components'
 
 export const useRestoreFailuresStyles = makeStyles({
   // The page doesn't scroll past the editor, so a long list scrolls on its own. It fills its column, and a long
@@ -11,5 +11,8 @@ export const useRestoreFailuresStyles = makeStyles({
     maxHeight: '30vh',
     overflowWrap: 'anywhere',
     overflowY: 'auto',
+  },
+  delete: {
+    marginLeft: tokens.spacingHorizontalS,
   },
 })

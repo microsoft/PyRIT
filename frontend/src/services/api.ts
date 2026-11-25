@@ -21,10 +21,12 @@ import type {
   ConverterListResponse,
   ConverterPreviewRequest,
   ConverterPreviewResponse,
+  ConverterSaveabilityRequest,
   CreateConverterRequest,
   CreateTechniqueRequest,
   TechniqueInstance,
   TechniqueListResponse,
+  TechniqueSaveabilityRequest,
   TechniqueTypeResponse,
   TechniqueConfiguration,
   TechniqueOverride,
@@ -416,6 +418,16 @@ export const runtimeApi = {
   },
 }
 
+export const savedEntriesApi = {
+  get: async (kind: RegistryRecipeKind, name: string): Promise<SavedEntry> => {
+    return (await apiClient.get(`/saved-entries/${kind}/${encodeURIComponent(name)}`)).data
+  },
+  delete: async (kind: RegistryRecipeKind, name: string, expectedVersion: string | null): Promise<void> => {
+    const params = expectedVersion === null ? {} : { expected_version: expectedVersion }
+    await apiClient.delete(`/saved-entries/${kind}/${encodeURIComponent(name)}`, { params })
+  },
+}
+
 export const targetsApi = {
   detectCapabilities: async (target: TargetInstance): Promise<TargetInstance> => {
     const response = await apiClient.post<TargetInstance>(
@@ -469,6 +481,11 @@ export const techniquesApi = {
     (await apiClient.get('/techniques/types')).data,
   createTechnique: async (request: CreateTechniqueRequest): Promise<TechniqueInstance> =>
     (await apiClient.post('/techniques', request)).data,
+  checkSaveability: async (
+    request: TechniqueSaveabilityRequest,
+    signal?: AbortSignal,
+  ): Promise<SaveabilityResponse> =>
+    (await apiClient.post('/techniques/saveability', request, { signal })).data,
   getConfiguration: async (name: string): Promise<TechniqueConfiguration> =>
     (await apiClient.get(`/techniques/${encodeURIComponent(name)}/configuration`)).data,
   validateEdit: async (request: TechniqueOverride): Promise<TechniqueEditResponse> =>
@@ -493,6 +510,13 @@ export const convertersApi = {
 
   createConverter: async (request: CreateConverterRequest): Promise<ConverterInstance> => {
     const response = await apiClient.post('/converters', request)
+    return response.data
+  },
+  checkSaveability: async (
+    request: ConverterSaveabilityRequest,
+    signal?: AbortSignal,
+  ): Promise<SaveabilityResponse> => {
+    const response = await apiClient.post('/converters/saveability', request, { signal })
     return response.data
   },
   buildConverter: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredConverter> => {
@@ -1185,4 +1209,9 @@ export const promptGenerationsApi = {
   },
 }
 
-import type { RuntimeReadiness, RuntimeStatus } from '@/types'
+import type {
+  RegistryRecipeKind,
+  RuntimeReadiness,
+  RuntimeStatus,
+  SavedEntry,
+} from '@/types'

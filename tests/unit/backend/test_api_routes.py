@@ -1947,6 +1947,42 @@ class TestConverterRoutes:
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_check_converter_saveability_answers_with_the_save_checks(self, client: TestClient) -> None:
+        saveable = client.post("/api/converters/saveability", json={"type": "Base64Converter", "params": {}})
+        needs_file = client.post(
+            "/api/converters/saveability", json={"type": "AddImageTextConverter", "params": {"text_to_add": "x"}}
+        )
+
+        assert saveable.status_code == status.HTTP_200_OK
+        assert saveable.json() == {"not_saveable_reason": None}
+        assert needs_file.json() == {
+            "not_saveable_reason": "It needs an uploaded file, which saved converters can't keep yet."
+        }
+
+    def test_check_converter_saveability_refuses_an_unknown_type(self, client: TestClient) -> None:
+        response = client.post("/api/converters/saveability", json={"type": "MissingConverter", "params": {}})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {"detail": "Converter type 'MissingConverter' not found"}
+
+    def test_get_converter_named_saveability_reaches_the_lookup(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_converter_async = AsyncMock(
+                return_value=ConverterInstance(
+                    converter_id="saveability",
+                    identifier=ConverterIdentifier(
+                        class_name="Base64Converter", class_module="pyrit.converter.base64_converter"
+                    ),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/converters/saveability")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["converter_id"] == "saveability"
+
     def test_delete_converter_success(self, client: TestClient) -> None:
         with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
             mock_service = MagicMock()
@@ -1970,8 +2006,8 @@ class TestConverterRoutes:
 
     def test_delete_converter_refuses_a_saved_converter(self, client: TestClient) -> None:
         refusal = SavedEntryRemovalError(
-            "Saved converter 'base64_converter' can't be removed yet, since it comes back from its saved file at "
-            "every start."
+            "Saved converter 'base64_converter' comes back from its saved file at every start, so delete it with "
+            "DELETE /api/saved-entries/converters/base64_converter instead."
         )
         with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
             mock_get_service.return_value.delete_converter_async = AsyncMock(side_effect=refusal)

@@ -79,7 +79,11 @@ from pyrit.registry import (
     TargetRegistry,
     owner_metadata,
 )
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, registry_entry_origin
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SavedEntryReplacementError,
+    registry_entry_origin,
+)
 from pyrit.scenario import (
     AttackTechniqueFactory,
     DatasetSource,
@@ -395,6 +399,41 @@ async def test_tools_launch_script_cannot_use_a_saved_technique_in_its_place_asy
             await _run_launch_scripts_async({"tools": ToolsInitializer()})
 
         assert registry.instances.get("role_play_tool_calls") is saved
+    finally:
+        AttackTechniqueRegistry.reset_registry_singleton()
+
+
+class _TechniqueLaunchScript:
+    """A launch script that registers a technique the way the Techniques initializer does."""
+
+    def __init__(self, *, name: str, swallow: bool = False) -> None:
+        self._name = name
+        self._swallow = swallow
+
+    async def initialize_async(self) -> None:
+        factory = AttackTechniqueFactory(name=self._name, attack_class=PromptSendingAttack)
+        try:
+            AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        except SavedEntryReplacementError:
+            if not self._swallow:
+                raise
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("swallow", [False, True])
+async def test_launch_scripts_cannot_take_a_saved_techniques_tag_async(swallow: bool) -> None:
+    AttackTechniqueRegistry.reset_registry_singleton()
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    saved = AttackTechniqueFactory(name="formal", attack_class=PromptSendingAttack, technique_tags=["custom"])
+    registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+    try:
+        with pytest.raises(
+            SavedEntryLaunchConflictError, match="'techniques' would replace the saved technique 'formal'"
+        ):
+            await _run_launch_scripts_async({"techniques": _TechniqueLaunchScript(name="custom", swallow=swallow)})
+
+        assert registry.instances.get("custom") is None
+        assert registry.instances.get("formal") is saved
     finally:
         AttackTechniqueRegistry.reset_registry_singleton()
 

@@ -34,15 +34,19 @@ from pyrit.backend.services.scenario_run_service import _PreparedRun
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.technique_service import get_technique_service
 from pyrit.converter import Base64Converter
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
 from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget, TextTarget
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
-from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY, registry_entry_origin
+from pyrit.registry.instance_registry import (
+    CONFIGURATION_ENTRY_METADATA_KEY,
+    registry_entry_origin,
+)
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
-from pyrit.scenario import Scenario
+from pyrit.scenario import AttackTechniqueFactory, Scenario
 from pyrit.score import SubStringScorer
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initialization import reset_setup_registries
@@ -468,6 +472,28 @@ async def test_admitted_manual_send_blocks_reinitialization_without_an_http_requ
         assert runtime.generation != "original"
     finally:
         get_manual_send_scheduler.cache_clear()
+
+
+async def test_a_request_doesnt_count_itself_as_active_work_async(runtime: RuntimeLifecycle) -> None:
+    @runtime.app.get("/api/probe-active-work")
+    async def probe() -> dict[str, bool]:
+        return {"active": runtime.has_active_work()}
+
+    release = asyncio.Event()
+
+    async def other_request_async() -> None:
+        await release.wait()
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+        assert (await client.get("/api/probe-active-work")).json() == {"active": False}
+        other = asyncio.create_task(other_request_async())
+        runtime.operations.add(other)
+        try:
+            assert (await client.get("/api/probe-active-work")).json() == {"active": True}
+        finally:
+            release.set()
+            await other
+            runtime.operations.discard(other)
 
 
 async def test_second_idle_check_closes_admission_race(runtime: RuntimeLifecycle) -> None:
@@ -1175,6 +1201,35 @@ async def test_startup_marks_the_converters_and_scorers_its_scripts_register_but
         )
     finally:
         ScorerRegistry.reset_registry_singleton()
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_startup_marks_the_techniques_its_scripts_register_and_restores_saved_ones_with_their_owner_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    AttackTechniqueRegistry.reset_registry_singleton()
+    recipes = tmp_path / "recipes"
+    owner = {"oid": "00000000-0000-0000-0000-000000000001", "name": "Ada"}
+    _save_recipe(
+        recipes, kind="techniques", name="saved_send", document={"type": "PromptSendingAttack", "owner": owner}
+    )
+    techniques = AttackTechniqueRegistry.get_registry_singleton().instances
+
+    def register_startup_technique(**_: object) -> None:
+        techniques.register_runtime(AttackTechniqueFactory(name="startup_send", attack_class=PromptSendingAttack))
+
+    try:
+        await _start_with_recipes_async(runtime, recipes=recipes, initialize=register_startup_technique)
+
+        assert (runtime.state, runtime.outcome) == ("ready", "success")
+        startup, saved = techniques.get_entry("startup_send"), techniques.get_entry("saved_send")
+        assert startup is not None and saved is not None
+        assert (registry_entry_origin(startup.metadata), registry_entry_origin(saved.metadata)) == (
+            RegistryEntryOrigin.CONFIGURATION,
+            RegistryEntryOrigin.SAVED,
+        )
+    finally:
+        AttackTechniqueRegistry.reset_registry_singleton()
 
 
 class _LoopBoundTarget(MockPromptTarget):

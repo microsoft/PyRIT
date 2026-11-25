@@ -41,6 +41,7 @@ from pyrit.backend.models.targets import (
     UnregisteredTarget,
 )
 from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
+from pyrit.backend.services.saved_entries import save_then_register_locked_async
 from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
 from pyrit.models import Parameter, PromptDataType, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import (
@@ -74,7 +75,6 @@ from pyrit.registry import (
     is_private_entry,
     prepare_saved_params_async,
     record_private_references,
-    save_then_register_async,
 )
 from pyrit.registry.instance_registry import (
     PRIVATE_METADATA_KEY,
@@ -1001,7 +1001,7 @@ class TargetService:
             RegistryEntry(name=name, instance=target_obj, metadata=dict(creator)), origin=RegistryEntryOrigin.SAVED
         )
         auth_parameters = target_cls.get_auth_mode_parameters(auth_mode=auth_mode)
-        await save_then_register_async(
+        await save_then_register_locked_async(
             kind=RegistryRecipeKind.TARGETS,
             name=name,
             recipe=ComponentRecipe(
