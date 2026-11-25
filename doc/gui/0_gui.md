@@ -241,7 +241,10 @@ robin that uses the old name: restore finds its members by name, so it would
 otherwise send to the initializer's target in place of the saved one.
 
 Saved targets can't hold credentials yet, so choose Identity-based or No key
-authentication when the target supports it. A target that needs an API key or
+authentication when the target supports it. When the server lists keys for the
+target type in `server_credentials`, you can also choose **Server credential** and
+pick one by name: the key stays on the server, and the endpoint is set to the only
+address that key is sent to. A target that needs an API key or
 another credential value, a type that can't be saved, a round robin that uses a
 Temporary target, or a target that only you can use or that allows credential
 updates is created as **Temporary** instead, and the dialog says why.

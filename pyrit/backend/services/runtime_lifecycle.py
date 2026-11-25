@@ -111,6 +111,7 @@ class RuntimeLifecycle:
         self.app.state.allow_custom_initializers = config.allow_custom_initializers
         self.app.state.target_upload_directory = config.target_upload_directory
         self.app.state.registry_recipes_source = config.registry_recipes_source
+        self.app.state.server_credentials = list(config.server_credentials)
         registry = await asyncio.to_thread(InitializerRegistry.get_registry_singleton)
         registry.configure_custom_scripts_source(config.custom_initializers_source)
         preset_registry = ScenarioPresetRegistry.get_registry_singleton()
@@ -148,14 +149,19 @@ class RuntimeLifecycle:
         Returns:
             bool: Whether every saved entry was restored.
         """
-        restorer = RegistryRecipeRestorer(source=config.registry_recipes_source)
+        restorer = RegistryRecipeRestorer(
+            source=config.registry_recipes_source, server_credentials=config.server_credentials
+        )
         # Reading can wait on storage, so it runs in a worker thread. Entries are built on this loop, through
         # the API's create for each kind, because a constructor such as HuggingFaceChatTarget's starts a task
         # on it; the target's create_async does its slow setup, such as importing torch, in a worker thread first.
         saved = await asyncio.to_thread(restorer.read)
-        report = await restorer.restore_async(
-            saved=saved, build_async=partial(build_saved_entry_async, upload_directory=config.target_upload_directory)
+        build_async = partial(
+            build_saved_entry_async,
+            upload_directory=config.target_upload_directory,
+            server_credentials=config.server_credentials,
         )
+        report = await restorer.restore_async(saved=saved, build_async=build_async)
         self.restore_failures, self.restore_ignored = report.failures, report.ignored
         if not report.failures:
             return True
@@ -185,6 +191,7 @@ class RuntimeLifecycle:
         self.app.state.allow_custom_initializers = False
         self.app.state.target_upload_directory = None
         self.app.state.registry_recipes_source = None
+        self.app.state.server_credentials = []
         self.app.state.environment_file_service = None
         self.app.state.configured_initializers = []
         self.app.state.default_labels = {}

@@ -166,15 +166,17 @@ class OpenAITarget(PromptTarget):
         {"api_key": None, "headers": "{}"}
     )
     destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
+    listed_credential_parameters: ClassVar[tuple[str, str] | None] = ("api_key", "endpoint")
     environment_backed_parameters: ClassVar[frozenset[str]] = frozenset({"endpoint", "model_name"})
-    # The OpenAI SDK adds these headers to every client it creates.
-    server_header_variables: ClassVar[tuple[str, ...]] = ("OPENAI_CUSTOM_HEADERS",)
 
     COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
         {"endpoint", "auth_mode", "api_key", "headers", "httpx_client_kwargs"}
     )
     # Identifier params that describe constructor inputs instead of repeating them, so copies keep the inputs.
     _DESCRIPTIVE_IDENTIFIER_PARAMS: ClassVar[frozenset[str]] = frozenset({"tools", "tool_providers"})
+
+    # The OpenAI SDK adds these headers to every client it creates.
+    server_header_variables: ClassVar[tuple[str, ...]] = ("OPENAI_CUSTOM_HEADERS",)
 
     model_name_environment_variable: str
     endpoint_environment_variable: str

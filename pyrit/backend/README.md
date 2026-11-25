@@ -61,8 +61,9 @@ its database collation.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 - `GET /api/targets/types` - List the target types that can be created, with their parameters and auth
-  modes, the auth modes a saved target of each type can use (`saveable_auth_modes`), and why a type can't be saved
-  at all (`not_saveable_reason`)
+  modes, the auth modes a saved target of each type can use (`saveable_auth_modes`), why a type can't be saved
+  at all (`not_saveable_reason`), and the server credentials a target of each type can use
+  (`server_credentials`: each one's name and endpoint)
 - `POST /api/targets` - Create (and optionally register) a target
 - `POST /api/targets/saveability` - Say whether a target could be saved, without building or saving it. Send the
   create request's `type`, `params`, and `auth_mode`; the answer is `{"not_saveable_reason": ...}`, which gives only
@@ -102,11 +103,13 @@ Per-send values use
 
 A created target is Temporary: a restart or a configuration apply removes it. With `"persist": true` (and `register`
 left on), the target is saved under `registry_recipes_source` and restored at every start, and the signed-in user is
-recorded as the one who saved it. A saved target can't hold or use a key: it signs in with Microsoft Entra ID
-(`"auth_mode": "identity"`, through this server's Azure identity) or needs no key. An OpenAI target's empty `headers`
-is set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITIONAL_REQUEST_HEADERS`. The save
-itself is the registry library's `prepare_saved_params_async` and `save_then_register_async`, so Python code saves a
-target the same way; the API adds the signed-in user, the configured source, and the responses below.
+recorded as the one who saved it. A saved target can't hold a key: it signs in with Microsoft Entra ID
+(`"auth_mode": "identity"`, through this server's Azure identity), needs no key, or names a key an administrator listed
+in `server_credentials` (`"server_credential": "<name>"` with `"auth_mode": "api_key"`). That key is read from this
+server's environment, only sent to the credential's endpoint, and never saved. An OpenAI target's empty `headers` is
+set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITIONAL_REQUEST_HEADERS`. The save itself is
+the registry library's `prepare_saved_params_async` and `save_then_register_async`, so Python code saves a target the
+same way; the API adds the signed-in user, the configured source, and the responses below.
 
 | A request with `persist` that... | Gets |
 |---|---|
@@ -118,14 +121,15 @@ target the same way; the API adds the signed-in user, the configured source, and
 | saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** not-saveable |
 | uses a Temporary target | **400** not-saveable |
 | gives an address that isn't a full http(s) or ws(s) address, where this server's address setting would apply | **400** |
+| names a server credential that isn't listed or set, or an endpoint that isn't the credential's | **400** |
 | takes a name that a target or a saved file already has | **409** |
 | can't be written to storage | **503** |
 
 A not-saveable **400** has `"type": "/errors/not-saveable"` and the cause alone in `not_saveable_reason`, and the
-request can be sent again without `persist`. For any other **400**, fix what its `detail` names, such as the address
-or a constructor parameter. A name that a registered target has is a **409** without a problem type, with or without
-`persist`. `GET /api/targets/types` gives the same class-level answer before a request is sent, and
-`POST /api/targets/saveability` the answer for the request's values. When storage can't be written, the
+request can be sent again without `persist`. For any other **400**, fix what its `detail` names, such as the address,
+a constructor parameter, or the server credential. A name that a registered target has is a **409** without a problem
+type, with or without `persist`. `GET /api/targets/types` gives the same class-level answer before a request is sent,
+and `POST /api/targets/saveability` the answer for the request's values. When storage can't be written, the
 server log names the target and its folder, since the target comes back at the next start if the write reached storage
 anyway.
 
@@ -1008,7 +1012,8 @@ API callers are trusted operators, so these are intentional exceptions:
   server's environment, sent even to an endpoint the caller chose, or a token for the server's
   Azure identity, sent to the Azure endpoint or container the caller chose. For an
   OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
-  of these.
+  of these. A key listed in `server_credentials` is only sent to its listed endpoint, so list a
+  variable that holds only that key, not one a target reads on its own.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
   created them, except [private targets](#private-targets) and the components built on them.
 - Prompt content is not filtered; it is adversarial test data by design.

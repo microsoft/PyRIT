@@ -236,13 +236,28 @@ The backend restores saved entries at startup and after a live apply, once the c
 
 #### Saved entry requirements
 
-A saved file never holds a credential: restore refuses a file that stores a value for a parameter its class marks as a credential, such as `api_key`. A saved target also can't use a key from this server: it signs in with Microsoft Entra ID (`"auth_mode": "identity"`), which uses this server's Azure identity for everyone using the app, or needs no key. Targets from the server's configuration that it uses, such as a round-robin's members, keep their own sign-in. Restore refuses a target file that breaks these rules:
+A saved file never holds a credential: restore refuses a file that stores a value for a parameter its class marks as a credential, such as `api_key`. A saved target also can't use a key from this server unless it is listed in `server_credentials` (below): otherwise it signs in with Microsoft Entra ID (`"auth_mode": "identity"`), which uses this server's Azure identity for everyone using the app, or needs no key. Targets from the server's configuration that it uses, such as a round-robin's members, keep their own sign-in. Restore refuses a target file that breaks these rules:
 
 - It can't read an empty key from an environment variable or leave an address to this server's settings. An address the server would otherwise fill in must be a full http(s) or ws(s) address.
 - It sets each setting its target type would otherwise read from this server's environment, such as an OpenAI target's `model_name`, and only parameters the create API accepts, so no Python objects such as `httpx_client_kwargs`.
 - The addresses each target type declares (such as `endpoint`, `container_url` for Blob storage, or an A2A agent card path) can't hold a user name, password, SAS token, fragment, path parameters (`;`, `&`, `=`), or a query other than `api-version`, and a path can't have a query at all.
 - In identity mode, an OpenAI target file sets `"headers": "{}"` in its `params` so that the server's `OPENAI_ADDITIONAL_REQUEST_HEADERS` aren't added. The OpenAI SDK adds the headers in `OPENAI_CUSTOM_HEADERS` to every request, so while the server sets it, OpenAI targets can't be saved and saved ones aren't restored. The SDK's `OPENAI_ORG_ID` and `OPENAI_PROJECT_ID` still apply to every OpenAI target on this server.
 - GitHub Copilot, Hugging Face, HackAPrompt, LiteLLM, HTTP, and Copilot WebSocket targets can't be saved yet.
+
+### `server_credentials`
+
+Keys in this server's environment that users can pick by name for an OpenAI target instead of typing one. Each entry has a `name` users pick, the `env_var` that holds the key, and the only `endpoint` the key is sent to:
+
+```yaml
+server_credentials:
+  - name: contoso
+    env_var: CONTOSO_OPENAI_KEY
+    endpoint: https://contoso.openai.azure.com/openai/v1
+```
+
+`GET /api/targets/types` lists each entry's name and endpoint for the types that can use it, never the key or the variable. A target that names an entry (`"server_credential": "contoso"` with `"auth_mode": "api_key"` in `POST /api/targets`) gets the key only when its endpoint is the entry's endpoint, compared with the scheme and host lowercased and a default port and trailing slash removed. A saved target stores the entry's name, never the key, and reads the key again each time the backend starts, so rotating the variable's value takes effect at the next start. Restore refuses a saved target whose entry is no longer listed or whose variable isn't set.
+
+List a variable that holds only this key. A variable a target reads on its own, such as `OPENAI_CHAT_KEY`, can still reach any endpoint through a Temporary target created without a key, so listing it doesn't limit where that key goes. Names are up to 64 lowercase letters, digits, and underscores, starting with a letter, and each name can be listed once. The default is none.
 
 ### `initialization_scripts`
 

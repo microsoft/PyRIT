@@ -132,7 +132,10 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
         TargetTypeResponse: Available target types and build parameters.
     """
     service = get_target_service()
-    return await service.list_target_types_async(upload_directory=_target_upload_directory(request))
+    return await service.list_target_types_async(
+        upload_directory=_target_upload_directory(request),
+        server_credentials=getattr(request.app.state, "server_credentials", ()),
+    )
 
 
 @router.post(
@@ -166,6 +169,7 @@ async def check_target_saveability(  # pyrit-async-suffix-exempt
             request=body,
             upload_directory=_target_upload_directory(request),
             is_admin=has_admin_access(request),
+            server_credentials=getattr(request.app.state, "server_credentials", ()),
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
@@ -227,6 +231,7 @@ async def create_target(
             is_admin=has_admin_access(request),
             owner=saved_entry_owner_from_request(request) if body.persist else None,
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
+            server_credentials=getattr(request.app.state, "server_credentials", ()),
         )
     except NotSaveableError as e:
         return not_saveable_response(error=e, request=request)
