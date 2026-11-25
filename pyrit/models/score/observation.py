@@ -308,10 +308,11 @@ class ConversationObservationPayload(BaseModel):
 
 class ToolEventsObservationPayload(BaseModel):
     """
-    An immutable allowlisted tool snapshot, with raw arguments and results not retained.
+    An immutable allowlisted tool snapshot; results are not retained.
 
-    ``kept_arguments`` names the arguments the source kept at write time. Every other argument
-    was redacted, so a matcher treats it as unknown, never as absent.
+    ``arguments_retained`` records whether the source captured tool arguments. When it is true,
+    each event holds its parsed arguments, or None when they were unreadable. When it is false,
+    as in snapshots stored before arguments were captured, no event holds arguments.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -321,25 +322,23 @@ class ToolEventsObservationPayload(BaseModel):
     scope: TraceScorable
     events: tuple[ToolExecution, ...] = ()
     coverage: TraceCoverage = Field(default_factory=TraceCoverage)
-    arguments_retained: Literal[False] = False
-    #: Left out of serialization while empty, so name-only snapshots keep their stored form.
-    kept_arguments: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    arguments_retained: bool = False
 
     @field_validator("arguments_retained", mode="before")
     @classmethod
-    def _validate_arguments_retained(cls, value: object) -> Literal[False]:
+    def _validate_arguments_retained(cls, value: object) -> bool:
         """
-        Require the explicit no-argument-capture marker without coercion.
+        Require the argument-capture marker to be a real boolean, without coercion.
 
         Returns:
-            Literal[False]: The supported argument-retention marker.
+            bool: The argument-capture marker.
 
         Raises:
-            ValueError: If the marker is not exactly false.
+            ValueError: If the marker is not a boolean.
         """
-        if value is not False:
-            raise ValueError("Tool payload arguments_retained must be false; raw arguments are not captured.")
-        return False
+        if not isinstance(value, bool):
+            raise ValueError("Tool payload arguments_retained must be a boolean.")
+        return value
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -366,7 +365,7 @@ class ToolEventsObservationPayload(BaseModel):
             ToolEventsObservationPayload: The validated snapshot.
 
         Raises:
-            ValueError: If identities, scope, completeness, or kept arguments are inconsistent.
+            ValueError: If identities, scope, completeness, or argument capture are inconsistent.
         """
         identities = [(event.trace_id, event.span_id) for event in self.events]
         if len(set(identities)) != len(identities):
@@ -375,11 +374,8 @@ class ToolEventsObservationPayload(BaseModel):
             raise ValueError("Tool events must belong to the declared trace scope.")
         if self.coverage.complete and any(event.end_time is None for event in self.events):
             raise ValueError("Complete coverage cannot contain unfinished tool events.")
-        if any(not name for name in self.kept_arguments) or len(set(self.kept_arguments)) != len(self.kept_arguments):
-            raise ValueError("Kept tool arguments must be distinct, nonempty names.")
-        kept = set(self.kept_arguments)
-        if any(event.arguments is not None and (not kept or not set(event.arguments) <= kept) for event in self.events):
-            raise ValueError("Tool events can only retain the arguments the payload declares kept.")
+        if not self.arguments_retained and any(event.arguments is not None for event in self.events):
+            raise ValueError("Tool events cannot hold arguments when arguments_retained is false.")
         return self
 
 

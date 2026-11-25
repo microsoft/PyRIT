@@ -52,16 +52,16 @@ def _has_non_finite_number(value: JsonValue) -> bool:
     return False
 
 
-def _keep_arguments(value: JsonValue | None, *, kept: tuple[str, ...]) -> dict[str, JsonValue] | None:
+def _parse_arguments(value: JsonValue | None) -> dict[str, JsonValue] | None:
     """
-    Keep only the named top-level arguments of one call, redacting the rest.
+    Parse one call's arguments into a JSON object.
 
     A number that is not finite is not JSON, whether it arrives as a ``NaN`` or ``Infinity``
     constant, as a literal too large to represent, or inside an already-parsed object.
 
     Returns:
-        dict[str, JsonValue] | None: The kept arguments the call has, or None if its arguments
-            are missing, are not a JSON object, or hold a number that is not finite.
+        dict[str, JsonValue] | None: The parsed arguments, or None if they are missing, do not
+            parse, are not a JSON object, or hold a number that is not finite.
     """
     if isinstance(value, str):
         try:
@@ -70,58 +70,35 @@ def _keep_arguments(value: JsonValue | None, *, kept: tuple[str, ...]) -> dict[s
             return None
     if not isinstance(value, dict) or _has_non_finite_number(value):
         return None
-    return {name: value[name] for name in kept if name in value}
+    return value
 
 
 class OtelTraceSource:
     """
     Normalize explicit GenAI/OpenInference execution spans into safe evidence.
 
-    Tool arguments are redacted at write time. By default none are kept. ``kept_arguments`` opts in
-    to keeping the named top-level arguments from the span's ``gen_ai.tool.call.arguments``
-    attribute; every other argument, and the raw attribute, is discarded before the evidence is
-    stored. Spans that do not carry that attribute keep no arguments.
+    Each tool event keeps the parsed JSON object from its span's ``gen_ai.tool.call.arguments``
+    attribute, not the raw attribute. Arguments that are missing or unreadable are left as None.
     """
 
-    def __init__(
-        self,
-        *,
-        trace_client: TraceClient,
-        max_spans: int = 10000,
-        timeout_seconds: float = 30,
-        kept_arguments: Sequence[str] = (),
-    ) -> None:
+    def __init__(self, *, trace_client: TraceClient, max_spans: int = 10000, timeout_seconds: float = 30) -> None:
         """
         Initialize bounded acquisition through a caller-owned client.
 
         Raises:
-            ValueError: If the retrieval limit or timeout is not positive and finite, or the kept
-                argument names are not distinct and nonempty.
+            ValueError: If the retrieval limit or timeout is not positive and finite.
         """
         if max_spans < 1 or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("max_spans and timeout_seconds must be positive.")
-        if (
-            isinstance(kept_arguments, str)
-            or not all(isinstance(name, str) and name for name in kept_arguments)
-            or len(set(kept_arguments)) != len(kept_arguments)
-        ):
-            raise ValueError("kept_arguments must be a sequence of distinct, nonempty argument names.")
         self._client = trace_client
         self._max_spans = max_spans
         self._timeout_seconds = timeout_seconds
-        self._kept_arguments = tuple(kept_arguments)
 
     def get_identifier(self) -> ComponentIdentifier:
         """Return parser version and source identity without serializing the client."""
         return ComponentIdentifier.of(
             self,
-            params={
-                "normalization_version": 1,
-                "max_spans": self._max_spans,
-                "timeout_seconds": self._timeout_seconds,
-                # Omitted while empty, so a source that keeps no arguments keeps its identity.
-                "kept_arguments": list(self._kept_arguments) or None,
-            },
+            params={"normalization_version": 2, "max_spans": self._max_spans, "timeout_seconds": self._timeout_seconds},
             children={"trace_client": self._client.get_identifier()},
         )
 
@@ -146,7 +123,7 @@ class OtelTraceSource:
             )
 
         spans, reasons = _scoped_spans(result=result, scope=scorable, max_spans=self._max_spans)
-        events, normalization_reasons = self._normalize(spans=spans, kept=self._kept_arguments)
+        events, normalization_reasons = self._normalize(spans=spans)
         reasons.extend(normalization_reasons)
         acquisition = Acquisition.PARTIAL if reasons else Acquisition.COMPLETE
         return self._observation(
@@ -172,12 +149,12 @@ class OtelTraceSource:
                 scope=scorable,
                 events=events,
                 coverage=TraceCoverage(complete=acquisition is Acquisition.COMPLETE, reasons=reasons),
-                kept_arguments=self._kept_arguments,
+                arguments_retained=True,
             ),
         )
 
     @staticmethod
-    def _normalize(*, spans: Sequence[TraceSpan], kept: tuple[str, ...]) -> tuple[tuple[ToolExecution, ...], list[str]]:
+    def _normalize(*, spans: Sequence[TraceSpan]) -> tuple[tuple[ToolExecution, ...], list[str]]:
         events: list[ToolExecution] = []
         reasons: list[str] = []
         for span in spans:
@@ -202,7 +179,7 @@ class OtelTraceSource:
                     start_time=span.start_time,
                     end_time=span.end_time,
                     status=span.status,
-                    arguments=_keep_arguments(span.attributes.get(_ARGUMENTS_ATTRIBUTE), kept=kept) if kept else None,
+                    arguments=_parse_arguments(span.attributes.get(_ARGUMENTS_ATTRIBUTE)),
                 )
             )
         events.sort(key=lambda event: (event.start_time, event.trace_id, event.span_id))

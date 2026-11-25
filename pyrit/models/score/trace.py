@@ -141,10 +141,10 @@ class TraceQueryResult(BaseModel):
 
 class ToolExecution(_TraceInterval):
     """
-    Safe immutable execution evidence; results and raw arguments are not retained.
+    Safe immutable execution evidence; results are not retained.
 
-    ``arguments`` holds only the arguments a source was configured to keep, redacting the rest
-    at write time. It is None when the source kept no arguments or could not read them.
+    ``arguments`` holds the call's parsed arguments when they were readable. It is None when the
+    source did not capture arguments or could not read them.
     """
 
     name: ToolName

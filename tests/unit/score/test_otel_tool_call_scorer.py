@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -23,6 +24,7 @@ from pyrit.models import (
     ContentScorable,
     Equals,
     MessageScorable,
+    Observation,
     Score,
     ScoringExpectation,
     ToolArgumentRequirement,
@@ -229,35 +231,50 @@ async def test_name_only_requirement_gets_no_argument_note_or_warning_async(capl
 
 
 @pytest.mark.parametrize("complete", [False, True])
-async def test_name_only_trace_evidence_cannot_confirm_an_argument_requirement_async(
+async def test_name_only_observation_cannot_confirm_an_argument_requirement_async(
     sqlite_instance: SQLiteMemory, complete: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
-    client = InMemoryTraceClient()
+    # Observations stored before trace arguments were captured carry arguments_retained=false.
+    scope = TraceScorable(trace_ids=("1" * 32,))
+    source = OtelTraceSource(trace_client=InMemoryTraceClient())
     span = _span(name="send_email")
-    span.attributes["gen_ai.tool.call.arguments"] = '{"to": "a@example.com"}'
-    client.add_span(span)
-    if complete:
-        client.mark_complete(trace_ids=(span.trace_id,))
-    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+    legacy = Observation(
+        source_identifier=source.get_identifier(),
+        acquisition=Acquisition.COMPLETE if complete else Acquisition.PARTIAL,
+        scorable=scope,
+        payload=ToolEventsObservationPayload.model_validate(
+            {
+                "scope": scope.model_dump(mode="json"),
+                "events": [
+                    {
+                        "name": "send_email",
+                        "trace_id": span.trace_id,
+                        "span_id": span.span_id,
+                        "start_time": span.start_time.isoformat(),
+                        "end_time": span.end_time.isoformat(),
+                    }
+                ],
+                "coverage": {"complete": complete},
+                "arguments_retained": False,
+            }
+        ),
+    )
+    scorer = OtelToolCallScorer(source=source)
 
-    with caplog.at_level("WARNING"):
-        score = (
-            await scorer.score_async(
-                scorable=TraceScorable(trace_ids=(span.trace_id,)), expectation=_argument_expectation()
-            )
-        )[0]
+    with patch.object(source, "acquire_async", new_callable=AsyncMock, return_value=legacy), caplog.at_level("WARNING"):
+        score = (await scorer.score_async(scorable=scope, expectation=_argument_expectation()))[0]
 
     assert score.is_undetermined
     assert "send_email(to)" in score.score_rationale
-    # The rationale says why, so a user is not left to guess that traces drop arguments.
+    # The rationale says why, so a user is not left to guess that the evidence dropped arguments.
     assert "Trace evidence does not retain tool arguments" in score.score_rationale
     assert "MessageToolCallScorer" in score.score_rationale
     assert "argument constraints, which trace evidence cannot confirm" in caplog.text
     observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
-    assert "a@example.com" not in observation.model_dump_json()
-    client.close()
+    assert observation.payload.arguments_retained is False
     replay = (await scorer.score_observation_async(observation=observation, expectation=_argument_expectation()))[0]
     assert replay.is_undetermined
+    assert replay.score_rationale == score.score_rationale
 
 
 @pytest.mark.parametrize(("complete", "expected"), [(False, None), (True, False)])
@@ -293,7 +310,7 @@ async def test_absent_name_only_tool_refutes_alongside_an_undetermined_argument_
     assert (await scorer.score_async(scorable=scope, expectation=_argument_expectation()))[0].is_undetermined
 
 
-def _kept_argument_scorer(*arguments: JsonValue, kept: tuple[str, ...] = ("to",)) -> OtelToolCallScorer:
+def _argument_scorer(*arguments: JsonValue) -> OtelToolCallScorer:
     client = InMemoryTraceClient()
     for index, value in enumerate(arguments):
         span = _span(name="send_email", span_id=f"{index + 2:016x}")
@@ -301,7 +318,7 @@ def _kept_argument_scorer(*arguments: JsonValue, kept: tuple[str, ...] = ("to",)
             span.attributes["gen_ai.tool.call.arguments"] = value
         client.add_span(span)
     client.mark_complete(trace_ids=("1" * 32,))
-    return OtelToolCallScorer(source=OtelTraceSource(trace_client=client, kept_arguments=kept))
+    return OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
 
 
 def _send_email_expectation(**matchers: str) -> ScoringExpectation:
@@ -313,10 +330,9 @@ def _send_email_expectation(**matchers: str) -> ScoringExpectation:
     )
 
 
-async def test_source_keeps_only_the_named_arguments_async(sqlite_instance: SQLiteMemory) -> None:
-    scorer = _kept_argument_scorer(
-        '{"to": "a@example.com", "body": "private-body"}', '{"body": "private-other"}', kept=("to", "cc")
-    )
+async def test_source_stores_parsed_arguments_not_the_raw_attribute_async(sqlite_instance: SQLiteMemory) -> None:
+    raw = '{"to": "a@example.com", "body": "invoice"}'
+    scorer = _argument_scorer(raw)
 
     score = (
         await scorer.score_async(
@@ -326,9 +342,9 @@ async def test_source_keeps_only_the_named_arguments_async(sqlite_instance: SQLi
 
     assert score.get_value() is True
     observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
-    assert observation.payload.kept_arguments == ("to", "cc")
-    assert [event.arguments for event in observation.payload.events] == [{"to": "a@example.com"}, {}]
-    assert "private-" not in observation.model_dump_json()
+    assert observation.payload.arguments_retained is True
+    assert observation.payload.events[0].arguments == {"to": "a@example.com", "body": "invoice"}
+    assert json.dumps(raw) not in observation.model_dump_json()
     assert "gen_ai.tool.call.arguments" not in observation.model_dump_json()
 
 
@@ -350,7 +366,7 @@ async def test_source_keeps_only_the_named_arguments_async(sqlite_instance: SQLi
 async def test_unreadable_trace_arguments_are_not_retained_and_stay_undetermined_async(
     sqlite_instance: SQLiteMemory, arguments: JsonValue
 ) -> None:
-    scorer = _kept_argument_scorer(arguments)
+    scorer = _argument_scorer(arguments)
 
     score = (
         await scorer.score_async(
@@ -359,6 +375,7 @@ async def test_unreadable_trace_arguments_are_not_retained_and_stay_undetermined
     )[0]
 
     assert score.is_undetermined
+    assert "could not be read" in score.score_rationale
     observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     assert observation.acquisition is Acquisition.COMPLETE
     assert observation.payload.events[0].arguments is None
@@ -371,64 +388,28 @@ async def test_unreadable_trace_arguments_are_not_retained_and_stay_undetermined
         ({"to": "a@example.com"}, {"to": "a@example.com"}, True),
         ('{"to": "b@example.com"}', {"to": "a@example.com"}, False),
         ('{"subject": "hi"}', {"to": "a@example.com"}, False),
-        ('{"to": "b@example.com", "body": "invoice"}', {"to": "a@example.com", "body": "invoice"}, False),
-        ('{"to": "a@example.com", "body": "invoice"}', {"to": "a@example.com", "body": "invoice"}, None),
-        ('{"to": "a@example.com", "body": "invoice"}', {"body": "invoice"}, None),
-        ('{"to": "a@example.com", "body": "other"}', {"body": "invoice"}, None),
+        ('{"to": "a@example.com", "body": "invoice"}', {"to": "a@example.com", "body": "invoice"}, True),
+        ('{"to": "a@example.com", "body": "other"}', {"to": "a@example.com", "body": "invoice"}, False),
     ],
 )
-async def test_complete_evidence_never_decides_a_redacted_argument_async(
-    sqlite_instance: SQLiteMemory, arguments: JsonValue, matchers: dict[str, str], expected: bool | None
+async def test_trace_arguments_decide_argument_requirements_in_scoring_and_replay_async(
+    sqlite_instance: SQLiteMemory, arguments: JsonValue, matchers: dict[str, str], expected: bool
 ) -> None:
-    scorer = _kept_argument_scorer(arguments)
+    scorer = _argument_scorer(arguments)
     expectation = _send_email_expectation(**matchers)
 
     score = (await scorer.score_async(scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=expectation))[0]
 
-    assert score.score_value == (None if expected is None else str(expected).lower())
-    assert ("did not keep these arguments: body" in score.score_rationale) is (expected is None)
+    assert score.get_value() is expected
     observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
-    assert observation.acquisition is Acquisition.COMPLETE
     replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
-    assert replay.score_value == score.score_value
+    assert replay.get_value() is expected
 
 
-async def test_redaction_leaves_name_only_negatives_confident_async() -> None:
-    scorer = _kept_argument_scorer('{"to": "a@example.com", "body": "invoice"}')
-    expectation = ScoringExpectation(
-        conditions=(
-            ToolsCalled(
-                tools=(
-                    ToolCallRequirement(
-                        name="send_email",
-                        arguments=(ToolArgumentRequirement(name="body", matcher=Equals(value="invoice")),),
-                    ),
-                    ToolCallRequirement(name="lookup"),
-                )
-            ),
-        )
-    )
+def test_source_identity_records_normalization_version() -> None:
+    identifier = OtelTraceSource(trace_client=InMemoryTraceClient(source_id="same")).get_identifier()
 
-    score = (await scorer.score_async(scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=expectation))[0]
-
-    assert score.get_value() is False
-
-
-def test_source_identity_records_kept_arguments_only_when_set() -> None:
-    client = InMemoryTraceClient(source_id="same")
-    default = OtelTraceSource(trace_client=client).get_identifier()
-
-    assert set(default.params) == {"normalization_version", "max_spans", "timeout_seconds"}
-    kept = OtelTraceSource(trace_client=client, kept_arguments=("to",)).get_identifier()
-    assert kept.params["kept_arguments"] == ["to"]
-    assert kept.hash != default.hash
-    assert OtelTraceSource(trace_client=client, kept_arguments=()).get_identifier().hash == default.hash
-
-
-@pytest.mark.parametrize("kept_arguments", ["to", ("",), ("to", "to"), (3,)])
-def test_source_rejects_invalid_kept_arguments(kept_arguments: object) -> None:
-    with pytest.raises(ValueError, match="kept_arguments"):
-        OtelTraceSource(trace_client=InMemoryTraceClient(), kept_arguments=kept_arguments)  # type: ignore[arg-type]
+    assert identifier.params == {"normalization_version": 2, "max_spans": 10000, "timeout_seconds": 30}
 
 
 @pytest.mark.parametrize(

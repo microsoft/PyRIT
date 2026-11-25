@@ -147,7 +147,7 @@ def test_tool_execution_preserves_attempt_status(status: TraceSpanStatus) -> Non
     }
 
 
-def test_tool_execution_round_trips_kept_arguments() -> None:
+def test_tool_execution_round_trips_arguments() -> None:
     event = ToolExecution.model_validate(
         {**_model_data(ToolExecution), "arguments": {"to": "a@example.com", "recipient": {"cc": [1, None]}}}
     )
