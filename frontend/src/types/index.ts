@@ -1715,6 +1715,8 @@ export interface ScenarioDatasetOptions {
   supports_overrides: boolean
   filters: boolean
   source_settings?: boolean
+  /** Only stored datasets whose contents pass the scenario's checks can be selected. */
+  compatible_only?: boolean
 }
 
 export interface ScenarioDatasetSourceSettings {

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid  # noqa: TC003  (runtime-required by Pydantic field annotations)
 from abc import ABC
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Self, get_args
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Self, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
@@ -258,8 +258,8 @@ ScorableUnion = Annotated[
 ]
 
 # The known scorable kinds, read back off the union so adding a member does not require a
-# second edit here.
-SCORABLE_TYPES: tuple[type[Scorable], ...] = get_args(get_args(ScorableUnion)[0])
+# second edit here. Every member of the union above is a Scorable subclass.
+SCORABLE_TYPES = cast("tuple[type[Scorable], ...]", get_args(get_args(ScorableUnion)[0]))
 
 _SCORABLE_ADAPTER: TypeAdapter[ScorableUnion] = TypeAdapter(ScorableUnion)
 
