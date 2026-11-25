@@ -306,6 +306,21 @@ class PromptInject(Scenario):
         )
         super()._validate_runtime_configuration()
 
+    async def _prepare_resume_state_async(self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]) -> None:
+        """
+        Restore the goal scorer and technique templates, which the stored groups don't carry.
+
+        The stored groups already hold the contexts, so resume reads only the technique templates.
+
+        Args:
+            seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
+        """
+        self._set_goal_scorer()
+        templates = await cast("ScenarioRequiredData", self._required_data).load_async(
+            names=[self.TECHNIQUE_DATASET_NAME]
+        )
+        self._technique_templates = self._select_technique_templates(templates[self.TECHNIQUE_DATASET_NAME])
+
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
@@ -318,11 +333,8 @@ class PromptInject(Scenario):
         Returns:
             dict[str, list[AttackSeedGroup]]: Sampled context and goal groups.
         """
-        goal_texts = cast("list[str]", self.params["goal_texts"])
         config = cast("PromptInjectDatasetConfiguration", self._dataset_config)
-        if self._use_goal_scorers:
-            self._objective_scorer = self._build_goal_scorer(goal_texts=goal_texts)
-            self._objective_scorer_identifier = self._objective_scorer.get_identifier()
+        self._set_goal_scorer()
         templates = await cast("ScenarioRequiredData", self._required_data).load_async()
         groups = config.select_assembled_groups(
             groups_by_population=config.assemble_groups(
@@ -332,6 +344,12 @@ class PromptInject(Scenario):
         )
         self._technique_templates = self._select_technique_templates(templates[self.TECHNIQUE_DATASET_NAME])
         return groups
+
+    def _set_goal_scorer(self) -> None:
+        """Build the per-goal scorer from ``goal_texts`` unless a custom scorer replaces it."""
+        if self._use_goal_scorers:
+            self._objective_scorer = self._build_goal_scorer(goal_texts=cast("list[str]", self.params["goal_texts"]))
+            self._objective_scorer_identifier = self._objective_scorer.get_identifier()
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """

@@ -226,7 +226,13 @@ jest.mock('@/services/api', () => ({
     previewConversion: jest.fn(),
   },
   labelsApi: { getLabels: jest.fn().mockResolvedValue({ labels: {} }) },
-  operationsApi: { list: jest.fn().mockResolvedValue({ items: [] }) },
+  operationsApi: {
+    list: jest.fn().mockResolvedValue({ items: [] }),
+    getFindingFields: jest.fn().mockResolvedValue(
+      jest.requireActual<typeof import('@/test-utils/findingFieldsFixtures')>('@/test-utils/findingFieldsFixtures')
+        .DEFAULT_FINDING_FIELDS_FIXTURE,
+    ),
+  },
   datasetsApi: {
     listDatasets: jest.fn().mockResolvedValue({ items: [{
       name: 'Example dataset', selection_key: 'example-dataset',

@@ -38,7 +38,7 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import (
 )
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import SubStringScorer, TrueFalseScorer
-from tests.unit.mocks import MockPromptTarget
+from tests.unit.mocks import MockPromptTarget, accept_scenario_scoring
 
 
 def _mock_factory(*, name: str, seed_technique=None, adversarial_chat=None) -> MagicMock:
@@ -58,7 +58,7 @@ def _mock_factory(*, name: str, seed_technique=None, adversarial_chat=None) -> M
     # simulated-conversation lazy path override this return value explicitly.
     factory.resolve_adversarial_chat.return_value = adversarial_chat
     factory.create.return_value = AttackTechnique(attack=MagicMock(spec=AttackStrategy), seed_technique=seed_technique)
-    return factory
+    return accept_scenario_scoring(factory)
 
 
 def _seed_group(*, objective: str) -> AttackSeedGroup:

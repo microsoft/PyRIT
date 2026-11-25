@@ -12,6 +12,7 @@ from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.initializer_service import get_initializer_service
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.message_send_service import get_message_send_service
+from pyrit.backend.services.prompt_generation_service import reset_prompt_generation_service_async
 from pyrit.backend.services.scenario_run_service import reset_scenario_run_service_async
 from pyrit.backend.services.scenario_service import get_scenario_service
 from pyrit.backend.services.scenario_suite_execution_service import (
@@ -69,6 +70,7 @@ async def _close_cached_services_async() -> None:
                 await get_converter_service().close_async()
             await reset_scenario_suite_execution_service_async()
             await reset_scenario_run_service_async()
+            await reset_prompt_generation_service_async()
         finally:
             for factory in (
                 get_attack_service,

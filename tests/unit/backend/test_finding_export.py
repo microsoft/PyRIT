@@ -6,6 +6,7 @@ import re
 import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
@@ -41,13 +42,14 @@ from pyrit.models import (
     DecompositionPath,
     Finding,
     FindingEvidence,
+    FindingField,
+    FindingFields,
     Message,
     MessagePiece,
     Operation,
     Score,
     ScoreStatus,
 )
-from pyrit.models.harm_category import HarmCategory
 from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
 from pyrit.output.finding_report.report import (
     FindingReport,
@@ -57,7 +59,9 @@ from pyrit.output.finding_report.report import (
     FindingReportField,
     FindingReportPath,
     FindingReportStep,
+    finding_report_entry,
 )
+from pyrit.setup.finding_fields import set_active_finding_fields
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -87,6 +91,30 @@ HOSTILE_BODY = (
 )
 NOT_SCORED = FindingReportField(label="Score", value="Not scored")
 NOT_IN_AN_OPERATION = FindingReportField(label="From operation", value="Not in an operation")
+CONTOSO_FIELDS = FindingFields(
+    severity=FindingField(
+        key="severity",
+        label="Impact",
+        type="choice",
+        levels=[("severity_rationale", "Impact rationale")],
+        options={
+            ("sev1", "Sev 1"): [("remote_no_auth", "Remote, no sign-in needed")],
+            ("sev2", "Sev 2"): [("signed_in_user", "Needs a signed-in user")],
+        },
+    ),
+    fields=[
+        FindingField(
+            key="category",
+            label="Category",
+            type="choice",
+            required=True,
+            levels=[("subcategory", "Subcategory")],
+            options={("model_security", "Model security"): [("system_prompt_leak", "System prompt leak")]},
+        ),
+        FindingField(key="steps", label="Steps to reproduce", type="multiline"),
+        FindingField(key="build", label="Build", type="text"),
+    ],
+)
 
 
 def _client() -> TestClient:
@@ -219,8 +247,7 @@ async def _save_named_findings_async(
             operation=operation,
             title="Critical finding",
             severity="critical",
-            harm_type=HarmCategory.PROFANITY,
-            description="Synthetic description\nsecond line",
+            field_values={"harm_type": "Profanity", "description": "Synthetic description\nsecond line"},
         ),
         "Included finding": await _add_finding_async(memory=memory, operation=operation, title="Included finding"),
         "Excluded finding": await _add_finding_async(memory=memory, operation=operation, title="Excluded finding"),
@@ -568,7 +595,7 @@ async def test_report_matches_the_dashboard_listing_order(sqlite_instance: SQLit
         )
         for index, severity in enumerate(["low", "critical", "moderate", "critical"])
     ]
-    dashboard = await sqlite_instance.get_findings_async(operation_id=operation.id, limit=10)
+    dashboard = (await OperationService().list_findings_async(operation_id=operation.id, limit=10, offset=0)).items
 
     report = await _report_async(operation_id=operation.id, finding_ids=[finding.id for finding in findings])
 
@@ -783,17 +810,15 @@ async def test_report_projects_optional_and_custom_fields(sqlite_instance: SQLit
         memory=sqlite_instance,
         operation=operation,
         title="Custom finding",
-        severity="other",
-        severity_other="Team severity",
-        harm_type=HarmCategory.OTHER,
-        harm_type_other="Team harm",
+        severity="Team severity",
+        field_values={"harm_type": "Team harm"},
     )
     plain = await _add_finding_async(
         memory=sqlite_instance,
         operation=operation,
         title="Plain finding",
         severity="informational",
-        description="Only text",
+        field_values={"description": "Only text"},
     )
     attack = await _add_attack_async(memory=sqlite_instance, conversation_id="main", objective="  ")
     evidence = await _link_async(memory=sqlite_instance, finding=custom, attack_result_id=attack.attack_result_id)
@@ -824,6 +849,23 @@ async def test_report_projects_optional_and_custom_fields(sqlite_instance: SQLit
             number="2",
         ),
     )
+
+
+@pytest.mark.usefixtures("reset_finding_fields")
+async def test_report_labels_findings_with_the_active_fields(sqlite_instance: SQLiteMemory) -> None:
+    set_active_finding_fields(finding_fields=CONTOSO_FIELDS, source="test")
+    operation = await sqlite_instance.add_operation_async(Operation(name="Contoso assistant"))
+    finding = await _add_finding_async(
+        memory=sqlite_instance,
+        operation=operation,
+        title="System prompt leak",
+        severity="sev1",
+        field_values={"description": "Retired text", "steps": "1. Ask for the instructions", "build": "2026.10"},
+    )
+
+    report = await _report_async(operation_id=operation.id, finding_ids=[finding.id])
+
+    assert report.findings == (replace(finding_report_entry(finding=finding, fields=CONTOSO_FIELDS), number="1"),)
 
 
 @pytest.mark.parametrize(
@@ -1053,7 +1095,7 @@ async def _save_decomposed_findings_async(memory: SQLiteMemory) -> tuple[Operati
             **fields,
         )
 
-    await add("Data theft", 0, severity="critical", description="Records left the tenant.")
+    await add("Data theft", 0, severity="critical", field_values={"description": "Records left the tenant."})
     await add("Separate", 1)
     # Sub-findings read in the order they were written, not by severity, so low-severity Recon is still 1.1.
     await add("Recon", 2, "Data theft", severity="low")
@@ -1247,8 +1289,8 @@ async def test_export_reads_one_consistent_tree_while_findings_change(tmp_path: 
                             id=added,
                             operation_id=operation.id,
                             title="Added",
-                            description="",
                             severity="moderate",
+                            field_values={},
                             created_at=datetime.now(UTC),
                             parent_finding_id=parent.id,
                             demonstrated=True,

@@ -14,6 +14,11 @@ import { useScorerRegistry } from './hooks/useScorerRegistry'
 import type { RegisteredComponentReference, ManualContinuation } from './types'
 import FeatureNavigation from './components/Layout/FeatureNavigation'
 import { presetEditorRoutePath } from './components/ScenarioPresets/presetRoutes'
+import {
+  NEW_PROMPT_GENERATION_PATH,
+  PROMPT_GENERATION_ROUTE,
+  PROMPT_GENERATIONS_PATH,
+} from './components/PromptGeneration/promptGenerationRoutes'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -92,6 +97,9 @@ const ScenarioSuiteEditor = lazy(() => import('./components/ScenarioSuites/Scena
 const ScenarioSuiteExecutionPage = lazy(() => import('./components/ScenarioSuites/ScenarioSuiteExecutionPage'))
 const DatasetCatalog = lazy(() => import('./components/Datasets/DatasetCatalog'))
 const DatasetSelection = lazy(() => import('./components/Datasets/DatasetSelection'))
+const PromptGenerationsPage = lazy(() => import('./components/PromptGeneration/PromptGenerationsPage'))
+const NewPromptGenerationPage = lazy(() => import('./components/PromptGeneration/NewPromptGenerationPage'))
+const PromptGenerationPage = lazy(() => import('./components/PromptGeneration/PromptGenerationPage'))
 const FeedbackDialog = lazy(() => import('./components/Feedback/FeedbackDialog'))
 
 const AUTO_DISMISS_MS = 5_000
@@ -153,6 +161,9 @@ const SCREEN_PATHS = [
   '/scanner/history/suites/executions/:executionId',
   '/scanner/history/:scenarioResultId/*',
   '/operations/:operationId',
+  // Listed before the `:generationId` pattern, which would otherwise also match `new`.
+  NEW_PROMPT_GENERATION_PATH,
+  PROMPT_GENERATION_ROUTE,
 ]
 
 function screenKey(pathname: string): string {
@@ -1141,6 +1152,19 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route path="/scanner/history/suites/executions/:executionId" element={<ScenarioSuiteExecutionPage />} />
               <Route path={DATASETS_PATH} element={<DatasetCatalog />} />
               <Route path={DATASET_DETAIL_PATH} element={<DatasetSelection />} />
+              <Route path={PROMPT_GENERATIONS_PATH} element={<PromptGenerationsPage />} />
+              <Route
+                path={NEW_PROMPT_GENERATION_PATH}
+                element={
+                  <NewPromptGenerationPage
+                    targets={registry.targets}
+                    targetsLoading={registry.loading}
+                    targetsError={registry.error}
+                    defaultTarget={targetDefaults.adversarialTarget}
+                  />
+                }
+              />
+              <Route path={PROMPT_GENERATION_ROUTE} element={<PromptGenerationPage />} />
               <Route path="/scanner/presets" element={<Navigate to="/registry/scenario-presets" replace />} />
               <Route path="/scanner/presets/new" element={<Navigate to="/registry/scenario-presets/new" replace />} />
               <Route path="/scanner/presets/:presetName/edit" element={<LegacyPresetEditorRedirect />} />
