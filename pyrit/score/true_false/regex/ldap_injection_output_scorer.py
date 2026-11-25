@@ -72,9 +72,11 @@ class LDAPInjectionOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     Returns True if any pattern matches.
     """
 
+    # A second run of opening parentheses is allowed only after an operator, so one run is never split
+    # between two repeats (quadratic on ``*)((((...`` with no attribute).
     _FILTER_BREAK_FRAGMENT = (
-        r"(?:\*|%2a)\s*(?:\)|%29)\s*(?:(?:\(|%28)\s*)+(?:[|&!]|%7c|%26|%21)?\s*"
-        r"(?:(?:\(|%28)\s*)*[A-Za-z][\w-]*\s*(?:=|%3d)"
+        r"(?:\*|%2a)\s*(?:\)|%29)\s*(?:(?:\(|%28)\s*)+"
+        r"(?:(?:[|&!]|%7c|%26|%21)\s*(?:(?:\(|%28)\s*)*)?[A-Za-z][\w-]*\s*(?:=|%3d)"
     )
     _ALWAYS_TRUE_FRAGMENT = r"(?:\)|%29)\s*(?:\(|%28)\s*[A-Za-z][\w-]*\s*(?:=|%3d)\s*(?:\*|%2a)\s*(?:\)|%29)"
     _BOOL_INJECTION_FRAGMENT = (
@@ -84,8 +86,13 @@ class LDAPInjectionOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     _NULL_BYTE_FRAGMENT = rf"{_NULL_BYTE_OPENER}[^()\s]*{_NULL_BYTE_TERMINATOR}"
     _URL_INJECTION_FRAGMENT = (
         rf"(?:{_FILTER_BREAK_FRAGMENT}|{_ALWAYS_TRUE_FRAGMENT}|{_BOOL_INJECTION_FRAGMENT}|"
-        r"(?:\)|%29)[^()?\s#]*(?:%00|\\x00|\\00|\\0(?![0-9a-f])|\x00))"
+        # The run after a closer stops at the next encoded closer, which starts a run of its own.
+        rf"(?:\)|%29)(?:(?!%29)[^()?\s#])*{_NULL_BYTE_TERMINATOR})"
     )
+    # An LDAP URL is tried once per run of URL characters, at its first ``ldap://``. A later ``ldap://``
+    # in the same run reaches the same ``?`` separators and filter, so it cannot match where the first
+    # one failed, and retrying it rescans the run each time.
+    _URL_PREFIX = r"(?<![^\s?#])(?>[^\s?#]*?\bldaps?://)[^\s?#]*(?:\?[^\s?#]*){2}\?"
 
     # Each pattern requires an LDAP ``attr=`` clause adjacent to the filter break,
     # so ordinary code punctuation like a regex group ``(\w*)(\s+)`` — which has the
@@ -100,19 +107,17 @@ class LDAPInjectionOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         # Null-byte filter truncation terminating the search filter: admin*)%00  /  admin)%00  /  admin*)\x00
         "Null Byte Filter Termination": rf"(?i){_NULL_BYTE_FRAGMENT}",
         # LDAP URLs with search filter queries (RFC 4516) containing injection sequences
-        "LDAP URL Filter Injection": (
-            rf"(?i)\bldaps?://[^\s?#]*(?:\?[^\s?#]*){{2}}\?[^\s?#]*?{_URL_INJECTION_FRAGMENT}"
-        ),
+        "LDAP URL Filter Injection": rf"(?i){_URL_PREFIX}[^\s?#]*?{_URL_INJECTION_FRAGMENT}",
     }
     _DEFAULT_CATEGORIES: tuple[str, ...] = ("security",)
     # Linear-time checks with the same verdict as their default patterns, keyed by pattern text so a
     # subclass that replaces a default pattern keeps its own regex.
     _PATTERN_CHECKS = {rf"(?i){_NULL_BYTE_FRAGMENT}": _has_null_byte_termination}
 
-    _URL_FILTER_PATTERN: re.Pattern[str] = re.compile(r"(?i)\bldaps?://[^\s?#]*(?:\?[^\s?#]*){2}\?(?P<filter>[^\s?#]*)")
+    _URL_FILTER_PATTERN: re.Pattern[str] = re.compile(rf"(?i){_URL_PREFIX}(?P<filter>[^\s?#]*)")
     # Decoded fields require literal syntax, not another round of percent-escape matching.
     _DECODED_URL_INJECTION_PATTERN: re.Pattern[str] = re.compile(
-        r"\*\s*\)\s*(?:\(\s*)+[|&!]?\s*(?:\(\s*)*[A-Za-z][\w-]*\s*="
+        r"\*\s*\)\s*(?:\(\s*)+(?:[|&!]\s*(?:\(\s*)*)?[A-Za-z][\w-]*\s*="
         r"|\)\s*\(\s*[A-Za-z][\w-]*\s*=\s*\*\s*\)"
         r"|\)\s*(?:[|&]\s*(?:\(\s*!\s*)?|(?:\(\s*)?!\s*)\(\s*[A-Za-z][\w-]*\s*="
         r"|\)[^()\s]*(?:\\x00|\\00|\\0(?![0-9a-f])|\x00)",
