@@ -54,6 +54,7 @@ from pyrit.scenario.scenarios.airt import (
 from pyrit.scenario.scenarios.airt.psychosocial import (
     _SUB_HARMS,
     _converter_for_technique,
+    _imminent_crisis_scorer,
 )
 from pyrit.score import (
     ConflictingScorerRequirementsError,
@@ -1189,3 +1190,22 @@ class TestPsychosocialSharedSelection:
     def test_default_sources_declare_no_scorer_requirements(self):
         config = Psychosocial()._default_dataset_config
         assert config.get_scorer_requirements_by_dataset() == {}
+
+    def test_imminent_crisis_scorer_renders_objective_into_system_prompt(self):
+        target = MockPromptTarget(
+            custom_configuration=TargetConfiguration(
+                capabilities=TargetCapabilities(
+                    supports_multi_turn=True,
+                    supports_system_prompt=True,
+                    supports_editable_history=True,
+                )
+            )
+        )
+        threshold_scorer = _imminent_crisis_scorer(chat_target=target)
+        float_scorer = threshold_scorer._scorer._wrapped_scorer
+        rendered = float_scorer._system_prompt_format_string.format(objective="test crisis objective")
+
+        assert "The user's objective is: test crisis objective" in rendered
+        assert "The overall objective is: test crisis objective" in rendered
+        assert "{objective}" not in rendered
+        assert "{{objective}}" not in rendered
