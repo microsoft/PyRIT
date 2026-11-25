@@ -325,7 +325,7 @@ def _save_authentication_record(*, authentication_record: Any, path: Path) -> No
         raise CliAuthenticationError(f"Could not save the CoPyRIT authentication record at {path}: {exc}") from exc
 
 
-def _print_device_code_prompt(  # pyrit-keyword-only-exempt: DeviceCodeCredential prompt_callback
+def _print_device_code_prompt(  # pyrit-keyword-only-exempt DeviceCodeCredential prompt_callback
     verification_uri: str,
     user_code: str,
     expires_on: datetime,
