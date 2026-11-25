@@ -106,9 +106,7 @@ class TechniqueRequirements:
             *self.objective_target.check(target=target),
         ]
         if self.requires_target_tools:
-            errors.extend(
-                error for error in self.TOOL_HISTORY_TARGET_REQUIREMENTS.check(target=target) if error not in errors
-            )
+            errors.extend(self.TOOL_HISTORY_TARGET_REQUIREMENTS.check(target=target))
             if not target.may_advertise_tools():
                 errors.append(f"{type(target).__name__} advertises no function tools for this technique to use.")
         return errors
