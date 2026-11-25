@@ -179,11 +179,11 @@ async def test_base_image_converter_convert_async_honors_url_reader_override():
     converter = _OverridingImageConverter(image_bytes=image_buffer.getvalue())
     serializer = MagicMock()
     serializer.value = "converted.png"
-    serializer.save_b64_image_async = AsyncMock()
+    serializer.save_data_async = AsyncMock()
 
     with patch("pyrit.converter.base_image_to_image_converter.data_serializer_factory", return_value=serializer):
         result = await converter.convert_async(prompt="https://example.com/image.png", input_type="url")
 
     assert result.output_text == "converted.png"
     assert converter.urls_read == ["https://example.com/image.png"]
-    serializer.save_b64_image_async.assert_awaited_once()
+    serializer.save_data_async.assert_awaited_once()
