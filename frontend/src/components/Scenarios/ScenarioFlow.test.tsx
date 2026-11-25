@@ -236,7 +236,8 @@ describe('Scenario catalog-to-run integration', () => {
     ))
     const estimate = screen.getByRole('region', { name: 'Run estimate' })
     expect(within(estimate).getAllByRole('term')[0]).toHaveTextContent('Total atomic attacks')
-    expect(within(estimate).getAllByRole('definition')[0]).toHaveTextContent(/^2$/)
+    // The estimate renders after the mocked request resolves, not when it is sent.
+    await waitFor(() => expect(within(estimate).getAllByRole('definition')[0]).toHaveTextContent(/^2$/))
 
     await user.click(screen.getByTestId('launch-scenario-btn'))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
