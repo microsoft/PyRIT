@@ -168,9 +168,9 @@ async def generate_simulated_conversation_async(
         simulated_target_system_prompt: System prompt for the simulated target.
             If None, no system prompt is used for the simulated target.
         next_message_system_prompt: Optional system prompt for generating a final user message.
-            If provided, after the simulated conversation, a single LLM call generates a user
-            message that attempts to get the target to fulfill the objective in their next
-            response. The prompt template receives `objective` and `conversation_context`
+            ``TURN_BY_TURN`` only. If provided, after the simulated conversation, a single LLM call
+            generates a user message that attempts to get the target to fulfill the objective in
+            their next response. The prompt template receives `objective` and `conversation_context`
             parameters.
         adversarial_chat_system_prompt_path: Deprecated. Path to the adversarial chat system
             prompt YAML. Use ``adversarial_chat_system_prompt`` instead.
@@ -178,8 +178,10 @@ async def generate_simulated_conversation_async(
             prompt YAML. Use ``simulated_target_system_prompt`` instead.
         next_message_system_prompt_path: Deprecated. Path to the next message system prompt
             YAML. Use ``next_message_system_prompt`` instead.
-        attack_converter_config: Converter configuration for the attack. Defaults to None.
-        memory_labels: Labels to associate with the conversation in memory. Defaults to None.
+        attack_converter_config: Converter configuration for the attack. ``TURN_BY_TURN`` only.
+            Defaults to None.
+        memory_labels: Labels to associate with the conversation in memory. ``TURN_BY_TURN`` only.
+            Defaults to None.
         mode: How the conversation is generated. Defaults to ``TURN_BY_TURN``.
         tools: Function tools the conversation uses, usually those the objective target reports.
             Required for ``ONE_SHOT``.
@@ -198,18 +200,12 @@ async def generate_simulated_conversation_async(
     Raises:
         ValueError: If num_turns is not a positive integer, if no adversarial chat system prompt
             is supplied, if a prompt and its deprecated path input are both supplied, if
-            ``ONE_SHOT`` mode has no tools or duplicate tool names, if both ``tools`` and
-            a ``simulated_target`` with its own tools are given, if an adversarial chat cannot
-            hold a multi-turn conversation with a system prompt, if ``TURN_BY_TURN`` mode has no
-            objective scorer, or if a simulated target with tools cannot run them.
+            ``ONE_SHOT`` mode has no tools or duplicate tool names, or is given a next-message
+            prompt, converters, a simulated target, or memory labels, if both ``tools`` and a
+            ``simulated_target`` with its own tools are given, if an adversarial chat cannot hold a
+            multi-turn conversation with a system prompt, if ``TURN_BY_TURN`` mode has no objective
+            scorer, or if a simulated target with tools cannot run them.
     """
-    if simulated_target is not None and tools and await simulated_target.get_tool_definitions_async():
-        raise ValueError(
-            "The simulated_target already has its own tools; tools would replace them. Pass either tools, "
-            "whose results the adversarial chat writes, or a simulated_target with its own tools, not both."
-        )
-    # By default the same LLM plays both roles, with different system prompts.
-    simulated_target = simulated_target or adversarial_chat
     if num_turns <= 0:
         raise ValueError("num_turns must be a positive integer")
 
@@ -238,6 +234,15 @@ async def generate_simulated_conversation_async(
         raise ValueError("adversarial_chat_system_prompt is required")
 
     if mode is SimulatedConversationMode.ONE_SHOT:
+        # The stand-in system prompt and the objective scorer are not rejected: callers pass them in every mode.
+        unsupported = {
+            "next_message_system_prompt": next_message_system_prompt,
+            "attack_converter_config": attack_converter_config,
+            "simulated_target": simulated_target,
+            "memory_labels": memory_labels,
+        }
+        if names := [name for name, value in unsupported.items() if value is not None]:
+            raise ValueError(f"One-shot simulated conversations do not support {', '.join(names)}")
         if not tools:
             raise ValueError("One-shot simulated conversations need the tools to write calls to")
         if len({tool.name for tool in tools}) != len(tools):
@@ -252,6 +257,13 @@ async def generate_simulated_conversation_async(
             starting_sequence=starting_sequence,
         )
 
+    if simulated_target is not None and tools and await simulated_target.get_tool_definitions_async():
+        raise ValueError(
+            "The simulated_target already has its own tools; tools would replace them. Pass either tools, "
+            "whose results the adversarial chat writes, or a simulated_target with its own tools, not both."
+        )
+    # By default the same LLM plays both roles, with different system prompts.
+    simulated_target = simulated_target or adversarial_chat
     if objective_scorer is None:
         raise ValueError("objective_scorer is required for turn-by-turn simulated conversations")
 

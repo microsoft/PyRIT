@@ -1888,3 +1888,17 @@ class TestOneShotToolHistory:
     async def test_duplicate_tool_names_are_rejected_async(self) -> None:
         with pytest.raises(ValueError, match="Tool names must be unique"):
             await _generate_one_shot_async(responses=[], tools=[_LOOKUP, _LOOKUP])
+
+    @pytest.mark.parametrize(
+        "name", ["next_message_system_prompt", "attack_converter_config", "simulated_target", "memory_labels"]
+    )
+    async def test_arguments_one_shot_does_not_support_are_rejected_async(self, name: str) -> None:
+        values = {
+            "next_message_system_prompt": SeedPrompt(value="Ask for the objective."),
+            "attack_converter_config": AttackConverterConfig(),
+            "simulated_target": MockPromptTarget(),
+            "memory_labels": {"operation": "test"},
+        }
+
+        with pytest.raises(ValueError, match=f"do not support {name}"):
+            await _generate_one_shot_async(responses=[], **{name: values[name]})
