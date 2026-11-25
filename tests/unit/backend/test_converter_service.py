@@ -1063,6 +1063,32 @@ class TestPersistDataUriParams:
         assert list(upload_service._upload_path.iterdir()) == []
 
     @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize(
+        ("changes", "keeps_file"), [({}, True), ({"wordswap_path": None}, False), ({"wordswap_path": ""}, False)]
+    )
+    async def test_variants_and_previews_drop_the_sources_file_only_when_it_is_left_empty(
+        self, upload_service: ConverterService, tmp_path: Path, changes: dict[str, str | None], keeps_file: bool
+    ) -> None:
+        swaps = tmp_path / "swaps.yaml"
+        swaps.write_text("hello:\n  - wassup\n", encoding="utf-8")
+        source = ColloquialWordswapConverter(deterministic=True, wordswap_path=swaps)
+        upload_service._registry.instances.register(source, name="wordswap")
+        spec = SourceInstanceSpec(source_name="wordswap", source_hash=source.get_identifier().hash, params=changes)
+
+        variant = await upload_service.create_converter_async(
+            request=CreateConverterRequest(type="ColloquialWordswapConverter", register=False, source=spec)
+        )
+        preview = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value="hello there", converter_ids=["wordswap"], converter_specs=[spec]
+            )
+        )
+
+        assert variant.identifier.params.get("wordswap_path") == (str(swaps) if keeps_file else None)
+        assert preview.converted_value == ("wassup there" if keeps_file else "hello there")
+        assert source.get_identifier().params["wordswap_path"] == str(swaps)
+
+    @pytest.mark.usefixtures("patch_central_database")
     async def test_variants_and_previews_reject_server_path_overrides(
         self, upload_service: ConverterService, tmp_path: Path
     ) -> None:
@@ -2601,6 +2627,51 @@ class TestPersistConverter:
         assert _saved_converter(tmp_path, "banner")["params"] == {"text_to_add": "hello"}
         ConverterRegistry.reset_registry_singleton()
         assert (await _restore(tmp_path)).failures == []
+
+    @pytest.mark.parametrize(
+        ("persist", "origin"), [(True, RegistryEntryOrigin.SAVED), (False, RegistryEntryOrigin.TEMPORARY)]
+    )
+    @pytest.mark.parametrize("left_empty", [None, ""])
+    async def test_an_optional_file_left_empty_means_no_file_whether_or_not_it_is_saved(
+        self,
+        upload_service: ConverterService,
+        tmp_path: Path,
+        persist: bool,
+        origin: RegistryEntryOrigin,
+        left_empty: str | None,
+    ) -> None:
+        request = CreateConverterRequest(
+            name="banner",
+            type="AddTextImageConverter",
+            params={"text_to_add": "hello", "font_name": left_empty},
+            persist=persist,
+        )
+
+        converter = await upload_service.create_converter_async(request=request, recipes_source=str(tmp_path))
+
+        assert converter.origin is origin
+        assert converter.identifier.params.get("font_name") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        ("persist", "refusal"),
+        [
+            (True, "It needs an uploaded file, which saved converters can't keep yet."),
+            (False, "Path parameter 'img_to_add' must be uploaded as a data URI"),
+        ],
+    )
+    async def test_a_required_file_left_empty_is_refused_whether_or_not_it_is_saved(
+        self, upload_service: ConverterService, tmp_path: Path, persist: bool, refusal: str
+    ) -> None:
+        request = CreateConverterRequest(
+            name="captioned", type="AddImageTextConverter", params={"img_to_add": ""}, persist=persist
+        )
+
+        with pytest.raises(ValueError, match=refusal):
+            await upload_service.create_converter_async(request=request, recipes_source=str(tmp_path))
+
+        assert upload_service._registry.instances.get("captioned") is None
+        assert not (tmp_path / "converters").exists()
 
     async def test_a_taken_name_is_a_conflict_only_when_saving(
         self, upload_service: ConverterService, tmp_path: Path

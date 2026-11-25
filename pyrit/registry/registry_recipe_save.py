@@ -29,6 +29,7 @@ from pyrit.registry.registry_recipe_rules import (
     check_saveable_class,
     check_saved_copy_params,
     check_saved_entry_params,
+    get_server_fallback_parameters,
 )
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.registry.resolution import reject_non_external_params
@@ -137,7 +138,7 @@ async def prepare_saved_params_async(
     if class_reason is not None:
         raise NotSaveableError(class_reason)
     saved_params = dict(params)
-    fallbacks: Mapping[str, str | None] = getattr(cls, "server_fallback_parameters", {})
+    fallbacks = get_server_fallback_parameters(cls)
     for name, turned_off in fallbacks.items():
         if turned_off is not None and saved_params.get(name) in (None, ""):
             saved_params[name] = turned_off

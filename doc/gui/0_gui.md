@@ -131,7 +131,9 @@ datasets already selected, add one `dataset` parameter per name, for example
 `/scanner/launch/foundry.red_team_agent?dataset=harmbench&dataset=my_dataset`. The
 names replace the default or preset datasets; other dataset settings, such as
 limits and filters, stay. A scenario that can't take the linked datasets won't
-launch with them and offers a link to open it without them.
+launch with them and offers a link to open it without them. A scenario that lists
+only compatible datasets, such as `foundry.assert_policy`, leaves out linked names
+it can't use and says so in the Datasets section.
 
 Use the chevron on the right of a technique to inspect its identity JSON.
 This does not change the checkbox selection on the left.
