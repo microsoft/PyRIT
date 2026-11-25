@@ -6,7 +6,7 @@ import { FluentProvider, Tab, TabList, webLightTheme } from '@fluentui/react-com
 import { createMemoryRouter, RouterProvider, Link, useLocation, useNavigate } from 'react-router'
 
 import * as scenarioConfigForm from '@/components/Scenarios/scenarioConfigForm'
-import { datasetsApi, promptGeneratorsApi, scenarioPresetsApi, scenariosApi } from '@/services/api'
+import { promptGeneratorsApi, scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { deferred } from '@/test-utils/deferred'
 import { installRouterTestRequest } from '@/test-utils/routerRequest'
 import { makeScenario } from '@/test-utils/scenarioFixtures'
@@ -845,8 +845,8 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
       jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
     )
     // Three harm categories across the two stored datasets, and a preset that keeps two of them.
-    const listedDatasets = datasetsApi.listDatasets as jest.Mock
-    const { items } = await datasetsApi.listDatasets({ loaded_only: false })
+    const listedDatasets = scenariosApi.listCompatibleDatasets as jest.Mock
+    const { items } = await scenariosApi.listCompatibleDatasets('probe')
     const defaultListing = listedDatasets.getMockImplementation()
     listedDatasets.mockResolvedValue({
       items: items.map((item) => ({
@@ -892,8 +892,8 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
     )
     // Three harm categories across the two stored datasets, and a preset that keeps
     // two of them alongside a second filter key.
-    const listedDatasets = datasetsApi.listDatasets as jest.Mock
-    const { items } = await datasetsApi.listDatasets({ loaded_only: false })
+    const listedDatasets = scenariosApi.listCompatibleDatasets as jest.Mock
+    const { items } = await scenariosApi.listCompatibleDatasets('probe')
     const defaultListing = listedDatasets.getMockImplementation()
     listedDatasets.mockResolvedValue({
       items: items.map((item) => ({
