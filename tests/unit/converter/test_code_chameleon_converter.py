@@ -331,6 +331,42 @@ def test_codechameleon_custom_identifier_unstable_function_is_unique_per_instanc
     assert first != second
 
 
+def test_codechameleon_custom_identifier_distinguishes_same_line_lambdas() -> None:
+    """Lambdas sharing a source line share their source, so the fingerprint also locates each body."""
+    first, second = lambda text: text[::-1], lambda text: text.upper()
+    first_name = _custom_unique_name(encrypt_function=first, decrypt_function=_reverse_text)
+    assert first_name != _custom_unique_name(encrypt_function=second, decrypt_function=_reverse_text)
+    assert first_name == _custom_unique_name(encrypt_function=first, decrypt_function=_reverse_text)
+
+
+def _make_config_encryptor(config):
+    def _encrypt_with_config(text: str) -> str:
+        return text + repr(config)
+
+    return _encrypt_with_config
+
+
+@pytest.mark.parametrize(
+    ("first_config", "second_config"),
+    [
+        (["x"], ("x",)),
+        ({"a": 1, "b": 2}, {"b": 2, "a": 1}),
+        (1, True),
+        (1, 1.0),
+    ],
+    ids=["list-vs-tuple", "dict-order", "int-vs-bool", "int-vs-float"],
+)
+def test_codechameleon_custom_identifier_keeps_configuration_types_and_order(first_config, second_config) -> None:
+    """Configurations that render differently must not collide in the fingerprint."""
+    assert repr(first_config) != repr(second_config)
+    first = _custom_unique_name(encrypt_function=_make_config_encryptor(first_config), decrypt_function=_reverse_text)
+    second = _custom_unique_name(encrypt_function=_make_config_encryptor(second_config), decrypt_function=_reverse_text)
+    assert first != second
+    assert first == _custom_unique_name(
+        encrypt_function=_make_config_encryptor(first_config), decrypt_function=_reverse_text
+    )
+
+
 @pytest.mark.parametrize("encrypt_type", ["reverse", "binary_tree", "odd_even", "length"])
 def test_codechameleon_builtin_identifier_params_unchanged(encrypt_type: str) -> None:
     converter = CodeChameleonConverter(encrypt_type=encrypt_type)
