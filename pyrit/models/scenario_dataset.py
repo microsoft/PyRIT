@@ -60,6 +60,9 @@ class ScenarioDatasetOptions(BaseModel):
     supports_overrides: bool = True
     filters: bool = True
     source_settings: bool = True
+    #: Whether the scenario checks stored dataset contents against its requirements, so only stored
+    #: datasets that pass can be selected.
+    compatible_only: bool = False
 
     @model_validator(mode="after")
     def _validate_selection_bounds(self) -> Self:
