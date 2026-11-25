@@ -104,14 +104,17 @@ PyRIT also includes agent skills, task guides that the agent follows when a requ
 running and comparing one `technique.execute` scan per technique. `pyrit-results` turns a scan's
 results into candidate findings: it compares each technique with the baseline, checks the
 scorer's reasons, and cites the attack results that show each finding, for you to record in an
-[operation](../gui/0_gui.md#operations). Add PyRIT's skills to GitHub Copilot CLI:
+[operation](../gui/0_gui.md#operations). `pyrit-scenario` plans a scan of what you want to test
+and starts a small first run, asking you first when the plan needs a choice from you, such as an
+attacker model. Add PyRIT's skills to GitHub Copilot CLI:
 
 ```bash
 copilot skill add "$(python -c "import pathlib, pyrit.backend; print(pathlib.Path(pyrit.backend.__file__).parent / 'skills')")"
 ```
 
 Then ask, for example, "/pyrit-technique Which technique best gets my target to reveal its
-system prompt?" or "/pyrit-results What did my latest scan find?"
+system prompt?", "/pyrit-scenario Scan my target for cyber harms.", or "/pyrit-results What did
+my latest scan find?"
 
 ## Built-in Scenarios
 

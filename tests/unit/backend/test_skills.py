@@ -12,7 +12,7 @@ from pyrit.backend.main import app as backend_app
 from pyrit.backend.rest_tools import RestToolset
 
 SKILLS_ROOT = Path(pyrit.backend.__file__).parent / "skills"
-SKILL_NAMES = ["pyrit-results", "pyrit-technique"]
+SKILL_NAMES = ["pyrit-results", "pyrit-scenario", "pyrit-technique"]
 
 
 def _read_skill(name: str) -> tuple[dict, str]:
