@@ -27,6 +27,7 @@ from pyrit.models import (
     RequestGenerationInfo,
     RequestTraceContext,
     TargetIdentifier,
+    ToolCaptureCoverage,
     WebSearchConfig,
     WebSearchMode,
 )
@@ -438,6 +439,8 @@ class PromptTarget(Identifiable):
         """
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            # Coverage is a target's statement about its own response, never an input.
+            piece.prompt_metadata.pop(ToolCaptureCoverage.METADATA_KEY, None)
             # A resent request must not keep the identifiers of its earlier send if this one is rejected.
             ProviderTraceReference.clear_metadata(piece.prompt_metadata)
             RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
