@@ -1,18 +1,16 @@
 import { Badge } from '@fluentui/react-components'
 
-import type { FindingCreate } from '@/types'
-import { findingSeverityColor, findingSeverityLabel } from '@/utils/findingSeverity'
+import type { FindingFields } from '@/types'
+import { severityBadge } from '@/utils/findingFields'
 import { useFindingSeverityBadgeStyles } from './FindingSeverityBadge.styles'
 
 interface FindingSeverityBadgeProps {
-  finding: Pick<FindingCreate, 'severity' | 'severity_other'>
+  fields: FindingFields
+  severity: string
 }
 
-export default function FindingSeverityBadge({ finding }: FindingSeverityBadgeProps) {
+export default function FindingSeverityBadge({ fields, severity }: FindingSeverityBadgeProps) {
   const styles = useFindingSeverityBadgeStyles()
-  return (
-    <Badge className={styles.badge} appearance="tint" color={findingSeverityColor(finding.severity)}>
-      {findingSeverityLabel(finding)}
-    </Badge>
-  )
+  const { label, color } = severityBadge(fields, severity)
+  return <Badge className={styles.badge} appearance="tint" color={color}>{label}</Badge>
 }

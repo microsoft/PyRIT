@@ -8,7 +8,10 @@ Provides endpoints for managing target instances.
 Target types are set at app startup via initializers - you cannot add new types at runtime.
 """
 
+from typing import cast
+
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 
 from pyrit.backend.middleware.auth import AuthenticatedUser, has_admin_access
 from pyrit.backend.models import (
@@ -17,9 +20,10 @@ from pyrit.backend.models import (
     TargetListResponse,
     UpdateTargetCredentialsRequest,
 )
-from pyrit.backend.models.common import CursorStr, IdentifierStr
+from pyrit.backend.models.common import CursorStr, IdentifierStr, NotSaveableProblemDetail, SaveabilityResponse
 from pyrit.backend.models.targets import (
     DetectTargetCapabilitiesRequest,
+    TargetSaveabilityRequest,
     TargetTypeResponse,
     UnregisteredTarget,
 )
@@ -27,9 +31,13 @@ from pyrit.backend.services import get_target_service
 from pyrit.backend.services.target_service import CredentialUpdateConflictError
 from pyrit.models.catalog import SavedEntryOwner, TargetInstance
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
-from pyrit.registry import SavedEntryConflictError, SavedEntryStorageError
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
+from pyrit.registry.instance_registry import RegistryNameTakenError
 
 router = APIRouter(prefix="/targets", tags=["targets"])
+
+# Problem type for a target that can't be saved as asked but can still be created without saving it.
+NOT_SAVEABLE_PROBLEM_TYPE = "/errors/not-saveable"
 
 
 @router.post(
@@ -80,8 +88,8 @@ def _target_upload_directory(request: Request) -> str | None:
     Returns:
         str | None: The configured folder, or None when the server configures none.
     """
-    directory: str | None = getattr(request.app.state, "target_upload_directory", None)
-    return directory
+    # RuntimeLifecycle sets this from the validated server config, always as str | None.
+    return cast("str | None", getattr(request.app.state, "target_upload_directory", None))
 
 
 def _saved_entry_owner(request: Request) -> SavedEntryOwner | None:
@@ -142,13 +150,54 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
 
 
 @router.post(
+    "/saveability",
+    response_model=SaveabilityResponse,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid target type or parameters"},
+        403: {
+            "model": ProblemDetail,
+            "description": "Administrator access is required to create this target",
+        },
+    },
+)
+async def check_target_saveability(  # pyrit-async-suffix-exempt
+    *,
+    body: TargetSaveabilityRequest,
+    request: Request,
+) -> SaveabilityResponse:
+    """
+    Say whether a target could be saved as asked, without building or saving it.
+
+    Only the type, parameters, and auth mode are checked, by create's parameter, permission, and save checks. The
+    name and registration options aren't checked, and the target isn't built, so its constructor's own checks don't
+    run: a null reason means the save checks pass, not that creating the target succeeds.
+
+    Returns:
+        SaveabilityResponse: Why the target can't be saved, or no reason when the save checks pass.
+    """
+    try:
+        return await get_target_service().check_saveability_async(
+            request=body,
+            upload_directory=_target_upload_directory(request),
+            is_admin=has_admin_access(request),
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+@router.post(
     "",
     response_model=TargetInstance | UnregisteredTarget,
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {
-            "model": ProblemDetail,
-            "description": "Invalid target type or parameters",
+            "model": NotSaveableProblemDetail,
+            "description": (
+                f"Invalid target type or parameters, or (type {NOT_SAVEABLE_PROBLEM_TYPE}) a target that can't be "
+                "saved as asked but can be created without saving it"
+            ),
         },
         403: {
             "model": ProblemDetail,
@@ -157,7 +206,7 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
         },
         409: {
             "model": ProblemDetail,
-            "description": "A target to save has the name of a registered or saved target",
+            "description": "A registered target has the name, or, for a target to save, a saved target has it",
         },
         503: {"model": ProblemDetail, "description": "Saved targets can't be written right now"},
     },
@@ -166,7 +215,7 @@ async def create_target(
     *,
     body: CreateTargetRequest,
     request: Request,
-) -> TargetInstance | UnregisteredTarget:  # pyrit-async-suffix-exempt
+) -> TargetInstance | UnregisteredTarget | JSONResponse:  # pyrit-async-suffix-exempt
     """
     Create a new target instance.
 
@@ -180,7 +229,8 @@ async def create_target(
     ``allow_credential_updates`` is true.
 
     Returns:
-        TargetInstance | UnregisteredTarget: A named instance or an unregistered descriptor.
+        TargetInstance | UnregisteredTarget | JSONResponse: A named instance or an unregistered descriptor,
+            or the problem response for a target that can't be saved as asked.
     """
     service = get_target_service()
 
@@ -192,7 +242,18 @@ async def create_target(
             owner=_saved_entry_owner(request) if body.persist else None,
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
-    except SavedEntryConflictError as e:
+    except NotSaveableError as e:
+        problem = NotSaveableProblemDetail(
+            type=NOT_SAVEABLE_PROBLEM_TYPE,
+            title="Can't be saved",
+            status=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+            not_saveable_reason=e.cause,
+            instance=str(request.url.path),
+        )
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=problem.model_dump(exclude_none=True))
+    except (SavedEntryConflictError, RegistryNameTakenError) as e:
+        # RegistryNameTakenError is a ValueError, and a taken name is a 409 whether or not the target is saved.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except SavedEntryStorageError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e

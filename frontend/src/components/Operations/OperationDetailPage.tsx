@@ -7,10 +7,11 @@ import {
 import { AddRegular, ArrowLeftRegular } from '@fluentui/react-icons'
 
 import { DEFAULT_HISTORY_FILTERS, filtersToSearchParams } from '@/components/History/historyFilters'
+import { useFindingFields } from '@/hooks/useFindingFields'
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { FindingCreate, FindingListItem, FindingListResponse, OperationDetail } from '@/types'
-import FindingDialog, { type FindingSaveAttempt } from './FindingDialog'
+import type { FindingListItem, FindingListResponse, OperationDetail } from '@/types'
+import FindingDialog, { type FindingDraft, type FindingSaveAttempt } from './FindingDialog'
 import FindingExportDialog from './FindingExportDialog'
 import FindingPathsDialog from './FindingPathsDialog'
 import FindingTreeItem, { type FindingTreeActions } from './FindingTreeItem'
@@ -51,6 +52,7 @@ export default function OperationDetailPage({ onOperationChanged }: OperationDet
 function OperationDetailContent({ operationId, onOperationChanged }: { operationId: string } & OperationDetailPageProps) {
   const styles = useOperationsStyles()
   const navigate = useNavigate()
+  const { fields, error: fieldsError, retry: retryFields, fieldsRevision } = useFindingFields(operationId)
   const [params, setParams] = useSearchParams()
   const rawOffset = Number(params.get('offset') ?? 0)
   const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0
@@ -63,7 +65,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
   const [evidenceRevision, setEvidenceRevision] = useState(0)
   const [settledKey, setSettledKey] = useState('')
   const [error, setError] = useState('')
-  const requestKey = JSON.stringify([operationId, offset, revision])
+  const requestKey = JSON.stringify([operationId, offset, revision, fieldsRevision])
   const [notice, setNotice] = useState('')
   const [dialog, setDialog] = useState<FindingDialogTarget | null>(null)
   const [deleting, setDeleting] = useState<FindingListItem | null>(null)
@@ -123,12 +125,13 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
     setRevision(value => value + 1)
   }
 
-  const save = async (draft: FindingCreate, attempt: FindingSaveAttempt): Promise<void> => {
+  const save = async (draft: FindingDraft, attempt: FindingSaveAttempt): Promise<void> => {
     if (dialog === null) return
     const { editing, parent } = dialog
     const saved = editing
       ? await operationsApi.updateFinding(operationId, editing.id, {
         ...draft, parent_finding_id: editing.parent_finding_id,
+        keep_retired_keys: draft.keep_retired_keys ?? [], remove_retired_keys: draft.remove_retired_keys ?? [],
       })
       : await operationsApi.createFinding(operationId, {
         ...draft, id: attempt.id, ...(parent ? { parent_finding_id: parent.id } : {}),
@@ -240,18 +243,19 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
               onOperationChanged?.()
               void navigate('/operations')
             }} />
-          <FindingExportDialog key={current.operation.id} operation={current.operation} />
-          <Button ref={newFindingRef as never} appearance="primary" className={styles.button} icon={<AddRegular />} onClick={event => {
-            returnFocusRef.current = event.currentTarget
-            setDialog({ editing: null, parent: null })
-          }}>New finding</Button>
+          {fields !== null && <FindingExportDialog key={current.operation.id} operation={current.operation}
+            fields={fields} fieldsRevision={fieldsRevision} />}
+          <Button ref={newFindingRef as never} appearance="primary" className={styles.button} icon={<AddRegular />}
+            disabled={fields === null} onClick={event => {
+              returnFocusRef.current = event.currentTarget
+              setDialog({ editing: null, parent: null })
+            }}>New finding</Button>
         </div>
-        {dialog && <FindingDialog editing={editing !== null} evidenceField={editing === null}
-          parentTitle={dialog.parent?.title}
+        {dialog && fields !== null && <FindingDialog fields={fields} editing={editing !== null}
+          evidenceField={editing === null} parentTitle={dialog.parent?.title}
           initialValues={editing ? {
-            title: editing.title, description: editing.description, severity: editing.severity,
-            severity_other: editing.severity_other ?? null, harm_type: editing.harm_type ?? null,
-            harm_type_other: editing.harm_type_other ?? null, demonstrated: editing.demonstrated,
+            title: editing.title, severity: editing.severity, field_values: editing.field_values,
+            retired: editing.retired, demonstrated: editing.demonstrated,
           } : undefined}
           onSave={save} onClose={() => { setDialog(null) }} />}
         {pathsTarget && <FindingPathsDialog operationId={operationId} finding={pathsTarget.finding}
@@ -290,7 +294,12 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
       {notice && <MessageBar className={styles.notice} intent="success" aria-live="polite">
         <MessageBarBody>{notice}</MessageBarBody>
       </MessageBar>}
-      {settledKey !== requestKey ? <Spinner label="Loading findings…" /> : error ? (
+      {fieldsError ? (
+        <MessageBar intent="error"><MessageBarBody>
+          Could not load finding fields: {fieldsError}{' '}
+          <Button className={styles.button} aria-label="Retry finding fields" onClick={retryFields}>Retry</Button>
+        </MessageBarBody></MessageBar>
+      ) : fields === null || settledKey !== requestKey ? <Spinner label="Loading findings…" /> : error ? (
         <MessageBar intent="error"><MessageBarBody>
           Could not load findings: {error}{' '}
           <Button className={styles.button} onClick={() => { setRevision(value => value + 1) }}>Retry</Button>
@@ -300,9 +309,9 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
           {page.items.length === 0 ? <Text>No findings in this operation yet. Create one to record an assessment.</Text>
             : <ul className={styles.list}>{page.items.map((finding, index) => (
               // Numbered across pages, in the order the report lists top-level findings.
-              <FindingTreeItem key={finding.id} operationId={operationId} finding={finding}
+              <FindingTreeItem key={finding.id} operationId={operationId} finding={finding} fields={fields}
                 number={String(offset + index + 1)} depth={0}
-                revision={revision + evidenceRevision} expanded={expanded} actions={treeActions} />
+                revision={revision + evidenceRevision + fieldsRevision} expanded={expanded} actions={treeActions} />
             ))}</ul>}
           <div className={styles.header}>
             <Button className={styles.button} disabled={offset === 0} onClick={() => { navigatePage(0) }}>First</Button>

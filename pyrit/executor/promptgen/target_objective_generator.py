@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
+from pydantic import ValidationError as PydanticValidationError
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.exceptions import InvalidJsonException
@@ -27,6 +28,7 @@ from pyrit.models import (
     PromptGenerationEstimate,
     PromptGenerationStageEstimate,
     SeedPrompt,
+    TargetObjectiveGenerationRequest,
 )
 from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
 
@@ -267,13 +269,27 @@ class TargetObjectiveGenerator(
         return Draft202012Validator(schema)
 
 
+_INVALID_REQUEST_MESSAGES = {
+    "instructions": "instructions must be a non-empty string.",
+    "count": "count must be a positive integer.",
+    "harm_categories": "harm_categories must contain non-empty strings.",
+}
+
+
 def _validate_request(*, instructions: object, count: object, harm_categories: Sequence[object]) -> None:
-    if not isinstance(instructions, str) or not instructions.strip():
-        raise ValueError("instructions must be a non-empty string.")
-    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
-        raise ValueError("count must be a positive integer.")
-    if any(not isinstance(category, str) or not category.strip() for category in harm_categories):
-        raise ValueError("harm_categories must contain non-empty strings.")
+    """
+    Check a request against the rules of ``TargetObjectiveGenerationRequest``.
+
+    Raises:
+        ValueError: If a field breaks those rules, naming the first field that does.
+    """
+    try:
+        TargetObjectiveGenerationRequest.model_validate(
+            {"instructions": instructions, "count": count, "harm_categories": harm_categories}
+        )
+    except PydanticValidationError as error:
+        field = str(error.errors()[0]["loc"][0])
+        raise ValueError(_INVALID_REQUEST_MESSAGES[field]) from error
 
 
 def _request_text(*, instructions: str, count: int, harm_categories: Sequence[str]) -> str:

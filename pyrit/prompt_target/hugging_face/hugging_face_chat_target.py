@@ -403,7 +403,7 @@ class HuggingFaceChatTarget(PromptTarget):
 
             assistant_response = cast(
                 "str",
-                self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),  # type: ignore[ty:unresolved-attribute]
+                self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),  # type: ignore[ty:missing-union-attribute]
             ).strip()
 
             truncated = self._is_truncated(generated_tokens=generated_tokens)

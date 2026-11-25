@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useCallback, useState } from 'react'
 import type { ReactNode, Ref } from 'react'
 
 import {
@@ -122,12 +122,26 @@ function Conditions({ conditions }: { conditions: SeedCondition[] | null }) {
   )
 }
 
+type MemberCopyField = 'value' | 'id'
+
 interface MemberViewProps {
   member: SeedRecord
   position: number
-  copiedKey: string | null
-  failedKey: string | null
+  /** Which of this member's copy buttons last copied, if any. */
+  copiedField: MemberCopyField | null
+  copyFailed: boolean
   onCopy: (key: string, value: string) => void
+  onRefreshUrls?: ((memberId: string) => Promise<string | null>) | undefined
+}
+
+function memberCopyKey(memberId: string, field: MemberCopyField): string {
+  return `${memberId}:${field}`
+}
+
+function memberCopyField(memberId: string, key: string | null): MemberCopyField | null {
+  if (key === memberCopyKey(memberId, 'value')) return 'value'
+  if (key === memberCopyKey(memberId, 'id')) return 'id'
+  return null
 }
 
 function MemberMedia({
@@ -187,17 +201,19 @@ function MemberMedia({
   )
 }
 
-function MemberView({
+// Memoized so copy feedback, which lives in SeedExampleDetail, re-renders only the members
+// whose own copied/failed state changed instead of the whole list.
+const MemberView = memo(function MemberView({
   member,
   position,
-  copiedKey,
-  failedKey,
+  copiedField,
+  copyFailed,
   onCopy,
   onRefreshUrls,
-}: MemberViewProps & { onRefreshUrls?: ((memberId: string) => Promise<string | null>) | undefined }) {
+}: MemberViewProps) {
   const styles = useSeedExampleDetailStyles()
-  const valueKey = `${member.id}:value`
-  const idKey = `${member.id}:id`
+  const valueKey = memberCopyKey(member.id, 'value')
+  const idKey = memberCopyKey(member.id, 'id')
   const conversationId = generationConversationId(member.metadata)
   return (
     <article className={styles.member} aria-label={`Member ${position}`}>
@@ -245,7 +261,7 @@ function MemberView({
           icon={<ClipboardRegular />}
           onClick={() => { onCopy(valueKey, member.value) }}
         >
-          {copiedKey === valueKey ? 'Copied full text' : 'Copy full text'}
+          {copiedField === 'value' ? 'Copied full text' : 'Copy full text'}
         </Button>
         <Button
           className={styles.touchTarget}
@@ -253,15 +269,15 @@ function MemberView({
           icon={<ClipboardRegular />}
           onClick={() => { onCopy(idKey, member.id) }}
         >
-          {copiedKey === idKey ? 'Copied ID' : 'Copy ID'}
+          {copiedField === 'id' ? 'Copied ID' : 'Copy ID'}
         </Button>
       </div>
-      {failedKey === valueKey || failedKey === idKey ? (
+      {copyFailed ? (
         <p role="alert" className={styles.note}>{COPY_FAILED_MESSAGE}</p>
       ) : null}
     </article>
   )
-}
+})
 
 /** Inspection view for stored members. Text stays text. Media loads only when asked and never plays itself. */
 export default function SeedExampleDetail({
@@ -279,7 +295,8 @@ export default function SeedExampleDetail({
   const keys = memberKeys(detail.members)
   const exampleCopyKey = `example:${detail.example_id}`
 
-  const copyText = (key: string, value: string): void => {
+  // Stable across renders so the memoized members are not invalidated by a new callback.
+  const copyText = useCallback((key: string, value: string): void => {
     const write = navigator.clipboard?.writeText
     if (!write) {
       setCopiedKey(null)
@@ -293,7 +310,7 @@ export default function SeedExampleDetail({
       setCopiedKey(null)
       setFailedKey(key)
     })
-  }
+  }, [])
 
   return (
     <section className={styles.root} aria-label="Example detail">
@@ -385,8 +402,8 @@ export default function SeedExampleDetail({
           key={keys[index]}
           member={member}
           position={index + 1}
-          copiedKey={copiedKey}
-          failedKey={failedKey}
+          copiedField={memberCopyField(member.id, copiedKey)}
+          copyFailed={memberCopyField(member.id, failedKey) != null}
           onCopy={copyText}
           onRefreshUrls={onRefreshUrls}
         />

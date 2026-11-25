@@ -22,6 +22,7 @@ import {
   Field,
   MessageBar,
   MessageBarBody,
+  MessageBarTitle,
   Tooltip,
 } from '@fluentui/react-components'
 import { DeleteRegular } from '@fluentui/react-icons'
@@ -33,10 +34,12 @@ import {
   buildParametersFromForm,
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
+import { useSaveability } from '@/hooks/useSaveability'
 import { targetsApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
+import { isNotSaveableError, notSaveableReason, toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
-import type { TargetAuthMode, TargetInstance, TargetTypeEntry } from '@/types'
+import type { TargetAuthMode, TargetInstance, TargetSaveabilityRequest, TargetTypeEntry } from '@/types'
+import { suggestRegistryName, validateRegistryName } from '@/utils/registryName'
 import { isGuiTarget } from '@/utils/targetVisibility'
 import {
   targetIdentifierHash,
@@ -44,6 +47,7 @@ import {
   targetType as getTargetType,
   targetUnderlyingModelName,
 } from '@/utils/targetIdentity'
+import { TARGET_ORIGIN_LABELS } from '@/utils/targetOrigin'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
 import {
   canConfigureTargetType,
@@ -143,8 +147,18 @@ const AUTH_MODE_LABELS: Record<TargetAuthMode, string> = {
   none: 'No key',
 }
 
+// A new target starts with the first of these that a saved target of its type can use.
+const SAVEABLE_AUTH_MODE_PREFERENCE: readonly TargetAuthMode[] = ['identity', 'none']
+
+const TEMPORARY_TARGET_NOTE = 'A Temporary target is gone after the backend restarts or is reinitialized.'
+
 function getTargetDisplayName(targetType: string): string {
   return TARGET_DISPLAY_NAMES[targetType] ?? targetType
+}
+
+/** The text a suggested registry name is built from: the type's display name, or its class name without "Target". */
+function getTargetNameLabel(targetType: string): string {
+  return TARGET_DISPLAY_NAMES[targetType] ?? targetType.replace(/Target$/, '')
 }
 
 function getAuthDescription(entry: TargetTypeEntry, registryMetadataLoaded: boolean): string | null {
@@ -242,6 +256,18 @@ interface SelectedInnerTarget {
   weightInput: string
 }
 
+/** A save the backend refused, for the form values it refused. */
+interface SaveRefusal {
+  readonly formKey: string
+  readonly reason: string
+}
+
+/** A name the backend said is taken. */
+interface NameConflict {
+  readonly name: string
+  readonly detail: string
+}
+
 /**
  * Resolve the effective underlying model for compatibility checks.
  *
@@ -284,10 +310,13 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const styles = useCreateTargetDialogStyles()
   const [targetType, setTargetType] = useState('')
   const [endpoint, setEndpoint] = useState('')
+  // The Entra ID endpoint error waits until the endpoint field is left, so it doesn't flash while a host is typed.
+  const [endpointFocused, setEndpointFocused] = useState(false)
   const [modelName, setModelName] = useState('')
   const [hasDifferentUnderlying, setHasDifferentUnderlying] = useState(false)
   const [underlyingModel, setUnderlyingModel] = useState('')
-  const [authMode, setAuthMode] = useState<TargetAuthMode>('api_key')
+  // The auth mode the user picked; until then the dialog uses the default for the selected type.
+  const [chosenAuthMode, setChosenAuthMode] = useState<TargetAuthMode | null>(null)
   const [apiKey, setApiKey] = useState('')
   const [onlyMeChoice, setOnlyMeChoice] = useState(false)
   // Null follows the default: updates are allowed for a private target and not for a shared one.
@@ -299,12 +328,18 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const errorMessageRef = useRef<HTMLDivElement>(null)
   const httpRequestFieldRef = useRef<HTMLTextAreaElement>(null)
   const [fieldErrors, setFieldErrors] = useState<{
-    targetType?: string
+    targetType?: string | undefined
     endpoint?: string
     modelName?: string
     underlyingModel?: string
     apiKey?: string
   }>({})
+  const [registryName, setRegistryName] = useState('')
+  // Until the user edits the name, the field shows a suggestion instead.
+  const [nameEdited, setNameEdited] = useState(false)
+  const [nameConflict, setNameConflict] = useState<NameConflict | null>(null)
+  const [saveRefusal, setSaveRefusal] = useState<SaveRefusal | null>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (httpRequestError) {
@@ -425,10 +460,23 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     ? targetTypeEntry.supported_auth_modes.includes('none')
     : defaultSupportsNoKey(targetType)
   const showAuthField = targetType !== '' && (supportsIdentity || supportsNoKey)
+  // Default to a mode a saved target of this type can use. It is derived, so it also applies when the type's
+  // details arrive after the type was chosen.
+  const defaultAuthMode = SAVEABLE_AUTH_MODE_PREFERENCE.find(
+    (mode) => targetTypeEntry?.saveable_auth_modes?.includes(mode),
+  ) ?? 'api_key'
+  const chosenAuthModeSupported = chosenAuthMode === 'api_key'
+    || (chosenAuthMode === 'identity' && supportsIdentity)
+    || (chosenAuthMode === 'none' && supportsNoKey)
+  const authMode = chosenAuthMode !== null && chosenAuthModeSupported ? chosenAuthMode : defaultAuthMode
   const isIdentity = showAuthField && authMode === 'identity'
   const isNoKey = showAuthField && authMode === 'none'
   const endpointRequired = Boolean(endpointParameter?.required) || (metadataUnavailableForSelection && hasEndpointField)
-  const modelNameRequired = Boolean(modelNameParameter?.required)
+  // Without the type's details, still require the model every OpenAI type needs. The suggested name then includes
+  // it, which keeps it off names such as `openai_chat` that startup initializers use.
+  const modelNameRequired = modelNameParameter
+    ? Boolean(modelNameParameter.required)
+    : metadataUnavailableForSelection && isOpenAi
   const underlyingModelRequired = Boolean(underlyingModelParameter?.required)
   const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity && !isNoKey
   // Anything built on a private target is private too, so such a round robin can't be shared.
@@ -485,7 +533,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const identityEndpointError: string | null = (() => {
     if (!isIdentity || endpoint === '') return null
     if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
+      const noKeyHint = supportsNoKey ? ' For a server that needs no key, such as a local one, choose No key.' : ''
       return 'Identity-based auth only works with Azure OpenAI / AI Foundry endpoints (for example, *.openai.azure.com or *.ai.azure.com).'
+        + noKeyHint
     }
     if (isAzureML && !isAzureMlEndpoint(endpoint)) {
       return 'Identity-based auth for AzureMLChatTarget only works with Azure ML managed online endpoints (for example, *.inference.ml.azure.com).'
@@ -493,6 +543,96 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     return null
   })()
   const showIdentityEndpointError = identityEndpointError !== null
+  // Shown with the field after it loses focus, so a narrow screen still shows why Save is disabled.
+  const endpointMessage = fieldErrors.endpoint ?? (endpointFocused ? null : identityEndpointError)
+  // The parent's list is current; the round-robin list is a snapshot from when it was fetched.
+  const takenNames = useMemo(
+    () => new Set((existingTargets ?? availableTargets).map((t) => t.target_registry_name)),
+    [existingTargets, availableTargets],
+  )
+  // Until edited, the name follows the type and model. That tells saved targets apart and leaves names such as
+  // `openai_chat` to the startup initializers, whose target would otherwise stop a saved one of that name restoring.
+  const suggestedName = targetType
+    ? suggestRegistryName(getTargetNameLabel(targetType), takenNames, hasModelNameField ? modelName : '')
+    : ''
+  const nameValue = nameEdited ? registryName : suggestedName
+  // The server stays authoritative; this only catches names already in the list the dialog has.
+  const nameTaken = takenNames.has(nameValue)
+  // A conflict applies to the name it was reported for, even if it arrives after the name was edited.
+  const nameConflictDetail = nameConflict?.name === nameValue ? nameConflict.detail : null
+  const nameMessage = nameConflictDetail
+    ?? (nameTaken ? `A target named '${nameValue}' already exists.` : null)
+    ?? (nameEdited ? validateRegistryName(nameValue) : null)
+  const nameBlocked = nameConflictDetail !== null || nameTaken || validateRegistryName(nameValue) !== null
+  // A type's own reasons are known upfront; whether the entered values can be saved is the backend's call.
+  const typeTemporaryReason: string | null = (() => {
+    if (!targetType) return null
+    if (targetTypeEntry?.not_saveable_reason) return targetTypeEntry.not_saveable_reason
+    const saveableAuthModes = targetTypeEntry?.saveable_auth_modes
+    if (showAuthField && saveableAuthModes && !saveableAuthModes.includes(authMode)) {
+      const current = authMode === 'api_key' ? 'an API key' : AUTH_MODE_LABELS[authMode]
+      return `Saved targets can't use ${current} yet.`
+    }
+    return null
+  })()
+  // Saved targets are shared, and their credentials can't be updated, so these choices are known to need Temporary.
+  const choiceTemporaryReason: string | null = (() => {
+    if (!targetType) return null
+    // Also a round robin that's private because of a member, which the "Who can use it" hint names.
+    if (onlyMe) return 'Private targets stay Temporary.'
+    if (allowCredentialUpdates) return "A saved target's credentials can't be updated."
+    return null
+  })()
+  const requestAuthMode: TargetAuthMode | undefined = isIdentity ? 'identity' : isNoKey ? 'none' : undefined
+  // The parameters a create request sends for the standard fields, or why the form can't give them.
+  const buildFormParams = (): { ok: true, params: Record<string, unknown> } | { ok: false, error: string } => {
+    const metadataParams = buildParametersFromForm(metadataDrivenParameters, parameterValues)
+    if (!metadataParams.ok) return metadataParams
+    const params: Record<string, unknown> = { ...(metadataParams.parameters ?? {}) }
+    // Identity-based auth must be enforceable: strip any metadata-driven
+    // parameter (e.g. AzureBlobStorageTarget's sas_token) that would let the
+    // backend authenticate a different way than the selected identity.
+    if (isIdentity) {
+      for (const parameter of metadataDrivenParameters) {
+        if (parameter.identity_conflicting) delete params[parameter.name]
+      }
+    }
+    if (hasEndpointField && endpoint) params.endpoint = endpoint
+    if (hasModelNameField && modelName) params.model_name = modelName
+    // A pasted key often ends with a newline, which can't be sent in a request header.
+    if (hasApiKeyField && !isIdentity && !isNoKey && apiKey.trim()) params.api_key = apiKey.trim()
+    if ((underlyingModelRequired || hasDifferentUnderlying) && underlyingModel && hasUnderlyingModelField) {
+      params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
+    }
+    return { ok: true, params }
+  }
+  const saveabilityRequest: TargetSaveabilityRequest | null = (() => {
+    if (!open || !targetType || typeTemporaryReason !== null || choiceTemporaryReason !== null) return null
+    if (isRoundRobin) {
+      if (selectedInnerTargets.length === 0) return null
+      return { type: targetType, params: { targets: selectedInnerTargets.map((selected) => selected.registryName) } }
+    }
+    const formParams = buildFormParams()
+    if (!formParams.ok) return null
+    return { type: targetType, params: formParams.params, ...(requestAuthMode ? { auth_mode: requestAuthMode } : {}) }
+  })()
+  const checkedReason = useSaveability(saveabilityRequest, targetsApi.checkSaveability)
+  // A refused save only applies to the values it was refused for, so any edit lets the user try saving again.
+  const formKey = JSON.stringify([
+    targetType,
+    endpoint,
+    modelName,
+    hasDifferentUnderlying,
+    underlyingModel,
+    authMode,
+    apiKey,
+    parameterValues,
+    selectedInnerTargets,
+  ])
+  const refusedReason = saveRefusal?.formKey === formKey ? saveRefusal.reason : null
+  // Each reason gives only its cause: the footer shows the first, and changing what it names can leave another.
+  const temporaryReason = typeTemporaryReason ?? choiceTemporaryReason ?? checkedReason ?? refusedReason
+  const submitLabel = submitting ? 'Creating...' : (temporaryReason === null ? 'Save Target' : 'Create as Temporary')
 
   // Fetch the available targets when the dialog opens with RoundRobin selected.
   // If the parent already passed targets, derive availableTargets from them
@@ -584,7 +724,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setModelName('')
     setHasDifferentUnderlying(false)
     setUnderlyingModel('')
-    setAuthMode('api_key')
+    setChosenAuthMode(null)
     setApiKey('')
     setOnlyMeChoice(false)
     setCredentialUpdatesChoice(null)
@@ -593,6 +733,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setHttpRequestError(null)
     setFieldErrors({})
     setSelectedInnerTargets([])
+    setEndpointFocused(false)
+    setRegistryName('')
+    setNameEdited(false)
+    setNameConflict(null)
+    setSaveRefusal(null)
   }
 
   const handleClose = () => {
@@ -601,7 +746,36 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     onClose()
   }
 
+  const handleCreateError = (err: unknown, persist: boolean) => {
+    const apiError = toApiError(err)
+    if (persist && isNotSaveableError(apiError)) {
+      setSaveRefusal({ formKey, reason: notSaveableReason(apiError) ?? apiError.detail })
+      return
+    }
+    // A taken name is a 409 without a problem type; a typed 409 is the build-identity mismatch the client handles.
+    if (apiError.status === 409 && apiError.type === undefined) {
+      setNameConflict({ name: nameValue, detail: apiError.detail })
+      // A conflict for a name that was edited away stays hidden, so it doesn't take focus either.
+      if (nameInputRef.current?.value === nameValue) nameInputRef.current.focus()
+      return
+    }
+    // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
+    // messages) rather than the generic axios "Request failed with status code 400".
+    setError(apiError.detail)
+    setHttpRequestError(
+      targetType === 'HTTPTarget' && apiError.status === 400 ? apiError.detail : null,
+    )
+  }
+
   const handleSubmit = async () => {
+    if (nameBlocked) {
+      // Keep the name shown, a suggestion included, so its message stays with it.
+      setRegistryName(nameValue)
+      setNameEdited(true)
+      return
+    }
+    const persist = temporaryReason === null
+
     // For RoundRobinTarget, validation is different: we need ≥2 selected targets, not endpoint
     if (isRoundRobin) {
       if (selectedInnerTargets.length < 2) {
@@ -626,19 +800,19 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
       try {
         await targetsApi.createTarget({
+          name: nameValue,
           type: 'RoundRobinTarget',
           params: {
             targets: selectedInnerTargets.map((t) => t.registryName),
             weights: parsedWeights,
           },
+          persist,
           private: onlyMe,
         })
         resetForm()
         onCreated()
       } catch (err) {
-        // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
-        // messages) rather than the generic axios "Request failed with status code 400".
-        setError(toApiError(err).detail)
+        handleCreateError(err, persist)
       } finally {
         setSubmitting(false)
       }
@@ -665,10 +839,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     }
     setFieldErrors({})
 
-    const metadataParams = buildParametersFromForm(metadataDrivenParameters, parameterValues)
-    if (!metadataParams.ok) {
+    const formParams = buildFormParams()
+    if (!formParams.ok) {
       setHttpRequestError(null)
-      setError(metadataParams.error)
+      setError(formParams.error)
       return
     }
 
@@ -677,33 +851,12 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setHttpRequestError(null)
 
     try {
-      const params: Record<string, unknown> = { ...(metadataParams.parameters ?? {}) }
-      // Identity-based auth must be enforceable: strip any metadata-driven
-      // parameter (e.g. AzureBlobStorageTarget's sas_token) that would let the
-      // backend authenticate a different way than the selected identity.
-      if (isIdentity) {
-        for (const parameter of metadataDrivenParameters) {
-          if (parameter.identity_conflicting) delete params[parameter.name]
-        }
-      }
-      if (hasEndpointField && endpoint) params.endpoint = endpoint
-      if (hasModelNameField && modelName) params.model_name = modelName
-      // A pasted key often ends with a newline, which can't be sent in a request header.
-      if (hasApiKeyField && !isIdentity && !isNoKey && apiKey.trim()) params.api_key = apiKey.trim()
-
-      if (
-        (underlyingModelRequired || hasDifferentUnderlying)
-        && underlyingModel
-        && hasUnderlyingModelField
-      ) {
-        params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
-      }
-
       await targetsApi.createTarget({
+        name: nameValue,
         type: targetType,
-        params,
-        ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
-        ...(isNoKey ? { auth_mode: 'none' as const } : {}),
+        params: formParams.params,
+        ...(requestAuthMode ? { auth_mode: requestAuthMode } : {}),
+        persist,
         private: onlyMe,
         // The server applies the same default, so the choice is sent only when the user changed it.
         ...(canUpdateCredentials && credentialUpdatesChoice !== null
@@ -714,13 +867,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       resetForm()
       onCreated()
     } catch (err) {
-      // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
-      // messages) rather than the generic axios "Request failed with status code 400".
-      const apiError = toApiError(err)
-      setError(apiError.detail)
-      setHttpRequestError(
-        targetType === 'HTTPTarget' && apiError.status === 400 ? apiError.detail : null,
-      )
+      handleCreateError(err, persist)
     } finally {
       setSubmitting(false)
     }
@@ -777,26 +924,17 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   value={targetType ? selectedTargetDisplayName : ''}
                   onOptionSelect={(_, data) => {
                     const next = data.optionValue
-                    if (!next) return
+                    // The picker also reports the type that is already selected, which must not clear what was typed.
+                    if (!next || next === targetType) return
                     setTargetType(next)
+                    setFieldErrors((previous) => ({ ...previous, targetType: undefined }))
                     setParameterValues({})
                     if (httpRequestError !== null) {
                       setHttpRequestError(null)
                       setError(null)
                     }
-                    const nextEntry = targetTypeByName.get(next)
-                    const nextSupportsIdentity = nextEntry
-                      ? nextEntry.supported_auth_modes.includes('identity')
-                      : defaultSupportsIdentity(next)
-                    const nextSupportsNoKey = nextEntry
-                      ? nextEntry.supported_auth_modes.includes('none')
-                      : defaultSupportsNoKey(next)
-                    if (
-                      (authMode === 'identity' && !nextSupportsIdentity)
-                      || (authMode === 'none' && !nextSupportsNoKey)
-                    ) {
-                      setAuthMode('api_key')
-                    }
+                    setChosenAuthMode(null)
+                    setApiKey('')
                   }}
                 >
                   {targetTypeOptions.map((entry) => {
@@ -865,6 +1003,24 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 </section>
               )}
 
+              <Field
+                className={styles.formField}
+                label="Registry Name"
+                hint={nameMessage ? null : 'Lowercase letters, digits and underscores, starting with a letter, up to 64 characters.'}
+                required
+                validationMessage={nameMessage ?? null}
+                validationState={nameMessage ? 'error' : 'none'}
+              >
+                <Input
+                  ref={nameInputRef as never}
+                  value={nameValue}
+                  onChange={(_, data) => {
+                    setRegistryName(data.value)
+                    setNameEdited(true)
+                  }}
+                />
+              </Field>
+
               {isGitHubCopilot && (
                 <>
                   <MessageBar intent="info">
@@ -905,6 +1061,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         <option key={t.target_registry_name} value={t.target_registry_name}>
                           {t.target_registry_name} — {getTargetType(t)}
                           {targetModelName(t) ? ` (${targetModelName(t)})` : ''}
+                          {t.origin === 'temporary' ? ` · ${TARGET_ORIGIN_LABELS.temporary}` : ''}
                         </option>
                       ))}
                     </Select>
@@ -927,7 +1084,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                           )
                           const selectedTargetLabel = `${target?.target_registry_name ?? sel.registryName}${
                             target && targetModelName(target) ? ` (${targetModelName(target)})` : ''
-                          }`
+                          }${target?.origin === 'temporary' ? ` · ${TARGET_ORIGIN_LABELS.temporary}` : ''}`
                           const weightParse = parseWeight(sel.weightInput)
                           const weightError = weightParse.ok ? null : weightParse.error
                           return (
@@ -999,8 +1156,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       label="Endpoint URL"
                       hint={endpointParameter?.description || null}
                       required={endpointRequired}
-                      validationMessage={fieldErrors.endpoint || null}
-                      validationState={fieldErrors.endpoint ? 'error' : 'none'}
+                      validationMessage={endpointMessage ?? null}
+                      validationState={endpointMessage ? 'error' : 'none'}
                     >
                       <Input
                         placeholder={isAzureML
@@ -1010,6 +1167,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                             : 'https://example.com/'}
                         value={endpoint}
                         onChange={(_, data) => setEndpoint(data.value)}
+                        onFocus={() => setEndpointFocused(true)}
+                        onBlur={() => setEndpointFocused(false)}
                       />
                     </Field>
                   )}
@@ -1110,7 +1269,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         value={authMode}
                         onChange={(_, data) => {
                           const next = data.value as TargetAuthMode
-                          setAuthMode(next)
+                          setChosenAuthMode(next)
                           if (next === 'none') {
                             setApiKey('')
                           }
@@ -1137,14 +1296,6 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     </Field>
                   )}
 
-                  {showIdentityEndpointError && (
-                    <MessageBar intent="error" className={styles.warningMessage}>
-                      <MessageBarBody className={styles.warningMessageBody}>
-                        {identityEndpointError}
-                      </MessageBarBody>
-                    </MessageBar>
-                  )}
-
                   {hasApiKeyField && !isIdentity && !isNoKey && (
                     <Field
                       label="API Key"
@@ -1157,7 +1308,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         type="password"
                         placeholder="API key (stored in memory only)"
                         value={apiKey}
-                        onChange={(_, data) => setApiKey(data.value)}
+                        onChange={(_, data) => {
+                          setApiKey(data.value)
+                          setChosenAuthMode('api_key')
+                        }}
                       />
                     </Field>
                   )}
@@ -1207,6 +1361,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 </>
               )}
 
+
               {!isRoundRobin && (
               <Label size="small" style={{ color: tokens.colorNeutralForeground3 }}>
                 Targets can also be auto-populated by adding the <code>target</code> initializer to your{' '}
@@ -1224,7 +1379,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               )}
             </form>
           </DialogContent>
-          <DialogActions>
+          {/* Outside the scrolling form, so it shows next to the button it explains without moving the fields. */}
+          {temporaryReason && (
+            <MessageBar intent="warning" className={styles.temporaryWarning} role="status">
+              <MessageBarBody className={styles.warningMessageBody}>
+                <MessageBarTitle>This target can&apos;t be saved</MessageBarTitle>
+                {temporaryReason} {TEMPORARY_TARGET_NOTE}
+              </MessageBarBody>
+            </MessageBar>
+          )}
+          <DialogActions className={temporaryReason ? styles.actionsBelowWarning : undefined}>
             <Button appearance="secondary" onClick={handleClose} disabled={submitting}>
               Cancel
             </Button>
@@ -1242,9 +1406,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   || (underlyingModelRequired && !underlyingModel)
                   || (apiKeyRequired && !apiKey.trim())
                   || requiredMetadataParameterMissing
+                  || nameBlocked
               }
             >
-              {submitting ? 'Creating...' : 'Create Target'}
+              {submitLabel}
             </Button>
           </DialogActions>
         </DialogBody>

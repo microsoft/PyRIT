@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { mapScenarioRunEstimate } from '@/components/Scenarios/scenarioRunEstimateAdapter'
 import { scenariosApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
+import { apiErrorMessage, toApiError } from '@/services/errors'
 import type {
   ScenarioDatasetSettings,
   ScenarioRunEstimateResult,
@@ -13,12 +13,15 @@ import type {
 
 export const ESTIMATE_DEBOUNCE_MS = 300
 
+const REQUIRED_CONFIGURATION_LABEL = 'Complete the required configuration to request an estimate.'
+const REJECTED_CONFIGURATION_LABEL = 'Fix the configuration to request an estimate.'
+
 type SuccessfulEstimateResult = Extract<ScenarioRunEstimateResult, { status: 'available' | 'conditional' }>
 
 /** The backend answer for one request key. */
 export type EstimateRequestState =
   | { status: 'resolved', requestKey: string, result: ScenarioRunEstimateResult, datasetSettings?: ScenarioDatasetSettings | undefined }
-  | { status: 'error', requestKey: string, error: string }
+  | { status: 'error', requestKey: string, error: string, httpStatus: number | null }
 
 interface UseScenarioRunEstimateInput {
   scenarioName: string
@@ -39,6 +42,13 @@ export interface ScenarioRunEstimate {
   datasetProjection: ScenarioRunSizeEstimateResponse | null
   /** The backend answer for the current request, or null while it's pending. */
   current: EstimateRequestState | null
+  /** The server's message when it rejected the current request's configuration (HTTP 400 or 422), else null. */
+  rejection: string | null
+}
+
+function isRejection(state: EstimateRequestState | null): state is Extract<EstimateRequestState, { status: 'error' }> {
+  // A 400 or 422 rejects the configuration itself; the backend is working.
+  return state?.status === 'error' && (state.httpStatus === 400 || state.httpStatus === 422)
 }
 
 /**
@@ -88,7 +98,7 @@ export function useScenarioRunEstimate({
         .catch((err: unknown) => {
           if (isStale()) return
           const error = toApiError(err)
-          setRequestState({ status: 'error', requestKey, error: error.detail })
+          setRequestState({ status: 'error', requestKey, error: apiErrorMessage(error), httpStatus: error.status })
           if (request.datasets && (error.status === 400 || error.status === 422)) {
             const { datasets, ...defaultRequest } = request
             void datasets
@@ -117,6 +127,7 @@ export function useScenarioRunEstimate({
     state: estimateState({ invalidReason: request === null ? invalidReason : null, current, lastGoodEstimate }),
     datasetProjection,
     current,
+    rejection: isRejection(current) ? current.error : null,
   }
 }
 
@@ -133,7 +144,7 @@ function estimateState({
     return {
       status: 'unavailable',
       scope: 'request',
-      label: 'Complete the required configuration to request an estimate.',
+      label: REQUIRED_CONFIGURATION_LABEL,
       note: invalidReason,
     }
   }
@@ -151,7 +162,7 @@ function estimateState({
       : {
           status: 'unavailable',
           scope: 'request',
-          label: 'The backend estimate could not be refreshed.',
+          label: isRejection(current) ? REJECTED_CONFIGURATION_LABEL : 'The backend estimate could not be refreshed.',
           note: current.error,
         }
   }
