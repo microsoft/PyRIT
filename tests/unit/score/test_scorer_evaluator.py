@@ -7,6 +7,7 @@ import inspect
 import json
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,7 +16,7 @@ import pytest
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 from pyrit.common.path import SCORER_EVALS_PATH
-from pyrit.memory import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece, MessageScorable, Score, ScoreStatus, ScoringExpectation
 from pyrit.score import (
     AzureContentFilterScorer,
@@ -160,7 +161,8 @@ async def test_evaluate_dataset_async_harm(mock_harm_scorer):
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
     evaluator._score_responses_grouped_async = AsyncMock(return_value=[[score] for score in entry_values])
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=2)
-    assert mock_harm_scorer._memory.add_message_to_memory_async.call_count == 2
+    # Both entries share one message, so it is stored once.
+    assert mock_harm_scorer._memory.add_message_to_memory_async.call_count == 1
     assert isinstance(metrics, HarmScorerMetrics)
     assert metrics.mean_absolute_error == 0.0
     assert metrics.mae_standard_error == 0.0
@@ -1967,3 +1969,50 @@ class TestSelectEvaluationScore:
         scores = [self._score(category=["violence"]), self._score(category=["self_harm"])]
         with pytest.raises(ValueError, match="requires exactly one score per response"):
             ScorerEvaluator._select_evaluation_score(scores=scores, harm_category="hate_speech")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_objective_dataset_can_be_evaluated_twice_async() -> None:
+    user_message, assistant_message = _objective_conversation()
+    dataset = _objective_dataset(
+        [ObjectiveHumanLabeledEntry([user_message, assistant_message], [True], "Test objective")]
+    )
+    evaluator = ObjectiveScorerEvaluator(scorer=SubStringScorer(substring="moon"))
+
+    first = await evaluator.evaluate_dataset_async(labeled_dataset=dataset, num_scorer_trials=1)
+    second = await evaluator.evaluate_dataset_async(labeled_dataset=dataset, num_scorer_trials=1)
+
+    assert first.accuracy == second.accuracy == 1.0
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_harm_entries_sharing_a_message_store_it_once_async() -> None:
+    response = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="moon",
+                original_value_data_type="text",
+                conversation_id=str(uuid.uuid4()),
+            )
+        ]
+    )
+    dataset = HumanLabeledDataset(
+        name="test_dataset",
+        metrics_type=MetricsType.HARM,
+        entries=[
+            HarmHumanLabeledEntry([response], [0.0], "hate_speech"),
+            HarmHumanLabeledEntry([response], [0.0], "hate_speech"),
+        ],
+        version="1.0",
+        harm_definition="hate_speech.yaml",
+        harm_definition_version="1.0",
+    )
+    evaluator = HarmScorerEvaluator(scorer=MagicMock(spec=FloatScaleScorer))
+    evaluator.scorer._memory = CentralMemory.get_memory_instance()
+
+    responses, _, _ = await evaluator._validate_and_extract_data_async(dataset)
+    pieces = await evaluator.scorer._memory.get_message_pieces_async(prompt_ids=[str(response.message_pieces[0].id)])
+
+    assert responses == [response, response]
+    assert len(pieces) == 1
