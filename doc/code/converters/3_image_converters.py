@@ -213,6 +213,23 @@ resize_img = Image.open(resize_result.output_text)
 display(resize_img)
 
 # %% [markdown]
+# ### ImageBlurConverter
+#
+# The `ImageBlurConverter` applies a Gaussian blur to an image, to check whether a target still reads text rendered into it, and whether image-based safety filtering still catches it. `radius` sets the blur radius in pixels (default `2.0`).
+
+# %%
+from pyrit.converter import ImageBlurConverter
+
+# Blur the image with a radius of 2 pixels
+blur_converter = ImageBlurConverter(radius=2.0)
+blur_result = await blur_converter.convert_async(prompt=image_location)  # type: ignore
+
+print(f"Blurred image saved to: {blur_result.output_text}")
+
+blur_img = Image.open(blur_result.output_text)
+display(blur_img)
+
+# %% [markdown]
 # ### ImageRotationConverter
 #
 # The `ImageRotationConverter` rotates an image by a given angle. The default is `90.0` (positive values rotate counter-clockwise).
@@ -228,6 +245,23 @@ print(f"Rotated image saved to: {rotate_result.output_text}")
 
 rotate_img = Image.open(rotate_result.output_text)
 display(rotate_img)
+
+# %% [markdown]
+# ### ImageNoiseConverter
+#
+# The `ImageNoiseConverter` adds random Gaussian pixel noise to an image, to check how robust a target's image understanding and image-based safety filtering are. `standard_deviation` sets the noise level on the 0-255 scale (default `25.0`). The noise follows PyRIT's seeded randomness, so a configured seed gives the same noise for the same image.
+
+# %%
+from pyrit.converter import ImageNoiseConverter
+
+# Add Gaussian noise with a standard deviation of 25 to every color channel
+noise_converter = ImageNoiseConverter(standard_deviation=25.0)
+noise_result = await noise_converter.convert_async(prompt=image_location)  # type: ignore
+
+print(f"Noisy image saved to: {noise_result.output_text}")
+
+noise_img = Image.open(noise_result.output_text)
+display(noise_img)
 
 # %% [markdown]
 # ### TransparencyAttackConverter

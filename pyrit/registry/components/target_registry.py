@@ -24,7 +24,7 @@ is the buildable class catalog. Pre-configured instances live under the
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pyrit.models import TargetIdentifier
 from pyrit.registry.registry import InstanceHoldingRegistry
@@ -54,8 +54,9 @@ class TargetMetadata(RegistryMetadata):
     @property
     def supported_auth_modes(self) -> tuple[str, ...]:
         """Auth modes this target type accepts (e.g. ``"api_key"``, ``"identity"``)."""
-        auth_modes: tuple[str, ...] = tuple(self.class_attributes.get("supported_auth_modes") or ())
-        return auth_modes
+        # TargetIdentifier projects this from PromptTarget's typed supported_auth_modes class attribute.
+        auth_modes = cast("tuple[str, ...] | None", self.class_attributes.get("supported_auth_modes"))
+        return tuple(auth_modes or ())
 
 
 class TargetRegistry(InstanceHoldingRegistry["PromptTarget", TargetMetadata]):
