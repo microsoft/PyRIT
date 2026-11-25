@@ -291,9 +291,10 @@ async def test_order_scorer_notes_unconfirmable_argument_constraints_async(
 
     assert score.is_undetermined
     assert "read -> send(to)" in score.score_rationale
-    assert "Trace evidence does not retain tool arguments" in score.score_rationale
-    assert "MessageToolCallScorer" in score.score_rationale
-    assert "argument constraints, which trace evidence cannot confirm" in caplog.text
+    assert "OtelToolCallOrderScorer does not match tool arguments" in score.score_rationale
+    assert "Trace evidence does not retain tool arguments" not in score.score_rationale
+    assert "OtelToolCallScorer or MessageToolCallScorer" in score.score_rationale
+    assert "argument constraints, which it does not match" in caplog.text
 
 
 def test_scorer_declares_only_the_order_condition() -> None:

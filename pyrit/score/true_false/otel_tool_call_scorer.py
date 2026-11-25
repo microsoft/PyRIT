@@ -48,6 +48,11 @@ _NO_TRACE_ARGUMENTS_REASON = (
     "use MessageToolCallScorer to match arguments."
 )
 
+_ORDER_IGNORES_ARGUMENTS_REASON = (
+    "OtelToolCallOrderScorer does not match tool arguments, so it cannot confirm an argument requirement; "
+    "use OtelToolCallScorer or MessageToolCallScorer to match arguments."
+)
+
 _UNREADABLE_TRACE_ARGUMENTS_REASON = "The arguments of one or more calls could not be read from the trace."
 
 _UNLINKED_REQUESTS_REASON = (
@@ -199,8 +204,8 @@ def match_tools_called_in_order(
     establish no order. An observed order stands with partial evidence. A negative needs
     complete evidence in which every candidate order is contradicted or a tool never ran.
 
-    Trace events do not retain arguments, so a requirement with argument constraints cannot be
-    confirmed: an observed order is undetermined, because the ordered attempts may not be the
+    Order matching does not match tool arguments, so a requirement with argument constraints cannot
+    be confirmed: an observed order is undetermined, because the ordered attempts may not be the
     matching calls. A contradiction still stands, because it rules out every choice of attempts,
     matching ones included.
 
@@ -474,8 +479,8 @@ class OtelToolCallOrderScorer(_OtelToolEvidenceScorer):
         constrains_arguments = any(tool.arguments for tool in condition.tools)
         if constrains_arguments:
             logger.warning(
-                "OtelToolCallOrderScorer received a requirement with argument constraints, which trace evidence "
-                "cannot confirm. Use MessageToolCallScorer to match arguments."
+                "OtelToolCallOrderScorer received a requirement with argument constraints, which it does not "
+                "match. Use OtelToolCallScorer or MessageToolCallScorer to match arguments."
             )
         names = " -> ".join(describe_tool_requirement(tool) for tool in condition.tools)
         rationale = (
@@ -486,7 +491,7 @@ class OtelToolCallOrderScorer(_OtelToolEvidenceScorer):
             else f"Trace evidence cannot establish the required tool order: {names}."
         )
         if value is None and constrains_arguments:
-            rationale = f"{rationale} {_NO_TRACE_ARGUMENTS_REASON}"
+            rationale = f"{rationale} {_ORDER_IGNORES_ARGUMENTS_REASON}"
         return [
             Score(
                 score_value=None if value is None else str(value).lower(),
