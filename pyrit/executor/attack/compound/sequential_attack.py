@@ -235,6 +235,10 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         {SequenceCompletionPolicy.FIRST_SUCCESS, SequenceCompletionPolicy.EXHAUSTIVE}
     )
 
+    # Set on a child failure that stops the sequence, so an enclosing SequentialAttack also stops after
+    # the strategy layer wraps it in a new ``_StrategyRuntimeError`` with a stored ERROR row.
+    _STOPS_SEQUENCE_ATTRIBUTE: ClassVar[str] = "_pyrit_stops_sequential_attack"
+
     def __init__(
         self,
         *,
@@ -355,9 +359,11 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                     operation_id=context.params.operation_id,
                 )
             except Exception as child_error:
-                error_result = await self._get_recorded_child_error_async(
-                    error=child_error, linked_result_ids=child_ids[linked_before:]
-                )
+                linked_result_ids = child_ids[linked_before:]
+                if not self._is_recorded_child_failure(error=child_error, linked_result_ids=linked_result_ids):
+                    setattr(child_error, self._STOPS_SEQUENCE_ATTRIBUTE, True)
+                    raise
+                error_result = await self._get_recorded_child_error_async(linked_result_ids=linked_result_ids)
                 if error_result is None:
                     raise
                 # The child's ERROR result is already persisted and linked in child_ids.
@@ -497,18 +503,16 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             "AttackExecutor returned neither completed nor incomplete results."
         )
 
-    async def _get_recorded_child_error_async(
-        self, *, error: Exception, linked_result_ids: Sequence[str]
-    ) -> AttackResult | None:
+    @classmethod
+    def _is_recorded_child_failure(cls, *, error: Exception, linked_result_ids: Sequence[str]) -> bool:
         """
-        Return the stored ERROR result of a child attack that raised, when the sequence continues past it.
+        Return whether a child failure is an attack that raised after its own ERROR result was stored.
 
-        Only ``FIRST_SUCCESS`` and ``EXHAUSTIVE`` continue, and only past a child whose attack raised
-        (the strategy layer's ``_StrategyRuntimeError``) and whose own error result was confirmed
-        persisted (and so is already linked). A child that could not be prepared, whose error result
-        could not be stored (an ``ExceptionGroup`` with the persistence error), or whose completed
-        result could not be stored (the persistence error itself, even when the stored row is ERROR)
-        still stops the sequence.
+        That is the strategy layer's ``_StrategyRuntimeError`` with a confirmed, linked result. A child
+        that could not be prepared, whose error result could not be stored (an ``ExceptionGroup`` with
+        the persistence error), or whose completed result could not be stored (the persistence error
+        itself, even when the stored row is ERROR) is not. Neither is a nested compound child that
+        stopped for one of these reasons, although its own ERROR result was stored.
 
         Args:
             error (Exception): The exception the child attack raised.
@@ -516,11 +520,34 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 persisted result, if any.
 
         Returns:
+            bool: True when sequences continuing past child exceptions may continue past this one.
+        """
+        if not isinstance(error, _StrategyRuntimeError) or not linked_result_ids:
+            return False
+        current: BaseException | None = error
+        visited: set[int] = set()
+        while current is not None and id(current) not in visited:
+            visited.add(id(current))
+            if getattr(current, cls._STOPS_SEQUENCE_ATTRIBUTE, False):
+                return False
+            current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+        return True
+
+    async def _get_recorded_child_error_async(self, *, linked_result_ids: Sequence[str]) -> AttackResult | None:
+        """
+        Return the stored ERROR result of a recorded child failure, when the sequence continues past it.
+
+        Only ``FIRST_SUCCESS`` and ``EXHAUSTIVE`` continue, and only past a failure that
+        ``_is_recorded_child_failure`` accepts and whose stored row reads back as ERROR.
+
+        Args:
+            linked_result_ids (Sequence[str]): Result IDs linked while dispatching this child: its confirmed
+                persisted result.
+
+        Returns:
             AttackResult | None: The child's stored ERROR result, or None when the error should propagate.
         """
         if self._completion_policy not in self._POLICIES_CONTINUING_PAST_CHILD_EXCEPTIONS:
-            return None
-        if not isinstance(error, _StrategyRuntimeError) or not linked_result_ids:
             return None
         try:
             stored = await self._memory.get_attack_results_async(

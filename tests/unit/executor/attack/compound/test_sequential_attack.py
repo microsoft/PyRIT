@@ -1056,6 +1056,94 @@ class TestChildExceptions:
         skipped.assert_not_awaited()
         assert raised.value.__cause__ is persistence_error
 
+    @pytest.mark.parametrize("leaf_strategy_type", [_BoomChildStrategy, _OkChildStrategy])
+    @pytest.mark.parametrize(
+        "inner_policy", [SequenceCompletionPolicy.STRICT_ALL, SequenceCompletionPolicy.FIRST_SUCCESS]
+    )
+    @pytest.mark.parametrize(
+        "outer_policy", [SequenceCompletionPolicy.FIRST_SUCCESS, SequenceCompletionPolicy.EXHAUSTIVE]
+    )
+    async def test_nested_child_result_write_failure_still_stops(
+        self,
+        seed_group: AttackSeedGroup,
+        sqlite_instance: MemoryInterface,
+        leaf_strategy_type: type[_OkChildStrategy],
+        inner_policy: SequenceCompletionPolicy,
+        outer_policy: SequenceCompletionPolicy,
+    ) -> None:
+        """A grandchild result that could not be stored stops the outer sequence, though the inner one stored ERROR."""
+        target = MockPromptTarget()
+        inner = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(
+                    strategy=leaf_strategy_type(objective_target=target),
+                    seed_group=seed_group,
+                    memory_labels={"leaf": "unstored"},
+                )
+            ],
+            completion_policy=inner_policy,
+        )
+        skipped_child = _OkChildStrategy(objective_target=target)
+        outer = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(strategy=inner, seed_group=seed_group),
+                SequentialChildAttack(strategy=skipped_child, seed_group=seed_group),
+            ],
+            completion_policy=outer_policy,
+        )
+        persist = sqlite_instance.add_attack_results_to_memory_async
+        persistence_error = OSError("disk full")
+
+        async def fail_leaf_write_async(*, attack_results: Sequence[AttackResult]) -> None:
+            if attack_results[0].labels.get("leaf") == "unstored":
+                raise persistence_error
+            await persist(attack_results=attack_results)
+
+        with (
+            patch.object(sqlite_instance, "add_attack_results_to_memory_async", side_effect=fail_leaf_write_async),
+            patch.object(skipped_child, "_perform_async", new_callable=AsyncMock) as skipped,
+            pytest.raises(RuntimeError) as raised,
+        ):
+            await outer.execute_async(objective="obj")
+
+        skipped.assert_not_awaited()
+        chain: list[BaseException] = []
+        current: BaseException | None = raised.value
+        while current is not None:
+            chain.append(current)
+            current = current.__cause__
+        assert any(
+            error is persistence_error or (isinstance(error, ExceptionGroup) and persistence_error in error.exceptions)
+            for error in chain
+        )
+
+    async def test_nested_child_that_raised_after_storing_its_error_is_continued_past(
+        self, seed_group: AttackSeedGroup, sqlite_instance: MemoryInterface
+    ) -> None:
+        target = MockPromptTarget()
+        inner = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(strategy=_BoomChildStrategy(objective_target=target), seed_group=seed_group)
+            ],
+            completion_policy=SequenceCompletionPolicy.STRICT_ALL,
+        )
+        outer = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(strategy=inner, seed_group=seed_group),
+                SequentialChildAttack(strategy=_OkChildStrategy(objective_target=target), seed_group=seed_group),
+            ],
+            completion_policy=SequenceCompletionPolicy.FIRST_SUCCESS,
+        )
+
+        result = await outer.execute_async(objective="obj")
+
+        assert result.outcome is AttackOutcome.SUCCESS
+        assert [r.outcome for r in result.child_attack_results] == [AttackOutcome.ERROR, AttackOutcome.SUCCESS]
+
     async def test_child_failure_without_a_confirmed_error_result_still_stops(self, target, seed_group) -> None:
         """A failure the executor could not record (no confirmed row) propagates even under FIRST_SUCCESS."""
         a = _make_strategy(outcomes=[], name="a")
