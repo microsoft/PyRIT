@@ -101,15 +101,17 @@ send a Microsoft Graph access token instead, for example with
 
 PyRIT also includes agent skills, task guides that the agent follows when a request matches.
 `pyrit-technique` finds which attack technique best achieves an objective against a target by
-running and comparing one `technique.execute` scan per technique. Add PyRIT's skills to GitHub
-Copilot CLI:
+running and comparing one `technique.execute` scan per technique. `pyrit-results` turns a scan's
+results into candidate findings: it compares each technique with the baseline, checks the
+scorer's reasons, and cites the attack results that show each finding, for you to record in an
+[operation](../gui/0_gui.md#operations). Add PyRIT's skills to GitHub Copilot CLI:
 
 ```bash
 copilot skill add "$(python -c "import pathlib, pyrit.backend; print(pathlib.Path(pyrit.backend.__file__).parent / 'skills')")"
 ```
 
 Then ask, for example, "/pyrit-technique Which technique best gets my target to reveal its
-system prompt?"
+system prompt?" or "/pyrit-results What did my latest scan find?"
 
 ## Built-in Scenarios
 
