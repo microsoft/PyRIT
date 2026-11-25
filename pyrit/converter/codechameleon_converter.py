@@ -1,16 +1,92 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import functools
+import hashlib
 import inspect
 import json
 import pathlib
 import textwrap
+import uuid
 from collections.abc import Callable
 from typing import Any
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
+
+_JSON_SCALARS = (str, int, float, bool, type(None))
+
+
+def _is_stable_value(value: Any) -> bool:
+    """
+    Report whether a value is plain JSON data whose repr fully describes it.
+
+    Returns:
+        bool: True for JSON scalars and lists, tuples or str-keyed dicts of them.
+    """
+    if isinstance(value, _JSON_SCALARS):
+        return True
+    if isinstance(value, (list, tuple)):
+        return all(_is_stable_value(item) for item in value)
+    if isinstance(value, dict):
+        return all(isinstance(key, str) and _is_stable_value(item) for key, item in value.items())
+    return False
+
+
+def _callable_fingerprint(function: Callable[..., Any]) -> str:
+    """
+    Fingerprint a user-supplied function by its source and bound configuration.
+
+    A qualified name alone is not enough: two functions can share one with different code,
+    closures or partial arguments. The fingerprint covers the module, qualified name, source,
+    defaults, closure values and ``functools.partial`` arguments. When any of these cannot be
+    captured as plain data (no source, a closure over an object, a bound method), a random
+    per-instance token is returned so distinct converters never share an identifier.
+
+    Returns:
+        str: ``sha256:<hex>`` for a reproducible fingerprint, otherwise ``unstable:<hex>``.
+    """
+    partial_args: tuple[Any, ...] = ()
+    partial_keywords: dict[str, Any] = {}
+    while isinstance(function, functools.partial):
+        partial_args = function.args + partial_args
+        partial_keywords = {**(function.keywords or {}), **partial_keywords}
+        function = function.func
+
+    unstable = f"unstable:{uuid.uuid4().hex}"
+    if not inspect.isfunction(function):
+        return unstable
+    try:
+        source = textwrap.dedent(inspect.getsource(function))
+    except (OSError, TypeError):
+        return unstable
+
+    try:
+        closure = dict(
+            zip(function.__code__.co_freevars, (cell.cell_contents for cell in function.__closure__ or ()), strict=True)
+        )
+    except ValueError:  # an empty closure cell
+        return unstable
+    configuration = {
+        "partial_args": list(partial_args),
+        "partial_keywords": partial_keywords,
+        "defaults": list(function.__defaults__ or ()),
+        "kwdefaults": function.__kwdefaults__ or {},
+        "closure": closure,
+    }
+    if not _is_stable_value(configuration):
+        return unstable
+
+    payload = json.dumps(
+        {
+            "function": f"{function.__module__}.{function.__qualname__}",
+            "source": source,
+            "configuration": configuration,
+        },
+        sort_keys=True,
+    )
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class CodeChameleonConverter(Converter):
@@ -102,16 +178,19 @@ class CodeChameleonConverter(Converter):
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
-        Build identifier with encryption type.
+        Build identifier with encryption type and, for custom functions, their behavior.
+
+        With ``encrypt_type="custom"`` the encryption function decides the encoded prompt and the
+        rendered decryption source is part of the prompt, so both are folded into the identifier.
 
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        return self._create_identifier(
-            params={
-                "encrypt_type": self._encrypt_type,
-            }
-        )
+        params: dict[str, Any] = {"encrypt_type": self._encrypt_type}
+        if self._encrypt_type == "custom":
+            params["encrypt_function"] = _callable_fingerprint(self.encrypt_function)
+            params["decrypt_function_sha256"] = hashlib.sha256(self.decrypt_function.encode("utf-8")).hexdigest()
+        return self._create_identifier(params=params)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
