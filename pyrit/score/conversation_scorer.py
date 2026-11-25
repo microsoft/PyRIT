@@ -38,6 +38,7 @@ from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, Tru
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score.observation.provider_trace_resolver import ProviderTraceResolver
 
 
 class ConversationScorer(MessageScorer, ABC):
@@ -485,6 +486,7 @@ def create_conversation_scorer(
     trace_source: ObservationSource[TraceScorable] | None = None,
     trace_requirement: TraceEvidenceRequirement = TraceEvidenceRequirement.NONE,
     max_rendered_trace_chars: int = 60000,
+    provider_trace_resolver: "ProviderTraceResolver | None" = None,
 ) -> Scorer:
     """
     Create a ConversationScorer that inherits from the same type as the wrapped scorer.
@@ -512,6 +514,9 @@ def create_conversation_scorer(
         max_rendered_trace_chars (int): Character budget for rendered execution steps, used with a
             trace source. Each content value is previewed up to 4,000 characters; past the budget,
             content is dropped first, then steps. The saved evidence stays complete. Defaults to 60000.
+        provider_trace_resolver (ProviderTraceResolver | None): Links outbound requests that carry
+            the provider's own identifiers but no W3C trace link, used with a trace source.
+            Defaults to None.
 
     Returns:
         Scorer: A ConversationScorer instance that is also an instance of the wrapped scorer's type.
@@ -519,7 +524,8 @@ def create_conversation_scorer(
     Raises:
         TypeError: If the dynamic scorer does not inherit from ``Scorer``.
         ValueError: If the scorer is outside the true/false and float-scale families, a trace
-            requirement has no trace source, or a trace source's rendering budget is not positive.
+            requirement or provider trace resolver has no trace source, or a trace source's
+            rendering budget is not positive.
 
     Example:
         >>> float_scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=scale)
@@ -530,9 +536,14 @@ def create_conversation_scorer(
     requirement = TraceEvidenceRequirement(trace_requirement)
     if trace_source is None and requirement is not TraceEvidenceRequirement.NONE:
         raise ValueError("A trace requirement needs a trace_source to acquire execution evidence.")
+    if trace_source is None and provider_trace_resolver is not None:
+        raise ValueError("A provider_trace_resolver needs a trace_source to acquire execution evidence.")
     trace_evidence = (
         ConversationTraceEvidence(
-            source=trace_source, requirement=requirement, max_rendered_chars=max_rendered_trace_chars
+            source=trace_source,
+            requirement=requirement,
+            max_rendered_chars=max_rendered_trace_chars,
+            provider_trace_resolver=provider_trace_resolver,
         )
         if trace_source is not None
         else None
@@ -583,6 +594,9 @@ def create_conversation_scorer(
             Raises:
                 TypeError: If identifier construction returns an unexpected type.
             """
+            resolver = (
+                self._trace_evidence.provider_trace_resolver_identifier if self._trace_evidence is not None else None
+            )
             identifier = self._create_identifier(
                 params={
                     "rendering_version": 2,
@@ -609,6 +623,7 @@ def create_conversation_scorer(
                         if self._trace_evidence is not None
                         else {}
                     ),
+                    **({"provider_trace_resolver": resolver} if resolver is not None else {}),
                 },
             )
             if not isinstance(identifier, ComponentIdentifier):
