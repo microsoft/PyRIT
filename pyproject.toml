@@ -332,15 +332,6 @@ include = [
     "pyrit/executor/promptgen/gcg/attack/gcg/candidate_proposer.py",
     "pyrit/executor/promptgen/gcg/attack/gcg/gcg_attack.py",
     "pyrit/executor/promptgen/gcg/default_implementations.py",
-    "pyrit/models/harm_category.py",
-    "pyrit/models/messages/conversations.py",
-    "pyrit/models/parameter.py",
-    "pyrit/models/score/observation.py",
-    "pyrit/models/score/scorable.py",
-    "pyrit/registry/components/target_registry.py",
-    "pyrit/registry/registry_recipe_restore.py",
-    "pyrit/registry/registry_recipe_rules.py",
-    "pyrit/registry/registry_recipe_save.py",
 ]
 [tool.ty.overrides.rules]
 unsound-assignment = "ignore"
