@@ -17,6 +17,7 @@ from pyrit.models.messages.message_piece import MessagePiece
 from pyrit.models.score import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ComponentIdentifierField,
 )
+from pyrit.models.target.tool_execution_metadata import ToolCaptureCoverage
 
 if TYPE_CHECKING:
     from collections.abc import MutableSequence, Sequence
@@ -231,7 +232,9 @@ def construct_response_from_request(
         Message: Constructed response message.
 
     """
+    # A response states its own tool capture coverage; it never inherits the request's.
     response_metadata = dict[str, object](request.prompt_metadata)
+    response_metadata.pop(ToolCaptureCoverage.METADATA_KEY, None)
     if prompt_metadata:
         response_metadata.update(prompt_metadata)
 
