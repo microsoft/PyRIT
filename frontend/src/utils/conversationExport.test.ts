@@ -8,12 +8,12 @@ import {
   EXPORT_MIME_TYPES,
   MAX_TOTAL_INLINE_CHARACTERS,
 } from "./conversationExport";
-import type { Message, MessageAttachment, BackendMessage } from "../types";
+import type { Message, MessageAttachment, BackendMessage, BackendMessagePiece } from "../types";
 import { backendMessageToFrontend } from "./messageMapper";
 
 const FIXED_NOW = new Date("2026-07-22T02:34:01.059Z");
 
-function textPiece(id: string, value: string) {
+function textPiece(id: string, value: string): BackendMessagePiece {
   return {
     id,
     original_value_data_type: "text",
@@ -25,7 +25,7 @@ function textPiece(id: string, value: string) {
   };
 }
 
-function mediaPiece(id: string, value: string, filename: string) {
+function mediaPiece(id: string, value: string, filename: string): BackendMessagePiece {
   return {
     id,
     original_value_data_type: "image_path",
@@ -294,6 +294,244 @@ describe("conversationExport", () => {
       const md = conversationToMarkdown([message()], "conv-1");
       expect(md).toContain("# CoPyRIT conversation export");
       expect(md).toContain("- Exported: ");
+    });
+
+    it("renders interleaved text and media pieces in their exact display order", () => {
+      const img1 = attachment({ name: "image-2.png", mimeType: "image/png", type: "image" });
+      const img2 = attachment({ name: "image-4.png", mimeType: "image/png", type: "image" });
+      const md = conversationToMarkdown(
+        [
+          message({
+            role: "assistant",
+            content: "BEFORE_IMAGE_ONE\nBETWEEN_IMAGES\nAFTER_IMAGE_TWO",
+            attachments: [img1, img2],
+            displayPieces: [
+              { type: "text", pieceId: "p1", pieceIndex: 0, content: "BEFORE_IMAGE_ONE" },
+              { type: "media", pieceId: "p2", pieceIndex: 1, attachment: img1 },
+              { type: "text", pieceId: "p3", pieceIndex: 2, content: "BETWEEN_IMAGES" },
+              { type: "media", pieceId: "p4", pieceIndex: 3, attachment: img2 },
+              { type: "text", pieceId: "p5", pieceIndex: 4, content: "AFTER_IMAGE_TWO" },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+
+      const idxText1 = md.indexOf("BEFORE_IMAGE_ONE");
+      const idxImg1 = md.indexOf("image-2.png");
+      const idxText2 = md.indexOf("BETWEEN_IMAGES");
+      const idxImg2 = md.indexOf("image-4.png");
+      const idxText3 = md.indexOf("AFTER_IMAGE_TWO");
+
+      // Verify exact order
+      expect(idxText1).toBeGreaterThanOrEqual(0);
+      expect(idxImg1).toBeGreaterThan(idxText1);
+      expect(idxText2).toBeGreaterThan(idxImg1);
+      expect(idxImg2).toBeGreaterThan(idxText2);
+      expect(idxText3).toBeGreaterThan(idxImg2);
+
+      // Verify each piece and attachment appears exactly once
+      expect(md.split("BEFORE_IMAGE_ONE")).toHaveLength(2);
+      expect(md.split("image-2.png")).toHaveLength(2);
+      expect(md.split("BETWEEN_IMAGES")).toHaveLength(2);
+      expect(md.split("image-4.png")).toHaveLength(2);
+      expect(md.split("AFTER_IMAGE_TWO")).toHaveLength(2);
+
+      // Verify converted attachments are not duplicated under a separate "Attachments:" header
+      expect(md).not.toContain("**Attachments:**");
+
+      // Verify data URLs / media bytes are not embedded
+      expect(md).not.toContain("data:");
+      expect(md).not.toContain("base64");
+    });
+
+    it("keeps a backend message in Markdown piece order end to end", () => {
+      const backend: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        created_at: "2026-07-22T02:30:07.000Z",
+        message_pieces: [
+          textPiece("p1", "MAPPER_BEFORE"),
+          mediaPiece("p2", "data:image/png;base64,AAAA", "mapper-one.png"),
+          textPiece("p3", "MAPPER_BETWEEN"),
+          mediaPiece("p4", "data:image/png;base64,BBBB", "mapper-two.png"),
+          textPiece("p5", "MAPPER_AFTER"),
+        ],
+      };
+      const md = conversationToMarkdown([backendMessageToFrontend(backend)], "conv-1", FIXED_NOW);
+      const markers = ["MAPPER_BEFORE", "mapper-one.png", "MAPPER_BETWEEN", "mapper-two.png", "MAPPER_AFTER"];
+      let previousIndex = -1;
+      for (const marker of markers) {
+        const index = md.indexOf(marker);
+        expect(index).toBeGreaterThan(previousIndex);
+        previousIndex = index;
+      }
+    });
+
+    it("falls back to flat content and attachments when media count in displayPieces is inconsistent", () => {
+      const img1 = attachment({ name: "att1.png", mimeType: "image/png", type: "image" });
+      const img2 = attachment({ name: "att2.png", mimeType: "image/png", type: "image" });
+      const md = conversationToMarkdown(
+        [
+          message({
+            content: "Inconsistent count text",
+            attachments: [img1, img2],
+            displayPieces: [
+              { type: "text", pieceId: "p1", pieceIndex: 0, content: "Inconsistent count text" },
+              { type: "media", pieceId: "p2", pieceIndex: 1, attachment: img1 },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(md).toContain("**Attachments:**");
+      expect(md).toContain("- image: att1.png (image/png)");
+      expect(md).toContain("- image: att2.png (image/png)");
+    });
+
+    it("renders text-only messages with displayPieces correctly", () => {
+      const md = conversationToMarkdown(
+        [
+          message({
+            content: "Only text content",
+            displayPieces: [
+              { type: "text", pieceId: "p1", pieceIndex: 0, content: "Only text content" },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(md).toContain("```\nOnly text content\n```");
+      expect(md).not.toContain("**Attachments:**");
+    });
+
+    it("renders media-only messages with displayPieces without an empty code block", () => {
+      const img = attachment({ name: "media-only.png", mimeType: "image/png", type: "image" });
+      const md = conversationToMarkdown(
+        [
+          message({
+            content: "",
+            attachments: [img],
+            displayPieces: [
+              { type: "media", pieceId: "p1", pieceIndex: 0, attachment: img },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(md).toContain("- image: media-only.png (image/png)");
+      expect(md).not.toContain("```\n\n```");
+      expect(md).not.toContain("**Attachments:**");
+    });
+
+    it("groups consecutive text pieces into a single code block", () => {
+      const md = conversationToMarkdown(
+        [
+          message({
+            content: "Part one\nPart two",
+            displayPieces: [
+              { type: "text", pieceId: "p1", pieceIndex: 0, content: "Part one" },
+              { type: "text", pieceId: "p2", pieceIndex: 1, content: "Part two" },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(md).toContain("```\nPart one\nPart two\n```");
+    });
+
+    it("renders multiple consecutive media pieces as a list without extra blank lines", () => {
+      const img1 = attachment({ name: "img1.png", mimeType: "image/png", type: "image" });
+      const img2 = attachment({ name: "img2.png", mimeType: "image/png", type: "image" });
+      const md = conversationToMarkdown(
+        [
+          message({
+            content: "Before images",
+            attachments: [img1, img2],
+            displayPieces: [
+              { type: "text", pieceId: "p1", pieceIndex: 0, content: "Before images" },
+              { type: "media", pieceId: "p2", pieceIndex: 1, attachment: img1 },
+              { type: "media", pieceId: "p3", pieceIndex: 2, attachment: img2 },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(md).toContain("- image: img1.png (image/png)\n- image: img2.png (image/png)");
+    });
+
+    it("skips display pieces that carry scores but no media attachment", () => {
+      const img = attachment({ name: "actual.png", mimeType: "image/png", type: "image" });
+      const md = conversationToMarkdown(
+        [
+          message({
+            content: "Text content",
+            attachments: [img],
+            displayPieces: [
+              { type: "media", pieceId: "p1", pieceIndex: 0 },
+              { type: "text", pieceId: "p2", pieceIndex: 1, content: "Text content" },
+              { type: "media", pieceId: "p3", pieceIndex: 2, attachment: img },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(md).toContain("```\nText content\n```");
+      expect(md).toContain("- image: actual.png (image/png)");
+      expect(md.split("- image:").length).toBe(2); // exactly one image rendered
+    });
+
+    it("preserves separate Original attachments section alongside interleaved displayPieces", () => {
+      const convertedImg = attachment({ name: "converted.png", mimeType: "image/png", type: "image" });
+      const origImg = attachment({ name: "original.png", mimeType: "image/png", type: "image" });
+      const md = conversationToMarkdown(
+        [
+          message({
+            content: "Converted text",
+            originalContent: "Original text",
+            attachments: [convertedImg],
+            originalAttachments: [origImg],
+            displayPieces: [
+              { type: "text", pieceId: "p1", pieceIndex: 0, content: "Converted text" },
+              { type: "media", pieceId: "p2", pieceIndex: 1, attachment: convertedImg },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(md).toContain("- image: converted.png (image/png)");
+      expect(md).toContain("**Original (before conversion):**");
+      expect(md).toContain("```\nOriginal text\n```");
+      expect(md).toContain("**Original attachments (before conversion):**");
+      expect(md).toContain("- image: original.png (image/png)");
+    });
+
+    it("neutralizes newlines and special characters in interleaved attachment filenames", () => {
+      const evilImg = attachment({ name: "evil.png\n## Injected Heading\n```", mimeType: "image/png", type: "image" });
+      const md = conversationToMarkdown(
+        [
+          message({
+            content: "Text",
+            attachments: [evilImg],
+            displayPieces: [
+              { type: "text", pieceId: "p1", pieceIndex: 0, content: "Text" },
+              { type: "media", pieceId: "p2", pieceIndex: 1, attachment: evilImg },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(md).not.toContain("\n## Injected Heading");
+      expect(md).toContain("- image: evil.png ## Injected Heading ``` (image/png)");
     });
   });
 

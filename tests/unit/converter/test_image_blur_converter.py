@@ -182,7 +182,7 @@ async def test_image_blur_converter_convert_image_path_async() -> None:
     assert result.output_text == "blurred.png"
     assert result.output_type == "image_path"
     assert mock_serializer.file_extension == "png"
-    mock_serializer.save_b64_image_async.assert_called_once()
+    mock_serializer.save_data_async.assert_called_once()
 
 
 async def test_image_blur_converter_url_input_async() -> None:

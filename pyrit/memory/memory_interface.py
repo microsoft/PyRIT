@@ -62,6 +62,7 @@ from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.pagination import DecodedKeysetCursor
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.memory._finding_decomposition import (
     FindingHierarchyError,
     delete_subtree_async,
@@ -3701,8 +3702,9 @@ class MemoryInterface(abc.ABC):
             )
             return
 
-        prepared_content = await asyncio.gather(
-            *(self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables)
+        # A failed copy cancels the others, so no media files are written for scores that are not stored.
+        prepared_content = await gather_with_cleanup_async(
+            self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables
         )
         prepared_by_source = {content.source: content for content in prepared_content}
         prepared_hashes = {content.stored: content.value_sha256 for content in prepared_content}
