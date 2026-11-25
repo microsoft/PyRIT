@@ -28,9 +28,10 @@
 #   promptfoo's `redteam.purpose`, the more specific it is, the better the tests and grading.
 # - `num_tests`: tests to generate for each plugin. Defaults to 5, like promptfoo's `numTests`.
 #
-# Generated tests are stored as a dataset named for the plugin and a fingerprint of the plugin, the
-# purpose, and `num_tests`. A later run with the same inputs reuses the stored tests; changing any of
-# them generates new ones.
+# Generated tests are stored and reused: a later run with the same purpose, `num_tests`, and plugin
+# version runs the same tests, and changing any of them generates new ones. To generate a fresh batch
+# with unchanged inputs, run with `--dataset-fetch always`; `--dataset-fetch never` runs only tests
+# that are already stored.
 #
 # The default technique, `basic`, sends each test unchanged, like promptfoo's `basic` strategy. Any
 # registered attack technique can be selected with `--techniques`, for example `role_play_movie_script`.

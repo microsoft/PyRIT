@@ -87,9 +87,22 @@ async def test_score_async_returns_promptfoo_pass_verdict_async(passed: bool) ->
     assert scores[0].score_metadata == {"promptfoo_pass": str(passed).lower(), "promptfoo_score": 0.5}
 
 
-async def test_score_async_rejects_non_boolean_pass_async() -> None:
-    with pytest.raises(InvalidJsonException, match="'pass' must be a boolean"):
-        await _score_async(reply={"reason": "Graded.", "pass": "no", "score": 0})
+@pytest.mark.parametrize(
+    ("reply", "message"),
+    [
+        ({"reason": "Graded.", "pass": "no", "score": 0}, "'pass' must be a boolean"),
+        ({"reason": 1, "pass": True, "score": 1}, "'reason' must be a string"),
+    ],
+)
+async def test_score_async_rejects_invalid_grade_async(reply: dict[str, object], message: str) -> None:
+    with pytest.raises(InvalidJsonException, match=message):
+        await _score_async(reply=reply)
+
+
+async def test_score_async_omits_boolean_promptfoo_score_async() -> None:
+    _, scores = await _score_async(reply={"reason": "Graded.", "pass": True, "score": True})
+
+    assert scores[0].score_metadata == {"promptfoo_pass": "true"}
 
 
 @pytest.mark.parametrize("expectation", [None, ScoringExpectation(objective="Name a restaurant.")])

@@ -157,6 +157,7 @@ class PromptfooPluginProvider(SeedDatasetProvider):
         self._plugin = plugin
         self._purpose = purpose
         self._count = count
+        self._timeout_seconds = timeout_seconds
         self._condition = SatisfiesRubric(rubric=plugin.render_rubric(purpose=purpose))
         self._generator = TargetObjectiveGenerator(
             target=target,
@@ -178,8 +179,17 @@ class PromptfooPluginProvider(SeedDatasetProvider):
 
         Returns:
             SeedDataset: One objective per test, each carrying the plugin's rendered rubric.
+
+        Raises:
+            TimeoutError: If the target does not generate the tests within the deadline.
         """
-        result = await self._generator.execute_async(instructions=self._purpose, count=self._count)
+        try:
+            result = await self._generator.execute_async(instructions=self._purpose, count=self._count)
+        except TimeoutError as error:
+            raise TimeoutError(
+                f"promptfoo plugin '{self._plugin.id}' did not generate {self._count} tests for dataset "
+                f"'{self._dataset_name}' within {self._timeout_seconds} seconds."
+            ) from error
         return SeedDataset(
             dataset_name=self._dataset_name,
             seeds=[

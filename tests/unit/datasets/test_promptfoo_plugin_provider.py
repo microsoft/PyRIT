@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import json
 
 import pytest
@@ -28,6 +29,14 @@ class _GeneratorTarget(MockPromptTarget):
         return [
             MessagePiece(role="assistant", original_value=self._reply, conversation_id=conversation_id).to_message()
         ]
+
+
+class _SilentTarget(MockPromptTarget):
+    """Never answer, so generation runs into its deadline."""
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
 
 
 def test_get_available_ids_lists_bundled_plugins() -> None:
@@ -77,6 +86,24 @@ async def test_fetch_dataset_async_attaches_rendered_rubric_async() -> None:
         assert seed.harm_categories == ["hallucination"]
         assert seed.conditions == (SatisfiesRubric(rubric=plugin.render_rubric(purpose=PURPOSE)),)
         assert set(seed.metadata) == {"generation_conversation_id"}
+
+
+async def test_fetch_dataset_async_names_the_plugin_and_deadline_on_timeout_async() -> None:
+    provider = PromptfooPluginProvider(
+        dataset_name="promptfoo_hallucination_test",
+        plugin=PromptfooPlugin.from_id("hallucination"),
+        purpose=PURPOSE,
+        count=2,
+        target=_SilentTarget(),
+        timeout_seconds=0.01,
+    )
+
+    with pytest.raises(
+        TimeoutError,
+        match="'hallucination' did not generate 2 tests for dataset 'promptfoo_hallucination_test' within 0.01 seconds",
+    ) as error:
+        await provider.fetch_dataset_async()
+    assert isinstance(error.value.__cause__, TimeoutError)
 
 
 @pytest.mark.parametrize(

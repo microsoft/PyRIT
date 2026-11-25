@@ -350,8 +350,10 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #   [Combining & stacking scorers](3_combining_scorers.ipynb) for how custom scorers slot in.
 # - **`PromptfooRubricScorer`** — grades a response against the rubric carried by the objective's
 #   `SatisfiesRubric` condition, using promptfoo's own grading prompts. `True` means the response
-#   satisfies the rubric. The promptfoo scenarios wrap it in `TrueFalseInverterScorer`, so a failed
-#   rubric is a success.
+#   satisfies the rubric. The promptfoo scenarios' default objective scorer ANDs an inverted
+#   `PromptfooRubricScorer` with an inverted `SelfAskRefusalScorer`, so a failed rubric is a success
+#   only when the response is not a refusal. PyRIT ports promptfoo's rubric judge but not its fixed
+#   rule that passes a refusal or an empty response, which the refusal check replaces.
 #
 # %% [markdown]
 # ### ASSERT policy scoring

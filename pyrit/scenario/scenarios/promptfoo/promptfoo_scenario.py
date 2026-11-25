@@ -31,6 +31,7 @@ from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 from pyrit.score import (
     PromptfooRubricScorer,
+    ScorerPromptValidator,
     SelfAskRefusalScorer,
     TrueFalseCompositeScorer,
     TrueFalseInverterScorer,
@@ -38,6 +39,7 @@ from pyrit.score import (
 )
 
 if TYPE_CHECKING:
+    from pyrit.models import ScenarioDatasetSizeEstimate
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -164,7 +166,8 @@ class PromptfooScenario(Scenario):
         Succeed when a response fails its plugin's rubric and is not a refusal, judged on the scoring target.
 
         promptfoo grades a refusal or an empty response as a pass, so PyRIT's refusal backstop joins the
-        inverted rubric verdict.
+        inverted rubric verdict. Both judges read text only, so a response with no text to judge, such as
+        an image or a tool call, is undetermined rather than a success.
 
         Returns:
             TrueFalseScorer: AND of the inverted ``PromptfooRubricScorer`` and the inverted
@@ -172,7 +175,9 @@ class PromptfooScenario(Scenario):
         """
         chat_target = self._resolve_scoring_target()
         rubric_scorer = PromptfooRubricScorer(chat_target=chat_target)
-        refusal_scorer = SelfAskRefusalScorer(chat_target=chat_target)
+        refusal_scorer = SelfAskRefusalScorer(
+            chat_target=chat_target, validator=ScorerPromptValidator(supported_data_types=["text"])
+        )
         for leaf in (rubric_scorer, refusal_scorer):
             leaf.raise_if_scorer_blocks = self.RAISE_IF_DEFAULT_SCORER_BLOCKS
         return TrueFalseCompositeScorer(
@@ -188,16 +193,28 @@ class PromptfooScenario(Scenario):
         if self._get_num_tests() < 1:
             raise ValueError("num_tests must be at least 1.")
 
-    def _get_run_size_budget(self) -> BoundedDatasetSize:
+    def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
         """
-        Size the run by the tests it generates, which may not exist yet.
+        Size generated plugin datasets by their test count, since they may not exist yet.
+
+        Each generated dataset holds ``num_tests`` tests, or fewer under a smaller per-dataset limit. Before
+        a purpose names the datasets, each plugin counts ``num_tests``. A configuration that selects any
+        other dataset keeps the base budget.
 
         Returns:
-            BoundedDatasetSize: The generated tests across plugins, capped by ``max_total``.
+            ScenarioDatasetSizeEstimate: The configured selection budget.
         """
-        generated = self._get_num_tests() * len(self.get_plugin_ids())
-        cap = self._dataset_config.max_total
-        return BoundedDatasetSize(value=generated if cap == "all" else min(generated, cap))
+        config = self._dataset_config
+        if isinstance(config, CompoundDatasetAttackConfiguration) or config.source_kind is not DatasetSourceKind.MEMORY:
+            return super()._get_run_size_budget()
+        num_tests = self._get_num_tests()
+        if not config.sources:
+            return BoundedDatasetSize(value=num_tests * len(self.get_plugin_ids()))
+        generated = self._get_generated_datasets()
+        if any(source.name not in generated for source in config.sources):
+            return super()._get_run_size_budget()
+        limits = [config.source_limit(source.name) for source in config.sources]
+        return BoundedDatasetSize(value=sum(num_tests if limit == "all" else min(num_tests, limit) for limit in limits))
 
     def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
         """
@@ -207,20 +224,17 @@ class PromptfooScenario(Scenario):
             DatasetAttackConfiguration: One source per plugin, which the configuration's fetch policy
                 generates when missing by default.
         """
-        purpose = self.params.get("purpose")
-        if not isinstance(purpose, str) or not purpose.strip():
+        generated = self._get_generated_datasets()
+        if not generated:
             return self._default_dataset_config
-        num_tests = self._get_num_tests()
-        return self._default_dataset_config.with_overrides(
-            sources=[
-                DatasetSource(name=self._get_dataset_name(plugin_id=plugin_id, purpose=purpose, num_tests=num_tests))
-                for plugin_id in self.get_plugin_ids()
-            ]
-        )
+        return self._default_dataset_config.with_overrides(sources=[DatasetSource(name=name) for name in generated])
 
     async def _prepare_datasets_async(self, *, fetch: DatasetFetchPolicy | None = None) -> None:
         """
         Attach each plugin's generator, on the adversarial target, before preparing datasets.
+
+        Only the scenario's own generated datasets get a generator; other selected datasets are used as
+        stored.
 
         Args:
             fetch (DatasetFetchPolicy | None): Optional policy for this operation only.
@@ -229,15 +243,15 @@ class PromptfooScenario(Scenario):
         if config.source_kind is DatasetSourceKind.MEMORY and not isinstance(
             config, CompoundDatasetAttackConfiguration
         ):
-            providers = await run_legacy_sync_async(self._build_providers)
-            self._dataset_config = self._dataset_config.with_overrides(
-                sources=[
-                    replace(source, provider=providers[source.name])
-                    if source.provider is None and source.name in providers
-                    else source
-                    for source in self._dataset_config.sources
-                ]
-            )
+            unprovided = {source.name for source in config.sources if source.provider is None}
+            providers = await run_legacy_sync_async(self._build_providers, dataset_names=unprovided)
+            if providers:
+                self._dataset_config = config.with_overrides(
+                    sources=[
+                        replace(source, provider=providers[source.name]) if source.name in providers else source
+                        for source in config.sources
+                    ]
+                )
         await super()._prepare_datasets_async(fetch=fetch)
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
@@ -266,33 +280,65 @@ class PromptfooScenario(Scenario):
             technique_converters=context.technique_converters,
         )
 
-    def _build_providers(self) -> dict[str, PromptfooPluginProvider]:
+    def _build_providers(self, *, dataset_names: set[str]) -> dict[str, PromptfooPluginProvider]:
         """
-        Build a generator for each plugin's dataset.
+        Build a generator for each of the named datasets that this scenario generates.
 
         The generator runs on the adversarial target that readiness resolved. An explicit dataset load
         skips readiness, so it resolves the supplied or registered adversarial target here.
 
+        Args:
+            dataset_names (set[str]): The selected datasets that have no provider yet.
+
         Returns:
-            dict[str, PromptfooPluginProvider]: Providers keyed by dataset name.
+            dict[str, PromptfooPluginProvider]: Providers keyed by dataset name; empty when none of the
+                named datasets is generated here.
         """
+        generated = {
+            name: plugin_id for name, plugin_id in self._get_generated_datasets().items() if name in dataset_names
+        }
+        if not generated:
+            return {}
         target = self._resolved_adversarial_target
         if target is None:
             target = self._supplied_adversarial_target or get_default_adversarial_target()
             validate_default_adversarial_target(target)
         purpose = str(self.params["purpose"])
-        num_tests = self._get_num_tests()
-        providers: dict[str, PromptfooPluginProvider] = {}
-        for plugin_id in self.get_plugin_ids():
-            name = self._get_dataset_name(plugin_id=plugin_id, purpose=purpose, num_tests=num_tests)
-            providers[name] = PromptfooPluginProvider(
+        return {
+            name: PromptfooPluginProvider(
                 dataset_name=name,
                 plugin=PromptfooPlugin.from_id(plugin_id),
                 purpose=purpose,
-                count=num_tests,
+                count=self._get_num_tests(),
                 target=target,
             )
-        return providers
+            for name, plugin_id in generated.items()
+        }
+
+    def _get_generated_datasets(self) -> dict[str, str]:
+        """
+        Name the dataset each plugin generates for the current purpose and test count.
+
+        Returns:
+            dict[str, str]: Plugin ids keyed by dataset name; empty until a purpose is set.
+        """
+        purpose = self.params.get("purpose")
+        if not isinstance(purpose, str) or not purpose.strip():
+            return {}
+        num_tests = self._get_num_tests()
+        return {
+            self._get_dataset_name(plugin_id=plugin_id, purpose=purpose, num_tests=num_tests): plugin_id
+            for plugin_id in self.get_plugin_ids()
+        }
+
+    def _get_readiness_factories(self) -> dict[str, AttackTechniqueFactory]:
+        """
+        Keep promptfoo's ``basic`` strategy over any registered technique with the same name.
+
+        Returns:
+            dict[str, AttackTechniqueFactory]: The selectable factories keyed by technique name.
+        """
+        return {**super()._get_readiness_factories(), PROMPTFOO_BASIC_FACTORY.name: PROMPTFOO_BASIC_FACTORY}
 
     def _get_num_tests(self) -> int:
         return int(self.params.get("num_tests", self.DEFAULT_NUM_TESTS))
