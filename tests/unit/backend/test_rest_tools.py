@@ -208,45 +208,36 @@ async def test_path_converter_parameter_keeps_its_slashes(toolset: RestToolset) 
     assert json.loads(text) == {"path": "docs/guides/setup.md"}
 
 
-async def test_large_list_keeps_leading_items_without_a_cursor_past_the_cut_ones(toolset: RestToolset) -> None:
+async def test_response_over_the_limit_is_a_note_that_names_its_fields(toolset: RestToolset) -> None:
     with patch.object(RestToolset, "MAX_RESPONSE_CHARS", 1_000):
-        text, _ = await toolset.call_async(name="list_things", arguments={"limit": 100}, authorization=None)
+        text, failed = await toolset.call_async(name="list_things", arguments={"limit": 100}, authorization=None)
 
-    result = json.loads(text)
-    kept = len(result["items"])
-    assert len(text) <= 1_000
-    assert kept > 0
-    assert [item["name"] for item in result["items"]] == [f"thing-{index}" for index in range(kept)]
-    assert result["items_omitted"] == 100 - kept
-    # The cursor continues after thing-99, so following it would skip every cut item.
-    assert result["pagination"] == {"limit": 100, "has_more": True}
+    page = {
+        "items": [{"name": f"thing-{index}", "text": "x" * 50} for index in range(100)],
+        "pagination": {"limit": 100, "has_more": True, "next_cursor": "after-the-page"},
+    }
+    length = len(json.dumps(page, separators=(",", ":")))
+    # No partial page: its continuation cursor would skip whatever was left out.
+    assert failed is False
+    assert json.loads(text) == {
+        "note": f"The response has {length:,} characters, over the 1,000 limit. Request fewer at a time, such as "
+        "with a smaller limit, or pass response_fields to keep only what you need.",
+        "available_fields": ["items", "pagination"],
+    }
 
 
 @pytest.mark.parametrize("cursor_field", ["next_cursor", "next_group_offset"])
-async def test_large_response_cuts_its_largest_list_and_stays_valid_json(
-    toolset: RestToolset, cursor_field: str
-) -> None:
+async def test_response_that_fits_keeps_its_continuation_field(toolset: RestToolset, cursor_field: str) -> None:
     with patch.object(RestToolset, "MAX_RESPONSE_CHARS", 1_000):
         text, _ = await toolset.call_async(
-            name="get_notes", arguments={"count": 30, "length": 100, "cursor_field": cursor_field}, authorization=None
+            name="get_notes", arguments={"count": 3, "cursor_field": cursor_field}, authorization=None
         )
 
-    result = json.loads(text)
-    assert len(text) <= 1_000
-    assert result["notebook"] == "n"
-    assert 0 < len(result["messages"]) < 30
-    assert result["messages_omitted"] == 30 - len(result["messages"])
-    assert cursor_field not in result
-
-
-async def test_response_too_large_to_cut_names_its_fields(toolset: RestToolset) -> None:
-    with patch.object(RestToolset, "MAX_RESPONSE_CHARS", 1_000):
-        text, _ = await toolset.call_async(name="get_notes", arguments={"length": 990}, authorization=None)
-
-    result = json.loads(text)
-    assert len(text) <= 1_000
-    assert result["available_fields"] == ["messages", "next_cursor", "notebook"]
-    assert "response_fields" in result["note"]
+    assert json.loads(text) == {
+        "notebook": "n",
+        "messages": [{"text": "m" * 10}] * 3,
+        cursor_field: "after-the-page",
+    }
 
 
 async def test_long_text_is_a_preview_unless_its_field_is_requested(toolset: RestToolset) -> None:
@@ -257,17 +248,43 @@ async def test_long_text_is_a_preview_unless_its_field_is_requested(toolset: Res
         authorization=None,
     )
 
-    assert json.loads(preview)["messages"] == [{"text": "m" * 1_000 + "…"}]
+    assert json.loads(preview)["messages"] == [
+        {"text": "m" * 1_000 + "… [shortened from 1,500 characters; the full text is in the PyRIT GUI or REST API]"}
+    ]
     assert json.loads(full) == {"messages": [{"text": "m" * 1_500}]}
 
 
-async def test_named_long_text_that_does_not_fit_comes_back_as_a_preview(toolset: RestToolset) -> None:
-    text, _ = await toolset.call_async(
+async def test_named_text_too_long_for_any_response_is_a_marked_preview(toolset: RestToolset) -> None:
+    text, failed = await toolset.call_async(
         name="get_conversation", arguments={RestToolset.RESPONSE_FIELDS: ["messages.text"]}, authorization=None
     )
 
-    # The reply after an oversized prompt stays readable instead of the whole response becoming a note.
-    assert json.loads(text) == {"messages": [{"text": "q" * 1_000 + "…"}, {"text": "Sure, here is the answer."}]}
+    # No page could hold the prompt, so it is shortened and the reply after it stays readable.
+    assert failed is False
+    assert json.loads(text) == {
+        "messages": [
+            {
+                "text": "q" * 1_000
+                + "… [shortened from 50,000 characters; the full text is in the PyRIT GUI or REST API]"
+            },
+            {"text": "Sure, here is the answer."},
+        ]
+    }
+
+
+async def test_named_text_over_the_limit_is_a_note_instead_of_previews(toolset: RestToolset) -> None:
+    text, _ = await toolset.call_async(
+        name="get_notes",
+        arguments={"count": 30, "length": 2_000, RestToolset.RESPONSE_FIELDS: ["messages.text"]},
+        authorization=None,
+    )
+
+    length = len(json.dumps({"messages": [{"text": "m" * 2_000}] * 30}, separators=(",", ":")))
+    assert json.loads(text) == {
+        "note": f"The response has {length:,} characters, over the 40,000 limit. Request fewer at a time, such as "
+        "with a smaller limit, or pass response_fields to keep only what you need.",
+        "available_fields": ["messages"],
+    }
 
 
 async def test_response_fields_keep_matches_and_name_alternatives_for_misses(toolset: RestToolset) -> None:
