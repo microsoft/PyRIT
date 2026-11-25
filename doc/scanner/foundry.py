@@ -229,7 +229,8 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 
 # %% [markdown]
 # Results are grouped by each case's generated category, with its baseline and technique results
-# together. When several selected policies share a category name, the behavior name tells them apart.
+# together. With several judged policies, each category is prefixed by its policy's behavior name,
+# plus a short policy ID when behavior names match, as in the ASSERT metrics.
 # Read the ASSERT data that a score records with the models in `pyrit.models`:
 # `AssertDimensionResult.from_metadata` gives the dimension, why a conversation wasn't judged, and
 # any not-applicable answer or grade. In `category_validated` mode,

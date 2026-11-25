@@ -294,6 +294,13 @@ describe('ScenarioRunPage', () => {
       expect(within(table).queryByText(/__case_hash/)).not.toBeInTheDocument()
       expect(screen.getByText('12/15', { exact: true })).toBeVisible()
 
+      await user.click(within(table).getByRole('row', { name: 'View attack details for baseline__case_hash: First objective' }))
+      const details = within(await screen.findByRole('dialog'))
+      expect(details.getByText('Baseline', { exact: true })).toBeInTheDocument()
+      expect(details.queryByText('cross_turn_policy_drift')).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Close attack details' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
       await user.click(screen.getByRole('button', { name: 'First objective' }))
       const dialog = within(await screen.findByRole('dialog'))
       for (const definition of definitions) {

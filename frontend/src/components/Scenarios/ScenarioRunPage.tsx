@@ -6,6 +6,7 @@ import {
 import { ArrowLeftRegular } from '@fluentui/react-icons'
 import { Link, useLocation, useParams } from 'react-router'
 
+import { plannedTechniqueLabel } from '@/components/AttackResults/attackAttemptFormatting'
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { useScenarioResultHierarchy } from '@/hooks/useScenarioResultHierarchy'
 import { useScenarioRunAttackDetails } from '@/hooks/useScenarioRunAttackDetails'
@@ -79,7 +80,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   )
   const techniqueNames = useMemo(
     () => new Map(state.plan?.atomic_groups.map((group) => [
-      group.id, group.kind === 'baseline' ? 'Baseline' : group.technique_name ?? group.atomic_attack_name,
+      group.id, plannedTechniqueLabel(group) ?? group.atomic_attack_name,
     ]) ?? []),
     [state.plan],
   )
