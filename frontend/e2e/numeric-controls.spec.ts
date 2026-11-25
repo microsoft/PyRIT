@@ -99,6 +99,7 @@ async function mockNumericControlApis(page: Page): Promise<void> {
       '/api/datasets': { items: datasetItems },
       '/api/prompt-generators': { items: [] },
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}`]: SCENARIO,
+      [`/api/scenarios/catalog/${SCENARIO.scenario_name}/datasets`]: { items: datasetItems },
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}/estimate`]: SCENARIO.default_run_size,
     }
     if (path.endsWith('/datasets/load')) {
