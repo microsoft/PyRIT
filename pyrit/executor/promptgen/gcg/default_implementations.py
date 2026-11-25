@@ -32,6 +32,24 @@ import torch.nn as nn
 logger = logging.getLogger(__name__)
 
 
+def decode_control_tokens(*, tokenizer: Any, control_tokens: torch.Tensor) -> str:
+    """
+    Decode control token ids exactly as candidate filters decode candidates.
+
+    The result keeps any leading separator space, so re-tokenizing it for scoring yields the
+    same ids, unlike the stripped ``control_str``.
+
+    Args:
+        tokenizer (Any): HuggingFace-style tokenizer.
+        control_tokens (torch.Tensor): One row of control token ids.
+
+    Returns:
+        str: The decoded control string.
+    """
+    decoded: str = tokenizer.decode(control_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+    return decoded
+
+
 class StandardGCGSampling:
     """
     Top-k by ``-gradient``, uniform pick within top-k at one random position per row.
@@ -377,7 +395,11 @@ class LengthPreservingFilter:
                 re-tokenization drift; ``tokenizer("!").input_ids[0]``
                 provides the replacement id for out-of-vocab clamping.
             current_control (str): Current suffix string. When ``filter``
-                is True, candidates that decode to this string are dropped.
+                is True, candidates that decode to this string (ignoring
+                surrounding whitespace) are dropped, and it pads the result
+                when every candidate is rejected. Pass the unstripped decode
+                of the current control tokens (see ``decode_control_tokens``)
+                so the padded rows re-tokenize to the current ids.
 
         Returns:
             list[str]: Decoded candidate suffix strings of length exactly
@@ -393,9 +415,7 @@ class LengthPreservingFilter:
         stripped_control = current_control.strip()
         candidates: list[str] = []
         for i in range(candidate_tokens.shape[0]):
-            decoded_str = tokenizer.decode(
-                candidate_tokens[i], skip_special_tokens=True, clean_up_tokenization_spaces=False
-            )
+            decoded_str = decode_control_tokens(tokenizer=tokenizer, control_tokens=candidate_tokens[i])
             if self._filter:
                 if decoded_str.strip() != stripped_control and len(
                     tokenizer(decoded_str, add_special_tokens=False).input_ids
