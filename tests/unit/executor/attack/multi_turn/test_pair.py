@@ -11,6 +11,7 @@ exposed configuration surface matches the PAIR-paper-relevant knobs.
 """
 
 import inspect
+import uuid
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -27,7 +28,7 @@ from pyrit.executor.attack import (
 from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
 )
-from pyrit.models import AttackOutcome, ComponentIdentifier, ScorerCapabilityName
+from pyrit.models import AttackOutcome, ComponentIdentifier, Score, ScorerCapabilityName
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 
@@ -240,6 +241,16 @@ class TestPAIRErrorOutcome:
         )
         context = attack._context_type(params=AttackParameters(objective="Test objective"))
         context.tree_visualization.create_node("root", "root")
+        context.best_objective_score = Score(
+            score_type="true_false",
+            score_value="false",
+            score_category=["test"],
+            score_value_description="",
+            score_rationale="",
+            score_metadata={},
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=ComponentIdentifier(class_name="MockScorer", class_module="test_module"),
+        )
 
         result = await attack._create_failure_result_async(context)
 
