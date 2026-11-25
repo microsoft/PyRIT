@@ -47,7 +47,6 @@ from pyrit.score import (
     FloatScaleThresholdScorer,
     MessageScorable,
     NumericRubric,
-    RefusalScorerPaths,
     SelfAskRefusalScorer,
     SelfAskScaleScorer,
 )
@@ -229,12 +228,14 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
 
         # Initialize refusal scorer - use the one from config if provided, otherwise create default.
-        # Crescendo's early turns intentionally ask benign or tangential stepping-stone questions
-        # that do not yet fulfill the attack objective, so use OBJECTIVE_LENIENT instead of
-        # OBJECTIVE_STRICT (which classifies partial/safe completions as refusals).
+        # Crescendo's early turns intentionally ask benign or off-objective stepping-stone questions
+        # whose cooperative answers may appear unrelated to context.objective, so use a
+        # Crescendo-specific rubric that only flags explicit refusals.
         self._refusal_scorer = attack_scoring_config.refusal_scorer or SelfAskRefusalScorer(
             chat_target=attack_adversarial_config.target,
-            system_prompt=SeedPrompt.from_yaml_file(RefusalScorerPaths.OBJECTIVE_LENIENT.value),
+            system_prompt=SeedPrompt.from_yaml_file(
+                Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / "refusal_scorer.yaml"
+            ),
         )
 
         # Initialize adversarial configuration

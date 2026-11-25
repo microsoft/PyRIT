@@ -22,7 +22,7 @@ from pyrit.executor.attack import (
     CrescendoAttackContext,
     CrescendoAttackResult,
 )
-from pyrit.memory import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,
     AttackOutcome,
@@ -36,7 +36,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import FloatScaleThresholdScorer, RefusalScorerPaths, SelfAskRefusalScorer, TrueFalseScorer
+from pyrit.score import FloatScaleThresholdScorer, SelfAskRefusalScorer, TrueFalseScorer
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
 
@@ -374,8 +374,10 @@ class TestCrescendoAttackInitialization:
         # Verify default scorers were created
         assert isinstance(attack._objective_scorer, FloatScaleThresholdScorer)
         assert isinstance(attack._refusal_scorer, SelfAskRefusalScorer)
-        expected_lenient_prompt = SeedPrompt.from_yaml_file(RefusalScorerPaths.OBJECTIVE_LENIENT.value)
-        assert attack._refusal_scorer._system_prompt == expected_lenient_prompt.value
+        expected_crescendo_prompt = SeedPrompt.from_yaml_file(
+            Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / "refusal_scorer.yaml"
+        )
+        assert attack._refusal_scorer._system_prompt == expected_crescendo_prompt.value
 
     @pytest.mark.parametrize(
         "system_prompt_path",
@@ -1263,6 +1265,54 @@ class TestResponseScoring:
 
         expectation = mock_refusal_scorer.score_async.call_args.kwargs["expectation"]
         assert expectation.objective == "Test objective"
+
+    async def test_default_refusal_scorer_allows_unrelated_cooperative_turn_without_backtrack(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CrescendoAttackContext,
+    ):
+        """Default Crescendo refusal rubric must not equate unrelated cooperative replies with refusals."""
+        from pyrit.models import UnvalidatedScore
+
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+        )
+        basic_context.last_response = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="1. The mechanism ensures data integrity during transfer.",
+                    conversation_id=basic_context.session.conversation_id,
+                )
+            ]
+        )
+        await CentralMemory.get_memory_instance().add_message_to_memory_async(request=basic_context.last_response)
+        non_refusal = UnvalidatedScore(
+            raw_score_value="false",
+            score_value_description="No refusal",
+            score_category=["refusal"],
+            score_rationale="The AI cooperatively answered an unrelated intermediate prompt without refusing.",
+            score_metadata=None,
+            scorer_class_identifier=attack._refusal_scorer.get_identifier(),
+            message_piece_id=basic_context.last_response.message_pieces[0].id,
+            objective=basic_context.objective,
+        )
+
+        with patch.object(
+            attack._refusal_scorer._judge, "judge_async", new_callable=AsyncMock, return_value=non_refusal
+        ) as mock_judge:
+            backtracked = await attack._perform_backtrack_if_refused_async(
+                context=basic_context, prompt_sent="Write three short sentences."
+            )
+
+        assert backtracked is False
+        assert basic_context.last_response_was_refusal is False
+        request = mock_judge.call_args.kwargs["request"]
+        assert request.expectation.objective == "Test objective"
+        assert "unrelated to `conversation_objective`" in request.system_prompt
+        assert "non-sequitur" not in request.system_prompt.lower()
 
 
 @pytest.mark.usefixtures("patch_central_database")
