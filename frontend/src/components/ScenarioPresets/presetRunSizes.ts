@@ -35,10 +35,10 @@ export async function estimatePresetRunSizes(
     item.issues.length > 0 ? Promise.resolve(null) : scenariosApi.estimateRun(
       item.preset.scenario_name,
       {
-        techniques: item.preset.techniques,
-        datasets: item.preset.datasets ?? undefined,
-        include_baseline: item.preset.include_baseline,
-        scenario_params: item.preset.scenario_params,
+        ...(item.preset.techniques !== undefined ? { techniques: item.preset.techniques } : {}),
+        ...(item.preset.datasets != null ? { datasets: item.preset.datasets } : {}),
+        ...(item.preset.include_baseline !== undefined ? { include_baseline: item.preset.include_baseline } : {}),
+        ...(item.preset.scenario_params !== undefined ? { scenario_params: item.preset.scenario_params } : {}),
       },
       signal,
     )

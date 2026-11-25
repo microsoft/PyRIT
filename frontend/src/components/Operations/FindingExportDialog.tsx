@@ -16,6 +16,7 @@ import { findingChildren, findingDescendantIds, flattenFindingTree } from '@/uti
 import { findingIndent, useFindingExportDialogStyles } from './FindingExportDialog.styles'
 import FindingSeverityBadge from './FindingSeverityBadge'
 import { MAX_EXPORT_FINDINGS } from './findingExportLimits'
+import { fluentRef } from '@/utils/fluentRef'
 
 const PAGE_SIZE = 100
 const FORMATS: Record<FindingExportFormat, { option: string; name: string; extension: string }> = {
@@ -285,7 +286,7 @@ export default function FindingExportDialog({ operation, fields, fieldsRevision 
       else setOpen(false)
     }}>
       <DialogTrigger disableButtonEnhancement>
-        <Button ref={triggerRef} className={styles.button} icon={<ArrowDownloadRegular />}>Export findings</Button>
+        <Button ref={fluentRef(triggerRef)} className={styles.button} icon={<ArrowDownloadRegular />}>Export findings</Button>
       </DialogTrigger>
       <DialogSurface>
         <DialogBody>

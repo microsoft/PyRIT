@@ -3,7 +3,7 @@ import { Badge, type BadgeProps } from '@fluentui/react-components'
 import type { TargetOrigin } from '@/types'
 import { TARGET_ORIGIN_LABELS } from '@/utils/targetOrigin'
 
-const ORIGIN_BADGE_COLORS: Record<TargetOrigin, BadgeProps['color']> = {
+const ORIGIN_BADGE_COLORS: Record<TargetOrigin, NonNullable<BadgeProps['color']>> = {
   saved: 'success',
   configuration: 'informative',
   temporary: 'warning',
