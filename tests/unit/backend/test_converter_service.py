@@ -3406,6 +3406,63 @@ async def test_a_copy_with_a_taken_name_is_a_conflict(startup_replace: SearchRep
     assert not (tmp_path / "converters").exists()
 
 
+def _wordswap_copy_request(*, source: ColloquialWordswapConverter, params: dict[str, Any]) -> CreateConverterRequest:
+    return CreateConverterRequest(
+        name="plain_wordswap",
+        type="ColloquialWordswapConverter",
+        persist=True,
+        source=SourceInstanceSpec(
+            source_name="startup_wordswap", source_hash=source.get_identifier().hash, params=params
+        ),
+    )
+
+
+def _register_startup_wordswap(swaps: Path) -> ColloquialWordswapConverter:
+    swaps.write_text("hello:\n  - wassup\n", encoding="utf-8")
+    source = ColloquialWordswapConverter(deterministic=True, wordswap_path=swaps)
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        ConverterRegistry.get_registry_singleton().instances.register(source, name="startup_wordswap")
+    return source
+
+
+@pytest.mark.parametrize("left_empty", [None, ""])
+async def test_a_saved_copy_that_leaves_an_optional_file_empty_comes_back_without_it(
+    tmp_path: Path, left_empty: str | None
+) -> None:
+    swaps = tmp_path / "swaps.yaml"
+    source = _register_startup_wordswap(swaps)
+
+    copy = await ConverterService().create_converter_async(
+        request=_wordswap_copy_request(source=source, params={"wordswap_path": left_empty}),
+        recipes_source=str(tmp_path),
+    )
+
+    assert copy.origin is RegistryEntryOrigin.SAVED
+    assert copy.identifier.params.get("wordswap_path") is None
+    assert _saved_converter(tmp_path, "plain_wordswap")["params"] == {"wordswap_path": None}
+    ConverterRegistry.reset_registry_singleton()
+    _register_startup_wordswap(swaps)
+    assert (await _restore(tmp_path)).failures == []
+    restored = ConverterRegistry.get_registry_singleton().instances.get("plain_wordswap")
+    assert restored is not None
+    assert restored.get_identifier().params.get("wordswap_path") is None
+
+
+async def test_a_copy_that_uploads_a_file_is_not_saved(tmp_path: Path) -> None:
+    source = _register_startup_wordswap(tmp_path / "swaps.yaml")
+    upload = _make_data_uri(mime_type="application/yaml", content=b"hello:\n  - wassup\n")
+
+    with pytest.raises(NotSaveableError) as refusal:
+        await ConverterService().create_converter_async(
+            request=_wordswap_copy_request(source=source, params={"wordswap_path": upload}),
+            recipes_source=str(tmp_path),
+        )
+
+    assert refusal.value.cause == "Saved converters can't keep uploaded files yet ('wordswap_path')."
+    assert ConverterRegistry.get_registry_singleton().instances.get("plain_wordswap") is None
+    assert not (tmp_path / "converters").exists()
+
+
 class _LaunchScriptCaesarConverter(CaesarConverter):
     """A converter class that only a scan's launch script registers."""
 

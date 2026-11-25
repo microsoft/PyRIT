@@ -547,7 +547,8 @@ class ConverterService:
         Build a copy of a registered converter with the requested changes, save it, then register it as saved.
 
         The recipe names the copied converter and holds only the changes, so the copy is rebuilt from that converter
-        at every start and keeps where it sends requests and how it signs in.
+        at every start and keeps where it sends requests and how it signs in. An optional file the changes leave
+        empty is saved as None, so the copy comes back without its source's file.
 
         Returns:
             ConverterInstance: The saved copy.
@@ -563,13 +564,14 @@ class ConverterService:
         source = self._registry.resolve_source(name=source_spec.source_name, identifier_hash=source_spec.source_hash)
         if type(source) is not converter_cls:
             raise ValueError("The source converter type does not match the requested type")
+        upload_params = self._upload_params(converter_type=request.type)
+        left_empty = self._optional_uploads_left_empty(upload_params=upload_params, params=source_spec.params)
         uploads = [
-            parameter
-            for parameter in self._upload_params(converter_type=request.type)
-            if parameter in source_spec.params
+            parameter for parameter in upload_params if parameter in source_spec.params and parameter not in left_empty
         ]
         if uploads:
             raise NotSaveableError(f"Saved converters can't keep uploaded files yet ('{uploads[0]}').")
+        changes = {name: None if name in left_empty else value for name, value in source_spec.params.items()}
         source_name = copied_entry_name(registry=self._registry, kind=RegistryRecipeKind.CONVERTERS, source=source)
         try:
             self._registry.instances.validate_name_available(name)
@@ -579,11 +581,21 @@ class ConverterService:
         # credential and Temporary-entry checks on the changes, whose refusal says the copy can still be created
         # without saving it.
         converter_obj = await construct_component_async(
-            self._registry.recreate_instance, source=source, params=source_spec.params, external_input=True
+            self._registry.recreate_instance,
+            source=source,
+            params=changes,
+            external_input=True,
+            allowed_path_params=left_empty,
         )
+        # The library refuses any file parameter a recipe sets, even an empty one, so the emptied ones skip its checks
+        # and are saved as None, which names no file.
         params = await prepare_saved_copy_params_async(
-            registry=self._registry, type_name=request.type, cls=converter_cls, params=source_spec.params
+            registry=self._registry,
+            type_name=request.type,
+            cls=converter_cls,
+            params={name: value for name, value in changes.items() if name not in left_empty},
         )
+        params |= dict.fromkeys(sorted(left_empty))
         if source_spec.effective_hash and converter_obj.get_identifier().hash != source_spec.effective_hash:
             raise ValueError("Temporary converter configuration has changed")
         converter = self._build_instance_from_object(
