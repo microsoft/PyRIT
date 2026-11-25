@@ -23,6 +23,10 @@ if TYPE_CHECKING:
         ATRVariationType,
         _AgentThreatRulesDataset,
     )
+    from pyrit.datasets.seed_datasets.remote.air_bench_dataset import (
+        AIRBenchRegion,
+        _AIRBenchDataset,
+    )
     from pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset import (
         AnthropicModelWrittenEvalCategory,
         _AnthropicModelWrittenEvalsDataset,
@@ -186,6 +190,7 @@ if TYPE_CHECKING:
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AegisHarmCategory": "pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset",
+    "AIRBenchRegion": "pyrit.datasets.seed_datasets.remote.air_bench_dataset",
     "AnthropicModelWrittenEvalCategory": "pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset",
     "AttaQCategory": "pyrit.datasets.seed_datasets.remote.attaq_dataset",
     "CoCoNotCategory": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
@@ -226,6 +231,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ATRDetectionField": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
     "ATRVariationType": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
     "_AgentThreatRulesDataset": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
+    "_AIRBenchDataset": "pyrit.datasets.seed_datasets.remote.air_bench_dataset",
     "_AttaQDataset": "pyrit.datasets.seed_datasets.remote.attaq_dataset",
     "_AyaRedteamingDataset": "pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset",
     "_BabelscapeAlertDataset": "pyrit.datasets.seed_datasets.remote.babelscape_alert_dataset",
