@@ -27,11 +27,13 @@ const mockedConfigurationApi = jest.mocked(configurationApi)
 
 function renderFiles(
   onUnsavedChangesChange = jest.fn(),
+  onSavingChange = jest.fn(),
 ): ReturnType<typeof render> {
   return render(
     <FluentProvider theme={webLightTheme}>
       <EnvironmentFiles
         onUnsavedChangesChange={onUnsavedChangesChange}
+        onSavingChange={onSavingChange}
       />
     </FluentProvider>,
   )
@@ -210,7 +212,7 @@ describe('EnvironmentFiles', () => {
     await waitFor(() => expect(mockedConfigurationApi.getEnvironmentFile).toHaveBeenCalledTimes(2))
     mockGeneration = 'second'
     rendered.rerender(<FluentProvider theme={webLightTheme}>
-      <EnvironmentFiles onUnsavedChangesChange={jest.fn()} />
+      <EnvironmentFiles onUnsavedChangesChange={jest.fn()} onSavingChange={jest.fn()} />
     </FluentProvider>)
     await act(async () => { read.resolve({
       id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=old-runtime\n',
@@ -307,7 +309,7 @@ describe('EnvironmentFiles', () => {
 
   it('should preserve a dirty draft across generations and timed checks until edits are discarded', async () => {
     const user = userEvent.setup()
-    const props = { onUnsavedChangesChange: jest.fn() }
+    const props = { onUnsavedChangesChange: jest.fn(), onSavingChange: jest.fn() }
     const page = <FluentProvider theme={webLightTheme}><EnvironmentFiles {...props} /></FluentProvider>
     const { rerender } = render(page)
     const editor = await screen.findByRole('textbox', { name: 'Environment file contents' })
@@ -351,7 +353,7 @@ describe('EnvironmentFiles', () => {
   })
 
   it('should refresh clean sources when another client reinitializes', async () => {
-    const props = { onUnsavedChangesChange: jest.fn() }
+    const props = { onUnsavedChangesChange: jest.fn(), onSavingChange: jest.fn() }
     const { rerender } = render(
       <FluentProvider theme={webLightTheme}><EnvironmentFiles {...props} /></FluentProvider>,
     )
@@ -360,5 +362,34 @@ describe('EnvironmentFiles', () => {
     mockGeneration = 'second'
     rerender(<FluentProvider theme={webLightTheme}><EnvironmentFiles {...props} /></FluentProvider>)
     expect(await screen.findByText('No environment sources are enabled by the configuration.')).toBeInTheDocument()
+  })
+
+  it('should report a running file save, and take the report back when the editor closes', async () => {
+    const user = userEvent.setup()
+    const onSavingChange = jest.fn()
+    const first = deferred<Awaited<ReturnType<typeof configurationApi.updateEnvironmentFile>>>()
+    mockedConfigurationApi.updateEnvironmentFile.mockReturnValueOnce(first.promise)
+    const view = renderFiles(jest.fn(), onSavingChange)
+    const editor = await screen.findByRole('textbox', { name: 'Environment file contents' })
+    await user.type(editor, '# draft')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(onSavingChange).toHaveBeenLastCalledWith(true)
+
+    await act(async () => {
+      first.resolve({
+        id: '0', name: '.env', path: 'C:/config/.env', content: '# draft', exists: true, version: 'version-2',
+      })
+    })
+    expect(onSavingChange).toHaveBeenLastCalledWith(false)
+
+    // A save that outlives the editor must not keep the page describing a save in progress.
+    mockedConfigurationApi.updateEnvironmentFile.mockReturnValueOnce(
+      deferred<Awaited<ReturnType<typeof configurationApi.updateEnvironmentFile>>>().promise,
+    )
+    await user.type(editor, ' again')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(onSavingChange).toHaveBeenLastCalledWith(true)
+    view.unmount()
+    expect(onSavingChange).toHaveBeenLastCalledWith(false)
   })
 })
