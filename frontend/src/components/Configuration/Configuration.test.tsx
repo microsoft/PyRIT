@@ -585,6 +585,57 @@ describe('Configuration', () => {
     expect(event.defaultPrevented).toBe(true)
   })
 
+  it('should describe an environment file save in progress instead of offering to discard it', async () => {
+    const user = userEvent.setup()
+    const saving = deferred<Awaited<ReturnType<typeof configurationApi.updateEnvironmentFile>>>()
+    mockedConfigurationApi.updateEnvironmentFile.mockReturnValueOnce(saving.promise)
+    renderPage('/config?tab=environment')
+
+    const editor = await screen.findByLabelText('Environment file contents')
+    await user.clear(editor)
+    await user.type(editor, '# draft')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Go to scanner' }))
+
+    // Leaving closes this editor, so a failure would be reported nowhere and the draft would not stay.
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveAccessibleName('Leave while saving?')
+    expect(dialog).not.toHaveTextContent(/will be lost/)
+    expect(dialog).toHaveTextContent('the draft does not stay on this tab')
+
+    await user.click(screen.getByRole('button', { name: 'Leave' }))
+    expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
+    expect(mockedConfigurationApi.updateEnvironmentFile).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      saving.resolve({
+        id: '0', name: '.env', path: 'C:/Users/test/.pyrit/.env', content: '# draft', exists: true, version: 'v2',
+      })
+    })
+  })
+
+  it('should stop describing a save once the environment editor has closed', async () => {
+    const user = userEvent.setup()
+    const saving = deferred<Awaited<ReturnType<typeof configurationApi.updateEnvironmentFile>>>()
+    mockedConfigurationApi.updateEnvironmentFile.mockReturnValueOnce(saving.promise)
+    renderPage('/config?tab=environment')
+
+    const editor = await screen.findByLabelText('Environment file contents')
+    await user.clear(editor)
+    await user.type(editor, '# draft')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(screen.getByRole('tab', { name: 'PyRIT Configuration' }))
+    await user.click(await screen.findByRole('button', { name: 'Leave' }))
+    const configuration = await screen.findByLabelText('Configuration YAML')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    // That editor is gone, so an ordinary unsaved edit gets the ordinary prompt again.
+    await user.type(configuration, '# draft')
+    await user.click(await screen.findByRole('button', { name: 'Go to scanner' }))
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+  })
+
   it('should request browser confirmation before unloading unsaved changes', async () => {
     const user = userEvent.setup()
     renderPage()

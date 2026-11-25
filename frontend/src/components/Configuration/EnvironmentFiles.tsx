@@ -22,10 +22,13 @@ interface StatusMessage {
 
 interface EnvironmentFilesProps {
   onUnsavedChangesChange: (hasUnsavedChanges: boolean) => void
+  /** Reports whether a file save is running, so the page can describe leaving during one. */
+  onSavingChange: (saving: boolean) => void
 }
 
 export default function EnvironmentFiles({
   onUnsavedChangesChange,
+  onSavingChange,
 }: EnvironmentFilesProps) {
   const styles = useConfigurationStyles()
   const { generation } = useRuntime()
@@ -152,6 +155,12 @@ export default function EnvironmentFiles({
   useEffect(() => {
     onUnsavedChangesChange(hasUnsavedChanges)
   }, [hasUnsavedChanges, onUnsavedChangesChange])
+
+  useEffect(() => {
+    onSavingChange(saving)
+    // The report leaves with this editor. A save that outlives it has no editor left to speak for.
+    return () => onSavingChange(false)
+  }, [saving, onSavingChange])
 
   useAutoRefresh(() => {
     if (!pending.current) setReloadCount((count: number) => count + 1)
