@@ -35,7 +35,8 @@ one technique per run.
 `list_targets`, `list_scorers`, and `list_techniques` return 50 entries at a time. Keep
 `pagination` in `response_fields`, and while `pagination.has_more` is true, call again with
 `cursor` set to `pagination.next_cursor`: the target may be on a later page, and so may the
-best scorer or technique.
+best scorer or technique. A response too large to return comes back as a note instead; call
+again with a smaller `limit` or fewer `response_fields`.
 
 1. Find the target with `list_targets` and `response_fields: ["items.target_registry_name",
    "pagination"]`. Use the exact registry name.
@@ -83,8 +84,11 @@ If a start fails, report the error message as it is; it names what is missing.
    `get_attack` and `response_fields: ["outcome", "outcome_reason", "executed_turns",
    "last_score.score_value", "last_score.score_rationale", "conversation_id"]`.
 3. Read the conversation with `get_conversation_messages` only when the outcome needs it or the
-   user asks: pass `attack_result_id`, `conversation_id`, and `response_fields:
-   ["messages.role", "messages.message_pieces.original_value"]`.
+   user asks: pass `attack_result_id`, `conversation_id`, `limit: 10`, and `response_fields:
+   ["messages.role", "messages.message_pieces.original_value", "pagination"]`, and while
+   `pagination.has_more` is true, call again with `cursor` set to `pagination.next_cursor`.
+   Text that ends with "… [shortened from N characters; …]" is only a preview: don't judge a
+   response from it, and say its full text is in the PyRIT GUI.
 
 ## Report
 
