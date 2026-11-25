@@ -503,6 +503,64 @@ class TestLengthPreservingFilter:
         assert torch.equal(default_input, legacy_input)
         assert default_input[0, 0].item() == 0
 
+    def test_filter_candidates_pads_with_current_control_when_all_rejected(self) -> None:
+        """Regression for #4546: when every row is rejected, both code paths
+        pad with the current control instead of raising ``IndexError``.
+
+        Rows ``[5, 0, 0]`` and ``[2, 0, 1]`` re-tokenize to lengths 5 and 2
+        (control length 3), so both are dropped.
+        """
+        candidate_template = torch.tensor([[5, 0, 0], [2, 0, 1]])
+
+        legacy_attack = self._make_legacy_attack(tokenizer=_make_filter_tokenizer())
+        legacy_out = legacy_attack.get_filtered_cands(
+            0, candidate_template.clone(), filter_cand=True, curr_control="current"
+        )
+
+        default_out = LengthPreservingFilter(filter=True).filter_candidates(
+            candidate_tokens=candidate_template.clone(),
+            tokenizer=_make_filter_tokenizer(),
+            current_control="current",
+        )
+
+        assert default_out == legacy_out
+        assert legacy_out == ["current", "current"]
+
+    def test_legacy_filter_raises_clear_error_when_all_rejected_without_current_control(self) -> None:
+        legacy_attack = self._make_legacy_attack(tokenizer=_make_filter_tokenizer())
+        with pytest.raises(RuntimeError, match="All GCG candidates were filtered out"):
+            legacy_attack.get_filtered_cands(0, torch.tensor([[5, 0, 0]]), filter_cand=True)
+
+    def test_filter_candidates_drops_unchanged_candidate_with_leading_space(self) -> None:
+        """Regression for #4545: ``current_control`` is the stripped
+        ``control_str`` while candidates keep their leading separator space,
+        so an unchanged candidate must still be recognized and dropped.
+
+        - Row ``[3, 0, 1]`` decodes to ``" ab"`` — same suffix as ``"ab"`` -> DROP.
+        - Row ``[7, 0, 1]`` decodes to ``" cd"`` (len 3) -> KEEP.
+        """
+
+        def make_tokenizer() -> MagicMock:
+            tokenizer = _make_filter_tokenizer()
+            tokenizer.decode.side_effect = lambda ids, **_kwargs: {3: " ab", 7: " cd"}[int(ids[0].item())]
+            return tokenizer
+
+        candidate_template = torch.tensor([[3, 0, 1], [7, 0, 1]])
+
+        legacy_attack = self._make_legacy_attack(tokenizer=make_tokenizer())
+        legacy_out = legacy_attack.get_filtered_cands(
+            0, candidate_template.clone(), filter_cand=True, curr_control="ab"
+        )
+
+        default_out = LengthPreservingFilter(filter=True).filter_candidates(
+            candidate_tokens=candidate_template.clone(),
+            tokenizer=make_tokenizer(),
+            current_control="ab",
+        )
+
+        assert default_out == legacy_out
+        assert legacy_out == [" cd", " cd"]
+
     def test_init_rejects_enabled_and_legacy_filter_together(self) -> None:
         with pytest.raises(TypeError, match="Specify either 'enabled' or 'filter', not both"):
             LengthPreservingFilter(enabled=True, filter=False)
