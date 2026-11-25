@@ -29,10 +29,11 @@
 # for models PyRIT recognizes or when declared with `custom_configuration`.
 #
 # `tool_priming_one_shot` is in the `extra` technique catalog. `tool_priming_simulated` copies the adversarial
-# chat as the stand-in, so the adversarial chat must run tool calls (`RUNS_TOOLS_LOCALLY`, true for the targets
-# above), and the opt-in `ToolsInitializer` registers it only then. The default chat-completions
-# `adversarial_chat` qualifies; this example replaces it with a Responses adversarial chat built from the same
-# `ADVERSARIAL_CHAT_*` environment variables, which is what the recorded run used. The objective target uses
+# chat as the stand-in, so it needs a single `adversarial_chat` that runs tool calls (`RUNS_TOOLS_LOCALLY`,
+# true for the targets above), and the opt-in `ToolsInitializer` registers it only then. When
+# `ADVERSARIAL_CHAT_ENDPOINT2` or `ADVERSARIAL_CHAT_ENDPOINT3` is also set, the default `adversarial_chat`
+# round-robins across the endpoints and does not run tool calls, so this example registers a single Responses
+# adversarial chat built from the `ADVERSARIAL_CHAT_*` environment variables. The objective target uses
 # `OPENAI_RESPONSES_*`, and the scorer uses the default chat target.
 
 # %%
