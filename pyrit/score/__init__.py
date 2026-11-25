@@ -155,6 +155,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.regex.agent_threat_rules_scorer import AgentThreatRulesScorer
     from pyrit.score.true_false.regex.ansi_escape_output_scorer import AnsiEscapeOutputScorer
     from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
+    from pyrit.score.true_false.regex.code_presence_scorer import CodePresenceScorer
     from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
     from pyrit.score.true_false.regex.divergence_scorer import DivergenceScorer
     from pyrit.score.true_false.regex.escaped_ansi_output_scorer import EscapedAnsiOutputScorer
@@ -240,6 +241,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ContentClassifierPaths": "pyrit.score.true_false.self_ask_category_scorer",
     "ConversationScorer": "pyrit.score.conversation_scorer",
     "AgentThreatRulesScorer": "pyrit.score.true_false.regex.agent_threat_rules_scorer",
+    "CodePresenceScorer": "pyrit.score.true_false.regex.code_presence_scorer",
     "CredentialLeakScorer": "pyrit.score.true_false.regex.credential_leak_scorer",
     "DecisionScorer": "pyrit.score.float_scale.decision_scorer",
     "DecodingScorer": "pyrit.score.true_false.decoding_scorer",

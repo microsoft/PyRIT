@@ -31,6 +31,11 @@ if TYPE_CHECKING:
         LeakReplayDatasetConfiguration,
         LeakReplayTechnique,
     )
+    from pyrit.scenario.scenarios.garak.malwaregen import (
+        MalwareGen,
+        MalwareGenDatasetConfiguration,
+        MalwareGenTechnique,
+    )
     from pyrit.scenario.scenarios.garak.package_hallucination import (
         PackageHallucination,
         PackageHallucinationTechnique,
@@ -70,6 +75,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "LeakReplay": "pyrit.scenario.scenarios.garak.leak_replay",
     "LeakReplayDatasetConfiguration": "pyrit.scenario.scenarios.garak.leak_replay",
     "LeakReplayTechnique": "pyrit.scenario.scenarios.garak.leak_replay",
+    "MalwareGen": "pyrit.scenario.scenarios.garak.malwaregen",
+    "MalwareGenDatasetConfiguration": "pyrit.scenario.scenarios.garak.malwaregen",
+    "MalwareGenTechnique": "pyrit.scenario.scenarios.garak.malwaregen",
     "PackageHallucination": "pyrit.scenario.scenarios.garak.package_hallucination",
     "PackageHallucinationTechnique": "pyrit.scenario.scenarios.garak.package_hallucination",
     "PromptInject": "pyrit.scenario.scenarios.garak.prompt_inject",
