@@ -44,6 +44,6 @@ async def test_image_transformation_runs_off_the_event_loop_async(converter: Bas
         result = await converter.convert_async(prompt="input.png", input_type="image_path")
 
     assert result.output_text == "converted.png"
-    mock_serializer.save_b64_image_async.assert_awaited_once()
+    mock_serializer.save_data_async.assert_awaited_once()
     assert len(transform_thread_ids) == 1
     assert transform_thread_ids[0] != loop_thread_id

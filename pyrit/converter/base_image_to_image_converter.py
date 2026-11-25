@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import asyncio
-import base64
 import logging
 from abc import ABC, abstractmethod
 from io import BytesIO
@@ -126,7 +125,7 @@ class BaseImageToImageConverter(Converter, ABC):
             return image
         return image.convert("RGBA" if image.has_transparency_data else "RGB")
 
-    def _decode_and_transform(self, image_bytes: bytes) -> tuple[BytesIO, str]:
+    def _decode_and_transform(self, image_bytes: bytes) -> tuple[bytes, str]:
         """
         Decode the source image and apply the transformation.
 
@@ -134,10 +133,11 @@ class BaseImageToImageConverter(Converter, ABC):
             image_bytes (bytes): The encoded source image.
 
         Returns:
-            tuple[BytesIO, str]: The transformed image bytes and the output format.
+            tuple[bytes, str]: The transformed image bytes and the output format.
         """
         original_img = Image.open(BytesIO(image_bytes))
-        return self._transform_image(original_img, original_img.format or "JPEG")
+        transformed, output_format = self._transform_image(original_img, original_img.format or "JPEG")
+        return transformed.getvalue(), output_format
 
     def _transform_image(self, image: Image.Image, original_format: str) -> tuple[BytesIO, str]:
         """
@@ -210,7 +210,6 @@ class BaseImageToImageConverter(Converter, ABC):
         transformed_bytes, output_format = await asyncio.to_thread(self._decode_and_transform, original_img_bytes)
         img_serializer.file_extension = output_format.lower()
 
-        image_str = base64.b64encode(transformed_bytes.getvalue())
-        await img_serializer.save_b64_image_async(data=image_str.decode())
+        await img_serializer.save_data_async(data=transformed_bytes)
 
         return ConverterResult(output_text=str(img_serializer.value), output_type="image_path")
