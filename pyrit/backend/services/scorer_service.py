@@ -15,6 +15,7 @@ from pyrit.backend.models import (
     ScorerTypeResponse,
 )
 from pyrit.backend.models.scorers import UnregisteredScorer
+from pyrit.backend.services.saved_entries import save_then_register_locked_async
 from pyrit.models import ScorerEvaluationIdentifier, ScorerIdentifier, project_behavioral_identity
 from pyrit.models.catalog import (
     ComponentRecipe,
@@ -27,11 +28,11 @@ from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.output.scorer.json import format_scorer_type, scorer_metrics_to_dict
 from pyrit.registry import (
     SavedEntryConflictError,
+    SavedEntryReplacement,
     ScorerRegistry,
     creator_metadata,
     prepare_saved_params_async,
     record_private_references,
-    save_then_register_async,
 )
 from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin
 from pyrit.score import Scorer, TrueFalseScorer
@@ -198,6 +199,7 @@ class ScorerService:
         request: CreateScorerRequest,
         owner: SavedEntryOwner | None = None,
         recipes_source: str | None = None,
+        replacing: SavedEntryReplacement | None = None,
     ) -> ScorerInstance | UnregisteredScorer:
         """
         Build a scorer through the shared registry resolver, with optional registration.
@@ -210,6 +212,7 @@ class ScorerService:
             request: The create scorer request with type, params, and name.
             owner: The signed-in user, recorded on a saved scorer, or None when sign-in is off.
             recipes_source: Where saved entries are stored, or None for the default folder.
+            replacing: The saved scorer an edit rebuilds, whose recipe is overwritten instead of created, or None.
 
         Returns:
             ScorerInstance | UnregisteredScorer: A named instance, or an unregistered
@@ -224,7 +227,7 @@ class ScorerService:
         """
         if request.persist and request.name is not None:
             return await self._save_scorer_async(
-                name=request.name, request=request, owner=owner, recipes_source=recipes_source
+                name=request.name, request=request, owner=owner, recipes_source=recipes_source, replacing=replacing
             )
 
         def create() -> ScorerInstance | UnregisteredScorer:
@@ -257,6 +260,7 @@ class ScorerService:
         request: CreateScorerRequest,
         owner: SavedEntryOwner | None,
         recipes_source: str | None,
+        replacing: SavedEntryReplacement | None = None,
     ) -> ScorerInstance:
         """
         Build the requested scorer, save its recipe, then register it as a saved entry.
@@ -297,7 +301,7 @@ class ScorerService:
             return scorer, self._build_instance(name=name, scorer=scorer, origin=RegistryEntryOrigin.SAVED), creator
 
         scorer, instance, creator = await asyncio.to_thread(build)
-        await save_then_register_async(
+        await save_then_register_locked_async(
             kind=RegistryRecipeKind.SCORERS,
             name=name,
             recipe=ComponentRecipe(
@@ -307,6 +311,7 @@ class ScorerService:
             register=lambda metadata: self._registry.instances.register(
                 scorer, name=name, metadata={**creator, **metadata}
             ),
+            replacing=replacing,
         )
         return instance
 

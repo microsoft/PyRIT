@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import uuid
+from contextvars import ContextVar
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -38,9 +39,12 @@ from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import validate_reinitialization_memory
 
 if TYPE_CHECKING:
-    from pyrit.models.catalog import IgnoredRecipeFile, RestoreFailure
+    from pyrit.models.catalog import IgnoredRecipeFile, RestoreFailure, SavedEntryRef
 
 logger = logging.getLogger(__name__)
+
+# The admitted request that the running code belongs to, so a request doesn't count itself as work in progress.
+current_operation: ContextVar[asyncio.Task[None] | None] = ContextVar("pyrit_runtime_operation", default=None)
 
 
 class RuntimeLifecycle:
@@ -317,8 +321,28 @@ class RuntimeLifecycle:
             finally:
                 logger.info("PyRIT apply outcome=%s generation=%s", self.outcome, self.generation)
 
-    def _has_active_work(self) -> bool:
-        """Return whether any admitted or background runtime operation remains."""
+    def has_active_work(self) -> bool:
+        """
+        Return whether a run, send, estimate, or another request could still be using a registered entry.
+
+        Returns:
+            bool: Whether any admitted or background runtime operation remains, apart from the caller's request.
+        """
+        return self._has_active_work(excluding=current_operation.get())
+
+    def forget_restore_failure(self, ref: "SavedEntryRef") -> None:
+        """
+        Stop listing a saved entry whose file was deleted among the ones that couldn't be restored.
+
+        Args:
+            ref (SavedEntryRef): The deleted entry.
+        """
+        self.restore_failures = [
+            failure for failure in self.restore_failures if (failure.kind, failure.name) != (ref.kind, ref.name)
+        ]
+
+    def _has_active_work(self, *, excluding: asyncio.Task[None] | None = None) -> bool:
+        """Return whether any admitted or background runtime operation remains, other than ``excluding``."""
         service = peek_scenario_run_service()
         suite_execution_service = peek_scenario_suite_execution_service()
         generation_service = peek_prompt_generation_service()
@@ -326,7 +350,7 @@ class RuntimeLifecycle:
             (service and service.has_active_work())
             or (suite_execution_service and suite_execution_service.has_active_work())
             or (generation_service and generation_service.has_active_work())
-            or self.operations
+            or any(operation is not excluding for operation in self.operations)
             or outstanding_estimates()
             or has_active_manual_sends()
             or has_active_analytics_work()

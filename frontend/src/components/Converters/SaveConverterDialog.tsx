@@ -64,14 +64,14 @@ export default function SaveConverterDialog({
   return <Dialog open onOpenChange={(_, data) => { if (!data.open) close() }}>
     <DialogSurface>
       <DialogBody>
-        <DialogTitle>Save to registry</DialogTitle>
+        <DialogTitle>Add to registry</DialogTitle>
         <DialogContent>
           <form id={formId} noValidate className={styles.content} onSubmit={(event) => {
             event.preventDefault()
             void save()
           }}>
-            <Text>Save these settings under a new name. The original converter stays unchanged.
-              Saved converters are available until the backend restarts.</Text>
+            <Text>Add these settings under a new name. The original converter stays unchanged.
+              The new converter is Temporary: it&apos;s gone after the backend restarts or is reinitialized.</Text>
             {error && <MessageBar intent="error">
               <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error}</MessageBarBody>
             </MessageBar>}
@@ -84,7 +84,7 @@ export default function SaveConverterDialog({
         <DialogActions>
           <Button onClick={close}>Cancel</Button>
           <Button appearance="primary" type="submit" form={formId}
-            disabled={submitting} disabledFocusable={submitting}>{submitting ? 'Saving...' : 'Save'}</Button>
+            disabled={submitting} disabledFocusable={submitting}>{submitting ? 'Adding...' : 'Add'}</Button>
         </DialogActions>
       </DialogBody>
     </DialogSurface>

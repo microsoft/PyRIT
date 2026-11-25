@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { SaveabilityResponse } from '@/types'
 
@@ -21,7 +21,8 @@ export function useSaveability<Request>(
   request: Request | null,
   check: (request: Request, signal: AbortSignal) => Promise<SaveabilityResponse>,
 ): string | null | undefined {
-  const requestKey = request === null ? null : JSON.stringify(request)
+  // A request can hold an uploaded file's data, so it's only serialized again when it changes.
+  const requestKey = useMemo(() => (request === null ? null : JSON.stringify(request)), [request])
   const [answer, setAnswer] = useState<SaveabilityAnswer | null>(null)
   if (answer !== null && answer.requestKey !== requestKey) setAnswer(null)
   // Checks follow the request key, so an identical request rebuilt by a render isn't checked again.

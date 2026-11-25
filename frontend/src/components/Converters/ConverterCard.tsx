@@ -79,7 +79,7 @@ export default function ConverterCard({
             : converter?.reconstruction_error ?? 'This converter does not support separate settings.'}
           onClick={onSettings}>Settings</MenuItem>
         {temporary && onReset && <MenuItem onClick={onReset}>Reset to registered converter</MenuItem>}
-        {temporary && onSave && <MenuItem onClick={onSave}>Save to registry</MenuItem>}
+        {temporary && onSave && <MenuItem onClick={onSave}>Add to registry</MenuItem>}
       </MenuList></MenuPopover>
     </Menu></div>}
   </div>

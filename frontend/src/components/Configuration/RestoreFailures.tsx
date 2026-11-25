@@ -1,3 +1,4 @@
+import DeleteSavedEntryButton from '@/components/Registry/DeleteSavedEntryButton'
 import type { RegistryRecipeKind, RestoreFailure } from '@/types'
 
 import { useRestoreFailuresStyles } from './RestoreFailures.styles'
@@ -34,7 +35,18 @@ export default function RestoreFailures({ failures }: RestoreFailuresProps) {
     >
       <ul>
         {failures.map((failure) => (
-          <li key={`${failure.kind}/${failure.name ?? ''}`}>{describeFailure(failure)}</li>
+          <li key={`${failure.kind}/${failure.name ?? ''}`}>
+            {describeFailure(failure)}
+            {failure.name !== null && (
+              <DeleteSavedEntryButton
+                kind={failure.kind}
+                name={failure.name}
+                className={styles.delete}
+                // The runtime status is read again every second, so a deleted entry leaves the list on its own.
+                onDeleted={() => {}}
+              />
+            )}
+          </li>
         ))}
       </ul>
     </div>

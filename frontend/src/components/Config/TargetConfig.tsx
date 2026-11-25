@@ -7,6 +7,7 @@ import {
   MessageBar,
   MessageBarBody,
   Spinner,
+  useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import { AddRegular } from '@fluentui/react-icons'
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
@@ -62,6 +63,9 @@ export default function TargetConfig({
   useEffect(() => { detectionRef.current = detection }, [detection])
   const pending = useRef(false)
   const [refetchCount, setRefetchCount] = useState(0)
+  const restoreFocusTarget = useRestoreFocusTarget()
+  const newTargetButton = useRef<HTMLButtonElement>(null)
+  const [focusRestore, setFocusRestore] = useState(0)
 
   // Retry fetching targets a few times with backoff. The Vite dev proxy
   // returns 502 while the backend is still starting, so a single failed
@@ -110,6 +114,16 @@ export default function TargetConfig({
   }, [])
   useAutoRefresh(() => { if (!pending.current) fetchTargets() }, ready && !loading && !detecting)
 
+  useEffect(() => {
+    if (focusRestore) newTargetButton.current?.focus()
+  }, [focusRestore])
+
+  const handleTargetDeleted = useCallback(() => {
+    // The deleted target's row is about to unmount, so focus goes to New Target.
+    setFocusRestore((current) => current + 1)
+    fetchTargets()
+  }, [fetchTargets])
+
   const handleTargetCreated = useCallback(() => {
     setDialogOpen(false)
     fetchTargets()
@@ -130,6 +144,8 @@ export default function TargetConfig({
         </div>
         <div className={styles.headerActions}>
           <Button
+            {...restoreFocusTarget}
+            ref={newTargetButton}
             className={styles.headerAction}
             appearance="primary"
             icon={<AddRegular />}
@@ -186,6 +202,7 @@ export default function TargetConfig({
           targets={targets}
           defaultAdversarialTarget={defaultAdversarialTarget}
           onSetDefaultAdversarialTarget={onSetDefaultAdversarialTarget}
+          onTargetDeleted={handleTargetDeleted}
           detection={detection}
         />
       )}
