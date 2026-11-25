@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import base64
 from collections.abc import Iterator
 from io import BytesIO
 from unittest.mock import AsyncMock, patch
@@ -47,8 +46,10 @@ async def _convert_png_async(converter: ImageNoiseConverter, image_bytes: bytes)
         result = await converter.convert_async(prompt="input.png", input_type="image_path")
 
         assert result.output_type == "image_path"
-        mock_serializer.save_b64_image_async.assert_called_once()
-        return base64.b64decode(mock_serializer.save_b64_image_async.call_args.kwargs["data"])
+        mock_serializer.save_data_async.assert_called_once()
+        saved_data = mock_serializer.save_data_async.call_args.kwargs["data"]
+        assert isinstance(saved_data, bytes)
+        return saved_data
 
 
 def _color_key_png() -> Image.Image:
