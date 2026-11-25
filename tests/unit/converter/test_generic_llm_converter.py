@@ -29,7 +29,12 @@ from pyrit.converter import (
     TranslationConverter,
     VariationConverter,
 )
-from pyrit.exceptions import InvalidJsonException
+from pyrit.exceptions import (
+    ConverterLLMResponseBlockedException,
+    EmptyResponseException,
+    InvalidJsonException,
+    PyritException,
+)
 from pyrit.memory import SQLiteMemory
 from pyrit.models import ConverterIdentifier, Message, MessagePiece, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
@@ -769,3 +774,59 @@ async def test_convert_async_writes_nothing_to_memory(sqlite_instance: SQLiteMem
     await _rewrite_converter(_RecordingTarget()).convert_async(prompt="hello")
 
     assert list(await sqlite_instance.get_message_pieces_async()) == []
+
+
+def _error_response(response_error: str) -> Message:
+    return Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value='{"status_code": 400, "message": "The response was filtered"}',
+                original_value_data_type="error",
+                converted_value_data_type="error",
+                response_error=response_error,
+            )
+        ]
+    )
+
+
+async def test_send_with_retries_raises_when_converter_target_response_is_blocked(mock_target) -> None:
+    mock_target.send_prompt_async.return_value = [_error_response("blocked")]
+    processed: list[str] = []
+
+    class _ToneLikeConverter(LLMGenericTextConverter):
+        def _process_response(self, response_text: str) -> str:
+            processed.append(response_text)
+            return response_text
+
+    converter = _ToneLikeConverter(converter_target=mock_target)
+    with pytest.raises(ConverterLLMResponseBlockedException, match="blocked"):
+        await converter.convert_async(prompt="hello")
+    assert processed == [], "the error payload must not reach _process_response"
+
+
+@pytest.mark.parametrize(
+    ("response_error", "expected_exception"),
+    [("empty", EmptyResponseException), ("processing", PyritException), ("unknown", PyritException)],
+)
+async def test_send_with_retries_raises_when_converter_target_response_is_error(
+    mock_target, response_error: str, expected_exception: type[Exception]
+) -> None:
+    mock_target.send_prompt_async.return_value = [_error_response(response_error)]
+    converter = LLMGenericTextConverter(converter_target=mock_target)
+    with pytest.raises(expected_exception):
+        await converter.convert_async(prompt="hello")
+
+
+async def test_send_with_retries_retries_blocked_converter_target_response(mock_target) -> None:
+    ok_response = Message(message_pieces=[MessagePiece(role="assistant", original_value="rewritten")])
+    mock_target.send_prompt_async.side_effect = [[_error_response("blocked")], [ok_response]]
+
+    class _RetryingConverter(LLMGenericTextConverter):
+        RETRY_EXCEPTIONS = (ConverterLLMResponseBlockedException,)
+
+    converter = _RetryingConverter(converter_target=mock_target)
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await converter.convert_async(prompt="hello")
+    assert result.output_text == "rewritten"
+    assert mock_target.send_prompt_async.call_count == 2

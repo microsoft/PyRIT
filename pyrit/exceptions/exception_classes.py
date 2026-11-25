@@ -241,6 +241,15 @@ class AdversarialChatRefusedException(AdversarialChatResponseBlockedException):
     """
 
 
+class ConverterLLMResponseBlockedException(BadRequestException):
+    """
+    Exception raised when an LLM-backed converter's own target blocks the rewrite request.
+
+    Raised instead of returning the provider's error payload as converted text, so a
+    content-filtered converter target never becomes the prompt sent to the objective target.
+    """
+
+
 class ScorerLLMResponseBlockedException(BadRequestException):
     """Exception raised when a scorer's own LLM response is blocked by content filtering."""
 
