@@ -221,7 +221,8 @@ def resolve_execution_unit(
     The atomic group is the planned group matching the atomic attack name and technique configuration,
     or a hash of both for attempts the plan does not describe. The seed group comes from, in order: the
     persisted attribution, an objective match in the planned group, the atomic identifier's seeds, and
-    finally a hash of the objective (legacy rows). The SQL history query follows the same order.
+    finally a hash of the objective (legacy rows). The SQL history query instead reads each attempt's
+    stored planned-unit link, which the migration that introduced it backfilled in the same order.
 
     Returns:
         ScenarioExecutionUnit: The resolved execution unit.

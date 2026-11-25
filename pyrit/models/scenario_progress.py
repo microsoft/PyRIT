@@ -5,8 +5,8 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal, Self
-from uuid import UUID
+from typing import Any, ClassVar, Literal, Self
+from uuid import UUID, uuid5
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
@@ -121,6 +121,9 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
 class ScenarioRunPlan(BaseModel):
     """Versioned normalized execution plan persisted in ScenarioResult metadata."""
 
+    #: Namespace of planned-unit IDs. Stored attempts reference these IDs, so it never changes.
+    PLANNED_UNIT_ID_NAMESPACE: ClassVar[UUID] = UUID("0321aa1d-fe5c-4c66-b8d4-e7a8352a88e4")
+
     version: Literal[1] = 1
     scenario_registry_name: str | None = None
     atomic_groups: list[ScenarioRunPlanAtomicGroup]
@@ -158,6 +161,27 @@ class ScenarioRunPlan(BaseModel):
                     f"{', '.join(sorted(missing_seed_group_ids))}."
                 )
         return self
+
+    @classmethod
+    def compute_planned_unit_id(
+        cls, *, scenario_result_id: str | UUID, atomic_group_id: str, seed_group_id: str
+    ) -> str:
+        """
+        Compute the stored ID of one planned unit: a run's planned atomic group and seed group pair.
+
+        The ID is deterministic, so the code running a unit references the row stored with the plan
+        without reading it back.
+
+        Args:
+            scenario_result_id (str | UUID): The run that planned the unit.
+            atomic_group_id (str): The planned atomic group's ID.
+            seed_group_id (str): The planned seed group's ID.
+
+        Returns:
+            str: The planned unit's UUID.
+        """
+        run_id = UUID(str(scenario_result_id))
+        return str(uuid5(cls.PLANNED_UNIT_ID_NAMESPACE, f"{run_id}:{atomic_group_id}:{seed_group_id}"))
 
 
 class ScenarioProgressHeader(BaseModel):

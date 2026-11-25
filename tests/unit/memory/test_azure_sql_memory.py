@@ -808,21 +808,19 @@ def test_scenario_history_seed_projection_defaults_to_empty_json(memory_interfac
     assert "INCLUDE_NULL_VALUES" in str(seed_projection)
 
 
-def test_scenario_plan_unit_subqueries_expand_plan_json_server_side(memory_interface: AzureSQLMemory) -> None:
-    """The SQL Server plan expansion uses CROSS APPLY OPENJSON and binds scenario IDs."""
-    scenario_result_id = uuid.uuid4()
-    plan_units, plan_seeds = memory_interface._get_scenario_plan_unit_subqueries(
-        scenario_result_ids=[scenario_result_id]
-    )
+@pytest.mark.parametrize("build_statement", ["aggregate", "group_aggregate"])
+def test_scenario_history_aggregates_join_planned_units_without_reading_run_plans(
+    memory_interface: AzureSQLMemory, build_statement: str
+) -> None:
+    """Plan runs resolve units through the planned-unit link, never by expanding run-plan JSON."""
+    builder = getattr(memory_interface, f"_build_scenario_history_{build_statement}_statement")
+    statement = builder(entry_ids=[uuid.uuid4()], plan_entry_ids=[uuid.uuid4()])
+    compiled = str(statement.compile(dialect=mssql.dialect()))
 
-    statement = select(plan_units.c.atomic_group_id, plan_seeds.c.seed_group_id).join(
-        plan_seeds, plan_units.c.atomic_group_id == plan_seeds.c.seed_group_id
-    )
-    compiled = statement.compile(dialect=mssql.dialect())
-
-    assert "CROSS APPLY OPENJSON" in str(compiled)
-    assert "JOIN LATERAL" not in str(compiled)
-    assert str(scenario_result_id) in str(compiled.params)
+    assert "[ScenarioPlannedUnitEntries] AS history_planned_units ON history_planned_units.id = " in compiled
+    assert "history_attempts.planned_unit_id" in compiled
+    assert "scenario_metadata" not in compiled
+    assert "run_plan" not in compiled
 
 
 def test_scenario_history_attempt_ranking_uses_canonical_uuid_order(

@@ -19,7 +19,7 @@ from unit.mocks import get_mock_target_identifier, make_scenario_result, run_mem
 from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultEntry, AzureSQLMemory, MemoryInterface, ScenarioHistoryKeysetCursor, SQLiteMemory
 from pyrit.memory._scenario_history import _ScenarioHistoryQueries
-from pyrit.memory.memory_models import ConversationEntry, ScenarioResultEntry
+from pyrit.memory.memory_models import ConversationEntry, ScenarioPlannedUnitEntry, ScenarioResultEntry
 from pyrit.models import (
     SCENARIO_CONVERSATIONS_METADATA_KEY,
     SCENARIO_RUN_PLAN_METADATA_KEY,
@@ -60,7 +60,6 @@ class _LegacyScenarioLabelMemory(SQLiteMemory):
         ("_get_scenario_registry_name_condition", {"scenario_names": ["test.scenario"]}),
         ("_get_scenario_history_plan_expressions", {}),
         ("_get_scenario_attempt_unit_expressions", {}),
-        ("_get_scenario_plan_unit_subqueries", {"scenario_result_ids": [uuid.uuid4()]}),
     ],
 )
 def test_scenario_history_dialect_hooks_are_optional_until_used(
@@ -114,6 +113,13 @@ def _make_scenario(
         metadata=metadata,
         attack_results={},
         objective_target_identifier=get_mock_target_identifier(),
+    )
+
+
+def _planned_unit_id(scenario_result_id: uuid.UUID) -> str:
+    """The planned unit of ``_make_scenario``'s plan, as a scenario links its attempts to it."""
+    return ScenarioRunPlan.compute_planned_unit_id(
+        scenario_result_id=scenario_result_id, atomic_group_id="group-1", seed_group_id="seed-1"
     )
 
 
@@ -695,6 +701,13 @@ async def test_history_filters_names_statuses_and_labels_without_hydration(
     )
     with sqlite_instance._get_session() as session:
         session.add_all([ScenarioResultEntry(entry=result) for result in (included, excluded)])
+        session.flush()
+        session.add_all(
+            ScenarioPlannedUnitEntry.from_run_plan(
+                scenario_result_id=included.id,
+                run_plan=ScenarioRunPlan.model_validate(included.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]),
+            )
+        )
         session.commit()
     started_at = timestamp + timedelta(seconds=30)
     (
@@ -712,6 +725,7 @@ async def test_history_filters_names_statuses_and_labels_without_hydration(
             execution_time_ms=1,
             timestamp=timestamp,
             attribution_parent_id=str(included.id),
+            planned_unit_id=_planned_unit_id(included.id),
             attribution_data={
                 "parent_collection": "attack",
                 "parent_eval_hash": "eval-1",
@@ -730,6 +744,7 @@ async def test_history_filters_names_statuses_and_labels_without_hydration(
             timestamp=timestamp + timedelta(seconds=1),
             total_retries=2,
             attribution_parent_id=str(included.id),
+            planned_unit_id=_planned_unit_id(included.id),
             attribution_data={
                 "parent_collection": "attack",
                 "parent_eval_hash": "eval-1",
@@ -811,6 +826,7 @@ async def test_history_aggregate_uses_latest_attempt_outcome(sqlite_instance: Me
                     execution_time_ms=1,
                     timestamp=timestamp,
                     attribution_parent_id=str(scenario.id),
+                    planned_unit_id=_planned_unit_id(scenario.id),
                     attribution_data={
                         "parent_collection": "attack",
                         "parent_eval_hash": "eval-1",
@@ -825,6 +841,7 @@ async def test_history_aggregate_uses_latest_attempt_outcome(sqlite_instance: Me
                     execution_time_ms=1,
                     timestamp=timestamp + timedelta(seconds=1),
                     attribution_parent_id=str(scenario.id),
+                    planned_unit_id=_planned_unit_id(scenario.id),
                     attribution_data={
                         "parent_collection": "attack",
                         "parent_eval_hash": "eval-1",
@@ -845,10 +862,10 @@ async def test_history_aggregate_uses_latest_attempt_outcome(sqlite_instance: Me
     assert aggregate.latest_attempt_timestamp == timestamp + timedelta(seconds=1)
 
 
-async def test_history_aggregates_ignore_unplanned_units_and_remap_hash_seeds(
+async def test_history_aggregates_count_linked_attempts_and_ignore_unplanned_units(
     sqlite_instance: MemoryInterface,
 ) -> None:
-    """Plan-aware aggregation folds hash-attributed attempts into their planned unit."""
+    """Plan-aware aggregation counts attempts through their stored planned-unit link."""
     timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     planned = make_scenario_result(
         id=uuid.UUID(int=20),
@@ -901,6 +918,7 @@ async def test_history_aggregates_ignore_unplanned_units_and_remap_hash_seeds(
                     timestamp=timestamp,
                     attribution_parent_id=str(planned.id),
                     attribution_data={"parent_collection": "attack", "parent_eval_hash": "eval-1"},
+                    planned_unit_id=_planned_unit_id(planned.id),
                 ),
                 AttackResult(
                     attack_result_id=str(uuid.UUID(int=23)),
@@ -1056,6 +1074,32 @@ async def test_history_aggregates_fill_zero_for_runs_without_attempts(sqlite_ins
 
     assert aggregates[scenario_result_id].unit_count == 0
     assert aggregates[scenario_result_id].latest_attempt_timestamp is None
+
+
+async def test_adding_scenario_result_stores_planned_units_attempts_reference(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    scenario = _make_scenario(
+        result_id=uuid.UUID(int=60),
+        timestamp=datetime(2026, 8, 7, tzinfo=UTC),
+        name="PlannedUnitsScenario",
+        registry_name="registered.scenario",
+        state=ScenarioRunState.CREATED,
+        labels={},
+    )
+
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario])
+
+    with sqlite_instance._get_session() as session:
+        units = session.execute(
+            select(
+                ScenarioPlannedUnitEntry.id,
+                ScenarioPlannedUnitEntry.scenario_result_id,
+                ScenarioPlannedUnitEntry.atomic_group_id,
+                ScenarioPlannedUnitEntry.seed_group_id,
+            )
+        ).all()
+    assert units == [(uuid.UUID(_planned_unit_id(scenario.id)), scenario.id, "group-1", "seed-1")]
 
 
 @pytest.mark.filterwarnings("error:The params\\(\\) and unique_params\\(\\).*:sqlalchemy.exc.SADeprecationWarning")

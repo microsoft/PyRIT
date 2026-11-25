@@ -73,6 +73,7 @@ from pyrit.models import (
     ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
+    ScenarioRunPlan,
     ScenarioRunState,
     Score,
     ScorerEvaluationIdentifier,
@@ -2358,6 +2359,14 @@ class AttackResultEntry(Base):
         CustomUUID, ForeignKey("ScenarioResultEntries.id", ondelete="SET NULL"), nullable=True, index=True
     )
     attribution_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # The planned unit this result executes, written by the orchestrator that ran it. NO ACTION, because
+    # SQL Server rejects a second cascade path from ScenarioResultEntries.
+    planned_unit_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID,
+        ForeignKey("ScenarioPlannedUnitEntries.id", name="fk_attack_results_planned_unit"),
+        nullable=True,
+        index=True,
+    )
 
     last_response: Mapped["PromptMemoryEntry | None"] = relationship(
         "PromptMemoryEntry",
@@ -2448,6 +2457,7 @@ class AttackResultEntry(Base):
         # an AttackResultAttribution is present on the AttackContext; otherwise None)
         self.attribution_parent_id = uuid.UUID(entry.attribution_parent_id) if entry.attribution_parent_id else None
         self.attribution_data = entry.attribution_data
+        self.planned_unit_id = uuid.UUID(entry.planned_unit_id) if entry.planned_unit_id else None
 
     @staticmethod
     def _prepare_atomic_attack_identifier(
@@ -2608,6 +2618,7 @@ class AttackResultEntry(Base):
             total_retries=self.total_retries or 0,
             attribution_parent_id=str(self.attribution_parent_id) if self.attribution_parent_id else None,
             attribution_data=self.attribution_data,
+            planned_unit_id=str(self.planned_unit_id) if self.planned_unit_id else None,
         )
 
 
@@ -2888,3 +2899,53 @@ class ScenarioPlanSeedGroupEntry(Base):
                 seed = SeedSimulatedConversation.model_validate(seed)
             seeds.append(seed)
         return AttackSeedGroup.model_validate({**self.seed_group, "seeds": seeds})
+
+
+class ScenarioPlannedUnitEntry(Base):
+    """
+    One unit of work a scenario run planned: an atomic group paired with one of its seed groups.
+
+    Stored with the run's plan. Each attack result the run executes references its unit through
+    ``AttackResultEntry.planned_unit_id``. Rows are deleted with their scenario result.
+    """
+
+    __tablename__ = "ScenarioPlannedUnitEntries"
+
+    #: ``ScenarioRunPlan.compute_planned_unit_id`` of the run, atomic group, and seed group.
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    scenario_result_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID, ForeignKey("ScenarioResultEntries.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    atomic_group_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    seed_group_id: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    @classmethod
+    def from_run_plan(
+        cls, *, scenario_result_id: uuid.UUID, run_plan: ScenarioRunPlan
+    ) -> list["ScenarioPlannedUnitEntry"]:
+        """
+        Build one entry per planned unit of a run plan.
+
+        Args:
+            scenario_result_id (uuid.UUID): The run that planned the units.
+            run_plan (ScenarioRunPlan): The run's plan.
+
+        Returns:
+            list[ScenarioPlannedUnitEntry]: The planned units, in plan order.
+        """
+        return [
+            cls(
+                id=uuid.UUID(
+                    ScenarioRunPlan.compute_planned_unit_id(
+                        scenario_result_id=scenario_result_id,
+                        atomic_group_id=group.id,
+                        seed_group_id=seed_group_id,
+                    )
+                ),
+                scenario_result_id=scenario_result_id,
+                atomic_group_id=group.id,
+                seed_group_id=seed_group_id,
+            )
+            for group in run_plan.atomic_groups
+            for seed_group_id in group.seed_group_ids
+        ]

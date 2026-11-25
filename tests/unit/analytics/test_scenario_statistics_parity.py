@@ -9,6 +9,7 @@ The same saved history must produce identical effective-unit statistics through 
 and the reports (JSON printer).
 """
 
+import importlib
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -47,6 +48,9 @@ from pyrit.output.scenario_result.json import (
 from unit.mocks import make_scenario_result
 
 _T0 = datetime(2026, 9, 1, tzinfo=UTC)
+_PLANNED_UNITS_MIGRATION = importlib.import_module(
+    "pyrit.memory.alembic.versions.54eb9489b8f0_add_scenario_planned_units"
+)
 
 
 @dataclass(frozen=True)
@@ -462,6 +466,9 @@ async def _persist(memory: MemoryInterface, history: _History) -> str:
         )
     if attack_results:
         await memory.add_attack_results_to_memory_async(attack_results=attack_results)
+    # The rows carry attribution without planned-unit links, like attempts saved before the upgrade that added them.
+    with memory.engine.begin() as connection:
+        _PLANNED_UNITS_MIGRATION.backfill_planned_units(bind=connection)
     return str(scenario_result_id)
 
 

@@ -889,6 +889,7 @@ class TestDefaultAttackStrategyEventHandler:
                 parent_id="scenario-1",
                 parent_collection="atomic_a",
                 seed_group_id="seed-a",
+                planned_unit_id="00000000-0000-0000-0000-0000000000a1",
             )
 
             event_data = StrategyEventData(
@@ -901,6 +902,7 @@ class TestDefaultAttackStrategyEventHandler:
             await handler.on_event_async(event_data)
 
         assert sample_attack_result.attribution_parent_id == "scenario-1"
+        assert sample_attack_result.planned_unit_id == "00000000-0000-0000-0000-0000000000a1"
         assert sample_attack_result.attribution_data == {
             "parent_collection": "atomic_a",
             "result_role": "target_facing",
@@ -941,6 +943,7 @@ class TestDefaultAttackStrategyEventHandler:
                 parent_id="scenario-err",
                 parent_collection="atomic_err",
                 seed_group_id="seed-error",
+                planned_unit_id="00000000-0000-0000-0000-0000000000e1",
             )
 
             event_data = StrategyEventData(
@@ -957,6 +960,7 @@ class TestDefaultAttackStrategyEventHandler:
         persisted = call.kwargs["attack_results"][0]
         assert persisted.outcome == AttackOutcome.ERROR
         assert persisted.attribution_parent_id == "scenario-err"
+        assert persisted.planned_unit_id == "00000000-0000-0000-0000-0000000000e1"
         assert persisted.attribution_data == {
             "parent_collection": "atomic_err",
             "result_role": "target_facing",

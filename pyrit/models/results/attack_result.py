@@ -259,6 +259,8 @@ class AttackResult(StrategyResult, Generic[_ResponsePieceT, _ScoreT]):
     # record their role even without an orchestrator; the parent ID stays None.
     attribution_parent_id: str | None = None
     attribution_data: dict[str, Any] | None = None
+    # The parent's planned unit of work this result executes, when the parent stored a plan.
+    planned_unit_id: str | None = None
 
     @property
     def scoring_inputs(self) -> AttackScoringInputs | None:
