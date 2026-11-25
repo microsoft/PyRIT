@@ -140,7 +140,7 @@ class TestTransparencyAttackConverter:
         target = np.array([[2.0, 3.0], [4.0, 5.0]])
         expected_loss = 1.0
 
-        loss = converter._compute_mse_loss(blended, target)
+        loss = converter._compute_mse_loss(blended, target_tensor=target)
         assert loss == expected_loss
         assert isinstance(loss, float)
 
@@ -149,7 +149,7 @@ class TestTransparencyAttackConverter:
         attack_image = np.array([[0.2]], dtype=np.float32)  # 1x1 grayscale image
         alpha = np.array([[0.8]], dtype=np.float32)  # 1x1 alpha
 
-        la_image = converter._create_blended_image(attack_image, alpha)
+        la_image = converter._create_blended_image(attack_image, alpha=alpha)
 
         assert la_image.shape == (1, 1, 2)  # LA (Luminance + Alpha)
         assert la_image.dtype == np.uint8
@@ -169,7 +169,7 @@ class TestTransparencyAttackConverter:
             attack_image = np.ones((10, 10), dtype=np.float32) * 0.5
             alpha = np.ones((10, 10), dtype=np.float32) * 0.7
 
-            result_path = await converter._save_blended_image_async(attack_image, alpha)
+            result_path = await converter._save_blended_image_async(attack_image, alpha=alpha)
 
             assert result_path == "mock_image_path.png"
             mock_factory.assert_called_once_with(category="prompt-memory-entries", data_type="image_path")

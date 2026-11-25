@@ -337,7 +337,11 @@ class TestAddMessage:
             patch("pyrit.backend.services.message_send_service.PromptNormalizer") as mock_normalizer_cls,
         ):
             mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
+            target = _make_matching_target_mock()
+            # Unlike the TextTarget the mock stands in for, this target replies.
+            target.configuration.includes.side_effect = None
+            target.configuration.includes.return_value = True
+            mock_target_svc.get_target_object.return_value = target
             mock_get_target_svc.return_value = mock_target_svc
 
             mock_normalizer = MagicMock()
@@ -408,96 +412,6 @@ class TestAddMessage:
 
             with pytest.raises(RuntimeError, match="boom"):
                 await message_send_service.add_message_async(attack_result_id="test-id", request=request)
-
-    async def test_add_message_with_legacy_converter_ids_warns_and_preserves_behavior(
-        self, message_send_service, mock_memory
-    ) -> None:
-        """Test that legacy converter IDs warn and remain an unrestricted pipeline."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results_async.return_value = [ar]
-        mock_memory.get_message_pieces_async.return_value = []
-        mock_memory.get_conversation_messages_async.return_value = []
-
-        with (
-            patch("pyrit.backend.services.message_send_service.get_target_service") as mock_get_target_svc,
-            patch("pyrit.backend.services.message_send_service.get_converter_service") as mock_get_conv_svc,
-            patch("pyrit.backend.services.message_send_service.PromptNormalizer") as mock_normalizer_cls,
-        ):
-            mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
-            mock_get_target_svc.return_value = mock_target_svc
-
-            first_converter = MagicMock()
-            first_converter.get_identifier.return_value = ComponentIdentifier(
-                class_name="FirstConverter",
-                class_module="test_module",
-                params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
-            )
-            second_converter = MagicMock()
-            second_converter.get_identifier.return_value = ComponentIdentifier(
-                class_name="SecondConverter",
-                class_module="test_module",
-                params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
-            )
-            mock_conv_svc = MagicMock()
-            mock_conv_svc.get_converter_objects_for_ids.return_value = [first_converter, second_converter]
-            mock_get_conv_svc.return_value = mock_conv_svc
-
-            mock_normalizer = MagicMock()
-            mock_normalizer.send_prompt_async = AsyncMock()
-            mock_normalizer_cls.return_value = mock_normalizer
-
-            request = AddMessageRequest(
-                pieces=[MessagePieceRequest(original_value="Hello")],
-                target_conversation_id="test-id",
-                send=True,
-                converter_ids=["first", "second"],
-                target_registry_name="test-target",
-            )
-
-            with pytest.warns(DeprecationWarning, match="AddMessageRequest.converter_ids is deprecated"):
-                await message_send_service.add_message_async(attack_result_id="test-id", request=request)
-
-            configurations = mock_normalizer.send_prompt_async.call_args.kwargs["request_converter_configurations"]
-            assert [configuration.converters for configuration in configurations] == [
-                [first_converter],
-                [second_converter],
-            ]
-            assert all(configuration.indexes_to_apply is None for configuration in configurations)
-            mock_conv_svc.get_converter_objects_for_ids.assert_called_once_with(converter_ids=["first", "second"])
-
-    def test_empty_legacy_converter_ids_allow_store_only_request(self) -> None:
-        """Test that an empty legacy converter list remains a no-op when send is false."""
-        request = AddMessageRequest(
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-            converter_ids=[],
-        )
-
-        assert request.converter_ids == []
-
-    def test_empty_legacy_converter_ids_warn_and_use_structured_configuration(self, message_send_service) -> None:
-        """Test that an empty legacy list does not override a structured configuration."""
-        converter = MagicMock()
-        request = AddMessageRequest(
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            converter_ids=[],
-            request_converter_configurations=[ConverterConfigurationRequest(converter_ids=["structured"])],
-        )
-
-        with patch("pyrit.backend.services.message_send_service.get_converter_service") as mock_get_converter_service:
-            mock_get_converter_service.return_value.get_converter_objects_for_ids.return_value = [converter]
-
-            with pytest.warns(DeprecationWarning, match="AddMessageRequest.converter_ids is deprecated"):
-                configurations = message_send_service._resolve_request_converter_configs(request=request)
-
-        assert len(configurations) == 1
-        assert configurations[0].converters == [converter]
-        mock_get_converter_service.return_value.get_converter_objects_for_ids.assert_called_once_with(
-            converter_ids=["structured"]
-        )
 
     async def test_add_message_preserves_converter_configuration_targeting(
         self, message_send_service, mock_memory
@@ -2510,6 +2424,9 @@ class TestNormalizerPersistence:
             request.request_converter_configurations = [ConverterConfigurationRequest(converter_ids=["base64"])]
         elif failure == "response-converter":
             request.response_converter_configurations = [ConverterConfigurationRequest(converter_ids=["base64"])]
+        if failure == "write-only":
+            # Only a target that declares no response support turns an empty reply into a delivery.
+            target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
         component = target if failure in {"target", "write-only"} else converter
         method = "_send_prompt_to_target_async" if failure in {"target", "write-only"} else "convert_async"
         with patch.object(

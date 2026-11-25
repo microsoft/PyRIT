@@ -5,10 +5,10 @@
 Shared *derivation* helpers for the output printers.
 
 These compute values from models (target fields, success rates, score display,
-attack and objective-score selection) so the pretty / markdown / json printers
-derive them **once** instead of each keeping its own copy. Presentation (color,
-fallback strings) stays in the printers; these return raw values with an optional
-``none_value`` fallback.
+attack and objective-score selection, suite entry statistics) so the pretty /
+markdown / json printers derive them **once** instead of each keeping its own
+copy. Presentation (color, fallback strings) stays in the printers; these return
+raw values with an optional ``none_value`` fallback.
 """
 
 from __future__ import annotations
@@ -20,15 +20,20 @@ from pyrit.analytics import (
 )
 from pyrit.analytics.scenario_statistics import (
     combine_execution_counts,
+    recorded_objective_scorer_identifier,
     select_execution_attack_result_ids,
 )
+from pyrit.models import ScenarioObjectiveScorerAttribution
 
 if TYPE_CHECKING:
     from pyrit.models import (
+        AttackOutcome,
         AttackResult,
         ComponentIdentifier,
         MessagePiece,
         OutcomeStatistics,
+        ScenarioObjectiveScorerScope,
+        ScenarioObjectiveScorerStatistics,
         ScenarioProducerCounts,
         ScenarioResult,
         Score,
@@ -88,6 +93,9 @@ class ScenarioOverview(NamedTuple):
     groups: list[GroupStatistics]
     outcomes: OutcomeStatistics | None = None
     producer_counts: ScenarioProducerCounts | None = None
+    #: Statistics per objective scorer; rates are only comparable within one scorer.
+    objective_scorers: tuple[ScenarioObjectiveScorerStatistics, ...] = ()
+    objective_scorer_scope: ScenarioObjectiveScorerScope | None = None
 
 
 def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
@@ -130,6 +138,77 @@ def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
         groups=groups,
         outcomes=statistics.overall.outcomes,
         producer_counts=statistics.overall.producer_counts,
+        objective_scorers=tuple(statistics.objective_scorers),
+        objective_scorer_scope=statistics.objective_scorer_scope,
+    )
+
+
+def objective_scorer_label(objective_scorer: ScenarioObjectiveScorerStatistics) -> str:
+    """
+    Derive a short display label for an objective scorer's statistics.
+
+    Args:
+        objective_scorer (ScenarioObjectiveScorerStatistics): The scorer statistics to label.
+
+    Returns:
+        str: The scorer class and short hash, the short hash alone, or why the scorer is unknown.
+    """
+    if objective_scorer.scorer_identifier is not None and objective_scorer.scorer_hash is not None:
+        return f"{objective_scorer.scorer_identifier.class_name} ({objective_scorer.scorer_hash[:12]})"
+    if objective_scorer.scorer_hash is not None:
+        return f"Scorer {objective_scorer.scorer_hash[:12]}"
+    if objective_scorer.attribution == ScenarioObjectiveScorerAttribution.CONFLICT:
+        return "Conflicting scorer records"
+    return "Unknown scorer"
+
+
+def format_rate(rate: float | None) -> str:
+    """
+    Format a 0-1 rate as a percentage with one decimal, or ``N/A`` when it has no denominator.
+
+    Args:
+        rate (float | None): The rate to format.
+
+    Returns:
+        str: The formatted percentage.
+    """
+    return "N/A" if rate is None else f"{rate:.1%}"
+
+
+class SuiteEntryStatistics(NamedTuple):
+    """Latest execution-unit outcomes for one suite entry's scenario result."""
+
+    completed: int
+    planned: int | None
+    successes: int | None
+    failures: int | None
+    errors: int | None
+    undetermined: int | None
+    success_rate_all: float | None
+    success_percentage: int | None
+
+
+def suite_entry_statistics(result: ScenarioResult) -> SuiteEntryStatistics:
+    """
+    Summarize one suite entry's result with the scenario report's counting policy.
+
+    Args:
+        result (ScenarioResult): The entry's scenario result.
+
+    Returns:
+        SuiteEntryStatistics: Latest-unit counts and the all-outcome success rate.
+    """
+    counts = compute_scenario_statistics(result).overall
+    outcomes = counts.outcomes
+    return SuiteEntryStatistics(
+        completed=counts.completed,
+        planned=counts.planned,
+        successes=outcomes.successes if outcomes is not None else None,
+        failures=outcomes.failures if outcomes is not None else None,
+        errors=outcomes.errors if outcomes is not None else None,
+        undetermined=outcomes.undetermined if outcomes is not None else None,
+        success_rate_all=outcomes.success_rate_all if outcomes is not None else None,
+        success_percentage=counts.success_percentage,
     )
 
 
@@ -165,8 +244,32 @@ def attack_technique_label(*, atomic_attack_name: str, attack: AttackResult) -> 
     return attack.technique_name or atomic_attack_name
 
 
+def attack_objective_scorer_identifier(
+    *, attack: AttackResult, run_scorer_identifier: ComponentIdentifier | None
+) -> ComponentIdentifier | None:
+    """
+    Return the objective scorer that judged an attack.
+
+    Each attack records the scorer it ran with. That can differ from the run's: a run with a
+    scorer pool has no single scorer, and selects one per attack population. Results without
+    that record use the run's scorer.
+
+    Args:
+        attack (AttackResult): The attack whose objective scorer to find.
+        run_scorer_identifier (ComponentIdentifier | None): The run's objective scorer, if it has one.
+
+    Returns:
+        ComponentIdentifier | None: The attack's recorded scorer, otherwise the run's.
+    """
+    recorded = recorded_objective_scorer_identifier(attack)
+    return recorded if recorded is not None else run_scorer_identifier
+
+
 def select_attacks(
-    result: ScenarioResult, *, attack_result_ids: list[str] | None = None
+    result: ScenarioResult,
+    *,
+    attack_result_ids: list[str] | None = None,
+    outcome: AttackOutcome | None = None,
 ) -> list[tuple[str, AttackResult]]:
     """
     Return ``(atomic_attack_name, attack)`` pairs in scenario order.
@@ -179,6 +282,7 @@ def select_attacks(
     Args:
         result (ScenarioResult): The scenario result whose attacks to walk.
         attack_result_ids (list[str] | None): When provided, keep only these ids.
+        outcome (AttackOutcome | None): Keep only attacks with this outcome. Defaults to None.
 
     Returns:
         list[tuple[str, AttackResult]]: The selected pairs in scenario order.
@@ -188,7 +292,7 @@ def select_attacks(
         (atomic_attack_name, attack)
         for atomic_attack_name, attacks in result.attack_results.items()
         for attack in attacks
-        if attack.attack_result_id in id_filter
+        if attack.attack_result_id in id_filter and (outcome is None or attack.outcome == outcome)
     ]
 
 

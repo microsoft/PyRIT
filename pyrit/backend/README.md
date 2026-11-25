@@ -60,7 +60,18 @@ its database collation.
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
-- `POST /api/targets` - Create a target
+- `GET /api/targets/types` - List the target types that can be created, with their parameters and auth
+  modes, the auth modes a saved target of each type can use (`saveable_auth_modes`), and why a type can't be saved
+  at all (`not_saveable_reason`)
+- `POST /api/targets` - Create (and optionally register) a target
+- `POST /api/targets/saveability` - Say whether a target could be saved, without building or saving it. Send the
+  create request's `type`, `params`, and `auth_mode`; the answer is `{"not_saveable_reason": ...}`, which gives only
+  the cause, or null when the save checks pass. It runs create's parameter, permission, and save checks on those
+  three fields only, and a request the parameter or permission checks refuse gets the same 400 or 403 as create. It
+  doesn't check the name or the registration options (`register`, `private`, and `allow_credential_updates`), and
+  the target's own constructor checks don't run, so null doesn't mean the create succeeds: a round robin with one
+  member gets null here and a 400 from create
+- `PUT /api/targets/{id}/credentials` - Update the API key or request headers of a target that allows it
 - `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
   apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.
   Detection uses a private target, has a four-minute operation deadline, and
@@ -100,16 +111,23 @@ target the same way; the API adds the signed-in user, the configured source, and
 | A request with `persist` that... | Gets |
 |---|---|
 | names the target with anything but up to 64 lowercase letters, digits, and underscores, starting with a letter | **422** |
-| would save a key, or use one of this server's keys or address settings | **400** |
-| gives an address that can carry a credential, or, where this server's setting would apply, one that isn't a full http(s) or ws(s) address | **400** |
-| saves a target type that can't be saved, or one that a scan's launch scripts added or put in place of another | **400** |
-| saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** |
-| uses a Temporary target | **400** |
+| is private, or allows credential updates | **422** |
+| would save a key, or use one of this server's keys or address settings | **400** not-saveable |
+| gives an address that can carry a credential | **400** not-saveable |
+| saves a target type that can't be saved, or one that a scan's launch scripts added or put in place of another | **400** not-saveable |
+| saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** not-saveable |
+| uses a Temporary target | **400** not-saveable |
+| gives an address that isn't a full http(s) or ws(s) address, where this server's address setting would apply | **400** |
 | takes a name that a target or a saved file already has | **409** |
 | can't be written to storage | **503** |
 
-A request refused with **400** can be sent again without `persist`. When storage can't be written, the server log names
-the target and its folder, since the target comes back at the next start if the write reached storage anyway.
+A not-saveable **400** has `"type": "/errors/not-saveable"` and the cause alone in `not_saveable_reason`, and the
+request can be sent again without `persist`. For any other **400**, fix what its `detail` names, such as the address
+or a constructor parameter. A name that a registered target has is a **409** without a problem type, with or without
+`persist`. `GET /api/targets/types` gives the same class-level answer before a request is sent, and
+`POST /api/targets/saveability` the answer for the request's values. When storage can't be written, the
+server log names the target and its folder, since the target comes back at the next start if the write reached storage
+anyway.
 
 Each listed target's `origin` is `saved`, `configuration` (registered by the server's startup scripts), or `temporary`
 (gone after a restart or a configuration apply, such as a target created without `persist` or registered by a scan's
@@ -122,6 +140,64 @@ constructor. A class that moves within PyRIT still restores. Renaming or removin
 changes the saved format: such a change raises `schema_version` and adds a migration for older files, with a test that
 restores one. A file that still doesn't match fails to restore with the reason, and the backend stays not ready until
 the file is fixed or deleted, so nothing runs without the saved target.
+
+#### Private targets
+
+A target, scorer, converter, or technique created through the API is **shared** by default:
+everyone can see and use it. Send `"private": true` to make it **private**, so only the signed-in
+user who created it can see and use it. A private entry needs a signed-in caller (local mode has
+one) and `"register": true`, and can't be saved with `"persist": true`. Entries from initializers and
+saved configuration are always shared.
+
+```http
+POST /api/targets
+{"name": "my-claude", "type": "OpenAIChatTarget", "private": true,
+ "params": {"endpoint": "https://api.anthropic.com/v1", "model_name": "<model>", "api_key": "<your key>"}}
+
+PUT /api/targets/my-claude/credentials
+{"api_key": "<new key or access token>", "private": true}
+```
+
+- To everyone else, a private target doesn't exist: lists leave it out, and naming it anywhere
+  (a chat, scenario, scorer, converter, technique, or composite target) fails as for an unknown
+  target. Creating a target with a name already taken, even by a target you can't see, fails.
+- Anything built on your private target is private too, so a shared component never uses a
+  private one; `"private": false` then fails with 400 and registers nothing.
+- Results, such as attack and scenario results and conversations, stay visible to everyone.
+- Whoever creates a target decides whether its credentials can be updated later
+  (`"allow_credential_updates"`). A private target allows it by default, so its owner can keep a
+  short-lived token fresh; a shared target doesn't unless its creator sends `true`. An
+  initializer can allow it for a shared target it registers, for example one whose gateway
+  token expires, with `credential_update_metadata(allowed=True)` from `pyrit.registry`.
+  Responses report `allow_credential_updates`.
+- `PUT /api/targets/{id}/credentials` takes an `api_key`, `headers`, or both. Only the owner can
+  update a private target (others get 404), and anyone signed in can update a shared target that
+  allows it, so everyone's requests then use the new credentials. A target that doesn't allow
+  updates, or a saved target, returns 403. A header replaces any header of the same name, whatever
+  its case and wherever the target was configured with it (`headers`,
+  `OPENAI_ADDITIONAL_REQUEST_HEADERS`, or `httpx_client_kwargs`), so a target behind any auth
+  scheme can be kept fresh: `Authorization`, `x-api-key`, a team's own header, or `Cookie` (the
+  whole cookie string). If the target has an explicit `Authorization` header, update that
+  header instead of sending just `api_key` (400). Send `"private"` with the visibility you expect;
+  when the target isn't private or shared as expected, nothing changes and the request returns 409.
+- The update changes the registered target in place: its identity, configuration, detected
+  capabilities, and authentication mode stay the same, and everything using it, such as a round
+  robin, a scorer, or a running scenario, sends the new values with its next request. A target
+  that gets its tokens from a token provider, such as Microsoft Entra ID (`"auth_mode": "identity"`,
+  or a provider an initializer passes as `api_key`), can't take an `api_key` or an `Authorization`
+  header, and one that needs no key can't take an `api_key` (400). Headers that frame or route a request, such as
+  `Host` or `Content-Length`, can't be set (400). OpenAI-family targets other than `RealtimeTarget`
+  can update in place; other target types can't allow updates. Values are never returned.
+- Keys, sensitive parameters, and header values must be ASCII. When a target is created or updated,
+  surrounding whitespace is trimmed and remaining control characters are refused (400), except for
+  tabs inside header values. The error names only the parameter or header.
+- Target responses report `private` and `credentials_rejected`: whether the provider answered the
+  last request through the target, or a chat copy of it, with 401 or 403. It is `null` until a
+  request using the current credentials completes or fails authentication.
+- `pyrit_scan set-target-credential` updates a target's `api_key`, or a request header with
+  `--header`, from a prompt, an environment variable, or the `ant` CLI.
+- Like other targets created through the API, private targets are gone after the backend
+  restarts or reinitializes.
 
 ### Dataset creation, batch mutation, and deletion
 
@@ -195,11 +271,11 @@ server-generated storage names and are never executed. Blob uploads are opaque
 attachments; local retrieval uses the existing media route's safe inline allowlist.
 
 Names are exact, nonempty, at most 256 UTF-16 code units, and have no surrounding
-whitespace or control characters. An existing stored dataset or in-progress upload
-with a database-collation-equivalent name returns `409`, never append/replace or
-silent deduplication. SQLite keeps its normal case-sensitive identity; SQL Server
-uses the existing seed-name column collation. Exact deletion remains exact even
-when legacy datasets contain collated aliases. Seed and journal names use Unicode
+whitespace or control characters. An existing stored dataset, in-progress upload, or
+unfinished prompt generation with a database-collation-equivalent name returns `409`,
+never append/replace or silent deduplication. SQLite keeps its normal case-sensitive
+identity; SQL Server uses the existing seed-name column collation. Exact deletion
+remains exact even when legacy datasets contain collated aliases. Seed and journal names use Unicode
 storage on SQL Server, including databases with non-UTF-8 collations.
 A provider-only name is allowed; its provider registration remains unchanged.
 Descriptive metadata, response schema, roles, sequence numbers, and grouping are
@@ -429,6 +505,21 @@ alias metadata. `model_dump(by_alias=False)` likewise deliberately exposes
 `register_instance`; use the default or `by_alias=True` for the existing JSON
 shape. Copy updates and field filters accept either name.
 
+### Scenario dataset compatibility
+
+`GET /api/scenarios/catalog/{scenario_name}/datasets` returns the named catalog datasets the
+scenario can run, as a `DatasetListResponse`. It never fetches providers or calls a model. An
+unknown scenario returns 404, and a listing the scenario can't configure returns 400.
+
+- A scenario without dataset requirements gets every named dataset its source options allow:
+  all of them for `ANY`, and only the permitted sources for `SUBSET` and `FIXED`.
+- A scenario with dataset requirements reports `dataset_options.compatible_only`, as
+  `foundry.assert_policy` does. It gets only the stored datasets whose full contents pass its
+  checks, plus any required ingredient datasets. Datasets that aren't stored are left out.
+
+A listed name is not a launch guarantee. The run-size estimate and launch check the selected
+contents again, so data changed after the listing is rejected there with the reason.
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
@@ -598,6 +689,17 @@ count, and a clipping flag. These use the same metadata model as the generic att
 Use the saved-conversation APIs above for reference continuation and all transcript
 bodies. There is no hierarchy-specific transcript format or conversation-preview mode.
 
+### ASSERT analytics
+
+`GET /api/analytics/assert?scenario_result_id=<run-id>` returns the SDK's
+`AssertPolicyMetrics` for a completed `foundry.assert_policy` run. Other scenarios
+return 400 with problem type `/errors/not-assert-policy-run`, runs that haven't
+completed return 409, and saved results that can't be read as ASSERT metrics return
+500. A saved registry name identifies the run; older runs without one must come from
+the `AssertPolicy` class in PyRIT's Foundry scenario module. The run page shows these
+metrics for completed ASSERT runs and hides the panel when the route identifies
+another scenario.
+
 An entirely rootless saved graph, such as a closed cycle, returns a bounded
 `diagnostics.rootless_result_ids` sample with its total count and clipping flag.
 It does not invent lineage or promote a cycle member to a true root. The sampled
@@ -658,6 +760,47 @@ Responses also include `creation_statement`, a Python-style display of the facto
 supplied arguments. Helper constructors retain their original call form.
 Live components without captured inputs use `...`; this display is not executable
 or lossless source. The GUI displays identity JSON, not the creation statement.
+
+### Prompt Generations
+
+Prompt generations run PyRIT's prompt generators as background jobs and store each
+result as a new named seed dataset. `GET /api/prompt-generators` describes each
+generator's stages, target roles, and, for ASSERT, the scenario that runs its datasets.
+Two generators are registered: `assert` (`AssertGenerator`, with a reviewable
+dimensions stage) and `target_objective` (`TargetObjectiveGenerator`).
+
+| Endpoint | Result |
+| --- | --- |
+| `POST /api/prompt-generations/preflight` | Validation errors, dataset-name availability, and a call/token estimate; no target is called |
+| `POST /api/prompt-generations` | 201 with a queued generation; 409 if the dataset name is taken |
+| `POST /api/prompt-generations/batch` | 201 with several queued generations that share a generator, targets, settings, and a `group_id`, such as an ASSERT suite |
+| `GET /api/prompt-generations` | Generations newest first; the members of one batch in the batch's order |
+| `GET`, `DELETE /api/prompt-generations/{id}` | Read or delete a record; deleting keeps the dataset |
+| `POST /api/prompt-generations/{id}/continue\|retry\|cancel` | Finish a review, resume from the last checkpoint, or cancel |
+| `GET`, `PUT /api/prompt-generations/{id}/review` | Read or save output awaiting review |
+| `GET /api/prompt-generations/{id}/estimate` | Remaining calls from the checkpoint; ASSERT is exact once the taxonomy and dimension levels are known |
+| `GET /api/prompt-generations/from-dataset?selection_key=` | The request recorded in a generated dataset, to edit and regenerate under a new name |
+| `GET /api/prompt-generators/assert/behaviors\|suites` | The bundled ASSERT behavior and suite library |
+
+Each backend runs one generation at a time and queues the rest. Records are stored in
+memory (`PromptGenerationEntries`), so backends that share a database list the same
+generations. `pause_for_review` is rejected for generators without a reviewable stage.
+
+Dataset names are create-only, under one rule shared with dataset uploads: a name is
+taken while stored seeds use it, an upload is staging it, or a generation holds it, and
+the database's collation decides which names match. A generation holds its name until
+it completes or is cancelled. If the name is taken while generating, the save fails
+without adding seeds to the other dataset. If another dataset or generation takes the
+name of a cancelled generation, that generation can't resume: retry returns 409, and a
+new generation under another name starts over and repeats the model calls.
+
+Failed, cancelled, and interrupted generations retry from their last checkpoint.
+Shutdown interrupts running generations but lets a dataset save finish. On first use
+after a restart with SQLite memory, active generations become `interrupted`. Shared
+memory, such as Azure SQL, leaves them active because another backend may own them:
+cancel a generation whose backend stopped, then retry or delete it. A cancel from
+another backend stops a run at its next checkpoint, and a save it was running then
+commits nothing; cancelling a save that this backend is running returns 409.
 
 ### Manual Messages
 
@@ -815,11 +958,13 @@ uses them:
   folder, and callers cannot supply their own.
 - A copy of a registered target or converter, made from its `source`, keeps the source's
   connection: it can't change the parameters its type reports as `copy_locked` (for OpenAI
-  targets the endpoint, `auth_mode`, key, headers, and HTTP client settings; for the Azure
-  Speech converters the region, key, and resource ID), and trying returns **400**. So a copy
-  can't take its source's credentials, or a token for an identity its source was set up with,
-  to another endpoint or resource. This rule covers copies only: creating a new target can
-  still send this server's key to an endpoint the caller chooses, as described below.
+  targets the endpoint, `auth_mode`, key, headers, and HTTP client settings; for LiteLLM
+  targets, including Claude, the model name, endpoint, key, headers, and extra body
+  parameters; for the Azure Speech converters the region, key, and resource ID), and trying
+  returns **400**. So a copy can't take its source's credentials, or a token for an identity
+  its source was set up with, to another endpoint or resource. This rule covers copies only:
+  creating a new target can still send this server's key to an endpoint the caller chooses,
+  as described below.
 
 Targets that need a setting the API does not allow can be registered in Python or with an
 initializer.
@@ -843,7 +988,7 @@ API callers are trusted operators, so these are intentional exceptions:
   OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
   of these.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
-  created them.
+  created them, except [private targets](#private-targets) and the components built on them.
 - Prompt content is not filtered; it is adversarial test data by design.
 - Any file type can be stored as a payload. `GET /api/media` renders only allow-listed image,
   audio, and video file extensions inline; everything else downloads as a file.

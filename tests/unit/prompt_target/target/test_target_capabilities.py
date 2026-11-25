@@ -17,6 +17,7 @@ from pyrit.prompt_target import (
     get_known_capabilities,
 )
 from pyrit.prompt_target.common.conversation_normalization_pipeline import NORMALIZABLE_CAPABILITIES
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 
 
 class TestCapabilityHandlingPolicy:
@@ -248,6 +249,9 @@ class TestTargetCapabilitiesModalities:
         caps = TargetCapabilities()
         assert caps.input_modalities == frozenset({frozenset(["text"])})
         assert caps.output_modalities == frozenset({frozenset(["text"])})
+
+    def test_default_capabilities_support_responses(self):
+        assert TargetCapabilities().includes(capability=CapabilityName.RESPONSES)
 
     @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_chat_target_modalities(self):
@@ -563,6 +567,32 @@ def test_gpt_5_aliases_share_full_model_profile() -> None:
     assert gpt_5 is not None and gpt_5_1 is not None and gpt_5_4 is not None
     assert gpt_5_1 is gpt_5
     assert gpt_5_4 is gpt_5
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
+def test_grok_4_3_model_name_adds_only_tool_call_input() -> None:
+    from pyrit.prompt_target import OpenAIChatTarget
+
+    target = OpenAIChatTarget(model_name="grok-4.3", endpoint="https://mock.azure.com/", api_key="mock-api-key")
+    defaults = OpenAIChatTarget._DEFAULT_CONFIGURATION.capabilities
+    assert target.capabilities.input_modalities == defaults.input_modalities | TOOL_CALL_INPUT_MODALITIES
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
+def test_grok_4_3_underlying_model_uses_full_profile() -> None:
+    from pyrit.prompt_target import OpenAIChatTarget
+
+    target = OpenAIChatTarget(
+        model_name="grok-deployment",
+        underlying_model="grok-4.3",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+    )
+    assert target.capabilities.supports_json_schema is True
+    assert frozenset({"text", "image_path"}) in target.capabilities.input_modalities
+    assert target.capabilities.input_modalities >= TOOL_CALL_INPUT_MODALITIES
 
 
 @pytest.mark.usefixtures("patch_central_database")

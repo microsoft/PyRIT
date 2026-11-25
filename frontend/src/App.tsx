@@ -37,6 +37,14 @@ import ScenarioSuiteEditor from './components/ScenarioSuites/ScenarioSuiteEditor
 import ScenarioSuiteExecutionPage from './components/ScenarioSuites/ScenarioSuiteExecutionPage'
 import DatasetCatalog from './components/Datasets/DatasetCatalog'
 import DatasetSelection from './components/Datasets/DatasetSelection'
+import NewPromptGenerationPage from './components/PromptGeneration/NewPromptGenerationPage'
+import PromptGenerationPage from './components/PromptGeneration/PromptGenerationPage'
+import PromptGenerationsPage from './components/PromptGeneration/PromptGenerationsPage'
+import {
+  NEW_PROMPT_GENERATION_PATH,
+  PROMPT_GENERATION_ROUTE,
+  PROMPT_GENERATIONS_PATH,
+} from './components/PromptGeneration/promptGenerationRoutes'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -154,7 +162,7 @@ function LegacyAttackRedirect() {
     ? attackRoutePath(routerPathParamValue(attackId))
     : attackConversationRoutePath(routerPathParamValue(attackId), routerPathParamValue(conversationId))
 
-  return <Navigate replace to={`${path}${location.search}${location.hash}`} />
+  return <Navigate replace to={`${path}${location.search}${location.hash}`} state={location.state} />
 }
 
 /** Status of the in-flight attack load for an /attack/chat/:id route. */
@@ -888,10 +896,14 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const chatElement = isAttackNotFound || isAttackError || isEvidenceConversationMissing ? (
     <AttackNotFound
       attackId={routeAttackId ?? ''}
-      variant={isAttackError ? 'error' : 'not-found'}
+      conversationId={isEvidenceConversationMissing ? routeConversationId : undefined}
+      variant={isAttackError ? 'error' : isEvidenceConversationMissing ? 'evidence-missing' : 'not-found'}
       findingEvidenceId={findingEvidenceId}
       onStartNew={handleNewAttack}
       onBackToHistory={() => navigate(HISTORY_ATTACKS_PATH + lastHistorySearch.current)}
+      onViewAttack={isEvidenceConversationMissing && routeAttackId ? () => {
+        navigate(attackRoutePath(routeAttackId, scenarioResultId), { state: location.state })
+      } : undefined}
     />
   ) : (
     <ChatWindow
@@ -1116,6 +1128,19 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route path="/scanner/history/suites/executions/:executionId" element={<ScenarioSuiteExecutionPage />} />
               <Route path={DATASETS_PATH} element={<DatasetCatalog />} />
               <Route path={DATASET_DETAIL_PATH} element={<DatasetSelection />} />
+              <Route path={PROMPT_GENERATIONS_PATH} element={<PromptGenerationsPage />} />
+              <Route
+                path={NEW_PROMPT_GENERATION_PATH}
+                element={
+                  <NewPromptGenerationPage
+                    targets={registry.targets}
+                    targetsLoading={registry.loading}
+                    targetsError={registry.error}
+                    defaultTarget={targetDefaults.adversarialTarget}
+                  />
+                }
+              />
+              <Route path={PROMPT_GENERATION_ROUTE} element={<PromptGenerationPage />} />
               <Route path="/scanner/presets" element={<Navigate to="/registry/scenario-presets" replace />} />
               <Route path="/scanner/presets/new" element={<Navigate to="/registry/scenario-presets/new" replace />} />
               <Route path="/scanner/presets/:presetName/edit" element={<LegacyPresetEditorRedirect />} />

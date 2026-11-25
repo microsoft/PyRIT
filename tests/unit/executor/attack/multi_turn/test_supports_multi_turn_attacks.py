@@ -17,7 +17,7 @@ from pyrit.executor.attack.component.prepended_history_send_context import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import ConversationType, Message, MessagePiece, ScoringExpectation
-from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetCapabilities, TargetConfiguration
 
 
 class _SingleTurnPromptTarget(PromptTarget):
@@ -52,7 +52,9 @@ def _make_strategy(*, supports_multi_turn: bool):
 
     target = MagicMock()
     target.capabilities.supports_multi_turn = supports_multi_turn
-    target.configuration.includes.return_value = supports_multi_turn
+    target.configuration.includes.side_effect = lambda *, capability: (
+        capability is CapabilityName.RESPONSES or supports_multi_turn
+    )
     target.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
 
     with patch.multiple(
@@ -463,7 +465,9 @@ class TestTAPNodeDuplicateSystemMessages:
 
         target = MagicMock()
         target.capabilities.supports_multi_turn = supports_multi_turn
-        target.configuration.includes.return_value = supports_multi_turn
+        target.configuration.includes.side_effect = lambda *, capability: (
+            capability is CapabilityName.RESPONSES or supports_multi_turn
+        )
         target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
         target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
         target.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
@@ -868,7 +872,9 @@ class TestTAPBranchingPreservesSystemPrompts:
 
         target = MagicMock()
         target.capabilities.supports_multi_turn = supports_multi_turn
-        target.configuration.includes.return_value = supports_multi_turn
+        target.configuration.includes.side_effect = lambda *, capability: (
+            capability is CapabilityName.RESPONSES or supports_multi_turn
+        )
         target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
         target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
         target.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}

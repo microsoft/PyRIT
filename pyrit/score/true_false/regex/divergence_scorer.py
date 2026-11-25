@@ -138,7 +138,7 @@ class DivergenceScorer(MessageTrueFalseScorer):
                 "mitigation_strings_digest": mitigation_digest,
                 "categories": self._score_categories,
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
     async def _score_piece_with_expectation_async(

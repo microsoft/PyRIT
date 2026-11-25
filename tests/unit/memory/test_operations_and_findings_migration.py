@@ -17,9 +17,7 @@ from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import CreateTable
 
-from pyrit.memory import (
-    AttackResultEntry,
-)
+from pyrit.memory import AttackResultEntry
 from pyrit.memory.memory_models import (
     FindingEntry,
     FindingEvidenceEntry,
@@ -67,6 +65,7 @@ def test_migration_adds_tables_without_changing_existing_ones() -> None:
             assert {name: columns for name, columns in after.items() if name not in ACTIVITY_TABLES} == {
                 name: columns for name, columns in existing.items() if name not in ACTIVITY_TABLES
             }
+            # check_schema_migrations compares the database with the head models.
             command.upgrade(config, "head")
         run_schema_migrations(engine=engine)
         check_schema_migrations(engine=engine)
@@ -175,23 +174,24 @@ def test_migration_rejects_inconsistent_finding_classifications(invalid: dict[st
     try:
         with engine.begin() as connection:
             command.upgrade(_config_for(connection), REVISION)
-            insert = sa.insert(FindingEntry)
-            connection.execute(insert.values(id=uuid4(), operation_id=uuid4(), **valid))
+            # The table as this revision created it; later revisions add columns the current model fills in.
+            insert = sa.insert(sa.Table(FindingEntry.__tablename__, sa.MetaData(), autoload_with=connection))
+            connection.execute(insert.values(id=str(uuid4()), operation_id=str(uuid4()), **valid))
             # Harm types are unconstrained so HarmCategory can change without a migration.
             connection.execute(
-                insert.values(id=uuid4(), operation_id=uuid4(), **valid, harm_type="Not a current category")
+                insert.values(id=str(uuid4()), operation_id=str(uuid4()), **valid, harm_type="Not a current category")
             )
             connection.execute(
                 insert.values(
-                    id=uuid4(),
-                    operation_id=uuid4(),
+                    id=str(uuid4()),
+                    operation_id=str(uuid4()),
                     **{**valid, "severity": "other", "severity_other": "Custom"},
                     harm_type="Other",
                     harm_type_other="Custom",
                 )
             )
             with pytest.raises(IntegrityError, match="CHECK"):
-                connection.execute(insert.values(id=uuid4(), operation_id=uuid4(), **{**valid, **invalid}))
+                connection.execute(insert.values(id=str(uuid4()), operation_id=str(uuid4()), **{**valid, **invalid}))
     finally:
         engine.dispose()
 

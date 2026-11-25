@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pyrit.models import Message, Score, ScoreStatus, ScoringExpectation, UndeterminedScoreError
+from pyrit.models import Message, Score, ScorerCapabilityName, ScoreStatus, ScoringExpectation, UndeterminedScoreError
 from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.scorer import Scorer
@@ -31,6 +31,7 @@ class TrueFalseScorer(Scorer):
 
     # Default evaluation configuration - evaluates against all objective CSVs
     evaluation_file_mapping: ScorerEvalDatasetFiles | None = None
+    CAPABILITIES = frozenset({ScorerCapabilityName.TRUE_FALSE})
 
     def __init__(
         self,

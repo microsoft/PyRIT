@@ -55,7 +55,7 @@ These decisions apply to every change. The [style guide](../contributing/3_style
 
 - **Give each responsibility one owner.** Put new code in the component that owns the responsibility, as described below. If nothing fits, raise it with the maintainers instead of stretching a component.
 - **Keep logic in the library.** The backend, CLI, and frontend only expose and present library behavior. Implement new behavior in the owning library package, with any shared types in `pyrit.models`, then use it from the surfaces.
-- **Reuse and compose before adding.** Express new capability as a configuration of existing pieces: an attack technique instead of a new attack, a composite of scorers instead of a new scorer type, an existing model instead of a near-copy. Add a class only when composition can't express it.
+- **Reuse and compose before adding.** Express new capability as a configuration of existing pieces: an attack technique instead of a new attack, a composite of scorers instead of a new scorer type, an existing model instead of a near-copy. Add a new kind of class only when composition can't express it. This limits new mechanisms, not the catalog: more converters and attack techniques mean a better user experience and more for operators and automation to select from, so a new named one is welcome even when existing ones could be stacked or configured to match it. The same holds, to a lesser degree, for scenarios and scorers. Build each on the closest existing piece instead of reimplementing its logic.
 - **Port the logic, not the structure.** When a feature comes from other work, such as an algorithm from a paper like Crescendo or a scenario from Garak, keep its logic, but break it into PyRIT's components and follow PyRIT's rules. A hard-coded judge, for example, becomes a scorer. If a part doesn't fit, that's a sign the owning component should generalize, not a reason to work around it. Cite sources in `doc/references.bib`.
 - **Be consistent, but do what's best.** Match the patterns in the code you change, so PyRIT reads as one codebase. Consistency never outranks doing what's best: when a better way exists, take it, and move existing uses to it in their own PR, not inside an unrelated change.
 - **Don't over-engineer.** Build what the change needs now, as simply as possible. Don't add options, layers, abstractions, or branches for hypothetical needs. Handle the cases that occur in practice, and reject the rest with a clear error.
@@ -66,7 +66,7 @@ These decisions apply to every change. The [style guide](../contributing/3_style
 ## Security
 
 - **Trust operators with the data.** PyRIT is a red teaming tool, not a consumer app. Operators need everything a test produces: prompts, responses (including harmful content), errors, and scorer rationales. Don't redact, mask, or truncate what operators need; needless redaction breaks tests and causes bugs. A shortened preview is fine when the full value stays available.
-- **Secure the real boundaries.** Never expose PyRIT's own credentials, such as API keys and tokens, in logs, errors, identifiers, or results; secrets that appear in target output are test evidence. In shared deployments, authenticate users, and keep server-level powers, such as changing configuration, reading the server's files, or running code on the server, behind explicit administrator or configuration control. Treat target output as data: escape it when rendering, and never run it as code outside a sandbox.
+- **Secure the real boundaries.** Keep each boundary clear and enforce it the same way everywhere, so nothing fails by accident because checks are inconsistent. Never expose PyRIT's own credentials, such as API keys and tokens, in logs, errors, identifiers, or results; secrets that appear in target output are test evidence. In shared deployments, authenticate and trust all users: anyone may create shared targets, converters, and scorers that connect with the server's credentials, such as the team's managed identity. Reserve running code on the server and changing its configuration for administrators as a soft boundary to keep the deployment working, not a defense against users. As a rule of thumb, prioritize keeping PyRIT usable for testing unusual situations over restricting what users can do. Treat target output as data: escape it when rendering, and never run it as code outside a sandbox.
 
 ## Docs
 
@@ -101,6 +101,7 @@ Surfaces run the core components, and the shared library supports both. The orch
 
 Converters, targets, and scorers are the bricks that attacks use. The registry builds components, and memory holds the shared record of conversations, scores, and results.
 
+(core-components)=
 # Core Components
 
 Core components are pluggable bricks. Each one can be swapped, combined, or replaced with a no-op, such as a converter that doesn't convert or a target that only prints. Most contributions belong in one of them. If yours doesn't fit, open an issue so we can discuss the architecture, and tell us what you want, or don't want, under Framework Plans.
@@ -121,7 +122,7 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 - Manage datasets at scale and load them more intelligently. Expect some redesign here.
 - Finish moving components from file paths and providers to seeds passed in or read from memory.
 - Express expected results as objective conditions in every executor, including benchmarks, instead of adding new seed types.
-- Execute objective decomposition paths in attacks (likely compound attacks), and reuse the same parent/child model for findings.
+- Execute objective decomposition paths in attacks (likely compound attacks).
 
 **Contributing (difficulty easy)**: Add seed dataset providers, prompts, and jailbreak templates for what you're testing.
 
@@ -132,6 +133,7 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 - **Declare the scenario; let the base class run it.** Subclass `Scenario`, give the base its technique class, default datasets, and objective scorer, and implement `_build_atomic_attacks_async`, its one required hook. Override optional hooks, such as `additional_parameters()`, only when you need them. For a technique × dataset matrix, the build is one call to `build_matrix_atomic_attacks`; `Cyber` is a good model.
 - Leave the run to the base class: run parameters (including the objective target), dataset preparation, concurrency, retries, resume, and results. Don't rebuild any of it in a subclass. If the base can't express what you need, propose a base change in its own PR.
 - Decide whether to skip or fail on incompatible techniques.
+- Declare evaluation-wide dataset requirements; techniques add delivery-specific inputs.
 - Keep the results of a run independent; none depends on another. Anything that adapts to results within a run belongs in an attack, such as a compound attack.
 - **Does not own**: conversation logic, new attack algorithms, or new datasets. A scenario selects and packages existing techniques and datasets.
 
@@ -191,7 +193,7 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 
 - Refactor the converter pipeline so partial and conditional conversion are more dynamic. Some of this works today, but it's limited.
 
-**Contributing (difficulty low)**: The pattern is well-defined. Add conversions that help attacks.
+**Contributing (difficulty low)**: The pattern is well-defined. Add conversions that help attacks. A named converter is welcome even when a stack of existing ones produces the same output; subclass or wrap them rather than copying their logic.
 
 ## [Targets](./targets/0_prompt_targets)
 
@@ -201,7 +203,7 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 - Adapt messages to what the target supports with its `TargetConfiguration` and message normalizer.
 - Return what the target produced. A response can hold several pieces or tool calls, or none.
 - Return a content-filter block as a blocked response (`error="blocked"`), not an exception, so scorers can detect it.
-- If the target runs tools itself, bound its tool loop. When the target's own tool infrastructure fails (`ToolInfrastructureError`), answer every pending call and end the turn with an error response that says why (`ToolLoopStop`), instead of asking the model to fix it.
+- If the target runs tools itself, bound its tool loop with the shared `run_tool_loop_async` in `pyrit/prompt_target/common/tool_loop.py`, so a tool behaves the same on every target. When the target's own tool infrastructure fails (`ToolInfrastructureError`), answer every pending call and end the turn with an error response that says why (`ToolLoopStop`), instead of asking the model to fix it.
 - Retry only transient target errors, such as rate limits.
 - **Does not own**: what to send or what to do with the response. Converting (converters), scoring (scorers), conversation flow (attacks), and persistence (the prompt normalizer) belong elsewhere.
 
@@ -259,6 +261,7 @@ These modules support every component.
 - Build every component that comes from user input (configuration, REST, or the CLI) through the registry, and store reusable instances there.
 - Construction doesn't require registration; the caller owns temporary instances.
 - Accept only explicitly supported external inputs, and leave argument validation to constructors.
+- Show an entry that is private to its owner only to that owner. To everyone else, it doesn't exist.
 
 ## [Normalizers](./targets/11_message_normalizer)
 
@@ -326,6 +329,7 @@ The backend is an adapter, not a second library. It owns HTTP and process concer
 - **Don't add domain models.** `pyrit/backend/models` holds backend-only envelopes, such as pagination and presentation views, built from `pyrit.models` types. If a backend model or a service's dataclass would describe a domain concept, put it in `pyrit.models` instead.
 - Keep each layer thin. Routes and middleware handle HTTP, services call the library for a request, and mappers translate library objects into API views. None of them make domain decisions.
 - Build components through the registry and persist through memory, as everywhere else.
+- The auth middleware scopes each request, and the work it starts, to its caller. Work that starts outside its request, such as a queued run, carries the caller captured when it was admitted.
 
 **Framework Plans**:
 
@@ -361,7 +365,7 @@ These patterns cut across components. Use them instead of inventing a local vari
 - **Resolve defaults in one order.** An explicit argument wins, then an initializer default (`@apply_defaults`), then the environment variable that the class names, read at construction, then a declared default or an error. Components don't read `os.environ` anywhere else; setup, the backend, and the CLI read process settings at startup.
 - **Give data PyRIT queries a typed field.** If memory queries, filters, or sorts by a value, make it a typed field on the narrowest model that owns it (`MessagePiece`, not `Message`). Other structured data travels in metadata through a value object (below). Labels are user tags: PyRIT stores and filters them for users but never derives behavior from them.
 - **Let one value object own each metadata key.** A small model in `pyrit.models` declares a namespaced key and is the only code that reads or writes it, through `to_metadata()` and `from_metadata()`; see `ToolExecutionMetadata`. A missing key, or a legacy value from older rows, reads as unset.
-- **Keep shared components free of per-call state.** Registered targets, converters, and scorers serve concurrent callers, so instance state must be safe to share: configuration, caches, clients, and maps keyed by conversation or attempt are fine. Keep per-call data in arguments, the attack context, or memory.
+- **Keep shared components free of per-call state.** Registered targets, converters, and scorers serve concurrent callers, so instance state must be safe to share: configuration, caches, clients, and maps keyed by conversation or attempt are fine. Keep per-call data in arguments, the attack context, or memory. The one exception is the caller's identity, which travels in the caller scope (`pyrit.auth.caller_principal_scope`) so the registry can limit private entries to their owner.
 - **Keep helper-model prompts in YAML seeds.** Prompts for judges, converters, and adversarial chat are YAML `SeedPrompt`s that declare their parameters. Render them only through `SeedPrompt`'s sandboxed rendering, never with f-strings or `str.format`; per-call content, such as the text being judged, can be plain message text.
 - **Declare structured output, and parse it once.** When you need JSON from a model, ask for it with `JsonResponseConfig`, and let the target enforce or adapt it. Parse each kind of response in one function that raises `InvalidJsonException`, and retry through `send_json_with_retry_async`, which starts each retry from a clean history.
 - **Store media through serializers.** Write media and other files that results reference only through `data_serializer_factory` into results storage, point to them by the returned path or URL, and read them back the same way. Don't persist base64, temporary files, or paths outside results storage.
