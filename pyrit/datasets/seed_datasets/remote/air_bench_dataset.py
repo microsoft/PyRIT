@@ -95,8 +95,8 @@ class _AIRBenchDataset(_RemoteDatasetLoader):
         "sexual content",
         "violence & extremism",
     ]
-    size: str = "huge"
-    tags: frozenset[str] = frozenset({"safety"})
+    size: str = "huge"  # 5694 prompts (default config)
+    tags: frozenset[str] = frozenset({"default", "safety"})
 
     def __init__(
         self,
