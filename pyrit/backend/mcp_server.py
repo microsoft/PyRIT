@@ -37,8 +37,9 @@ class MCPEndpoint:
     """
 
     PATH: ClassVar[str] = "/api/mcp"
-    # MCP clients send this header on every request after initialization, so browser CORS must allow it.
-    PROTOCOL_VERSION_HEADER: ClassVar[str] = "MCP-Protocol-Version"
+    # Browser CORS must allow the headers MCP clients send: the protocol version after initialization, the
+    # method on every request, and the name on a tool call.
+    CORS_HEADERS: ClassVar[tuple[str, ...]] = ("MCP-Protocol-Version", "Mcp-Method", "Mcp-Name")
 
     def __init__(self, *, toolset: RestToolset, allowed_origins: Collection[str]) -> None:
         """
