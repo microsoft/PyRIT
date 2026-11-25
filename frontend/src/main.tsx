@@ -5,9 +5,6 @@ import AppRouter from './AppRouter'
 import { AuthProvider } from './auth/AuthProvider'
 import { CompatibilityGate } from './components/CompatibilityGate'
 import './styles/global.css'
-import { installChunkReloadHandler } from './utils/chunkReload'
-
-installChunkReloadHandler()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

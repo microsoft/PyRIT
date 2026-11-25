@@ -153,7 +153,8 @@ function viewFromPath(pathname: string): ViewName {
 }
 
 // Screens with ids in the URL. Matching on the pattern keeps the ids out of the screen key, so
-// moving between attacks, conversations or runs doesn't remount the screen.
+// moving between attacks, conversations or runs doesn't remount the screen. Add every new route
+// with an id in its path here; otherwise each id gets its own key and remounts the screen.
 const SCREEN_PATHS = [
   '/attack/chat/*',
   '/registry/*',
@@ -1077,7 +1078,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
             )}
             {/* Keyed by screen so a switch to a screen that is still loading shows the spinner
                 right away. Otherwise React keeps the old screen until the chunk arrives, and
-                currentView lags behind the URL (the tour reads it to decide where to go). */}
+                currentView lags behind the URL (the tour reads it to decide where to go).
+                The boundary keeps a failed screen inside the shell, so navigation still works. */}
+            <ErrorBoundary variant="section" resetKeys={[screenKey(location.pathname)]}>
             <Suspense key={screenKey(location.pathname)} fallback={<Spinner label="Loading..." />}>
             <Routes>
               <Route
@@ -1235,8 +1238,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route path="*" element={<PageNotFound />} />
             </Routes>
             </Suspense>
+            </ErrorBoundary>
           </MainLayout>
           {feedbackOpen && (
+            <ErrorBoundary variant="dialog" onDismiss={() => setFeedbackOpen(false)}>
             <Suspense fallback={null}>
             <FeedbackDialog
               open={feedbackOpen}
@@ -1248,6 +1253,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               }}
             />
             </Suspense>
+            </ErrorBoundary>
           )}
       </ConnectionHealthProvider>
     </ErrorBoundary>

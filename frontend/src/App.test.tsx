@@ -20,6 +20,8 @@ import { DEFAULT_ANALYTICS_VIEW, analyticsViewToHash } from "./utils/attackAnaly
 
 const mockGetActiveAccount = jest.fn();
 let mockCreatedAttackRender: Promise<void> | null = null;
+let mockAnalyticsPending: Promise<void> | null = null;
+let mockAnalyticsFailure: Error | null = null;
 
 jest.mock("./hooks/useTargetRegistry", () => ({
   useTargetRegistry: () => {
@@ -447,6 +449,8 @@ jest.mock("./components/Analytics/AnalyticsPage", () => {
   const { useLocation } = jest.requireActual<typeof import("react-router")>("react-router");
   function MockAnalyticsPage({ onOpenAttack }: { onOpenAttack: (id: string) => void }) {
     const location = useLocation();
+    if (mockAnalyticsPending) throw mockAnalyticsPending;
+    if (mockAnalyticsFailure) throw mockAnalyticsFailure;
     return <section aria-label="Analytics explorer">
       <output aria-label="Analytics URL">{location.pathname}{location.search}{location.hash}</output>
       <button onClick={() => onOpenAttack("analytics-result")}>Open analytics result</button>
@@ -749,6 +753,8 @@ describe("App", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockCreatedAttackRender = null;
+    mockAnalyticsPending = null;
+    mockAnalyticsFailure = null;
     mockGetActiveAccount.mockReturnValue(null);
     mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
     mockListTargets.mockResolvedValue({
@@ -792,6 +798,45 @@ describe("App", () => {
     expect(screen.getByLabelText("Active target multi-turn")).toHaveTextContent("false");
   });
 
+  it("shows the spinner and moves the current view as soon as a screen that is still loading is opened", async () => {
+    const user = userEvent.setup();
+    const load = deferred<void>();
+    mockAnalyticsPending = load.promise;
+    renderApp();
+    expect(await screen.findByTestId("home-view")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Analytics" }));
+
+    // The tour reads the current view, so it must follow the URL before the screen arrives.
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "analytics");
+    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.queryByTestId("home-view")).toBeNull();
+
+    mockAnalyticsPending = null;
+    await act(async () => { load.resolve(); });
+    expect(await screen.findByRole("region", { name: "Analytics explorer" })).toBeInTheDocument();
+    expect(screen.queryByText("Loading...")).toBeNull();
+  });
+
+  it("keeps the app shell when a screen fails to load and clears the error on navigation", async () => {
+    const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const user = userEvent.setup();
+      mockAnalyticsFailure = new TypeError("Failed to fetch dynamically imported module: http://x/assets/AnalyticsPage-abc.js");
+      renderApp("/analytics");
+
+      const fallback = await screen.findByTestId("error-boundary-fallback");
+      expect(screen.getByTestId("main-layout")).toContainElement(fallback);
+      expect(screen.getByRole("button", { name: "Reload page" })).toBeInTheDocument();
+
+      mockAnalyticsFailure = null;
+      await user.click(screen.getByTestId("nav-home"));
+      expect(await screen.findByTestId("home-view")).toBeInTheDocument();
+      expect(screen.queryByTestId("error-boundary-fallback")).toBeNull();
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
   it("opens Analytics and restores its fragment after inspecting a saved attack", async () => {
     const user = userEvent.setup();
     const originalPath = `/analytics${analyticsViewToHash({
