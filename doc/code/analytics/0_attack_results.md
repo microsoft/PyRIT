@@ -134,6 +134,40 @@ separate: an error followed by a successful retry contributes one historical err
 but no latest-unit error. Never derive the decided denominator by subtracting
 historical errors from completed units.
 
+### Opt-in judge calibration for decided rates
+
+`compute_outcome_statistics` never looks up a scorer or adjusts `success_rate`.
+When a cohort's decided outcomes come from one evaluated objective scorer and
+you want to adjust for that scorer's empirical false-positive and false-negative
+rates, pass `OutcomeStatistics` and an explicit `JudgeCalibrationProfile` to
+`calibrate_outcome_statistics`:
+
+```python
+from pyrit.analytics import JudgeCalibrationProfile, calibrate_outcome_statistics
+
+metrics = scorer.get_scorer_metrics()
+if metrics is not None:
+    eval_hash = scorer.get_identifier().eval_hash
+    profile = JudgeCalibrationProfile.from_objective_metrics(metrics, eval_hash=eval_hash)
+    if profile is not None:
+        calibrated = calibrate_outcome_statistics(
+            outcomes,
+            judge_profile=profile,
+            expected_eval_hash=eval_hash,
+        )
+        print(calibrated.observed_success_rate, calibrated.calibrated_success_rate, calibrated.is_reliable)
+```
+
+`calibrate_outcome_statistics` returns a `CalibratedOutcomeStatistics` object
+containing the clipped Rogan-Gladen prevalence estimate and closed-form
+Lang-Reiczigel confidence bounds alongside the unadjusted rate, Wilson bounds,
+`decided_share`, warning codes, and dataset/scorer provenance. Calibration is
+conditional on non-differential error transfer to single-response verdicts (not
+multi-turn stop-on-first-positive sessions without session-level evaluation). If
+Youden's index (`sensitivity + specificity - 1`) is at or below `min_youden_index`
+(`0.20` by default) or its lower confidence bound is at or below zero,
+`is_reliable` is `False` and the calibrated fields are `None`.
+
 ### Compare matched baseline and attack outcomes
 
 For scenarios that saved a normalized run plan with explicit baseline and attack
