@@ -808,36 +808,16 @@ def test_scenario_history_seed_projection_defaults_to_empty_json(memory_interfac
     assert "INCLUDE_NULL_VALUES" in str(seed_projection)
 
 
-def test_scenario_plan_unit_subqueries_expand_plan_json_server_side(memory_interface: AzureSQLMemory) -> None:
-    """The SQL Server plan expansion uses CROSS APPLY OPENJSON and binds scenario IDs."""
-    scenario_result_id = uuid.uuid4()
-    plan_units, plan_seeds = memory_interface._get_scenario_plan_unit_subqueries(
-        scenario_result_ids=[scenario_result_id]
-    )
-
-    statement = select(plan_units.c.atomic_group_id, plan_seeds.c.seed_group_id).join(
-        plan_seeds, plan_units.c.atomic_group_id == plan_seeds.c.seed_group_id
-    )
-    compiled = statement.compile(dialect=mssql.dialect())
-
-    assert "CROSS APPLY OPENJSON" in str(compiled)
-    assert "JOIN LATERAL" not in str(compiled)
-    assert str(scenario_result_id) in str(compiled.params)
-
-
-def test_scenario_history_attempt_ranking_uses_canonical_uuid_order(
+def test_scenario_history_attempt_statement_never_reads_run_plans(
     uninitialized_memory_interface: AzureSQLMemory,
 ) -> None:
-    statement = uninitialized_memory_interface._build_scenario_history_aggregate_statement(
-        entry_ids=[uuid.uuid4()], plan_entry_ids=[]
-    )
-    sql = str(statement.compile(dialect=mssql.dialect())).upper()
+    """Attempt rows are read from AttackResultEntries alone; run plans are resolved in Python."""
+    statement = uninitialized_memory_interface._build_scenario_history_attempt_statement(entry_ids=[uuid.uuid4()])
+    sql = str(statement.compile(dialect=mssql.dialect()))
 
-    assert (
-        "HISTORY_CLASSIFIED_UNITS.TIMESTAMP DESC, "
-        "LOWER(CAST(HISTORY_CLASSIFIED_UNITS.ATTEMPT_ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2 DESC"
-    ) in sql
-    assert "HISTORY_CLASSIFIED_UNITS.ATTEMPT_INDEX IS NULL" in sql
+    assert "json_value([AttackResultEntries].attribution_data" in sql
+    assert "ScenarioResultEntries" not in sql
+    assert "run_plan" not in sql
 
 
 def test_scenario_progress_cursor_and_order_use_canonical_uuid_order(
@@ -1260,41 +1240,6 @@ def test_init_prod_with_skip_schema_migration_still_checks():
     finally:
         Singleton._instances.clear()
         Singleton._instances.update(saved)
-
-
-def test_scenario_history_aggregate_uses_sql_server_json_value(memory_interface: AzureSQLMemory) -> None:
-    from sqlalchemy.dialects import mssql
-
-    statement = memory_interface._build_scenario_history_aggregate_statement(
-        entry_ids=[uuid.uuid4()], plan_entry_ids=[uuid.uuid4()]
-    )
-    compiled = statement.compile(dialect=memory_interface.engine.dialect)
-    compiled_str = str(compiled).lower()
-    assert "json_value" in compiled_str
-    assert "$.result_role" in compiled.params.values()
-    assert "latin1_general_100_bin2" in compiled_str
-    assert "datalength" in compiled_str
-
-    mssql_compiled = str(statement.compile(dialect=mssql.dialect())).lower()
-    assert "collate latin1_general_100_bin2" in mssql_compiled
-    assert "datalength" in mssql_compiled
-
-
-def test_scenario_role_match_condition_uses_binary_collation_and_datalength_guard(
-    memory_interface: AzureSQLMemory,
-) -> None:
-    from sqlalchemy import column
-    from sqlalchemy.dialects import mssql
-
-    from pyrit.models import AttackResultRole
-
-    col = column("result_role")
-    condition = memory_interface._get_scenario_role_match_condition(
-        role_expression=col, role=AttackResultRole.TARGET_FACING
-    )
-    compiled_mssql = str(condition.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}))
-    assert "(result_role COLLATE Latin1_General_100_BIN2) = 'target_facing'" in compiled_mssql
-    assert "datalength(result_role) = datalength(N'target_facing')" in compiled_mssql
 
 
 def test_scenario_attack_result_deltas_by_ids_statement_compiles_mssql(

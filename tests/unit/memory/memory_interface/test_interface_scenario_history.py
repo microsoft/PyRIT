@@ -60,7 +60,6 @@ class _LegacyScenarioLabelMemory(SQLiteMemory):
         ("_get_scenario_registry_name_condition", {"scenario_names": ["test.scenario"]}),
         ("_get_scenario_history_plan_expressions", {}),
         ("_get_scenario_attempt_unit_expressions", {}),
-        ("_get_scenario_plan_unit_subqueries", {"scenario_result_ids": [uuid.uuid4()]}),
     ],
 )
 def test_scenario_history_dialect_hooks_are_optional_until_used(
