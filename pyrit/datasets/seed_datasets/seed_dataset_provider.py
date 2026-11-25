@@ -463,14 +463,14 @@ class SeedDatasetProvider(ABC):
                 return result
 
         # Fetch all datasets with controlled concurrency and progress bar
-        tasks = [
+        fetches = [
             fetch_with_semaphore_async(provider_name, provider_class)
             for provider_name, provider_class in cls._registry.items()
         ]
 
         # A failed fetch cancels the others instead of leaving them running after this method raises.
         try:
-            results = await gather_with_cleanup_async(tasks)
+            results = await gather_with_cleanup_async(fetches)
         finally:
             pbar.close()
 
