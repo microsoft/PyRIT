@@ -50,7 +50,7 @@ export default function GenerationCommonFields({
           label="Dataset name"
           required
           hint="The name of the new stored dataset. It must not exist yet."
-          validationMessage={datasetName.error ?? undefined}
+          validationMessage={datasetName.error ?? null}
           validationState={datasetName.error ? 'error' : 'none'}
         >
           <Input

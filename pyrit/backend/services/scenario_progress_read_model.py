@@ -586,8 +586,7 @@ class ScenarioProgressReadModel:
         groups_by_technique: dict[str, list[ScenarioRunPlanAtomicGroup]] = {}
         groups_by_display: dict[str, list[ScenarioRunPlanAtomicGroup]] = {}
         for group in plan.atomic_groups:
-            technique_name = group.technique_name or group.display_group
-            groups_by_technique.setdefault(technique_name, []).append(group)
+            groups_by_technique.setdefault(group.technique_label, []).append(group)
             groups_by_display.setdefault(group.display_group, []).append(group)
         display_groups: list[ScenarioDisplayGroupProgress] = []
         for display_group, groups in groups_by_display.items():

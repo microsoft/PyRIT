@@ -11,7 +11,7 @@ interface OutcomeSummaryBarProps {
   readonly showBar?: boolean
   readonly disabled?: boolean
   readonly disabledReason?: string | null
-  readonly describedBy?: string
+  readonly describedBy?: string | undefined
   readonly onOutcome?: (outcome: AttackOutcome) => void
 }
 

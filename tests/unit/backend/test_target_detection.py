@@ -972,7 +972,7 @@ async def test_detection_does_not_promote_untransmitted_tts_features_async(
         assert result.capabilities == original
         assert source.capabilities == original
         speech.assert_awaited_once()
-        assert set(speech.call_args.kwargs) == {"model", "voice", "input", "response_format", "speed"}
+        assert set(speech.call_args.kwargs) == {"model", "voice", "input", "response_format"}
         assert speech.call_args.kwargs["response_format"] == "mp3"
     finally:
         await source.cleanup_target_async()

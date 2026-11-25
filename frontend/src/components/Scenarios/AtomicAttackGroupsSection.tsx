@@ -4,12 +4,15 @@ import { Button, Text } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
 
 import type { UseScenarioResultHierarchyResult } from '@/hooks/useScenarioResultHierarchy'
-import type { ScenarioHierarchyNode, ScenarioProgressResult, ScenarioProgressSummary, ScenarioRunState } from '@/types'
+import type {
+  ScenarioDisplayGroupProgress, ScenarioHierarchyNode, ScenarioProgressResult, ScenarioProgressSummary, ScenarioRunState,
+} from '@/types'
 
 import AttackExecutionTable from './AttackExecutionTable'
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
 import ScenarioResultHierarchy from './ScenarioResultHierarchy'
 import { hierarchyDisplayGroups, runExecutionCount } from './scenarioHierarchy'
+import { fluentRef } from '@/utils/fluentRef'
 
 const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
 const AUTO_EXPAND_GROUP_LIMIT = 20
@@ -75,7 +78,7 @@ export default function AtomicAttackGroupsSection({
             aria-controls="atomic-groups-panel"
             aria-label={`${sectionExpanded ? 'Collapse' : 'Expand'} atomic attack groups`}
             data-testid="toggle-atomic-groups-btn"
-            ref={toggleRef}
+            ref={fluentRef(toggleRef)}
             onClick={() => setSectionExpandedChoice(!sectionExpanded)}
           >
           </Button>
@@ -97,6 +100,7 @@ export default function AtomicAttackGroupsSection({
                     .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
                   const expanded = expandedGroupChoices.get(group.id) ?? defaultExpanded
                   const panelId = `atomic-group-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+                  const techniques = groupTechniques(group, techniqueNames)
                   return (
                     <article key={group.id} className={styles.displayGroup}>
                       <div className={styles.displayGroupSummary}>
@@ -111,9 +115,9 @@ export default function AtomicAttackGroupsSection({
                         />
                         <span className={styles.displayGroupIdentity}>
                           <Text size={400} weight="semibold">{group.display_group}</Text>
-                          <Text size={200} className={styles.sectionHint}>
-                            {group.atomic_attack_names.join(', ')}
-                          </Text>
+                          {techniques && techniques.toLowerCase() !== group.display_group.toLowerCase() && (
+                            <Text size={200} className={styles.sectionHint}>{techniques}</Text>
+                          )}
                         </span>
                         <span className={styles.displayGroupMetrics}>
                           <DisplayGroupMetric label="Completed" value={formatCompletion(group.completed, group.planned)} />
@@ -165,6 +169,13 @@ function DisplayGroupMetric({ label, value }: { readonly label: string; readonly
       <Text weight="semibold">{value}</Text>
     </div>
   )
+}
+
+/** A group's distinct techniques, or its atomic attack names when the saved plan doesn't name every member. */
+function groupTechniques(group: ScenarioDisplayGroupProgress, techniqueNames: ReadonlyMap<string, string>): string {
+  const names = group.atomic_group_ids.map((atomicGroupId) => techniqueNames.get(atomicGroupId))
+  const known = names.filter((name): name is string => name !== undefined)
+  return [...new Set(known.length > 0 && known.length === names.length ? known : group.atomic_attack_names)].join(', ')
 }
 
 function formatCompletion(completed: number, planned: number | null): string {

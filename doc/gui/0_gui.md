@@ -131,7 +131,9 @@ datasets already selected, add one `dataset` parameter per name, for example
 `/scanner/launch/foundry.red_team_agent?dataset=harmbench&dataset=my_dataset`. The
 names replace the default or preset datasets; other dataset settings, such as
 limits and filters, stay. A scenario that can't take the linked datasets won't
-launch with them and offers a link to open it without them.
+launch with them and offers a link to open it without them. A scenario that lists
+only compatible datasets, such as `foundry.assert_policy`, leaves out linked names
+it can't use and says so in the Datasets section.
 
 Use the chevron on the right of a technique to inspect its identity JSON.
 This does not change the checkbox selection on the left.
@@ -368,8 +370,10 @@ This is a cross-result report, not the progress dashboard for one scanner run.
 ## Operations
 
 Operations organize human findings for an engagement. Create an operation,
-record findings with severity and description, and attach saved attacks as
-evidence. A model score does not create a finding automatically.
+record findings, and attach saved attacks as evidence. Findings use the
+deployment's [finding fields](../code/setup/finding_fields.md), which by default
+are severity, harm type, and description. A model score does not create a
+finding automatically.
 
 Select an operation in the labels bar to associate new chats and scans with it.
 The operation page brings its findings, linked evidence, and execution history

@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
@@ -39,12 +39,13 @@ _COMPUTED_IDENTITY_FIELDS = frozenset(
 )
 
 
-class ScenarioRunState(str, Enum):
+class ScenarioRunState(StrEnum):
     """
     Lifecycle state of a scenario run.
 
-    Inherits from ``str`` so values serialize naturally in Pydantic models and
-    REST responses, and compare equal to their string form.
+    A ``StrEnum``, so values serialize naturally in Pydantic models and REST
+    responses, compare equal to their string form, and format as their value
+    (``COMPLETED``, not ``ScenarioRunState.COMPLETED``) in messages and logs.
     """
 
     CREATED = "CREATED"
@@ -158,15 +159,27 @@ class ScenarioResult(BaseModel):
         """
         Get the list of techniques present in the results.
 
-        Results are aggregated by display group so each technique is counted once,
-        even when it fans out into multiple atomic-attack cells (e.g. across
-        datasets or targets in a matrix scenario). When no ``display_group_map`` is
-        set, atomic-attack names are returned unchanged.
+        With a saved run plan, each planned group counts under its technique, and a baseline
+        counts as ``baseline``, whatever its display group. Without one, results are aggregated
+        by display group so each technique is counted once, even when it fans out into multiple
+        atomic-attack cells (e.g. across datasets or targets in a matrix scenario). When no
+        ``display_group_map`` is set, atomic-attack names are returned unchanged.
 
         Returns:
-            list[str]: Technique (display-group) names that produced results.
+            list[str]: Technique names that produced results.
 
         """
+        # The plan model imports this module, so import it at call time.
+        from pyrit.models.scenario_progress import SCENARIO_RUN_PLAN_METADATA_KEY, ScenarioRunPlan
+
+        raw_plan = self.metadata.get(SCENARIO_RUN_PLAN_METADATA_KEY)
+        if raw_plan is not None:
+            try:
+                plan = ScenarioRunPlan.model_validate(raw_plan)
+            except ValueError:
+                logger.warning("Scenario result %s has an invalid saved run plan; using its display groups.", self.id)
+            else:
+                return list(dict.fromkeys(group.technique_label for group in plan.atomic_groups))
         return list(self.get_display_groups().keys())
 
     def get_display_groups(self) -> dict[str, list[AttackResult]]:

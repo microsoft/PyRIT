@@ -72,6 +72,10 @@ DEFAULT_PROBE_TIMEOUT_SECONDS: float = 30.0
 DEFAULT_PROBE_RETRY_BACKOFF_SECONDS: float = 0.1
 MAX_PROBE_RETRY_BACKOFF_SECONDS: float = 1.0
 
+# Longest error message a failed check reports, so a provider's full response body
+# does not flood the result.
+_MAX_ERROR_DETAIL_LENGTH: int = 500
+
 # Exceptions that are deterministic on the probe payload and will not become
 # valid on a retry (malformed Message, type errors, missing attributes, etc.).
 # These fail the probe immediately rather than wasting backoff time.
@@ -96,6 +100,42 @@ class CapabilityDiscoveryError(RuntimeError):
     """Discovery could not determine support because a probe failed."""
 
 
+def _status_code(error: BaseException) -> int | None:
+    """
+    Return the HTTP status code an SDK error carries, if any.
+
+    Returns:
+        int | None: The status code, or None when the error has none.
+    """
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+    return status_code if isinstance(status_code, int) else None
+
+
+def _describe_error(error: BaseException) -> str:
+    """
+    Summarize ``error`` on one line so a failed check names its cause.
+
+    Database errors report the driver's message instead of the full statement
+    and its parameters.
+
+    Returns:
+        str: The error type, HTTP status when known, and the first line of its message.
+    """
+    if isinstance(error, CapabilityDiscoveryError):
+        return str(error)
+    original = getattr(error, "orig", None)
+    source = original if isinstance(original, BaseException) else error
+    lines = str(source).strip().splitlines()
+    text = lines[0].strip() if lines else ""
+    if len(text) > _MAX_ERROR_DETAIL_LENGTH:
+        text = text[:_MAX_ERROR_DETAIL_LENGTH].rstrip() + "..."
+    status_code = _status_code(error)
+    kind = type(error).__name__ if status_code is None else f"{type(error).__name__} (HTTP {status_code})"
+    return f"{kind}: {text}" if text else kind
+
+
 def _raise_if_inconclusive(*, error: Exception, label: str) -> None:
     """
     Reject operational failures when discovery will be applied automatically.
@@ -103,11 +143,14 @@ def _raise_if_inconclusive(*, error: Exception, label: str) -> None:
     Raises:
         CapabilityDiscoveryError: A strict probe failed without evidence of rejection.
     """
-    status_code = getattr(error, "status_code", None)
-    if status_code is None:
-        status_code = getattr(getattr(error, "response", None), "status_code", None)
-    if _RAISE_ON_PROBE_ERROR.get() and not (isinstance(error, ValueError) or status_code in (400, 422)):
-        raise CapabilityDiscoveryError(f"{label} failed; capabilities were not changed.") from error
+    if not _RAISE_ON_PROBE_ERROR.get():
+        return
+    if isinstance(error, CapabilityDiscoveryError):
+        raise CapabilityDiscoveryError(f"{label}: {error}") from error
+    if not (isinstance(error, ValueError) or _status_code(error) in (400, 422)):
+        raise CapabilityDiscoveryError(
+            f"{label} failed: {_describe_error(error)}; capabilities were not changed."
+        ) from error
 
 
 def _json_enforcing_target_types() -> tuple[type[PromptTarget], ...]:
@@ -212,7 +255,6 @@ def _disable_probe_tools(*, target: PromptTarget) -> Generator[None, None, None]
                 target._extra_body_parameters["extra_body"] = {
                     key: value for key, value in extra_body.items() if key not in tool_settings
                 }
-        if isinstance(target, (OpenAIResponseTarget, LiteLLMChatTarget)):
             stack.callback(setattr, target, "_execute_tools", target._execute_tools)
             stack.callback(setattr, target, "_suppress_tools", target._suppress_tools)
             target._execute_tools = False
@@ -268,6 +310,7 @@ async def _send_and_check_async(
     timeout_s: float,
     retries: int = 1,
     label: str = "Capability probe",
+    failures: list[str] | None = None,
 ) -> bool:
     """
     Send ``message`` and report whether the call succeeded cleanly.
@@ -291,6 +334,8 @@ async def _send_and_check_async(
             Defaults to 1.
         label (str): Short label used in log messages. Defaults to
             ``"Capability probe"``.
+        failures (list[str] | None): When given, receives a one-line reason
+            for each failed send, so callers can report why a check failed.
 
     Returns:
         bool: ``True`` iff the call returned without raising and every response
@@ -299,6 +344,11 @@ async def _send_and_check_async(
         ``"empty"``, ``"unknown"``) is treated as failure. An empty response
         list (or responses with no message pieces) is also treated as a failure.
     """
+
+    def _record_failure(error: Exception) -> None:
+        if failures is not None:
+            failures.append(f"{label}: {_describe_error(error)}")
+
     attempts = max(1, retries + 1)
     last_exc: Exception | None = None
     for attempt in range(attempts):
@@ -314,6 +364,7 @@ async def _send_and_check_async(
             # Deterministic on the probe payload — retrying will not help.
             logger.debug("%s failed with non-retryable error: %s", label, exc)
             _raise_if_inconclusive(error=exc, label=label)
+            _record_failure(exc)
             return False
         except Exception as exc:
             last_exc = exc
@@ -324,25 +375,32 @@ async def _send_and_check_async(
 
         if not responses or any(not r.message_pieces for r in responses):
             logger.debug("%s returned an empty response; treating as failure", label)
-            _raise_if_inconclusive(error=RuntimeError("Empty response"), label=label)
+            empty_error = RuntimeError("The target returned an empty response.")
+            _raise_if_inconclusive(error=empty_error, label=label)
+            _record_failure(empty_error)
             return False
         for response in responses:
             for piece in response.message_pieces:
                 if piece.response_error != "none":
                     logger.debug("%s returned error response: %s", label, piece.converted_value)
-                    _raise_if_inconclusive(error=RuntimeError("Error response"), label=label)
+                    response_error = RuntimeError(
+                        f"The target returned a '{piece.response_error}' error response: {piece.converted_value}"
+                    )
+                    _raise_if_inconclusive(error=response_error, label=label)
+                    _record_failure(response_error)
                     return False
         return True
 
     logger.info("%s exhausted %d attempt(s); last error: %s", label, attempts, last_exc)
     if last_exc is not None:
         _raise_if_inconclusive(error=last_exc, label=label)
+        _record_failure(last_exc)
     return False
 
 
 def _retry_backoff_seconds(*, attempt: int) -> float:
     """Return the exponential backoff delay for a retry attempt."""
-    backoff_seconds: float = DEFAULT_PROBE_RETRY_BACKOFF_SECONDS * (2**attempt)
+    backoff_seconds: float = DEFAULT_PROBE_RETRY_BACKOFF_SECONDS * (2.0**attempt)
     return min(backoff_seconds, MAX_PROBE_RETRY_BACKOFF_SECONDS)
 
 
@@ -400,7 +458,9 @@ async def _probe_system_prompt_async(target: PromptTarget, timeout_s: float, ret
     except Exception as exc:
         logger.debug("System-prompt probe could not seed system message: %s", exc)
         if _RAISE_ON_PROBE_ERROR.get():
-            raise CapabilityDiscoveryError("Could not prepare the system-prompt probe.") from exc
+            raise CapabilityDiscoveryError(
+                f"Could not prepare the system-prompt probe: {_describe_error(exc)}; capabilities were not changed."
+            ) from exc
         return False
     user_piece = _user_text_piece(value="hi", conversation_id=conversation_id)
     return await _send_and_check_async(
@@ -506,7 +566,9 @@ async def _probe_multi_turn_async(target: PromptTarget, timeout_s: float, retrie
     except Exception as exc:
         logger.debug("Multi-turn probe could not seed conversation history: %s", exc)
         if _RAISE_ON_PROBE_ERROR.get():
-            raise CapabilityDiscoveryError("Could not prepare the multi-turn probe.") from exc
+            raise CapabilityDiscoveryError(
+                f"Could not prepare the multi-turn probe: {_describe_error(exc)}; capabilities were not changed."
+            ) from exc
         return False
 
     second = _user_text_piece(value="What did I just tell you?", conversation_id=conversation_id)
@@ -894,18 +956,28 @@ async def _check_control_request_async(
         key=lambda combination: (combination != frozenset({"text"}), len(combination), sorted(combination)),
     )
     assets = test_assets if test_assets is not None else DEFAULT_TEST_ASSETS
+    failures: list[str] = []
     with _permissive_configuration(target=target):
         for combination in combinations:
             try:
                 message = await asyncio.to_thread(_create_test_message, modalities=combination, test_assets=assets)
             except (FileNotFoundError, ValueError) as exc:
                 logger.info("Cannot prepare control input %s: %s", sorted(combination), exc)
+                failures.append(f"Could not prepare {sorted(combination)}: {_describe_error(exc)}")
                 continue
             if await _send_and_check_async(
-                target=target, message=message, timeout_s=timeout_s, retries=retries, label="Control request"
+                target=target,
+                message=message,
+                timeout_s=timeout_s,
+                retries=retries,
+                label=f"Control request {sorted(combination)}",
+                failures=failures,
             ):
                 return
-    raise CapabilityDiscoveryError("No declared input passed a control request; capabilities were not changed.")
+    reasons = "; ".join(failures) if failures else "the target declares no input types"
+    raise CapabilityDiscoveryError(
+        f"No declared input passed a control request ({reasons}); capabilities were not changed."
+    )
 
 
 async def discover_target_capabilities_async(
