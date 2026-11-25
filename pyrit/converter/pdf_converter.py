@@ -100,9 +100,11 @@ class PDFConverter(Converter):
         self._font_type = font_type
         self._font_path = str(font_path) if font_path is not None else None
         self._registered_font: str | None = None
+        self._font_hash: str | None = None
         if font_path is not None:
             font_data = Path(font_path).read_bytes()
-            self._registered_font = "PyRIT-" + hashlib.sha256(font_data).hexdigest()
+            self._font_hash = hashlib.sha256(font_data).hexdigest()[:16]
+            self._registered_font = "PyRIT-" + self._font_hash
             pdfmetrics.registerFont(TTFont(self._registered_font, BytesIO(font_data)))
         self._font_size = font_size
         self._font_color = font_color
@@ -164,7 +166,7 @@ class PDFConverter(Converter):
             params={
                 "font_type": self._font_type,
                 "font_path": self._font_path,
-                "font_hash": self._registered_font,
+                "font_hash": self._font_hash,
                 "font_size": self._font_size,
                 "page_width": self._page_width,
                 "page_height": self._page_height,
