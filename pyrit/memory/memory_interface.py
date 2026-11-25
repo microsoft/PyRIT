@@ -62,6 +62,7 @@ from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.pagination import DecodedKeysetCursor
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.memory._finding_decomposition import (
     FindingHierarchyError,
     delete_subtree_async,
@@ -212,6 +213,10 @@ logger = logging.getLogger(__name__)
 
 # Callers that don't pass the active fields' severity order get PyRIT 1.2's, which the default fields keep.
 _DEFAULT_SEVERITY_ORDER: tuple[str, ...] = tuple(DEFAULT_FINDING_FIELDS.severity_order)
+
+# Upper bound on the terms in one JSON "match any" condition. SQL Server allows 2100 bound parameters per
+# statement and each term uses two; SQLite rejects expression trees deeper than 1000 levels.
+_MAX_JSON_MATCH_BATCH = 500
 
 
 @dataclass(frozen=True)
@@ -3701,8 +3706,9 @@ class MemoryInterface(abc.ABC):
             )
             return
 
-        prepared_content = await asyncio.gather(
-            *(self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables)
+        # A failed copy cancels the others, so no media files are written for scores that are not stored.
+        prepared_content = await gather_with_cleanup_async(
+            self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables
         )
         prepared_by_source = {content.source: content for content in prepared_content}
         prepared_hashes = {content.stored: content.value_sha256 for content in prepared_content}
@@ -4330,7 +4336,9 @@ class MemoryInterface(abc.ABC):
         entries_by_id = {entry.id: entry for entry in score_entries}
 
         original_id_values = [str(original_id) for original_id in original_ids]
-        json_batch_size = max(1, self._MAX_BIND_VARS - 1)
+        # Each JSON term binds two parameters on SQL Server (the path repeats per term) and adds one level
+        # of expression depth on SQLite, so these batches are capped independently of _MAX_BIND_VARS.
+        json_batch_size = max(1, min(self._MAX_BIND_VARS, _MAX_JSON_MATCH_BATCH) - 1)
         for start in range(0, len(original_id_values), json_batch_size):
             batch = original_id_values[start : start + json_batch_size]
             scorable_condition = self._get_condition_json_array_match(
