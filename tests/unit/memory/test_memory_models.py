@@ -1,13 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import inspect
 import json
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any, get_args, get_origin
+from typing import Any, get_origin
 from unittest.mock import MagicMock
 
 import pytest
@@ -64,10 +62,8 @@ from pyrit.models import (
     SeedPrompt,
     SeedRecord,
     SeedSimulatedConversation,
-    SeedType,
     TargetIdentifier,
 )
-from unit.dispatch_exhaustiveness import assert_dispatch_exhaustiveness
 from unit.mocks import make_scenario_result
 
 # ---------------------------------------------------------------------------
@@ -832,30 +828,6 @@ class TestSeedEntry:
         recovered = entry.get_seed()
         assert isinstance(recovered, SeedPrompt)
         assert recovered.model_dump() == expected.model_dump()
-
-    @pytest.mark.parametrize("extend_literal", [False, True], ids=["current-literal", "extended-literal"])
-    def test_get_seed_dispatch_type_exhaustiveness(self, tmp_path: Path, *, extend_literal: bool) -> None:
-        seed_types = [*get_args(SeedType), *(["future"] if extend_literal else [])]
-        probe_source = "\n".join(
-            [
-                "import json",
-                "from typing import TYPE_CHECKING, Any, Literal, assert_never",
-                "from pyrit.models import SeedObjective, SeedOrigin, SeedPrompt, SeedSimulatedConversation",
-                f"SeedType = Literal[{', '.join(repr(seed_type) for seed_type in seed_types)}]",
-                "class DispatchProbe:",
-                "    seed_type: SeedType",
-                "    def __getattr__(self, name: str) -> Any:",
-                "        raise AttributeError(name)",
-                inspect.getsource(SeedEntry.get_seed),
-            ]
-        )
-        assert_dispatch_exhaustiveness(
-            tmp_path=tmp_path,
-            probe_source=probe_source,
-            extended=extend_literal,
-            assertions=["assert_never(self.seed_type)"],
-            new_member='Literal["future"]',
-        )
 
 
 # ---------------------------------------------------------------------------

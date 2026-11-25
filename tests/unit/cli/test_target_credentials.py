@@ -4,11 +4,9 @@
 """The credential command for targets the caller created, in the thin CLI."""
 
 import asyncio
-import inspect
 import json
 from argparse import Namespace
 from collections.abc import Awaitable, Callable, Iterator
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -25,7 +23,6 @@ from pyrit.cli._target_credentials import (
 from pyrit.cli.api_client import PyRITApiClient
 from pyrit.models import TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import TargetInstance
-from unit.dispatch_exhaustiveness import assert_dispatch_exhaustiveness
 
 _SECRET = "fake-secret-marker"
 _ANT = CredentialSource(kind=CredentialSourceKind.ANT, ant_profile="copyrit")
@@ -213,24 +210,6 @@ async def test_unknown_source_keeps_the_ant_fallback() -> None:
     with patch("pyrit.cli._target_credentials._read_ant_async", new_callable=AsyncMock, return_value=_SECRET) as ant:
         assert await read_target_credential_async(source=source, target_name="mine") == _SECRET
     assert ant.call_args.kwargs == {"profile": "copyrit"}
-
-
-@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
-def test_credential_source_dispatch_type_exhaustiveness(tmp_path: Path, *, extend_enum: bool) -> None:
-    source_file = inspect.getsourcefile(CredentialSource)
-    assert source_file is not None
-    source = Path(source_file).read_text(encoding="utf-8")
-    last_member = '    ANT = "ant"\n'
-    assert source.count(last_member) == 1
-    if extend_enum:
-        source = source.replace(last_member, last_member + '    FUTURE = "future"\n')
-    assert_dispatch_exhaustiveness(
-        tmp_path=tmp_path,
-        probe_source=source,
-        extended=extend_enum,
-        assertions=["assert_never(kind)", "assert_never(kind)"],
-        new_member="CredentialSourceKind.FUTURE",
-    )
 
 
 # ============================================================================

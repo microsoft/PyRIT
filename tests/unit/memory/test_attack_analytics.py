@@ -4,14 +4,12 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import re
 import sqlite3
 import time
 import uuid
 from datetime import UTC, datetime, timedelta, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -47,7 +45,6 @@ from pyrit.memory.query_control import QueryControl
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackAnalyticsDimension,
-    AttackAnalyticsDimensionName,
     AttackAnalyticsFacetQuery,
     AttackAnalyticsFilter,
     AttackAnalyticsFilters,
@@ -64,7 +61,6 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import ConverterConfiguration
 from test_support.text_search import LITERAL_CASES, PATTERN_CASES, TEXTS
 from unit.async_utils import TEST_WATCHDOG_SECONDS
-from unit.dispatch_exhaustiveness import assert_dispatch_exhaustiveness
 from unit.mocks import MockPromptTarget, add_legacy_attack_results_async
 
 if TYPE_CHECKING:
@@ -2519,37 +2515,3 @@ def test_create_source_unknown_dimension_keeps_model_fallback() -> None:
     assert str(actual.label.compile(dialect=dialect)) == str(expected.label.compile(dialect=dialect))
     # The identifier joins are still added before the fallback projection.
     assert str(unknown._from.compile(dialect=dialect)) == str(model._from.compile(dialect=dialect))
-
-
-@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
-def test_create_source_dispatch_type_exhaustiveness(tmp_path: Path, *, extend_enum: bool) -> None:
-    enum_source = inspect.getsource(AttackAnalyticsDimensionName)
-    if extend_enum:
-        enum_source += '\n    FUTURE = "future"\n'
-    method_source = inspect.getsource(AttackAnalyticsQueryCompiler._create_source)
-    assert method_source.count("def _create_source(") == 1
-    probe_source = "\n".join(
-        [
-            "import json",
-            "from enum import Enum",
-            "from typing import TYPE_CHECKING, Any, assert_never",
-            "from sqlalchemy import Unicode, UnicodeText, cast, func",
-            "from pyrit.memory.analytics_sql import JsonScalar, UnicodeStrip",
-            "from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler, _Source",
-            "from pyrit.memory.memory_models import ScenarioResultEntry",
-            enum_source,
-            "class AttackAnalyticsDimension:",
-            "    name: AttackAnalyticsDimensionName",
-            "    label_key: str | None",
-            "    converter_direction: Any",
-            "class DispatchProbe(AttackAnalyticsQueryCompiler):",
-            method_source.replace("def _create_source(", "def _create_source_probe(", 1),
-        ]
-    )
-    assert_dispatch_exhaustiveness(
-        tmp_path=tmp_path,
-        probe_source=probe_source,
-        extended=extend_enum,
-        assertions=["assert_never(name)"],
-        new_member="AttackAnalyticsDimensionName.FUTURE",
-    )

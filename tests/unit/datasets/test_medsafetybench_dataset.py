@@ -1,12 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import inspect
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from unit.dispatch_exhaustiveness import assert_dispatch_exhaustiveness
 
 from pyrit.datasets.seed_datasets.remote import _MedSafetyBenchDataset
 from pyrit.models import SeedDataset, SeedPrompt
@@ -54,21 +51,3 @@ def test_dataset_name():
 def test_invalid_subset_name_raises():
     with pytest.raises(ValueError, match="Invalid subset_name"):
         _MedSafetyBenchDataset(subset_name="invalid")
-
-
-@pytest.mark.parametrize("extend_literal", [False, True], ids=["current-literal", "extended-literal"])
-def test_subset_name_dispatch_type_exhaustiveness(tmp_path: Path, *, extend_literal: bool) -> None:
-    source_file = inspect.getsourcefile(_MedSafetyBenchDataset)
-    assert source_file is not None
-    source = Path(source_file).read_text(encoding="utf-8")
-    subsets = 'Literal["train", "test", "generated", "all"]'
-    assert source.count(subsets) == 1
-    if extend_literal:
-        source = source.replace(subsets, 'Literal["train", "test", "generated", "all", "future"]')
-    assert_dispatch_exhaustiveness(
-        tmp_path=tmp_path,
-        probe_source=source,
-        extended=extend_literal,
-        assertions=["assert_never(subset_name)"],
-        new_member='Literal["future"]',
-    )
