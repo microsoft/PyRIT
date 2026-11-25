@@ -85,10 +85,15 @@ If a start fails, report the error message as it is; it names what is missing.
    "last_score.score_value", "last_score.score_rationale", "conversation_id"]`.
 3. Read the conversation with `get_conversation_messages` only when the outcome needs it or the
    user asks: pass `attack_result_id`, `conversation_id`, `limit: 10`, and `response_fields:
-   ["messages.role", "messages.message_pieces.original_value", "pagination"]`, and while
-   `pagination.has_more` is true, call again with `cursor` set to `pagination.next_cursor`.
-   Text that ends with "… [shortened from N characters; …]" is only a preview: don't judge a
-   response from it, and say its full text is in the PyRIT GUI.
+   ["messages.role", "messages.message_pieces.original_value",
+   "messages.message_pieces.converted_value", "pagination"]`, and while `pagination.has_more`
+   is true, call again with `cursor` set to `pagination.next_cursor`. A piece's
+   `original_value` is its text before converters and `converted_value` after them: what was
+   sent, for a prompt, and what the scorer judged, for a reply. They differ when a technique
+   converts text: `bijection`, for example, decodes the reply before scoring, which garbles a
+   reply the target wrote in plain text, so compare both before trusting the score. Text that
+   ends with "… [shortened from N characters; …]" is only a preview: don't judge a response
+   from it, and say its full text is in the PyRIT GUI.
 
 ## Report
 
