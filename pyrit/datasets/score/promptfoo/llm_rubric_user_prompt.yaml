@@ -1,0 +1,18 @@
+# Ported verbatim from promptfoo's DEFAULT_GRADING_PROMPT (src/prompts/grading.ts).
+# Source revision: 825929e64f3eec83e376df98f0b3abad5e7ccee6. Copyright (c) Promptfoo. MIT License.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
+---
+name: promptfoo llm-rubric grading user prompt
+description: The user message promptfoo's llm-rubric assertion sends, holding the output under grading and the rubric.
+source: https://github.com/promptfoo/promptfoo/blob/825929e64f3eec83e376df98f0b3abad5e7ccee6/src/prompts/grading.ts
+data_type: text
+parameters:
+  - output
+  - rubric
+value: |-
+  <Output>
+  {{ output }}
+  </Output>
+  <Rubric>
+  {{ rubric }}
+  </Rubric>

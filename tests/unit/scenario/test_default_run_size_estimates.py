@@ -57,6 +57,7 @@ from pyrit.scenario.scenarios.garak import (
     WebInjection,
     WebInjectionTechnique,
 )
+from pyrit.scenario.scenarios.promptfoo import Hallucination
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
@@ -608,6 +609,31 @@ async def test_system_prompt_extraction_uses_one_shared_generation_cap_async(
     else:
         assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
         assert estimate.effective_parameters == {"prompt_cap": expected}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({}, 5),
+        ({"max_per_dataset": 2}, 2),
+        ({"max_per_dataset": 7}, 5),
+        ({"max_total": 3}, 3),
+        ({"sources": [{"name": "my_rubric_dataset", "max_size": 8}]}, 8),
+        ({"sources": [{"name": "my_rubric_dataset"}]}, None),
+    ],
+)
+async def test_promptfoo_bounds_generated_tests_and_keeps_supplied_dataset_limits_async(
+    *, overrides: dict[str, Any], expected: int | None
+) -> None:
+    scenario = Hallucination(objective_scorer=_scorer())
+    scenario.set_params_from_args(args={"purpose": "A travel agent.", "num_tests": 5, "dataset_overrides": overrides})
+    estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.estimated_attack_count == expected
+    if expected is None:
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+    else:
+        assert estimate.dataset_size == scenario_dataset_size_from_limit(expected)
 
 
 @pytest.mark.usefixtures("patch_central_database")

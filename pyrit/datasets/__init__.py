@@ -17,6 +17,10 @@ if TYPE_CHECKING:
     )
     from pyrit.datasets.jailbreak.text_jailbreak import TextJailBreak
     from pyrit.datasets.seed_datasets.generated.assert_provider import AssertProvider
+    from pyrit.datasets.seed_datasets.generated.promptfoo_plugin_provider import (
+        PromptfooPlugin,
+        PromptfooPluginProvider,
+    )
     from pyrit.datasets.seed_datasets.generated.target_objective_provider import TargetObjectiveProvider
     from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
     from pyrit.datasets.seed_datasets.seed_metadata import (
@@ -29,6 +33,8 @@ if TYPE_CHECKING:
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "SeedDatasetDescriptor": "pyrit.datasets.seed_datasets.seed_metadata",
     "AssertProvider": "pyrit.datasets.seed_datasets.generated.assert_provider",
+    "PromptfooPlugin": "pyrit.datasets.seed_datasets.generated.promptfoo_plugin_provider",
+    "PromptfooPluginProvider": "pyrit.datasets.seed_datasets.generated.promptfoo_plugin_provider",
     "list_assert_behavior_presets": "pyrit.datasets.assert_library",
     "list_assert_suite_presets": "pyrit.datasets.assert_library",
     "load_assert_behavior_preset": "pyrit.datasets.assert_library",

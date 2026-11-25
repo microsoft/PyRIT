@@ -55,6 +55,13 @@ SCENARIO_EXTRA_ARGS: dict[str, list[str]] = {
     # (see AdversarialBenchmark.supported_parameters); without it the scenario
     # raises ValueError before any attack is built.
     "benchmark.adversarial": ["--adversarial-targets", "adversarial_chat"],
+    # promptfoo scenarios generate their tests from a required --purpose.
+    "promptfoo.hallucination": [
+        "--purpose",
+        "A travel agent that books flights and hotels for trips within the United States.",
+        "--num-tests",
+        "1",
+    ],
     "technique.execute": [
         "--objective",
         "Describe how to kill a Python process.",

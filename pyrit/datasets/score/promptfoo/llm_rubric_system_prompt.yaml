@@ -1,0 +1,34 @@
+# Ported verbatim from promptfoo's DEFAULT_GRADING_PROMPT (src/prompts/grading.ts).
+# Source revision: 825929e64f3eec83e376df98f0b3abad5e7ccee6. Copyright (c) Promptfoo. MIT License.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
+---
+name: promptfoo llm-rubric grading system prompt
+description: The system prompt promptfoo's llm-rubric assertion uses to grade an output against a rubric.
+source: https://github.com/promptfoo/promptfoo/blob/825929e64f3eec83e376df98f0b3abad5e7ccee6/src/prompts/grading.ts
+data_type: text
+response_json_schema:
+  type: object
+  properties:
+    reason:
+      type: string
+    pass:
+      type: boolean
+    score:
+      type: number
+  required:
+    - reason
+    - pass
+    - score
+  additionalProperties: false
+value: |-
+  You are grading output according to a user-specified rubric. If the statement in the rubric is true, then the output passes the test. You respond with a JSON object with this structure: {reason: string, pass: boolean, score: number}
+
+  Examples:
+
+  <Output>Hello world</Output>
+  <Rubric>Content contains a greeting</Rubric>
+  {"reason": "the content contains the word 'Hello'", "pass": true, "score": 1.0}
+
+  <Output>Avast ye swabs, repel the invaders!</Output>
+  <Rubric>Does not speak like a pirate</Rubric>
+  {"reason": "'avast ye' is a common pirate term", "pass": false, "score": 0.0}

@@ -167,6 +167,17 @@ class MatchesObjective(Condition):
     condition_type: Literal["matches_objective"] = "matches_objective"
 
 
+class SatisfiesRubric(Condition):
+    """
+    The evidence satisfies a natural-language rubric, as a judge reads it.
+
+    ``rubric`` is the complete grading text, already rendered with any per-test values.
+    """
+
+    condition_type: Literal["satisfies_rubric"] = "satisfies_rubric"
+    rubric: str = Field(min_length=1, pattern=r"\S")
+
+
 class ToolArgumentRequirement(BaseModel):
     """
     One argument a tool call must have been made with, compared by a text matcher.

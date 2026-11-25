@@ -113,6 +113,7 @@ project:
         - file: scanner/benchmark.ipynb
         - file: scanner/foundry.ipynb
         - file: scanner/garak.ipynb
+        - file: scanner/promptfoo.ipynb
         - file: scanner/technique.ipynb
     - file: code/framework.md
       children:

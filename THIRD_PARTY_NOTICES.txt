@@ -235,3 +235,45 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ---------------------------------------------------------
+
+promptfoo red-team plugin and grading prompts - MIT
+https://github.com/promptfoo/promptfoo
+
+Copyright (c) Promptfoo 2025
+
+PyRIT includes prompts from promptfoo at revision
+825929e64f3eec83e376df98f0b3abad5e7ccee6:
+
+- pyrit/datasets/score/promptfoo/llm_rubric_system_prompt.yaml and
+  llm_rubric_user_prompt.yaml: the llm-rubric grading system and user prompts
+  (src/prompts/grading.ts), unchanged.
+- pyrit/datasets/promptfoo/response_attribution_guidance.yaml: the red-team
+  grader's response attribution guidance (src/redteam/plugins/base.ts), unchanged.
+- pyrit/datasets/promptfoo/plugins/: plugin generation templates and grading
+  rubrics (src/redteam/plugins/), with descriptions from
+  src/redteam/constants/metadata.ts. Each file's header states how its
+  generation template was adapted to PyRIT's objective generator.
+
+promptfoo is not a runtime dependency.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---------------------------------------------------------
