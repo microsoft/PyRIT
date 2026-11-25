@@ -32,8 +32,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
 ]
-requires-python = ">=3.11, <3.15"
+requires-python = ">=3.11, <3.16"
 dependencies = [
     "aiofiles>=24,<26",
     "aiohttp>=3.13.4",
@@ -213,6 +214,10 @@ filterwarnings = [
     "error:MessageScorableResolver\\.resolve:DeprecationWarning",
     # True/false verdicts are set through Score.set_value; compatibility tests capture the warning.
     "error:Assigning Score\\.score_value:DeprecationWarning",
+    # Findings use configurable fields; tests of the PyRIT 1.2 finding compatibility capture the warnings.
+    "error:pyrit\\.models\\.(finding\\.)?FindingSeverity:DeprecationWarning",
+    "error:Finding\\w*[.(](description|severity|harm_type):DeprecationWarning",
+    "error:GET /operations/finding-options:DeprecationWarning",
     # TAP and PAIR take a plain AttackScoringConfig; compatibility tests capture the warning.
     "error:TAPAttackScoringConfig:DeprecationWarning",
 ]
@@ -323,18 +328,10 @@ unsound-assignment = "ignore"
 # deletes this override. Do not add files here: new code is checked by the rule.
 [[tool.ty.overrides]]
 include = [
-    "pyrit/cli/api_client.py",
-    "pyrit/cli/pyrit_scan.py",
-    "pyrit/common/cli_helpers.py",
-    "pyrit/common/yaml_loadable.py",
     "pyrit/executor/promptgen/gcg/attack/base/attack_manager.py",
     "pyrit/executor/promptgen/gcg/attack/gcg/candidate_proposer.py",
     "pyrit/executor/promptgen/gcg/attack/gcg/gcg_attack.py",
     "pyrit/executor/promptgen/gcg/default_implementations.py",
-    "pyrit/memory/alembic/env.py",
-    "pyrit/memory/attack_analytics.py",
-    "pyrit/memory/azure_sql_memory.py",
-    "pyrit/memory/memory_interface.py",
     "pyrit/models/harm_category.py",
     "pyrit/models/messages/conversations.py",
     "pyrit/models/parameter.py",
