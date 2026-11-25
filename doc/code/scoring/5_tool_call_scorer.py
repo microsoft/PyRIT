@@ -549,12 +549,17 @@ print(f"Trace the backend does not have: {missing.acquisition.value}")
 # Injected history in the `simulated_assistant` and `simulated_tool` roles does
 # not count either.
 #
-# Stored messages are partial evidence. Hosted tools, several response section
-# types, and targets that execute tools themselves leave no output pieces. For
-# subset conditions, the scorer returns true or undetermined and never false. `OpenAIResponseTarget`
-# records these pieces when it runs `custom_functions`. Combine it with
-# `OtelToolCallScorer` under `TrueFalseScoreAggregator.OR` when trace evidence is
-# also available.
+# Stored messages are usually partial evidence. Hosted tools, several response
+# section types, and targets that execute tools themselves leave no output
+# pieces, so a missing tool is undetermined rather than false.
+# `OpenAIResponseTarget` records these pieces when it runs `custom_functions`,
+# and records `ToolCaptureCoverage` on each model response. Coverage is complete
+# when the target ran every function call itself and the provider ran no tool of
+# its own; otherwise it names a gap such as `hosted_tool_call`. When every
+# response through the scored message is complete and every request has a
+# response, the stored messages rule out other calls and a missing tool is
+# false. Combine it with `OtelToolCallScorer` under
+# `TrueFalseScoreAggregator.OR` when trace evidence is also available.
 
 # %% [markdown]
 # ## Require that nothing else ran
@@ -568,10 +573,10 @@ print(f"Trace the backend does not have: {missing.acquisition.value}")
 # tool disproves the match, even when acquisition reports `Acquisition.PARTIAL`
 # or `Acquisition.ERROR`, provided the event was retained. Confirming it needs
 # complete evidence, because only that rules out every other tool. So
-# `OtelToolCallScorer` returns true only for complete, fully correlated traces,
-# and `MessageToolCallScorer` returns false for a stored execution of an unnamed
-# tool and is otherwise undetermined. Use `OtelToolCallScorer` when an exhaustive
-# check needs to be able to pass.
+# `OtelToolCallScorer` returns true only for complete, fully correlated traces.
+# `MessageToolCallScorer` returns false for a stored execution of an unnamed
+# tool, decides the rest only from complete stored messages as described above,
+# and is otherwise undetermined.
 #
 # ```python
 # ToolsCalled(tools=(ToolCallRequirement(name="read_file"),), exhaustive=True)
