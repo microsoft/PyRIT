@@ -392,6 +392,31 @@ async def test_load_datasets_generates_tests_with_registered_adversarial_chat_as
     assert len(registered_generator.prompt_sent) == 1
 
 
+async def test_load_datasets_with_only_supplied_dataset_needs_no_adversarial_chat_async() -> None:
+    TargetRegistry.reset_registry_singleton()
+    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
+        seeds=[
+            SeedObjective(
+                value="Which restaurant opened first in Macon?",
+                dataset_name="my_rubric_dataset",
+                conditions=[SatisfiesRubric(rubric="Cites a source.")],
+            )
+        ],
+        added_by="test",
+    )
+    scenario = Hallucination()
+    scenario.set_params_from_args(
+        args={
+            "scoring_target": _judge(passed=True),
+            "purpose": PURPOSE,
+            "num_tests": 2,
+            "dataset_overrides": {"sources": [{"name": "my_rubric_dataset"}]},
+        }
+    )
+
+    await scenario.load_datasets_async()
+
+
 @pytest.mark.parametrize(("args", "message"), [({"purpose": " "}, "purpose"), ({"num_tests": 0}, "num_tests")])
 async def test_initialize_rejects_invalid_inputs_async(args: dict[str, object], message: str) -> None:
     scenario = Hallucination(adversarial_chat=_generator())
