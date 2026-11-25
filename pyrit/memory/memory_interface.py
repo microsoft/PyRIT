@@ -54,6 +54,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql import visitors
 from sqlalchemy.sql.elements import BindParameter, ClauseElement
+from sqlalchemy.sql.operators import asc_op, desc_op
 
 from pyrit.analytics import compute_outcome_statistics
 from pyrit.analytics.outcome_statistics import success_percentage
@@ -185,6 +186,7 @@ from pyrit.models import (
     ScoreStatus,
     Seed,
     SeedDataset,
+    SeedDatasetGroupProfile,
     SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
@@ -222,6 +224,33 @@ class PreparedSeedBatch:
     def seeds(self) -> list[Seed[Any]]:
         """Independent copies of the prepared seeds for candidate validation."""
         return [seed.model_copy(deep=True) for seed in self._seeds]
+
+
+def _order_by_attribute_keys(order_by: Any) -> "list[tuple[str, bool]]":
+    """
+    Extract ``(attribute name, ascending)`` pairs from a plain column ``order_by`` clause.
+
+    Batched queries merge rows that came back from separate statements, so the
+    caller's ordering has to be re-applied in Python across the merged rows.
+    Only plain ascending or descending single columns are supported, which is
+    every ordering the batched call sites use.
+
+    Returns:
+        list[tuple[str, bool]]: One ``(attribute name, ascending)`` pair per order key.
+
+    Raises:
+        ValueError: If the clause is not made of plain ascending or descending columns.
+    """
+    expressions = order_by if isinstance(order_by, (list, tuple)) else [order_by]
+    keys: list[tuple[str, bool]] = []
+    for expression in expressions:
+        inner = getattr(expression, "element", expression)
+        name = getattr(inner, "key", None) or getattr(inner, "name", None)
+        modifier = getattr(expression, "modifier", None)
+        if name is None or modifier not in (None, asc_op, desc_op):
+            raise ValueError("Cannot merge a batched query whose order_by clause has no plain columns.")
+        keys.append((name, modifier is not desc_op))
+    return keys
 
 
 def _deprecate_message_labels(*, method: str) -> None:
@@ -3071,12 +3100,16 @@ class MemoryInterface(abc.ABC):
             batch = batch_values[i : i + effective_size]
             conditions = other_conditions + [batch_column.in_(batch)]
 
+            # The limit cannot select inside one batch alone, but rows past it
+            # in a batch can never be in the overall top rows either, so each
+            # statement may fetch at most the limit it will be trimmed to.
             results = self._query_entries(
                 model_class,
                 conditions=and_(*conditions) if conditions else None,
                 distinct=distinct,
                 join_scores=join_scores,
                 order_by=order_by,
+                limit=limit,
             )
 
             # Deduplicate by primary key (id)
@@ -3090,6 +3123,19 @@ class MemoryInterface(abc.ABC):
                 else:
                     all_results.append(result)
 
+        if order_by is not None:
+            # Rows come back per statement, so the merged sequence is in batch
+            # order and any limit only applied inside each batch. The caller's
+            # ordering is re-applied across the merged rows before the limit
+            # trims. Rows that tie on every order key keep their row id order,
+            # so the result does not depend on batch order, but which tied rows
+            # each statement returned under its limit is still up to the database.
+            order_keys = _order_by_attribute_keys(order_by)
+            all_results.sort(key=lambda row: str(getattr(row, "id", "")))
+            for name, ascending in reversed(order_keys):
+                all_results.sort(key=lambda row: getattr(row, name), reverse=not ascending)
+        if limit is not None:
+            return all_results[:limit]
         return all_results
 
     def _query_with_list_params(
@@ -6494,6 +6540,110 @@ class MemoryInterface(abc.ABC):
         """
         for dataset in datasets:
             await self.add_seeds_to_memory_async(seeds=dataset.seeds, added_by=added_by)
+
+    @staticmethod
+    def _build_seed_dataset_group_profiles_statement(*, metadata_keys: Sequence[str]) -> "Select[Any]":
+        """
+        Bound profile materialization by boolean facts, not conversation lengths.
+
+        Returns:
+            Select[Any]: Portable aggregate query without seed bodies or taxonomy materialization.
+        """
+        keys = tuple(dict.fromkeys(metadata_keys))
+        objective = SeedEntry.seed_type == "objective"
+
+        def key_present(key: str) -> "ColumnElement[bool]":
+            items = JsonArrayItems(JsonContainer(SeedEntry.prompt_metadata, "$")).table_valued(column("key", Unicode))
+            return select(1).select_from(items).where(items.c.key == key).correlate(SeedEntry).exists()
+
+        flags = [
+            case((and_(objective, key_present(key)), 1), else_=0).label(f"metadata_{index}")
+            for index, key in enumerate(keys)
+        ]
+        # SQL Server requires correlated key-presence subqueries to be projected before aggregation.
+        seeds = (
+            select(
+                SeedEntry.dataset_name,
+                func.coalesce(SeedEntry.prompt_group_id, SeedEntry.id).label("group_id"),
+                # Standalone seed IDs and explicit group IDs occupy different grouping namespaces.
+                case((SeedEntry.prompt_group_id.is_(None), 1), else_=0).label("ungrouped"),
+                SeedEntry.seed_type,
+                SeedEntry.role,
+                *flags,
+            )
+            .where(SeedEntry.dataset_name.is_not(None), SeedEntry.dataset_name != "")
+            .subquery()
+        )
+        prompt = seeds.c.seed_type == "prompt"
+
+        def flag(condition: "ColumnElement[bool]") -> "ColumnElement[Any]":
+            return case((condition, 1), else_=0)
+
+        def seed_count(condition: "ColumnElement[bool]") -> "ColumnElement[Any]":
+            return func.sum(flag(condition))
+
+        # Each group's facts are columns here, so the outer query groups by plain columns. SQL Server can't
+        # match bound parameters repeated in SELECT and GROUP BY (see attack_analytics_query.py).
+        groups = (
+            select(
+                seeds.c.dataset_name,
+                flag(seed_count(seeds.c.seed_type == "objective") == 1).label("single_objective"),
+                flag(func.count() == 1).label("single_seed"),
+                # Unset roles can hydrate as user or inherit their sequence's role; keep them unverified.
+                flag(seed_count(and_(prompt, or_(seeds.c.role == "user", seeds.c.role.is_(None)))) > 0).label(
+                    "has_user_prompt"
+                ),
+                flag(seed_count(and_(prompt, seeds.c.role != "user")) > 0).label("has_non_user_prompt"),
+                flag(seed_count(seeds.c.seed_type == "simulated_conversation") > 0).label("has_simulated_conversation"),
+                *(func.max(seeds.c[f"metadata_{index}"]).label(f"metadata_{index}") for index in range(len(keys))),
+            )
+            .group_by(seeds.c.dataset_name, seeds.c.ungrouped, seeds.c.group_id)
+            .subquery()
+        )
+        columns = [
+            groups.c.dataset_name,
+            groups.c.single_objective,
+            groups.c.single_seed,
+            groups.c.has_user_prompt,
+            groups.c.has_non_user_prompt,
+            groups.c.has_simulated_conversation,
+            *(groups.c[f"metadata_{index}"] for index in range(len(keys))),
+        ]
+        return select(*columns, func.count().label("group_count")).group_by(*columns)
+
+    def _execute_get_seed_dataset_group_profiles(
+        self, *, metadata_keys: Sequence[str]
+    ) -> Sequence[SeedDatasetGroupProfile]:
+        keys = tuple(dict.fromkeys(metadata_keys))
+        statement = self._build_seed_dataset_group_profiles_statement(metadata_keys=keys)
+        with closing(self._get_session()) as session:
+            rows = session.execute(statement).mappings().all()
+        return [
+            SeedDatasetGroupProfile(
+                dataset_name=row["dataset_name"],
+                group_count=int(row["group_count"]),
+                single_objective=bool(row["single_objective"]),
+                single_seed=bool(row["single_seed"]),
+                has_user_prompt=bool(row["has_user_prompt"]),
+                has_non_user_prompt=bool(row["has_non_user_prompt"]),
+                has_simulated_conversation=bool(row["has_simulated_conversation"]),
+                metadata_keys=tuple(key for index, key in enumerate(keys) if row[f"metadata_{index}"]),
+            )
+            for row in rows
+        ]
+
+    async def get_seed_dataset_group_profiles_async(
+        self, *, metadata_keys: Sequence[str] = ()
+    ) -> Sequence[SeedDatasetGroupProfile]:
+        """
+        Read compressed group structure without hydrating seeds, policies, or prompt values.
+
+        Returns:
+            Sequence[SeedDatasetGroupProfile]: Counts of groups sharing the same stored structural facts.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_seed_dataset_group_profiles, metadata_keys=tuple(metadata_keys)
+        )
 
     def _execute_get_seed_dataset_summaries(self) -> Sequence[SeedDatasetSummary]:
         """

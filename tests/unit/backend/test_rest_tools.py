@@ -7,12 +7,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from pydantic import BaseModel
+from starlette.applications import Starlette
 
 from pyrit import _compatibility
 from pyrit.backend.main import app as backend_app
 from pyrit.backend.rest_tools import RestToolset
+from pyrit.backend.routes import scenarios as scenario_routes
+from pyrit.backend.services import ScenarioService
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.registry import ScorerRegistry, TargetRegistry
@@ -44,6 +47,7 @@ BACKEND_PATH_VALUES = {
     "attack_result_id": "c2d7e8f1-0a3b-4c5d-8e9f-1a2b3c4d5e6f",
 }
 INVALID_THING_ID = "Invalid path parameters: thing_id. Pass IDs and names exactly as a tool returned them."
+INVALID_FILE_PATH = "Invalid path parameters: file_path. Pass IDs and names exactly as a tool returned them."
 
 
 class ThingRequest(BaseModel):
@@ -104,7 +108,23 @@ def toolset() -> Iterator[RestToolset]:
         """Create a thing."""
         return {"created": thing.model_dump()}
 
-    offered = ("get_thing", "list_things", "get_notes", "get_conversation", "create_thing")
+    files = APIRouter(prefix="/files")
+
+    @files.get("/{file_path:path}/size")
+    async def get_file_size(file_path: str) -> dict[str, object]:
+        """Get a file's size, which is not offered and is matched before the file itself."""
+        return {"size": 1}
+
+    @files.get("/{file_path:path}")
+    async def get_file(file_path: str) -> dict[str, object]:
+        """Get one file by its path."""
+        return {"path": file_path}
+
+    app.include_router(files, prefix="/api")
+    # Like the bundled frontend, a mount registered last that takes every path no route matched.
+    app.mount("/", Starlette())
+
+    offered = ("get_thing", "list_things", "get_notes", "get_conversation", "create_thing", "get_file")
     with patch.object(RestToolset, "OPERATIONS", offered):
         yield RestToolset(app=app)
 
@@ -112,7 +132,14 @@ def toolset() -> Iterator[RestToolset]:
 def test_tools_are_rest_operations_named_after_their_route_functions(toolset: RestToolset) -> None:
     operations = {operation.name: operation for operation in toolset.operations}
 
-    assert list(operations) == ["get_thing", "list_things", "get_notes", "get_conversation", "create_thing"]
+    assert list(operations) == [
+        "get_thing",
+        "list_things",
+        "get_notes",
+        "get_conversation",
+        "create_thing",
+        "get_file",
+    ]
     assert operations["get_thing"].description.startswith("GET /api/things/{thing_id}\n\nGet one thing.")
     assert operations["get_thing"].input_schema["required"] == ["thing_id"]
     assert set(operations["list_things"].input_schema["properties"]) == {"limit", RestToolset.RESPONSE_FIELDS}
@@ -154,12 +181,13 @@ async def test_call_sends_the_body(toolset: RestToolset) -> None:
         ("no_such_tool", {}, "Unknown tool 'no_such_tool'."),
         ("get_thing", {"thing_id": None}, "Missing path parameters: thing_id."),
         # Each would reach another route or none: more segments, a static route registered first, the list
-        # route ("."), the API root (".."), and a path with a trailing slash.
+        # route ("."), the API root (".."), a path with a trailing slash, and both of two path routes.
         ("get_thing", {"thing_id": "a/secret"}, INVALID_THING_ID),
         ("get_thing", {"thing_id": "featured"}, INVALID_THING_ID),
         ("get_thing", {"thing_id": "."}, INVALID_THING_ID),
         ("get_thing", {"thing_id": ".."}, INVALID_THING_ID),
         ("get_thing", {"thing_id": ""}, INVALID_THING_ID),
+        ("get_file", {"file_path": "docs/size"}, INVALID_FILE_PATH),
     ],
 )
 async def test_call_reports_unknown_tools_and_invalid_path_parameters(
@@ -171,45 +199,45 @@ async def test_call_reports_unknown_tools_and_invalid_path_parameters(
     assert json.loads(text) == {"error": error}
 
 
-async def test_large_list_keeps_leading_items_without_a_cursor_past_the_cut_ones(toolset: RestToolset) -> None:
-    with patch.object(RestToolset, "MAX_RESPONSE_CHARS", 1_000):
-        text, _ = await toolset.call_async(name="list_things", arguments={"limit": 100}, authorization=None)
+async def test_path_converter_parameter_keeps_its_slashes(toolset: RestToolset) -> None:
+    text, failed = await toolset.call_async(
+        name="get_file", arguments={"file_path": "docs/guides/setup.md"}, authorization=None
+    )
 
-    result = json.loads(text)
-    kept = len(result["items"])
-    assert len(text) <= 1_000
-    assert kept > 0
-    assert [item["name"] for item in result["items"]] == [f"thing-{index}" for index in range(kept)]
-    assert result["items_omitted"] == 100 - kept
-    # The cursor continues after thing-99, so following it would skip every cut item.
-    assert result["pagination"] == {"limit": 100, "has_more": True}
+    assert failed is False
+    assert json.loads(text) == {"path": "docs/guides/setup.md"}
+
+
+async def test_response_over_the_limit_is_a_note_that_names_its_fields(toolset: RestToolset) -> None:
+    with patch.object(RestToolset, "MAX_RESPONSE_CHARS", 1_000):
+        text, failed = await toolset.call_async(name="list_things", arguments={"limit": 100}, authorization=None)
+
+    page = {
+        "items": [{"name": f"thing-{index}", "text": "x" * 50} for index in range(100)],
+        "pagination": {"limit": 100, "has_more": True, "next_cursor": "after-the-page"},
+    }
+    length = len(json.dumps(page, separators=(",", ":")))
+    # No partial page: its continuation cursor would skip whatever was left out.
+    assert failed is False
+    assert json.loads(text) == {
+        "note": f"The response has {length:,} characters, over the 1,000 limit. Request fewer at a time, such as "
+        "with a smaller limit, or pass response_fields to keep only what you need.",
+        "available_fields": ["items", "pagination"],
+    }
 
 
 @pytest.mark.parametrize("cursor_field", ["next_cursor", "next_group_offset"])
-async def test_large_response_cuts_its_largest_list_and_stays_valid_json(
-    toolset: RestToolset, cursor_field: str
-) -> None:
+async def test_response_that_fits_keeps_its_continuation_field(toolset: RestToolset, cursor_field: str) -> None:
     with patch.object(RestToolset, "MAX_RESPONSE_CHARS", 1_000):
         text, _ = await toolset.call_async(
-            name="get_notes", arguments={"count": 30, "length": 100, "cursor_field": cursor_field}, authorization=None
+            name="get_notes", arguments={"count": 3, "cursor_field": cursor_field}, authorization=None
         )
 
-    result = json.loads(text)
-    assert len(text) <= 1_000
-    assert result["notebook"] == "n"
-    assert 0 < len(result["messages"]) < 30
-    assert result["messages_omitted"] == 30 - len(result["messages"])
-    assert cursor_field not in result
-
-
-async def test_response_too_large_to_cut_names_its_fields(toolset: RestToolset) -> None:
-    with patch.object(RestToolset, "MAX_RESPONSE_CHARS", 1_000):
-        text, _ = await toolset.call_async(name="get_notes", arguments={"length": 990}, authorization=None)
-
-    result = json.loads(text)
-    assert len(text) <= 1_000
-    assert result["available_fields"] == ["messages", "next_cursor", "notebook"]
-    assert "response_fields" in result["note"]
+    assert json.loads(text) == {
+        "notebook": "n",
+        "messages": [{"text": "m" * 10}] * 3,
+        cursor_field: "after-the-page",
+    }
 
 
 async def test_long_text_is_a_preview_unless_its_field_is_requested(toolset: RestToolset) -> None:
@@ -220,17 +248,43 @@ async def test_long_text_is_a_preview_unless_its_field_is_requested(toolset: Res
         authorization=None,
     )
 
-    assert json.loads(preview)["messages"] == [{"text": "m" * 1_000 + "…"}]
+    assert json.loads(preview)["messages"] == [
+        {"text": "m" * 1_000 + "… [shortened from 1,500 characters; the full text is in the PyRIT GUI or REST API]"}
+    ]
     assert json.loads(full) == {"messages": [{"text": "m" * 1_500}]}
 
 
-async def test_named_long_text_that_does_not_fit_comes_back_as_a_preview(toolset: RestToolset) -> None:
-    text, _ = await toolset.call_async(
+async def test_named_text_too_long_for_any_response_is_a_marked_preview(toolset: RestToolset) -> None:
+    text, failed = await toolset.call_async(
         name="get_conversation", arguments={RestToolset.RESPONSE_FIELDS: ["messages.text"]}, authorization=None
     )
 
-    # The reply after an oversized prompt stays readable instead of the whole response becoming a note.
-    assert json.loads(text) == {"messages": [{"text": "q" * 1_000 + "…"}, {"text": "Sure, here is the answer."}]}
+    # No page could hold the prompt, so it is shortened and the reply after it stays readable.
+    assert failed is False
+    assert json.loads(text) == {
+        "messages": [
+            {
+                "text": "q" * 1_000
+                + "… [shortened from 50,000 characters; the full text is in the PyRIT GUI or REST API]"
+            },
+            {"text": "Sure, here is the answer."},
+        ]
+    }
+
+
+async def test_named_text_over_the_limit_is_a_note_instead_of_previews(toolset: RestToolset) -> None:
+    text, _ = await toolset.call_async(
+        name="get_notes",
+        arguments={"count": 30, "length": 2_000, RestToolset.RESPONSE_FIELDS: ["messages.text"]},
+        authorization=None,
+    )
+
+    length = len(json.dumps({"messages": [{"text": "m" * 2_000}] * 30}, separators=(",", ":")))
+    assert json.loads(text) == {
+        "note": f"The response has {length:,} characters, over the 40,000 limit. Request fewer at a time, such as "
+        "with a smaller limit, or pass response_fields to keep only what you need.",
+        "available_fields": ["messages"],
+    }
 
 
 async def test_response_fields_keep_matches_and_name_alternatives_for_misses(toolset: RestToolset) -> None:
@@ -295,6 +349,8 @@ def test_backend_offers_the_selected_operations() -> None:
     [
         ("get_attack", {"attack_result_id": "attack-options"}),
         ("get_attack", {"attack_result_id": "converter-options"}),
+        ("get_attack", {"attack_result_id": "a/b"}),
+        ("get_scenario", {"scenario_name": "team/custom-scan/datasets"}),
         ("get_scenario_run", {"scenario_result_id": "queue"}),
         ("get_conversation_messages", {"attack_result_id": "conversations", "conversation_id": "c"}),
     ],
@@ -302,7 +358,8 @@ def test_backend_offers_the_selected_operations() -> None:
 async def test_backend_tool_does_not_send_a_value_that_reaches_another_route(
     name: str, arguments: dict[str, object]
 ) -> None:
-    # Each value matches a route registered before the tool's own, such as GET /api/scenarios/runs/queue.
+    # Each value reaches another route, such as GET /api/scenarios/runs/queue registered before the tool's own,
+    # or none.
     toolset = RestToolset(app=backend_app)
     with patch.object(toolset, "_send_async", new_callable=AsyncMock) as send:
         text, failed = await toolset.call_async(name=name, arguments=arguments, authorization=None)
@@ -323,6 +380,19 @@ async def test_backend_tools_send_ids_and_names_to_their_own_routes() -> None:
                 rejected.append(operation.name)
 
     assert rejected == []
+
+
+async def test_backend_get_scenario_receives_a_name_with_a_slash() -> None:
+    service = MagicMock(spec=ScenarioService)
+    service.get_scenario_async = AsyncMock(return_value=None)
+    with patch.object(scenario_routes, "get_scenario_service", return_value=service):
+        text, failed = await RestToolset(app=backend_app).call_async(
+            name="get_scenario", arguments={"scenario_name": "team/custom-scan"}, authorization=None
+        )
+
+    assert service.get_scenario_async.call_args.kwargs == {"scenario_name": "team/custom-scan"}
+    assert failed is True
+    assert json.loads(text)["error"]["detail"] == "Scenario 'team/custom-scan' not found"
 
 
 def _references(node: object) -> list[str]:

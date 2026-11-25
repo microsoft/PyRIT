@@ -505,6 +505,21 @@ alias metadata. `model_dump(by_alias=False)` likewise deliberately exposes
 `register_instance`; use the default or `by_alias=True` for the existing JSON
 shape. Copy updates and field filters accept either name.
 
+### Scenario dataset compatibility
+
+`GET /api/scenarios/catalog/{scenario_name}/datasets` returns the named catalog datasets the
+scenario can run, as a `DatasetListResponse`. It never fetches providers or calls a model. An
+unknown scenario returns 404, and a listing the scenario can't configure returns 400.
+
+- A scenario without dataset requirements gets every named dataset its source options allow:
+  all of them for `ANY`, and only the permitted sources for `SUBSET` and `FIXED`.
+- A scenario with dataset requirements reports `dataset_options.compatible_only`, as
+  `foundry.assert_policy` does. It gets only the stored datasets whose full contents pass its
+  checks, plus any required ingredient datasets. Datasets that aren't stored are left out.
+
+A listed name is not a launch guarantee. The run-size estimate and launch check the selected
+contents again, so data changed after the listing is rejected there with the reason.
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
@@ -892,65 +907,24 @@ Stop these test-owned servers after the run.
 
 ### REST tools
 
-MCP tools are generated from this server's OpenAPI document; none are hand-written. Each
-operation named in `RestToolset.OPERATIONS` (`pyrit/backend/rest_tools.py`) becomes a tool
-named after its route function, such as `list_scenario_runs`. The tool takes the operation's
-description, its path and query parameters, and its JSON body as `body`. A call is an
-in-process REST request with the caller's `Authorization` header, so it gets the same
-validation, errors, authentication, and runtime admission as any other request. Error
-responses go back to the model as results.
-
-Responses are compacted for the model. Component identifiers keep only readable fields, such
-as class, model, and endpoint, plus the `hash` that a request uses to pin a registered
-component, as in `"objective_scorer": {"registry_name": "...", "identifier_hash": "..."}`.
-Null values and empty lists and objects are dropped; empty strings stay, because some are real
-values, such as an analytics bucket for an empty label. Text over 1,000 characters is shortened
-to a preview unless its field is named in `response_fields`. A response over 40,000 characters
-keeps the leading entries of its largest list and reports how many it left out. Continuation
-fields such as `next_cursor` are then dropped, because they would skip those entries, so the
-model asks for fewer at a time instead. If not even one entry fits, the response is replaced by
-a note that lists its fields. Every tool also accepts `response_fields`: dot paths, such as
-`items.scenario_name`, that keep only part of a successful response. A path that matches no
-field is reported with the field names available where it stopped matching; a path to an
-empty value is not.
-
-To offer another operation, add its name to `RestToolset.OPERATIONS`. The list is curated
-because every tool schema is sent with each model request, and some operations, such as
-reading environment files, must not be given to a model. A call is sent only if its path
-matches that operation's route and no other, so a path parameter such as `queue` or `.`
-can't reach another route.
+MCP tools are generated from this server's OpenAPI document; none are hand-written. To offer
+another operation as a tool, add its route function's name to `RestToolset.OPERATIONS` in
+`pyrit/backend/rest_tools.py`. The list is curated because every tool schema is sent with each
+model request, and some operations, such as reading environment files, must not be given to a
+model.
 
 ### MCP
 
-External MCP clients can use the same [tools](#rest-tools) over Streamable HTTP at `/api/mcp`
-(no trailing slash). Authentication and runtime admission apply as for the rest of `/api`, but
-the compatibility header is not required. Responses are JSON, so the endpoint accepts only
-POST. A request with an `Origin` header, which browsers send, must come from an origin in
-`PYRIT_CORS_ORIGINS`, where `*` allows any, as it does for CORS; MCP clients outside a browser
-send none. For example, with GitHub Copilot CLI:
+External MCP clients can use these [tools](#rest-tools) over Streamable HTTP at `/api/mcp`. To
+connect one, see [Using an AI Agent](../../doc/scanner/0_scanner.md#using-an-ai-agent).
+Authentication and runtime admission apply as for the rest of `/api`, and the endpoint accepts
+only POST. A request with an `Origin` header, which browsers send, must come from an origin in
+`PYRIT_CORS_ORIGINS`.
 
-```bash
-copilot mcp add --transport http pyrit http://localhost:8000/api/mcp
-```
-
-Or in VS Code's `mcp.json`:
-
-```json
-{"servers": {"pyrit": {"type": "http", "url": "http://localhost:8000/api/mcp"}}}
-```
-
-With Entra authentication, clients that support MCP sign-in, such as GitHub Copilot CLI, sign
-you in themselves. A 401 from `/api/mcp` points to the public
-`/.well-known/oauth-protected-resource/api/mcp` document, which names the Entra tenant and the
-Microsoft Graph `User.Read` scope. The client then opens a browser the first time you start an
-interactive session and sends the token with each request, which each tool call forwards.
-`copilot -p` can't open a browser, so sign in from an interactive session first. Other clients
-can send a Microsoft Graph access token as a bearer token themselves.
-
-Clients use that document only when it names the exact URL they connected to. Behind a proxy
-that changes the scheme or host, such as Azure Container Apps or Front Door, the backend takes
-them from `X-Forwarded-Proto` and `X-Forwarded-Host` when the result is an origin listed in
-`PYRIT_CORS_ORIGINS`, as the deployment templates set it.
+With Entra authentication, the sign-in metadata names the URL the client connected to. Behind a
+proxy that changes the scheme or host, such as Azure Container Apps or Front Door, list the
+public origin in `PYRIT_CORS_ORIGINS`, as the deployment templates do; the backend then takes
+the scheme and host from `X-Forwarded-Proto` and `X-Forwarded-Host`.
 
 ### Request Limits
 
@@ -1005,11 +979,13 @@ uses them:
   folder, and callers cannot supply their own.
 - A copy of a registered target or converter, made from its `source`, keeps the source's
   connection: it can't change the parameters its type reports as `copy_locked` (for OpenAI
-  targets the endpoint, `auth_mode`, key, headers, and HTTP client settings; for the Azure
-  Speech converters the region, key, and resource ID), and trying returns **400**. So a copy
-  can't take its source's credentials, or a token for an identity its source was set up with,
-  to another endpoint or resource. This rule covers copies only: creating a new target can
-  still send this server's key to an endpoint the caller chooses, as described below.
+  targets the endpoint, `auth_mode`, key, headers, and HTTP client settings; for LiteLLM
+  targets, including Claude, the model name, endpoint, key, headers, and extra body
+  parameters; for the Azure Speech converters the region, key, and resource ID), and trying
+  returns **400**. So a copy can't take its source's credentials, or a token for an identity
+  its source was set up with, to another endpoint or resource. This rule covers copies only:
+  creating a new target can still send this server's key to an endpoint the caller chooses,
+  as described below.
 
 Targets that need a setting the API does not allow can be registered in Python or with an
 initializer.

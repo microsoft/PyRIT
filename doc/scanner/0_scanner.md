@@ -84,6 +84,13 @@ reading attack results, conversations, and analytics. With the backend running (
 copilot mcp add --transport http pyrit http://localhost:8000/api/mcp
 ```
 
+Clients that read the portable `mcpServers` format, such as GitHub Copilot in VS Code, take the
+same entry, for example in a workspace `.mcp.json` file:
+
+```json
+{"mcpServers": {"pyrit": {"type": "http", "url": "http://localhost:8000/api/mcp", "tools": ["*"]}}}
+```
+
 Then ask, for example, "Which PyRIT targets are registered?" or "Summarize my latest scenario
 run." Each tool call is a request with the agent's credentials, so it gets the same validation
 and authentication as any other client. With Entra authentication, GitHub Copilot CLI asks you to

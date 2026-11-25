@@ -127,18 +127,20 @@ async def test_mcp_endpoint_checks_browser_origins_like_cors(
     assert other.status_code == other_origin_status
 
 
-def test_backend_cors_lets_browser_mcp_clients_send_the_protocol_version_header() -> None:
+def test_backend_cors_lets_browser_mcp_clients_send_their_headers() -> None:
     response = TestClient(backend_app).options(
         MCPEndpoint.PATH,
         headers={
             "Origin": ALLOWED_ORIGIN,
             "Access-Control-Request-Method": "POST",
-            "Access-Control-Request-Headers": "content-type,mcp-protocol-version",
+            "Access-Control-Request-Headers": "content-type,mcp-protocol-version,mcp-method,mcp-name",
         },
     )
 
+    # A preflight that asks for a header CORS doesn't allow fails with 400.
     assert response.status_code == 200
-    assert "mcp-protocol-version" in response.headers["access-control-allow-headers"].lower()
+    allowed = response.headers["access-control-allow-headers"].lower()
+    assert all(header in allowed for header in ("mcp-protocol-version", "mcp-method", "mcp-name"))
 
 
 def test_backend_mcp_401_leads_to_sign_in_metadata_outside_the_api_schema() -> None:

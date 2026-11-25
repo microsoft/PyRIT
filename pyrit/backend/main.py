@@ -140,7 +140,7 @@ app.add_middleware(
         "Content-Type",
         "X-Request-ID",
         _compatibility.COMPATIBILITY_HEADER,
-        MCPEndpoint.PROTOCOL_VERSION_HEADER,
+        *MCPEndpoint.CORS_HEADERS,
     ],
 )
 app.add_middleware(RequestIdMiddleware)
