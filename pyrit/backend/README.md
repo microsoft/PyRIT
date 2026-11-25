@@ -505,6 +505,21 @@ alias metadata. `model_dump(by_alias=False)` likewise deliberately exposes
 `register_instance`; use the default or `by_alias=True` for the existing JSON
 shape. Copy updates and field filters accept either name.
 
+### Scenario dataset compatibility
+
+`GET /api/scenarios/catalog/{scenario_name}/datasets` returns the named catalog datasets the
+scenario can run, as a `DatasetListResponse`. It never fetches providers or calls a model. An
+unknown scenario returns 404, and a listing the scenario can't configure returns 400.
+
+- A scenario without dataset requirements gets every named dataset its source options allow:
+  all of them for `ANY`, and only the permitted sources for `SUBSET` and `FIXED`.
+- A scenario with dataset requirements reports `dataset_options.compatible_only`, as
+  `foundry.assert_policy` does. It gets only the stored datasets whose full contents pass its
+  checks, plus any required ingredient datasets. Datasets that aren't stored are left out.
+
+A listed name is not a launch guarantee. The run-size estimate and launch check the selected
+contents again, so data changed after the listing is rejected there with the reason.
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
