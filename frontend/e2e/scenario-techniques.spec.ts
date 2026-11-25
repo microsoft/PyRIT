@@ -368,6 +368,8 @@ for (const view of VIEWPORTS) {
       { page }: { page: Page }, testInfo: TestInfo,
     ): Promise<void> => {
       await page.goto('/scanner/launch')
+      // Scenarios registered outside PyRIT's packages are listed under Other scenarios.
+      await page.getByRole('button', { name: /^Other scenarios/ }).click()
       for (const [scenarioName, technique, policy, baseline] of [
         [SCENARIO, 'offline_plain', 'enabled', true],
         ['technique_no_baseline', 'offline_rot13', 'forbidden', false],
@@ -402,7 +404,8 @@ for (const view of VIEWPORTS) {
           name: technique === 'offline_plain' ? 'offline_base64' : 'offline_plain', exact: true,
         }).check()
         if (policy !== 'forbidden') await checkbox.setChecked(!baseline)
-        await page.getByRole('link', { name: 'Back to scanners', exact: true }).click()
+        await page.getByRole('link', { name: 'Back to Launch', exact: true }).click()
+        await expect(page).toHaveURL('/scanner/launch?open=other-scenarios')
       }
     })
 

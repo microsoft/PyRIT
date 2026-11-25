@@ -452,6 +452,10 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/scenarios/modules") {
+      await route.fulfill(jsonResponse({ items: [] }));
+      return;
+    }
     if (apiPath === "/scenarios/runs/queue") {
       await route.fulfill(
         jsonResponse({

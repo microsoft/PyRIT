@@ -13,7 +13,12 @@ from functools import lru_cache
 from time import monotonic
 from typing import cast
 
-from pyrit.backend.models import DatasetListResponse, ListRegisteredScenariosResponse, PaginationInfo
+from pyrit.backend.models import (
+    DatasetListResponse,
+    ListRegisteredScenariosResponse,
+    ListScenarioModulesResponse,
+    PaginationInfo,
+)
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
@@ -83,6 +88,7 @@ def _metadata_to_registered_scenario(
     estimate = default_run_size or ScenarioRunSizeEstimate.unavailable()
     return RegisteredScenario(
         scenario_name=metadata.registry_name,
+        module=metadata.module,
         scenario_type=metadata.class_name,
         scenario_version=metadata.scenario_version,
         supports_objective_scorer=metadata.supports_objective_scorer,
@@ -196,6 +202,15 @@ class ScenarioService:
                 prev_cursor=cursor,
             ),
         )
+
+    def list_modules(self) -> ListScenarioModulesResponse:
+        """
+        List the built-in scenario packages for grouping the catalog.
+
+        Returns:
+            ListScenarioModulesResponse: Packages with at least one registered scenario.
+        """
+        return ListScenarioModulesResponse(items=self._registry.list_modules())
 
     async def get_scenario_async(self, *, scenario_name: str) -> RegisteredScenario | None:
         """

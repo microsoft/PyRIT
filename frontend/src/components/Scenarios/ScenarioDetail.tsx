@@ -107,6 +107,7 @@ import {
   usesCompatibleDatasetPicker,
 } from './scenarioLaunchRequest'
 import ScenarioDatasetTable from './ScenarioDatasetTable'
+import { BACK_TO_LAUNCH_LABEL, launchBackPath, type ScenarioLaunchNavigationState } from './scenarioRunNavigation'
 import DatasetActions from './DatasetActions'
 
 function targetOptionLabel(target: TargetInstance): string {
@@ -179,11 +180,12 @@ interface ScenarioDetailStateFrameProps {
 
 function ScenarioDetailStateFrame({ children }: ScenarioDetailStateFrameProps) {
   const styles = useScenarioDetailStyles()
+  const location = useLocation()
   return (
     <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
       <div className={styles.content}>
-        <Link to="/scanner/launch" className={styles.backLink}>
-          <ArrowLeftRegular /> Back to scanners
+        <Link to={launchBackPath(location.state as ScenarioLaunchNavigationState | null)} className={styles.backLink}>
+          <ArrowLeftRegular /> {BACK_TO_LAUNCH_LABEL}
         </Link>
         {children}
       </div>
@@ -867,8 +869,13 @@ function ScenarioLaunchForm({
       aria-labelledby="scenario-detail-title"
     >
       <div className={styles.content}>
-        <Link to={sourceRunId ? scenarioRunRoutePath(sourceRunId) : '/scanner/launch'} className={styles.backLink}>
-          <ArrowLeftRegular /> {sourceRunId ? 'Back to scan' : 'Back to scanners'}
+        <Link
+          to={sourceRunId
+            ? scenarioRunRoutePath(sourceRunId)
+            : launchBackPath(location.state as ScenarioLaunchNavigationState | null)}
+          className={styles.backLink}
+        >
+          <ArrowLeftRegular /> {sourceRunId ? 'Back to scan' : BACK_TO_LAUNCH_LABEL}
         </Link>
 
         <div className={styles.headerText}>

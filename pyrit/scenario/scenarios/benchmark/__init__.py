@@ -2,11 +2,16 @@
 # Licensed under the MIT license.
 # ruff: noqa: F401
 
-"""Benchmark scenario classes."""
+"""
+Compare attack success across adversarial models on a fixed objective set to choose the best
+attacker for your target.
+"""
 
 from typing import TYPE_CHECKING
 
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
+
+DISPLAY_NAME = "Benchmark"
 
 if TYPE_CHECKING:
     from pyrit.scenario.scenarios._dynamic_techniques import AdversarialBenchmarkTechnique

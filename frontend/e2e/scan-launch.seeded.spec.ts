@@ -91,6 +91,36 @@ for (const width of [1280, 390]) {
     expect(await targetSnapshot(request)).toEqual(initialTargets)
   })
 
+  test(`finds a scenario by module and comes back to the same modules at ${width}px @seeded`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/scanner/launch')
+    await waitForAppReady(page)
+    const techniqueModule = page.getByRole('button', { name: /^Technique \d+ scenarios?$/ })
+    await expect(techniqueModule).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByRole('table')).toHaveCount(0)
+
+    await techniqueModule.click()
+    await expect(page).toHaveURL('/scanner/launch?open=technique')
+    const row = page.getByTestId('scenario-card-technique.execute')
+    await expect(row.getByRole('link', { name: 'execute', exact: true })).toHaveAttribute('title', 'technique.execute')
+
+    // The whole row opens the scenario: a click on empty space in the row reaches the name's link.
+    const scenarioCell = row.getByRole('cell').first()
+    const cellSize = await scenarioCell.boundingBox()
+    if (!cellSize) throw new Error('The scenario cell has no layout.')
+    await scenarioCell.click({ position: { x: cellSize.width - 4, y: cellSize.height - 4 } })
+    await expect(page).toHaveURL('/scanner/launch/technique.execute')
+    await page.getByRole('link', { name: 'Back to Launch', exact: true }).click()
+    await expect(page).toHaveURL('/scanner/launch?open=technique')
+    await expect(techniqueModule).toHaveAttribute('aria-expanded', 'true')
+
+    await row.getByRole('link', { name: 'execute', exact: true }).click()
+    await expect(page).toHaveURL('/scanner/launch/technique.execute')
+    await page.goBack()
+    await expect(page).toHaveURL('/scanner/launch?open=technique')
+    await expect(techniqueModule).toHaveAttribute('aria-expanded', 'true')
+  })
+
   test(`reports a missing generation target only when launching at ${width}px @seeded`, async ({ page, request }) => {
     await page.setViewportSize({ width, height: 900 })
     const initialTargets = await targetSnapshot(request)

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
-import { createMemoryRouter, Link, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
+import { createMemoryRouter, type InitialEntry, Link, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 
 import {
   attacksApi,
@@ -240,7 +240,7 @@ async function setObjectiveLimit(user: ReturnType<typeof userEvent.setup>, value
 }
 
 function renderDetail(
-  path: string,
+  path: InitialEntry,
   props: Partial<React.ComponentProps<typeof ScenarioDetail>> = {},
   dataRouter = false,
 ) {
@@ -1009,8 +1009,19 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/launch/missing.scenario')
 
     expect(await screen.findByTestId('scenario-not-found')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /back to scanners/i })).toHaveAttribute('href', '/scanner/launch')
+    expect(screen.getByRole('link', { name: 'Back to Launch' })).toHaveAttribute('href', '/scanner/launch')
     expect(screen.queryByTestId('scenario-error')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['the configure page', null],
+    ['a missing scenario', { isAxiosError: true, response: { status: 404, data: { detail: 'not found' } } }],
+  ])('returns from %s to the Launch tab with the modules that were open', async (_page, failure) => {
+    if (failure) mockGetScenario.mockRejectedValueOnce(failure)
+    renderDetail({ pathname: '/scanner/launch/foundry.red_team_agent', state: { launchSearch: '?open=foundry' } })
+
+    expect(await screen.findByRole('link', { name: 'Back to Launch' }))
+      .toHaveAttribute('href', '/scanner/launch?open=foundry')
   })
 
   it('shows a generic error state with retry for a non-404 failure', async () => {
@@ -3242,7 +3253,7 @@ describe('ScenarioDetail', () => {
       renderDetail(PRESET_PATH)
 
       expect(await screen.findByTestId('preset-not-found')).toHaveTextContent('Preset "spanish_probe" was not found')
-      expect(screen.getByRole('link', { name: /back to scanners/i })).toHaveAttribute('href', '/scanner/launch')
+      expect(screen.getByRole('link', { name: 'Back to Launch' })).toHaveAttribute('href', '/scanner/launch')
       expect(screen.getByRole('link', { name: 'Open foundry.red_team_agent without a preset' }))
         .toHaveAttribute('href', '/scanner/launch/foundry.red_team_agent')
       expect(screen.queryByRole('button', { name: 'Launch scan' })).not.toBeInTheDocument()

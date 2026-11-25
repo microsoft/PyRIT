@@ -31,7 +31,8 @@ export const useScenarioCatalogTableStyles = makeStyles({
   tableHeader: {
     position: 'sticky',
     top: 0,
-    zIndex: 1,
+    // Above row controls, which sit over each row's stretched link.
+    zIndex: 2,
     backgroundColor: tokens.colorNeutralBackground1,
     [NARROW_VIEWPORT_QUERY]: {
       position: 'absolute',
@@ -83,6 +84,22 @@ export const useScenarioCatalogTableStyles = makeStyles({
       border: `1px solid ${tokens.colorNeutralStroke2}`,
       borderRadius: tokens.borderRadiusLarge,
       backgroundColor: tokens.colorNeutralBackground1,
+    },
+  },
+  linkedRow: {
+    position: 'relative',
+    cursor: 'pointer',
+    // Fluent positions each cell, which would confine the stretched link to the first cell.
+    '& > td': {
+      position: 'static',
+    },
+  },
+  // Covers the row so a click anywhere opens the link; controls inside the row sit above it.
+  stretchedLink: {
+    '::after': {
+      content: '""',
+      position: 'absolute',
+      inset: 0,
     },
   },
   tableCell: {
@@ -148,6 +165,8 @@ export const useScenarioCatalogTableStyles = makeStyles({
     overflow: 'hidden',
   },
   descriptionToggle: {
+    position: 'relative',
+    zIndex: 1,
     alignSelf: 'flex-start',
     minWidth: 0,
     width: '2rem',

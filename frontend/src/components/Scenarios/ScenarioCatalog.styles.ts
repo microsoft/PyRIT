@@ -1,6 +1,11 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
-import { MINIMUM_TOUCH_TARGET_SIZE, NARROW_VIEWPORT_QUERY, TOUCH_INPUT_QUERY } from '@/styles/touchTargets'
+import {
+  MINIMUM_TOUCH_TARGET_SIZE,
+  mobileTouchTarget,
+  NARROW_VIEWPORT_QUERY,
+  TOUCH_INPUT_QUERY,
+} from '@/styles/touchTargets'
 import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
 export const useScenarioCatalogStyles = makeStyles({
@@ -73,20 +78,34 @@ export const useScenarioCatalogStyles = makeStyles({
     gap: tokens.spacingVerticalS,
     marginBottom: tokens.spacingVerticalL,
   },
-  purposePreview: {
+  errorDetail: {
+    display: 'block',
+    marginTop: tokens.spacingVerticalXS,
     color: tokens.colorNeutralForeground2,
-    fontSize: tokens.fontSizeBase200,
-    lineHeight: tokens.lineHeightBase300,
-    '& p': {
-      marginBottom: tokens.spacingVerticalXS,
-    },
-    '& ul, & ol': {
-      marginBottom: tokens.spacingVerticalXS,
-    },
-    '& h1, & h2, & h3, & h4, & h5, & h6': {
-      margin: `${tokens.spacingVerticalXS} 0`,
-      fontSize: tokens.fontSizeBase300,
-      lineHeight: tokens.lineHeightBase300,
-    },
+    overflowWrap: 'anywhere',
+  },
+  touchTarget: {
+    ...mobileTouchTarget,
+  },
+  listActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    marginBottom: tokens.spacingVerticalS,
+  },
+  modules: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+  },
+  visuallyHidden: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    margin: '-1px',
+    padding: 0,
+    overflow: 'hidden',
+    clip: 'rect(0, 0, 0, 0)',
+    whiteSpace: 'nowrap',
+    border: 0,
   },
 })

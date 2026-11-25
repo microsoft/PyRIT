@@ -14,10 +14,11 @@ from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.models import ScenarioRunListItem
-from pyrit.models.catalog import RegisteredScenario
+from pyrit.models.catalog import RegisteredScenario, ScenarioModuleSummary
 
 __all__ = [
     "ListRegisteredScenariosResponse",
+    "ListScenarioModulesResponse",
     "ScenarioRunListResponse",
 ]
 
@@ -27,6 +28,12 @@ class ListRegisteredScenariosResponse(BaseModel):
 
     items: list[RegisteredScenario] = Field(..., description="List of scenario summaries")
     pagination: PaginationInfo = Field(..., description="Pagination metadata")
+
+
+class ListScenarioModulesResponse(BaseModel):
+    """Response for listing the built-in scenario packages."""
+
+    items: list[ScenarioModuleSummary] = Field(..., description="Scenario packages, sorted by display name")
 
 
 class ScenarioRunListResponse(BaseModel):

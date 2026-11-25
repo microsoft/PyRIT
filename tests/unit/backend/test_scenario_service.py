@@ -40,6 +40,7 @@ from pyrit.models import (
     Parameter,
     ScenarioDatasetSizeCap,
     ScenarioDatasetSummary,
+    ScenarioModuleSummary,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
@@ -178,6 +179,12 @@ def test_catalog_lists_only_external_scenario_parameters() -> None:
 
     assert [parameter.name for parameter in summary.supported_parameters] == ["max_concurrency"]
     assert summary.supported_parameter_names == ["dataset_config", "max_concurrency"]
+
+
+def test_catalog_names_each_scenario_package() -> None:
+    summary = _metadata_to_registered_scenario(metadata=replace(_make_scenario_metadata(), module="garak"))
+    assert summary.module == "garak"
+    assert _metadata_to_registered_scenario(metadata=_make_scenario_metadata()).module is None
 
 
 def test_catalog_does_not_invent_an_unconfigured_baseline_identity() -> None:
@@ -2237,6 +2244,28 @@ class TestScenarioRoutes:
             data = response.json()
             assert data["items"] == []
             assert data["pagination"]["has_more"] is False
+
+    def test_list_scenario_modules_returns_registry_packages(self, client: TestClient) -> None:
+        """GET /api/scenarios/modules returns the registry's packages in its order."""
+        modules = [
+            ScenarioModuleSummary(name="airt", display_name="AI Red Team", description="Harm-area scenarios."),
+            ScenarioModuleSummary(name="garak", display_name="Garak", description="Ports of garak probes."),
+        ]
+        with patch.object(ScenarioService, "__init__", lambda self: None):
+            service = ScenarioService()
+        service._registry = MagicMock()
+        service._registry.list_modules.return_value = modules
+
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service", return_value=service):
+            response = client.get("/api/scenarios/modules")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {
+            "items": [
+                {"name": "airt", "display_name": "AI Red Team", "description": "Harm-area scenarios."},
+                {"name": "garak", "display_name": "Garak", "description": "Ports of garak probes."},
+            ]
+        }
 
     def test_list_scenarios_rejects_stale_cursor(self, client: TestClient) -> None:
         """Test that a stale catalog cursor returns the standard 400 problem detail."""

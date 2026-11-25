@@ -120,8 +120,12 @@ interface ScannerRowProps {
   columns: ScannerColumnLabels
   testId: string
   name: string
-  /** Where the name links. Null renders the name as plain text. */
+  /** Shown on hover over the name, such as the full scenario id behind a short name. */
+  nameTitle?: string
+  /** Where the name, and the whole row, link. Null renders the name as plain text. */
   path: string | null
+  /** Router location state the link carries. */
+  linkState?: unknown
   /** Always-visible details between the name and the collapsible description. */
   summary?: ReactNode
   description: ReactNode | null
@@ -137,7 +141,9 @@ export function ScannerRow({
   columns,
   testId,
   name,
+  nameTitle,
   path,
+  linkState,
   summary,
   description,
   descriptionKey,
@@ -172,16 +178,22 @@ export function ScannerRow({
   )
 
   return (
-    <TableRow className={styles.summaryRow} data-testid={testId}>
+    <TableRow className={mergeClasses(styles.summaryRow, path !== null && styles.linkedRow)} data-testid={testId}>
       <TableCell className={cellClassName}>
         <Text className={styles.mobileLabel} size={200} weight="semibold">
           {columns.scenario}
         </Text>
         <div className={styles.scenarioSummary}>
           {path === null ? (
-            <Text weight="semibold">{name}</Text>
+            <Text weight="semibold" title={nameTitle}>{name}</Text>
           ) : (
-            <Link to={path} className={styles.scenarioLink}>
+            // The link stretches over the row, so the whole row opens it while the name stays a real link.
+            <Link
+              to={path}
+              state={linkState}
+              title={nameTitle}
+              className={mergeClasses(styles.scenarioLink, styles.stretchedLink)}
+            >
               {name}
             </Link>
           )}

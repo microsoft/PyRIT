@@ -75,7 +75,11 @@ if TYPE_CHECKING:
         ScenarioSuiteResponse,
         UpdateScenarioSuiteRequest,
     )
-    from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse, ScenarioRunListResponse
+    from pyrit.backend.models.scenarios import (
+        ListRegisteredScenariosResponse,
+        ListScenarioModulesResponse,
+        ScenarioRunListResponse,
+    )
     from pyrit.backend.models.scorers import (
         CreateScorerRequest,
         ScorerListResponse,
@@ -139,6 +143,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScenarioSuiteResponse": "pyrit.backend.models.scenario_suites",
     "UpdateScenarioSuiteRequest": "pyrit.backend.models.scenario_suites",
     "ListRegisteredScenariosResponse": "pyrit.backend.models.scenarios",
+    "ListScenarioModulesResponse": "pyrit.backend.models.scenarios",
     "CreateScorerRequest": "pyrit.backend.models.scorers",
     "ScorerListResponse": "pyrit.backend.models.scorers",
     "ScorerTypeEntry": "pyrit.backend.models.scorers",

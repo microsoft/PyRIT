@@ -1,4 +1,4 @@
-import { scenarioRunBackLink } from './scenarioRunNavigation'
+import { launchBackPath, scenarioRunBackLink } from './scenarioRunNavigation'
 
 describe('scenarioRunBackLink', () => {
   it('returns to the preset run that opened it', () => {
@@ -14,9 +14,22 @@ describe('scenarioRunBackLink', () => {
       .toEqual({ path: '/scanner/history', label: 'Back to scans' })
   })
 
-  it('returns to the launched scenario, or the scanner catalog', () => {
+  it('returns to the launched scenario, or the Launch tab', () => {
     expect(scenarioRunBackLink({ scenarioName: 'garak/encoding' }))
       .toEqual({ path: '/scanner/launch/garak%2Fencoding', label: 'Back to scenario' })
-    expect(scenarioRunBackLink(null)).toEqual({ path: '/scanner/launch', label: 'Back to scanners' })
+    expect(scenarioRunBackLink(null)).toEqual({ path: '/scanner/launch', label: 'Back to Launch' })
   })
+})
+
+describe('launchBackPath', () => {
+  it('returns to the Launch tab with the modules that were open', () => {
+    expect(launchBackPath({ launchSearch: '?open=airt&open=garak' })).toBe('/scanner/launch?open=airt&open=garak')
+  })
+
+  it.each([null, {}, { launchSearch: '' }, { launchSearch: '/elsewhere' }])(
+    'returns to the plain Launch tab without a query from %p',
+    (state) => {
+      expect(launchBackPath(state)).toBe('/scanner/launch')
+    },
+  )
 })

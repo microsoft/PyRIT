@@ -66,6 +66,7 @@ jest.mock('@/services/api', () => ({
   targetsApi: { listTargets: jest.fn(), getTarget: jest.fn() },
   scenariosApi: {
     listCatalog: jest.fn(),
+    listModules: jest.fn(),
     listCompatibleDatasets: jest.fn().mockResolvedValue({ items: [] }),
     listRuns: jest.fn(),
     getScenario: jest.fn(),
@@ -204,6 +205,7 @@ describe('Shared new run labels', () => {
     jest.mocked(scenariosApi.listCatalog).mockResolvedValue({
       items: [SCENARIO], pagination: { limit: 200, has_more: false },
     })
+    jest.mocked(scenariosApi.listModules).mockResolvedValue({ items: [] })
     jest.mocked(scenariosApi.listRuns).mockResolvedValue({
       items: [], pagination: { limit: 5, has_more: false },
     })
@@ -272,7 +274,8 @@ describe('Shared new run labels', () => {
       expect(currentLabels()).toBe(bar)
       expect(within(bar).getByRole('combobox', { name: 'Operation' })).toHaveValue('remembered_op')
     }
-    await user.click(await screen.findByRole('link', { name: 'test.scenario' }))
+    await user.click(await screen.findByRole('button', { name: /^Other scenarios/ }))
+    await user.click(screen.getByRole('link', { name: 'test.scenario' }))
     await screen.findByRole('combobox', { name: 'Objective Target' })
     expect(currentLabels()).toBe(bar)
     expect(readUserPreferences('local')).toEqual(expect.objectContaining({

@@ -59,6 +59,7 @@ const configuredEstimate = {
 
 const catalogScenario = {
   scenario_name: SCENARIO_NAME,
+  module: "airt",
   scenario_type: "Jailbreak",
   scenario_version: 4,
   description: "Tests how vulnerable a model is to jailbreak templates.",
@@ -396,6 +397,16 @@ async function mockScenarioAPIs(
     });
   });
 
+  await page.route(/\/api\/scenarios\/modules(?:\?|$)/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [{ name: "airt", display_name: "AI Red Team", description: "Harm-area scenarios from the AI Red Team." }],
+      }),
+    });
+  });
+
   await page.route(/\/api\/scenario-(?:presets|suites)(?:\?|$)/, async (route) => {
     await route.fulfill({
       status: 200,
@@ -661,11 +672,15 @@ test.describe("Scenario catalog, history, and live run routing", () => {
       "Configuration",
     ]);
     await expect(page.getByRole("button", { name: "Scanner", exact: true })).toHaveAttribute("aria-current", "page");
-    await expect(page.getByRole("table", { name: "Scenarios" })).toBeVisible();
+    const moduleToggle = page.getByRole("button", { name: "AI Red Team 1 scenario" });
+    await expect(moduleToggle).toHaveAttribute("aria-expanded", "false");
+    await moduleToggle.click();
+    await expect(page).toHaveURL("/scanner/launch?open=airt");
+    await expect(page.getByRole("table", { name: "Scenarios in AI Red Team" })).toBeVisible();
     await expect(page.getByRole("columnheader", { name: "Default run size" })).toBeVisible();
 
     const row = page.getByTestId(`scenario-card-${SCENARIO_NAME}`);
-    await row.getByRole("link", { name: SCENARIO_NAME }).click();
+    await row.getByRole("link", { name: "jailbreak", exact: true }).click();
     await expect(page).toHaveURL(`/scanner/launch/${SCENARIO_NAME}`);
     await expect(page.getByRole("heading", { name: SCENARIO_NAME, level: 2 })).toBeVisible();
     const description = page.getByTestId("scenario-detail-description");

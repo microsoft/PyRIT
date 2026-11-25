@@ -1,752 +1,263 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { MemoryRouter, useLocation } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
 import { scenariosApi } from '@/services/api'
-import { deferred } from '@/test-utils/deferred'
-import type {
-  ListRegisteredScenariosResponse,
-  RegisteredScenario,
-  ScenarioRunSizeEstimateResponse,
-} from '@/types'
+import { installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+import { makeScenario } from '@/test-utils/scenarioFixtures'
+import type { ListRegisteredScenariosResponse, RegisteredScenario, ScenarioModule } from '@/types'
 
 import ScenarioCatalog from './ScenarioCatalog'
-import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
 
 installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   scenariosApi: {
     listCatalog: jest.fn(),
+    listModules: jest.fn(),
   },
 }))
 
-
 const mockListCatalog = scenariosApi.listCatalog as jest.Mock
+const mockListModules = scenariosApi.listModules as jest.Mock
 
+const MODULES: ScenarioModule[] = [
+  { name: 'airt', display_name: 'AI Red Team', description: 'Harm-area scenarios from the AI Red Team.' },
+  { name: 'garak', display_name: 'Garak', description: 'Ports of garak probes: prompt injection and more.' },
+]
 
-const REMOVED_NORMAL_ESTIMATE_LABELS = new RegExp(
-  [
-    ['Run', 'size', 'calculated'].join(' '),
-    ['Final', 'count', 'set', 'at', 'launch'].join(' '),
-  ].join('|'),
-  'i',
-)
-
-function LocationProbe() {
-  const location = useLocation()
-  return <output aria-label="Current route">{location.pathname}</output>
-}
-
-function TestWrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <FluentProvider theme={webLightTheme}>
-      <MemoryRouter>
-        {children}
-        <LocationProbe />
-      </MemoryRouter>
-    </FluentProvider>
-  )
-}
-
-function makeScenario(overrides: Partial<RegisteredScenario> & { scenario_name: string }): RegisteredScenario {
-  const description = overrides.description ?? 'A demo scenario.'
-  const defaultTechnique = overrides.default_technique ?? 'default_technique'
-  return {
-    scenario_type: 'DemoScenario',
-    scenario_version: 1,
-    aggregate_techniques: [],
-    aggregate_technique_expansions: {},
-    all_techniques: ['default_technique'],
-    technique_summaries: [
-      {
-        name: 'default_technique',
-        description: 'Runs the default attack.',
-        tags: ['default'],
-      },
-    ],
-    default_datasets: [],
-    dataset_size_limit: {
-      default_scope: 'none',
-      default_count: null,
-      override_scope: 'per_dataset',
-    },
-    baseline_policy: 'enabled',
-    include_baseline_by_default: true,
-    uses_default_adversarial_target: true,
-    supported_parameters: [],
-    supported_parameter_names: [],
-    default_run_size: {
-      dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
-      dataset_limit: { state: 'scenario_default' },
-      estimated_attack_count: null,
-      minimum_attack_count: null,
-      maximum_attack_count: null,
-      components: [],
-      datasets: [],
-      note: 'Default sizing is not available.',
-    },
-    ...overrides,
-    description,
-    description_markdown: overrides.description_markdown ?? description,
-    default_technique: defaultTechnique,
-    default_techniques: overrides.default_techniques ?? [defaultTechnique],
-  }
-}
+const SCENARIOS: RegisteredScenario[] = [
+  makeScenario({ scenario_name: 'garak.encoding', module: 'garak', description: 'Hides objectives in encodings.' }),
+  makeScenario({ scenario_name: 'garak.doctor', module: 'garak', description: 'Uses a fake doctor persona.' }),
+  makeScenario({ scenario_name: 'airt.jailbreak', module: 'airt', description: 'Tries jailbreak templates.' }),
+  makeScenario({ scenario_name: 'my_probe', module: null, description: 'A probe from an initializer.' }),
+]
 
 function catalogPage(items: RegisteredScenario[]): ListRegisteredScenariosResponse {
   return { items, pagination: { limit: 200, has_more: false } }
 }
 
-function makeEstimate(attacks: number): ScenarioRunSizeEstimateResponse {
-  return {
-    dataset_size: { kind: 'bounded', value: attacks },
-    dataset_limit: { state: 'scenario_default' },
-    estimated_attack_count: attacks,
-    components: [{ label: 'Configured attacks', count: attacks, is_baseline: false, note: null }],
-    datasets: [],
-    note: null,
-  }
+function LocationProbe() {
+  const location = useLocation()
+  return <output aria-label="Current route">{`${location.pathname}${location.search}`}</output>
+}
+
+function ConfigurePage() {
+  const location = useLocation()
+  return <output aria-label="Configure state">{JSON.stringify(location.state)}</output>
+}
+
+function renderCatalog(entry = '/scanner/launch') {
+  render(
+    <FluentProvider theme={webLightTheme}>
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes>
+          <Route path="/scanner/launch" element={<ScenarioCatalog />} />
+          <Route path="/scanner/launch/:scenarioName" element={<ConfigurePage />} />
+        </Routes>
+        <LocationProbe />
+      </MemoryRouter>
+    </FluentProvider>,
+  )
+}
+
+function moduleToggle(name: RegExp): HTMLElement {
+  return screen.getByRole('button', { name })
+}
+
+function currentRoute(): string | null {
+  return screen.getByRole('status', { name: 'Current route' }).textContent
+}
+
+async function renderLoaded(entry?: string) {
+  renderCatalog(entry)
+  await screen.findByRole('heading', { level: 3, name: /^AI Red Team/ })
 }
 
 describe('ScenarioCatalog', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockListCatalog.mockResolvedValue(catalogPage(SCENARIOS))
+    mockListModules.mockResolvedValue({ items: MODULES })
   })
 
   it('shows a loading state while fetching', () => {
     mockListCatalog.mockReturnValue(new Promise(() => {}))
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
+    renderCatalog()
     expect(screen.getByText('Loading scenarios...')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   })
 
-  it('renders every scenario from a single page', async () => {
-    mockListCatalog.mockResolvedValue({
-      items: [
-        makeScenario({ scenario_name: 'foundry.red_team_agent', description: 'Red teams a target.' }),
-        makeScenario({ scenario_name: 'encoding.base64', description: 'Encodes prompts.' }),
-      ],
-      pagination: { limit: 200, has_more: false },
-    })
+  it('titles the page in plain text with a link about scenarios', async () => {
+    await renderLoaded()
 
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-
-    expect(await screen.findByText('foundry.red_team_agent')).toBeInTheDocument()
-    expect(screen.getByText('encoding.base64')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Launch a scan' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Launch a scan' })).toHaveAttribute(
-      'href',
-      'https://microsoft.github.io/PyRIT/latest/scanner/scanner/',
-    )
-    expect(
-      screen.getByText('Select a scenario to configure a scan.'),
-    ).toBeInTheDocument()
-    expect(screen.queryByText(/Browse registered scenarios/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/Read the scanner documentation/i)).not.toBeInTheDocument()
-    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('heading', { level: 2, name: 'Launch a scan' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Launch a scan' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Choose a scenario to configure\./)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'About scenarios' }))
+      .toHaveAttribute('href', 'https://microsoft.github.io/PyRIT/latest/scanner/scanner/')
   })
 
-  it('renders metadata while default estimates are calculated', async () => {
-    let resolveEstimates: ((value: {
-      items: RegisteredScenario[]
-      pagination: { limit: number; has_more: boolean }
-    }) => void) | undefined
-    const pendingScenario = makeScenario({
-      scenario_name: 'scenario.pending',
-      default_datasets: ['harmbench'],
-    })
-    const estimatedScenario = makeScenario({
-      scenario_name: 'scenario.pending',
-      default_datasets: ['harmbench'],
-      default_run_size: {
-        dataset_size: { kind: 'bounded', value: 4 },
-        dataset_limit: { state: 'scenario_default' },
-        estimated_attack_count: 4,
-        minimum_attack_count: null,
-        maximum_attack_count: null,
-        components: [{ label: 'Default', count: 4, is_baseline: false, note: null }],
-        datasets: [
-          {
-            name: 'harmbench',
-            kind: 'dataset',
-            logical_seed_group_count: 400,
-            selected_seed_group_count: 4,
-            configured_caps: [],
-            selection_note: null,
-          },
-        ],
-        note: null,
-      },
-    })
-    mockListCatalog
-      .mockResolvedValueOnce({
-        items: [pendingScenario],
-        pagination: { limit: 200, has_more: false },
-      })
-      .mockImplementationOnce(() => new Promise((resolve) => {
-        resolveEstimates = resolve
-      }))
+  it('lists collapsed module cards in the API order with other scenarios last', async () => {
+    await renderLoaded()
 
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-
-    expect(await screen.findByText('scenario.pending')).toBeInTheDocument()
-    expect(screen.getAllByText('Calculating...')).toHaveLength(1)
-    expect(screen.getByText('harmbench')).toBeInTheDocument()
-    expect(mockListCatalog).toHaveBeenNthCalledWith(1, 200, undefined, false)
-
-    await act(async () => {
-      resolveEstimates?.({
-        items: [estimatedScenario],
-        pagination: { limit: 200, has_more: false },
-      })
-    })
-
-    expect(await screen.findByText('4 attacks')).toBeInTheDocument()
-    expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
-  })
-
-  it('retains scenario estimates while quiet replacement estimates are pending', async () => {
-    const scenario = makeScenario({ scenario_name: 'review.scan', default_datasets: ['review_data'] })
-    const estimated = { ...scenario, default_run_size: makeEstimate(6) }
-    const nextScenario = deferred<ListRegisteredScenariosResponse>()
-    mockListCatalog
-      .mockResolvedValueOnce(catalogPage([scenario]))
-      .mockResolvedValueOnce(catalogPage([estimated]))
-      .mockResolvedValueOnce(catalogPage([scenario]))
-      .mockReturnValueOnce(nextScenario.promise)
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-    const scenarioRow = await screen.findByTestId('scenario-card-review.scan')
-    expect(await within(scenarioRow).findByText('6 attacks')).toBeInTheDocument()
-    await advanceAutoRefresh()
-    expect(mockListCatalog).toHaveBeenCalledTimes(4)
-    expect(within(scenarioRow).getByText('6 attacks')).toBeInTheDocument()
-    expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
-    await act(async () => {
-      nextScenario.resolve(catalogPage([{ ...scenario, default_run_size: makeEstimate(12) }]))
-    })
-    expect(within(scenarioRow).getByText('12 attacks')).toBeInTheDocument()
-  })
-
-  it('keeps metadata visible when default estimates fail', async () => {
-    mockListCatalog
-      .mockResolvedValueOnce({
-        items: [makeScenario({ scenario_name: 'scenario.unsized' })],
-        pagination: { limit: 200, has_more: false },
-      })
-      .mockRejectedValueOnce(new Error('estimate failed'))
-
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-
-    expect(await screen.findByText('scenario.unsized')).toBeInTheDocument()
-    expect(await screen.findByText('estimate failed')).toBeInTheDocument()
-    expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
-  })
-
-  it('renders Markdown descriptions and lets users expand long previews', async () => {
-    const user = userEvent.setup()
-    const clientHeight = jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(60)
-    const scrollHeight = jest.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(120)
-    mockListCatalog.mockResolvedValue({
-      items: [
-        makeScenario({
-          scenario_name: 'scenario.markdown',
-          description_markdown: [
-            'Tests **formatted text** and ``inline_code``.',
-            '',
-            'This additional detail makes the description long enough to collapse in the catalog preview. ',
-            'Users can expand the row to read the complete scenario purpose without leaving the catalog.',
-          ].join('\n'),
-        }),
-      ],
-      pagination: { limit: 200, has_more: false },
-    })
-
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-
-    const row = await screen.findByTestId('scenario-card-scenario.markdown')
-    expect(within(row).getByText('formatted text').tagName).toBe('STRONG')
-    expect(within(row).getByText('inline_code').tagName).toBe('CODE')
-
-    const expandButton = await within(row).findByRole('button', {
-      name: 'Expand row details for scenario.markdown',
-    })
-    expect(expandButton).toHaveAttribute('aria-expanded', 'false')
-
-    await user.click(expandButton)
-
-    expect(within(row).getByRole('button', {
-      name: 'Collapse row details for scenario.markdown',
-    })).toHaveAttribute('aria-expanded', 'true')
-    clientHeight.mockRestore()
-    scrollHeight.mockRestore()
-  })
-
-  it('does not show an expand control for a fully visible description', async () => {
-    const clientHeight = jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(60)
-    const scrollHeight = jest.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(61)
-    mockListCatalog.mockResolvedValue({
-      items: [makeScenario({ scenario_name: 'scenario.visible' })],
-      pagination: { limit: 200, has_more: false },
-    })
-
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-
-    const row = await screen.findByTestId('scenario-card-scenario.visible')
-    expect(within(row).queryByRole('button', {
-      name: 'Expand row details for scenario.visible',
-    })).not.toBeInTheDocument()
-    clientHeight.mockRestore()
-    scrollHeight.mockRestore()
-  })
-
-  it('ignores a catalog response that resolves after unmount', async () => {
-    let resolveRequest: ((value: {
-      items: RegisteredScenario[]
-      pagination: { limit: number; has_more: boolean }
-    }) => void) | undefined
-    mockListCatalog.mockImplementationOnce(() => new Promise((resolve) => {
-      resolveRequest = resolve
-    }))
-
-    const { unmount } = render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(1))
-    unmount()
-    await act(async () => {
-      resolveRequest?.({
-        items: [makeScenario({ scenario_name: 'late.scenario' })],
-        pagination: { limit: 200, has_more: false },
-      })
-    })
-  })
-
-  it('ignores a catalog failure that arrives after unmount', async () => {
-    let rejectRequest: ((reason?: unknown) => void) | undefined
-    mockListCatalog.mockImplementationOnce(() => new Promise((_resolve, reject) => {
-      rejectRequest = reject
-    }))
-
-    const { unmount } = render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(1))
-    unmount()
-    await act(async () => {
-      rejectRequest?.(new Error('late failure'))
-    })
-  })
-
-  it('renders the exact launch-index column order and applies spacing to every cell', async () => {
-    mockListCatalog.mockResolvedValue({
-      items: [makeScenario({ scenario_name: 'foundry.red_team_agent' })],
-      pagination: { limit: 200, has_more: false },
-    })
-
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-
-    const table = await screen.findByRole('table', { name: 'Scenarios' })
-    expect(
-      screen.getByText('Select a scenario to configure a scan.'),
-    ).toBeInTheDocument()
-    const headers = within(table).getAllByRole('columnheader')
-    expect(headers).toHaveLength(4)
-    expect(headers.map((header) => header.textContent)).toEqual([
-      'Scenario / purpose',
-      'Default datasets',
-      'Default techniques',
-      'Default run size',
+    expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual([
+      'AI Red Team 1 scenario',
+      'Garak 2 scenarios',
+      'Other scenarios 1 scenario',
     ])
-    expect(headers.every((cell) => cell.classList.contains('scenario-catalog-cell-padding'))).toBe(true)
-    const cells = within(screen.getByTestId('scenario-card-foundry.red_team_agent')).getAllByRole('cell')
-    expect(cells).toHaveLength(4)
-    expect(cells.every((cell) => cell.classList.contains('scenario-catalog-cell-padding'))).toBe(true)
-    expect(within(cells[0]).getByRole('link', { name: 'foundry.red_team_agent' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /show details|hide details/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: /details/i })).not.toBeInTheDocument()
+    for (const toggle of [/^AI Red Team/, /^Garak/, /^Other scenarios/]) {
+      expect(moduleToggle(toggle)).toHaveAttribute('aria-expanded', 'false')
+    }
+    expect(screen.getByText('Ports of garak probes: prompt injection and more.')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 
-  it('follows the cursor to load every page automatically', async () => {
-    mockListCatalog
-      .mockResolvedValueOnce({
-        items: [makeScenario({ scenario_name: 'scenario.page1' })],
-        pagination: { limit: 1, has_more: true, next_cursor: 'cursor-1' },
-      })
-      .mockResolvedValueOnce({
-        items: [makeScenario({ scenario_name: 'scenario.page2' })],
-        pagination: { limit: 1, has_more: false },
-      })
-      .mockResolvedValueOnce({
-        items: [makeScenario({ scenario_name: 'scenario.page1' })],
-        pagination: { limit: 1, has_more: true, next_cursor: 'cursor-1' },
-      })
-      .mockResolvedValueOnce({
-        items: [makeScenario({ scenario_name: 'scenario.page2' })],
-        pagination: { limit: 1, has_more: false },
-      })
-
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-
-    expect(await screen.findByText('scenario.page1')).toBeInTheDocument()
-    expect(screen.getByText('scenario.page2')).toBeInTheDocument()
-    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(4))
-    expect(mockListCatalog).toHaveBeenNthCalledWith(2, 200, 'cursor-1', false)
-    expect(mockListCatalog).toHaveBeenNthCalledWith(3, 200, undefined)
-    expect(mockListCatalog).toHaveBeenNthCalledWith(4, 200, 'cursor-1')
-  })
-
-  it('stops paging if the backend repeats a cursor instead of looping forever', async () => {
-    mockListCatalog.mockResolvedValue({
-      items: [makeScenario({ scenario_name: 'scenario.loop' })],
-      pagination: { limit: 1, has_more: true, next_cursor: 'same-cursor' },
-    })
-
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-
-    expect(await screen.findAllByText('scenario.loop')).toHaveLength(1)
-    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(4))
-    // Give any additional (incorrect) fetch a chance to fire before asserting it didn't.
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(mockListCatalog).toHaveBeenCalledTimes(4)
-  })
-
-  it('shows an empty state when no scenarios are registered', async () => {
-    mockListCatalog.mockResolvedValueOnce({ items: [], pagination: { limit: 200, has_more: false } })
-
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-
-    expect(await screen.findByTestId('empty-state')).toBeInTheDocument()
-  })
-
-  it('shows the error text without a retry action on failure', async () => {
-    mockListCatalog.mockRejectedValueOnce(new Error('Network error — check that the backend is running and reachable.'))
-
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-
-    expect(await screen.findByText(/Network error/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
-  })
-
-  it('recovers on the next automatic catalog check', async () => {
-    mockListCatalog
-      .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValue({
-        items: [makeScenario({ scenario_name: 'scenario.recovered' })],
-        pagination: { limit: 200, has_more: false },
-      })
-
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-
-    await screen.findByText('boom')
-    await advanceAutoRefresh()
-
-    expect(await screen.findByText('scenario.recovered')).toBeInTheDocument()
-    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(3))
-  })
-
-  it('filters scenarios by the search box across name, description, techniques, and datasets', async () => {
+  it('keeps opened modules in the URL', async () => {
     const user = userEvent.setup()
-    mockListCatalog.mockResolvedValue({
-      items: [
-        makeScenario({ scenario_name: 'foundry.red_team_agent', description: 'Red teams a target.' }),
-        makeScenario({
-          scenario_name: 'encoding.base64',
-          description: 'Applies text encodings.',
-          default_datasets: ['harmbench'],
-          default_technique: 'multi_turn',
-          default_techniques: ['crescendo'],
-          aggregate_techniques: ['multi_turn'],
-          aggregate_technique_expansions: { multi_turn: ['crescendo'] },
-        }),
-      ],
-      pagination: { limit: 200, has_more: false },
-    })
+    await renderLoaded()
 
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
+    await user.click(moduleToggle(/^Garak/))
+    await user.click(moduleToggle(/^AI Red Team/))
 
-    await screen.findByText('foundry.red_team_agent')
-
-    await user.type(screen.getByLabelText('Search scenarios'), 'Multi-turn')
-
-    expect(screen.queryByText('foundry.red_team_agent')).not.toBeInTheDocument()
-    expect(screen.getByText('encoding.base64')).toBeInTheDocument()
+    expect(currentRoute()).toBe('/scanner/launch?open=garak&open=airt')
+    expect(screen.getByRole('table', { name: 'Scenarios in Garak' })).toBeInTheDocument()
+    await user.click(moduleToggle(/^Garak/))
+    expect(currentRoute()).toBe('/scanner/launch?open=airt')
+    expect(screen.queryByRole('table', { name: 'Scenarios in Garak' })).not.toBeInTheDocument()
   })
 
-  it('searches dataset metadata and renders singular counts with no default techniques', async () => {
+  it('restores the open modules from the URL', async () => {
+    await renderLoaded('/scanner/launch?open=garak')
+
+    expect(moduleToggle(/^Garak/)).toHaveAttribute('aria-expanded', 'true')
+    expect(moduleToggle(/^AI Red Team/)).toHaveAttribute('aria-expanded', 'false')
+    expect(within(screen.getByRole('table', { name: 'Scenarios in Garak' })).getByRole('link', { name: 'encoding' }))
+      .toHaveAttribute('title', 'garak.encoding')
+  })
+
+  it('expands and collapses every module', async () => {
     const user = userEvent.setup()
-    mockListCatalog.mockResolvedValue({
-      items: [
-        makeScenario({
-          scenario_name: 'scenario.one',
-          default_techniques: [],
-          default_datasets: ['dataset-one'],
-          default_run_size: {
-            dataset_size: { kind: 'bounded', value: 1 }, dataset_limit: { state: 'value', value: 1 },
-            estimated_attack_count: null,
-            components: [],
-            datasets: [{
-              name: 'dataset-one',
-              kind: 'dataset',
-              logical_seed_group_count: 1,
-              selected_seed_group_count: 1,
-              configured_caps: [],
-              selection_note: null,
-            }],
-            note: null,
-          },
-        }),
-        makeScenario({
-          scenario_name: 'scenario.two',
-          default_datasets: ['dataset-two'],
-          default_run_size: {
-            dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
-            dataset_limit: { state: 'scenario_default' },
-            estimated_attack_count: null,
-            components: [],
-            datasets: [{
-              name: 'dataset-two',
-              kind: 'dataset',
-              logical_seed_group_count: 2,
-              selected_seed_group_count: 2,
-              configured_caps: [],
-              selection_note: 'Dataset metadata is searchable.',
-            }],
-            note: null,
-          },
-        }),
-      ],
-      pagination: { limit: 200, has_more: false },
-    })
+    await renderLoaded()
 
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-    await screen.findByText('scenario.one')
-    await user.type(screen.getByLabelText('Search scenarios'), 'dataset')
+    await user.click(screen.getByRole('button', { name: 'Expand all' }))
+    expect(currentRoute()).toBe('/scanner/launch?open=airt&open=garak&open=other-scenarios')
+    expect(screen.getAllByRole('table')).toHaveLength(3)
 
-    const firstRow = screen.getByTestId('scenario-card-scenario.one')
-    expect(within(firstRow).getByText('Up to 1 objective')).toBeInTheDocument()
-    expect(within(firstRow).getByText(/dataset-one/)).toBeInTheDocument()
-    expect(within(firstRow).getByText('No default techniques')).toBeInTheDocument()
-    expect(screen.getByText('scenario.two')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Collapse all' }))
+    expect(currentRoute()).toBe('/scanner/launch')
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 
-  it('shows a no-results state when the search matches nothing', async () => {
+  it('carries the open modules to the configure page', async () => {
     const user = userEvent.setup()
-    mockListCatalog.mockResolvedValue({
-      items: [makeScenario({ scenario_name: 'foundry.red_team_agent' })],
-      pagination: { limit: 200, has_more: false },
-    })
+    await renderLoaded('/scanner/launch?open=garak')
 
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-    await screen.findByText('foundry.red_team_agent')
+    await user.click(screen.getByRole('link', { name: 'doctor' }))
 
-    await user.type(screen.getByLabelText('Search scenarios'), 'no-such-scenario')
-
-    expect(await screen.findByTestId('no-results-state')).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'Configure state' }))
+      .toHaveTextContent('{"launchSearch":"?open=garak"}')
   })
 
-  it('links each card to its encoded scenario detail route', async () => {
-    mockListCatalog.mockResolvedValue({
-      items: [makeScenario({ scenario_name: 'foundry/red_team_agent' })],
-      pagination: { limit: 200, has_more: false },
-    })
+  it('opens every module with a match while searching and counts the matches', async () => {
+    const user = userEvent.setup()
+    await renderLoaded()
 
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
+    await user.type(screen.getByRole('textbox', { name: 'Search modules and scenarios' }), 'encodings')
 
-    const card = await screen.findByRole('link', { name: /foundry\/red_team_agent/i })
-    expect(card).toHaveAttribute('href', '/scanner/launch/foundry%2Fred_team_agent')
+    expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent))
+      .toEqual(['Garak 1 of 2 scenarios'])
+    expect(moduleToggle(/^Garak/)).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('link', { name: 'encoding' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'doctor' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Expand all|Collapse all/ })).not.toBeInTheDocument()
+    expect(screen.getByText('1 scenario matches "encodings"')).toBeInTheDocument()
+    expect(currentRoute()).toBe('/scanner/launch')
   })
 
-  it('shows configured limits rather than known population counts', async () => {
-    mockListCatalog.mockResolvedValue({
-      items: [
-        makeScenario({
-          scenario_name: 'scenario.compound',
-          default_datasets: ['population-a', 'population-b'],
-          dataset_size_limit: {
-            default_scope: 'none',
-            default_count: null,
-            override_scope: 'per_dataset',
-          },
-          default_run_size: {
-            dataset_size: { kind: 'bounded', value: 10 }, dataset_limit: { state: 'value', value: 10 },
-            estimated_attack_count: null,
-            components: [],
-            datasets: [
-              {
-                name: 'population-a',
-                kind: 'dataset',
-                logical_seed_group_count: 100,
-                selected_seed_group_count: 4,
-                configured_caps: [],
-                selection_note: null,
-              },
-              {
-                name: 'population-b',
-                kind: 'synthesized',
-                logical_seed_group_count: 20,
-                selected_seed_group_count: 2,
-                configured_caps: [],
-                selection_note: null,
-              },
-            ],
-            note: null,
-          },
-        }),
-      ],
-      pagination: { limit: 200, has_more: false },
-    })
+  it('lists a whole module when the search names it', async () => {
+    const user = userEvent.setup()
+    await renderLoaded()
 
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
+    await user.type(screen.getByRole('textbox', { name: 'Search modules and scenarios' }), 'garak')
 
-    const row = await screen.findByTestId('scenario-card-scenario.compound')
-    expect(within(row).getByText('Up to 10 objectives')).toBeInTheDocument()
-    expect(within(row).getByText('population-a · population-b')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 3, name: 'Garak 2 scenarios' })).toBeInTheDocument()
+    expect(screen.getAllByRole('link', { name: /^(encoding|doctor)$/ })).toHaveLength(2)
   })
 
-  it('shows an adaptive estimate as a plain attack range', async () => {
-    mockListCatalog.mockResolvedValue({
-      items: [
-        makeScenario({
-          scenario_name: 'adaptive.text_adaptive',
-          default_run_size: {
-            dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
-            dataset_limit: { state: 'scenario_default' },
-            estimated_attack_count: null,
-            minimum_attack_count: 21,
-            maximum_attack_count: 42,
-            components: [
-              {
-                label: 'Baseline',
-                count: 21,
-                is_baseline: true,
-                note: null,
-              },
-              {
-                label: 'Adaptive objectives',
-                count: 21,
-                is_baseline: false,
-                note: null,
-              },
-            ],
-            datasets: [],
-            note: null,
-          },
-        }),
-      ],
-      pagination: { limit: 200, has_more: false },
-    })
+  it('does not match module descriptions', async () => {
+    const user = userEvent.setup()
+    await renderLoaded()
 
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
+    await user.type(screen.getByRole('textbox', { name: 'Search modules and scenarios' }), 'prompt injection')
 
-    const row = await screen.findByTestId('scenario-card-adaptive.text_adaptive')
-    expect(within(row).getByText('21-42 attacks')).toBeInTheDocument()
-    expect(within(row).queryByText(/progress units|attack attempts/i)).not.toBeInTheDocument()
+    expect(screen.getByTestId('no-results-state')).toHaveTextContent('No scenarios match "prompt injection"')
+    expect(screen.queryByRole('heading', { level: 3 })).not.toBeInTheDocument()
   })
 
-  it('keeps declared datasets visible when backend population summaries are unavailable', async () => {
-    mockListCatalog.mockResolvedValue({
-      items: [
-        makeScenario({
-          scenario_name: 'scenario.unsized',
-          default_datasets: ['harmbench'],
-          dataset_size_limit: {
-            default_scope: 'none',
-            default_count: null,
-            override_scope: 'per_dataset',
-          },
-        }),
-      ],
-      pagination: { limit: 200, has_more: false },
-    })
+  it('lets users close a matching module until the search changes', async () => {
+    const user = userEvent.setup()
+    await renderLoaded()
+    const search = screen.getByRole('textbox', { name: 'Search modules and scenarios' })
+    await user.type(search, 'garak')
 
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-    const row = await screen.findByTestId('scenario-card-scenario.unsized')
-    expect(within(row).queryByText('Population counts unavailable')).not.toBeInTheDocument()
-    expect(within(row).getByText('harmbench')).toBeInTheDocument()
+    await user.click(moduleToggle(/^Garak/))
+    expect(moduleToggle(/^Garak/)).toHaveAttribute('aria-expanded', 'false')
+    expect(currentRoute()).toBe('/scanner/launch')
+
+    await user.type(search, '.')
+    expect(moduleToggle(/^Garak/)).toHaveAttribute('aria-expanded', 'true')
   })
 
-  it('keeps the authoritative default comparison values in the launch row', async () => {
-    mockListCatalog.mockResolvedValue({
-      items: [
-        makeScenario({
-          scenario_name: 'airt.jailbreak',
-          scenario_version: 4,
-          default_technique: 'default',
-          default_techniques: ['prompt_sending', 'jailbreak_system_prompt'],
-          aggregate_techniques: ['default', 'easy'],
-          aggregate_technique_expansions: {
-            default: ['prompt_sending', 'jailbreak_system_prompt'],
-            easy: ['prompt_sending'],
-          },
-          all_techniques: ['prompt_sending', 'jailbreak_system_prompt', 'flip'],
-          default_datasets: ['harmbench'],
-          dataset_size_limit: {
-            default_scope: 'none',
-            default_count: null,
-            override_scope: 'per_dataset',
-          },
-          default_run_size: {
-            estimated_attack_count: null,
-            minimum_attack_count: 12,
-            maximum_attack_count: 20,
-            dataset_size: { kind: 'bounded', value: 4 }, dataset_limit: { state: 'value', value: 4 },
-            components: [
-              {
-                label: 'Default attacks',
-                count: 20,
-                is_baseline: false,
-                note: null,
-              },
-            ],
-            datasets: [
-              {
-                name: 'harmbench',
-                kind: 'dataset',
-                logical_seed_group_count: 400,
-                selected_seed_group_count: 4,
-                configured_caps: [
-                  {
-                    label: 'Jailbreak templates',
-                    count: 2,
-                    configured_on: 'configuration',
-                    dataset_name: null,
-                  },
-                ],
-                selection_note: 'One incompatible group is excluded.',
-              },
-            ],
-            note: 'Retries and internal turns are excluded.',
-          },
-        }),
-      ],
-      pagination: { limit: 200, has_more: false },
-    })
+  it('clears the search on Escape and restores the modules the user had open', async () => {
+    const user = userEvent.setup()
+    await renderLoaded('/scanner/launch?open=airt')
+    const search = screen.getByRole('textbox', { name: 'Search modules and scenarios' })
+    await user.type(search, 'encodings')
+    expect(moduleToggle(/^Garak/)).toHaveAttribute('aria-expanded', 'true')
 
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
+    await user.keyboard('{Escape}')
 
-    const row = await screen.findByTestId('scenario-card-airt.jailbreak')
-    expect(within(row).getByText('Up to 4 objectives')).toBeInTheDocument()
-    expect(within(row).getByText('harmbench')).toBeInTheDocument()
-    expect(within(row).getByText('2 techniques')).toBeInTheDocument()
-    expect(within(row).getByText('prompt_sending · jailbreak_system_prompt')).toBeInTheDocument()
-    expect(within(row).getByText('12-20 attacks')).toBeInTheDocument()
-    expect(within(row).queryByText('default')).not.toBeInTheDocument()
-    expect(within(row).queryByText(/aggregate presets|compatible concrete/i)).not.toBeInTheDocument()
-    expect(within(row).queryByText(REMOVED_NORMAL_ESTIMATE_LABELS)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /show details|hide details/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: /details/i })).not.toBeInTheDocument()
+    expect(search).toHaveValue('')
+    expect(moduleToggle(/^AI Red Team/)).toHaveAttribute('aria-expanded', 'true')
+    expect(moduleToggle(/^Garak/)).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('button', { name: 'Expand all' })).toBeInTheDocument()
   })
 
-  it('ignores a default estimate failure that arrives after unmount', async () => {
-    const scenarioEstimates = deferred<ListRegisteredScenariosResponse>()
+  it('explains a load failure in plain words with the details and a retry', async () => {
+    const user = userEvent.setup()
+    mockListCatalog.mockRejectedValueOnce(new Error('initializer airt_scenarios timed out'))
+    renderCatalog()
+
+    expect(await screen.findByText("Couldn't load scenarios.")).toBeInTheDocument()
+    expect(screen.getByText(/ask your PyRIT administrator to check the server/)).toBeInTheDocument()
+    expect(screen.getByText('Details: initializer airt_scenarios timed out')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+
+    expect(await screen.findByRole('heading', { level: 3, name: /^Garak/ })).toBeInTheDocument()
+    expect(screen.queryByText("Couldn't load scenarios.")).not.toBeInTheDocument()
+  })
+
+  it('warns when default estimates fail but keeps the modules', async () => {
     mockListCatalog
-      .mockResolvedValueOnce(catalogPage([makeScenario({ scenario_name: 'airt.jailbreak' })]))
-      .mockReturnValueOnce(scenarioEstimates.promise)
+      .mockResolvedValueOnce(catalogPage(SCENARIOS))
+      .mockRejectedValueOnce(new Error('estimate failed'))
+    await renderLoaded()
 
-    const { unmount } = render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
+    expect(await screen.findByText('estimate failed')).toBeInTheDocument()
+    expect(moduleToggle(/^Garak/)).toBeInTheDocument()
+  })
 
-    await screen.findByTestId('scenario-card-airt.jailbreak')
-    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(2))
-    unmount()
-    await act(async () => {
-      scenarioEstimates.reject(new Error('late estimate failure'))
-    })
+  it('shows an empty state without a search when no scenarios are registered', async () => {
+    mockListCatalog.mockResolvedValue(catalogPage([]))
+    mockListModules.mockResolvedValue({ items: [] })
+    renderCatalog()
+
+    expect(await screen.findByTestId('empty-state')).toHaveTextContent('No scenarios are registered')
+    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   })
 })

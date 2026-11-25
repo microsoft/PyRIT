@@ -1,213 +1,80 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type KeyboardEvent, useMemo, useState } from 'react'
 
 import {
+  Button,
   Input,
   Link as FluentLink,
   MessageBar,
+  MessageBarActions,
   MessageBarBody,
+  MessageBarTitle,
   Spinner,
   Text,
 } from '@fluentui/react-components'
 import { SearchRegular } from '@fluentui/react-icons'
+import { useLocation } from 'react-router'
 
-import MarkdownContent from '@/components/Markdown/MarkdownContent'
-import { useRuntime } from '@/hooks/useRuntime'
-import { useAutoRefresh } from '@/hooks/useAutoRefresh'
-import { scenariosApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
-import type { RegisteredScenario } from '@/types'
-import { fetchAllPages } from '@/utils/fetchAllPages'
+import { useLaunchModuleState } from '@/hooks/useLaunchModuleState'
+import { useScenarioCatalog } from '@/hooks/useScenarioCatalog'
 
 import { useScenarioCatalogStyles } from './ScenarioCatalog.styles'
-import ScenarioCatalogTable, { DatasetSummary, ScannerRow, type ScannerColumnLabels } from './ScenarioCatalogTable'
-import { ScenarioRunEstimateSummary } from './ScenarioRunEstimate'
-import { normalizeScenarioMarkdown } from './scenarioMarkdown'
-import { mapScenarioRunEstimate } from './scenarioRunEstimateAdapter'
-import { techniqueSetName } from './scenarioTechniqueSets'
+import ScenarioModuleCard from './ScenarioModuleCard'
+import { filterModuleGroups, groupScenariosByModule } from './scenarioModules'
+import type { ScenarioLaunchNavigationState } from './scenarioRunNavigation'
 
-/** Items requested per catalog page while paging through the full list. */
-const CATALOG_PAGE_SIZE = 200
+const SCENARIOS_DOCUMENTATION_URL = 'https://microsoft.github.io/PyRIT/latest/scanner/scanner/'
 
-/** The Launch table shows what each scenario runs by default. */
-const SCENARIO_DEFAULT_COLUMNS: ScannerColumnLabels = {
-  scenario: 'Scenario / purpose',
-  datasets: 'Default datasets',
-  techniques: 'Default techniques',
-  runSize: 'Default run size',
+function matchSummary(count: number, query: string): string {
+  return count === 1 ? `1 scenario matches "${query}"` : `${count} scenarios match "${query}"`
 }
 
-type SearchTerm = string | null | undefined
-
-function matchesQuery(terms: SearchTerm[], query: string): boolean {
-  if (!query) {
-    return true
-  }
-  return terms.join(' ').toLowerCase().includes(query.toLowerCase())
-}
-
-function compareNames(left: string, right: string): number {
-  if (left < right) {
-    return -1
-  }
-  return left > right ? 1 : 0
-}
-
-function scenarioSearchTerms(scenario: RegisteredScenario): SearchTerm[] {
-  return [
-    scenario.scenario_name,
-    scenario.description,
-    scenario.description_markdown,
-    scenario.scenario_type,
-    scenario.default_technique,
-    ...scenario.default_techniques,
-    ...scenario.aggregate_techniques,
-    ...scenario.aggregate_techniques.map(techniqueSetName),
-    ...Object.values(scenario.aggregate_technique_expansions).flat(),
-    ...scenario.all_techniques,
-    ...scenario.default_datasets,
-    ...scenario.default_run_size.datasets.flatMap((dataset) => [
-      dataset.name,
-      dataset.selection_note,
-      ...dataset.configured_caps.map((cap) => cap.label),
-    ]),
-  ]
-}
-
-interface ScenarioScannerRowProps {
-  scenario: RegisteredScenario
-  estimatesLoading: boolean
-}
-
-function ScenarioScannerRow({ scenario, estimatesLoading }: ScenarioScannerRowProps) {
-  const styles = useScenarioCatalogStyles()
-  const descriptionMarkdown = normalizeScenarioMarkdown(
-    scenario.description_markdown || scenario.description,
-  )
-
-  return (
-    <ScannerRow
-      columns={SCENARIO_DEFAULT_COLUMNS}
-      testId={`scenario-card-${scenario.scenario_name}`}
-      name={scenario.scenario_name}
-      path={`/scanner/launch/${encodeURIComponent(scenario.scenario_name)}`}
-      description={(
-        <MarkdownContent
-          content={descriptionMarkdown}
-          className={styles.purposePreview}
-          testId={`scenario-description-${scenario.scenario_name}`}
-        />
-      )}
-      descriptionKey={descriptionMarkdown}
-      datasets={(
-        <DatasetSummary
-          datasets={scenario.default_run_size.datasets}
-          declaredDatasets={scenario.default_datasets}
-          datasetSize={scenario.default_run_size.dataset_size}
-        />
-      )}
-      techniques={[...new Set(scenario.default_techniques)]}
-      runSize={estimatesLoading ? (
-        <Spinner size="tiny" label="Calculating..." labelPosition="after" />
-      ) : (
-        <ScenarioRunEstimateSummary
-          state={mapScenarioRunEstimate(scenario.default_run_size, 'default')}
-          compact
-        />
-      )}
-    />
-  )
-}
-
-/** The Scanner's Launch tab: every registered scenario, each opening its configure page. */
+/** The Scanner's Launch tab: registered scenarios grouped into module cards, each row opening its configure page. */
 export default function ScenarioCatalog() {
-  const { generation } = useRuntime()
   const styles = useScenarioCatalogStyles()
-  const [scenarios, setScenarios] = useState<RegisteredScenario[]>([])
-  const [loading, setLoading] = useState(true)
-  const [estimatesLoading, setEstimatesLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [estimateError, setEstimateError] = useState<string | null>(null)
+  const location = useLocation()
+  const { scenarios, modules, loading, estimatesLoading, error, estimateError, retry } = useScenarioCatalog()
+  const { openModules, setOpenModules } = useLaunchModuleState()
   const [query, setQuery] = useState('')
-  const [refetchCount, setRefetchCount] = useState(0)
-  const pending = useRef(false)
+  // Cards opened or closed during a search; a new search starts with every matching card open.
+  const [searchToggles, setSearchToggles] = useState<ReadonlyMap<string, boolean>>(new Map())
 
-  useEffect(() => {
-    let cancelled = false
-    pending.current = true
+  const searchQuery = query.trim()
+  const searching = searchQuery !== ''
+  const groups = useMemo(() => groupScenariosByModule(scenarios, modules), [scenarios, modules])
+  const results = useMemo(() => filterModuleGroups(groups, searchQuery), [groups, searchQuery])
+  const matchCount = results.reduce((count, result) => count + result.matches.length, 0)
+  const allOpen = groups.every((group) => openModules.includes(group.key))
+  const linkState: ScenarioLaunchNavigationState = { launchSearch: location.search }
 
-    const loadScenarioEstimates = async (): Promise<void> => {
-      try {
-        const estimatedItems = await fetchAllPages(
-          (cursor) => scenariosApi.listCatalog(CATALOG_PAGE_SIZE, cursor),
-          undefined,
-          (scenario) => scenario.scenario_name,
-        )
-        if (cancelled) return
-        setScenarios(estimatedItems)
-        setEstimateError(null)
-      } catch (err: unknown) {
-        if (cancelled) return
-        setEstimateError(toApiError(err).detail)
-      } finally {
-        if (!cancelled) {
-          setEstimatesLoading(false)
-        }
-      }
-    }
-
-    const loadCatalog = async (): Promise<void> => {
-      let items: RegisteredScenario[]
-      try {
-        items = await fetchAllPages(
-          (cursor) => scenariosApi.listCatalog(CATALOG_PAGE_SIZE, cursor, false),
-          undefined,
-          (scenario) => scenario.scenario_name,
-        )
-      } catch (err: unknown) {
-        if (cancelled) return
-        setError(toApiError(err).detail)
-        setLoading(false)
-        setEstimatesLoading(false)
-        return
-      }
-      if (cancelled) return
-
-      setScenarios((current) => items.map((item) => {
-        const previous = current.find((candidate) => candidate.scenario_name === item.scenario_name)
-        return previous
-          && JSON.stringify({ ...previous, default_run_size: null }) === JSON.stringify({ ...item, default_run_size: null })
-          ? { ...item, default_run_size: previous.default_run_size }
-          : item
-      }))
-      setError(null)
-      setLoading(false)
-
-      if (items.length === 0) {
-        setEstimatesLoading(false)
-        return
-      }
-      await loadScenarioEstimates()
-    }
-
-    void loadCatalog().finally(() => { if (!cancelled) pending.current = false })
-
-    return () => {
-      cancelled = true
-      pending.current = false
-    }
-  }, [refetchCount, generation])
-
-  const handleRetry = useCallback(() => {
-    setRefetchCount((count) => count + 1)
-  }, [])
-  useAutoRefresh(() => { if (!pending.current) handleRetry() }, !loading)
-
-  const filteredScenarios = useMemo(
-    () => scenarios
-      .filter((scenario) => matchesQuery(scenarioSearchTerms(scenario), query))
-      .sort((left, right) => compareNames(left.scenario_name, right.scenario_name)),
-    [scenarios, query],
+  const isOpen = (key: string): boolean => (
+    searching ? (searchToggles.get(key) ?? true) : openModules.includes(key)
   )
+
+  const changeQuery = (value: string): void => {
+    setQuery(value)
+    setSearchToggles(new Map())
+  }
+
+  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === 'Escape' && query) {
+      event.preventDefault()
+      changeQuery('')
+    }
+  }
+
+  const changeModuleOpen = (key: string, open: boolean): void => {
+    if (searching) {
+      setSearchToggles((current) => new Map(current).set(key, open))
+    } else {
+      setOpenModules(open ? [...openModules, key] : openModules.filter((module) => module !== key))
+    }
+  }
+
+  const toggleAll = (): void => {
+    setOpenModules(allOpen ? [] : groups.map((group) => group.key))
+  }
+
+  const hasScenarios = !loading && scenarios.length > 0
 
   return (
     <section
@@ -218,28 +85,32 @@ export default function ScenarioCatalog() {
       <div className={styles.header} data-tour="scanner-catalog">
         <div className={styles.headerText}>
           <Text id="scenario-catalog-title" as="h2" size={600} weight="semibold">
-            <FluentLink
-              href="https://microsoft.github.io/PyRIT/latest/scanner/scanner/"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Launch a scan
-            </FluentLink>
+            Launch a scan
           </Text>
           <Text size={300} className={styles.subtitle}>
-            Select a scenario to configure a scan.
+            Choose a scenario to configure.{' '}
+            <FluentLink href={SCENARIOS_DOCUMENTATION_URL} target="_blank" rel="noopener noreferrer">
+              About scenarios
+            </FluentLink>
           </Text>
         </div>
-        <div className={styles.headerActions}>
-          <Input
-            className={styles.search}
-            contentBefore={<SearchRegular />}
-            placeholder="Search scenarios..."
-            value={query}
-            onChange={(_, data) => setQuery(data.value)}
-            aria-label="Search scenarios"
-          />
-        </div>
+        {hasScenarios && (
+          <div className={styles.headerActions}>
+            <Input
+              className={styles.search}
+              contentBefore={<SearchRegular />}
+              placeholder="Search modules and scenarios..."
+              value={query}
+              onChange={(_, data) => changeQuery(data.value)}
+              onKeyDown={handleSearchKeyDown}
+              aria-label="Search modules and scenarios"
+            />
+          </div>
+        )}
+      </div>
+
+      <div role="status" className={styles.visuallyHidden}>
+        {hasScenarios && searching ? matchSummary(matchCount, searchQuery) : ''}
       </div>
 
       {estimateError && (
@@ -250,7 +121,21 @@ export default function ScenarioCatalog() {
         </div>
       )}
 
-      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
+      {error && (
+        <div className={styles.messages}>
+          <MessageBar intent="error" layout="multiline">
+            <MessageBarBody>
+              <MessageBarTitle>Couldn&apos;t load scenarios.</MessageBarTitle>
+              Try again. If it keeps failing, ask your PyRIT administrator to check the server.
+              <Text as="p" size={200} className={styles.errorDetail}>Details: {error}</Text>
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button onClick={retry} className={styles.touchTarget}>Retry</Button>
+            </MessageBarActions>
+          </MessageBar>
+        </div>
+      )}
+
       {loading ? (
         <div className={styles.centeredState}>
           <Spinner label="Loading scenarios..." />
@@ -261,21 +146,34 @@ export default function ScenarioCatalog() {
           <Text size={400}>No scenarios are registered</Text>
           <Text size={200}>Register a scenario via your PyRIT initializers to see it here.</Text>
         </div>
-      ) : filteredScenarios.length === 0 ? (
+      ) : results.length === 0 ? (
         <div className={styles.centeredState} data-testid="no-results-state">
-          <Text size={400}>No scenarios match &quot;{query}&quot;</Text>
+          <Text size={400}>No scenarios match &quot;{searchQuery}&quot;</Text>
           <Text size={200}>Try a different search term.</Text>
         </div>
       ) : (
-        <ScenarioCatalogTable label="Scenarios" columns={SCENARIO_DEFAULT_COLUMNS}>
-          {filteredScenarios.map((scenario) => (
-            <ScenarioScannerRow
-              key={scenario.scenario_name}
-              scenario={scenario}
-              estimatesLoading={estimatesLoading}
-            />
-          ))}
-        </ScenarioCatalogTable>
+        <>
+          {!searching && (
+            <div className={styles.listActions}>
+              <Button appearance="subtle" size="small" className={styles.touchTarget} onClick={toggleAll}>
+                {allOpen ? 'Collapse all' : 'Expand all'}
+              </Button>
+            </div>
+          )}
+          <div className={styles.modules}>
+            {results.map(({ group, matches }) => (
+              <ScenarioModuleCard
+                key={group.key}
+                group={group}
+                scenarios={matches}
+                open={isOpen(group.key)}
+                onOpenChange={(open) => changeModuleOpen(group.key, open)}
+                estimatesLoading={estimatesLoading}
+                linkState={linkState}
+              />
+            ))}
+          </div>
+        </>
       )}
     </section>
   )

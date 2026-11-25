@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 # ruff: noqa: F401
 
-"""Scenario for executing one catalog technique."""
+"""Run one catalog technique toward one free-text objective, without a scenario's datasets."""
 
 from typing import TYPE_CHECKING
 
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
+
+DISPLAY_NAME = "Technique"
 
 if TYPE_CHECKING:
     from pyrit.scenario.scenarios._dynamic_techniques import ExecuteTechnique

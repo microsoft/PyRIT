@@ -120,7 +120,8 @@ for SDK usage.
 
 Scanner has **Launch** (`/scanner/launch`), **Presets** (`/scanner/presets`), and
 **History** (`/scanner/history`) tabs. Launch is the catalog and launch point for
-automated scenarios. Presets lists saved sets of scenarios; **Launch** on a preset
+automated scenarios, grouped by module such as Garak; scenarios registered outside
+PyRIT's modules are under **Other scenarios**. Presets lists saved sets of scenarios; **Launch** on a preset
 runs all of its scenarios, each with its own settings, against the target you choose.
 Each scenario defines a test workflow with its techniques, data, and scoring.
 Open one to select a target and adjust the settings it supports, such as

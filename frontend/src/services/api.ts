@@ -57,6 +57,7 @@ import type {
   CreateConversationResponse,
   ChangeMainConversationResponse,
   ListRegisteredScenariosResponse,
+  ListScenarioModulesResponse,
   RegisteredScenario,
   RunScenarioRequest,
   ScenarioPreset,
@@ -750,6 +751,11 @@ export const scenariosApi = {
     if (cursor) params.cursor = cursor
     if (!includeEstimates) params.include_estimates = false
     const response = await apiClient.get('/scenarios/catalog', { params })
+    return response.data
+  },
+
+  listModules: async (): Promise<ListScenarioModulesResponse> => {
+    const response = await apiClient.get('/scenarios/modules')
     return response.data
   },
 
