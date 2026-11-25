@@ -1187,13 +1187,13 @@ class AttackAnalyticsQueryCompiler:
         self, *, ids: list[str], names: list[str], missing: bool, index: int
     ) -> ColumnElement[bool]:
         """
-        Match saved Operation IDs, legacy names, and unassigned activity through their indexes.
+        Match saved Operation IDs, legacy names, and unassigned activity through independent indexed branches.
 
         A legacy name matches only results without an Operation ID, so an ID and a legacy
         name never select each other's results, even when the name is UUID-shaped.
 
         Returns:
-            ColumnElement[bool]: The requested ID, legacy-name, and unassigned lookups combined with OR.
+            ColumnElement[bool]: The requested ID, legacy-name, and unassigned lookups.
         """
         root = self.root.c
         matches: list[ColumnElement[bool]] = []
@@ -1208,7 +1208,12 @@ class AttackAnalyticsQueryCompiler:
             )
         if missing:
             matches.append(and_(root.operation_id.is_(None), root.operation.is_(None)))
-        return or_(*matches)
+        if len(matches) < 2:
+            return or_(*matches)
+        candidates = union_all(
+            *(select(root.id).select_from(self.root).where(match).correlate(None) for match in matches)
+        )
+        return root.id.in_(candidates)
 
     @staticmethod
     def _filter_values(*, values: list[str], index: int) -> FromClause:
