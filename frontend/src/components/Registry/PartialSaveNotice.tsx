@@ -6,13 +6,19 @@ interface PartialSaveNoticeProps {
   error: string
 }
 
+/** Server details don't always end a sentence; the notice continues after them. */
+function asSentence(text: string): string {
+  const trimmed = text.trim()
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`
+}
+
 /** Says plainly that the scenario was saved but the second write failed, so Retry finishes it. */
 export default function PartialSaveNotice({ missingFrom, error }: PartialSaveNoticeProps) {
   return (
     <MessageBar intent="warning" data-testid="partial-save-notice">
       <MessageBarBody>
         <MessageBarTitle>The scenario was saved but not {missingFrom}.</MessageBarTitle>
-        {error} Select Retry to finish.
+        {asSentence(error)} Select Retry to finish.
       </MessageBarBody>
     </MessageBar>
   )

@@ -153,7 +153,15 @@ export default function ScannerPresetsPage({
           <Spinner label="Loading presets..." />
         </div>
       ) : library.error && !hasPresets ? null
-      : !hasPresets ? (
+      : !hasPresets && library.suites.length > 0 ? (
+        <div className={styles.centeredState} data-testid="presets-attention-state">
+          <Text as="h3" size={400} weight="semibold">No presets are ready to launch</Text>
+          <Text size={300}>Every saved preset needs attention. Fix them in the Registry to launch them here.</Text>
+          <Button className={styles.touchTarget} appearance="primary" onClick={() => navigate(PRESETS_ROUTE)}>
+            Open Scenario presets in the Registry
+          </Button>
+        </div>
+      ) : !hasPresets ? (
         <div className={styles.centeredState} data-testid="presets-empty-state">
           <Text as="h3" size={400} weight="semibold">No presets yet</Text>
           <Text size={300}>

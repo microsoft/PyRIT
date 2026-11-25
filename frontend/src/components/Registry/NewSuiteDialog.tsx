@@ -27,13 +27,15 @@ const SCENARIO_HINT = 'You can change its techniques, datasets, and limits after
 
 interface NewSuiteDialogProps {
   scenarios: RegisteredScenario[]
+  /** Names of the presets already loaded, rejected before anything is saved. */
+  existingNames: ReadonlySet<string>
   onCreate: (input: NewSuiteInput, savedPresetName?: string) => Promise<SuiteMutationOutcome>
   onCreated: (name: string) => void
   onDismiss: () => void
 }
 
 /** Creates a preset with its first scenario; a preset is never created empty. */
-export default function NewSuiteDialog({ scenarios, onCreate, onCreated, onDismiss }: NewSuiteDialogProps) {
+export default function NewSuiteDialog({ scenarios, existingNames, onCreate, onCreated, onDismiss }: NewSuiteDialogProps) {
   const styles = useSuiteDialogStyles()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -47,6 +49,7 @@ export default function NewSuiteDialog({ scenarios, onCreate, onCreated, onDismi
     event.preventDefault()
     const trimmedName = name.trim()
     const validation = validateRegistryName(trimmedName)
+      ?? (existingNames.has(trimmedName) ? `A preset named '${trimmedName}' already exists.` : null)
     if (validation) {
       setNameError(validation)
       return

@@ -1,6 +1,6 @@
 import type { Ref } from 'react'
 
-import { Badge, Button, Tooltip } from '@fluentui/react-components'
+import { Badge, Button, Tooltip, useRestoreFocusTarget } from '@fluentui/react-components'
 import { AddRegular, DeleteRegular, EditRegular, WarningRegular } from '@fluentui/react-icons'
 
 import CollapsibleCard from '@/components/CollapsibleCard'
@@ -44,6 +44,8 @@ export default function RegistrySuiteCard({
   addScenarioRef,
 }: RegistrySuiteCardProps) {
   const styles = useRegistrySuiteCardStyles()
+  // Add, Edit, and Delete open dialogs that return focus here when they close.
+  const restoreFocusTarget = useRestoreFocusTarget()
   const { suite } = item
   const editable = item.origin === 'stored'
   const attention = suiteNeedsAttention(item)
@@ -71,6 +73,7 @@ export default function RegistrySuiteCard({
         <>
           <Button
             ref={addScenarioRef}
+            {...restoreFocusTarget}
             className={styles.touchTarget}
             appearance="subtle"
             icon={<AddRegular />}
@@ -85,6 +88,7 @@ export default function RegistrySuiteCard({
               className={styles.touchTarget}
               appearance="subtle"
               icon={<EditRegular />}
+              {...restoreFocusTarget}
               disabledFocusable={busy}
               onClick={() => onEdit(item)}
             />
@@ -94,6 +98,7 @@ export default function RegistrySuiteCard({
               className={styles.touchTarget}
               appearance="subtle"
               icon={<DeleteRegular />}
+              {...restoreFocusTarget}
               disabledFocusable={busy}
               onClick={() => onDelete(item)}
             />

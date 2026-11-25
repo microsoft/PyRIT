@@ -161,9 +161,22 @@ describe('ScannerPresetsPage', () => {
     expect(screen.getByRole('status', { name: 'Current route' })).toHaveTextContent('/registry/scenario-presets')
   })
 
-  it('offers to create the first preset when none can launch', async () => {
+  it('says no preset is ready and points to the Registry when every preset needs attention', async () => {
     const user = userEvent.setup()
     mockListSuites.mockResolvedValue({ source: 'suites', items: [BROKEN] })
+    renderPage()
+
+    const state = await screen.findByTestId('presets-attention-state')
+    expect(within(state).getByRole('heading', { name: 'No presets are ready to launch' })).toBeInTheDocument()
+    expect(screen.queryByText('No presets yet')).not.toBeInTheDocument()
+    await user.click(within(state).getByRole('button', { name: 'Open Scenario presets in the Registry' }))
+
+    expect(screen.getByRole('status', { name: 'Current route' })).toHaveTextContent('/registry/scenario-presets')
+  })
+
+  it('offers to create the first preset when there are none', async () => {
+    const user = userEvent.setup()
+    mockListSuites.mockResolvedValue({ source: 'suites', items: [] })
     renderPage()
 
     const empty = await screen.findByTestId('presets-empty-state')

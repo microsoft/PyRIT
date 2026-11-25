@@ -9,6 +9,7 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
+  useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import { EditRegular, SubtractCircleRegular } from '@fluentui/react-icons'
 
@@ -69,6 +70,8 @@ export default function RegistrySuiteMemberTable({
   onRemove,
 }: RegistrySuiteMemberTableProps) {
   const styles = useRegistrySuiteMemberTableStyles()
+  // Edit may open the shared-scenario warning, which returns focus here when it closes.
+  const restoreFocusTarget = useRestoreFocusTarget()
 
   if (members.length === 0) {
     return <Text size={200}>This preset has no scenarios yet. Add one to launch it from the Scanner.</Text>
@@ -142,6 +145,7 @@ export default function RegistrySuiteMemberTable({
                           className={styles.touchTarget}
                           appearance="subtle"
                           icon={<EditRegular />}
+                          {...restoreFocusTarget}
                           disabledFocusable={busy}
                           aria-label={`Edit ${member.presetName}`}
                           onClick={() => onEdit(member)}

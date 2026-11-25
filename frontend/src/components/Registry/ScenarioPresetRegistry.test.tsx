@@ -201,9 +201,8 @@ describe('ScenarioPresetRegistry', () => {
     expect(mockCreatePreset).not.toHaveBeenCalled()
   })
 
-  it('says the scenario was saved but not added when the preset write fails, then retries', async () => {
+  it('rejects a name another preset already has before saving anything', async () => {
     const user = userEvent.setup()
-    mockCreateSuite.mockRejectedValueOnce(apiError(409, "Suite 'release_gate' already exists."))
     renderRegistry()
 
     await user.click(await screen.findByRole('button', { name: 'New preset' }))
@@ -212,9 +211,28 @@ describe('ScenarioPresetRegistry', () => {
     await chooseScenario(user, dialog, 'airt.jailbreak')
     await user.click(within(dialog).getByRole('button', { name: 'Create' }))
 
+    expect(within(dialog).getByText("A preset named 'release_gate' already exists.")).toBeInTheDocument()
+    expect(mockCreatePreset).not.toHaveBeenCalled()
+    expect(mockCreateSuite).not.toHaveBeenCalled()
+  })
+
+  it('says the scenario was saved but not added when the preset write fails, then retries', async () => {
+    const user = userEvent.setup()
+    mockCreateSuite.mockRejectedValueOnce(apiError(409, "Scenario suite 'nightly' already exists"))
+    renderRegistry()
+
+    await user.click(await screen.findByRole('button', { name: 'New preset' }))
+    const dialog = screen.getByRole('dialog', { name: 'New preset' })
+    await user.type(within(dialog).getByRole('textbox', { name: /Name/ }), 'nightly')
+    await chooseScenario(user, dialog, 'airt.jailbreak')
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }))
+
     const notice = await within(dialog).findByTestId('partial-save-notice')
-    expect(notice).toHaveTextContent('The scenario was saved but not added to a new preset.')
-    expect(notice).toHaveTextContent("Suite 'release_gate' already exists.")
+    expect(notice).toHaveTextContent(
+      "The scenario was saved but not added to a new preset."
+      + "A preset named 'nightly' was just created by someone else. Choose another name. Select Retry to finish.",
+    )
+    expect(notice).not.toHaveTextContent(/suite/i)
     const name = within(dialog).getByRole('textbox', { name: /Name/ })
     await user.clear(name)
     await user.type(name, 'release_gate_two')
@@ -224,7 +242,7 @@ describe('ScenarioPresetRegistry', () => {
     expect(mockCreatePreset).toHaveBeenCalledTimes(1)
     expect(mockCreateSuite).toHaveBeenLastCalledWith(expect.objectContaining({
       name: 'release_gate_two',
-      entries: [expect.objectContaining({ preset_name: 'release_gate_airt_jailbreak' })],
+      entries: [expect.objectContaining({ preset_name: 'nightly_airt_jailbreak' })],
     }))
   })
 
@@ -366,6 +384,20 @@ describe('ScenarioPresetRegistry', () => {
     expect(mockRemoveSuite).toHaveBeenCalledWith('release_gate', 'release_gate-v1')
     expect(await screen.findByText("'release_gate' changed since it was loaded. Review it and try again."))
       .toBeInTheDocument()
+  })
+
+  it('focuses New preset in the empty state after deleting the last preset', async () => {
+    const user = userEvent.setup()
+    mockListSuites
+      .mockResolvedValueOnce({ source: 'suites', items: [RELEASE] })
+      .mockResolvedValue({ source: 'suites', items: [] })
+    renderRegistry()
+
+    await user.click(await screen.findByRole('button', { name: 'Delete release_gate' }))
+    await user.click(within(screen.getByRole('dialog', { name: 'Delete release_gate?' })).getByRole('button', { name: 'Delete' }))
+
+    const empty = await screen.findByTestId('registry-presets-empty-state')
+    await waitFor(() => expect(within(empty).getByRole('button', { name: 'New preset', hidden: true })).toHaveFocus())
   })
 
   it('removes a scenario from one preset without a confirmation', async () => {

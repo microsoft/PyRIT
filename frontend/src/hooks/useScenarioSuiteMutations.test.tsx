@@ -75,7 +75,7 @@ describe('useScenarioSuiteMutations', () => {
 
     expect(outcome).toEqual({
       status: 'partial',
-      error: "Suite 'nightly' already exists.",
+      error: "A preset named 'nightly' was just created by someone else. Choose another name.",
       savedPresetName: 'nightly_garak_encoding',
     })
     const retried = await run(() => result.current.createSuite({ ...input, name: 'nightly_two' }, 'nightly_garak_encoding'))

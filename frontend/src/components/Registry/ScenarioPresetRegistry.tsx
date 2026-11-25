@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Button,
@@ -7,6 +7,7 @@ import {
   MessageBarBody,
   Spinner,
   Text,
+  useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import { AddRegular } from '@fluentui/react-icons'
 import { useMatch, useNavigate } from 'react-router'
@@ -62,6 +63,10 @@ export default function ScenarioPresetRegistry() {
   const library = useScenarioSuiteLibrary()
   const mutations = useScenarioSuiteMutations(library.presets, library.reload)
   const newPresetButton = useRef<HTMLButtonElement>(null)
+  // Dialogs return focus to the button that opened them.
+  const restoreFocusTarget = useRestoreFocusTarget()
+  // Set after a delete; the reload can swap the header button for the empty state's.
+  const focusNewPresetAfterLoad = useRef(false)
   const addScenarioButtons = useRef(new Map<string, HTMLButtonElement>())
   const [openNames, setOpenNames] = useState<ReadonlySet<string>>(new Set())
   const [newOpen, setNewOpen] = useState(false)
@@ -115,10 +120,17 @@ export default function ScenarioPresetRegistry() {
     setDeleting(null)
     const outcome = await mutations.deleteSuite(item)
     reportOutcome(outcome)
-    if (outcome.status === 'done') newPresetButton.current?.focus()
+    if (outcome.status === 'done') focusNewPresetAfterLoad.current = true
   }
 
   const empty = !library.loading && !library.error && suites.length === 0
+
+  // After a delete removes the focused card, focus the New preset button the reload rendered.
+  useEffect(() => {
+    if (!focusNewPresetAfterLoad.current || library.loading) return
+    focusNewPresetAfterLoad.current = false
+    newPresetButton.current?.focus()
+  }, [library.loading, library.suites])
 
   return (
     <div className={styles.root} data-testid="scenario-preset-registry">
@@ -130,6 +142,7 @@ export default function ScenarioPresetRegistry() {
         {!empty && (
           <Button
             ref={newPresetButton}
+            {...restoreFocusTarget}
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
@@ -183,6 +196,7 @@ export default function ScenarioPresetRegistry() {
           <Text size={300}>Create a preset, then add the scenarios it should run.</Text>
           <Button
             ref={newPresetButton}
+            {...restoreFocusTarget}
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
@@ -226,6 +240,7 @@ export default function ScenarioPresetRegistry() {
       {showNewPreset && (
         <NewSuiteDialog
           scenarios={scenarioOptions}
+          existingNames={new Set(library.suites.map((item) => item.suite.name))}
           onCreate={mutations.createSuite}
           onCreated={(name) => {
             closeNewPreset()

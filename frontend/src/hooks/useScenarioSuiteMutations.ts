@@ -117,7 +117,12 @@ export function useScenarioSuiteMutations(
       await scenarioSuitesApi.create(appendEntry(suite, presetName))
       return { status: 'done' }
     } catch (err: unknown) {
-      return { status: 'partial', error: toApiError(err).detail, savedPresetName: presetName }
+      const apiError = toApiError(err)
+      // The dialog rejects known names first, so a 409 here means another user just took it.
+      const error = apiError.status === 409
+        ? `A preset named '${input.name}' was just created by someone else. Choose another name.`
+        : apiError.detail
+      return { status: 'partial', error, savedPresetName: presetName }
     }
   }), [run, saveScenario])
 
