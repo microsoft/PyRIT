@@ -277,11 +277,11 @@ class PromptShieldTarget(PromptTarget):
         Raises:
             ValueError: If any field sent was not analyzed.
         """
-        user_prompt_sent: str | None = request_body.get("userPrompt")
-        documents_sent: list[str] | None = request_body.get("documents")
+        user_prompt_sent: object = request_body.get("userPrompt")
+        documents_sent: object = request_body.get("documents")
 
-        lookup_user_prompt: str | None = response_body.get("userPromptAnalysis")
-        lookup_documents: list[str] | None = response_body.get("documentsAnalysis")
+        lookup_user_prompt: object = response_body.get("userPromptAnalysis")
+        lookup_documents: object = response_body.get("documentsAnalysis")
 
         if (user_prompt_sent and not lookup_user_prompt) or (documents_sent and not lookup_documents):
             raise ValueError(
@@ -339,7 +339,7 @@ class PromptShieldTarget(PromptTarget):
         if self._api_key:
             # If callable, call it to get the token
             if callable(self._api_key):
-                token = self._api_key()  # type: ignore[ty:call-top-callable]
+                token = self._api_key()  # type: ignore[ty:call-to-function-with-unknown-signature]
                 headers["Authorization"] = f"Bearer {token}"
             else:
                 # String API key

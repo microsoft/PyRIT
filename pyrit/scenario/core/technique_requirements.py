@@ -64,6 +64,18 @@ class TechniqueRequirements:
                 "Put the evaluation on the scenario or the dataset source."
             )
 
+    def objective_scorer_for(self, *, attack_class: type[AttackStrategy[Any, Any]]) -> ScorerRequirements:
+        """
+        Combine the attack class's scorer needs with the technique's own.
+
+        Args:
+            attack_class (type[AttackStrategy]): The technique's attack class.
+
+        Returns:
+            ScorerRequirements: What any objective scorer for this technique must provide.
+        """
+        return ScorerRequirements.combine(attack_class.OBJECTIVE_SCORER_REQUIREMENTS, self.objective_scorer)
+
     @property
     def adaptation(self) -> str | None:
         """The permitted execution-input transformation, if any."""
@@ -114,6 +126,7 @@ def prepare_seed_group(
     seed_group: AttackSeedGroup,
     requirements: SeedGroupRequirements,
     seed_technique: AttackTechniqueSeedGroup | None = None,
+    validate_group: Callable[[AttackSeedGroup], None] | None = None,
 ) -> PreparedSeedGroup:
     """
     Check dataset input, apply permitted adaptation, then validate the full merge.
@@ -122,6 +135,7 @@ def prepare_seed_group(
         seed_group (AttackSeedGroup): The original dataset group.
         requirements (SeedGroupRequirements): Constraints on the dataset input only.
         seed_technique (AttackTechniqueSeedGroup | None): Technique-owned seeds to compose.
+        validate_group (Callable | None): Prompt-binding checks on the prepared execution group.
 
     Returns:
         PreparedSeedGroup: A separate execution group and any applied adaptation.
@@ -147,7 +161,19 @@ def prepare_seed_group(
             execution_group = execution_group.with_technique(technique=seed_technique)
         except ValueError as exc:
             raise IncompatibleTechniqueError(f"Technique seeds cannot be composed with dataset input: {exc}") from exc
+    if validate_group is not None:
+        validate_group(execution_group)
     return PreparedSeedGroup(seed_group=execution_group, adaptation=adaptation)
+
+
+def describe_target_incompatibility(*, technique_name: str, errors: Sequence[str]) -> str:
+    """
+    Format a known target mismatch consistently for assessment and execution.
+
+    Returns:
+        str: The existing technique-scoped diagnostic.
+    """
+    return f"Technique '{technique_name}' is incompatible with the objective target:\n" + "\n".join(errors)
 
 
 def check_target_compatibility(
@@ -177,7 +203,7 @@ def check_target_compatibility(
     errors = requirements.check_target(target=target, attack_class=attack_class)
     if not errors:
         return True
-    message = f"Technique '{technique_name}' is incompatible with the objective target:\n" + "\n".join(errors)
+    message = describe_target_incompatibility(technique_name=technique_name, errors=errors)
     if policy is IncompatibleTechniquePolicy.RAISE:
         raise IncompatibleTechniqueError(message)
     logger.warning("Skipping %s", message)
@@ -218,10 +244,11 @@ def filter_seed_groups(
     for seed_group in seed_groups:
         try:
             prepared = prepare_seed_group(
-                seed_group=seed_group, requirements=requirements, seed_technique=seed_technique
+                seed_group=seed_group,
+                requirements=requirements,
+                seed_technique=seed_technique,
+                validate_group=validate_group,
             )
-            if validate_group is not None:
-                validate_group(prepared.seed_group)
         except IncompatibleTechniqueError as exc:
             if policy is IncompatibleTechniquePolicy.RAISE:
                 raise IncompatibleTechniqueError(

@@ -162,6 +162,7 @@ project:
             - file: code/targets/use_huggingface_chat_target.ipynb
             - file: code/targets/websocket_target.ipynb
             - file: code/targets/round_robin_target.ipynb
+            - file: code/targets/claude_chat_target.md
         - file: code/converters/0_converters.ipynb
           children:
             - file: code/converters/1_text_to_text_converters.ipynb
@@ -198,6 +199,7 @@ project:
             - file: code/setup/1_configuration.ipynb
             - file: code/setup/2_resiliency.ipynb
             - file: code/setup/default_values.md
+            - file: code/setup/finding_fields.md
             - file: code/setup/pyrit_initializer.ipynb
         - file: code/scenarios/0_scenarios.ipynb
           children:

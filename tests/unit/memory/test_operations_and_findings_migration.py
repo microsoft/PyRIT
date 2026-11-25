@@ -17,9 +17,7 @@ from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import CreateTable
 
-from pyrit.memory import (
-    AttackResultEntry,
-)
+from pyrit.memory import AttackResultEntry
 from pyrit.memory.memory_models import (
     FindingEntry,
     FindingEvidenceEntry,
@@ -67,6 +65,7 @@ def test_migration_adds_tables_without_changing_existing_ones() -> None:
             assert {name: columns for name, columns in after.items() if name not in ACTIVITY_TABLES} == {
                 name: columns for name, columns in existing.items() if name not in ACTIVITY_TABLES
             }
+            # check_schema_migrations compares the database with the head models.
             command.upgrade(config, "head")
         run_schema_migrations(engine=engine)
         check_schema_migrations(engine=engine)
