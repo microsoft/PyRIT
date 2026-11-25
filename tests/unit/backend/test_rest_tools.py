@@ -7,12 +7,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from pydantic import BaseModel
+from starlette.applications import Starlette
 
 from pyrit import _compatibility
 from pyrit.backend.main import app as backend_app
 from pyrit.backend.rest_tools import RestToolset
+from pyrit.backend.routes import scenarios as scenario_routes
+from pyrit.backend.services import ScenarioService
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.registry import ScorerRegistry, TargetRegistry
@@ -44,6 +47,7 @@ BACKEND_PATH_VALUES = {
     "attack_result_id": "c2d7e8f1-0a3b-4c5d-8e9f-1a2b3c4d5e6f",
 }
 INVALID_THING_ID = "Invalid path parameters: thing_id. Pass IDs and names exactly as a tool returned them."
+INVALID_FILE_PATH = "Invalid path parameters: file_path. Pass IDs and names exactly as a tool returned them."
 
 
 class ThingRequest(BaseModel):
@@ -104,7 +108,23 @@ def toolset() -> Iterator[RestToolset]:
         """Create a thing."""
         return {"created": thing.model_dump()}
 
-    offered = ("get_thing", "list_things", "get_notes", "get_conversation", "create_thing")
+    files = APIRouter(prefix="/files")
+
+    @files.get("/{file_path:path}/size")
+    async def get_file_size(file_path: str) -> dict[str, object]:
+        """Get a file's size, which is not offered and is matched before the file itself."""
+        return {"size": 1}
+
+    @files.get("/{file_path:path}")
+    async def get_file(file_path: str) -> dict[str, object]:
+        """Get one file by its path."""
+        return {"path": file_path}
+
+    app.include_router(files, prefix="/api")
+    # Like the bundled frontend, a mount registered last that takes every path no route matched.
+    app.mount("/", Starlette())
+
+    offered = ("get_thing", "list_things", "get_notes", "get_conversation", "create_thing", "get_file")
     with patch.object(RestToolset, "OPERATIONS", offered):
         yield RestToolset(app=app)
 
@@ -112,7 +132,14 @@ def toolset() -> Iterator[RestToolset]:
 def test_tools_are_rest_operations_named_after_their_route_functions(toolset: RestToolset) -> None:
     operations = {operation.name: operation for operation in toolset.operations}
 
-    assert list(operations) == ["get_thing", "list_things", "get_notes", "get_conversation", "create_thing"]
+    assert list(operations) == [
+        "get_thing",
+        "list_things",
+        "get_notes",
+        "get_conversation",
+        "create_thing",
+        "get_file",
+    ]
     assert operations["get_thing"].description.startswith("GET /api/things/{thing_id}\n\nGet one thing.")
     assert operations["get_thing"].input_schema["required"] == ["thing_id"]
     assert set(operations["list_things"].input_schema["properties"]) == {"limit", RestToolset.RESPONSE_FIELDS}
@@ -154,12 +181,13 @@ async def test_call_sends_the_body(toolset: RestToolset) -> None:
         ("no_such_tool", {}, "Unknown tool 'no_such_tool'."),
         ("get_thing", {"thing_id": None}, "Missing path parameters: thing_id."),
         # Each would reach another route or none: more segments, a static route registered first, the list
-        # route ("."), the API root (".."), and a path with a trailing slash.
+        # route ("."), the API root (".."), a path with a trailing slash, and both of two path routes.
         ("get_thing", {"thing_id": "a/secret"}, INVALID_THING_ID),
         ("get_thing", {"thing_id": "featured"}, INVALID_THING_ID),
         ("get_thing", {"thing_id": "."}, INVALID_THING_ID),
         ("get_thing", {"thing_id": ".."}, INVALID_THING_ID),
         ("get_thing", {"thing_id": ""}, INVALID_THING_ID),
+        ("get_file", {"file_path": "docs/size"}, INVALID_FILE_PATH),
     ],
 )
 async def test_call_reports_unknown_tools_and_invalid_path_parameters(
@@ -169,6 +197,15 @@ async def test_call_reports_unknown_tools_and_invalid_path_parameters(
 
     assert failed is True
     assert json.loads(text) == {"error": error}
+
+
+async def test_path_converter_parameter_keeps_its_slashes(toolset: RestToolset) -> None:
+    text, failed = await toolset.call_async(
+        name="get_file", arguments={"file_path": "docs/guides/setup.md"}, authorization=None
+    )
+
+    assert failed is False
+    assert json.loads(text) == {"path": "docs/guides/setup.md"}
 
 
 async def test_large_list_keeps_leading_items_without_a_cursor_past_the_cut_ones(toolset: RestToolset) -> None:
@@ -295,6 +332,8 @@ def test_backend_offers_the_selected_operations() -> None:
     [
         ("get_attack", {"attack_result_id": "attack-options"}),
         ("get_attack", {"attack_result_id": "converter-options"}),
+        ("get_attack", {"attack_result_id": "a/b"}),
+        ("get_scenario", {"scenario_name": "team/custom-scan/datasets"}),
         ("get_scenario_run", {"scenario_result_id": "queue"}),
         ("get_conversation_messages", {"attack_result_id": "conversations", "conversation_id": "c"}),
     ],
@@ -302,7 +341,8 @@ def test_backend_offers_the_selected_operations() -> None:
 async def test_backend_tool_does_not_send_a_value_that_reaches_another_route(
     name: str, arguments: dict[str, object]
 ) -> None:
-    # Each value matches a route registered before the tool's own, such as GET /api/scenarios/runs/queue.
+    # Each value reaches another route, such as GET /api/scenarios/runs/queue registered before the tool's own,
+    # or none.
     toolset = RestToolset(app=backend_app)
     with patch.object(toolset, "_send_async", new_callable=AsyncMock) as send:
         text, failed = await toolset.call_async(name=name, arguments=arguments, authorization=None)
@@ -323,6 +363,19 @@ async def test_backend_tools_send_ids_and_names_to_their_own_routes() -> None:
                 rejected.append(operation.name)
 
     assert rejected == []
+
+
+async def test_backend_get_scenario_receives_a_name_with_a_slash() -> None:
+    service = MagicMock(spec=ScenarioService)
+    service.get_scenario_async = AsyncMock(return_value=None)
+    with patch.object(scenario_routes, "get_scenario_service", return_value=service):
+        text, failed = await RestToolset(app=backend_app).call_async(
+            name="get_scenario", arguments={"scenario_name": "team/custom-scan"}, authorization=None
+        )
+
+    assert service.get_scenario_async.call_args.kwargs == {"scenario_name": "team/custom-scan"}
+    assert failed is True
+    assert json.loads(text)["error"]["detail"] == "Scenario 'team/custom-scan' not found"
 
 
 def _references(node: object) -> list[str]:

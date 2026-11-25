@@ -19,6 +19,7 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI
+from fastapi.routing import iter_route_contexts
 from starlette.routing import compile_path
 
 from pyrit import _compatibility
@@ -173,9 +174,13 @@ How to work:
     def _route_patterns(self, *, method: str) -> list[tuple[str, re.Pattern[str]]]:
         if self._routes is None:
             routes: dict[str, list[tuple[str, re.Pattern[str]]]] = {}
-            for route, path_item in self._app.openapi()["paths"].items():
-                for route_method in path_item:
-                    routes.setdefault(route_method.upper(), []).append((route, compile_path(route)[0]))
+            # The registered paths keep converters, such as {scenario_name:path}, that OpenAPI paths drop.
+            # Routes without a path or methods, such as a mounted frontend, are not REST operations.
+            for route in iter_route_contexts(self._app.router.routes):
+                if not route.methods or route.path is None or route.path_format is None:
+                    continue
+                for route_method in route.methods:
+                    routes.setdefault(route_method, []).append((route.path_format, compile_path(route.path)[0]))
             self._routes = routes
         return self._routes.get(method, [])
 
