@@ -96,7 +96,7 @@ def resolve_listed_credential(
         SavedEntryRefusedError: If the class can't use a server credential, the list has no such entry, the
             entry's endpoint isn't the one the entry sends requests to, or the key isn't set on this server.
     """
-    declared: tuple[str, str] | None = getattr(cls, "listed_credential_parameters", None)
+    declared = cast("tuple[str, str] | None", getattr(cls, "listed_credential_parameters", None))
     if declared is None:
         raise SavedEntryRefusedError(
             reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
