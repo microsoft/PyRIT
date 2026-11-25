@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from collections.abc import Awaitable, Callable
-from typing import cast
+from typing import TYPE_CHECKING, assert_never, cast
 
 from pyrit.auth.azure_auth import ensure_async_token_provider, get_azure_openai_auth, is_azure_openai_endpoint
 from pyrit.common import AuthMode, default_values, print_deprecation_message
@@ -69,6 +69,9 @@ def resolve_openai_auth(
                 "or your own token provider callable as api_key."
             )
         return get_azure_openai_auth(endpoint)
+
+    if TYPE_CHECKING and auth_mode != "api_key":  # pragma: no cover
+        assert_never(auth_mode)
 
     if api_key is not None and callable(api_key):
         return cast("str | Callable[[], Awaitable[str]]", ensure_async_token_provider(api_key))

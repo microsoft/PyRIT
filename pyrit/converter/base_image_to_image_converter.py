@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import base64
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from io import BytesIO
@@ -125,6 +125,20 @@ class BaseImageToImageConverter(Converter, ABC):
             return image
         return image.convert("RGBA" if image.has_transparency_data else "RGB")
 
+    def _decode_and_transform(self, image_bytes: bytes) -> tuple[bytes, str]:
+        """
+        Decode the source image and apply the transformation.
+
+        Args:
+            image_bytes (bytes): The encoded source image.
+
+        Returns:
+            tuple[bytes, str]: The transformed image bytes and the output format.
+        """
+        original_img = Image.open(BytesIO(image_bytes))
+        transformed, output_format = self._transform_image(original_img, original_img.format or "JPEG")
+        return transformed.getvalue(), output_format
+
     def _transform_image(self, image: Image.Image, original_format: str) -> tuple[BytesIO, str]:
         """
         Resolve format, prepare the image, apply the transform, and save to a buffer.
@@ -192,13 +206,10 @@ class BaseImageToImageConverter(Converter, ABC):
             if input_type == "url"
             else await img_serializer.read_data_async()
         )
-        original_img = Image.open(BytesIO(original_img_bytes))
-        original_format = original_img.format or "JPEG"
-
-        transformed_bytes, output_format = self._transform_image(original_img, original_format)
+        # Decoding, transforming and re-encoding an image is CPU-bound, so keep it off the event loop.
+        transformed_bytes, output_format = await asyncio.to_thread(self._decode_and_transform, original_img_bytes)
         img_serializer.file_extension = output_format.lower()
 
-        image_str = base64.b64encode(transformed_bytes.getvalue())
-        await img_serializer.save_b64_image_async(data=image_str.decode())
+        await img_serializer.save_data_async(data=transformed_bytes)
 
         return ConverterResult(output_text=str(img_serializer.value), output_type="image_path")
