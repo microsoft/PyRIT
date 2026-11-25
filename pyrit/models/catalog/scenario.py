@@ -436,10 +436,22 @@ class ScenarioRunSizeEstimate(BaseModel):
 ScenarioDefaultRunSizeEstimate = ScenarioRunSizeEstimate
 
 
+class ScenarioModuleSummary(BaseModel):
+    """A built-in scenario package, such as ``garak``, that groups related scenarios."""
+
+    name: str = Field(..., description="Package name, which prefixes its scenario names (e.g., 'garak')")
+    display_name: str = Field(..., description="Human-readable package name (e.g., 'AI Red Team')")
+    description: str = Field("", description="One-line summary of the package's scenarios")
+
+
 class RegisteredScenario(BaseModel):
     """Summary of a registered scenario."""
 
     scenario_name: str = Field(..., description="Scenario name  (e.g., 'foundry.red_team_agent')")
+    module: str | None = Field(
+        None,
+        description="Built-in scenario package (e.g., 'foundry'); None for scenarios registered outside PyRIT",
+    )
     scenario_type: str = Field(..., description="Scenario type identifier (e.g., 'RedTeamAgentScenario')")
     scenario_version: int = Field(1, ge=1, description="Scenario definition version used for default metadata")
     supports_objective_scorer: bool = False

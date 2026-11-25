@@ -9,6 +9,7 @@ and managing scenario runs.
 
 Route structure:
     /api/scenarios/catalog       — scenario catalog (list + detail)
+    /api/scenarios/modules       — built-in scenario packages that group the catalog
     /api/scenarios/runs          — scenario execution lifecycle
 """
 
@@ -29,6 +30,7 @@ from pyrit.backend.models import (
     ConversationMessagesResponse,
     DatasetListResponse,
     ListRegisteredScenariosResponse,
+    ListScenarioModulesResponse,
     ProblemDetail,
     ScenarioRunListResponse,
 )
@@ -144,6 +146,17 @@ async def list_scenarios(  # pyrit-async-suffix-exempt
         cursor=cursor,
         include_estimates=include_estimates,
     )
+
+
+@router.get("/modules", response_model=ListScenarioModulesResponse)
+async def list_scenario_modules_async() -> ListScenarioModulesResponse:
+    """
+    List the built-in scenario packages, such as Garak, that group the catalog.
+
+    Returns:
+        ListScenarioModulesResponse: Each package's name, display name, and description.
+    """
+    return await run_in_threadpool(get_scenario_service().list_modules)
 
 
 @router.get(

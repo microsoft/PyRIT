@@ -2,11 +2,16 @@
 # Licensed under the MIT license.
 # ruff: noqa: F401
 
-"""Foundry scenario classes."""
+"""
+Scenarios matching Azure AI Foundry red-teaming and policy assertion checks, so results line up
+with Foundry reports.
+"""
 
 from typing import TYPE_CHECKING
 
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
+
+DISPLAY_NAME = "Foundry"
 
 if TYPE_CHECKING:
     from pyrit.scenario.scenarios.foundry.assert_policy import AssertPolicy

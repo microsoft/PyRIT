@@ -46,6 +46,7 @@ const API_RESPONSES: Record<string, unknown> = {
   '/api/scenario-presets': { source: 'theme-preview', items: [] },
   '/api/scenario-suites': { source: 'theme-preview', items: [] },
   '/api/scenarios/catalog': EMPTY_PAGE,
+  '/api/scenarios/modules': { items: [] },
   '/api/scenarios/runs': EMPTY_PAGE,
   '/api/scenarios/runs/queue': {
     revision: 0,
@@ -198,7 +199,8 @@ test.describe('Theme presets', () => {
 
   for (const path of [
     '/attack/chat', '/attack/history', '/scanner/history', '/targets', '/config',
-    '/scanner/launch', '/scanner/launch/missing', '/scanner/history/missing', '/',
+    '/scanner/launch', '/scanner/presets', '/registry/scenario-presets', '/scanner/launch/missing',
+    '/scanner/history/missing', '/',
   ]) {
     test(`decoration is shared with ${path}`, async ({ page }: { page: Page }) => {
       await chooseTheme(page, 'Jimothy')

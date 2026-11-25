@@ -21,10 +21,8 @@ function renderLayout(initialPath = '/registry/targets') {
             <Route path="converters" element={<div>Converter registry content</div>} />
             <Route path="techniques" element={<div>Technique registry content</div>} />
             <Route path="scenario-presets" element={<div>Preset library content</div>} />
-            <Route path="scenario-presets/new" element={<div>Preset editor content</div>} />
+            <Route path="scenario-presets/:presetName/edit" element={<div>Scenario editor content</div>} />
             <Route path="scorers" element={<div>Scorer registry content</div>} />
-            <Route path="scenario-suites/new" element={<div>Suite editor content</div>} />
-            <Route path="scenario-suites/:suiteName/edit" element={<div>Suite editor content</div>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -42,7 +40,7 @@ describe('RegistryLayout', () => {
     expect(screen.getByText('Target registry content')).toBeInTheDocument()
   })
 
-  it('has no separate suites tab because suites share the scenario preset page', () => {
+  it('lists presets under one Scenario presets tab', () => {
     renderLayout()
 
     expect(screen.queryByRole('tab', { name: 'Suites' })).not.toBeInTheDocument()
@@ -83,21 +81,11 @@ describe('RegistryLayout', () => {
     expect(screen.getByText('Preset library content')).toBeInTheDocument()
   })
 
-  it('keeps the preset tab selected on a nested preset route', () => {
-    renderLayout('/registry/scenario-presets/new')
+  it('keeps the Scenario presets tab selected while editing one of its scenarios', () => {
+    renderLayout('/registry/scenario-presets/nightly_probe/edit')
 
     expect(screen.getByRole('tab', { name: 'Scenario presets' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByText('Preset editor content')).toBeInTheDocument()
-  })
-
-  it.each([
-    '/registry/scenario-suites/new',
-    '/registry/scenario-suites/nightly_suite/edit',
-  ])('keeps the scenario presets tab selected on suite editor route %s', (path: string) => {
-    renderLayout(path)
-
-    expect(screen.getByRole('tab', { name: 'Scenario presets' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByText('Suite editor content')).toBeInTheDocument()
+    expect(screen.getByText('Scenario editor content')).toBeInTheDocument()
   })
 
   it('supports the Techniques direct URL and browser history', async () => {

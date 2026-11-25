@@ -67,6 +67,9 @@ async function mockScenarioCatalog(page: Page): Promise<void> {
       await route.fulfill({ json: TOUR_SCENARIO.default_run_size });
     }
   );
+  await page.route(/\/api\/scenarios\/modules(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { items: [] } });
+  });
   await page.route(/\/api\/scenario-(?:presets|suites)(?:\?.*)?$/, async (route) => {
     await route.fulfill({ json: { source: "tour", items: [] } });
   });
@@ -295,6 +298,7 @@ test.describe("Onboarding tour", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "Scanner", exact: true }).click();
     await expect(page).toHaveURL(/\/scanner\/launch$/);
+    await page.getByRole("button", { name: /^Other scenarios/ }).click();
     await page
       .getByRole("link", { name: TOUR_SCENARIO.scenario_name, exact: true })
       .click();

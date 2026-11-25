@@ -14,6 +14,7 @@ rather than by class name, so ``_discover``/``_get_registry_name`` are overridde
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -22,6 +23,7 @@ from pyrit.models import (
     ScenarioDatasetOptions,
     ScenarioDatasetSettings,
     ScenarioIdentifier,
+    ScenarioModuleSummary,
     ScenarioRunSizeEstimate,
     ScenarioTechniqueSummary,
     class_name_to_snake_case,
@@ -49,6 +51,9 @@ class ScenarioMetadata(RegistryMetadata):
 
     scenario_version: int = field(kw_only=True, default=1)
     supports_objective_scorer: bool = field(kw_only=True, default=False)
+
+    # The built-in package that groups this scenario (e.g., "garak"); None outside pyrit.scenario.scenarios.
+    module: str | None = field(kw_only=True, default=None)
 
     # The default technique name (e.g., "single_turn")
     default_technique: str = field(kw_only=True)
@@ -176,6 +181,61 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
                 return relative
         return class_name_to_snake_case(cls.__name__, suffix="Scenario")
 
+    def _get_module_name(self, cls: type[Scenario]) -> str | None:
+        """
+        Name the built-in package that holds a scenario class.
+
+        Args:
+            cls (type[Scenario]): The scenario class.
+
+        Returns:
+            str | None: The package under ``pyrit.scenario.scenarios`` (e.g. ``"garak"``), or None
+                for a scenario defined anywhere else.
+        """
+        prefix = f"{self._DISCOVERY_PACKAGE}."
+        module = cls.__module__ or ""
+        if not module.startswith(prefix):
+            return None
+        package, separator, _ = module[len(prefix) :].partition(".")
+        return package if separator else None
+
+    def list_modules(self) -> list[ScenarioModuleSummary]:
+        """
+        List the built-in scenario packages that hold at least one registered scenario.
+
+        Each package names itself in a ``DISPLAY_NAME`` constant and describes its scenarios in the
+        first paragraph of its docstring.
+
+        Returns:
+            list[ScenarioModuleSummary]: The packages, sorted by display name.
+        """
+        names = {metadata.module for metadata in self.get_all_registered_class_metadata() if metadata.module}
+        summaries = [self._build_module_summary(name) for name in names]
+        return sorted(summaries, key=lambda summary: summary.display_name.casefold())
+
+    def _build_module_summary(self, name: str) -> ScenarioModuleSummary:
+        """
+        Describe one built-in scenario package from its ``DISPLAY_NAME`` and docstring.
+
+        Args:
+            name (str): The package name under ``pyrit.scenario.scenarios``.
+
+        Returns:
+            ScenarioModuleSummary: The package's name, display name, and description.
+
+        Raises:
+            ValueError: If the package does not declare a ``DISPLAY_NAME`` string.
+        """
+        package = importlib.import_module(f"{self._DISCOVERY_PACKAGE}.{name}")
+        display_name = getattr(package, "DISPLAY_NAME", None)
+        if not isinstance(display_name, str) or not display_name:
+            raise ValueError(f"Scenario package '{package.__name__}' must declare a DISPLAY_NAME string.")
+        return ScenarioModuleSummary(
+            name=name,
+            display_name=display_name,
+            description=RegistryMetadata.summary_from_docstring(package),
+        )
+
     def _build_metadata(self, name: str, cls: type[Scenario]) -> ScenarioMetadata:
         """
         Build metadata for a Scenario class.
@@ -241,6 +301,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             class_module=cls.__module__,
             class_description=description,
             registry_name=name,
+            module=self._get_module_name(cls),
             scenario_version=instance._version,
             supports_objective_scorer=self.supports_objective_scorer(cls),
             default_technique=default_technique_value,

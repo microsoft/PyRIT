@@ -159,13 +159,13 @@ describe('LaunchSuiteDialog', () => {
   it('hydrates untouched defaults when the registry arrives after opening', async () => {
     const user = userEvent.setup()
     const rendered = render(dialog({ targets: [], defaultsReady: false }))
-    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Launch' })).toBeDisabled()
     rendered.rerender(dialog({
       defaultObjectiveTarget: OBJECTIVE_TARGET, defaultAdversarialTarget: ADVERSARIAL_TARGET,
     }))
     expect(screen.getByRole('combobox', { name: 'Target' })).toHaveValue('objective-target')
     expect(await screen.findByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('adversarial-target')
-    await user.click(screen.getByRole('button', { name: 'Launch suite' }))
+    await user.click(screen.getByRole('button', { name: 'Launch' }))
     expect(mockLaunch).toHaveBeenCalledWith('nightly_suite', expect.objectContaining({
       target_name: 'objective-target', adversarial_target_name: 'adversarial-target',
     }))
@@ -179,7 +179,7 @@ describe('LaunchSuiteDialog', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Target' }), 'adversarial-target')
     mockUseRuntime.mockReturnValue({ ready: false, state: 'initializing', generation: 'first' })
     rendered.rerender(dialog({ defaultsReady: false }))
-    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Launch' })).toBeDisabled()
 
     const replacement = makeTarget({
       target_registry_name: 'adversarial-target',
@@ -198,8 +198,8 @@ describe('LaunchSuiteDialog', () => {
     const user = userEvent.setup()
     mockUseRuntime.mockReturnValue({ ready: false, state: 'initializing', generation: 'first' })
     renderDialog()
-    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
-    await user.click(screen.getByRole('button', { name: 'Launch suite' }))
+    expect(screen.getByRole('button', { name: 'Launch' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Launch' }))
     expect(mockLaunch).not.toHaveBeenCalled()
   })
 
@@ -213,7 +213,7 @@ describe('LaunchSuiteDialog', () => {
     }))
     expect(screen.getByRole('combobox', { name: 'Target' })).toHaveValue('adversarial-target')
     expect(screen.getByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('')
-    await user.click(screen.getByRole('button', { name: 'Launch suite' }))
+    await user.click(screen.getByRole('button', { name: 'Launch' }))
     expect(mockLaunch).toHaveBeenCalledWith('nightly_suite', expect.objectContaining({ target_name: 'adversarial-target' }))
     expect(mockLaunch.mock.calls[0][1]).not.toHaveProperty('adversarial_target_name')
   })
@@ -223,11 +223,11 @@ describe('LaunchSuiteDialog', () => {
     const rendered = render(dialog({ defaultObjectiveTarget: OBJECTIVE_TARGET }))
     await user.selectOptions(screen.getByRole('combobox', { name: 'Target' }), '')
     rendered.rerender(dialog({ defaultObjectiveTarget: ADVERSARIAL_TARGET }))
-    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Launch' })).toBeDisabled()
     await user.selectOptions(screen.getByRole('combobox', { name: 'Target' }), 'objective-target')
     rendered.rerender(dialog({ targets: [ADVERSARIAL_TARGET], defaultObjectiveTarget: ADVERSARIAL_TARGET }))
     expect(screen.getByRole('combobox', { name: 'Target' })).toHaveValue('')
-    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Launch' })).toBeDisabled()
     expect(mockLaunch).not.toHaveBeenCalled()
   })
 

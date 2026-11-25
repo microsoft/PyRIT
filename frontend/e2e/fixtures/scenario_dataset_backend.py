@@ -156,11 +156,13 @@ def _register_components(sent: list[str]) -> None:
 def _configure_preset_storage(*, database_path: str, patches: ExitStack, mutations: list[dict[str, str]]) -> None:
     from pathlib import Path
 
-    from pyrit.registry import ScenarioPresetRegistry, ScenarioPresetStorage
+    from pyrit.registry import ScenarioPresetRegistry, ScenarioPresetStorage, ScenarioSuiteRegistry
 
     root = Path(database_path).resolve().parent.parent
     registry = ScenarioPresetRegistry.get_registry_singleton()
     registry.configure_source(str(root / "scenario_presets"))
+    # The GUI creates a scenario inside a preset (a suite), so suites need a fixture-owned home too.
+    ScenarioSuiteRegistry.get_registry_singleton().configure_source(str(root / "scenario_suites"))
     if not Path(registry.source).resolve().is_relative_to(root):
         raise RuntimeError("Refusing to use anything except the fixture-owned preset directory.")
     original_save = ScenarioPresetStorage.save_preset

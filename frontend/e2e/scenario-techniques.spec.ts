@@ -75,6 +75,15 @@ async function createPreset(page: Page, preset: ScenarioPreset): Promise<void> {
   expect(saved.origin).toBe('stored')
 }
 
+/** The GUI lists a stored scenario only inside a preset (a backend suite), so put it in one. */
+async function createSuiteHolding(page: Page, suiteName: string, presetName: string): Promise<void> {
+  const response = await page.request.post('/api/scenario-suites', {
+    headers: compatibilityHeaders(),
+    data: { name: suiteName, schema_version: 1, entries: [{ entry_id: crypto.randomUUID(), preset_name: presetName }] },
+  })
+  expect(response.status(), await response.text()).toBe(201)
+}
+
 async function readPreset(page: Page, name: string): Promise<ScenarioPresetResponse> {
   const response = await page.request.get(`/api/scenario-presets/${name}`, { headers: compatibilityHeaders() })
   expect(response.status(), await response.text()).toBe(200)
@@ -167,9 +176,12 @@ for (const view of VIEWPORTS) {
         description: 'Original local acceptance preset.',
       })
 
+      await createSuiteHolding(page, `${name}_set`, name)
+
       await page.goto(PRESETS_ROUTE)
       await page.getByRole('region', { name: 'Default Labels' }).getByRole('button', { name: 'Clear', exact: true }).click()
-      await page.getByRole('link', { name, exact: true }).click()
+      await page.getByRole('button', { name: new RegExp(`^${name}_set 1 scenario`) }).click()
+      await page.getByRole('button', { name: `Edit ${name}`, exact: true }).click()
       await expect(page).toHaveURL(presetEditorRoutePath(name))
       await expect(page.getByTestId('scenario-preset-editor')).toBeVisible({ timeout: 30_000 })
       await expectSelection(page, ['offline_plain'], true)
@@ -179,16 +191,14 @@ for (const view of VIEWPORTS) {
       await page.getByRole('textbox', { name: 'Description', exact: true }).fill('Edited local technique selection.')
       await page.getByRole('group', { name: 'Techniques', exact: true }).scrollIntoViewIfNeeded()
       await capture(page, testInfo, view.name, 'preset-edited')
-      await page.getByRole('button', { name: 'Save preset', exact: true }).click()
+      await page.getByRole('button', { name: 'Save scenario', exact: true }).click()
       await expect(page).toHaveURL(PRESETS_ROUTE)
       const saved = await readPreset(page, name)
       expect(saved.preset).toMatchObject({
         techniques: ['offline_base64'], include_baseline: false, description: 'Edited local technique selection.',
       })
 
-      await page.goto('/scanner/launch')
-      await page.getByRole('link', { name, exact: true }).click()
-      await expect(page).toHaveURL(presetScannerRoutePath(SCENARIO, name))
+      await page.goto(presetScannerRoutePath(SCENARIO, name))
       await expect(page.getByTestId('preset-seed-banner')).toContainText(name)
       await expectSelection(page, ['offline_base64'], false)
       const estimate = page.getByTestId('run-estimate')
@@ -358,6 +368,8 @@ for (const view of VIEWPORTS) {
       { page }: { page: Page }, testInfo: TestInfo,
     ): Promise<void> => {
       await page.goto('/scanner/launch')
+      // Scenarios registered outside PyRIT's packages are listed under Other scenarios.
+      await page.getByRole('button', { name: /^Other scenarios/ }).click()
       for (const [scenarioName, technique, policy, baseline] of [
         [SCENARIO, 'offline_plain', 'enabled', true],
         ['technique_no_baseline', 'offline_rot13', 'forbidden', false],
@@ -392,7 +404,8 @@ for (const view of VIEWPORTS) {
           name: technique === 'offline_plain' ? 'offline_base64' : 'offline_plain', exact: true,
         }).check()
         if (policy !== 'forbidden') await checkbox.setChecked(!baseline)
-        await page.getByRole('link', { name: 'Back to scanners', exact: true }).click()
+        await page.getByRole('link', { name: 'Back to Launch', exact: true }).click()
+        await expect(page).toHaveURL('/scanner/launch?open=other-scenarios')
       }
     })
 
@@ -404,7 +417,7 @@ for (const view of VIEWPORTS) {
       await page.goto(presetEditorRoutePath(name))
       await expectSelection(page, ['offline_base64'], false)
       await page.getByRole('textbox', { name: 'Description', exact: true }).fill('Keep scenario-owned defaults.')
-      await page.getByRole('button', { name: 'Save preset', exact: true }).click()
+      await page.getByRole('button', { name: 'Save scenario', exact: true }).click()
       await expect(page).toHaveURL(PRESETS_ROUTE)
       const saved = await readPreset(page, name)
       expect(saved.preset.techniques ?? null).toBeNull()
@@ -428,6 +441,91 @@ for (const view of VIEWPORTS) {
       await expectSelection(page, ['offline_base64', 'offline_rot13'], false)
       await readEstimate(await estimated, 2, false)
       expect((await readPreset(page, name)).preset.techniques).toEqual(['encoded'])
+    })
+
+    test('creates a preset, adds and shares a scenario, removes it, and deletes the preset', async (
+      { page }: { page: Page },
+    ): Promise<void> => {
+      const headers = compatibilityHeaders()
+      const name = `presets_${view.name}_${test.info().retry}`
+      const firstScenario = `${name}_${SCENARIO}`
+      const secondScenario = `${firstScenario}_2`
+      const readSuite = async (suiteName: string) => page.request.get(`/api/scenario-suites/${suiteName}`, { headers })
+      const card = page.getByTestId(`registry-suite-${name}`)
+      const toggle = page.getByRole('button', { name: new RegExp(`^${name} \\d scenarios?$`) })
+      const chooseScenario = async (dialog: Locator): Promise<void> => {
+        await dialog.getByRole('combobox', { name: /^Scenario/ }).click()
+        await page.getByRole('option', { name: SCENARIO, exact: true }).click()
+      }
+
+      await page.goto(PRESETS_ROUTE)
+      const newPreset = page.getByRole('button', { name: 'New preset', exact: true })
+      await newPreset.click()
+      await page.keyboard.press('Escape')
+      await expect(newPreset).toBeFocused()
+      await newPreset.click()
+      const create = page.getByRole('dialog', { name: 'New preset' })
+      await create.getByRole('textbox', { name: /^Name/ }).fill(name)
+      await create.getByRole('textbox', { name: 'Description' }).fill('Local acceptance preset.')
+      await chooseScenario(create)
+      await create.getByRole('button', { name: 'Create', exact: true }).click()
+      await expect(create).toHaveCount(0)
+      await expect(card.getByRole('heading', { level: 2 })).toHaveText(`${name} 1 scenario`)
+      await expect(card.getByText(`Saved as ${firstScenario}`)).toBeVisible()
+
+      // Closing a dialog returns focus to the button that opened it.
+      const editPreset = page.getByRole('button', { name: `Edit ${name}`, exact: true })
+      await editPreset.click()
+      await page.getByRole('dialog', { name: `Edit ${name}` }).getByRole('button', { name: 'Cancel', exact: true }).click()
+      await expect(editPreset).toBeFocused()
+      const addScenario = page.getByRole('button', { name: `Add scenario to ${name}`, exact: true })
+      await addScenario.click()
+      await page.keyboard.press('Escape')
+      await expect(addScenario).toBeFocused()
+
+      await addScenario.click()
+      const add = page.getByRole('dialog', { name: `Add a scenario to ${name}` })
+      await chooseScenario(add)
+      await add.getByRole('button', { name: 'Add', exact: true }).click()
+      await expect(add).toHaveCount(0)
+      await expect(card.getByText(`Saved as ${secondScenario}`)).toBeVisible()
+      const added = await (await readSuite(name)).json()
+      expect(added.suite.entries.map((entry: { preset_name: string }) => entry.preset_name))
+        .toEqual([firstScenario, secondScenario])
+
+      await createSuiteHolding(page, `${name}_shared`, firstScenario)
+      await page.reload()
+      await toggle.click()
+      await expect(card.getByTestId(`suite-member-${added.suite.entries[0].entry_id}`))
+        .toContainText('Also in 1 other preset')
+      await card.getByRole('button', { name: `Edit ${firstScenario}`, exact: true }).click()
+      const warning = page.getByRole('dialog', { name: `${SCENARIO} is shared` })
+      await expect(warning).toContainText(`This scenario is also used in ${name}_shared.`)
+      await warning.getByRole('button', { name: 'Cancel', exact: true }).click()
+      await expect(card.getByRole('button', { name: `Edit ${firstScenario}`, exact: true })).toBeFocused()
+      await card.getByRole('button', { name: `Edit ${firstScenario}`, exact: true }).click()
+      await warning.getByRole('button', { name: 'Edit for all presets' }).click()
+      await expect(page).toHaveURL(presetEditorRoutePath(firstScenario))
+      await expect(page.getByRole('heading', { level: 1, name: `Edit ${SCENARIO}` })).toBeVisible()
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+
+      await toggle.click()
+      await card.getByRole('button', { name: `Remove ${secondScenario} from ${name}`, exact: true }).click()
+      await expect(card.getByRole('heading', { level: 2 })).toHaveText(`${name} 1 scenario`)
+      const removed = await (await readSuite(name)).json()
+      expect(removed.suite.entries.map((entry: { preset_name: string }) => entry.preset_name)).toEqual([firstScenario])
+      expect((await readPreset(page, secondScenario)).preset.scenario_name).toBe(SCENARIO)
+
+      const deletePreset = page.getByRole('button', { name: `Delete ${name}`, exact: true })
+      await deletePreset.click()
+      await page.getByRole('dialog', { name: `Delete ${name}?` }).getByRole('button', { name: 'Cancel', exact: true }).click()
+      await expect(deletePreset).toBeFocused()
+      await deletePreset.click()
+      await page.getByRole('dialog', { name: `Delete ${name}?` }).getByRole('button', { name: 'Delete', exact: true }).click()
+      await expect(card).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'New preset', exact: true })).toBeFocused()
+      expect((await readSuite(name)).status()).toBe(404)
+      expect((await readPreset(page, firstScenario)).preset.scenario_name).toBe(SCENARIO)
     })
   })
 }

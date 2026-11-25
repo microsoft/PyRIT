@@ -1716,6 +1716,8 @@ export interface RegisteredScenario {
   /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
   max_concrete_techniques?: number | null
   scenario_name: string
+  /** Built-in package that groups the scenario, such as `garak`; null for scenarios registered elsewhere. */
+  module?: string | null
   scenario_type: string
   scenario_version: number
   description: string
@@ -1748,6 +1750,19 @@ export interface ScenarioTechniqueSummary {
 export interface ListRegisteredScenariosResponse {
   items: RegisteredScenario[]
   pagination: PaginationInfo
+}
+
+/** A built-in scenario package, such as Garak, that groups related scenarios on the Launch tab. */
+export interface ScenarioModule {
+  /** Package name; scenario names in it start with `<name>.`. */
+  name: string
+  display_name: string
+  description: string
+}
+
+export interface ListScenarioModulesResponse {
+  /** Sorted by display name. */
+  items: ScenarioModule[]
 }
 
 /**
@@ -1816,7 +1831,12 @@ export interface ScenarioSuiteEntry {
   preset_name: string
 }
 
-/** A user-authored, ordered collection of scenario preset references. */
+/**
+ * A user-authored, ordered collection of scenario preset references.
+ *
+ * The GUI calls a suite a "preset" and each scenario preset inside it a "scenario";
+ * the API and storage keep the suite and preset names.
+ */
 export interface ScenarioSuite {
   name: string
   schema_version: number

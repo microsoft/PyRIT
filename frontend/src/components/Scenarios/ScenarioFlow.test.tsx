@@ -33,6 +33,7 @@ jest.mock('@/services/api', () => ({
     getRunHierarchy: jest.fn(() => new Promise(() => {})),
     getScenario: jest.fn(),
     listCatalog: jest.fn(),
+    listModules: jest.fn(),
     startRun: jest.fn(),
   },
   scenarioPresetsApi: {
@@ -50,6 +51,7 @@ const mockUseScenarioRunProgress = useScenarioRunProgress as jest.Mock
 const mockEstimateRun = scenariosApi.estimateRun as jest.Mock
 const mockGetScenario = scenariosApi.getScenario as jest.Mock
 const mockListCatalog = scenariosApi.listCatalog as jest.Mock
+const mockListModules = scenariosApi.listModules as jest.Mock
 const mockStartRun = scenariosApi.startRun as jest.Mock
 const mockListPresets = scenarioPresetsApi.list as jest.Mock
 const mockListSuites = scenarioSuitesApi.list as jest.Mock
@@ -205,6 +207,7 @@ describe('Scenario catalog-to-run integration', () => {
       items: [SCENARIO],
       pagination: { limit: 200, has_more: false },
     })
+    mockListModules.mockResolvedValue({ items: [] })
     mockListSuites.mockResolvedValue({ source: '', items: [] })
     mockListPresets.mockResolvedValue({ source: '', items: [] })
     mockGetScenario.mockResolvedValue(SCENARIO)
@@ -221,7 +224,8 @@ describe('Scenario catalog-to-run integration', () => {
     const user = userEvent.setup()
     renderFlow()
 
-    await user.click(await screen.findByRole('link', { name: SCENARIO_NAME }))
+    await user.click(await screen.findByRole('button', { name: /^Other scenarios/ }))
+    await user.click(screen.getByRole('link', { name: SCENARIO_NAME }))
     expect(await screen.findByRole('heading', { level: 2, name: SCENARIO_NAME })).toBeInTheDocument()
 
     const expectedEstimateRequest = {

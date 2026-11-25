@@ -118,8 +118,12 @@ for SDK usage.
 
 ## Scanner
 
-Scanner has **Launch** (`/scanner/launch`) and **History** (`/scanner/history`) tabs.
-Launch is the catalog and launch point for automated scenarios.
+Scanner has **Launch** (`/scanner/launch`), **Presets** (`/scanner/presets`), and
+**History** (`/scanner/history`) tabs. Launch is the catalog and launch point for
+automated scenarios, grouped by module such as Garak; scenarios registered outside
+PyRIT's modules are under **Other scenarios**. Presets lists saved sets of scenarios;
+**Launch** on a preset runs all of its scenarios, each with its own settings, against the
+target you choose.
 Each scenario defines a test workflow with its techniques, data, and scoring.
 Open one to select a target and adjust the settings it supports, such as
 techniques, dataset selection, and concurrency.
@@ -216,14 +220,21 @@ members; defaults, visibility, and the target's configuration columns remain
 available. Converter inputs and outputs stay visible in the table. Use the small
 red X to remove a converter from the live registry; confirmation is required.
 
-**Scenario presets** save a scenario configuration for reuse with a target
-chosen at launch. **Suites** maintain ordered collections of preset definitions.
-They are stored separately from live component instances.
-Suite launch dialogs apply arriving target defaults only to untouched selections.
+**Scenario presets** are saved sets of scenarios that the Scanner launches
+together, each scenario with its own techniques, datasets, and limits. The API
+and storage call a preset a scenario suite and each scenario in it a scenario
+preset. **New preset** asks for a name, a description, and the first scenario;
+**Add scenario** adds another, starting from that scenario's defaults. **Edit** on
+a scenario changes it for every preset that uses it, and warns first when other
+presets share it. **Remove** takes a scenario out of one preset without deleting it.
+A preset that needs attention, such as one that references a missing scenario,
+is listed first here and does not appear in the Scanner until it is fixed.
+Presets are stored separately from live component instances.
+Preset launch dialogs apply arriving target defaults only to untouched selections.
 An explicit target choice, including clearing an optional adversarial target to
 use the server default, is retained when the registry refreshes.
 
-Editing a preset preserves unchanged parameter values exactly, including commas
+Editing a scenario preserves unchanged parameter values exactly, including commas
 and whitespace inside list entries, empty lists, duplicates, and their order.
 Editing a list field uses the comma-separated format shown in the editor.
 
@@ -324,7 +335,7 @@ change a dataset, choose **Edit & regenerate** and save it under a new name. An 
 dataset whose taxonomy was reviewed reuses that taxonomy until you change the policy. When an ASSERT
 dataset is ready, **Run foundry.assert_policy** opens the scanner with it selected.
 To list the datasets you generated, set the catalog's **Origins** filter to
-**Generated**. On the launch page and in the preset editor, a scanner that accepts
+**Generated**. On the launch page and in the scenario editor, a scanner that accepts
 any named dataset also has **Generate datasets** next to **Browse datasets**;
 Generate opens the ASSERT form for `foundry.assert_policy`, which needs at least
 one dataset, and the generator list for other scanners. Scanners with fixed or

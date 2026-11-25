@@ -2,11 +2,16 @@
 # Licensed under the MIT license.
 # ruff: noqa: F401
 
-"""Adaptive scenario classes."""
+"""
+Scenarios that pick the next technique from earlier results, spending more attempts where the
+target is weakest.
+"""
 
 from typing import TYPE_CHECKING
 
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
+
+DISPLAY_NAME = "Adaptive"
 
 if TYPE_CHECKING:
     from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from types import ModuleType
 
     from pyrit.models import Parameter
 
@@ -81,11 +82,11 @@ class RegistryMetadata:
         return cleaned or fallback
 
     @staticmethod
-    def summary_from_docstring(cls: type) -> str:
+    def summary_from_docstring(cls: type | ModuleType) -> str:
         """
-        Extract a short summary from the first paragraph of a class docstring.
+        Extract a short summary from the first paragraph of a class or module docstring.
 
-        Uses the class's own docstring only (never an inherited one), normalizes
+        Uses the object's own docstring only (never an inherited one), normalizes
         indentation, and collapses the first paragraph's whitespace onto one line.
         Empty when the class has no docstring. This is the catalog-display
         counterpart to ``description_from_docstring`` (which collapses the whole

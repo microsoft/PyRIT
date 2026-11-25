@@ -2,11 +2,16 @@
 # Licensed under the MIT license.
 # ruff: noqa: F401
 
-"""AIRT scenario classes."""
+"""
+Harm-area scenarios from the Microsoft AI Red Team: jailbreaks, cyber, scams, leakage,
+psychosocial harm, and multilingual attacks.
+"""
 
 from typing import TYPE_CHECKING
 
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
+
+DISPLAY_NAME = "AI Red Team"
 
 if TYPE_CHECKING:
     from pyrit.scenario.scenarios._dynamic_techniques import (

@@ -2,11 +2,16 @@
 # Licensed under the MIT license.
 # ruff: noqa: F401
 
-"""Garak-based attack scenarios."""
+"""
+Ports of garak probes: encodings, prompt and latent injection, leak replay, package hallucination,
+and other known LLM weaknesses.
+"""
 
 from typing import TYPE_CHECKING
 
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
+
+DISPLAY_NAME = "Garak"
 
 if TYPE_CHECKING:
     from pyrit.scenario.scenarios._dynamic_techniques import DoctorTechnique

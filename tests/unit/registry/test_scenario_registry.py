@@ -5,10 +5,12 @@
 
 import asyncio
 import threading
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import pyrit.scenario.scenarios.garak as garak_package
 from pyrit.models import ComponentIdentifier, DatasetSelectionMode, ScenarioDatasetOptions, ScenarioDatasetSettings
 from pyrit.registry import ScenarioRegistry
 from pyrit.scenario import Scenario
@@ -225,6 +227,66 @@ def test_build_metadata_preserves_structured_markdown_separately() -> None:
         "  https://example.com)\n\n"
         '<script>alert("untrusted")</script>'
     )
+
+
+class _GarakMetadataScenario(_MetadataScenario):
+    """A scenario defined inside a built-in package."""
+
+
+_GarakMetadataScenario.__module__ = "pyrit.scenario.scenarios.garak.sample"
+
+
+def _registry_with_modules(*modules: str | None) -> ScenarioRegistry:
+    """Build a registry whose metadata names the given scenario packages."""
+    registry = ScenarioRegistry()
+    registry.get_all_registered_class_metadata = MagicMock(  # type: ignore[method-assign]
+        return_value=[SimpleNamespace(module=module) for module in modules]
+    )
+    return registry
+
+
+@pytest.mark.parametrize(
+    ("scenario_class", "module"),
+    [(_GarakMetadataScenario, "garak"), (_MetadataScenario, None)],
+)
+def test_build_metadata_names_the_built_in_package(scenario_class: type, module: str | None) -> None:
+    """Built-in scenarios name their package; scenarios defined elsewhere name none."""
+    assert ScenarioRegistry()._build_metadata("sample", scenario_class).module == module
+
+
+def test_list_modules_describes_each_built_in_package_sorted_by_display_name() -> None:
+    """Every built-in package has a display name and a one-line description, listed once in display order."""
+    registry = _registry_with_modules("technique", "garak", None, "foundry", "garak", "benchmark", "airt", "adaptive")
+
+    modules = registry.list_modules()
+
+    assert [(module.name, module.display_name) for module in modules] == [
+        ("adaptive", "Adaptive"),
+        ("airt", "AI Red Team"),
+        ("benchmark", "Benchmark"),
+        ("foundry", "Foundry"),
+        ("garak", "Garak"),
+        ("technique", "Technique"),
+    ]
+    assert modules[4].description == (
+        "Ports of garak probes: encodings, prompt and latent injection, leak replay, package hallucination, "
+        "and other known LLM weaknesses."
+    )
+    assert all(module.description and "\n" not in module.description for module in modules)
+
+
+def test_list_modules_omits_packages_without_registered_scenarios() -> None:
+    """Only packages that hold a registered scenario are listed."""
+    assert _registry_with_modules(None).list_modules() == []
+    assert [module.name for module in _registry_with_modules("garak").list_modules()] == ["garak"]
+
+
+def test_list_modules_requires_a_display_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A built-in package without a DISPLAY_NAME fails loudly instead of guessing a name."""
+    monkeypatch.delattr(garak_package, "DISPLAY_NAME")
+
+    with pytest.raises(ValueError, match="pyrit.scenario.scenarios.garak' must declare a DISPLAY_NAME"):
+        _registry_with_modules("garak").list_modules()
 
 
 async def test_create_and_initialize_async_creates_sets_params_and_initializes() -> None:
