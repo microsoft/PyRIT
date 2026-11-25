@@ -159,8 +159,9 @@ def suggest_threshold(
         ThresholdSuggestion: The suggested threshold with its tuning and held-out results.
 
     Raises:
-        ValueError: If the inputs are malformed, a split has no gold-true response, every tuning
-            score is 0.0, or no candidate reaches ``min_precision``.
+        ValueError: If the inputs are malformed, a split has no gold-true response (including an
+            empty holdout split when ``holdout_fraction`` is above 0), every tuning score is 0.0, or
+            no candidate reaches ``min_precision``.
     """
     score_matrix, gold = _validate_scores_and_labels(scores=scores, labels=labels)
     if min_precision is not None and not 0 < min_precision <= 1:
@@ -174,8 +175,11 @@ def suggest_threshold(
     tuning_scores, tuning_gold = score_matrix[:, tuning_index], gold[tuning_index]
     if not tuning_gold.any():
         raise ValueError("The tuning split has no gold-true response, so recall is undefined.")
-    if holdout_index.size and not gold[holdout_index].any():
-        raise ValueError("The holdout split has no gold-true response; lower holdout_fraction or add labeled data.")
+    if holdout_fraction > 0 and not gold[holdout_index].any():
+        raise ValueError(
+            "The holdout split has no gold-true response; add labeled data, or set holdout_fraction=0 "
+            "to tune on every response without a held-out check."
+        )
 
     # A threshold must be in (0, 1], so a score of 0.0 can never count as true.
     candidates = np.unique(tuning_scores[tuning_scores > 0])
@@ -379,7 +383,8 @@ def _operating_point(*, score_matrix: np.ndarray, gold: np.ndarray, threshold: f
     false_negative = int(np.sum(~predicted & actual))
     precision = true_positive / (true_positive + false_positive) if true_positive + false_positive else 0.0
     recall = true_positive / (true_positive + false_negative) if true_positive + false_negative else 0.0
-    f1_score = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    # From the integer counts, so equal F1 scores compare equal and ties break toward the higher threshold.
+    f1_score = 2 * true_positive / (2 * true_positive + false_positive + false_negative) if true_positive else 0.0
     specificity = true_negative / (true_negative + false_positive) if true_negative + false_positive else None
     return ThresholdOperatingPoint(
         threshold=threshold,

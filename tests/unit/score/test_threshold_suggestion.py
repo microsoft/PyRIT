@@ -78,6 +78,25 @@ def test_suggest_threshold_breaks_ties_toward_higher_threshold() -> None:
     assert suggestion.threshold == 0.9
 
 
+def test_suggest_threshold_f1_ties_survive_floating_point() -> None:
+    # 0.9 gives TP=1, FP=3, FN=1 and 0.2 gives TP=2, FP=8, FN=0: both have an F1 score of exactly 1/3.
+    suggestion = suggest_threshold(
+        scores=[0.9, 0.2, 0.9, 0.9, 0.9, 0.5, 0.5, 0.5, 0.5, 0.5],
+        labels=[True, True] + [False] * 8,
+        holdout_fraction=0,
+    )
+
+    f1_by_threshold = {point.threshold: point.f1_score for point in suggestion.operating_points}
+    assert f1_by_threshold[0.9] == f1_by_threshold[0.2]
+    assert suggestion.threshold == 0.9
+
+
+def test_suggest_threshold_rejects_empty_holdout_when_requested() -> None:
+    # Half of one response per class rounds to zero, so nothing would be held out.
+    with pytest.raises(ValueError, match="holdout split has no gold-true"):
+        suggest_threshold(scores=[0.9, 0.1], labels=[True, False])
+
+
 def test_suggest_threshold_reports_current_threshold() -> None:
     suggestion = suggest_threshold(scores=SCORES, labels=LABELS, holdout_fraction=0, current_threshold=0.9)
 

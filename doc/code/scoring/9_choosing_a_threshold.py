@@ -98,7 +98,7 @@ print(
 #     suggest_threshold_async,
 # )
 #
-# judge = SelfAskScaleScorer(chat_target=OpenAIChatTarget())
+# judge = SelfAskScaleScorer.from_scale(chat_target=OpenAIChatTarget())
 # scorer = FloatScaleThresholdScorer(scorer=judge, threshold=0.9)
 # dataset = HumanLabeledDataset.from_csv(
 #     csv_path=SCORER_EVALS_PATH / "objective" / "cyber.csv", metrics_type=MetricsType.OBJECTIVE
