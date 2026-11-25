@@ -108,7 +108,6 @@ if TYPE_CHECKING:
     )
     from pyrit.score.scorer_evaluation.scorer_stability import (
         PresentationEffect,
-        PresentationKind,
         ScorerPresentation,
         ScorerStabilityEvaluator,
         ScorerStabilityMetrics,
@@ -372,7 +371,6 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScorerStabilityEvaluator": "pyrit.score.scorer_evaluation.scorer_stability",
     "ScorerStabilityMetrics": "pyrit.score.scorer_evaluation.scorer_stability",
     "PresentationEffect": "pyrit.score.scorer_evaluation.scorer_stability",
-    "PresentationKind": "pyrit.score.scorer_evaluation.scorer_stability",
     "compute_scorer_stability": "pyrit.score.scorer_evaluation.scorer_stability",
     "get_all_harm_metrics": "pyrit.score.scorer_evaluation.scorer_metrics_io",
     "get_all_objective_metrics": "pyrit.score.scorer_evaluation.scorer_metrics_io",

@@ -7,14 +7,25 @@ gives the same answer when the same question is put to it another way.
 
 A presentation is one way of asking. The order the options are listed in, the wording of a
 label, a paraphrase of the rubric, whether the objective comes before or after the response,
-and formatting around the response all leave the question unchanged. A scorer that measures
-the response should not move with them. When it does, the same attack on the same target
-reports a different success rate, depending on a detail that is rarely written down.
+and formatting of the prompt all leave the question unchanged. A scorer that measures the
+response should not move with them. When it does, the same attack on the same target reports a
+different success rate, depending on a detail that is rarely written down.
 
 Rewording a judge's rubric has been shown to flip its verdicts beyond what reruns alone do
-[@weng2026policyinvariance], and so have formatting and paraphrase changes to the response it
-is shown [@dev2026judgereliability]. The evaluator measures both kinds of change for any
-PyRIT true/false scorer.
+[@weng2026policyinvariance], and so have formatting and paraphrase changes to what the judge is
+shown [@dev2026judgereliability]. The evaluator measures such changes for any PyRIT true/false
+scorer that can be configured for them.
+
+## What moves the reported rate
+
+For an attack success rate, read `positive_rate_shift` first:
+
+- **`positive_rate_shift`**: how far the presentation moves the share of true verdicts from the
+  reference's, on the responses both reached a verdict on. With an objective scorer this is how
+  far the attack success rate moves.
+
+A presentation can also change many verdicts without moving the reported rate, by moving as
+many one way as the other. That is measured separately, below.
 
 ## Why a flip rate is not enough
 
@@ -32,43 +43,36 @@ flip rate = repeat flip rate + presentation effect
 - **`presentation_effect`**: what is left. For one response, if the scorer answers true with
   chance `a` under the reference and `b` under the presentation, this is `(a - b) ** 2`,
   averaged over responses. It is zero for a scorer that ignores the presentation, however noisy
-  that scorer is, and it equals the flip rate for a scorer that always repeats itself.
+  that scorer is, and it equals the flip rate for a scorer that always repeats itself. It is a
+  mean squared change: a presentation that moves every response's chance of a true verdict by
+  0.2 reads as an effect of 0.04.
 
-A presentation can also change many verdicts without moving the reported rate, by moving as
-many one way as the other. That is reported separately:
-
-- **`positive_rate_shift`**: the presentation's share of true verdicts minus the reference's.
-  It equals `flip_to_true_rate - flip_to_false_rate`.
-- **`positive_rate_range`**: the lowest and highest share of true verdicts over the reference
-  and every presentation, which is the range of rates the same scorer reports on the same
-  responses.
+With a single run (`num_repeats=1`) the noise cannot be measured, so `repeat_flip_rate`,
+`presentation_effect` and its p-value are `None`; the shift is still reported and tested.
 
 ## Running an evaluation
 
 The scorer under test is the reference. Each `ScorerPresentation` names another way of asking
-and carries a scorer configured for it. Anything a scorer's constructor accepts can be a
-presentation. For `SelfAskRefusalScorer`, the user prompt format decides the field order and
-the field labels:
+and carries a scorer already configured for it. Anything a scorer's constructor accepts can be
+a presentation. For `SelfAskRefusalScorer` and `SelfAskGeneralTrueFalseScorer`,
+`prompt_format_string` decides the field order, the field labels and the formatting of the
+prompt:
 
 ```python
 from pyrit.common.path import SCORER_EVALS_PATH
-from pyrit.converter import SuffixAppendConverter
 from pyrit.score import (
     HumanLabeledDataset,
     MetricsType,
-    PresentationKind,
     ScorerPresentation,
     ScorerStabilityEvaluator,
     SelfAskRefusalScorer,
 )
 
-scorer = SelfAskRefusalScorer(chat_target=chat_target)
 evaluator = ScorerStabilityEvaluator(
-    scorer=scorer,
+    scorer=SelfAskRefusalScorer(chat_target=chat_target),
     presentations=[
         ScorerPresentation(
             name="response_first",
-            kind=PresentationKind.FIELD_ORDER,
             scorer=SelfAskRefusalScorer(
                 chat_target=chat_target,
                 prompt_format_string="response_to_evaluate_input: {response}\nconversation_objective: {objective}",
@@ -76,7 +80,6 @@ evaluator = ScorerStabilityEvaluator(
         ),
         ScorerPresentation(
             name="short_labels",
-            kind=PresentationKind.LABEL_WORDING,
             scorer=SelfAskRefusalScorer(
                 chat_target=chat_target,
                 prompt_format_string="objective: {objective}\nresponse: {response}",
@@ -84,9 +87,10 @@ evaluator = ScorerStabilityEvaluator(
         ),
         ScorerPresentation(
             name="trailing_newline",
-            kind=PresentationKind.FORMATTING,
-            scorer=scorer,
-            response_converters=[SuffixAppendConverter(suffix="\n")],
+            scorer=SelfAskRefusalScorer(
+                chat_target=chat_target,
+                prompt_format_string="conversation_objective: {objective}\nresponse_to_evaluate_input: {response}\n",
+            ),
         ),
     ],
 )
@@ -100,28 +104,35 @@ metrics = await evaluator.evaluate_dataset_async(labeled_dataset=dataset, num_re
 for effect in metrics.effects:
     print(
         effect.name,
+        f"rate moves {effect.positive_rate_shift:+.1%} (p={effect.positive_rate_shift_p_value:.3f})",
         f"flips {effect.flip_rate:.1%}",
         f"noise {effect.repeat_flip_rate:.1%}",
-        f"effect {effect.presentation_effect:.1%} (p={effect.presentation_effect_p_value:.3f})",
-        f"rate moves {effect.positive_rate_shift:+.1%}",
+        f"effect {effect.presentation_effect:.3f} (p={effect.presentation_effect_p_value:.3f})",
+        f"accuracy {effect.metrics.accuracy:.1%} vs {metrics.reference_metrics.accuracy:.1%}",
     )
-print("reported rate ranges over", metrics.positive_rate_range)
 ```
 
-`response_converters` change how the response is shown to the scorer, so they work with any
-scorer, including ones that call no model. The stored original value is left as it was. For
-`SelfAskTrueFalseScorer`, a `system_prompt_template` that lists the false description before
+For `SelfAskTrueFalseScorer`, a `system_prompt_template` that lists the false description before
 the true one gives an option-order presentation, and a reworded `TrueFalseQuestion` gives a
 paraphrase.
 
+Every presentation must differ from the reference in configuration, and must use the same judge
+model, temperature and top_p. The evaluator checks both when it is built, because a judge change
+would read as a presentation effect. A run makes `(presentations + 1) x num_repeats x responses`
+scoring calls. Each round scores every response once under every presentation, so a change in
+the judge model over time falls on all of them alike.
+
+On a labeled dataset, `reference_metrics` and each effect's `metrics` hold that scorer's
+`ObjectiveScorerMetrics`, computed as `ObjectiveScorerEvaluator` computes them with `num_repeats`
+trials. `accuracy`, `f1_score` and the rest therefore mean what they mean in the scorer metrics
+registry. `num_repeats` defaults to 3, the number of trials `Scorer.evaluate_async` records.
+
 Stability needs no labels. `evaluate_conversations_async` takes conversations and a
 `ScoringExpectation` for each directly, so it also runs on the responses of an attack, and on
-scorers that need typed conditions. With an objective scorer,
-`positive_rate_range` is then the range of attack success rates that scorer would have
-reported for that run. When gold labels are present, each presentation also gets its
-`accuracy` and `accuracy_shift`, and the metrics report accuracy separately for the responses
-whose verdict held in every run (`accuracy_on_consistent_items`) and for the rest
-(`accuracy_on_inconsistent_items`).
+scorers that need typed conditions. The conversations must already be in memory, as an attack's
+are, because each score refers to the stored response; nothing else is added to memory. With an
+objective scorer, each `positive_rate_shift` is then how far the attack success rate of that run
+would move under that presentation.
 
 ## Deciding whether an effect is real
 
@@ -133,15 +144,10 @@ Each presentation carries two permutation p-values, which make no assumption abo
   large an effect chance alone produces.
 - **`positive_rate_shift_p_value`** answers whether the reported rate moves. Each response's
   shift is reversed at random. With one run per presentation this is the exact sign test on
-  the responses whose verdict changed. It is `None` when recorded verdicts give the reference
-  and the presentation different numbers of runs, where reversing shifts is not a fair
-  comparison.
+  the responses whose verdict changed.
 
-The intervals (`presentation_effect_interval`, `positive_rate_shift_interval`,
-`accuracy_shift_interval`) are Student t intervals over responses and describe the size of an
-effect. They can be too narrow when few responses ever change verdict, so use the p-value to
-decide whether an effect is there. P-values are for one presentation at a time and are not
-adjusted for the number of presentations compared.
+Both are Holm-adjusted across the presentations of one evaluation, each kind separately, so
+comparing more presentations does not raise the chance of a false finding.
 
 ## What to check before trusting a result
 
@@ -150,18 +156,19 @@ adjusted for the number of presentations compared.
   noise is counted as a presentation effect, because a change of prompt redraws the sample.
 - **A presentation must keep the meaning.** The evaluator cannot check this. A paraphrase that
   changes the criterion measures a different question, and its flips are not instability.
-- **A run with no verdict removes the response.** A response that any run of any presentation
-  left undetermined is left out of every rate instead of being counted as false, and
-  `num_undetermined_items` reports how many each presentation lost.
-- **`consistent_rate` and the ranges depend on how much was run.** More presentations and more
-  repeats can only lower the one and widen the others, so compare them between evaluations
-  with the same presentations and repeats.
+- **A run with no verdict removes the response from that comparison.** A response is left out
+  instead of being counted as false. Each comparison uses the responses that reached a verdict
+  in every run of both the reference and that presentation (`num_items`), and the reference's
+  own figures use the responses it reached a verdict on in every run. One presentation's
+  failures therefore change no other figure. `num_undetermined_items` and
+  `reference_num_undetermined_items` count the responses each lost, so a presentation that makes
+  the judge fail more often is visible.
 
 ## Working from recorded verdicts
 
 `metrics.to_json()` writes every recorded verdict with the metrics. `compute_scorer_stability`
-computes the same metrics from recorded verdicts without calling a scorer, which also covers
-verdicts collected by another tool:
+computes the same stability metrics from recorded verdicts without calling a scorer, which also
+covers verdicts collected by another tool:
 
 ```python
 from pyrit.score import compute_scorer_stability
@@ -171,9 +178,8 @@ metrics = compute_scorer_stability(
         "reference": [[True, True, False, False], [True, True, False, False]],
         "options_swapped": [[True, False, False, False], [True, False, False, True]],
     },
-    gold_labels=[True, True, False, False],
 )
 ```
 
-Each presentation maps to its runs, one row per run and one column per response. Use `None` for
-a run that reached no verdict.
+Each presentation maps to its runs, one row per run and one column per response, and every
+presentation needs the same number of runs. Use `None` for a run that reached no verdict.

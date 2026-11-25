@@ -5,9 +5,9 @@
 Measure how much a true/false scorer's verdicts depend on how the question is put to it.
 
 A presentation is one way of asking a scorer the same question: the order its options are
-listed in, the wording of a label, a paraphrase of the rubric, whether the objective comes
-before the response, or harmless formatting around the response. A scorer that measures the
-response should give the same verdict under each of them.
+listed in, the wording of a label, a paraphrase of the rubric, or whether the objective comes
+before the response. Each presentation is a scorer already configured for it. A scorer that
+measures the response should give the same verdict under each of them.
 
 Counting how often the verdict differs between two presentations is not enough, because a
 scorer that samples also differs from itself when nothing changes. For one response, let
@@ -26,80 +26,46 @@ unbiased estimate of each term.
 Whether an effect is there at all is settled by a permutation test. If a presentation changes
 nothing, a response's runs are interchangeable between the reference and the presentation, so
 reassigning them at random gives the distribution of the estimate with no assumption about the
-scorer. The intervals describe the size of an effect and rest on a normal approximation over
-responses.
-
-A presentation can change many verdicts and leave the reported rate where it was, when it
-moves as many one way as the other. The shift in the positive rate is therefore reported and
-tested separately from the effect.
-
-The repeats must be independent runs. A judge that is cached, or sampled with a pinned seed,
-repeats itself exactly, so the repeat flip rate reads zero and its sampling noise is counted
-as a presentation effect, because a change of prompt redraws the sample.
+scorer. The shift in the positive rate is tested separately, because a presentation can move
+as many verdicts one way as the other and leave the reported rate where it was. The repeats
+must be independent runs: a cached judge repeats itself, so its sampling noise would read as
+a presentation effect.
 """
 
 from __future__ import annotations
 
 import json
-import uuid
 from dataclasses import asdict, dataclass, field, replace
-from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
-from scipy.stats import t as student_t
 
-from pyrit.memory import CentralMemory
-from pyrit.models import MessageScorable, ScoringExpectation, UndeterminedScoreError
-from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target.batch_helper import batch_task_async
-from pyrit.score.scorer_evaluation.krippendorff import krippendorff_alpha
-from pyrit.score.scorer_evaluation.metrics_type import MetricsType
+from pyrit.models import ObjectiveTargetEvaluationIdentifier, ScoringExpectation
+from pyrit.score.scorer_evaluation.scorer_evaluator import ObjectiveScorerEvaluator, ScoringTrials
 from pyrit.score.scorer_evaluation.scorer_metrics import non_finite_to_none
-from pyrit.score.true_false.multi_label_true_false_scorer import MultiLabelTrueFalseScorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from pyrit.converter import Converter
-    from pyrit.models import Message, Score
-    from pyrit.score.scorer_evaluation.human_labeled_dataset import HumanLabeledDataset, ObjectiveHumanLabeledEntry
+    from pyrit.models import ComponentIdentifier, Message
+    from pyrit.score.scorer_evaluation.human_labeled_dataset import HumanLabeledDataset
+    from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 
 __all__ = [
-    "REFERENCE_PRESENTATION",
     "PresentationEffect",
-    "PresentationKind",
     "ScorerPresentation",
     "ScorerStabilityEvaluator",
     "ScorerStabilityMetrics",
     "compute_scorer_stability",
 ]
 
-#: The name the scorer under test is recorded under, presented the way it is normally used.
-REFERENCE_PRESENTATION = "reference"
-
+# The name the scorer under test is recorded under, presented the way it is normally used.
+_REFERENCE_PRESENTATION = "reference"
 # Permutations are drawn in blocks so the working array stays small for large datasets.
 _PERMUTATION_BLOCK = 200
 # Statistics are means of a few simple fractions, so equal values can differ in the last bits.
 _TIE_TOLERANCE = 1e-12
-
-
-class PresentationKind(str, Enum):
-    """What a presentation changes about the way the question is asked."""
-
-    #: The order in which the answer options are listed.
-    OPTION_ORDER = "option_order"
-    #: The words used for an option or a field, such as "refuses" for "declines".
-    LABEL_WORDING = "label_wording"
-    #: The same criterion written another way.
-    RUBRIC_PARAPHRASE = "rubric_paraphrase"
-    #: The order of the fields the scorer is shown, such as the objective before the response.
-    FIELD_ORDER = "field_order"
-    #: Formatting that carries no meaning, such as trailing whitespace around the response.
-    FORMATTING = "formatting"
-    #: Any other change the caller holds to be meaning-preserving.
-    OTHER = "other"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -107,23 +73,18 @@ class ScorerPresentation:
     """
     One way of putting the same question to a scorer.
 
-    The scorer carries whatever is changed on the scorer's side, such as a system prompt with
-    its options in another order. ``response_converters`` change how the response is shown to
-    it and work with any scorer. The caller is responsible for the change preserving meaning:
-    a presentation that changes the criterion measures a different question, not stability.
+    The scorer is configured for the presentation, for example with its options listed in
+    another order or its fields in another order. The caller is responsible for the change
+    preserving meaning: a presentation that changes the criterion measures a different
+    question, not stability.
 
     Attributes:
         name (str): A unique name for the presentation.
         scorer (TrueFalseScorer): The scorer, configured for this presentation.
-        kind (PresentationKind): What the presentation changes.
-        response_converters (Sequence[Converter]): Converters applied, in order, to the response
-            before it is scored. The stored original value is left as it was.
     """
 
     name: str
     scorer: TrueFalseScorer
-    kind: PresentationKind = PresentationKind.OTHER
-    response_converters: Sequence[Converter] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -131,73 +92,52 @@ class PresentationEffect:
     """
     How one presentation moved a scorer's verdicts away from the reference presentation.
 
-    Every rate is over the responses that reached a verdict in every run of every presentation,
-    and counts each pair of runs, one under each presentation, equally. The p-values are for
-    this presentation alone and are not adjusted for the number of presentations compared.
+    Every rate is over the responses that reached a verdict in every run of both this
+    presentation and the reference, so another presentation's missing verdicts do not change
+    it. The p-values are Holm-adjusted across the presentations of one evaluation.
 
     Attributes:
         name (str): The presentation.
-        kind (str | None): What the presentation changes, when recorded.
-        num_repeats (int): How many times the presentation scored each response.
+        eval_hash (str | None): Evaluation hash of the presentation's scorer, when the verdicts
+            came from ``ScorerStabilityEvaluator``.
+        num_items (int): Responses compared: those with a verdict in every run of both.
         num_undetermined_items (int): Responses with a run under this presentation that reached
-            no verdict. They are left out of every rate rather than counted as false.
-        positive_rate (float): Share of true verdicts under this presentation. For an objective
-            scorer this is the attack success rate the presentation would report.
-        positive_rate_shift (float): ``positive_rate`` minus the reference's. This is how far the
-            reported rate moves, and it equals ``flip_to_true_rate - flip_to_false_rate``.
-        positive_rate_shift_interval (tuple[float, float] | None): Interval for the shift. None
-            with fewer than two responses.
-        positive_rate_shift_p_value (float | None): Two-sided permutation p-value for a shift this
-            far from zero when the presentation moves verdicts in either direction equally. With
-            single runs it is the exact sign test on the responses whose verdict changed. None
-            when the presentation and the reference ran a different number of times, where a
-            response's shift is not symmetric about zero even if the presentation changes nothing.
-        flip_rate (float): Share of run pairs whose verdicts differ. It includes the scorer's
-            ordinary run-to-run noise.
-        flip_to_true_rate (float): Share of run pairs that are false under the reference and
-            true under this presentation.
-        flip_to_false_rate (float): Share of run pairs that are true under the reference and
-            false under this presentation.
+            no verdict. They are left out rather than counted as false.
+        positive_rate (float): Share of true verdicts under this presentation, over the compared
+            responses. For an objective scorer this is the attack success rate it would report.
+        positive_rate_shift (float): How far the presentation moves the positive rate from the
+            reference's on the same compared responses.
+        positive_rate_shift_p_value (float): Holm-adjusted two-sided permutation p-value for a
+            shift this far from zero when the presentation moves verdicts in either direction
+            equally. With single runs it is the exact sign test on the responses whose verdict
+            changed.
+        flip_rate (float): Share of run pairs, one under each presentation, whose verdicts
+            differ. It includes the scorer's ordinary run-to-run noise.
         repeat_flip_rate (float | None): Share of run pairs under one presentation whose verdicts
             differ, averaged over the reference and this presentation. This is the noise floor.
-            None unless both were run at least twice.
+            None with a single run.
         presentation_effect (float | None): ``flip_rate`` minus ``repeat_flip_rate``: an unbiased
             estimate of the mean squared change in a response's chance of a true verdict. Chance
-            can put the estimate slightly below zero, and it is not clipped. None when the noise
-            floor was not measured.
-        presentation_effect_interval (tuple[float, float] | None): Interval for the effect. It
-            can be too narrow when few responses ever change verdict, so use the p-value to
-            decide whether an effect is there.
-        presentation_effect_p_value (float | None): Permutation p-value for an effect this large
-            when the presentation changes no response's chance of a true verdict. None when the
-            noise floor was not measured.
-        accuracy (float | None): Share of single runs that agree with the gold label, when gold
-            labels were supplied.
-        accuracy_shift (float | None): ``accuracy`` minus the reference's.
-        accuracy_shift_interval (tuple[float, float] | None): Interval for the accuracy shift.
-        scorer_identifier_hash (str | None): Hash of the scorer that produced the verdicts, when
-            they came from ``ScorerStabilityEvaluator``.
+            can put the estimate slightly below zero, and it is not clipped. None with a single run.
+        presentation_effect_p_value (float | None): Holm-adjusted permutation p-value for an
+            effect this large when the presentation changes no response's chance of a true
+            verdict. None with a single run.
+        metrics (ObjectiveScorerMetrics | None): The presentation's scorer metrics against human
+            labels, as ``ObjectiveScorerEvaluator`` computes them, when the dataset was labeled.
     """
 
     name: str
-    kind: str | None = None
-    num_repeats: int
+    eval_hash: str | None = None
+    num_items: int
     num_undetermined_items: int
     positive_rate: float
     positive_rate_shift: float
-    positive_rate_shift_interval: tuple[float, float] | None
-    positive_rate_shift_p_value: float | None
+    positive_rate_shift_p_value: float
     flip_rate: float
-    flip_to_true_rate: float
-    flip_to_false_rate: float
     repeat_flip_rate: float | None = None
     presentation_effect: float | None = None
-    presentation_effect_interval: tuple[float, float] | None = None
     presentation_effect_p_value: float | None = None
-    accuracy: float | None = None
-    accuracy_shift: float | None = None
-    accuracy_shift_interval: tuple[float, float] | None = None
-    scorer_identifier_hash: str | None = None
+    metrics: ObjectiveScorerMetrics | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -207,69 +147,38 @@ class ScorerStabilityMetrics:
 
     Attributes:
         reference (str): The presentation the others are compared with.
-        reference_scorer_identifier_hash (str | None): Hash of the scorer under test, when the
+        reference_eval_hash (str | None): Evaluation hash of the scorer under test, when the
             verdicts came from ``ScorerStabilityEvaluator``.
         num_input_items (int): Responses supplied.
-        num_items (int): Responses that reached a verdict in every run of every presentation.
-            Every rate is over these.
-        num_repeats (int): How many times the reference scored each response.
-        confidence_level (float): The level of every interval.
+        num_repeats (int): How many times every presentation scored each response.
         num_permutations (int): Random reassignments behind every p-value. The smallest p-value
-            that can be reported is ``1 / (num_permutations + 1)``.
+            that can be reported, before adjustment, is ``1 / (num_permutations + 1)``.
         reference_num_undetermined_items (int): Responses with a reference run that reached no
             verdict.
-        reference_positive_rate (float): Share of true verdicts under the reference.
+        reference_positive_rate (float): Share of true verdicts under the reference, over the
+            responses that reached a verdict in every reference run.
         reference_repeat_flip_rate (float | None): Share of pairs of reference runs whose verdicts
-            differ. None when the reference ran once.
-        reference_accuracy (float | None): Share of single reference runs that agree with the gold
-            label, when gold labels were supplied.
-        positive_rate_range (tuple[float, float]): Lowest and highest ``positive_rate`` over the
-            reference and every presentation: the range of rates the same scorer reports on the
-            same responses. The width grows with the number of presentations, so judge a single
-            presentation by its own ``positive_rate_shift``.
-        accuracy_range (tuple[float, float] | None): Lowest and highest accuracy over the same
-            presentations, when gold labels were supplied.
-        consistent_rate (float): Share of responses given one verdict by every run of every
-            presentation. It falls as runs are added, so compare it only between evaluations
-            with the same presentations and repeats.
-        accuracy_on_consistent_items (float | None): Share of those responses whose verdict agrees
-            with the gold label. None without gold labels or when no response is consistent.
-        accuracy_on_inconsistent_items (float | None): Share of single runs that agree with the
-            gold label on the remaining responses. None without gold labels or when every
-            response is consistent.
-        krippendorff_alpha_runs (float | None): Krippendorff's alpha with every run of every
-            presentation as a rater. None when undefined.
-        krippendorff_alpha_repeats (float | None): Krippendorff's alpha between the reference's own
-            runs, for comparison. None when the reference ran once or it is undefined.
+            differ, over the same responses. None with a single run.
+        reference_metrics (ObjectiveScorerMetrics | None): The reference scorer's metrics against
+            human labels, as ``ObjectiveScorerEvaluator`` computes them, when the dataset was labeled.
         effects (list[PresentationEffect]): One entry per presentation, in the order given.
         verdicts (dict[str, np.ndarray]): Every recorded verdict, by presentation, as an array of
             shape ``(num_repeats, num_input_items)`` holding 1.0, 0.0, or NaN for no verdict.
-        gold_labels (list[bool] | None): The gold label of each response, when supplied.
         dataset_name (str | None): Name of the dataset, when the verdicts came from one.
         dataset_version (str | None): Version of the dataset, when the verdicts came from one.
     """
 
     reference: str
-    reference_scorer_identifier_hash: str | None = None
+    reference_eval_hash: str | None = None
     num_input_items: int
-    num_items: int
     num_repeats: int
-    confidence_level: float
     num_permutations: int
     reference_num_undetermined_items: int
     reference_positive_rate: float
     reference_repeat_flip_rate: float | None = None
-    reference_accuracy: float | None = None
-    positive_rate_range: tuple[float, float]
-    accuracy_range: tuple[float, float] | None = None
-    consistent_rate: float
-    accuracy_on_consistent_items: float | None = None
-    accuracy_on_inconsistent_items: float | None = None
-    krippendorff_alpha_runs: float | None = None
-    krippendorff_alpha_repeats: float | None = None
+    reference_metrics: ObjectiveScorerMetrics | None = None
     effects: list[PresentationEffect] = field(default_factory=list)
     verdicts: dict[str, np.ndarray] = field(default_factory=dict)
-    gold_labels: list[bool] | None = None
     dataset_name: str | None = None
     dataset_version: str | None = None
 
@@ -350,7 +259,7 @@ def _repeat_disagreement(*, true_counts: np.ndarray, num_repeats: int) -> np.nda
 
 
 def _flips(
-    *, reference_counts: np.ndarray, counts: np.ndarray, reference_repeats: int, repeats: int
+    *, reference_counts: np.ndarray, counts: np.ndarray, num_repeats: int
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """
     Compute, for each response, how its runs under two presentations disagree.
@@ -358,58 +267,31 @@ def _flips(
     Args:
         reference_counts (np.ndarray): True verdicts per response under the reference.
         counts (np.ndarray): True verdicts per response under the presentation.
-        reference_repeats (int): Runs per response under the reference.
-        repeats (int): Runs per response under the presentation.
+        num_repeats (int): Runs per response under each.
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray | None]: The share of run pairs that go from
             false to true, the share that go from true to false, and the repeat noise, which is
-            None unless both presentations ran at least twice.
+            None with a single run.
     """
-    reference_share = reference_counts / reference_repeats
-    share = counts / repeats
+    reference_share = reference_counts / num_repeats
+    share = counts / num_repeats
     to_true = (1.0 - reference_share) * share
     to_false = reference_share * (1.0 - share)
-    reference_within = _repeat_disagreement(true_counts=reference_counts, num_repeats=reference_repeats)
-    within = _repeat_disagreement(true_counts=counts, num_repeats=repeats)
+    reference_within = _repeat_disagreement(true_counts=reference_counts, num_repeats=num_repeats)
+    within = _repeat_disagreement(true_counts=counts, num_repeats=num_repeats)
     noise = (reference_within + within) / 2.0 if reference_within is not None and within is not None else None
     return to_true, to_false, noise
-
-
-def _interval(*, contributions: np.ndarray, confidence_level: float) -> tuple[float, float] | None:
-    """
-    Compute a Student t interval for the mean of per-response contributions.
-
-    Responses are the unit, so a statistic built from several runs of one response keeps those
-    runs together.
-
-    Args:
-        contributions (np.ndarray): One value per response; the statistic is their mean.
-        confidence_level (float): The level of the interval.
-
-    Returns:
-        tuple[float, float] | None: The lower and upper limits, or None with fewer than two
-            responses.
-    """
-    num_items = contributions.size
-    if num_items < 2:
-        return None
-    mean = float(contributions.mean())
-    half_width = float(
-        student_t.ppf((1.0 + confidence_level) / 2.0, num_items - 1) * contributions.std(ddof=1) / np.sqrt(num_items)
-    )
-    return mean - half_width, mean + half_width
 
 
 def _permutation_p_values(
     *,
     reference_counts: np.ndarray,
     counts: np.ndarray,
-    reference_repeats: int,
-    repeats: int,
+    num_repeats: int,
     num_permutations: int,
     rng: np.random.Generator,
-) -> tuple[float | None, float | None]:
+) -> tuple[float, float | None]:
     """
     Test the shift in the positive rate and the presentation effect by permutation.
 
@@ -421,27 +303,21 @@ def _permutation_p_values(
     The shift is tested against a presentation that moves verdicts in either direction equally,
     by reversing each response's shift at random. This is the weaker claim that the reported
     rate does not move, which can hold while verdicts change, and with single runs it is the
-    exact sign test on the responses whose verdict changed. It needs the same number of runs
-    under both: with one run against many, a rarely true verdict gives mostly small shifts
-    one way and a few large ones the other, so reversing them is not a fair comparison.
+    exact sign test on the responses whose verdict changed.
 
     Args:
         reference_counts (np.ndarray): True verdicts per response under the reference.
         counts (np.ndarray): True verdicts per response under the presentation.
-        reference_repeats (int): Runs per response under the reference.
-        repeats (int): Runs per response under the presentation.
+        num_repeats (int): Runs per response under each.
         num_permutations (int): Random permutations to draw for each test.
         rng (np.random.Generator): Source of the permutations.
 
     Returns:
-        tuple[float | None, float | None]: The two-sided p-value for the shift in the positive
-            rate, which is None when the run counts differ, and the p-value for the presentation
-            effect, which is None when the noise floor was not measured.
+        tuple[float, float | None]: The unadjusted two-sided p-value for the shift in the
+            positive rate, and the unadjusted p-value for the presentation effect, which is None
+            with a single run.
     """
-    to_true, to_false, noise = _flips(
-        reference_counts=reference_counts, counts=counts, reference_repeats=reference_repeats, repeats=repeats
-    )
-    test_shift = reference_repeats == repeats
+    to_true, to_false, noise = _flips(reference_counts=reference_counts, counts=counts, num_repeats=num_repeats)
     shifts = to_true - to_false
     shifts = shifts[shifts != 0.0]
     observed_shift = abs(float(shifts.sum()))
@@ -449,65 +325,119 @@ def _permutation_p_values(
 
     # A response whose runs all agree reads the same under every reassignment and adds nothing.
     pooled = (reference_counts + counts).astype(np.int64)
-    total = reference_repeats + repeats
+    total = 2 * num_repeats
     pooled = pooled[(pooled > 0) & (pooled < total)]
     shift_hits = 0
     effect_hits = 0
     for start in range(0, num_permutations, _PERMUTATION_BLOCK):
         block = min(_PERMUTATION_BLOCK, num_permutations - start)
-        if test_shift:
-            signs = rng.integers(0, 2, size=(block, shifts.size)) * 2 - 1
-            shift_hits += int(np.count_nonzero(np.abs((signs * shifts).sum(axis=1)) >= observed_shift - _TIE_TOLERANCE))
+        signs = rng.integers(0, 2, size=(block, shifts.size)) * 2 - 1
+        shift_hits += int(np.count_nonzero(np.abs((signs * shifts).sum(axis=1)) >= observed_shift - _TIE_TOLERANCE))
         if observed_effect is None:
             continue
         drawn_reference = (
-            rng.hypergeometric(pooled, total - pooled, reference_repeats, size=(block, pooled.size))
+            rng.hypergeometric(pooled, total - pooled, num_repeats, size=(block, pooled.size))
             if pooled.size
             else np.zeros((block, 0), dtype=np.int64)
         )
         drawn_to_true, drawn_to_false, drawn_noise = _flips(
-            reference_counts=drawn_reference,
-            counts=pooled - drawn_reference,
-            reference_repeats=reference_repeats,
-            repeats=repeats,
+            reference_counts=drawn_reference, counts=pooled - drawn_reference, num_repeats=num_repeats
         )
         drawn_effect = (drawn_to_true + drawn_to_false - cast("np.ndarray", drawn_noise)).sum(axis=1)
         effect_hits += int(np.count_nonzero(drawn_effect >= observed_effect - _TIE_TOLERANCE))
-    shift_p_value = (1 + shift_hits) / (1 + num_permutations) if test_shift else None
+    shift_p_value = (1 + shift_hits) / (1 + num_permutations)
     effect_p_value = (1 + effect_hits) / (1 + num_permutations) if observed_effect is not None else None
     return shift_p_value, effect_p_value
 
 
-def _alpha(*, runs: np.ndarray) -> float | None:
+def _holm(p_values: Sequence[float | None]) -> list[float | None]:
     """
-    Compute Krippendorff's alpha between runs, or None when it is undefined.
+    Adjust p-values for testing several presentations at once, by Holm's step-down method.
+
+    The method holds the chance of any false finding to the level used, whatever the dependence
+    between the tests. A None is left in place and not counted.
 
     Args:
-        runs (np.ndarray): Verdicts of shape ``(num_runs, num_items)``.
+        p_values (Sequence[float | None]): Unadjusted p-values.
 
     Returns:
-        float | None: The alpha, or None when it is undefined, as it is for a single run.
+        list[float | None]: The adjusted p-values, in the same order.
     """
-    alpha = float(krippendorff_alpha(reliability_data=runs, level_of_measurement="ordinal"))
-    return alpha if np.isfinite(alpha) else None
+    tested = sorted((p_value, index) for index, p_value in enumerate(p_values) if p_value is not None)
+    adjusted: list[float | None] = [None] * len(p_values)
+    running = 0.0
+    for rank, (p_value, index) in enumerate(tested):
+        running = max(running, min(1.0, (len(tested) - rank) * p_value))
+        adjusted[index] = running
+    return adjusted
 
 
-def _validate_settings(*, confidence_level: float, num_permutations: int, seed: int) -> None:
+def _compare(
+    *, name: str, reference_runs: np.ndarray, runs: np.ndarray, num_permutations: int, seed: int
+) -> PresentationEffect:
+    """
+    Compare one presentation with the reference on the responses both reached a verdict on.
+
+    Args:
+        name (str): The presentation.
+        reference_runs (np.ndarray): The reference's verdicts, NaN where missing.
+        runs (np.ndarray): The presentation's verdicts, of the same shape.
+        num_permutations (int): Random reassignments for each p-value.
+        seed (int): Seed for the reassignments.
+
+    Returns:
+        PresentationEffect: The effect, with unadjusted p-values.
+
+    Raises:
+        ValueError: If no response reached a verdict in every run of both.
+    """
+    undetermined = np.isnan(runs).any(axis=0)
+    compared = ~undetermined & ~np.isnan(reference_runs).any(axis=0)
+    if not compared.any():
+        raise ValueError(f"No response reached a verdict in every run of both the reference and '{name}'.")
+    num_repeats = runs.shape[0]
+    reference_counts = reference_runs[:, compared].sum(axis=0)
+    counts = runs[:, compared].sum(axis=0)
+    to_true, to_false, noise = _flips(reference_counts=reference_counts, counts=counts, num_repeats=num_repeats)
+    # Seeded by the presentation's name as well, so its p-values do not depend on which
+    # other presentations are compared or in what order.
+    shift_p_value, effect_p_value = _permutation_p_values(
+        reference_counts=reference_counts,
+        counts=counts,
+        num_repeats=num_repeats,
+        num_permutations=num_permutations,
+        rng=np.random.default_rng([seed, *name.encode("utf-8")]),
+    )
+    return PresentationEffect(
+        name=name,
+        num_items=int(compared.sum()),
+        num_undetermined_items=int(undetermined.sum()),
+        positive_rate=float((counts / num_repeats).mean()),
+        positive_rate_shift=float((to_true - to_false).mean()),
+        positive_rate_shift_p_value=shift_p_value,
+        flip_rate=float((to_true + to_false).mean()),
+        repeat_flip_rate=float(noise.mean()) if noise is not None else None,
+        presentation_effect=float((to_true + to_false - noise).mean()) if noise is not None else None,
+        presentation_effect_p_value=effect_p_value,
+    )
+
+
+def _validate_settings(*, num_repeats: int, num_permutations: int, seed: int) -> None:
     """
     Reject settings that cannot be used, before any scoring is paid for.
 
     Args:
-        confidence_level (float): The level of each interval.
+        num_repeats (int): Runs per presentation.
         num_permutations (int): Random reassignments for each p-value.
         seed (int): Seed for the reassignments.
 
     Raises:
         ValueError: If a setting is out of range.
     """
+    if num_repeats < 1:
+        raise ValueError("num_repeats must be at least 1.")
     if num_permutations < 1:
         raise ValueError("num_permutations must be at least 1.")
-    if not 0.0 < confidence_level < 1.0:
-        raise ValueError("confidence_level must be between 0 and 1.")
     if seed < 0:
         raise ValueError("seed must not be negative.")
 
@@ -515,29 +445,22 @@ def _validate_settings(*, confidence_level: float, num_permutations: int, seed: 
 def compute_scorer_stability(
     *,
     verdicts: Mapping[str, Any],
-    reference: str = REFERENCE_PRESENTATION,
-    gold_labels: Sequence[bool] | None = None,
-    kinds: Mapping[str, PresentationKind | str] | None = None,
-    confidence_level: float = 0.95,
+    reference: str = _REFERENCE_PRESENTATION,
     num_permutations: int = 2000,
     seed: int = 0,
 ) -> ScorerStabilityMetrics:
     """
     Compute stability metrics from recorded verdicts, without calling a scorer.
 
-    Use this to analyse verdicts recorded earlier or by another tool. Each presentation maps to
-    its runs, one row per run and one column per response, in the same response order for every
-    presentation. Presentations may have different numbers of runs.
+    Use this to analyse verdicts recorded earlier, such as those ``ScorerStabilityMetrics.to_json``
+    writes, or by another tool. Each presentation maps to its runs, one row per run and one column
+    per response, in the same response order for every presentation. Every presentation must have
+    the same number of runs.
 
     Args:
         verdicts (Mapping[str, Any]): Runs by presentation name. A verdict is true, false, or
             None / NaN when the run reached no verdict.
         reference (str): The presentation the others are compared with. Defaults to "reference".
-        gold_labels (Sequence[bool] | None): The gold label of each response. Defaults to None,
-            which leaves the accuracy fields empty.
-        kinds (Mapping[str, PresentationKind | str] | None): What each presentation changes, for
-            the record. Defaults to None.
-        confidence_level (float): The level of each interval. Defaults to 0.95.
         num_permutations (int): Random reassignments for each p-value. Defaults to 2000.
         seed (int): Non-negative seed for the reassignments, so the p-values can be reproduced.
             Defaults to 0.
@@ -547,151 +470,84 @@ def compute_scorer_stability(
 
     Raises:
         ValueError: If the reference or any other presentation is missing, the runs do not line
-            up, a setting is out of range, or no response reached a verdict in every run.
+            up, a setting is out of range, or a comparison has no response with a verdict in
+            every run.
     """
     if reference not in verdicts:
         raise ValueError(f"The reference presentation '{reference}' has no verdicts.")
     if len(verdicts) < 2:
         raise ValueError("At least one presentation besides the reference is required.")
-    _validate_settings(confidence_level=confidence_level, num_permutations=num_permutations, seed=seed)
-
     matrices = {name: _as_verdict_matrix(name=name, runs=runs) for name, runs in verdicts.items()}
-    num_input_items = matrices[reference].shape[1]
+    reference_runs = matrices[reference]
+    num_repeats, num_input_items = reference_runs.shape
+    _validate_settings(num_repeats=num_repeats, num_permutations=num_permutations, seed=seed)
     for name, matrix in matrices.items():
-        if matrix.shape[1] != num_input_items:
+        if matrix.shape != reference_runs.shape:
             raise ValueError(
-                f"Presentation '{name}' has {matrix.shape[1]} responses, but the reference has {num_input_items}."
+                f"Presentation '{name}' has {matrix.shape[0]} runs of {matrix.shape[1]} responses, but the "
+                f"reference has {num_repeats} runs of {num_input_items}. Every presentation needs the same runs."
             )
-    gold: np.ndarray | None = None
-    if gold_labels is not None:
-        gold = np.asarray(list(gold_labels), dtype=bool).astype(np.float64)
-        if gold.shape != (num_input_items,):
-            raise ValueError(f"gold_labels has {gold.size} labels for {num_input_items} responses.")
 
-    # A run that reached no verdict says nothing about which way it would have gone, so the
-    # response is left out everywhere rather than counted as false under one presentation.
-    undetermined = {name: np.isnan(matrix).any(axis=0) for name, matrix in matrices.items()}
-    kept = ~np.any(list(undetermined.values()), axis=0)
-    num_items = int(kept.sum())
-    if num_items == 0:
-        raise ValueError("No response reached a verdict in every run of every presentation.")
+    reference_undetermined = np.isnan(reference_runs).any(axis=0)
+    if reference_undetermined.all():
+        raise ValueError("No response reached a verdict in every run of the reference.")
+    reference_counts = reference_runs[:, ~reference_undetermined].sum(axis=0)
+    reference_noise = _repeat_disagreement(true_counts=reference_counts, num_repeats=num_repeats)
 
-    runs = {name: matrix[:, kept] for name, matrix in matrices.items()}
-    if gold is not None:
-        gold = gold[kept]
-    true_counts = {name: matrix.sum(axis=0) for name, matrix in runs.items()}
-    repeats = {name: matrix.shape[0] for name, matrix in runs.items()}
-    true_share = {name: true_counts[name] / repeats[name] for name in runs}
-    # Share of a response's runs that agree with its gold label.
-    correct_share = (
-        {name: np.where(gold == 1.0, true_share[name], 1.0 - true_share[name]) for name in runs}
-        if gold is not None
-        else None
-    )
-
-    effects: list[PresentationEffect] = []
-    for name in runs:
-        if name == reference:
-            continue
-        # Seeded by the presentation's name as well, so its p-values do not depend on which
-        # other presentations are compared or in what order.
-        rng = np.random.default_rng([seed, *name.encode("utf-8")])
-        to_true, to_false, noise = _flips(
-            reference_counts=true_counts[reference],
-            counts=true_counts[name],
-            reference_repeats=repeats[reference],
-            repeats=repeats[name],
-        )
-        shift_p_value, effect_p_value = _permutation_p_values(
-            reference_counts=true_counts[reference],
-            counts=true_counts[name],
-            reference_repeats=repeats[reference],
-            repeats=repeats[name],
-            num_permutations=num_permutations,
-            rng=rng,
-        )
-        effect_contributions = to_true + to_false - noise if noise is not None else None
-        accuracy_contributions = correct_share[name] - correct_share[reference] if correct_share is not None else None
-        kind = kinds.get(name) if kinds is not None else None
-        effects.append(
-            PresentationEffect(
-                name=name,
-                kind=kind.value if isinstance(kind, PresentationKind) else kind,
-                num_repeats=repeats[name],
-                num_undetermined_items=int(undetermined[name].sum()),
-                positive_rate=float(true_share[name].mean()),
-                positive_rate_shift=float((to_true - to_false).mean()),
-                positive_rate_shift_interval=_interval(
-                    contributions=to_true - to_false, confidence_level=confidence_level
-                ),
-                positive_rate_shift_p_value=shift_p_value,
-                flip_rate=float((to_true + to_false).mean()),
-                flip_to_true_rate=float(to_true.mean()),
-                flip_to_false_rate=float(to_false.mean()),
-                repeat_flip_rate=float(noise.mean()) if noise is not None else None,
-                presentation_effect=(float(effect_contributions.mean()) if effect_contributions is not None else None),
-                presentation_effect_interval=(
-                    _interval(contributions=effect_contributions, confidence_level=confidence_level)
-                    if effect_contributions is not None
-                    else None
-                ),
-                presentation_effect_p_value=effect_p_value,
-                accuracy=float(correct_share[name].mean()) if correct_share is not None else None,
-                accuracy_shift=(float(accuracy_contributions.mean()) if accuracy_contributions is not None else None),
-                accuracy_shift_interval=(
-                    _interval(contributions=accuracy_contributions, confidence_level=confidence_level)
-                    if accuracy_contributions is not None
-                    else None
-                ),
-            )
-        )
-
-    all_runs = np.concatenate(list(runs.values()), axis=0)
-    consistent = np.all(all_runs == all_runs[0], axis=0)
-    accuracy_on_consistent: float | None = None
-    accuracy_on_inconsistent: float | None = None
-    accuracy_range: tuple[float, float] | None = None
-    if gold is not None and correct_share is not None:
-        accuracies = [float(share.mean()) for share in correct_share.values()]
-        accuracy_range = (min(accuracies), max(accuracies))
-        if consistent.any():
-            accuracy_on_consistent = float(np.mean(all_runs[0, consistent] == gold[consistent]))
-        if not consistent.all():
-            accuracy_on_inconsistent = float(np.mean(all_runs[:, ~consistent] == gold[~consistent]))
-    positive_rates = [float(share.mean()) for share in true_share.values()]
-    reference_within = _repeat_disagreement(true_counts=true_counts[reference], num_repeats=repeats[reference])
+    effects = [
+        _compare(name=name, reference_runs=reference_runs, runs=runs, num_permutations=num_permutations, seed=seed)
+        for name, runs in matrices.items()
+        if name != reference
+    ]
+    shift_p_values = _holm([effect.positive_rate_shift_p_value for effect in effects])
+    effect_p_values = _holm([effect.presentation_effect_p_value for effect in effects])
 
     return ScorerStabilityMetrics(
         reference=reference,
         num_input_items=num_input_items,
-        num_items=num_items,
-        num_repeats=repeats[reference],
-        confidence_level=confidence_level,
+        num_repeats=num_repeats,
         num_permutations=num_permutations,
-        reference_num_undetermined_items=int(undetermined[reference].sum()),
-        reference_positive_rate=float(true_share[reference].mean()),
-        reference_repeat_flip_rate=float(reference_within.mean()) if reference_within is not None else None,
-        reference_accuracy=float(correct_share[reference].mean()) if correct_share is not None else None,
-        positive_rate_range=(min(positive_rates), max(positive_rates)),
-        accuracy_range=accuracy_range,
-        consistent_rate=float(consistent.mean()),
-        accuracy_on_consistent_items=accuracy_on_consistent,
-        accuracy_on_inconsistent_items=accuracy_on_inconsistent,
-        krippendorff_alpha_runs=_alpha(runs=all_runs),
-        krippendorff_alpha_repeats=_alpha(runs=runs[reference]),
-        effects=effects,
+        reference_num_undetermined_items=int(reference_undetermined.sum()),
+        reference_positive_rate=float((reference_counts / num_repeats).mean()),
+        reference_repeat_flip_rate=float(reference_noise.mean()) if reference_noise is not None else None,
+        effects=[
+            replace(effect, positive_rate_shift_p_value=cast("float", shift), presentation_effect_p_value=effect_p)
+            for effect, shift, effect_p in zip(effects, shift_p_values, effect_p_values, strict=True)
+        ],
         verdicts=matrices,
-        gold_labels=[bool(label) for label in gold_labels] if gold_labels is not None else None,
     )
+
+
+def _judge_settings(identifier: ComponentIdentifier) -> list[str]:
+    """
+    Return the behavioral settings of every judge model a scorer calls, wrapped scorers included.
+
+    Each is the judge target's evaluation hash, which covers its model, temperature and top_p.
+
+    Args:
+        identifier (ComponentIdentifier): The scorer's identifier.
+
+    Returns:
+        list[str]: The settings, sorted.
+    """
+    settings = [
+        ObjectiveTargetEvaluationIdentifier(target).eval_hash for target in identifier.get_child_list("prompt_target")
+    ]
+    for name in identifier.children:
+        if name != "prompt_target":
+            for child in identifier.get_child_list(name):
+                settings.extend(_judge_settings(child))
+    return sorted(settings)
 
 
 class ScorerStabilityEvaluator:
     """
     Score the same responses under several presentations and report how the verdicts move.
 
-    The scorer under test is the reference. Each presentation is scored on its own stored copy
-    of every conversation, and every presentation is scored once before any is scored again, so
-    a change in the judge model over time falls on all of them alike.
+    The scorer under test is the reference. Scoring runs in rounds, and each round scores every
+    response once under every presentation, so a change in the judge model over time falls on all
+    of them alike. Each scorer is scored through its own ``ObjectiveScorerEvaluator``, so on a
+    labeled dataset each also gets the metrics that evaluator would report for it.
     """
 
     def __init__(self, *, scorer: TrueFalseScorer, presentations: Sequence[ScorerPresentation]) -> None:
@@ -703,44 +559,43 @@ class ScorerStabilityEvaluator:
             presentations (Sequence[ScorerPresentation]): Other ways of putting the same question.
 
         Raises:
-            ValueError: If there is no presentation, a name is repeated or is the reference's, or
-                a scorer is not a single-verdict true/false scorer.
+            ValueError: If there is no presentation, a name is repeated or is the reference's, a
+                scorer is not a single-verdict true/false scorer, two scorers share a configuration,
+                or a presentation's judge model settings differ from the reference's.
         """
         if not presentations:
             raise ValueError("At least one presentation is required.")
         names = [presentation.name for presentation in presentations]
-        if REFERENCE_PRESENTATION in names or len(set(names)) != len(names):
-            raise ValueError(f"Presentation names must be unique and must not be '{REFERENCE_PRESENTATION}'.")
-        self._presentations = [ScorerPresentation(name=REFERENCE_PRESENTATION, scorer=scorer), *presentations]
-        for presentation in self._presentations:
-            if isinstance(presentation.scorer, MultiLabelTrueFalseScorer):
-                raise ValueError("Select a label with TrueFalseScoreSelector before evaluating a multi-label scorer.")
-            if not isinstance(presentation.scorer, TrueFalseScorer):
-                raise ValueError(f"Presentation '{presentation.name}' must use a TrueFalseScorer.")
+        if _REFERENCE_PRESENTATION in names or len(set(names)) != len(names):
+            raise ValueError(f"Presentation names must be unique and must not be '{_REFERENCE_PRESENTATION}'.")
+        all_presentations = [ScorerPresentation(name=_REFERENCE_PRESENTATION, scorer=scorer), *presentations]
+        # The evaluator rejects a multi-label scorer that has no label selected.
+        self._evaluators = {
+            presentation.name: ObjectiveScorerEvaluator(presentation.scorer) for presentation in all_presentations
+        }
+        self._validate_presentations(all_presentations)
 
     async def evaluate_dataset_async(
         self,
         *,
         labeled_dataset: HumanLabeledDataset,
-        num_repeats: int = 2,
+        num_repeats: int = 3,
         max_concurrency: int = 10,
-        confidence_level: float = 0.95,
         num_permutations: int = 2000,
         seed: int = 0,
     ) -> ScorerStabilityMetrics:
         """
         Evaluate stability on an objective human-labeled dataset.
 
-        The gold label of a response is the majority of its human labels, with a split vote
-        counted as false, as in ``ObjectiveScorerEvaluator``.
+        The dataset's messages are added to memory once. Each scorer's metrics against the human
+        labels are those ``ObjectiveScorerEvaluator`` reports for it with ``num_repeats`` trials.
 
         Args:
             labeled_dataset (HumanLabeledDataset): An OBJECTIVE dataset whose entries each hold
                 one assistant message.
-            num_repeats (int): Times each presentation scores each response. Defaults to 2, the
-                fewest that measure the scorer's run-to-run noise.
+            num_repeats (int): Times each presentation scores each response. Defaults to 3, the
+                number of trials ``Scorer.evaluate_async`` records.
             max_concurrency (int): Maximum concurrent scoring requests. Defaults to 10.
-            confidence_level (float): The level of each interval. Defaults to 0.95.
             num_permutations (int): Random reassignments for each p-value. Defaults to 2000.
             seed (int): Seed for the reassignments. Defaults to 0.
 
@@ -748,56 +603,61 @@ class ScorerStabilityEvaluator:
             ScorerStabilityMetrics: The metrics, with every recorded verdict.
 
         Raises:
-            ValueError: If the dataset is not an OBJECTIVE dataset.
+            ValueError: If a setting is out of range, checked before anything is stored or scored,
+                or the dataset is not an OBJECTIVE dataset.
         """
-        if labeled_dataset.metrics_type != MetricsType.OBJECTIVE:
-            raise ValueError("The HumanLabeledDataset must be of type OBJECTIVE to evaluate scorer stability.")
-        labeled_dataset.validate()
-        entries = [cast("ObjectiveHumanLabeledEntry", entry) for entry in labeled_dataset.entries]
-        metrics = await self.evaluate_conversations_async(
-            conversations=[entry.conversation for entry in entries],
-            expectations=[ScoringExpectation(objective=entry.objective) for entry in entries],
-            gold_labels=[
-                bool(np.round(np.median([float(score) for score in entry.human_scores]))) for entry in entries
-            ],
+        _validate_settings(num_repeats=num_repeats, num_permutations=num_permutations, seed=seed)
+        reference = self._evaluators[_REFERENCE_PRESENTATION]
+        responses, human_scores, objectives = await reference._validate_and_extract_data_async(labeled_dataset)
+        trials = await self._score_rounds_async(
+            responses=responses,
+            expectations=[ScoringExpectation(objective=objective) for objective in objectives or []],
             num_repeats=num_repeats,
             max_concurrency=max_concurrency,
-            confidence_level=confidence_level,
-            num_permutations=num_permutations,
-            seed=seed,
         )
-        return replace(metrics, dataset_name=labeled_dataset.name, dataset_version=labeled_dataset.version)
+        metrics = self._compute_stability(trials=trials, num_permutations=num_permutations, seed=seed)
+        all_human_scores = np.array(human_scores).T
+        scorer_metrics = {
+            name: cast(
+                "ObjectiveScorerMetrics",
+                self._evaluators[name]._compute_trial_metrics(
+                    trials=trials[name], all_human_scores=all_human_scores, labeled_dataset=labeled_dataset
+                ),
+            )
+            for name in trials
+        }
+        return replace(
+            metrics,
+            reference_metrics=scorer_metrics[_REFERENCE_PRESENTATION],
+            effects=[replace(effect, metrics=scorer_metrics[effect.name]) for effect in metrics.effects],
+            dataset_name=labeled_dataset.name,
+            dataset_version=labeled_dataset.version,
+        )
 
     async def evaluate_conversations_async(
         self,
         *,
         conversations: Sequence[Sequence[Message]],
         expectations: Sequence[ScoringExpectation],
-        gold_labels: Sequence[bool] | None = None,
-        num_repeats: int = 2,
+        num_repeats: int = 3,
         max_concurrency: int = 10,
-        confidence_level: float = 0.95,
         num_permutations: int = 2000,
         seed: int = 0,
     ) -> ScorerStabilityMetrics:
         """
-        Evaluate stability on conversations, with or without gold labels.
+        Evaluate stability on conversations already in memory, without labels.
 
-        Stability needs no labels, so this also runs on the responses of an attack run. Each
-        conversation must hold exactly one assistant message, which is the response scored; the
-        other messages give context to scorers that read the conversation. For a scorer that
-        judges against an objective, pass ``ScoringExpectation(objective=...)`` for each response.
+        This also runs on the responses of an attack, which memory already holds. Each conversation
+        must hold exactly one assistant message, the response scored, and be stored already, because
+        each score refers to the stored response. Nothing is added to memory but the scores.
 
         Args:
-            conversations (Sequence[Sequence[Message]]): The conversations to score.
-            expectations (Sequence[ScoringExpectation]): What each response is scored against:
-                its objective, and any conditions the scorers need. Each is passed to every
+            conversations (Sequence[Sequence[Message]]): The stored conversations to score.
+            expectations (Sequence[ScoringExpectation]): What each response is scored against: its
+                objective, and any conditions the scorers need. Each is passed to every
                 presentation's scorer as it is.
-            gold_labels (Sequence[bool] | None): The gold label of each response. Defaults to None.
-            num_repeats (int): Times each presentation scores each response. Defaults to 2, the
-                fewest that measure the scorer's run-to-run noise.
+            num_repeats (int): Times each presentation scores each response. Defaults to 3.
             max_concurrency (int): Maximum concurrent scoring requests. Defaults to 10.
-            confidence_level (float): The level of each interval. Defaults to 0.95.
             num_permutations (int): Random reassignments for each p-value. Defaults to 2000.
             seed (int): Seed for the reassignments. Defaults to 0.
 
@@ -805,133 +665,156 @@ class ScorerStabilityEvaluator:
             ScorerStabilityMetrics: The metrics, with every recorded verdict.
 
         Raises:
-            ValueError: If there is no conversation, the inputs do not line up, a conversation
-                does not hold exactly one assistant message, or a setting is out of range. Settings
-                are checked before anything is stored or scored.
+            ValueError: If there is no conversation, the inputs do not line up, a conversation does
+                not hold exactly one assistant message or is not in memory, or a setting is out of
+                range. All of this is checked before anything is scored.
         """
-        _validate_settings(confidence_level=confidence_level, num_permutations=num_permutations, seed=seed)
-        if num_repeats < 1:
-            raise ValueError("num_repeats must be at least 1.")
+        _validate_settings(num_repeats=num_repeats, num_permutations=num_permutations, seed=seed)
         if not conversations:
             raise ValueError("At least one conversation is required.")
         if len(expectations) != len(conversations):
             raise ValueError(f"{len(expectations)} expectations were given for {len(conversations)} conversations.")
-        if gold_labels is not None and len(gold_labels) != len(conversations):
-            raise ValueError(f"{len(gold_labels)} gold labels were given for {len(conversations)} conversations.")
-
-        responses: dict[str, list[Message]] = {}
-        for presentation in self._presentations:
-            responses[presentation.name] = [
-                await self._store_presented_copy_async(conversation=conversation, presentation=presentation)
-                for conversation in conversations
-            ]
-        verdicts: dict[str, list[list[float]]] = {presentation.name: [] for presentation in self._presentations}
-        for _ in range(num_repeats):
-            for presentation in self._presentations:
-                verdicts[presentation.name].append(
-                    await self._score_run_async(
-                        scorer=presentation.scorer,
-                        responses=responses[presentation.name],
-                        expectations=expectations,
-                        max_concurrency=max_concurrency,
-                    )
-                )
-
-        metrics = compute_scorer_stability(
-            verdicts=verdicts,
-            gold_labels=gold_labels,
-            kinds={presentation.name: presentation.kind for presentation in self._presentations[1:]},
-            confidence_level=confidence_level,
-            num_permutations=num_permutations,
-            seed=seed,
+        trials = await self._score_rounds_async(
+            responses=await self._stored_responses_async(conversations=conversations),
+            expectations=expectations,
+            num_repeats=num_repeats,
+            max_concurrency=max_concurrency,
         )
-        hashes = {presentation.name: presentation.scorer.get_identifier().hash for presentation in self._presentations}
-        return replace(
-            metrics,
-            reference_scorer_identifier_hash=hashes[REFERENCE_PRESENTATION],
-            effects=[replace(effect, scorer_identifier_hash=hashes[effect.name]) for effect in metrics.effects],
-        )
+        return self._compute_stability(trials=trials, num_permutations=num_permutations, seed=seed)
 
-    @staticmethod
-    async def _store_presented_copy_async(
-        *, conversation: Sequence[Message], presentation: ScorerPresentation
-    ) -> Message:
+    async def _stored_responses_async(self, *, conversations: Sequence[Sequence[Message]]) -> list[Message]:
         """
-        Store a copy of a conversation as one presentation shows it, and return its response.
-
-        Each presentation scores its own copy, so its scores attach to its own messages and a
-        converted response never replaces what another presentation reads.
+        Return each conversation's one assistant message, after checking memory holds every message.
 
         Args:
-            conversation (Sequence[Message]): The conversation to copy.
-            presentation (ScorerPresentation): The presentation whose converters are applied.
+            conversations (Sequence[Sequence[Message]]): The conversations.
 
         Returns:
-            Message: The copy's assistant message.
+            list[Message]: The responses to score.
 
         Raises:
-            ValueError: If the conversation does not hold exactly one assistant message.
+            ValueError: If a conversation does not hold exactly one assistant message, or a message
+                piece is not in memory.
         """
-        conversation_id = str(uuid.uuid4())
-        copies: list[Message] = []
-        for message in conversation:
-            copy = message.duplicate()
-            for piece in copy.message_pieces:
-                piece.conversation_id = conversation_id
-            copies.append(copy)
-        assistant_messages = [copy for copy in copies if copy.api_role == "assistant"]
-        if len(assistant_messages) != 1:
+        responses = []
+        for conversation in conversations:
+            assistant_messages = [message for message in conversation if message.api_role == "assistant"]
+            if len(assistant_messages) != 1:
+                raise ValueError(
+                    "Each conversation must contain exactly one assistant message, "
+                    f"but found {len(assistant_messages)}."
+                )
+            responses.append(assistant_messages[0])
+        piece_ids = {
+            str(piece.id)
+            for conversation in conversations
+            for message in conversation
+            for piece in message.message_pieces
+        }
+        memory = self._evaluators[_REFERENCE_PRESENTATION].scorer._memory
+        stored = await memory.get_message_pieces_async(prompt_ids=list(piece_ids))
+        missing = piece_ids - {str(piece.id) for piece in stored}
+        if missing:
             raise ValueError(
-                f"Each conversation must contain exactly one assistant message, but found {len(assistant_messages)}."
+                f"{len(missing)} message pieces of the conversations are not in memory. Store the conversations "
+                "before evaluating them, so each score can refer to its response."
             )
-        if presentation.response_converters:
-            await PromptNormalizer().convert_values_async(
-                converter_configurations=ConverterConfiguration.from_converters(
-                    converters=list(presentation.response_converters)
-                ),
-                message=assistant_messages[0],
-            )
-        memory = CentralMemory.get_memory_instance()
-        for copy in copies:
-            await memory.add_message_to_memory_async(request=copy)
-        return assistant_messages[0]
+        return responses
 
-    @staticmethod
-    async def _score_run_async(
+    async def _score_rounds_async(
+        self,
         *,
-        scorer: TrueFalseScorer,
-        responses: Sequence[Message],
+        responses: list[Message],
         expectations: Sequence[ScoringExpectation],
+        num_repeats: int,
         max_concurrency: int,
-    ) -> list[float]:
+    ) -> dict[str, ScoringTrials]:
         """
-        Score every response once and read each verdict.
+        Score every response once under every presentation, ``num_repeats`` times over.
 
         Args:
-            scorer (TrueFalseScorer): The scorer for this presentation.
-            responses (Sequence[Message]): The responses as this presentation shows them.
+            responses (list[Message]): The responses.
             expectations (Sequence[ScoringExpectation]): What each response is scored against.
+            num_repeats (int): The number of rounds.
             max_concurrency (int): Maximum concurrent scoring requests.
 
         Returns:
-            list[float]: 1.0 or 0.0 per response, or NaN when the scorer reached no verdict or
-                does not apply to the response.
+            dict[str, ScoringTrials]: Every presentation's trials.
         """
-        results: list[list[Score]] = await batch_task_async(
-            task_func=scorer.score_async,
-            task_arguments=["scorable", "expectation"],
-            prompt_target=scorer.get_chat_target(),
-            batch_size=max_concurrency,
-            items_to_batch=[
-                [MessageScorable.from_message(response) for response in responses],
-                list(expectations),
-            ],
+        rounds: dict[str, list[ScoringTrials]] = {name: [] for name in self._evaluators}
+        for _ in range(num_repeats):
+            for name, evaluator in self._evaluators.items():
+                rounds[name].append(
+                    await evaluator._run_scoring_trials_async(
+                        responses=responses,
+                        expectations=expectations,
+                        harm_category=None,
+                        num_scorer_trials=1,
+                        max_concurrency=max_concurrency,
+                    )
+                )
+        return {name: ScoringTrials.concatenate(trials) for name, trials in rounds.items()}
+
+    def _compute_stability(
+        self, *, trials: dict[str, ScoringTrials], num_permutations: int, seed: int
+    ) -> ScorerStabilityMetrics:
+        """
+        Compute the stability metrics from every presentation's trials.
+
+        Args:
+            trials (dict[str, ScoringTrials]): Every presentation's trials.
+            num_permutations (int): Random reassignments for each p-value.
+            seed (int): Seed for the reassignments.
+
+        Returns:
+            ScorerStabilityMetrics: The metrics, with each scorer's evaluation hash.
+        """
+        metrics = compute_scorer_stability(
+            verdicts={
+                name: np.where(trial.undetermined, np.nan, trial.scores.astype(np.float64))
+                for name, trial in trials.items()
+            },
+            num_permutations=num_permutations,
+            seed=seed,
         )
-        run: list[float] = []
-        for scores in results:
-            # A true/false scorer returns one score, or none when it does not apply.
-            try:
-                run.append(float(scores[0].get_value()) if scores else float("nan"))
-            except UndeterminedScoreError:
-                run.append(float("nan"))
-        return run
+        hashes = {name: evaluator.scorer.get_identifier().eval_hash for name, evaluator in self._evaluators.items()}
+        return replace(
+            metrics,
+            reference_eval_hash=hashes[_REFERENCE_PRESENTATION],
+            effects=[replace(effect, eval_hash=hashes[effect.name]) for effect in metrics.effects],
+        )
+
+    @staticmethod
+    def _validate_presentations(presentations: Sequence[ScorerPresentation]) -> None:
+        """
+        Check that every presentation is a true/false scorer asking differently through the same judge.
+
+        A presentation with the reference's configuration measures nothing, and one whose judge
+        uses another model, temperature or top_p would count that change as a presentation effect.
+
+        Args:
+            presentations (Sequence[ScorerPresentation]): The reference, then the presentations.
+
+        Raises:
+            ValueError: If a scorer is not a true/false scorer, two scorers share an evaluation hash,
+                or a judge setting differs.
+        """
+        for presentation in presentations:
+            if not isinstance(presentation.scorer, TrueFalseScorer):
+                raise ValueError(f"Presentation '{presentation.name}' must use a TrueFalseScorer.")
+        reference_judges = _judge_settings(presentations[0].scorer.get_identifier())
+        seen: dict[str | None, str] = {}
+        for presentation in presentations:
+            identifier = presentation.scorer.get_identifier()
+            if identifier.eval_hash in seen:
+                raise ValueError(
+                    f"Presentations '{seen[identifier.eval_hash]}' and '{presentation.name}' have the same scorer "
+                    "configuration, so they do not put the question differently."
+                )
+            seen[identifier.eval_hash] = presentation.name
+            if _judge_settings(identifier) != reference_judges:
+                raise ValueError(
+                    f"Presentation '{presentation.name}' uses different judge settings (model, temperature or "
+                    "top_p) from the reference. Use the same judge settings, or the change reads as a "
+                    "presentation effect."
+                )
