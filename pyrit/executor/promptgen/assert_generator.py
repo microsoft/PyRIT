@@ -452,7 +452,7 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
                 producer=producer,
             )
         else:
-            if TYPE_CHECKING and stage != AssertGenerationStage.DIMENSIONS:
+            if TYPE_CHECKING and stage is not AssertGenerationStage.DIMENSIONS:  # pragma: no cover
                 assert_never(stage)
             if checkpoint.taxonomy is None:
                 raise ValueError("Dimensions need a taxonomy.")
@@ -759,7 +759,7 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
         elif stage == AssertGenerationStage.SEED_GROUPS:
             raise ValueError("Seed groups are estimated separately.")
         else:
-            if TYPE_CHECKING and stage != AssertGenerationStage.DIMENSIONS:
+            if TYPE_CHECKING and stage is not AssertGenerationStage.DIMENSIONS:  # pragma: no cover
                 assert_never(stage)
             payload = _dimensions_payload(config=config, taxonomy=cls._estimated_taxonomy(checkpoint=checkpoint))
             output_tokens = len(config.dimensions) * config.dimension_level_count * cls.LEVEL_OUTPUT_TOKENS
@@ -1059,7 +1059,7 @@ def _plan_assignments(
         return _stratified_assignments(levels=levels, count=count, stratify_by=sampling.stratify_by, rng=rng)
     if sampling.method == AssertSamplingMethod.RANDOM:
         return _random_assignments(levels=levels, count=count, with_replacement=sampling.with_replacement, rng=rng)
-    if TYPE_CHECKING and sampling.method != AssertSamplingMethod.FULL_FACTORIAL:
+    if TYPE_CHECKING and sampling.method is not AssertSamplingMethod.FULL_FACTORIAL:  # pragma: no cover
         assert_never(sampling.method)
     return _full_factorial_assignments(levels=levels, count=count, replication=sampling.replication, rng=rng)
 

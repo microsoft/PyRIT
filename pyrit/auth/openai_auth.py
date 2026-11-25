@@ -70,7 +70,7 @@ def resolve_openai_auth(
             )
         return get_azure_openai_auth(endpoint)
 
-    if TYPE_CHECKING and auth_mode != "api_key":
+    if TYPE_CHECKING and auth_mode != "api_key":  # pragma: no cover
         assert_never(auth_mode)
 
     if api_key is not None and callable(api_key):

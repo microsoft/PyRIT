@@ -475,7 +475,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         if self._completion_policy is SequenceCompletionPolicy.STRICT_ALL:
             return result.outcome is not AttackOutcome.SUCCESS
         # EXHAUSTIVE and LAST_RESULT run every child attack to completion.
-        if (
+        if (  # pragma: no cover
             TYPE_CHECKING
             and self._completion_policy is not SequenceCompletionPolicy.EXHAUSTIVE
             and self._completion_policy is not SequenceCompletionPolicy.LAST_RESULT
@@ -495,7 +495,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 return AttackOutcome.FAILURE
             return AttackOutcome.UNDETERMINED
         # FIRST_SUCCESS, FIRST_DECISIVE, EXHAUSTIVE all share any-success semantics.
-        if (
+        if (  # pragma: no cover
             TYPE_CHECKING
             and self._completion_policy is not SequenceCompletionPolicy.FIRST_SUCCESS
             and self._completion_policy is not SequenceCompletionPolicy.FIRST_DECISIVE
