@@ -832,6 +832,58 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
   });
 
+  test("keeps Scanner and Registry preset controls at least 44px", async ({ page }) => {
+    const entry = { entry_id: "11111111-1111-4111-8111-000000000001", preset_name: "mobile_smoke" };
+    await page.route(/\/api\/scenario-suites(?:\?.*)?$/, async (route) => {
+      await route.fulfill(jsonResponse({
+        source: "touch-target-test",
+        items: [{
+          suite: { name: "mobile_release_gate", schema_version: 1, description: "Runs before a release.", entries: [entry] },
+          origin: "stored",
+          version: "v1",
+          entry_statuses: [{ ...entry, origin: "stored", preset_version: "v1", issues: [] }],
+        }],
+      }));
+    });
+    await page.route(/\/api\/scenario-presets(?:\?.*)?$/, async (route) => {
+      await route.fulfill(jsonResponse({
+        source: "touch-target-test",
+        items: [{ preset: { name: "mobile_smoke", scenario_name: "airt.jailbreak" }, origin: "stored", version: "v1", issues: [] }],
+      }));
+    });
+    await page.route(/\/api\/scenarios\/catalog\/[^/]+\/estimate$/, async (route) => {
+      await route.fulfill(jsonResponse({
+        status: "exact",
+        dataset_size: { kind: "bounded", value: 3 },
+        dataset_limit: { state: "scenario_default" },
+        estimated_attack_count: 3,
+        components: [],
+        datasets: [],
+        note: null,
+      }));
+    });
+
+    await page.goto("/scanner/presets");
+    await expectMinimumTouchTarget(page.getByRole("tab", { name: "Presets", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Launch mobile_release_gate", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Manage in Registry", exact: true }));
+    // Fluent sizes the Input wrapper, which is the area a finger hits.
+    await expectMinimumTouchTarget(page.getByRole("textbox", { name: "Search presets" }).locator(".."));
+    await expectNoDocumentOverflow(page);
+
+    await page.goto("/registry/scenario-presets");
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "New preset", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Add scenario to mobile_release_gate", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Edit mobile_release_gate", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Delete mobile_release_gate", exact: true }));
+    const toggle = page.getByRole("button", { name: /^mobile_release_gate 1 scenario/ });
+    await expectMinimumTouchTarget(toggle);
+    await toggle.click();
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Edit mobile_smoke", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Remove mobile_smoke from mobile_release_gate", exact: true }));
+    await expectNoDocumentOverflow(page);
+  });
+
   test("keeps closed dataset filters at least 44px", async ({ page }) => {
     await page.goto("/datasets");
     await expect(page.getByRole("heading", { name: "Datasets" })).toBeVisible();

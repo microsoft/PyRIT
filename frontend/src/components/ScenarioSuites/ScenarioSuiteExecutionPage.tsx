@@ -42,6 +42,7 @@ import type {
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
 
 import { useScenarioSuiteExecutionPageStyles } from './ScenarioSuiteExecutionPage.styles'
+import { SCANNER_PRESETS_ROUTE } from './suiteRoutes'
 
 const ENTRY_SUBMISSION_FAILURE_MESSAGE = (
   'The scenario run could not be created. Check server logs before retrying.'
@@ -92,11 +93,11 @@ function ScenarioSuiteExecutionPageContent({
     return (
       <main className={styles.root} data-testid="scenario-suite-execution-page">
         <div className={styles.content}>
-          <Link to="/scanner/launch" className={styles.backLink}>
-            <ArrowLeftRegular /> Back to scanners
+          <Link to={SCANNER_PRESETS_ROUTE} className={styles.backLink}>
+            <ArrowLeftRegular /> Back to presets
           </Link>
-          <div className={styles.centeredState} aria-label="Loading suite execution">
-            <Spinner label="Loading suite execution..." />
+          <div className={styles.centeredState} aria-label="Loading preset run">
+            <Spinner label="Loading preset run..." />
           </div>
         </div>
       </main>
@@ -107,15 +108,15 @@ function ScenarioSuiteExecutionPageContent({
     return (
       <main className={styles.root} data-testid="scenario-suite-execution-page">
         <div className={styles.content}>
-          <Link to="/scanner/launch" className={styles.backLink}>
-            <ArrowLeftRegular /> Back to scanners
+          <Link to={SCANNER_PRESETS_ROUTE} className={styles.backLink}>
+            <ArrowLeftRegular /> Back to presets
           </Link>
           <div className={styles.centeredState}>
             <ErrorCircleRegular fontSize={32} />
-            <Text as="h2" size={600} weight="semibold">Suite execution not found</Text>
+            <Text as="h2" size={600} weight="semibold">Preset run not found</Text>
             <Text>{state.error}</Text>
             <Text size={200}>
-              Suite progress is process-local, but successfully created scenario runs remain in scanner history.
+              Preset run progress is kept only while the server runs, but the scenario runs it created remain in Scanner history.
             </Text>
             <Button
               appearance="primary"
@@ -135,12 +136,12 @@ function ScenarioSuiteExecutionPageContent({
     return (
       <main className={styles.root} data-testid="scenario-suite-execution-page">
         <div className={styles.content}>
-          <Link to="/scanner/launch" className={styles.backLink}>
-            <ArrowLeftRegular /> Back to scanners
+          <Link to={SCANNER_PRESETS_ROUTE} className={styles.backLink}>
+            <ArrowLeftRegular /> Back to presets
           </Link>
           <div className={styles.centeredState}>
             <ErrorCircleRegular fontSize={32} />
-            <Text as="h2" size={600} weight="semibold">Unable to load suite execution</Text>
+            <Text as="h2" size={600} weight="semibold">Unable to load preset run</Text>
             <Text>{state.error}</Text>
             <Button
               appearance="primary"
@@ -172,8 +173,8 @@ function ScenarioSuiteExecutionPageContent({
   return (
     <main className={styles.root} data-testid="scenario-suite-execution-page">
       <div className={styles.content}>
-        <Link to="/scanner/launch" className={styles.backLink}>
-          <ArrowLeftRegular /> Back to scanners
+        <Link to={SCANNER_PRESETS_ROUTE} className={styles.backLink}>
+          <ArrowLeftRegular /> Back to presets
         </Link>
 
         <header className={styles.header}>
@@ -191,7 +192,7 @@ function ScenarioSuiteExecutionPageContent({
               />
             </div>
             <Text size={200} className={styles.executionId}>
-              Suite execution ID: <code>{execution.suite_execution_id}</code>
+              Preset run ID: <code>{execution.suite_execution_id}</code>
             </Text>
           </div>
           {canCancel && (
@@ -205,7 +206,7 @@ function ScenarioSuiteExecutionPageContent({
                   setCancelDialogOpen(true)
                 }}
               >
-                Cancel suite
+                Cancel preset run
               </Button>
             </div>
           )}
@@ -219,9 +220,9 @@ function ScenarioSuiteExecutionPageContent({
           </MessageBar>
         )}
 
-        <div className={styles.metadata} aria-label="Suite execution metadata">
+        <div className={styles.metadata} aria-label="Preset run details">
           <div className={styles.metadataItem}>
-            <Text size={200} className={styles.metadataLabel}>Suite origin</Text>
+            <Text size={200} className={styles.metadataLabel}>Preset origin</Text>
             <Text weight="semibold">
               {execution.suite_origin === 'registered' ? 'Defined in code' : 'Stored'}
             </Text>
@@ -239,22 +240,22 @@ function ScenarioSuiteExecutionPageContent({
         <section className={styles.section} aria-labelledby="suite-progress-heading">
           <div className={styles.sectionHeading}>
             <Text as="h2" id="suite-progress-heading" size={500} weight="semibold">
-              Suite progress
+              Progress
             </Text>
-            <Text className={styles.sectionHint}>Each entry remains an ordinary scenario run.</Text>
+            <Text className={styles.sectionHint}>Each scenario runs as an ordinary scenario run.</Text>
           </div>
           <div className={styles.summaryGrid}>
-            <SummaryItem label="Entries" value={execution.entries.length} />
+            <SummaryItem label="Scenarios" value={execution.entries.length} />
             <SummaryItem label="Active" value={Math.max(0, activeEntries)} />
             <SummaryItem label="Completed" value={completedEntries} />
             <SummaryItem label="Failed" value={failedEntries} />
           </div>
           <div className={styles.tableScroll}>
-            <Table className={styles.table} aria-label="Suite entry progress">
+            <Table className={styles.table} aria-label="Scenario progress">
               <TableHeader>
                 <TableRow>
                   <TableHeaderCell>Order</TableHeaderCell>
-                  <TableHeaderCell>Preset</TableHeaderCell>
+                  <TableHeaderCell>Scenario</TableHeaderCell>
                   <TableHeaderCell>Status</TableHeaderCell>
                   <TableHeaderCell>Scenario run</TableHeaderCell>
                   <TableHeaderCell>Progress</TableHeaderCell>
@@ -271,7 +272,7 @@ function ScenarioSuiteExecutionPageContent({
                       <div className={styles.entryIdentity}>
                         <Text weight="semibold">{entry.preset_name}</Text>
                         <Text size={200} className={styles.entryMeta}>
-                          {entry.preset_origin === 'registered' ? 'Defined in code' : 'Stored preset'}
+                          {entry.preset_origin === 'registered' ? 'Defined in code' : 'Stored scenario'}
                         </Text>
                         {entry.error && (
                           <Text size={200} className={styles.errorText}>
@@ -306,8 +307,8 @@ function ScenarioSuiteExecutionPageContent({
           </div>
           <span className={styles.liveStatus} aria-live="polite">
             {isTerminalSuiteExecutionStatus(execution.status)
-              ? `Suite ${formatState(execution.status)}`
-              : `${completedEntries} of ${execution.entries.length} entries completed`}
+              ? `Preset run ${formatState(execution.status).toLowerCase()}`
+              : `${completedEntries} of ${execution.entries.length} scenarios completed`}
           </span>
         </section>
       </div>
@@ -318,7 +319,7 @@ function ScenarioSuiteExecutionPageContent({
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Cancel {execution.suite_name}?</DialogTitle>
+            <DialogTitle>Cancel the {execution.suite_name} run?</DialogTitle>
             <DialogContent className={styles.dialogContent}>
               <Text>
                 Pending submissions and running child scenarios will be cancelled where possible.
@@ -344,7 +345,7 @@ function ScenarioSuiteExecutionPageContent({
                 disabled={cancelling}
                 data-testid="confirm-cancel-suite"
               >
-                {cancelling ? 'Cancelling...' : 'Cancel suite'}
+                {cancelling ? 'Cancelling...' : 'Cancel preset run'}
               </Button>
             </DialogActions>
           </DialogBody>

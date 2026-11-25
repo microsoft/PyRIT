@@ -72,7 +72,7 @@ interface TechniqueOptions {
  * would write `{max_per_dataset: 'default', max_total: 'default'}` into every stored
  * document. A preset that says nothing about datasets should stay silent about them.
  */
-export function datasetRequestIsEmpty(request: ScenarioDatasetRequest): boolean {
+function datasetRequestIsEmpty(request: ScenarioDatasetRequest): boolean {
   const isDefaultLimit = (value: ScenarioDatasetRequest['max_total']) => value === undefined || value === 'default'
   return (
     (request.sources ?? []).length === 0 &&

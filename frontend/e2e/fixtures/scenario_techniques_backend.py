@@ -263,13 +263,16 @@ if __name__ == "__main__":
                 original_serve(directory=directory, port=port)
 
         async def _seed_async(memory: SQLiteMemory) -> None:
-            from pyrit.registry import ScenarioPresetRegistry
+            from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
 
             memory.disable_embedding()
             await asyncio.to_thread(_register_components)
-            # Preset writes, like the database, must stay inside the disposable fixture.
+            # Preset and suite writes, like the database, must stay inside the disposable fixture.
             presets = ScenarioPresetRegistry.get_registry_singleton()
             presets.configure_source(str(Path(memory.db_path).parent / "scenario_presets"))
+            ScenarioSuiteRegistry.get_registry_singleton().configure_source(
+                str(Path(memory.db_path).parent / "scenario_suites")
+            )
             if not Path(presets.source).resolve().is_relative_to(Path(memory.db_path).resolve().parents[1]):
                 raise RuntimeError("The preset source must be inside the fixture before accepting requests.")
             _install_estimate_controls(patches=patches, memory=memory)

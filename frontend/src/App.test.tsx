@@ -591,19 +591,7 @@ jest.mock("./components/Datasets/DatasetSelection", () => {
 });
 
 jest.mock("./components/Scenarios/ScenarioCatalog", () => {
-  const MockScenarioCatalog = ({
-    operationId,
-    defaultsReady,
-  }: {
-    operationId: string | null;
-    defaultsReady: boolean;
-  }) => (
-    <div
-      data-testid="scenario-catalog"
-      data-operation-id={operationId ?? ""}
-      data-defaults-ready={String(defaultsReady)}
-    />
-  );
+  const MockScenarioCatalog = () => <div data-testid="scenario-catalog" />;
   MockScenarioCatalog.displayName = "MockScenarioCatalog";
   return {
     __esModule: true,
@@ -611,8 +599,32 @@ jest.mock("./components/Scenarios/ScenarioCatalog", () => {
   };
 });
 
+jest.mock("./components/Scenarios/ScannerPresetsPage", () => {
+  const MockScannerPresetsPage = ({
+    operationId,
+    defaultsReady,
+  }: {
+    operationId: string | null;
+    defaultsReady: boolean;
+  }) => (
+    <div
+      data-testid="scanner-presets"
+      data-operation-id={operationId ?? ""}
+      data-defaults-ready={String(defaultsReady)}
+    />
+  );
+  MockScannerPresetsPage.displayName = "MockScannerPresetsPage";
+  return {
+    __esModule: true,
+    default: MockScannerPresetsPage,
+  };
+});
+
 jest.mock("./components/Registry/ScenarioPresetRegistry", () => {
-  const MockScenarioPresetRegistry = () => <div data-testid="scenario-preset-registry" />;
+  const { useLocation } = jest.requireActual("react-router");
+  const MockScenarioPresetRegistry = () => (
+    <div data-testid="scenario-preset-registry" data-path={useLocation().pathname} />
+  );
   MockScenarioPresetRegistry.displayName = "MockScenarioPresetRegistry";
   return {
     __esModule: true,
@@ -622,10 +634,10 @@ jest.mock("./components/Registry/ScenarioPresetRegistry", () => {
 
 jest.mock("./components/ScenarioPresets/ScenarioPresetEditor", () => {
   const { useParams } = jest.requireActual("react-router");
-  const MockScenarioPresetEditor = ({ mode }: { mode: string }) => {
+  const MockScenarioPresetEditor = () => {
     const { presetName } = useParams();
     return (
-      <div data-testid="scenario-preset-editor" data-mode={mode}>
+      <div data-testid="scenario-preset-editor">
         {presetName ?? ""}
       </div>
     );
@@ -650,22 +662,6 @@ jest.mock("./components/ScenarioSuites/ScenarioSuiteExecutionPage", () => {
   };
 });
 
-jest.mock("./components/ScenarioSuites/ScenarioSuiteEditor", () => {
-  const { useParams } = jest.requireActual("react-router");
-  const MockScenarioSuiteEditor = ({ mode }: { mode: string }) => {
-    const { suiteName } = useParams();
-    return (
-      <div data-testid="scenario-suite-editor" data-mode={mode}>
-        {suiteName ?? ""}
-      </div>
-    );
-  };
-  MockScenarioSuiteEditor.displayName = "MockScenarioSuiteEditor";
-  return {
-    __esModule: true,
-    default: MockScenarioSuiteEditor,
-  };
-});
 
 jest.mock("./components/Scenarios/ScenarioDetail", () => {
   const MockScenarioDetail = ({
@@ -944,19 +940,29 @@ describe("App", () => {
     expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/attack\/chat$/);
   });
 
-  it("renders presets and suites together as a registry section", () => {
+  it("renders scenario presets as a registry section", () => {
     renderApp("/registry/scenario-presets");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "registry"
     );
-    expect(screen.getByTestId("scenario-preset-registry")).toBeInTheDocument();
+    expect(screen.getByTestId("scenario-preset-registry")).toHaveAttribute("data-path", "/registry/scenario-presets");
   });
 
-  it("redirects a bookmarked suite library URL to the combined registry section", async () => {
+  it("opens the New preset dialog on the registry page from its /new route", () => {
+    renderApp("/registry/scenario-presets/new");
+
+    expect(screen.getByTestId("scenario-preset-registry")).toHaveAttribute("data-path", "/registry/scenario-presets/new");
+  });
+
+  it.each([
+    "/registry/scenario-suites",
+    "/registry/scenario-suites/new",
+    "/registry/scenario-suites/nightly_suite/edit",
+  ])("redirects the retired suite route %s to the scenario presets page", async (path) => {
     render(
-      <MemoryRouter initialEntries={["/registry/scenario-suites"]}>
+      <MemoryRouter initialEntries={[path]}>
         <App />
         <RouterProbe />
       </MemoryRouter>
@@ -966,14 +972,6 @@ describe("App", () => {
     expect(screen.getByLabelText("Current URL")).toHaveTextContent(
       /^\/registry\/scenario-presets$/
     );
-  });
-
-  it("renders the suite editor as a nested registry route", () => {
-    renderApp("/registry/scenario-suites/nightly_suite/edit");
-
-    const editor = screen.getByTestId("scenario-suite-editor");
-    expect(editor).toHaveAttribute("data-mode", "edit");
-    expect(editor).toHaveTextContent("nightly_suite");
   });
 
   it("renders transient suite execution progress under the scanner", () => {
@@ -986,7 +984,7 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-suite-execution-page")).toHaveTextContent("execution-1");
   });
 
-  it("passes the globally resolved Operation to the scanner, which launches suites", async () => {
+  it("passes the globally resolved Operation to the Presets tab, which launches presets", async () => {
     const operationId = "11111111-1111-4111-8111-111111111111";
     writeUserPreferences("local", {
       ...DEFAULT_USER_PREFERENCES,
@@ -998,27 +996,46 @@ describe("App", () => {
       created_at: "2026-10-20T18:00:00Z",
     });
 
-    renderApp("/scanner/launch");
+    renderApp("/scanner/presets");
 
-    const catalog = screen.getByTestId("scenario-catalog");
+    const presets = screen.getByTestId("scanner-presets");
     await waitFor(() => {
-      expect(catalog).toHaveAttribute("data-operation-id", operationId);
-      expect(catalog).toHaveAttribute("data-defaults-ready", "true");
+      expect(presets).toHaveAttribute("data-operation-id", operationId);
+      expect(presets).toHaveAttribute("data-defaults-ready", "true");
     });
   });
 
-  it("redirects a bookmarked /scanner/presets to the registry section", async () => {
+  it("renders the Presets tab of the Scanner at /scanner/presets", () => {
+    renderApp("/scanner/presets");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "scenarios");
+    expect(screen.getByRole("tab", { name: "Presets" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("scanner-presets")).toBeInTheDocument();
+  });
+
+  it("redirects /scanner to the Launch tab", async () => {
     render(
-      <MemoryRouter initialEntries={["/scanner/presets"]}>
+      <MemoryRouter initialEntries={["/scanner"]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByTestId("scenario-catalog")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/scanner\/launch$/);
+    expect(screen.getByRole("tab", { name: "Launch" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("redirects a bookmarked /scanner/presets/new to the New preset dialog", async () => {
+    render(
+      <MemoryRouter initialEntries={["/scanner/presets/new"]}>
         <App />
         <RouterProbe />
       </MemoryRouter>
     );
 
     expect(await screen.findByTestId("scenario-preset-registry")).toBeInTheDocument();
-    expect(screen.getByLabelText("Current URL")).toHaveTextContent(
-      /^\/registry\/scenario-presets$/
-    );
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/registry\/scenario-presets\/new$/);
   });
 
   it("redirects a bookmarked preset editor URL, keeping the preset it named", async () => {
@@ -1030,7 +1047,6 @@ describe("App", () => {
     );
 
     const editor = await screen.findByTestId("scenario-preset-editor");
-    expect(editor).toHaveAttribute("data-mode", "edit");
     expect(editor).toHaveTextContent("nightly_probe");
     expect(screen.getByLabelText("Current URL")).toHaveTextContent(
       /^\/registry\/scenario-presets\/nightly_probe\/edit$/
@@ -1171,10 +1187,12 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
   });
 
-  it("keeps scanner launch and history in the same feature and restores its filters", async () => {
+  it("keeps scanner launch, presets, and history in the same feature and restores its filters", async () => {
     renderApp("/scanner/history?operator=alice");
     fireEvent.click(screen.getByRole("tab", { name: "Launch" }));
     expect(await screen.findByTestId("scenario-catalog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Presets" }));
+    expect(await screen.findByTestId("scanner-presets")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "History" }));
     expect(await screen.findByTestId("scenario-history")).toHaveAttribute("data-location", "/scanner/history?operator=alice");
   });

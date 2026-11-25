@@ -14,12 +14,12 @@ interface ScenarioRunBackLink {
   readonly label: string
 }
 
-/** Return to the suite, history filters, or scanner that opened the run. */
+/** Return to the preset run, history filters, or scanner that opened the run. */
 export function scenarioRunBackLink(state: ScenarioRunNavigationState | null): ScenarioRunBackLink {
   if (state?.suiteExecutionId) {
     return {
       path: suiteExecutionRoutePath(state.suiteExecutionId),
-      label: `Back to ${state.suiteName ?? 'suite execution'}`,
+      label: `Back to ${state.suiteName ?? 'preset run'}`,
     }
   }
   if (state?.fromScenarioHistory || state?.scenarioHistorySearch) {

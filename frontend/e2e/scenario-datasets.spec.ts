@@ -192,10 +192,11 @@ test('configures, saves, refreshes, estimates without a target, and launches the
   const errors: string[] = []
   page.on('pageerror', (error: Error) => { errors.push(error.message) })
   await page.goto('/registry/scenario-presets/new')
-  const presetName = page.getByRole('textbox', { name: 'Name', exact: true })
+  const newPreset = page.getByRole('dialog', { name: 'New preset' })
+  const presetName = newPreset.getByRole('textbox', { name: /^Name/ })
   await presetName.focus()
   await presetName.pressSequentially(name)
-  const scenario = page.getByRole('combobox', { name: 'Scenario', exact: true })
+  const scenario = newPreset.getByRole('combobox', { name: /^Scenario/ })
   await scenario.focus()
   await scenario.press('Enter')
   const scenarioOption = page.getByRole('option', { name: SCENARIO, exact: true })
@@ -210,6 +211,22 @@ test('configures, saves, refreshes, estimates without a target, and launches the
   await expect(scenario).toHaveAttribute('aria-activedescendant', optionId)
   await scenario.press('Enter')
   await expect(scenario).toHaveValue(SCENARIO)
+  const creatingScenario = page.waitForResponse((response: Response) =>
+    new URL(response.url()).pathname === '/api/scenario-presets' && response.request().method() === 'POST')
+  await newPreset.getByRole('button', { name: 'Create', exact: true }).focus()
+  await page.keyboard.press('Enter')
+  const createdResponse = await creatingScenario
+  expect(createdResponse.status(), await createdResponse.text()).toBe(201)
+  const created: ScenarioPresetResponse = await createdResponse.json()
+  // A new preset's first scenario starts from the scenario's defaults.
+  expect(created.preset.scenario_name).toBe(SCENARIO)
+  expect(created.preset.techniques ?? null).toBeNull()
+  expect(created.preset.datasets ?? null).toBeNull()
+  const scenarioName = created.preset.name
+  await expect(newPreset).toHaveCount(0)
+  // The new preset opens on its own, so its scenario's Edit is ready.
+  await page.getByRole('button', { name: `Edit ${scenarioName}`, exact: true }).click()
+  await expect(page).toHaveURL(presetEditorRoutePath(scenarioName))
   await expect(page.getByRole('button', { name: 'Edit acceptance_secondary objective limit' })).toHaveText('Up to 4 of 6')
 
   const search = page.getByRole('combobox', { name: 'Add dataset', exact: true })
@@ -230,11 +247,11 @@ test('configures, saves, refreshes, estimates without a target, and launches the
   await expect(page.getByRole('button', { name: 'Edit acceptance_primary objective limit' })).toBeFocused()
 
   const saving = page.waitForResponse((response: Response) =>
-    new URL(response.url()).pathname === '/api/scenario-presets' && response.request().method() === 'POST')
-  await page.getByRole('button', { name: 'Save preset', exact: true }).focus()
+    new URL(response.url()).pathname === `/api/scenario-presets/${scenarioName}` && response.request().method() === 'PUT')
+  await page.getByRole('button', { name: 'Save scenario', exact: true }).focus()
   await page.keyboard.press('Enter')
   const savedResponse = await saving
-  expect(savedResponse.status(), await savedResponse.text()).toBe(201)
+  expect(savedResponse.status(), await savedResponse.text()).toBe(200)
   const saved: ScenarioPresetResponse = await savedResponse.json()
   const datasets = saved.preset.datasets
   expect(datasets).toMatchObject({
@@ -247,13 +264,13 @@ test('configures, saves, refreshes, estimates without a target, and launches the
   })
   expect(saved.preset).not.toHaveProperty('target_name')
   await expect(page).toHaveURL(/\/registry\/scenario-presets$/)
-  await page.goto(presetEditorRoutePath(name))
+  await page.goto(presetEditorRoutePath(scenarioName))
   await page.reload()
   await expect(page.getByRole('button', { name: 'Edit acceptance_primary objective limit' })).toHaveText('Up to 3 of 8')
   await expect(page.getByRole('button', { name: 'Edit acceptance_searchable objective limit' })).toHaveText('Up to 1 of 3')
 
   const estimating = nextEstimate(page)
-  await page.goto(presetScannerRoutePath(SCENARIO, name))
+  await page.goto(presetScannerRoutePath(SCENARIO, scenarioName))
   const response = await estimating
   const estimate = await expectBudget(response, 4)
   expect(response.request().postDataJSON().target_name).toBeUndefined()

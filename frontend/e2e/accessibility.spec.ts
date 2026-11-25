@@ -351,6 +351,22 @@ test.describe("Accessibility", () => {
     }
   });
 
+  test("preset pages keep one page heading under their section heading", async ({ page }) => {
+    for (const [path, pageHeading, sectionHeading] of [
+      ["/scanner/presets", "Scanner", "Presets"],
+      ["/registry/scenario-presets", null, "Scenario presets"],
+    ] as const) {
+      await page.goto(path);
+      await expect(page.locator("main h1")).toHaveCount(1);
+      if (pageHeading) {
+        await expect(page.getByRole("heading", { level: 1, name: pageHeading, exact: true })).toBeVisible();
+        await expect(page.getByRole("heading", { level: 2, name: sectionHeading, exact: true })).toBeVisible();
+      } else {
+        await expect(page.getByRole("heading", { level: 1, name: sectionHeading, exact: true })).toBeVisible();
+      }
+    }
+  });
+
   test.describe("mobile touch context", () => {
     test.use({ hasTouch: true });
 

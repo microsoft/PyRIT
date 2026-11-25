@@ -10,7 +10,6 @@ import {
   configToPreset,
   presetToConfigState,
   uneditableScenarioParams,
-  validatePresetName,
 } from './scenarioPresetForm'
 
 function makePreset(overrides: Partial<ScenarioPreset> = {}): ScenarioPreset {
@@ -46,7 +45,6 @@ const IDENTITY = {
   name: 'nightly_probe',
   scenarioName: 'foundry.red_team_agent',
   description: '',
-  showInScanner: true,
 }
 const ITERATION_PARAMETER: Parameter = {
   name: 'max_turns',
@@ -63,32 +61,6 @@ const CONCURRENCY_PARAMETER: Parameter = {
   default: '1',
   description: 'Owned by the launch form, never rendered as a preset field.',
 }
-
-describe('validatePresetName', () => {
-  it('rejects an empty name', () => {
-    expect(validatePresetName('')).toBe('Name is required.')
-  })
-
-  it.each([
-    ['nightly_probe'],
-    ['a'],
-    ['a1_b2'],
-    [`a${'b'.repeat(63)}`],
-  ])('accepts %s', (name) => {
-    expect(validatePresetName(name)).toBeNull()
-  })
-
-  it.each([
-    ['Nightly'],
-    ['1nightly'],
-    ['nightly-probe'],
-    ['nightly probe'],
-    ['nightly.probe'],
-    [`a${'b'.repeat(64)}`],
-  ])('rejects %s', (name) => {
-    expect(validatePresetName(name)).not.toBeNull()
-  })
-})
 
 describe('uneditableScenarioParams', () => {
   it('returns nothing when the preset stores no parameters', () => {
@@ -389,7 +361,7 @@ describe('configToPreset', () => {
     expect(preset).not.toHaveProperty('author')
   })
 
-  it('leaves a listed preset without a scanner visibility field', () => {
+  it('keeps the scanner visibility a stored preset already has', () => {
     const scenario = makeScenario()
     const preset = configToPreset(
       IDENTITY,
@@ -397,20 +369,15 @@ describe('configToPreset', () => {
       { scenario, previous: makePreset({ show_in_scanner: false }) },
     )
 
-    expect(preset).not.toHaveProperty('show_in_scanner')
-  })
-
-  it('writes the scanner visibility of a hidden preset', () => {
-    const scenario = makeScenario()
-    const preset = configToPreset(
-      { ...IDENTITY, showInScanner: false },
-      buildConfig(),
-      { scenario, previous: null },
-    )
-
     expect(preset.show_in_scanner).toBe(false)
   })
 
+  it('writes no scanner visibility for a preset that never stored one', () => {
+    const scenario = makeScenario()
+    const preset = configToPreset(IDENTITY, buildConfig(), { scenario, previous: makePreset() })
+
+    expect(preset).not.toHaveProperty('show_in_scanner')
+  })
   it('carries only the fields the operator moved off the scenario default', () => {
     const scenario = makeScenario()
     const preset = configToPreset(IDENTITY, buildConfig(), { scenario, previous: null })

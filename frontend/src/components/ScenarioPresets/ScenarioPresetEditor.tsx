@@ -1,16 +1,11 @@
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   Button,
   Field,
-  Input,
-  type LabelProps,
   MessageBar,
   MessageBarBody,
-  Option,
   Spinner,
-  Combobox,
-  Switch,
   Text,
   Textarea,
 } from '@fluentui/react-components'
@@ -24,7 +19,6 @@ import ScenarioTechniqueSelector from '@/components/Scenarios/ScenarioTechniqueS
 import { scenarioDatasetDefaults, scenarioDatasetOptions } from '@/components/Scenarios/datasetPresentation'
 import {
   dynamicScenarioParameters,
-  initialScenarioConfigState,
   uniqueTechniqueOptions,
   type ScenarioConfigFormState,
 } from '@/components/Scenarios/scenarioConfigForm'
@@ -38,10 +32,8 @@ import type {
   ScenarioRunSizeEstimateRequest,
   ScenarioRunSizeEstimateResponse,
 } from '@/types'
-import { fetchAllPages } from '@/utils/fetchAllPages'
 import { routerPathParamValue } from '@/utils/routeParams'
 
-import ScannerVisibilityLabel from './ScannerVisibilityLabel'
 import { useScenarioPresetEditorStyles } from './ScenarioPresetEditor.styles'
 import { PRESETS_ROUTE } from './presetRoutes'
 import {
@@ -49,11 +41,8 @@ import {
   configToPreset,
   presetToConfigState,
   uneditableScenarioParams,
-  validatePresetName,
 } from './scenarioPresetForm'
 
-/** Items requested per catalog page while paging the scenario picker's options. */
-const CATALOG_PAGE_SIZE = 200
 const DATASET_PROJECTION_DEBOUNCE_MS = 250
 
 type LoadStatus = 'loading' | 'ready' | 'not-found' | 'error'
@@ -64,36 +53,34 @@ interface DatasetProjectionResult {
   error: string | null
 }
 
-export default function ScenarioPresetEditor({ mode }: { mode: 'create' | 'edit' }) {
+/**
+ * Edits one scenario of a preset: a stored scenario preset's techniques, datasets,
+ * parameters, and description. Its name and scenario are fixed; presets create
+ * scenarios from the Registry's Scenario presets page.
+ */
+export default function ScenarioPresetEditor() {
   const { presetName } = useParams<{ presetName: string }>()
-  // Remount on navigation between two presets so every field resets to the
+  // Remount on navigation between two scenarios so every field resets to the
   // newly loaded document rather than retaining the previous one's edits.
-  return <ScenarioPresetEditorContent key={presetName ?? 'new'} mode={mode} presetName={presetName} />
+  return <ScenarioPresetEditorContent key={presetName} presetName={presetName ?? ''} />
 }
 
 interface ScenarioPresetEditorContentProps {
-  mode: 'create' | 'edit'
-  presetName: string | undefined
+  presetName: string
 }
 
-function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorContentProps) {
+function ScenarioPresetEditorContent({ presetName }: ScenarioPresetEditorContentProps) {
   const styles = useScenarioPresetEditorStyles()
   const navigate = useNavigate()
-  const decodedName = presetName === undefined ? '' : routerPathParamValue(presetName)
+  const decodedName = routerPathParamValue(presetName)
 
   const [status, setStatus] = useState<LoadStatus>('loading')
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [catalog, setCatalog] = useState<RegisteredScenario[]>([])
   const [loaded, setLoaded] = useState<ScenarioPresetResponse | null>(null)
 
-  const [name, setName] = useState(mode === 'edit' ? decodedName : '')
   const [description, setDescription] = useState('')
-  const [showInScanner, setShowInScanner] = useState(true)
-  const [selectedScenarioName, setSelectedScenarioName] = useState('')
   const [scenario, setScenario] = useState<RegisteredScenario | null>(null)
   const [scenarioLoading, setScenarioLoading] = useState(false)
-  const scenarioRequestSequence = useRef(0)
-  const [resolvedScenarioRequestSequence, setResolvedScenarioRequestSequence] = useState<number | null>(null)
   const [config, setConfig] = useState<ScenarioConfigFormState | null>(null)
   const [scenarioUnavailable, setScenarioUnavailable] = useState<string | null>(null)
   const [datasetError, setDatasetError] = useState<string | null>(null)
@@ -108,100 +95,46 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     let cancelled = false
 
     const load = async (): Promise<void> => {
+      let response: ScenarioPresetResponse
       try {
-        const scenarios = await fetchAllPages(
-          (cursor) => scenariosApi.listCatalog(CATALOG_PAGE_SIZE, cursor, false),
-          undefined,
-          (entry) => entry.scenario_name,
-        )
-        if (cancelled) return
-        setCatalog(scenarios)
-
-        if (mode === 'create') {
-          setStatus('ready')
-          return
-        }
-
-        const response = await scenarioPresetsApi.get(decodedName)
-        if (cancelled) return
-        setLoaded(response)
-        setName(response.preset.name)
-        setDescription(response.preset.description ?? '')
-        setShowInScanner(response.preset.show_in_scanner !== false)
-        setSelectedScenarioName(response.preset.scenario_name)
-        setScenarioLoading(true)
-        setStatus('ready')
-
-        // The list endpoint omits run-size estimates, so the preset's scenario is
-        // re-fetched in full to get the configured dataset caps the form shows.
-        // A preset may legitimately name a scenario this deployment lacks; that
-        // is an unavailable scenario, not a missing preset, so it must not be
-        // reported as a 404 on the preset itself.
-        try {
-          const full = await scenariosApi.getScenario(response.preset.scenario_name)
-          if (cancelled) return
-          setScenario(full)
-          setConfig(presetToConfigState(full, response.preset))
-          setResolvedScenarioRequestSequence(scenarioRequestSequence.current)
-        } catch (scenarioErr) {
-          if (cancelled) return
-          setScenarioUnavailable(toApiError(scenarioErr).detail)
-        } finally {
-          if (!cancelled) {
-            setScenarioLoading(false)
-            setValidationError(null)
-          }
-        }
+        response = await scenarioPresetsApi.get(decodedName)
       } catch (err) {
         if (cancelled) return
         const apiError = toApiError(err)
         setLoadError(apiError.detail)
         setStatus(apiError.status === 404 ? 'not-found' : 'error')
+        return
+      }
+      if (cancelled) return
+      setLoaded(response)
+      setDescription(response.preset.description ?? '')
+      setScenarioLoading(true)
+      setStatus('ready')
+
+      // The preset's scenario is fetched in full for the configured dataset caps the
+      // form shows. A preset may legitimately name a scenario this deployment lacks;
+      // that is an unavailable scenario, not a missing preset, so it is not a 404 here.
+      try {
+        const full = await scenariosApi.getScenario(response.preset.scenario_name)
+        if (cancelled) return
+        setScenario(full)
+        setConfig(presetToConfigState(full, response.preset))
+      } catch (scenarioErr) {
+        if (cancelled) return
+        setScenarioUnavailable(toApiError(scenarioErr).detail)
+      } finally {
+        if (!cancelled) setScenarioLoading(false)
       }
     }
 
     void load()
     return () => {
       cancelled = true
-      scenarioRequestSequence.current += 1
     }
-  }, [decodedName, mode])
+  }, [decodedName])
 
-  const handleScenarioChange = useCallback(async (nextScenarioName: string): Promise<void> => {
-    const requestSequence = scenarioRequestSequence.current + 1
-    scenarioRequestSequence.current = requestSequence
-    setSelectedScenarioName(nextScenarioName)
-    setScenario(null)
-    setConfig(null)
-    setScenarioLoading(true)
-    setSaveError(null)
-    setValidationError(null)
-    setDatasetError(null)
-    setDatasetProjection(null)
-    setDatasetProjectionResult(null)
-    try {
-      const full = await scenariosApi.getScenario(nextScenarioName)
-      if (requestSequence !== scenarioRequestSequence.current) return
-      if (full.scenario_name !== nextScenarioName) {
-        setSaveError('Loaded metadata does not match the selected scenario. Select it again to retry.')
-        return
-      }
-      setScenario(full)
-      setConfig(initialScenarioConfigState(full))
-      setResolvedScenarioRequestSequence(requestSequence)
-    } catch (err) {
-      if (requestSequence !== scenarioRequestSequence.current) return
-      setSaveError(toApiError(err).detail)
-    } finally {
-      if (requestSequence === scenarioRequestSequence.current) {
-        setScenarioLoading(false)
-        setValidationError(null)
-      }
-    }
-  }, [])
-
-  const scenarioIsCurrent = scenario !== null && scenario.scenario_name === selectedScenarioName
-  const datasetMetadata = useScenarioDatasets(selectedScenarioName, scenarioIsCurrent)
+  const scenarioReady = scenario !== null && config !== null
+  const datasetMetadata = useScenarioDatasets(scenario?.scenario_name ?? '', scenarioReady)
   const datasetBaseline = useMemo(
     () => (scenario
       ? {
@@ -230,7 +163,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     [config, loaded, scenario],
   )
   const scenarioName = scenario?.scenario_name
-  const projectionRequest = !scenarioLoading && scenarioIsCurrent && builtConfig?.ok ? builtConfig.config : null
+  const projectionRequest = builtConfig?.ok ? builtConfig.config : null
   const projectionIsCurrent = datasetProjectionResult?.request === projectionRequest
     && datasetProjectionResult?.scenarioName === scenarioName
   const datasetProjectionLoading = Boolean(scenarioName && projectionRequest && !projectionIsCurrent)
@@ -273,57 +206,37 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
-    if (saving) {
-      return
-    }
-    // A programmatic submit can run before the selection's state updates commit.
-    const selectionPending = scenarioLoading
-      || (scenarioIsCurrent && resolvedScenarioRequestSequence !== scenarioRequestSequence.current)
-    if (selectionPending || !scenarioIsCurrent) {
-      setValidationError(selectionPending
-        ? 'Wait for the selected scenario to finish loading.'
-        : 'Select a scenario.')
+    if (saving || loaded === null) {
       return
     }
     setSaveError(null)
-
-    const trimmedName = name.trim()
-    const nameError = validatePresetName(trimmedName)
-    if (nameError) {
-      setValidationError(nameError)
-      return
-    }
     if (!scenario || !config) {
-      setValidationError('Select a scenario.')
+      setValidationError('Wait for the scenario to finish loading.')
       return
     }
     if (!builtConfig?.ok) {
-      setValidationError(builtConfig?.error ?? 'Select a scenario.')
+      setValidationError(builtConfig?.error ?? 'Wait for the scenario to finish loading.')
       return
     }
     if (datasetError) {
       setValidationError(datasetError)
       return
     }
+    if (loaded.version === null) {
+      setSaveError(`'${loaded.preset.name}' is defined in code and cannot be edited here.`)
+      return
+    }
     setValidationError(null)
 
     const preset = configToPreset(
-      { name: trimmedName, scenarioName: scenario.scenario_name, description, showInScanner },
+      { name: loaded.preset.name, scenarioName: scenario.scenario_name, description },
       builtConfig.config,
-      { scenario, previous: loaded?.preset ?? null },
+      { scenario, previous: loaded.preset },
     )
 
     setSaving(true)
     try {
-      if (loaded === null) {
-        await scenarioPresetsApi.create(preset)
-      } else if (loaded.version === null) {
-        setSaveError(`Preset '${loaded.preset.name}' is defined in code and cannot be edited here.`)
-        setSaving(false)
-        return
-      } else {
-        await scenarioPresetsApi.update(loaded.preset.name, preset, loaded.version)
-      }
+      await scenarioPresetsApi.update(loaded.preset.name, preset, loaded.version)
       navigate(PRESETS_ROUTE)
     } catch (err) {
       setSaveError(toApiError(err).detail)
@@ -335,19 +248,19 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     return (
       <section className={styles.root}>
         <div className={styles.centeredState}>
-          <Spinner label="Loading preset..." />
+          <Spinner label="Loading scenario..." />
         </div>
       </section>
     )
   }
 
-  if (status !== 'ready') {
+  if (status !== 'ready' || loaded === null) {
     return (
       <section className={styles.root}>
         <div className={styles.centeredState} data-testid="editor-error-state">
           <MessageBar intent="error">
             <MessageBarBody>
-              {status === 'not-found' ? `No preset named "${decodedName}".` : loadError}
+              {status === 'not-found' ? `No saved scenario named "${decodedName}".` : loadError}
             </MessageBarBody>
           </MessageBar>
           <Button appearance="primary" onClick={() => navigate(PRESETS_ROUTE)}>
@@ -358,8 +271,6 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     )
   }
 
-  const editing = loaded !== null
-
   return (
     <section
       className={styles.root}
@@ -368,10 +279,10 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     >
       <div className={styles.headerText}>
         <Text id="scenario-preset-editor-title" as="h1" size={600} weight="semibold">
-          {editing ? `Edit ${decodedName}` : 'New preset'}
+          Edit {loaded.preset.scenario_name}
         </Text>
         <Text size={300} className={styles.subtitle}>
-          A preset stores what to test. The target, concurrency and retries are chosen at launch.
+          Saved as {loaded.preset.name}. The target, concurrency, and retries are chosen at launch.
         </Text>
       </div>
 
@@ -397,7 +308,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
         {carriedScenarioParams.length > 0 && (
           <MessageBar intent="info" data-testid="carried-params-notice">
             <MessageBarBody>
-              This preset carries parameters this editor has no field for
+              This scenario carries parameters this editor has no field for
               ({carriedScenarioParams.join(', ')}). They are preserved as-is on save.
             </MessageBarBody>
           </MessageBar>
@@ -405,29 +316,13 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
         {scenarioUnavailable && (
           <MessageBar intent="warning" data-testid="scenario-unavailable-warning">
             <MessageBarBody>
-              This preset targets {loaded?.preset.scenario_name}, which is not available here
-              ({scenarioUnavailable}). Its configuration cannot be edited in this deployment.
+              {loaded.preset.scenario_name} is not available here ({scenarioUnavailable}). Its
+              configuration cannot be edited in this deployment.
             </MessageBarBody>
           </MessageBar>
         )}
 
         <div className={styles.section}>
-          <Field
-            label="Name"
-            required
-            hint="Lowercase letters, digits and underscores. Cannot be changed after creation."
-          >
-            <Input
-              className={styles.control}
-              value={name}
-              disabled={editing || saving}
-              onChange={(_, data) => {
-                setName(data.value)
-                setValidationError(null)
-              }}
-              data-testid="preset-name-input"
-            />
-          </Field>
           <Field label="Description">
             <Textarea
               className={styles.control}
@@ -437,44 +332,11 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
               data-testid="preset-description-input"
             />
           </Field>
-          <Field label="Scenario" required hint="Changing the scenario resets the configuration below.">
-            <Combobox
-              className={styles.control}
-              value={selectedScenarioName}
-              selectedOptions={selectedScenarioName ? [selectedScenarioName] : []}
-              disabled={editing || saving}
-              placeholder="Select a scenario"
-              onOptionSelect={(_, data) => {
-                if (data.optionValue) {
-                  void handleScenarioChange(data.optionValue)
-                }
-              }}
-              data-testid="preset-scenario-select"
-            >
-              {catalog.map((entry) => (
-                <Option key={entry.scenario_name} value={entry.scenario_name}>
-                  {entry.scenario_name}
-                </Option>
-              ))}
-            </Combobox>
-          </Field>
-          <Field
-            label={{
-              children: (_: unknown, slotProps: LabelProps) => <ScannerVisibilityLabel {...slotProps} />,
-            }}
-          >
-            <Switch
-              checked={showInScanner}
-              disabled={saving}
-              onChange={(_, data) => setShowInScanner(data.checked)}
-              data-testid="preset-show-in-scanner"
-            />
-          </Field>
         </div>
 
         {scenarioLoading && <Spinner label="Loading scenario..." />}
 
-        {scenarioIsCurrent && scenario && config && (
+        {scenario && config && (
           <>
             <ScenarioTechniqueSelector
               techniqueOptions={techniqueOptions}
@@ -539,10 +401,10 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
             className={styles.touchTarget}
             appearance="primary"
             type="submit"
-            disabled={saving || scenarioLoading || !scenarioIsCurrent || !config}
+            disabled={saving || !scenarioReady}
             data-testid="save-preset-btn"
           >
-            {saving ? 'Saving...' : 'Save preset'}
+            {saving ? 'Saving...' : 'Save scenario'}
           </Button>
           <Button
             className={styles.touchTarget}

@@ -13,9 +13,6 @@ const REGISTRY_TABS = [
   'scenario-presets',
 ] as const
 
-/** Suites are defined on the Scenario presets page, so their editor routes keep that tab selected. */
-const SUITE_SECTION = 'scenario-suites'
-
 function matchesSection(pathname: string, section: string): boolean {
   return pathname === `/registry/${section}` || pathname.startsWith(`/registry/${section}/`)
 }
@@ -24,9 +21,6 @@ function matchesSection(pathname: string, section: string): boolean {
  * Keeps a tab selected while its section owns nested create and edit routes.
  */
 function selectedTabFromPath(pathname: string): string {
-  if (matchesSection(pathname, SUITE_SECTION)) {
-    return 'scenario-presets'
-  }
   return REGISTRY_TABS.find((tab) => matchesSection(pathname, tab)) ?? 'targets'
 }
 
@@ -57,7 +51,7 @@ export default function RegistryLayout() {
         <Tooltip relationship="description" content={HELP_DEFINITIONS.technique}>
           <Tab value="techniques">Techniques</Tab>
         </Tooltip>
-        <Tooltip relationship="description" content="Reusable scenario settings. Choose the target and run-specific settings when you launch.">
+        <Tooltip relationship="description" content="Saved sets of scenarios that the Scanner launches together.">
           <Tab value="scenario-presets">Scenario presets</Tab>
         </Tooltip>
       </TabList>

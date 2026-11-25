@@ -170,7 +170,7 @@ describe('ScenarioSuiteExecutionPage', () => {
       .toHaveAttribute('href', '/scanner/history/run-1')
     expect(within(rows[1]).getByText('second_preset')).toBeInTheDocument()
     expect(within(rows[1]).getAllByText('Queued')).toHaveLength(2)
-    expect(screen.getByRole('link', { name: 'Back to scanners' })).toHaveAttribute('href', '/scanner/launch')
+    expect(screen.getByRole('link', { name: 'Back to presets' })).toHaveAttribute('href', '/scanner/presets')
   })
 
   it('shows safe entry failures without rendering backend exception details', () => {
@@ -228,7 +228,7 @@ describe('ScenarioSuiteExecutionPage', () => {
 
     renderPage()
 
-    await user.click(screen.getByRole('button', { name: 'Cancel suite' }))
+    await user.click(screen.getByRole('button', { name: 'Cancel preset run' }))
     const dialog = await screen.findByRole('dialog')
     await user.click(within(dialog).getByTestId('confirm-cancel-suite'))
 
@@ -242,7 +242,7 @@ describe('ScenarioSuiteExecutionPage', () => {
 
     renderPage()
 
-    await user.click(screen.getByRole('button', { name: 'Cancel suite' }))
+    await user.click(screen.getByRole('button', { name: 'Cancel preset run' }))
     const dialog = await screen.findByRole('dialog')
     await user.click(within(dialog).getByTestId('confirm-cancel-suite'))
 
@@ -250,7 +250,7 @@ describe('ScenarioSuiteExecutionPage', () => {
     expect(mockApplyExecution).not.toHaveBeenCalled()
   })
 
-  it('explains when transient suite progress is no longer available', () => {
+  it('explains when transient preset run progress is no longer available', () => {
     setHookResult({
       loadStatus: 'not-found',
       execution: null,
@@ -260,8 +260,8 @@ describe('ScenarioSuiteExecutionPage', () => {
 
     renderPage()
 
-    expect(screen.getByRole('heading', { name: 'Suite execution not found' })).toBeInTheDocument()
-    expect(screen.getByText(/successfully created scenario runs remain/i)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Back to scanners' })).toHaveAttribute('href', '/scanner/launch')
+    expect(screen.getByRole('heading', { name: 'Preset run not found' })).toBeInTheDocument()
+    expect(screen.getByText(/scenario runs it created remain in Scanner history/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Back to presets' })).toHaveAttribute('href', '/scanner/presets')
   })
 })
