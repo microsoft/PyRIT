@@ -505,6 +505,21 @@ alias metadata. `model_dump(by_alias=False)` likewise deliberately exposes
 `register_instance`; use the default or `by_alias=True` for the existing JSON
 shape. Copy updates and field filters accept either name.
 
+### Scenario dataset compatibility
+
+`GET /api/scenarios/catalog/{scenario_name}/datasets` returns the named catalog datasets the
+scenario can run, as a `DatasetListResponse`. It never fetches providers or calls a model. An
+unknown scenario returns 404, and a listing the scenario can't configure returns 400.
+
+- A scenario without dataset requirements gets every named dataset its source options allow:
+  all of them for `ANY`, and only the permitted sources for `SUBSET` and `FIXED`.
+- A scenario with dataset requirements reports `dataset_options.compatible_only`, as
+  `foundry.assert_policy` does. It gets only the stored datasets whose full contents pass its
+  checks, plus any required ingredient datasets. Datasets that aren't stored are left out.
+
+A listed name is not a launch guarantee. The run-size estimate and launch check the selected
+contents again, so data changed after the listing is rejected there with the reason.
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
@@ -943,11 +958,13 @@ uses them:
   folder, and callers cannot supply their own.
 - A copy of a registered target or converter, made from its `source`, keeps the source's
   connection: it can't change the parameters its type reports as `copy_locked` (for OpenAI
-  targets the endpoint, `auth_mode`, key, headers, and HTTP client settings; for the Azure
-  Speech converters the region, key, and resource ID), and trying returns **400**. So a copy
-  can't take its source's credentials, or a token for an identity its source was set up with,
-  to another endpoint or resource. This rule covers copies only: creating a new target can
-  still send this server's key to an endpoint the caller chooses, as described below.
+  targets the endpoint, `auth_mode`, key, headers, and HTTP client settings; for LiteLLM
+  targets, including Claude, the model name, endpoint, key, headers, and extra body
+  parameters; for the Azure Speech converters the region, key, and resource ID), and trying
+  returns **400**. So a copy can't take its source's credentials, or a token for an identity
+  its source was set up with, to another endpoint or resource. This rule covers copies only:
+  creating a new target can still send this server's key to an endpoint the caller chooses,
+  as described below.
 
 Targets that need a setting the API does not allow can be registered in Python or with an
 initializer.

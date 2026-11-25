@@ -54,9 +54,10 @@ dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="harmben
 # For more control, use `SeedDatasetProvider` to fetch datasets and pass explicit `seed_groups`.
 # This is useful when you need to filter, combine, or inspect the prompts before running.
 #
-# The default techniques below include `AsciiSmugglerConverter`, which only accepts printable
-# ASCII (0x20-0x7E). Filter out seed groups containing newlines, other control characters, or
-# non-ASCII text before sampling. This preserves the original text of the selected objectives.
+# The default techniques below include `AsciiSmugglerConverter`. It replaces newlines and common
+# punctuation such as curly quotes and dashes with ASCII equivalents, and rejects text that has no
+# ASCII equivalent, such as CJK or emoji. Filtering to printable-ASCII seed groups before sampling
+# avoids rejected objectives and sends the selected objectives unchanged.
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
@@ -140,7 +141,8 @@ await output_scenario_async(baseline_result)  # type: ignore [top-level-await]
 # run above produces a row for every default technique, which makes it hard to spot the most
 # successful ones at a glance. Pass `sort_groups_by_success_rate=True` to `output_scenario_async` to
 # re-render the same result with the highest success rates at the top (groups with equal rates keep
-# their original relative order):
+# their original relative order). Groups that different objective scorers judged (see **Judging Each
+# Dataset With Its Own Scorer** below) stay unsorted, because their success rates are not comparable:
 
 # %%
 await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
@@ -179,7 +181,8 @@ await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
 # `incompatible_technique_policy: raise` in YAML. `None` uses the scenario class default.
 #
 # This policy does not enable adaptation. Initialization fails if no selected technique can run,
-# even with a baseline. Other construction errors are not skipped.
+# even with a baseline. Other construction errors are not skipped. The policy covers selected
+# techniques only: an optional baseline skips groups it can't use under either policy.
 
 # %% [markdown]
 # ## Custom Scorers
