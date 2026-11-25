@@ -106,6 +106,13 @@ if TYPE_CHECKING:
         get_all_harm_metrics,
         get_all_objective_metrics,
     )
+    from pyrit.score.scorer_evaluation.threshold_suggestion import (
+        ThresholdOperatingPoint,
+        ThresholdSuggestion,
+        evaluate_threshold,
+        suggest_threshold,
+        suggest_threshold_async,
+    )
     from pyrit.score.scorer_info import get_scorer_info
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
     from pyrit.score.scorer_selection import (
@@ -364,6 +371,11 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "get_all_objective_metrics": "pyrit.score.scorer_evaluation.scorer_metrics_io",
     "get_scorer_info": "pyrit.score.scorer_info",
     "find_objective_metrics_by_eval_hash": "pyrit.score.scorer_evaluation.scorer_metrics_io",
+    "ThresholdOperatingPoint": "pyrit.score.scorer_evaluation.threshold_suggestion",
+    "ThresholdSuggestion": "pyrit.score.scorer_evaluation.threshold_suggestion",
+    "evaluate_threshold": "pyrit.score.scorer_evaluation.threshold_suggestion",
+    "suggest_threshold": "pyrit.score.scorer_evaluation.threshold_suggestion",
+    "suggest_threshold_async": "pyrit.score.scorer_evaluation.threshold_suggestion",
     "ScorerPromptValidator": "pyrit.score.scorer_prompt_validator",
     "SelfAskCategoryScorer": "pyrit.score.true_false.self_ask_category_scorer",
     "SelfAskGeneralFloatScaleScorer": "pyrit.score.float_scale.self_ask_general_float_scale_scorer",
