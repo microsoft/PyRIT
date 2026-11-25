@@ -403,6 +403,17 @@ def test_input_and_eval_hash_validation_errors() -> None:
     with pytest.raises(ValueError, match="confidence_level"):
         calibrate_outcome_statistics(outcomes, judge_profile=profile, confidence_level=True)  # type: ignore[arg-type]
 
+    with pytest.raises(ValueError, match="positive normal quantile"):
+        calibrate_outcome_statistics(outcomes, judge_profile=profile, confidence_level=1e-20)
+
+    extreme_high = calibrate_outcome_statistics(
+        outcomes,
+        judge_profile=profile,
+        confidence_level=math.nextafter(1.0, 0.0),
+    )
+    assert extreme_high.observed_ci_lower is not None and extreme_high.observed_ci_upper is not None
+    assert 0.0 <= extreme_high.observed_ci_lower < extreme_high.observed_ci_upper <= 1.0
+
     with pytest.raises(ValueError, match="min_youden_index"):
         calibrate_outcome_statistics(outcomes, judge_profile=profile, min_youden_index=1.0)
 

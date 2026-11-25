@@ -476,18 +476,27 @@ def _normal_quantile_decimal(confidence_level: float) -> Decimal:
     """
     Compute the two-sided standard normal quantile for ``confidence_level``.
 
+    Computes from the lower tail ``(1 - confidence_level) / 2`` so values near ``1.0``
+    do not round to ``1.0`` and raise ``StatisticsError``.
+
     Returns:
-        Decimal: Standard normal quantile ``z``.
+        Decimal: Strictly positive standard normal quantile ``z``.
+
+    Raises:
+        ValueError: If ``confidence_level`` underflows to a non-positive normal quantile.
     """
     if confidence_level == 0.95:
         return _Z_95
-    z_float = NormalDist().inv_cdf(0.5 + confidence_level / 2.0)
+    tail = (1.0 - confidence_level) / 2.0
+    z_float = -NormalDist().inv_cdf(tail)
+    if not isfinite(z_float) or z_float <= 0.0:
+        raise ValueError("confidence_level must produce a finite positive normal quantile.")
     return Decimal(str(z_float))
 
 
 def _wilson_bounds_decimal(*, successes: int, total: int, z: Decimal) -> tuple[Decimal, Decimal]:
     """
-    Compute exact Decimal Wilson score bounds inside an active ``_CALIBRATION_DECIMAL_CONTEXT``.
+    Compute exact Decimal Wilson score bounds inside an active scaled Decimal context.
 
     Returns:
         tuple[Decimal, Decimal]: Lower and upper Wilson score bounds in ``[0, 1]``.
