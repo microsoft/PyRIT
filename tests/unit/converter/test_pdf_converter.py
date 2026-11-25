@@ -751,48 +751,41 @@ def test_constructor_sets_no_underscore_existing_pdf_attribute(mock_pdf_path):
     assert hasattr(with_pdf, "_existing_pdf_bytes")
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
-async def test_convert_async_offloads_pdf_build_off_event_loop(
-    monkeypatch: pytest.MonkeyPatch, mock_pdf_path: Path
-) -> None:
+@pytest.mark.parametrize("use_existing_pdf", [False, True])
+async def test_convert_async_offloads_pdf_build_off_event_loop(mock_pdf_path: Path, use_existing_pdf: bool) -> None:
     event_loop_thread = threading.current_thread()
+    worker_threads: list[threading.Thread] = []
 
-    # 1. Generated PDF path
-    converter = PDFConverter()
-    gen_threads: list[threading.Thread] = []
-    original_generate = converter._generate_pdf
+    if use_existing_pdf:
+        converter = PDFConverter(
+            existing_pdf=mock_pdf_path,
+            injection_items=[{"page": 0, "x": 10, "y": 10, "text": "injected"}],
+        )
+        original_modify = converter._modify_existing_pdf
 
-    def tracked_generate(content: str) -> bytes:
-        gen_threads.append(threading.current_thread())
-        return original_generate(content)
+        def tracked_modify() -> bytes:
+            worker_threads.append(threading.current_thread())
+            return original_modify()
 
-    monkeypatch.setattr(converter, "_generate_pdf", tracked_generate)
-    result = await converter.convert_async(prompt="hello world")
+        with patch.object(converter, "_modify_existing_pdf", side_effect=tracked_modify):
+            result = await converter.convert_async(prompt="hello overlay")
+    else:
+        converter = PDFConverter()
+        original_generate = converter._generate_pdf
+
+        def tracked_generate(content: str) -> bytes:
+            worker_threads.append(threading.current_thread())
+            return original_generate(content)
+
+        with patch.object(converter, "_generate_pdf", side_effect=tracked_generate):
+            result = await converter.convert_async(prompt="hello world")
+
     assert result.output_type == "binary_path"
-    assert len(gen_threads) == 1
-    assert gen_threads[0] is not event_loop_thread
-
-    # 2. Existing PDF overlay path
-    existing_converter = PDFConverter(
-        existing_pdf=mock_pdf_path,
-        injection_items=[{"page": 0, "x": 10, "y": 10, "text": "injected"}],
-    )
-    mod_threads: list[threading.Thread] = []
-    original_modify = existing_converter._modify_existing_pdf
-
-    def tracked_modify() -> bytes:
-        mod_threads.append(threading.current_thread())
-        return original_modify()
-
-    monkeypatch.setattr(existing_converter, "_modify_existing_pdf", tracked_modify)
-    existing_result = await existing_converter.convert_async(prompt="hello overlay")
-    assert existing_result.output_type == "binary_path"
-    assert len(mod_threads) == 1
-    assert mod_threads[0] is not event_loop_thread
+    assert len(worker_threads) == 1
+    assert worker_threads[0] is not event_loop_thread
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_convert_async_existing_pdf_is_thread_safe_under_concurrency(mock_pdf_path: Path) -> None:
     converter = PDFConverter(
@@ -804,11 +797,17 @@ async def test_convert_async_existing_pdf_is_thread_safe_under_concurrency(mock_
     baseline_reader = PdfReader(BytesIO(Path(baseline.output_text).read_bytes()))
     baseline_page_count = len(baseline_reader.pages)
 
-    results = await asyncio.gather(
-        *(converter.convert_async(prompt=f"prompt-{idx}") for idx in range(5))
-    )
+    with patch("pyrit.converter.pdf_converter.PdfReader", wraps=PdfReader) as spy_reader:
+        results = await asyncio.gather(*(converter.convert_async(prompt=f"prompt-{idx}") for idx in range(5)))
 
     assert len(results) == 5
+    assert len({res.output_text for res in results}) == 5
+    assert spy_reader.call_count >= 5
+    for call in spy_reader.call_args_list:
+        stream_arg = call.args[0]
+        assert isinstance(stream_arg, BytesIO)
+        assert stream_arg is not converter._existing_pdf_bytes
+
     for res in results:
         assert res.output_type == "binary_path"
         pdf_bytes = Path(res.output_text).read_bytes()

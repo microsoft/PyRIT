@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import time
+import uuid
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -471,7 +472,8 @@ class PDFConverter(Converter):
         output_filename = None
         if self._existing_pdf_path:
             ticks = int(time.time() * 1_000_000)
-            output_filename = f"{ticks}_{self._existing_pdf_path.stem}"
+            unique_suffix = uuid.uuid4().int & 0xFFFFFFFF
+            output_filename = f"{ticks}{unique_suffix:010d}_{self._existing_pdf_path.stem}"
 
         pdf_serializer = data_serializer_factory(
             category="prompt-memory-entries",
