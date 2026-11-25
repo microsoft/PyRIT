@@ -439,7 +439,7 @@ async def test_category_headers_stay_distinct_when_names_contain_separators_asyn
     scenario = await harness.initialize_async(harness.scenario(), **_datasets(*sources))
     reversed_scenario = await harness.initialize_async(harness.scenario(), **_datasets(*reversed(sources)))
 
-    def headers(initialized: AssertPolicy) -> dict[str, str]:
+    def headers(initialized: AssertPolicy) -> dict[str | None, str]:
         return {
             attack.seed_groups[0].objective.dataset_name: attack.display_group for attack in initialized._atomic_attacks
         }
