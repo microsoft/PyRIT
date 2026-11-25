@@ -50,10 +50,10 @@ as a note instead; call again with a smaller `limit` or fewer `response_fields`.
 3. Read the chosen scenario with `get_scenario` and `response_fields: ["default_techniques",
    "technique_summaries.name", "technique_summaries.description", "default_datasets",
    "dataset_options.mode", "dataset_options.allowed_names", "dataset_options.total_limit",
-   "include_baseline_by_default", "supported_parameters.name", "supported_parameters.required",
-   "default_run_size.status", "default_run_size.total_attack_count",
-   "default_run_size.maximum_attack_count", "default_run_size.components",
-   "default_run_size.note"]`.
+   "include_baseline_by_default", "uses_default_adversarial_target",
+   "supported_parameters.name", "supported_parameters.required", "default_run_size.status",
+   "default_run_size.total_attack_count", "default_run_size.maximum_attack_count",
+   "default_run_size.components", "default_run_size.note"]`.
 4. Size the run. `default_run_size.total_attack_count` is about how many attacks the default
    run makes; when it's missing, `maximum_attack_count` is the most it can make. Its
    `components` are the parts of that run, and each one's `factors` multiply to its count: seed
@@ -69,9 +69,11 @@ as a note instead; call again with a smaller `limit` or fewer `response_fields`.
    `subset`, choose from `dataset_options.allowed_names`; when it's `fixed`, keep the defaults.
 6. Check which chosen techniques need an attacker model with `list_techniques` and
    `response_fields: ["items.name", "items.uses_default_adversarial_target", "pagination"]`.
-   If any has `uses_default_adversarial_target: true`, the plan needs the user to name a
-   registered target to use as `adversarial_target_name`. It also needs a value from them for
-   any `supported_parameters` entry with `required: true`.
+   The plan needs the user to name a registered target to use as `adversarial_target_name` if
+   any chosen technique has `uses_default_adversarial_target: true`, or if the scenario's own
+   `uses_default_adversarial_target` is true and a chosen technique isn't in that list: the
+   scenario then brings its own techniques or helpers, such as a translation model. It also
+   needs a value from them for any `supported_parameters` entry with `required: true`.
 7. Keep the scenario's scorer, and leave out `scoring_target_name`. If the user asks for another
    scorer, or a start error asks you to select one, choose a true/false scorer with
    `list_scorers` and `response_fields: ["items.scorer_registry_name", "items.description",
@@ -103,7 +105,8 @@ fewer, or once they agree to the plan. Leave out any field the plan doesn't need
 
 Never send `initializers`, `initializer_args`, `technique_override`, or `scenario_result_id`:
 they change the server's setup or a technique, or resume another run. If a start fails, report
-the error message as it is; it names what is missing.
+the error message as it is; it names what is missing. If it names a missing role, such as
+`adversarial_chat`, ask the user which registered target to use for it.
 
 ## Follow up
 
