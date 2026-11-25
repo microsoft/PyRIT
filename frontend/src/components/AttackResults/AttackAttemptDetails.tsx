@@ -20,7 +20,7 @@ import type {
 } from '@/types'
 import { scoreSummaryFromProgressScore } from '@/utils/scoreSummary'
 
-import { formatAttemptTiming, formatScoreRationale } from './attackAttemptFormatting'
+import { formatAttemptTiming, formatScoreRationale, plannedTechniqueLabel } from './attackAttemptFormatting'
 import { useAttackAttemptDetailsStyles } from './AttackAttemptDetails.styles'
 
 interface AttackAttemptDetailsProps {
@@ -60,7 +60,8 @@ export default function AttackAttemptDetails({
   const { fields: findingFields, error: findingFieldsError, retry: retryFindingFields } = useFindingFields(
     undefined, findings.length > 0,
   )
-  const techniqueName = atomicGroup?.technique_name ?? atomicGroup?.display_group ?? attempt?.atomic_attack_name ?? 'Not recorded'
+  const techniqueName = (atomicGroup ? plannedTechniqueLabel(atomicGroup) : null) ?? atomicGroup?.display_group
+    ?? attempt?.atomic_attack_name ?? 'Not recorded'
   const seeds = attempt && 'seed_identifiers' in attempt ? attempt.seed_identifiers ?? [] : []
   const datasetNames = [...new Set(seeds.flatMap((seed) =>
     typeof seed.parameters.dataset_name === 'string' ? [seed.parameters.dataset_name] : []))]
