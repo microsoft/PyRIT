@@ -26,6 +26,7 @@ from pyrit.models import (
     AttackOutcome,
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
+    CapabilityName,
     ComponentIdentifier,
     Identifiable,
     Message,
@@ -1615,14 +1616,12 @@ class _ApprovalCheckingTarget(PromptTarget):
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
             supports_editable_history=True,
+            supports_function_tools=True,
             input_modalities=frozenset(
                 {frozenset({"text"}), frozenset({"function_call"}), frozenset({"function_call_output"})}
             ),
         )
     )
-
-    def may_advertise_tools(self) -> bool:
-        return True
 
     async def get_tool_definitions_async(self) -> list[ToolDefinition]:
         return [ToolDefinition(name="read_ticket", parameters={"type": "object"})]
@@ -1689,15 +1688,21 @@ class TestSimulatedConversationWithTargetTools:
         )
 
         errors = factory.requirements.check_target(target=without_tools, attack_class=PromptSendingAttack)
-        assert any("advertises no function tools" in error for error in errors)
+        assert any(CapabilityName.FUNCTION_TOOLS.value in error for error in errors)
         assert not any(
-            "advertises no function tools" in error
+            CapabilityName.FUNCTION_TOOLS.value in error
             for error in factory.requirements.check_target(target=with_tools, attack_class=PromptSendingAttack)
         )
 
     @pytest.mark.parametrize(
         "requirements",
-        [None, TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True))],
+        [
+            None,
+            TechniqueRequirements(
+                objective_target=TargetRequirements(native_required=frozenset({CapabilityName.JSON_SCHEMA})),
+                seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True),
+            ),
+        ],
         ids=["default", "override"],
     )
     def test_targets_that_cannot_replay_tool_history_are_incompatible(
@@ -1717,10 +1722,14 @@ class TestSimulatedConversationWithTargetTools:
             extra_body_parameters={"tools": [declared]},
         )
 
-        errors = factory.requirements.check_target(target=unknown_deployment, attack_class=PromptSendingAttack)
+        errors = " ".join(
+            factory.requirements.check_target(target=unknown_deployment, attack_class=PromptSendingAttack)
+        )
 
-        assert any("function_call" in error for error in errors)
-        assert not any("advertises no function tools" in error for error in errors)
+        assert "function_call" in errors
+        assert CapabilityName.FUNCTION_TOOLS.value not in errors
+        # The tool requirements are added to an override's own objective-target requirements.
+        assert (CapabilityName.JSON_SCHEMA.value in errors) is (requirements is not None)
 
     def test_turn_by_turn_uses_tool_prompts_and_needs_a_tool_running_adversarial_chat(self) -> None:
         factory = AttackTechniqueFactory.with_simulated_conversation(

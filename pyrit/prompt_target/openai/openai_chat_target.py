@@ -214,6 +214,13 @@ class OpenAIChatTarget(_ChatCompletionsToolLoopMixin, OpenAITarget):
 
         self._extra_body_parameters = extra_body_parameters
         super().__init__(custom_configuration=custom_configuration, **kwargs)
+        # Set even over a custom configuration, since recreate_instance gives a copy its source's configuration.
+        function_tools = self._configures_function_tools()
+        if function_tools != self.capabilities.supports_function_tools:
+            self.apply_capabilities(
+                capabilities=self.capabilities.model_copy(update={"supports_function_tools": function_tools})
+            )
+            self._refresh_generation_capabilities()
 
     def _generation_capabilities_for_mode(self, capabilities: TargetCapabilities) -> TargetCapabilities:
         capabilities = super()._generation_capabilities_for_mode(capabilities)

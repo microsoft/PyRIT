@@ -72,16 +72,18 @@ class _ChatCompletionsToolLoopMixin(ABC):
         self._max_tool_rounds = max_tool_rounds
         self._suppress_tools = False
 
-    def may_advertise_tools(self) -> bool:
+    def _configures_function_tools(self) -> bool:
         """
-        Whether this target may advertise function tools, without contacting any tool provider.
+        Whether function tools are configured or declared, without contacting any tool provider.
 
         Returns:
-            bool: True if function tools are declared or configured. A configured tool provider counts,
-                since its tools are only known once it is contacted.
+            bool: True for configured tools, a tool provider, or a function tool declared in
+                ``extra_body_parameters["tools"]``.
         """
-        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools") or [])
-        return bool(declared or self._direct_tools or self._tool_providers)
+        declared = (self._extra_body_parameters or {}).get("tools") or []
+        return bool(
+            self._direct_tools or self._tool_providers or any(tool.get("type") == "function" for tool in declared)
+        )
 
     async def get_tool_definitions_async(self) -> list[ToolDefinition]:
         """
@@ -119,7 +121,7 @@ class _ChatCompletionsToolLoopMixin(ABC):
         """
         Accept tool-call history when tools run locally, since the target's own tool loop produces it.
 
-        Advertised capabilities are unchanged, so callers can still tell whether the model is known to call tools.
+        Advertised input modalities are unchanged, so callers can still tell whether the model is known to call tools.
 
         Returns:
             frozenset[frozenset[PromptDataType]]: Tool-call combinations, or none without configured tools.

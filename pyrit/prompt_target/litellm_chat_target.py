@@ -403,6 +403,12 @@ class LiteLLMChatTarget(_ChatCompletionsToolLoopMixin, PromptTarget):
                 derived = self._derive_capabilities_from_litellm(resolved_model)
                 if derived is not None:
                     self._configuration = TargetConfiguration(capabilities=derived)
+        # Set even over a custom configuration, since recreate_instance gives a copy its source's configuration.
+        function_tools = self._configures_function_tools()
+        if function_tools != self.capabilities.supports_function_tools:
+            self.apply_capabilities(
+                capabilities=self.capabilities.model_copy(update={"supports_function_tools": function_tools})
+            )
 
     @staticmethod
     def _import_litellm() -> Any:

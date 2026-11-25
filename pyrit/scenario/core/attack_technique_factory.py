@@ -25,7 +25,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, ParamSpec, TypeVar
 
 from pydantic import BaseModel
 
@@ -43,6 +43,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.models import (
     AttackTechniqueSeedGroup,
+    CapabilityName,
     ComponentIdentifier,
     Identifiable,
     NextMessageSystemPromptPaths,
@@ -58,6 +59,7 @@ from pyrit.models import (
     load_simulated_target_prompt,
     resolve_prompt_source,
 )
+from pyrit.prompt_target import TargetRequirements
 from pyrit.scenario.core._attack_adversarial_config import _AttackAdversarialConfigHelper
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -156,6 +158,14 @@ class AttackTechniqueFactory(Identifiable):
 
     _creation_calls: list[tuple[str, dict[str, Any]]]
     _OPAQUE_IDENTITY_SCOPE = uuid.uuid4().hex
+    #: Added to the objective-target requirements by ``use_target_tools``: the target advertises
+    #: function tools and replays tool-call history natively.
+    _TARGET_TOOL_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements(
+        native_required=frozenset(
+            {CapabilityName.FUNCTION_TOOLS, CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY}
+        ),
+        required_input_modalities=frozenset({frozenset({"function_call"}), frozenset({"function_call_output"})}),
+    )
 
     @_capture_creation
     def __init__(
@@ -349,8 +359,8 @@ class AttackTechniqueFactory(Identifiable):
             use_target_tools: Whether the conversation uses the objective target's function tools.
                 When set, no next message is generated unless a next-message prompt is given (the
                 objective is sent as is), the simulated target prompt defaults to one that calls
-                tools actively, and the objective target must report its tools and accept tool-call
-                history natively. Defaults to False.
+                tools actively, and the objective target must declare ``supports_function_tools`` and
+                accept tool-call history natively. Defaults to False.
             technique_tags: Tags controlling which ``ScenarioTechnique`` aggregates
                 include this technique (e.g. ``"single_turn"``, ``"multi_turn"``,
                 ``"default"``). Forwarded to the factory constructor.
@@ -375,8 +385,8 @@ class AttackTechniqueFactory(Identifiable):
                 constructor.
             requirements: Optional requirements override. Defaults to strict
                 objective-only dataset input; technique-owned seeds are not restricted. With
-                ``use_target_tools``, an override still requires a target that advertises tools and
-                replays tool-call history natively.
+                ``use_target_tools``, the target tool requirements are added to its objective-target
+                requirements.
 
         Returns:
             AttackTechniqueFactory: A new factory whose ``seed_technique`` is the
@@ -455,7 +465,15 @@ class AttackTechniqueFactory(Identifiable):
         seed_technique = AttackTechniqueSeedGroup(seeds=seeds)
         requirements = requirements or TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True))
         if use_target_tools:
-            requirements = replace(requirements, requires_target_tools=True)
+            target, tools = requirements.objective_target, cls._TARGET_TOOL_REQUIREMENTS
+            requirements = replace(
+                requirements,
+                objective_target=replace(
+                    target,
+                    native_required=target.native_required | tools.native_required,
+                    required_input_modalities=target.required_input_modalities | tools.required_input_modalities,
+                ),
+            )
         return cls(
             name=name,
             attack_class=attack_class,
@@ -972,8 +990,8 @@ class AttackTechniqueFactory(Identifiable):
         """
         Serialize the technique requirements for the configuration fingerprint.
 
-        Scorer requirements that require nothing, and an unset tools requirement, are left out, so a
-        technique saved before those fields existed keeps its fingerprint.
+        Scorer requirements that require nothing are left out, so a technique saved before
+        that field existed keeps its fingerprint.
 
         Returns:
             Any: The serialized requirements.
@@ -981,8 +999,6 @@ class AttackTechniqueFactory(Identifiable):
         value = self._configuration_value(self._requirements)
         if self._requirements.objective_scorer == type(self._requirements.objective_scorer)():
             value.pop("objective_scorer", None)
-        if not self._requirements.requires_target_tools:
-            value.pop("requires_target_tools", None)
         return value
 
     @classmethod

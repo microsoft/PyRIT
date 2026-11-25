@@ -288,6 +288,7 @@ A `TargetConfiguration` composes three concerns:
 | `supports_json_output`           | The target supports a "json" response format that guarantees valid JSON output.                                                          |
 | `supports_json_schema`           | The target supports constraining output to a caller-provided JSON schema.                                                                |
 | `supports_temperature`           | The adapter and configured model mode support per-request temperature overrides.                                                        |
+| `supports_function_tools`        | Function tools are configured and advertised to the model. OpenAI and LiteLLM targets set this from their configured and declared tools. |
 | `supports_responses`             | The target replies to requests. Defaults to `True`; write-only targets such as `TextTarget` and `AzureBlobStorageTarget` declare `False`. |
 | `input_modalities`               | The set of input modality combinations the target accepts (e.g. `{text}`, `{text, image_path}`).                                         |
 | `output_modalities`              | The set of output modality combinations the target produces.                                                                             |

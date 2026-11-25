@@ -23,10 +23,11 @@
 #   adversarial chat writes each result.
 #
 # Both are simulated-conversation techniques (`SeedSimulatedConversation` with `use_target_tools=True`,
-# in `ONE_SHOT` and `TURN_BY_TURN` mode). The objective target must report its function tools and accept
-# tool-call history natively. `OpenAIResponseTarget`, `OpenAIChatTarget` and `LiteLLMChatTarget` report the
-# tools they run and declare. Targets that advertise no tools are skipped. Chat targets accept tool-call history
-# for models PyRIT recognizes or when declared with `custom_configuration`.
+# in `ONE_SHOT` and `TURN_BY_TURN` mode). The objective target must declare `supports_function_tools` and
+# accept tool-call history natively; other targets are skipped. `OpenAIResponseTarget`, `OpenAIChatTarget` and
+# `LiteLLMChatTarget` report the tools they run and declare, and set `supports_function_tools` when they have
+# any. Chat targets accept tool-call history for models PyRIT recognizes or when declared with
+# `custom_configuration`.
 #
 # `tool_priming_one_shot` is in the `extra` technique catalog. `tool_priming_simulated` copies the adversarial
 # chat as the stand-in, so it needs a single `adversarial_chat` that runs tool calls (`RUNS_TOOLS_LOCALLY`,

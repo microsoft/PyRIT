@@ -287,6 +287,13 @@ class OpenAIResponseTarget(OpenAITarget):
         self._fail_on_missing_function: bool = fail_on_missing_function
         self._execute_tools = execute_tools
         self._suppress_tools = False
+        # Set even over a custom configuration, since recreate_instance gives a copy its source's configuration.
+        function_tools = self._configures_function_tools()
+        if function_tools != self.capabilities.supports_function_tools:
+            self.apply_capabilities(
+                capabilities=self.capabilities.model_copy(update={"supports_function_tools": function_tools})
+            )
+            self._refresh_generation_capabilities()
 
         # Extract the grammar 'tool' if one is present
         # See
@@ -335,16 +342,18 @@ class OpenAIResponseTarget(OpenAITarget):
         ):
             raise ValueError("Required web search needs a configured tool and supports_web_search=True.")
 
-    def may_advertise_tools(self) -> bool:
+    def _configures_function_tools(self) -> bool:
         """
-        Whether this target may advertise function tools, without contacting any tool provider.
+        Whether function tools are configured or declared, without contacting any tool provider.
 
         Returns:
-            bool: True if function tools are declared or configured. A configured tool provider counts,
-                since its tools are only known once it is contacted.
+            bool: True for configured tools, a tool provider, or a function tool declared in
+                ``extra_body_parameters["tools"]``.
         """
-        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools") or [])
-        return bool(declared or self._direct_tools or self._tool_providers)
+        declared = (self._extra_body_parameters or {}).get("tools") or []
+        return bool(
+            self._direct_tools or self._tool_providers or any(tool.get("type") == "function" for tool in declared)
+        )
 
     async def get_tool_definitions_async(self) -> list[ToolDefinition]:
         """

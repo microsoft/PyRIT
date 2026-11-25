@@ -52,6 +52,7 @@ class CapabilityName(str, Enum):
     PREFILL = "supports_prefill"
     TEMPERATURE = "supports_temperature"
     WEB_SEARCH = "supports_web_search"
+    FUNCTION_TOOLS = "supports_function_tools"
     RESPONSES = "supports_responses"
 
 
@@ -121,6 +122,10 @@ class TargetCapabilities(BaseModel):
 
     #: Whether web search is configured and available to this target.
     supports_web_search: bool = False
+
+    #: Whether function tools are configured and advertised to this target's model. Targets that
+    #: run tools set this from their configured tools, tool providers, and declared function tools.
+    supports_function_tools: bool = False
 
     #: Whether the target replies to the requests it receives. Write-only targets
     #: (e.g., ``TextTarget``) deliver each request without replying, so a send that

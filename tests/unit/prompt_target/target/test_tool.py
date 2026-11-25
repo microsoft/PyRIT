@@ -20,6 +20,8 @@ from pyrit.prompt_target import (
     MCPToolProvider,
     OpenAIChatTarget,
     OpenAIResponseTarget,
+    TargetCapabilities,
+    TargetConfiguration,
     ToolProvider,
     collect_tools_async,
     tool,
@@ -200,6 +202,9 @@ def test_openai_target_copy_adds_tools_to_a_tool_less_source(target_class: type[
     assert copy._max_tool_rounds == 2
     assert not source._direct_tools
     assert copy.get_identifier().params["tools"]
+    # The copy gets the source's configuration as custom_configuration, yet still reports its own tools.
+    assert copy.capabilities.supports_function_tools
+    assert not source.capabilities.supports_function_tools
 
 
 def _chat_tool_target(
@@ -354,7 +359,7 @@ async def test_null_tool_declarations_mean_no_tools(build_target) -> None:
     target = build_target({"tools": None})
 
     assert await target.get_tool_definitions_async() == []
-    assert not target.may_advertise_tools()
+    assert not target.capabilities.supports_function_tools
 
 
 async def test_litellm_target_reports_configured_tools(patch_central_database) -> None:
@@ -367,7 +372,47 @@ async def test_litellm_target_reports_configured_tools(patch_central_database) -
     definitions = await target.get_tool_definitions_async()
 
     assert [definition.name for definition in definitions] == ["add"]
-    assert target.may_advertise_tools()
+    assert target.capabilities.supports_function_tools
+
+
+_SOURCE_PROVIDER = MagicMock(spec=ToolProvider, identifier={"type": "test"})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget])
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        ({}, False),
+        ({"tools": [add]}, True),
+        ({"tool_providers": [_SOURCE_PROVIDER]}, True),
+        ({"extra_body_parameters": {"tools": [{"type": "function", "name": "send_email"}]}}, True),
+        ({"extra_body_parameters": {"tools": [{"type": "web_search_preview"}]}}, False),
+        ({"tools": [add], "custom_configuration": TargetConfiguration(capabilities=TargetCapabilities())}, True),
+        (
+            {
+                "custom_configuration": TargetConfiguration(
+                    capabilities=TargetCapabilities(supports_function_tools=True)
+                )
+            },
+            False,
+        ),
+    ],
+    ids=["none", "tools", "provider", "declared", "hosted_only", "custom_with_tools", "custom_without_tools"],
+)
+def test_function_tools_capability_follows_configured_tools(
+    *, target_class: type[OpenAIChatTarget | LiteLLMChatTarget], settings: dict[str, Any], expected: bool
+) -> None:
+    def build(**kwargs: Any) -> OpenAIChatTarget | LiteLLMChatTarget:
+        if target_class is LiteLLMChatTarget:
+            return LiteLLMChatTarget(model_name="openai/gpt-5.1", **kwargs)
+        return target_class(model_name="gpt-5.1", endpoint="https://mock.azure.com", api_key="mock-key", **kwargs)
+
+    target = build(**settings)
+
+    assert target.capabilities.supports_function_tools is expected
+    # Setting the flag must not pin the model's inferred temperature support as declared.
+    assert getattr(target, "_effective_generation", None) == getattr(build(), "_effective_generation", None)
 
 
 @pytest.mark.parametrize("from_provider", [False, True])
