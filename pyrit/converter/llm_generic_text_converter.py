@@ -353,8 +353,8 @@ class LLMGenericTextConverter(Converter):
         """
         if not self._retry_exceptions:
             response = await self._converter_target.send_prompt_async(message=request)
-            _raise_if_converter_target_error(response[0])
-            return self._process_response(response[0].get_value())
+            _raise_if_converter_target_error(response[-1])
+            return self._process_response(response[-1].get_value())
 
         stop_strategy: stop_base = (
             stop_after_attempt(self._max_retry_attempts)
@@ -376,8 +376,8 @@ class LLMGenericTextConverter(Converter):
         ):
             with attempt:
                 response = await self._converter_target.send_prompt_async(message=request)
-                _raise_if_converter_target_error(response[0])
-                return self._process_response(response[0].get_value())
+                _raise_if_converter_target_error(response[-1])
+                return self._process_response(response[-1].get_value())
 
         raise RuntimeError("unreachable: tenacity reraises on exhaustion")  # pragma: no cover
 

@@ -830,3 +830,24 @@ async def test_send_with_retries_retries_blocked_converter_target_response(mock_
         result = await converter.convert_async(prompt="hello")
     assert result.output_text == "rewritten"
     assert mock_target.send_prompt_async.call_count == 2
+
+
+def _tool_call_response() -> Message:
+    return Message(
+        message_pieces=[MessagePiece(role="assistant", original_value='{"name": "lookup", "arguments": {}}')]
+    )
+
+
+async def test_send_with_retries_raises_when_final_reply_after_tool_calls_is_blocked(mock_target) -> None:
+    mock_target.send_prompt_async.return_value = [_tool_call_response(), _error_response("blocked")]
+    converter = LLMGenericTextConverter(converter_target=mock_target)
+    with pytest.raises(ConverterLLMResponseBlockedException):
+        await converter.convert_async(prompt="hello")
+
+
+async def test_send_with_retries_uses_final_reply_after_tool_calls(mock_target) -> None:
+    final = Message(message_pieces=[MessagePiece(role="assistant", original_value="rewritten")])
+    mock_target.send_prompt_async.return_value = [_tool_call_response(), final]
+    converter = LLMGenericTextConverter(converter_target=mock_target)
+    result = await converter.convert_async(prompt="hello")
+    assert result.output_text == "rewritten"
