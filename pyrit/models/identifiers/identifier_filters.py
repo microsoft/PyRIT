@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from enum import Enum
+from typing import Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -47,7 +48,7 @@ class IdentifierFilter(BaseModel):
     case_sensitive: bool = False
 
     @model_validator(mode="after")
-    def _validate_combinations(self) -> "IdentifierFilter":
+    def _validate_combinations(self) -> Self:
         if (self.value is None) == (self.value_pattern is None):
             raise ValueError("Exactly one of value or value_pattern must be supplied")
         validate_text_search(value=self.value, pattern=self.value_pattern)
