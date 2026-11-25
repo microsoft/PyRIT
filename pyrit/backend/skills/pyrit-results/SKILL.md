@@ -58,8 +58,12 @@ smaller `limit`.
    has no conversation of its own; read one of its `child_attack_result_ids` for the evidence.
    Take counts from the totals, not from these rows. For a run of more than about 500 attacks,
    ask the user before reading them all.
-4. Get the results per harm category with `query_analytics`. To compare runs, such as before
-   and after a fix, read each one, or group by `scenario` with no filter.
+4. Get the results per harm category with `query_analytics`. These count every saved attack
+   result, retries included, so report them as their own breakdown, not as a split of the
+   totals above. A category is what an attack targeted, and when `groups_overlap` is true an
+   attack counts in more than one, so don't add them up. While `has_more_groups` is true, call
+   again with `group_offset` in `body` set to `next_group_offset`. To compare runs, such as
+   before and after a fix, read each one, or group by `scenario` with no filter.
 
 ```json
 {
@@ -67,7 +71,8 @@ smaller `limit`.
     "filters": {"dimensions": [{"dimension": {"name": "scenario"}, "values": [{"value": "<scenario result ID>"}]}]},
     "group_by": {"name": "targeted_harm_category"}
   },
-  "response_fields": ["groups.label", "groups.statistics", "has_more_groups"]
+  "response_fields": ["groups.label", "groups.statistics", "groups_overlap", "has_more_groups",
+    "next_group_offset"]
 }
 ```
 
