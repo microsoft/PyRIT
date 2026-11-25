@@ -47,7 +47,9 @@ async def _convert_png_async(converter: ImageNoiseConverter, image_bytes: bytes)
 
         assert result.output_type == "image_path"
         mock_serializer.save_data_async.assert_called_once()
-        return mock_serializer.save_data_async.call_args.kwargs["data"]
+        saved_data = mock_serializer.save_data_async.call_args.kwargs["data"]
+        assert isinstance(saved_data, bytes)
+        return saved_data
 
 
 def _color_key_png() -> Image.Image:
