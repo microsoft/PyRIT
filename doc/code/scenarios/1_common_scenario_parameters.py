@@ -141,7 +141,8 @@ await output_scenario_async(baseline_result)  # type: ignore [top-level-await]
 # run above produces a row for every default technique, which makes it hard to spot the most
 # successful ones at a glance. Pass `sort_groups_by_success_rate=True` to `output_scenario_async` to
 # re-render the same result with the highest success rates at the top (groups with equal rates keep
-# their original relative order):
+# their original relative order). Groups that different objective scorers judged (see **Judging Each
+# Dataset With Its Own Scorer** below) stay unsorted, because their success rates are not comparable:
 
 # %%
 await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
@@ -180,7 +181,8 @@ await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
 # `incompatible_technique_policy: raise` in YAML. `None` uses the scenario class default.
 #
 # This policy does not enable adaptation. Initialization fails if no selected technique can run,
-# even with a baseline. Other construction errors are not skipped.
+# even with a baseline. Other construction errors are not skipped. The policy covers selected
+# techniques only: an optional baseline skips groups it can't use under either policy.
 
 # %% [markdown]
 # ## Custom Scorers

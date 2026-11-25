@@ -157,6 +157,14 @@ class TestApproximateTextMatching:
         matcher = ApproximateTextMatching(threshold=threshold)
         assert matcher.is_match(target="hello", text="hello world") is True
 
+    def test_score_equal_to_threshold_is_a_match(self):
+        # The contract is "minimum overlap required", so an exact tie must count
+        # as a match (>= rather than >). A strict "exceeds" reading would fail here.
+        matcher = ApproximateTextMatching(threshold=0.5, n=2, case_sensitive=False)
+        # "abc" -> n-grams {"ab", "bc"}; "abx" contains only "ab" -> exactly 1/2.
+        assert matcher.get_overlap_score(target="abc", text="abx") == 0.5
+        assert matcher.is_match(target="abc", text="abx") is True
+
     @pytest.mark.parametrize("n", [0, -1, -5, 1.5, "3", None, True, False])
     def test_invalid_n_rejected(self, n):
         with pytest.raises(ValueError, match="n"):

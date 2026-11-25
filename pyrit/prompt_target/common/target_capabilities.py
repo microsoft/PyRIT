@@ -144,6 +144,17 @@ _CLAUDE_4 = TargetCapabilities(
     output_modalities=_TEXT_OUTPUT,
 )
 
+_GROK_4_3 = TargetCapabilities(
+    supports_multi_turn=True,
+    supports_multi_message_pieces=True,
+    supports_system_prompt=True,
+    supports_json_schema=True,
+    supports_json_output=True,
+    supports_editable_history=True,
+    input_modalities=_TEXT_IMAGE_INPUT | TOOL_CALL_INPUT_MODALITIES,
+    output_modalities=_TEXT_OUTPUT,
+)
+
 _GPT_REALTIME_1_5 = TargetCapabilities(
     supports_multi_turn=True,
     supports_multi_message_pieces=True,
@@ -192,6 +203,7 @@ _KNOWN_CAPABILITIES: dict[str, TargetCapabilities] = {
     "claude-sonnet-4-5": _CLAUDE_4,
     "claude-haiku-4-5": _CLAUDE_4,
     "claude-opus-4-5": _CLAUDE_4,
+    "grok-4.3": _GROK_4_3,
 }
 
 

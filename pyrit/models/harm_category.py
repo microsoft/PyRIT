@@ -7,7 +7,7 @@ import logging
 import os
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Any, cast
+from typing import cast
 
 from pyrit.common.yaml_helper import safe_load_yaml
 
@@ -18,11 +18,43 @@ _HARM_CATEGORY_ALIASES: "dict[str, list[HarmCategory]]" = {}
 _CANONICAL_LOOKUP: "dict[str, HarmCategory]" = {}
 _SEPARATOR_REMOVAL_TABLE = str.maketrans("", "", "_- ")
 
-with open(os.path.join(os.path.dirname(__file__), "harm_category_definitions.yaml")) as f:
-    _HARM_CATEGORY_YAML: dict[str, Any] = safe_load_yaml(f) or {}
-    _HARM_CATEGORY_DEFINITIONS: dict[str, str] = _HARM_CATEGORY_YAML.get("definitions", {})
 
-HARM_CATEGORY_TAXONOMY_VERSION: str = _HARM_CATEGORY_YAML.get("version", "v1.0.0")
+def _parse_taxonomy(data: object) -> tuple[str, dict[str, str]]:
+    """
+    Validate the version and definitions loaded from the taxonomy YAML.
+
+    Returns:
+        tuple[str, dict[str, str]]: The version and definitions, using defaults for absent fields.
+
+    Raises:
+        ValueError: If the YAML has an invalid taxonomy shape.
+    """
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError("The harm category taxonomy must be a mapping.")
+
+    version = data.get("version")
+    if version is None:
+        version = "v1.0.0"
+    if not isinstance(version, str):
+        raise ValueError("The harm category taxonomy version must be a string.")
+
+    definitions: dict[str, str] = {}
+    raw_definitions = data.get("definitions")
+    if raw_definitions is None:
+        raw_definitions = {}
+    if not isinstance(raw_definitions, dict):
+        raise ValueError("The harm category definitions must map strings to strings.")
+    for key, value in raw_definitions.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise ValueError("The harm category definitions must map strings to strings.")
+        definitions[key] = value
+    return version, definitions
+
+
+with open(os.path.join(os.path.dirname(__file__), "harm_category_definitions.yaml")) as f:
+    HARM_CATEGORY_TAXONOMY_VERSION, _HARM_CATEGORY_DEFINITIONS = _parse_taxonomy(safe_load_yaml(f))
 
 
 def normalize_harm_category_key(value: str) -> str:

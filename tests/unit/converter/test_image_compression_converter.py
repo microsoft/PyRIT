@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import threading
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -524,3 +525,32 @@ def test_image_compression_identifier_is_stable_for_equal_settings() -> None:
         .get_identifier()
         .hash
     )
+
+
+async def test_image_compression_converter_runs_off_the_event_loop(sample_image_bytes):
+    loop_thread_id = threading.get_ident()
+    compress_thread_ids: list[int] = []
+    converter = ImageCompressionConverter(
+        output_format="JPEG", quality=50, min_compression_threshold=0, fallback_to_original=False
+    )
+    compress_image = converter._compress_image
+
+    def recording_compress(image: Image.Image, original_format: str, original_size: int) -> tuple[BytesIO, str]:
+        compress_thread_ids.append(threading.get_ident())
+        return compress_image(image, original_format, original_size)
+
+    with (
+        patch("pyrit.converter.image_compression_converter.data_serializer_factory") as mock_factory,
+        patch.object(converter, "_compress_image", side_effect=recording_compress),
+    ):
+        mock_serializer = AsyncMock()
+        mock_serializer.read_data_async.return_value = sample_image_bytes(format="PNG", size=(400, 400))
+        mock_serializer.value = "compressed.jpeg"
+        mock_factory.return_value = mock_serializer
+
+        result = await converter.convert_async(prompt="input.png", input_type="image_path")
+
+    assert result.output_text == "compressed.jpeg"
+    mock_serializer.save_b64_image_async.assert_awaited_once()
+    assert len(compress_thread_ids) == 1
+    assert compress_thread_ids[0] != loop_thread_id
