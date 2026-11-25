@@ -387,13 +387,17 @@ class LengthPreservingFilter:
         vocab_size = tokenizer.vocab_size
         candidate_tokens[candidate_tokens > vocab_size] = tokenizer("!").input_ids[0]
 
+        # ``current_control`` comes from ``control_str``, which strips the
+        # decoded suffix, while candidates keep their leading separator space.
+        # Compare stripped forms so an unchanged candidate is still dropped.
+        stripped_control = current_control.strip()
         candidates: list[str] = []
         for i in range(candidate_tokens.shape[0]):
             decoded_str = tokenizer.decode(
                 candidate_tokens[i], skip_special_tokens=True, clean_up_tokenization_spaces=False
             )
             if self._filter:
-                if decoded_str != current_control and len(
+                if decoded_str.strip() != stripped_control and len(
                     tokenizer(decoded_str, add_special_tokens=False).input_ids
                 ) == len(candidate_tokens[i]):
                     candidates.append(decoded_str)
@@ -401,7 +405,10 @@ class LengthPreservingFilter:
                 candidates.append(decoded_str)
 
         if self._filter:
-            candidates = candidates + [candidates[-1]] * (len(candidate_tokens) - len(candidates))
+            # When every row is rejected, fall back to the current suffix so
+            # the step re-scores it instead of indexing an empty list.
+            pad = candidates[-1] if candidates else current_control
+            candidates = candidates + [pad] * (len(candidate_tokens) - len(candidates))
         return candidates
 
 
