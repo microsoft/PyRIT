@@ -42,7 +42,7 @@ def test_tts_initialization_warns_about_removal_and_converter_migration(patch_ce
 
     tts_warnings = [warning for warning in warnings if "OpenAITTSTarget is deprecated" in str(warning.message)]
     assert len(tts_warnings) == 1
-    assert "not a drop-in target replacement" in str(tts_warnings[0].message)
+    assert tts_warnings[0].filename == __file__
     assert target
 
 

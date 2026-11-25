@@ -25,7 +25,8 @@
 # `AZURE_SPEECH_REGION` and `AZURE_SPEECH_RESOURCE_ID` for Entra authentication.
 # This uses [Microsoft Speech TTS](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/text-to-speech),
 # the migration service recommended in the Azure TTS retirement advisory.
-# Install the Speech SDK with `uv sync --extra speech` in a PyRIT checkout.
+# For a PyPI installation in a uv project, install PyRIT with the Speech SDK using
+# `uv add 'pyrit[speech]'`. In a PyRIT checkout, use `uv sync --extra speech`.
 #
 # ```python
 # from pyrit.converter import AzureSpeechTextToAudioConverter

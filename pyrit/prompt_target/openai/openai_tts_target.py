@@ -94,10 +94,7 @@ class OpenAITTSTarget(OpenAITarget):
 
         print_deprecation_message(
             old_item=OpenAITTSTarget,
-            new_item=(
-                "pyrit.converter.AzureSpeechTextToAudioConverter for text-to-audio conversion "
-                "(a converter, not a drop-in target replacement)"
-            ),
+            new_item="pyrit.converter.AzureSpeechTextToAudioConverter",
             removed_in="1.5.0",
         )
 
