@@ -168,7 +168,7 @@ class PinyinConverter(Converter):
                 reading = reading[0]
             elif self._mode == "mixed":
                 reading = rng.choice((reading, reading[0]))
-            elif TYPE_CHECKING and self._mode != "full":
+            elif TYPE_CHECKING and self._mode != "full":  # pragma: no cover
                 assert_never(self._mode)
 
             out.append(reading)

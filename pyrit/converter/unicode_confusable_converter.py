@@ -103,7 +103,7 @@ class UnicodeConfusableConverter(Converter):
         elif self._source_package == "confusable_homoglyphs":
             converted_prompt = self._generate_perturbed_prompts(prompt)
         else:
-            if TYPE_CHECKING and self._source_package != "confusables":
+            if TYPE_CHECKING and self._source_package != "confusables":  # pragma: no cover
                 assert_never(self._source_package)
             converted_prompt = "".join(self._confusable(c) for c in prompt)
 
