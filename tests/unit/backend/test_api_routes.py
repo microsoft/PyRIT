@@ -772,6 +772,7 @@ class TestAttackRoutes:
     @pytest.mark.parametrize(
         ("error", "status_code"),
         [
+            (AttackStateConflictError("The attack changed concurrently. Reload and retry."), status.HTTP_409_CONFLICT),
             (ManualSendConflictError("Conversation is busy"), status.HTTP_409_CONFLICT),
             (ManualSendQueueFullError("Manual-send queue is full"), status.HTTP_429_TOO_MANY_REQUESTS),
             (PermissionError("Automated results are read-only. Choose Continue manually."), status.HTTP_403_FORBIDDEN),

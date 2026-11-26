@@ -691,7 +691,7 @@ async def add_message(  # pyrit-async-suffix-exempt
         return await service.add_message_async(attack_result_id=attack_result_id, request=request)
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
-    except ManualSendConflictError as e:
+    except (AttackStateConflictError, ManualSendConflictError) as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except ManualSendQueueFullError as e:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e)) from e
