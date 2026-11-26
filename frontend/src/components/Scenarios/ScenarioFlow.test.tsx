@@ -235,7 +235,10 @@ describe('Scenario catalog-to-run integration', () => {
 
     await user.click(screen.getByTestId('launch-scenario-btn'))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
-    await user.click(within(preview).getByTestId('confirm-launch-scenario-btn'))
+    await waitFor(() => expect(within(preview).getByRole('button', { name: 'Cancel', exact: true })).toHaveFocus())
+    const confirmLaunch = within(preview).getByRole('button', { name: 'Launch scan', exact: true })
+    await waitFor(() => expect(confirmLaunch).toBeEnabled())
+    await user.click(confirmLaunch)
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith({
       scenario_name: SCENARIO_NAME,
