@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_origin
 
@@ -334,6 +336,16 @@ class ViolatesAssertPolicy(Condition):
     taxonomy: AssertTaxonomy
     application_context: str = ""
     target_instructions: str | None = None
+
+    @property
+    def policy_id(self) -> str:
+        """
+        Identify the policy by its content, so policies that share a behavior name stay distinct.
+
+        Returns:
+            str: The SHA-256 hex digest of the policy's sorted JSON.
+        """
+        return hashlib.sha256(json.dumps(self.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()
 
 
 class ContentWritten(Condition):

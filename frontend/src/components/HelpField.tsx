@@ -5,21 +5,27 @@ import { Field, type FieldProps, type LabelProps } from '@fluentui/react-compone
 import ContextualHelpLabel from './ContextualHelpLabel'
 import { useContextualHelpLabelStyles } from './ContextualHelpLabel.styles'
 
-interface HelpFieldProps extends Omit<FieldProps, 'label' | 'hint'> {
+interface HelpFieldProps extends Omit<FieldProps, 'label' | 'hint' | 'validationMessage' | 'validationState'> {
   readonly label: string
-  readonly help?: string
+  readonly help?: string | undefined
   readonly hint?: ReactNode
+  readonly validationMessage?: FieldProps['validationMessage']
+  readonly validationState?: FieldProps['validationState']
 }
 
 /** Keeps the field description available to assistive technology even when its help is closed. */
-export default function HelpField({ label, help, hint, ...props }: HelpFieldProps) {
+export default function HelpField({ label, help, hint, validationMessage, validationState, ...props }: HelpFieldProps) {
   const styles = useContextualHelpLabelStyles()
+  const hintContent = help || hint != null ? <>{help && <span className={styles.srOnly}>{help}</span>}{hint}</> : undefined
   return (
-    <Field {...props}
+    <Field
+      {...props}
       label={help ? { children: (_: unknown, labelProps: LabelProps) => (
         <ContextualHelpLabel term={label} labelProps={labelProps}>{help}</ContextualHelpLabel>
       ) } : label}
-      hint={help || hint != null ? <>{help && <span className={styles.srOnly}>{help}</span>}{hint}</> : undefined}
+      {...(hintContent !== undefined ? { hint: hintContent } : {})}
+      {...(validationMessage !== undefined ? { validationMessage } : {})}
+      {...(validationState !== undefined ? { validationState } : {})}
     />
   )
 }

@@ -199,6 +199,28 @@ PUT /api/targets/my-claude/credentials
 - Like other targets created through the API, private targets are gone after the backend
   restarts or reinitializes.
 
+### Converters and scorers
+
+- `POST /api/converters` - Create a converter
+- `DELETE /api/converters/{converter_id}` - Remove a converter
+- `POST /api/scorers` - Create a scorer
+
+A created converter or scorer is Temporary unless the request sets `"persist": true`, which works as it does for
+targets: it needs `register` left on and a name of lowercase letters, digits, and underscores (otherwise **422**), the
+entry is saved under `registry_recipes_source` with the signed-in user recorded, and it's restored at every start. A
+request receives **400** with `"type": "/errors/not-saveable"`, and can be sent again without `persist`, if the entry
+would save a key, use a
+Temporary target, converter, or scorer, be of a type that only a scan's launch scripts added, or, for a converter, need
+or keep an uploaded file. A saved converter or scorer can use this server's keys and Azure identity, as the ones from
+the configuration do. A target left out of the
+request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
+converter copy made with `source` can't be saved yet, and a private converter or scorer can't be saved (**422**). A
+taken converter name receives **409** with or without `persist`, a taken scorer name receives **409** when saving
+and **400** otherwise, and storage that can't be written receives **503**. Each listed converter's and scorer's
+`origin` is `saved`, `configuration`, or
+`temporary`, as for targets. A saved converter can't be removed through the API yet (**409**): delete its file under
+`registry_recipes_source` and restart the backend.
+
 ### Dataset creation, batch mutation, and deletion
 
 `POST /api/datasets` creates a named dataset synchronously from multipart form data.
@@ -996,9 +1018,8 @@ API callers are trusted operators, so these are intentional exceptions:
   only files from the media folders above.
 - Initializers and custom initializer scripts are trusted Python. Uploading scripts requires
   an administrator and `allow_custom_initializers: true`.
-- `GitHubCopilotTarget.working_directory`, `HuggingFaceChatTarget.model_path`, and
-  `LocalRefusalClassifierScorer.model_id` may name local folders; callers set them like any
-  other operator setting.
+- `GitHubCopilotTarget.working_directory` and `HuggingFaceChatTarget.model_path` may name local
+  folders; callers set them like any other operator setting.
 
 ## Strict Lockstep Compatibility
 
