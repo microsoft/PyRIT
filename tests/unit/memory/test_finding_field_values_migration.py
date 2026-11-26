@@ -130,6 +130,8 @@ def test_upgrade_moves_existing_findings_into_field_values() -> None:
                 )
             ]
             assert evidence_rows == [(B, ATTACK_ID)]
+            # Schema validation requires the current head, not this historical revision.
+            command.upgrade(config, "head")
         check_schema_migrations(engine=engine)
     finally:
         engine.dispose()

@@ -62,7 +62,9 @@ jobs:
         timeout-minutes: 5
         env:
           PYRIT_TEST_SQLSERVER_URL: mssql+pyodbc://sa:Pyrit_CI_only!4829@localhost:1433/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
-        run: uv run --frozen python -m build_scripts.check_sqlserver_migrations
+        run: |
+          uv run --frozen python -m build_scripts.check_sqlserver_migrations
+          uv run --frozen python -m pytest tests/unit/memory/test_legacy_atomic_identifier_migration.py -q
       - name: SQL Server diagnostics
         if: failure()
         env:
