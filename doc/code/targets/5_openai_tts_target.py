@@ -26,7 +26,8 @@
 # This uses [Microsoft Speech TTS](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/text-to-speech),
 # the migration service recommended in the Azure TTS retirement advisory.
 # For a PyPI installation in a uv project, install PyRIT with the Speech SDK using
-# `uv add 'pyrit[speech]'`. In a PyRIT checkout, use `uv sync --extra speech`.
+# `uv add 'pyrit[speech]'`. In an existing standalone Python environment, use
+# `uv pip install 'pyrit[speech]'`. In a PyRIT checkout, use `uv sync --extra speech`.
 #
 # ```python
 # from pyrit.converter import AzureSpeechTextToAudioConverter
