@@ -129,7 +129,7 @@ class ScenarioRunPlan(BaseModel):
     stores_seed_groups: Literal[True] | None = None
 
     @model_validator(mode="after")
-    def _validate_normalized_plan(self) -> "ScenarioRunPlan":
+    def _validate_normalized_plan(self) -> Self:
         """
         Reject ambiguous IDs and invalid normalized references.
 
