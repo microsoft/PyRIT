@@ -452,7 +452,7 @@ export default function ObjectiveHeader({
               <Button
                 appearance="secondary"
                 className={styles.resultAction}
-                onClick={handleRemoveResult}
+                onClick={() => { void handleRemoveResult() }}
                 disabled={!canRemoveHumanScore || isUpdatingResult || applyingScorer}
               >
                 Remove
@@ -461,7 +461,7 @@ export default function ObjectiveHeader({
             <Button
               appearance="primary"
               className={styles.resultAction}
-              onClick={handleUpdateResult}
+              onClick={() => { void handleUpdateResult() }}
               disabled={!canUpdateOutcome || isUpdatingResult || applyingScorer}
               aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
             >
@@ -502,7 +502,7 @@ export default function ObjectiveHeader({
                   // eslint-disable-next-line jsx-a11y/no-autofocus -- focus moves into the editor the user just opened
                   autoFocus
                 />
-                <Button appearance="primary" size="small" className={styles.editorAction} onClick={handleSave} disabled={(!draft.trim() && missingObjective) || isSaving}>
+                <Button appearance="primary" size="small" className={styles.editorAction} onClick={() => { void handleSave() }} disabled={(!draft.trim() && missingObjective) || isSaving}>
                   {isSaving ? 'Saving...' : 'Save'}
                 </Button>
                 <Button appearance="subtle" size="small" className={styles.editorAction} onClick={() => setIsEditing(false)} disabled={isSaving}>

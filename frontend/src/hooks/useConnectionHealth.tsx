@@ -86,7 +86,7 @@ export function ConnectionHealthProvider({ children }: { children: ReactNode }) 
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        checkHealth()
+        void checkHealth()
       }
     }
     document.addEventListener('visibilitychange', handleVisibility)

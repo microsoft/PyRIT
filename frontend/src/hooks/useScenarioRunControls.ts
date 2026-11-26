@@ -71,7 +71,7 @@ export function useScenarioRunControls({
     try {
       const request = await scenariosApi.getLaunchConfiguration(scenarioResultId, controller.signal)
       if (rerunRequest.current !== controller || controller.signal.aborted) return
-      navigate(scenarioRerunRoutePath(request.scenario_name, scenarioResultId))
+      void navigate(scenarioRerunRoutePath(request.scenario_name, scenarioResultId))
     } catch (error: unknown) {
       if (rerunRequest.current !== controller || controller.signal.aborted) return
       setRerunError(toApiError(error).detail)
