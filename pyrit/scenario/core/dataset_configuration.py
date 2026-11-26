@@ -36,7 +36,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, TypeVar, cast
 
 from pyrit.common import print_deprecation_message
 from pyrit.memory import CentralMemory
@@ -628,6 +628,19 @@ class DatasetConfiguration:
     def _preparation_sources(self) -> list[tuple[DatasetSource, DatasetFetchPolicy]]:
         return [(source, source.fetch or self.fetch) for source in self.sources]
 
+    async def get_missing_dataset_names_async(self) -> list[str]:
+        """
+        Check source availability without reading seed bodies or fetching providers.
+
+        Returns:
+            list[str]: Selected names that are not stored in this configuration's memory.
+        """
+        names = self.dataset_names
+        if not names:
+            return []
+        stored = set(await self._memory.get_seed_dataset_names_async())
+        return [name for name in names if name not in stored]
+
     async def prepare_async(self, *, fetch: DatasetFetchPolicy | None = None) -> None:
         """
         Check all sources, then load or refresh datasets from configured or registered providers.
@@ -978,6 +991,12 @@ class DatasetConfiguration:
         return random.sample(items, self.max_total)
 
 
+class _AttackGroupSampler(Protocol):
+    def __call__(
+        self, *, configuration: DatasetAttackConfiguration, groups: dict[str, list[AttackSeedGroup]]
+    ) -> dict[str, list[AttackSeedGroup]]: ...
+
+
 @dataclass(frozen=True)
 class _ResolvedAttackGroups:
     """A per-read snapshot that validates compound populations before any sampling."""
@@ -986,15 +1005,19 @@ class _ResolvedAttackGroups:
     groups: dict[str, list[AttackSeedGroup]]
     children: tuple[_ResolvedAttackGroups, ...] = ()
 
-    def select(self, *, apply_sampling: bool) -> dict[str, list[AttackSeedGroup]]:
+    def select(
+        self, *, apply_sampling: bool, sampler: _AttackGroupSampler | None = None
+    ) -> dict[str, list[AttackSeedGroup]]:
         if not apply_sampling:
             return self.groups
         groups = self.groups
         if self.children:
             groups = {}
             for child in self.children:
-                for name, population in child.select(apply_sampling=True).items():
+                for name, population in child.select(apply_sampling=True, sampler=sampler).items():
                     groups.setdefault(name, []).extend(population)
+        if sampler is not None:
+            return sampler(configuration=self.configuration, groups=groups)
         return self.configuration._sample_groups_by_dataset(groups)
 
 
@@ -1075,7 +1098,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
                 dataset name, and the flat resolved seeds with their source kind.
 
         Raises:
-            DatasetConstraintError: If a configured dataset yields no seeds.
+            DatasetConstraintError: If a configured dataset yields no seeds or its seeds can't form attack groups.
         """
         inline = self._inline_attack_groups()
         if inline is not None:
@@ -1084,7 +1107,14 @@ class DatasetAttackConfiguration(DatasetConfiguration):
             return {INLINE_DATASET_NAME: inline}, resolved
 
         seeds_by_dataset = await self._collect_named_seeds_async()
-        groups_by_dataset = {name: self._build_attack_groups(seeds) for name, seeds in seeds_by_dataset.items()}
+        groups_by_dataset = {}
+        for name, seeds in seeds_by_dataset.items():
+            try:
+                groups_by_dataset[name] = self._build_attack_groups(seeds)
+            except ValueError as exc:
+                raise DatasetConstraintError(
+                    f"Dataset '{name}' has seeds that can't form attack groups: {exc}"
+                ) from exc
         all_seeds = [seed for seeds in seeds_by_dataset.values() for seed in seeds]
         resolved = ResolvedDataset(
             seeds=all_seeds,

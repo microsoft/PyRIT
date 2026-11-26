@@ -50,6 +50,11 @@ export function acceptsAnyNamedDataset(scenario: RegisteredScenario, options: Sc
   return supportsParameter(scenario, 'dataset_config') && options.supports_overrides && options.mode === 'any'
 }
 
+/** A scenario that checks stored contents offers only the server's compatible choices, without general dataset actions. */
+export function usesCompatibleDatasetPicker(scenario: RegisteredScenario): boolean {
+  return scenario.dataset_options?.compatible_only === true
+}
+
 /** Whether the scenario declares that a launch needs datasets selected, such as one without defaults. */
 export function requiresDatasetSelection(scenario: RegisteredScenario): boolean {
   return (scenario.dataset_options?.min_selected ?? 0) > 0
@@ -78,6 +83,14 @@ export function linkedDatasetProblem(names: readonly string[], takesLinkedDatase
     return `This scenario can't take the linked datasets: ${names.map(linkedDatasetLabel).join(', ')}.`
   }
   return null
+}
+
+/** Why the form left out linked names that a compatible-only scenario's listing omits. */
+export function omittedLinkedDatasetsMessage(names: readonly string[]): string {
+  const labels = names.map(linkedDatasetLabel).join(', ')
+  return names.length === 1
+    ? `The linked dataset ${labels} isn't a stored dataset this scenario can use, so it wasn't selected.`
+    : `The linked datasets ${labels} aren't stored datasets this scenario can use, so they weren't selected.`
 }
 
 /** The scenario-specific parameters the launch form renders, without the common ones. */
@@ -110,12 +123,12 @@ export interface ScenarioLaunchInput {
   /** Why the linked dataset names can't launch; see `linkedDatasetProblem`. */
   linkedDatasetError?: string | null
   includeBaseline: boolean
-  techniqueOverride?: TechniqueOverride
-  techniqueEditError?: string
+  techniqueOverride?: TechniqueOverride | undefined
+  techniqueEditError?: string | undefined
   supportsPrependedConversation?: boolean
   supportsPrompt?: boolean
   objectiveScorer?: RegisteredComponentReference | null
-  scorerError?: string
+  scorerError?: string | undefined
   operationId: string | null
   maxConcurrency: number
   maxRetries: number

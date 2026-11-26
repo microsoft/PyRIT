@@ -57,11 +57,16 @@ function exactValue(params: URLSearchParams, name: string): string | undefined {
 
 /** Reads the new-generation query. A missing or repeated parameter is ignored. */
 export function newGenerationParamsFromSearch(params: URLSearchParams): NewGenerationParams {
+  const generator = singleValue(params, GENERATOR_PARAM)
+  const template = singleValue(params, TEMPLATE_PARAM)
+  const suite = singleValue(params, SUITE_PARAM)
+  const from = singleValue(params, FROM_PARAM)
+  const selectionKey = exactValue(params, SELECTION_KEY_PARAM)
   return {
-    generator: singleValue(params, GENERATOR_PARAM),
-    template: singleValue(params, TEMPLATE_PARAM),
-    suite: singleValue(params, SUITE_PARAM),
-    from: singleValue(params, FROM_PARAM),
-    selectionKey: exactValue(params, SELECTION_KEY_PARAM),
+    ...(generator !== undefined ? { generator } : {}),
+    ...(template !== undefined ? { template } : {}),
+    ...(suite !== undefined ? { suite } : {}),
+    ...(from !== undefined ? { from } : {}),
+    ...(selectionKey !== undefined ? { selectionKey } : {}),
   }
 }

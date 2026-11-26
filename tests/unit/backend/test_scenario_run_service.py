@@ -38,6 +38,7 @@ from pyrit.memory import (
 )
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
+    DEFAULT_FINDING_FIELDS,
     SCENARIO_RUN_PLAN_METADATA_KEY,
     SCENARIO_SUITE_EXECUTION_METADATA_KEY,
     AtomicAttackIdentifier,
@@ -46,6 +47,8 @@ from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
+    FindingField,
+    FindingFields,
     Operation,
     RetryEvent,
     ScenarioAttackResultDelta,
@@ -59,6 +62,7 @@ from pyrit.models import (
     ScenarioRunExecutionToken,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
     ScenarioRunState,
     ScenarioTechniqueSummary,
@@ -91,7 +95,9 @@ from pyrit.scenario.core import (
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.scenarios.airt import Jailbreak, Scam
-from pyrit.setup.initializers import ConverterInitializer, ToolsInitializer
+from pyrit.setup.finding_fields import get_active_finding_fields
+from pyrit.setup.initializers import ConverterInitializer, FindingsInitializer, ToolsInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import (
     MockPromptTarget,
@@ -2069,6 +2075,29 @@ class TestScenarioRunServiceStartRun:
 
         assert response.status == ScenarioRunState.IN_PROGRESS
         assert mock_init_instance.initialize_async.await_count == 2
+
+    @pytest.mark.usefixtures("reset_finding_fields")
+    async def test_start_run_rejects_a_findings_initializer_before_running_any(self, mock_all_registries) -> None:
+        """A run that names a FindingsInitializer runs no initializers and leaves the finding fields alone."""
+
+        class ContosoFindingFields(FindingsInitializer):
+            def get_finding_fields(self) -> FindingFields:
+                return FindingFields(
+                    severity=FindingField(key="severity", label="Severity", type="choice", options=[("high", "High")])
+                )
+
+        service = ScenarioRunService()
+        target_initializer = MagicMock(spec=PyRITInitializer)
+        mock_all_registries["initializer_registry"].create_and_configure.side_effect = [
+            target_initializer,
+            ContosoFindingFields(),
+        ]
+
+        with pytest.raises(ValueError, match="'contoso_findings' sets the deployment's finding fields"):
+            await service.start_run_async(request=_make_request(initializers=["target", "contoso_findings"]))
+
+        target_initializer.initialize_async.assert_not_awaited()
+        assert get_active_finding_fields() is DEFAULT_FINDING_FIELDS
 
     async def test_start_run_passes_scenario_result_id_for_resume(self, mock_all_registries) -> None:
         """Test that scenario_result_id is passed to the registry for resumption."""
@@ -5910,6 +5939,51 @@ async def test_get_progress_techniques_used_prefers_technique_name_over_display_
 
     assert progress is not None
     assert progress.run.techniques_used == ["ignore_print"]
+
+
+async def test_get_progress_keeps_a_baseline_named_like_a_technique_unbound(mock_memory) -> None:
+    """A baseline whose display group matches a known technique runs no technique."""
+    groups = [
+        ScenarioRunPlanAtomicGroup(
+            id=f"group-{kind.value}",
+            atomic_attack_name=f"{kind.value}__goal_0",
+            display_group="ignore_print",
+            technique_name=technique_name,
+            technique_eval_hash="eval",
+            seed_group_ids=[],
+            kind=kind,
+        )
+        for kind, technique_name in (
+            (ScenarioRunPlanGroupKind.BASELINE, None),
+            (ScenarioRunPlanGroupKind.ATTACK, "ignore_print"),
+        )
+    ]
+    header = make_scenario_result(
+        scenario_name="garak.prompt_inject",
+        attack_results={},
+        metadata={
+            SCENARIO_RUN_PLAN_METADATA_KEY: ScenarioRunPlan(
+                scenario_registry_name="garak.prompt_inject", atomic_groups=groups, seed_groups=[]
+            ).model_dump(mode="json"),
+        },
+    )
+    mock_memory.get_scenario_result_header_async.return_value = header
+    mock_memory.get_scenario_attack_result_deltas_async.return_value = ([], False)
+    service = ScenarioRunService()
+    summaries = {"ignore_print": ScenarioTechniqueSummary(name="ignore_print", tags=["injection"])}
+
+    with patch.object(service, "_get_scenario_technique_summaries", return_value=summaries):
+        progress = await service.get_run_progress_from_storage_async(
+            scenario_result_id=str(header.id), since=None, limit=25, active_group_ids=[]
+        )
+
+    assert progress is not None and progress.plan is not None
+    techniques = {group.kind: (group.technique_name, group.tags) for group in progress.plan.atomic_groups}
+    assert techniques == {
+        ScenarioRunPlanGroupKind.BASELINE: (None, []),
+        ScenarioRunPlanGroupKind.ATTACK: ("ignore_print", ["injection"]),
+    }
+    assert progress.run.techniques_used == ["baseline", "ignore_print"]
 
 
 @pytest.mark.parametrize("started_at", ["not-a-timestamp", "2026-08-08T12:30:00"])

@@ -27,6 +27,7 @@ from pyrit.analytics import (
 )
 from pyrit.backend.models import (
     ConversationMessagesResponse,
+    DatasetListResponse,
     ListRegisteredScenariosResponse,
     ProblemDetail,
     ScenarioRunListResponse,
@@ -155,6 +156,30 @@ async def list_scenarios(  # pyrit-async-suffix-exempt
         cursor=cursor,
         include_estimates=include_estimates,
     )
+
+
+@router.get(
+    "/catalog/{scenario_name:path}/datasets",
+    response_model=DatasetListResponse,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid scenario configuration"},
+        404: {"model": ProblemDetail, "description": "Scenario not found"},
+    },
+)
+async def list_compatible_scenario_datasets_async(scenario_name: IdentifierStr) -> DatasetListResponse:
+    """
+    List verified scenario-compatible choices without fetching providers or starting a scan.
+
+    Returns:
+        DatasetListResponse: Named datasets satisfying the scenario's data contract.
+    """
+    try:
+        result = await get_scenario_service().list_compatible_datasets_async(scenario_name=scenario_name)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_name}' not found")
+    return result
 
 
 @router.get(

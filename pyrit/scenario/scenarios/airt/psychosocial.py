@@ -742,7 +742,6 @@ class Psychosocial(Scenario):
                 # incompatible technique policy: skipping would drop requested objectives silently.
                 raise ValueError(f"No objective scorer can judge sub-harm '{harm.name}'.\n{exc}") from exc
             scorer = selection.scorer
-            binding = selection.to_run_plan_binding()
             scoring_config = AttackScoringConfig(objective_scorer=scorer)
 
             if context.include_baseline:
@@ -754,7 +753,7 @@ class Psychosocial(Scenario):
                         memory_labels=context.memory_labels,
                         atomic_attack_name=f"{harm.name}_baseline",
                         display_group=harm.name,
-                        objective_scorer_binding=binding,
+                        objective_scorer_selection=selection,
                     )
                 )
 
@@ -810,7 +809,7 @@ class Psychosocial(Scenario):
                         seed_groups=compatible_groups,
                         adversarial_chat=adversarial_chat,
                         objective_scorer=scorer,
-                        objective_scorer_binding=binding,
+                        objective_scorer_selection=selection,
                         memory_labels=context.memory_labels,
                         display_group=harm.name,
                     )
