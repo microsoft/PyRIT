@@ -208,7 +208,7 @@ class PDFConverter(Converter):
         pdf_bytes = self._modify_existing_pdf() if self._existing_pdf_bytes else self._generate_pdf(content)
 
         # Step 3: Serialize PDF
-        pdf_serializer = await self._serialize_pdf_async(pdf_bytes, content)
+        pdf_serializer = await self._serialize_pdf_async(pdf_bytes, content=content)
 
         # Return the result
         return ConverterResult(output_text=pdf_serializer.value, output_type="binary_path")
@@ -365,7 +365,7 @@ class PDFConverter(Converter):
 
                         # (1) Build the overlay PageObject + buffer
                         overlay_page, overlay_buffer = self._inject_text_into_page(
-                            page, x, y, text, font, font_size, font_color
+                            page, x=x, y=y, text=text, font=font, font_size=font_size, font_color=font_color
                         )
 
                         # (2) Merge onto the page (already attached to writer)
@@ -386,6 +386,7 @@ class PDFConverter(Converter):
     def _inject_text_into_page(
         self,
         page: PageObject,
+        *,
         x: float,
         y: float,
         text: str,
@@ -503,7 +504,7 @@ class PDFConverter(Converter):
                 len(missing),
             )
 
-    async def _serialize_pdf_async(self, pdf_bytes: bytes, content: str) -> DataTypeSerializer:
+    async def _serialize_pdf_async(self, pdf_bytes: bytes, *, content: str) -> DataTypeSerializer:
         """
         Serialize the generated PDF using a data serializer.
 

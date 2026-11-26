@@ -17,6 +17,7 @@ import {
   parseJsonObjectFormValue,
   type ParameterFormValue,
 } from './parameterForm'
+import { fluentRef } from '@/utils/fluentRef'
 
 export interface ParameterFieldProps {
   parameter: Parameter
@@ -34,11 +35,11 @@ export interface ParameterFieldProps {
   /** Prefix for `data-testid` attributes. Defaults to `'param'` (e.g. `param-<name>`). */
   testIdPrefix?: string
   /** Extra guidance appended to the field's hint, e.g. explaining why it's disabled. */
-  extraHint?: string
+  extraHint?: string | undefined
   /** Associate a server-side validation error with this field's control. */
-  validationMessage?: string
+  validationMessage?: string | undefined
   /** Ref for a multiline control when the parent needs to restore focus. */
-  controlRef?: Ref<HTMLTextAreaElement>
+  controlRef?: Ref<HTMLTextAreaElement> | undefined
 }
 
 /**
@@ -279,7 +280,7 @@ export default function ParameterField({
         validationState={externalValidationMessage ? 'error' : 'none'}
       >
         <Textarea
-          ref={controlRef}
+          ref={fluentRef(controlRef)}
           className={styles.control}
           value={stringValue}
           placeholder={placeholder}
