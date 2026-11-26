@@ -599,6 +599,7 @@ async def test_request_from_dataset_reads_assert_metadata_async(
     [
         ("dataset:named:plain", PromptGenerationNotFoundError, "doesn't record a generation request"),
         ("dataset:named:invalid_request", PromptGenerationNotFoundError, "doesn't record a generation request"),
+        ("dataset:named:invalid_assert", PromptGenerationNotFoundError, "doesn't record a generation request"),
         ("dataset:unnamed", ValueError, "Choose a named dataset"),
         ("support_policy", ValueError, "Invalid dataset selection key"),
     ],
@@ -611,15 +612,40 @@ async def test_request_from_dataset_rejects_datasets_without_a_valid_request_asy
     match: str,
 ) -> None:
     invalid = {TargetObjectiveGenerationRequest.METADATA_KEY: {"instructions": " ", "count": 1}}
+    invalid_assert = {AssertGroupMetadata.METADATA_KEY: {"unexpected": True}}
     await sqlite_instance.add_seeds_to_memory_async(
         seeds=[
             SeedObjective(value="plain", dataset_name="plain"),
             SeedObjective(value="invalid", dataset_name="invalid_request", metadata=invalid),
+            SeedObjective(value="invalid assert", dataset_name="invalid_assert", metadata=invalid_assert),
         ],
         added_by="test",
     )
     with pytest.raises(error, match=match):
         await service.request_from_dataset_async(selection_key)
+
+
+async def test_request_from_dataset_skips_invalid_assert_metadata_for_valid_adapter_async(
+    service: PromptGenerationService,
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    target_request = TargetObjectiveGenerationRequest(instructions="Ask nicely", count=2)
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            SeedObjective(
+                value="mixed",
+                dataset_name="mixed_metadata",
+                metadata={
+                    AssertGroupMetadata.METADATA_KEY: {"unexpected": True},
+                    **target_request.to_metadata(),
+                },
+            ),
+        ],
+        added_by="test",
+    )
+    resolved = await service.request_from_dataset_async("dataset:named:mixed_metadata")
+    assert resolved.generator == "target_objective"
+    assert resolved.request == target_request.model_dump(mode="json")
 
 
 async def test_estimate_is_exact_after_review_pause_async(

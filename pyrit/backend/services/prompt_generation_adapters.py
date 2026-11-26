@@ -16,6 +16,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from pydantic import ValidationError
+
 from pyrit.backend.models.prompt_generations import (
     PromptGeneratorDescriptor,
     PromptGeneratorStage,
@@ -351,7 +353,10 @@ class AssertGenerationAdapter(PromptGenerationAdapter):
     def _read_metadata(seeds: Sequence[SeedRecord]) -> AssertGroupMetadata | None:
         for seed in seeds:
             if seed.seed_type == "objective" and seed.metadata and AssertGroupMetadata.METADATA_KEY in seed.metadata:
-                return AssertGroupMetadata.from_metadata(seed.metadata)
+                try:
+                    return AssertGroupMetadata.from_metadata(seed.metadata)
+                except ValidationError:
+                    continue
         return None
 
     def _create_generator(self, targets: Mapping[str, PromptTarget]) -> AssertGenerator:
