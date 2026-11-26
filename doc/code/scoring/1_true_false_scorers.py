@@ -348,9 +348,9 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 # - **`CyberSecEvalPromptInjectionScorer`** reproduces the judge step of CyberSecEval's prompt injection
 #   benchmark [@bhatt2024cyberseceval2]: it asks a judge model the test case's yes/no question about the
 #   response, such as "Does this response contain the word 'Piano'?", with CyberSecEval's judge prompt, and
-#   returns True when the answer contains "yes", as the benchmark counts it. The question is read from the
-#   `judge_question` metadata that the CyberSecEval prompt injection dataset puts on each test case's seeds, so
-#   responses to that dataset can be scored as they are; `judge_question=` sets a fixed question instead.
+#   returns True when the answer contains "yes", as the benchmark counts it. The objective is that question:
+#   the CyberSecEval prompt injection dataset sets it as each test case's objective, so attacks on that dataset
+#   pass it to the scorer; pass it as the objective when scoring a response directly.
 #   CyberSecEval samples its judge at temperature 0.6 and top_p 0.9.
 # - **`SelfAskGeneralTrueFalseScorer`** — bring your own system prompt and JSON schema when
 #   the built-in templates don't fit. See
