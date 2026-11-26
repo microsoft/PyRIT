@@ -747,6 +747,7 @@ class AttackPrompt:
         test_controls: Any,
         loss_function: _SelectiveLossFunction,
         logit_positions: torch.Tensor,
+        cache_parameter_name: str,
     ) -> torch.Tensor | None:
         """
         Score candidates after evaluating their invariant prefix once.
@@ -768,7 +769,7 @@ class AttackPrompt:
         prefix_output = model(**prefix_kwargs)
         try:
             prefix_cache = self._expand_prefix_cache(
-                getattr(prefix_output, "past_key_values", None), token_ids.shape[0]
+                getattr(prefix_output, cache_parameter_name, None), token_ids.shape[0]
             )
         except (TypeError, ValueError):
             del prefix_output, token_ids
@@ -777,7 +778,7 @@ class AttackPrompt:
 
         suffix_kwargs: dict[str, Any] = {
             "input_ids": token_ids[:, prefix_length:],
-            "past_key_values": prefix_cache,
+            cache_parameter_name: prefix_cache,
             "use_cache": False,
             "return_dict": True,
             "logits_to_keep": logit_positions - prefix_length,
@@ -820,7 +821,9 @@ class AttackPrompt:
             forward_parameters = {}
 
         supports_selective_logits = "logits_to_keep" in forward_parameters
-        supports_prefix_cache = "past_key_values" in forward_parameters and "use_cache" in forward_parameters
+        # transformers 5.24 renamed the forward parameter `past_key_values` to `cache`.
+        cache_parameter_name = next((name for name in ("cache", "past_key_values") if name in forward_parameters), None)
+        supports_prefix_cache = "use_cache" in forward_parameters
 
         if supports_selective_logits and isinstance(loss_function, _SelectiveLossFunction):
             logit_positions = loss_function.get_required_logit_positions(
@@ -828,12 +831,18 @@ class AttackPrompt:
                 control_slice=self._control_slice,
                 device=model.device,
             )
-            if use_prefix_cache and supports_prefix_cache and self._control_slice.start > 1:
+            if (
+                use_prefix_cache
+                and cache_parameter_name is not None
+                and supports_prefix_cache
+                and self._control_slice.start > 1
+            ):
                 cached_loss = self._loss_with_prefix_cache(
                     model,
                     test_controls,
                     loss_function,
                     logit_positions,
+                    cache_parameter_name,
                 )
                 if cached_loss is not None:
                     return cached_loss
