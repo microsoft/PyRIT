@@ -234,6 +234,14 @@ class TestObjectiveAccuracyInterval:
         assert metrics.accuracy_ci_lower is None
         assert metrics.accuracy_ci_upper is None
 
+    def test_is_none_after_a_json_round_trip_of_an_undefined_accuracy(self, tmp_path):
+        path = tmp_path / "metrics.json"
+        path.write_text(self._metrics(num_responses=10, accuracy=float("nan")).to_json())
+        loaded = ObjectiveScorerMetrics.from_json_file(path)
+        assert loaded.accuracy is None
+        assert loaded.accuracy_ci_lower is None
+        assert loaded.accuracy_ci_upper is None
+
     def test_round_trips_through_json(self, tmp_path):
         path = tmp_path / "metrics.json"
         path.write_text(self._metrics(num_responses=100, accuracy=0.92).to_json())

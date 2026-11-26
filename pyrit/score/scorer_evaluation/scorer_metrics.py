@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar, cast
 
 import numpy as np
 
@@ -371,14 +371,17 @@ class ObjectiveScorerMetrics(ScorerMetrics):
 
     def __post_init__(self) -> None:
         """Fill in the Wilson interval for the accuracy when it was not given."""
+        # An undefined (NaN) accuracy is written to JSON as null, so it is None after a round trip.
+        accuracy = cast("float | None", self.accuracy)
         if (
             self.accuracy_ci_lower is None
             and self.accuracy_ci_upper is None
             and self.num_responses
-            and math.isfinite(self.accuracy)
+            and accuracy is not None
+            and math.isfinite(accuracy)
         ):
             # accuracy is the share of correct responses, so this recovers their count exactly.
-            num_correct = round(self.accuracy * self.num_responses)
+            num_correct = round(accuracy * self.num_responses)
             self.accuracy_ci_lower, self.accuracy_ci_upper = compute_wilson_ci(
                 successes=num_correct, total=self.num_responses
             )
