@@ -66,12 +66,8 @@ class BinAsciiConverter(WordLevelConverter):
         elif encoding_func == "quoted-printable":
             self._encoded_separator = binascii.b2a_qp(separator.encode("utf-8")).decode("ascii")
         else:
-            if TYPE_CHECKING:
-                match encoding_func:
-                    case "UUencode":
-                        pass
-                    case _:
-                        assert_never(encoding_func)
+            if TYPE_CHECKING and encoding_func != "UUencode":
+                assert_never(encoding_func)
             self._encoded_separator = self._uuencode_chunk(separator)
 
     def _build_identifier(self) -> ComponentIdentifier:

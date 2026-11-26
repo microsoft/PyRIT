@@ -168,12 +168,8 @@ class PinyinConverter(Converter):
                 reading = reading[0]
             elif self._mode == "mixed":
                 reading = rng.choice((reading, reading[0]))
-            elif TYPE_CHECKING:
-                match self._mode:
-                    case "full":
-                        pass
-                    case _:
-                        assert_never(self._mode)
+            elif TYPE_CHECKING and self._mode != "full":
+                assert_never(self._mode)
 
             out.append(reading)
             if self._separator and reading != ch and i < len(prompt) - 1:
