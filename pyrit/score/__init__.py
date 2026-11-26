@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer, MessageFloatScaleScorer
     from pyrit.score.float_scale.insecure_code_scorer import InsecureCodeScorer, render_insecure_code_system_prompt
     from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEntry
+    from pyrit.score.float_scale.local_prompt_injection_scorer import LocalPromptInjectionScorer
     from pyrit.score.float_scale.local_violence_classifier_scorer import LocalViolenceClassifierScorer
     from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
     from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
@@ -410,6 +411,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
     "VideoFloatScaleScorer": "pyrit.score.float_scale.video_float_scale_scorer",
     "VideoTrueFalseScorer": "pyrit.score.true_false.video_true_false_scorer",
+    "LocalPromptInjectionScorer": "pyrit.score.float_scale.local_prompt_injection_scorer",
     "LocalViolenceClassifierScorer": "pyrit.score.float_scale.local_violence_classifier_scorer",
     "WildGuardLabel": "pyrit.score.true_false.wildguard_parser",
     "WildGuardScorer": "pyrit.score.true_false.wildguard_scorer",
