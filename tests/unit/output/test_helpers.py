@@ -17,6 +17,7 @@ from pyrit.models import (
     MessagePiece,
     ScenarioResult,
     Score,
+    ScorerSelectionReport,
 )
 from pyrit.output import (
     FileSink,
@@ -34,11 +35,13 @@ from pyrit.output import (
     output_scenario_suite_async,
     output_score_async,
     output_scorer_async,
+    output_scorer_selection_report_async,
 )
 from pyrit.output.conversation.source import MemoryConversationSource
 from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
 from pyrit.output.finding_report.report import FindingReport, FindingReportEntry, FindingReportField
 from pyrit.output.scenario_result.json import JsonScenarioResultMemoryPrinter
+from pyrit.output.scorer_selection.pretty import PrettyScorerSelectionReportPrinter
 
 # --- get_default_sink tests ---
 
@@ -329,6 +332,19 @@ async def test_output_finding_report_async_writes_markdown_to_the_sink():
 async def test_output_finding_report_async_rejects_other_formats():
     with pytest.raises(ValueError, match="Unsupported format for finding reports: 'json'"):
         await output_finding_report_async(FINDING_REPORT, format="json")
+
+
+async def test_output_scorer_selection_report_async_writes_pretty_to_the_sink():
+    sink = _RecordingSink()
+
+    await output_scorer_selection_report_async(ScorerSelectionReport(), format="pretty", sink=sink)
+
+    assert sink.written == [await PrettyScorerSelectionReportPrinter().render_async(ScorerSelectionReport())]
+
+
+async def test_output_scorer_selection_report_async_rejects_other_formats():
+    with pytest.raises(ValueError, match="Unsupported format for scorer selection reports: 'json'"):
+        await output_scorer_selection_report_async(ScorerSelectionReport(), format="json")
 
 
 # --- json-branch tests (each routes to the Json* memory printer) ---
@@ -706,6 +722,23 @@ async def test_output_scenario_conversations_async_scores_duplicated_conversatio
 
     conversation = json.loads(capsys.readouterr().out)["conversations"][0]
     assert _piece_scores(conversation) == [[], [("ObjectiveScorer", "false")]]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_output_scenario_conversations_async_keeps_the_score_of_each_attacks_recorded_judge(
+    seeded_attacks, capsys
+):
+    # A scorer-pool run has no single objective scorer; each attack records the judge it used.
+    result = make_scenario_result(attack_results=seeded_attacks, objective_scorer_identifier=None)
+    attack_identity = ComponentIdentifier(
+        class_name="PromptSendingAttack", class_module="tests", children={"objective_scorer": REFUSAL_SCORER}
+    )
+
+    with patch.object(AttackResult, "get_attack_strategy_identifier", return_value=attack_identity):
+        await output_scenario_conversations_async(result)
+
+    for entry in json.loads(capsys.readouterr().out)["conversations"]:
+        assert _piece_scores(entry) == [[], [("RefusalScorer", "true")]]
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -39,7 +39,7 @@ export default function ConverterChainField({
   const dragged = useRef<number | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [settings, setSettings] = useState<{
-    index: number; editing: { converter: ConverterInstance; spec?: SourceInstanceSpec }
+    index: number; editing: { converter: ConverterInstance; spec?: SourceInstanceSpec | undefined }
   }>()
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState<{

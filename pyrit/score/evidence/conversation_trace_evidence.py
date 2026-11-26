@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
     from pyrit.models import ComponentIdentifier, Score, TraceScorable
     from pyrit.score.observation.observation_source import ObservationSource
+    from pyrit.score.observation.provider_trace_resolver import ProviderTraceResolver
 
 
 class TraceEvidenceRequirement(str, Enum):
@@ -112,6 +113,7 @@ class ConversationTraceEvidence:
         source: ObservationSource[TraceScorable],
         requirement: TraceEvidenceRequirement = TraceEvidenceRequirement.NONE,
         max_rendered_chars: int = 60000,
+        provider_trace_resolver: ProviderTraceResolver | None = None,
     ) -> None:
         """
         Configure the evidence a conversation judge reads.
@@ -121,6 +123,8 @@ class ConversationTraceEvidence:
             requirement (TraceEvidenceRequirement): Evidence required before the judge is called.
                 Defaults to NONE.
             max_rendered_chars (int): Character budget for rendered steps. Defaults to 60000.
+            provider_trace_resolver (ProviderTraceResolver | None): Links requests that carry
+                provider identifiers but no W3C link. Defaults to None.
 
         Raises:
             ValueError: If the requirement is unknown or the budget is not positive.
@@ -130,11 +134,17 @@ class ConversationTraceEvidence:
         self._source = source
         self._requirement = TraceEvidenceRequirement(requirement)
         self._max_rendered_chars = max_rendered_chars
+        self._provider_trace_resolver = provider_trace_resolver
 
     @property
     def source_identifier(self) -> ComponentIdentifier:
         """The trace source's identity."""
         return self._source.get_identifier()
+
+    @property
+    def provider_trace_resolver_identifier(self) -> ComponentIdentifier | None:
+        """The provider trace resolver's identity, if one is set."""
+        return None if self._provider_trace_resolver is None else self._provider_trace_resolver.get_identifier()
 
     def get_identifier_params(self) -> dict[str, object]:
         """
@@ -159,7 +169,9 @@ class ConversationTraceEvidence:
         Raises:
             ValueError: If the trace source returns evidence for a different scope or kind.
         """
-        links = await resolve_conversation_trace_links_async(conversation_id=conversation_id, memory=memory)
+        links = await resolve_conversation_trace_links_async(
+            conversation_id=conversation_id, memory=memory, provider_resolver=self._provider_trace_resolver
+        )
         reasons = ["unlinked_requests"] if any(not link.linked for link in links) else []
         scope = trace_scope_from_links(links)
         if scope is None:

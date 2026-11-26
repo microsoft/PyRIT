@@ -20,8 +20,10 @@ from pyrit.analytics import (
 )
 from pyrit.analytics.scenario_statistics import (
     combine_execution_counts,
+    recorded_objective_scorer_identifier,
     select_execution_attack_result_ids,
 )
+from pyrit.models import ScenarioObjectiveScorerAttribution
 
 if TYPE_CHECKING:
     from pyrit.models import (
@@ -30,6 +32,8 @@ if TYPE_CHECKING:
         ComponentIdentifier,
         MessagePiece,
         OutcomeStatistics,
+        ScenarioObjectiveScorerScope,
+        ScenarioObjectiveScorerStatistics,
         ScenarioProducerCounts,
         ScenarioResult,
         Score,
@@ -89,6 +93,9 @@ class ScenarioOverview(NamedTuple):
     groups: list[GroupStatistics]
     outcomes: OutcomeStatistics | None = None
     producer_counts: ScenarioProducerCounts | None = None
+    #: Statistics per objective scorer; rates are only comparable within one scorer.
+    objective_scorers: tuple[ScenarioObjectiveScorerStatistics, ...] = ()
+    objective_scorer_scope: ScenarioObjectiveScorerScope | None = None
 
 
 def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
@@ -131,7 +138,41 @@ def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
         groups=groups,
         outcomes=statistics.overall.outcomes,
         producer_counts=statistics.overall.producer_counts,
+        objective_scorers=tuple(statistics.objective_scorers),
+        objective_scorer_scope=statistics.objective_scorer_scope,
     )
+
+
+def objective_scorer_label(objective_scorer: ScenarioObjectiveScorerStatistics) -> str:
+    """
+    Derive a short display label for an objective scorer's statistics.
+
+    Args:
+        objective_scorer (ScenarioObjectiveScorerStatistics): The scorer statistics to label.
+
+    Returns:
+        str: The scorer class and short hash, the short hash alone, or why the scorer is unknown.
+    """
+    if objective_scorer.scorer_identifier is not None and objective_scorer.scorer_hash is not None:
+        return f"{objective_scorer.scorer_identifier.class_name} ({objective_scorer.scorer_hash[:12]})"
+    if objective_scorer.scorer_hash is not None:
+        return f"Scorer {objective_scorer.scorer_hash[:12]}"
+    if objective_scorer.attribution == ScenarioObjectiveScorerAttribution.CONFLICT:
+        return "Conflicting scorer records"
+    return "Unknown scorer"
+
+
+def format_rate(rate: float | None) -> str:
+    """
+    Format a 0-1 rate as a percentage with one decimal, or ``N/A`` when it has no denominator.
+
+    Args:
+        rate (float | None): The rate to format.
+
+    Returns:
+        str: The formatted percentage.
+    """
+    return "N/A" if rate is None else f"{rate:.1%}"
 
 
 class SuiteEntryStatistics(NamedTuple):
@@ -201,6 +242,27 @@ def attack_technique_label(*, atomic_attack_name: str, attack: AttackResult) -> 
             scenario selected), otherwise *atomic_attack_name*.
     """
     return attack.technique_name or atomic_attack_name
+
+
+def attack_objective_scorer_identifier(
+    *, attack: AttackResult, run_scorer_identifier: ComponentIdentifier | None
+) -> ComponentIdentifier | None:
+    """
+    Return the objective scorer that judged an attack.
+
+    Each attack records the scorer it ran with. That can differ from the run's: a run with a
+    scorer pool has no single scorer, and selects one per attack population. Results without
+    that record use the run's scorer.
+
+    Args:
+        attack (AttackResult): The attack whose objective scorer to find.
+        run_scorer_identifier (ComponentIdentifier | None): The run's objective scorer, if it has one.
+
+    Returns:
+        ComponentIdentifier | None: The attack's recorded scorer, otherwise the run's.
+    """
+    recorded = recorded_objective_scorer_identifier(attack)
+    return recorded if recorded is not None else run_scorer_identifier
 
 
 def select_attacks(

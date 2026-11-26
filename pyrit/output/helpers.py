@@ -20,8 +20,9 @@ from pyrit.models import (
     ScenarioResult,
     ScenarioSuiteExecutionSummary,
     Score,
+    ScorerSelectionReport,
 )
-from pyrit.output._derivation import select_attacks
+from pyrit.output._derivation import attack_objective_scorer_identifier, select_attacks
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 from pyrit.output.conversation.json import JsonConversationMemoryPrinter, JsonConversationPrinter
@@ -42,6 +43,7 @@ from pyrit.output.scenario_suite_result.json import JsonScenarioSuiteResultMemor
 from pyrit.output.scenario_suite_result.pretty import PrettyScenarioSuiteResultMemoryPrinter
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
+from pyrit.output.scorer_selection.pretty import PrettyScorerSelectionReportPrinter
 from pyrit.output.sink import OutputFormat, Sink, StdoutSink, get_default_sink
 
 
@@ -132,7 +134,8 @@ async def output_scenario_async(
         format (OutputFormat): Output format. Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
         sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted so
-            that the group with the highest success rate appears first. Defaults to False,
+            that the group with the highest success rate appears first, unless different objective
+            scorers judged the groups, which then stay unsorted with a notice. Defaults to False,
             which preserves the original insertion order.
 
     Raises:
@@ -209,8 +212,8 @@ async def output_scenario_conversations_async(
     Print every attack's summary and conversation for a scenario result as one JSON document.
 
     The document has the same format as the CLI's ``scenario-results --view conversations
-    --format json`` output, and each response keeps only the score from the scenario's objective
-    scorer. Conversations are read from memory and every attack is included unless you pass
+    --format json`` output, and each response keeps only the score from the objective scorer that
+    judged its attack. Conversations are read from memory and every attack is included unless you pass
     ``attack_result_ids``, ``outcome``, or ``limit``, so narrow large scenarios.
 
     Args:
@@ -250,7 +253,7 @@ async def output_scenario_full_async(
 
     The report has the same format as the CLI's ``scenario-results --view full`` output with
     ``--format json`` or ``--format html``, and each response keeps only the score from the
-    scenario's objective scorer. The overview always covers the whole scenario;
+    objective scorer that judged its attack. The overview always covers the whole scenario;
     ``attack_result_ids``, ``outcome``, and ``limit`` only choose which conversations are included.
 
     Args:
@@ -324,7 +327,6 @@ async def _collect_conversation_entries_async(
     if not selected:
         return []
 
-    objective_scorer_identifier = result.objective_scorer_identifier
     source = MemoryConversationSource()
     printer = JsonConversationPrinter(source=source)
     entries: list[ConversationEntry] = []
@@ -332,6 +334,9 @@ async def _collect_conversation_entries_async(
         # Orchestration envelopes have no conversation of their own.
         messages = (
             await source.get_messages_async(conversation_id=attack.conversation_id) if attack.conversation_id else []
+        )
+        objective_scorer_identifier = attack_objective_scorer_identifier(
+            attack=attack, run_scorer_identifier=result.objective_scorer_identifier
         )
         structured = await printer.build_async(
             messages,
@@ -460,6 +465,30 @@ async def output_conversation_async(
         include_scores=include_scores,
         include_reasoning_summaries=include_reasoning_summaries,
     )
+
+
+async def output_scorer_selection_report_async(
+    report: ScorerSelectionReport,
+    *,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
+    """
+    Print which objective scorer each planned atomic group will use, and why earlier candidates were passed over.
+
+    Args:
+        report (ScorerSelectionReport): The report, from ``Scenario.get_scorer_selection_report()``.
+        format (OutputFormat): Output format. Only "pretty" is supported, so it is the default.
+        sink (Sink | None): Output sink. Defaults to StdoutSink.
+
+    Raises:
+        ValueError: If ``format`` is not "pretty".
+    """
+    if format != "pretty":
+        raise ValueError(f"Unsupported format for scorer selection reports: {format!r}. Only 'pretty' is available.")
+
+    printer = PrettyScorerSelectionReportPrinter(sink=sink or get_default_sink(StdoutSink))
+    await printer.write_async(report)
 
 
 async def output_score_async(

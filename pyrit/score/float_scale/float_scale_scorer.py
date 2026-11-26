@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pyrit.models import Message, Score, UndeterminedScoreError
+from pyrit.models import Message, Score, ScorerCapabilityName, UndeterminedScoreError
 from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.scorer import Scorer
 
@@ -25,6 +25,8 @@ class FloatScaleScorer(Scorer):
     whose evidence is a message; wrapping scorers use this base directly so a threshold can
     sit over a child that scores something other than a message.
     """
+
+    CAPABILITIES = frozenset({ScorerCapabilityName.FLOAT_SCALE})
 
     def validate_return_scores(self, scores: list[Score]) -> None:
         """
