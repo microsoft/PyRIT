@@ -100,6 +100,8 @@ No. There are up to three roles: the objective target is the system you are test
 
 The adversarial target works best without content moderation, so that it does not refuse to write attack prompts. See [Multi-Turn Attacks](./code/executor/2_multi_turn.ipynb).
 
+That said, the choice of scoring model matters too. A scorer has to read harmful responses in order to judge them. If your scoring model sits behind a content filter or rejects harmful inputs, it may block or refuse exactly the responses that matter most, and that affects your results.
+
 ### Where do I get an adversarial model?
 
 Adaptive attacks need a model that writes attack prompts, and most hosted models with safety training refuse to do that. A model with fewer restrictions works better. There are two places to look:
