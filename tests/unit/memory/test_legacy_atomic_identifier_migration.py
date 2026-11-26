@@ -140,6 +140,9 @@ def test_upgrade_normalizes_seeded_rows_and_clears_stale_hashes(legacy_engine) -
     documents = [legacy, plain, hashed, current, mixed, None, [], {"unrelated": "value"}]
     # More than one production-sized batch, with UUID ordering unrelated to insertion.
     documents.extend(copy.deepcopy(plain) for _ in range(501))
+    surrogate = copy.deepcopy(plain)
+    surrogate["prompt"] = "escaped \ud800 surrogate"
+    documents.append(surrogate)
     with engine.begin() as connection:
         config = _make_config(connection=connection)
         command.upgrade(config, migration.down_revision)
@@ -197,6 +200,8 @@ def test_upgrade_normalizes_seeded_rows_and_clears_stale_hashes(legacy_engine) -
                     == documents[index]["children"]["attack"]
                 )
                 assert actual["children"]["attack_technique"]["class_name"] == "AttackTechnique"
+                if "prompt" in documents[index]:
+                    assert actual["prompt"] == documents[index]["prompt"]
                 assert "hash" not in actual and "eval_hash" not in actual
                 if index in (0, 2):
                     assert actual["custom"] == "retained"

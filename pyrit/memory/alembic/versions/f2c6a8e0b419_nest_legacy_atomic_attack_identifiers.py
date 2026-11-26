@@ -92,7 +92,7 @@ def upgrade() -> None:
                     results.update()
                     .where(results.c.id == result_id)
                     .values(
-                        atomic_attack_identifier=json.dumps(rewritten, ensure_ascii=False),
+                        atomic_attack_identifier=json.dumps(rewritten),
                         atomic_attack_identifier_hash=None,
                     )
                 )
