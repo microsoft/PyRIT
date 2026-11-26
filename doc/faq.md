@@ -24,11 +24,11 @@ Most people use more than one. See [Mix Human-Led and Automated Red Teaming](./r
 
 ### Which Python versions are supported?
 
-Python 3.11, 3.12, 3.13, and 3.14. See [User Local Installation](./getting_started/install_local.md).
+Python 3.11, 3.12, 3.13, 3.14, and 3.15. See [User Local Installation](./getting_started/install_local.md).
 
 ### Do I need to set up a database?
 
-No. `await initialize_pyrit_async(memory_db_type=IN_MEMORY)` gives you an in-memory database that needs no setup and is discarded when the process ends. The `sqlite` backend keeps results in a local file. Azure SQL is optional and is mainly useful when several people share results. See [Memory](./code/memory/0_memory.md).
+No. `await initialize_pyrit_async(memory_db_type=IN_MEMORY)` gives you an in-memory database that needs no setup and is discarded when the process ends. `memory_db_type=SQLITE` keeps results in a local file instead. Both constants come from `pyrit.setup`. Azure SQL is optional and is mainly useful when several people share results. See [Memory](./code/memory/0_memory.md).
 
 ### Where does my `.env` file go?
 
@@ -138,7 +138,17 @@ Key-based authentication is inherently less secure than identity-based authentic
 
 ### Where are my results stored?
 
-In PyRIT's memory. Every prompt, response, and score is written there automatically. Memory has three backends, selected with `memory_db_type`: `in_memory`, `sqlite`, and `azure_sql`. Many examples in the docs use the in-memory backend, which loses everything when the process ends. Use `sqlite` or `azure_sql` to keep results. See [Memory](./code/memory/0_memory.md) and [Configuration File](./getting_started/pyrit_conf.md).
+In PyRIT's memory. Every prompt, response, and score is written there automatically. Memory has three backends, selected with `memory_db_type`: in-memory, SQLite, and Azure SQL. Many examples in the docs use the in-memory backend, which loses everything when the process ends. Use SQLite or Azure SQL to keep results.
+
+The value is written differently in the two places you can set it:
+
+| Backend | In Python, with `initialize_pyrit_async` | In `~/.pyrit/.pyrit_conf` |
+|---|---|---|
+| In-memory | `IN_MEMORY` (`"InMemory"`) | `in_memory` |
+| SQLite | `SQLITE` (`"SQLite"`) | `sqlite` |
+| Azure SQL | `AZURE_SQL` (`"AzureSQL"`) | `azure_sql` |
+
+The Python constants are in `pyrit.setup`. `initialize_pyrit_async` accepts only those exact strings, so passing a configuration file value such as `"sqlite"` raises a `ValueError`. See [Memory](./code/memory/0_memory.md) and [Configuration File](./getting_started/pyrit_conf.md).
 
 ### How do I view or export results?
 
