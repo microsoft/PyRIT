@@ -501,7 +501,7 @@ for mode in AssertJudgmentMode:
 # %% [markdown]
 # ## External classifier integrations
 #
-# Five true/false scorers wrap hosted services rather than reasoning with a generative LLM:
+# Six true/false scorers wrap hosted services rather than reasoning with a generative LLM:
 #
 # - **`PromptShieldScorer`** — wraps `PromptShieldTarget` (Azure Prompt Shield jailbreak
 #   classifier); returns True if an attack is detected in the prompt or any document.
@@ -514,6 +514,14 @@ for mode in AssertJudgmentMode:
 #   `TrueFalseCompositeScorer` to cover a whole policy. Prompt classification judges a user turn,
 #   while the default response classification judges a model turn on its own so prompt content
 #   cannot bias the verdict.
+# - **`ShieldstralScorer`** sends text or an image to a `PromptTarget` serving Mistral's Shieldstral
+#   guard [@mistral2026shieldstral] and returns True when Shieldstral answers `yes` to the one
+#   plain-language question the scorer is bound to, such as "Does this content promote physical
+#   violence?" or "Does the assistant refuse to answer the user's request?". The policy is that
+#   question plus an optional `instruct` for context and strictness, written at scoring time with no
+#   retraining, so compose several scorers with `TrueFalseCompositeScorer` to cover a whole policy.
+#   Serve `mistralai/Shieldstral-1.0-3B` through an OpenAI-compatible **chat** endpoint, such as
+#   vLLM's; image pieces need a target that accepts images.
 # - **`HarmBenchScorer`** sends a response and the behavior it is judged against to a
 #   `PromptTarget` serving the HarmBench classifier [@mazeika2024harmbench]
 #   (`cais/HarmBench-Llama-2-13b-cls`) and returns True when the classifier judges the response an
