@@ -12,10 +12,12 @@ implementation instead of re-inventing message construction.
 """
 
 from collections.abc import MutableSequence
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from pyrit.memory import DataTypeSerializer, data_serializer_factory
-from pyrit.memory.storage import convert_local_image_to_data_url_async
+from pyrit.memory.storage import convert_local_file_to_data_url_async, convert_local_image_to_data_url_async
 from pyrit.models import (
     ChatMessage,
     JsonResponseConfig,
@@ -47,6 +49,10 @@ def _renders_as_text(piece: MessagePiece) -> bool:
 # OpenAI SDK: openai/types/chat/chat_completion_content_part_input_audio_param.py
 # defines format: Required[Literal["wav", "mp3"]].
 _INPUT_AUDIO_EXTENSIONS = (".wav", ".mp3")
+
+# Chat Completions accepts only PDFs as ``file`` content parts. The Responses API accepts more formats.
+# https://developers.openai.com/api/docs/guides/pdf-files
+_INPUT_FILE_EXTENSIONS = (".pdf",)
 
 
 def is_text_only_conversation(conversation: MutableSequence[Message]) -> bool:
@@ -162,6 +168,32 @@ async def build_audio_content_entry_async(*, message_piece: MessagePiece) -> dic
     return {"type": "input_audio", "input_audio": {"data": base64_data, "format": ext.lower().lstrip(".")}}
 
 
+async def build_file_content_entry_async(*, message_piece: MessagePiece) -> dict[str, Any]:
+    """
+    Build a ``file`` content part (as a base64 data URL) for a multipart chat message.
+
+    Chat Completions accepts files only in user messages and only in PDF format. Providers
+    also limit file size (OpenAI allows up to 50 MB across all files in one request).
+
+    Args:
+        message_piece (MessagePiece): The ``binary_path`` piece.
+
+    Returns:
+        dict[str, Any]: A ``{"type": "file", "file": {"filename", "file_data"}}`` content part.
+
+    Raises:
+        ValueError: If the piece is not in a user message or the file is not a PDF.
+    """
+    if message_piece.api_role != "user":
+        raise ValueError(f"File inputs are only supported in user messages. Received role: {message_piece.api_role}.")
+    file_path = message_piece.converted_value
+    ext = DataTypeSerializer.get_extension(file_path)
+    if not ext or ext.lower() not in _INPUT_FILE_EXTENSIONS:
+        raise ValueError(f"Unsupported file format: {ext}. OpenAI Chat Completions file inputs only support .pdf.")
+    file_data = await convert_local_file_to_data_url_async(file_path)
+    return {"type": "file", "file": {"filename": Path(urlparse(file_path).path).name, "file_data": file_data}}
+
+
 def should_skip_audio_piece(
     *,
     message_piece: MessagePiece,
@@ -267,6 +299,8 @@ async def build_multimodal_chat_messages_async(
                 content.append(await build_image_content_entry_async(message_piece=message_piece))
             elif data_type == "audio_path":
                 content.append(await build_audio_content_entry_async(message_piece=message_piece))
+            elif data_type == "binary_path":
+                content.append(await build_file_content_entry_async(message_piece=message_piece))
             elif data_type == "function_call":
                 tool_calls.append(parse_function_call(message_piece))
             else:

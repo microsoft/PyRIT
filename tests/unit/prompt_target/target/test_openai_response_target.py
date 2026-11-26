@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import base64
 import json
 import logging
 import os
@@ -242,7 +243,7 @@ async def test_build_input_for_multi_modal_with_unsupported_data_types(target: O
     assert "Unsupported data type 'audio_path' in message index 0" in str(excinfo.value)
 
 
-@pytest.mark.parametrize("data_type", ["audio_path", "binary_path", "video_path", "url"])
+@pytest.mark.parametrize("data_type", ["audio_path", "video_path", "url"])
 async def test_build_input_for_multi_modal_preserves_unsupported_modalities(
     target: OpenAIResponseTarget, data_type: PromptDataType
 ):
@@ -2487,3 +2488,117 @@ def test_get_identifier_ignores_underlying_model_env_var_when_model_name_explici
         # model_name was explicit, so underlying_model env var should be ignored
         assert identifier.params["model_name"] == "gpt-4.1"
         assert identifier.params["underlying_model_name"] == ""
+
+
+def _file_piece(*, path: str, role: str = "user") -> MessagePiece:
+    return MessagePiece(
+        role=role, conversation_id="file-convo", original_value=path, original_value_data_type="binary_path"
+    )
+
+
+def _text_piece(*, text: str, role: str = "user") -> MessagePiece:
+    return MessagePiece(role=role, conversation_id="file-convo", original_value=text, original_value_data_type="text")
+
+
+@pytest.fixture
+def pdf_path(tmp_path) -> str:
+    path = tmp_path / "report.pdf"
+    path.write_bytes(b"%PDF-1.4 sample")
+    return str(path)
+
+
+PDF_DATA_URL = f"data:application/pdf;base64,{base64.b64encode(b'%PDF-1.4 sample').decode()}"
+
+
+def test_default_capabilities_accept_binary_path(target: OpenAIResponseTarget, pdf_path: str):
+    file_only = Message(message_pieces=[_file_piece(path=pdf_path)])
+    text_and_file = Message(message_pieces=[_text_piece(text="Summarize this"), _file_piece(path=pdf_path)])
+
+    target._validate_request(normalized_conversation=[file_only])
+    target._validate_request(normalized_conversation=[text_and_file])
+
+
+async def test_build_input_for_multi_modal_async_file_only(target: OpenAIResponseTarget, pdf_path: str):
+    result = await target._build_input_for_multi_modal_async([Message(message_pieces=[_file_piece(path=pdf_path)])])
+
+    assert result == [
+        {
+            "role": "user",
+            "content": [{"type": "input_file", "filename": "report.pdf", "file_data": PDF_DATA_URL}],
+        }
+    ]
+
+
+async def test_build_input_for_multi_modal_async_text_and_multiple_files(target: OpenAIResponseTarget, tmp_path):
+    pdf_path = tmp_path / "report.pdf"
+    csv_path = tmp_path / "data.csv"
+    pdf_path.write_bytes(b"%PDF-1.4 sample")
+    csv_bytes = b"a,b\n1,2\n"
+    csv_path.write_bytes(csv_bytes)
+    message = Message(
+        message_pieces=[
+            _text_piece(text="Compare these"),
+            _file_piece(path=str(pdf_path)),
+            _file_piece(path=str(csv_path)),
+        ]
+    )
+
+    result = await target._build_input_for_multi_modal_async([message])
+
+    assert result[0]["content"] == [
+        {"type": "input_text", "text": "Compare these"},
+        {"type": "input_file", "filename": "report.pdf", "file_data": PDF_DATA_URL},
+        {
+            "type": "input_file",
+            "filename": "data.csv",
+            "file_data": f"data:text/csv;base64,{base64.b64encode(csv_bytes).decode()}",
+        },
+    ]
+
+
+async def test_build_input_for_multi_modal_async_preserves_file_in_history(target: OpenAIResponseTarget, pdf_path: str):
+    conversation = [
+        Message(message_pieces=[_text_piece(text="Summarize this"), _file_piece(path=pdf_path)]),
+        Message(message_pieces=[_text_piece(text="It is a report.", role="assistant")]),
+        Message(message_pieces=[_text_piece(text="What is the title?")]),
+    ]
+
+    result = await target._build_input_for_multi_modal_async(conversation)
+
+    assert result[0]["content"][1] == {"type": "input_file", "filename": "report.pdf", "file_data": PDF_DATA_URL}
+    assert result[1]["role"] == "assistant"
+    assert result[2]["content"] == [{"type": "input_text", "text": "What is the title?"}]
+
+
+async def test_build_input_for_multi_modal_async_missing_file_raises(target: OpenAIResponseTarget, tmp_path):
+    message = Message(message_pieces=[_file_piece(path=str(tmp_path / "missing.pdf"))])
+
+    with pytest.raises(FileNotFoundError, match="missing.pdf"):
+        await target._build_input_for_multi_modal_async([message])
+
+
+async def test_build_input_for_multi_modal_async_unknown_file_type_raises(target: OpenAIResponseTarget, tmp_path):
+    file_path = tmp_path / "payload.bin"
+    file_path.write_bytes(b"data")
+
+    with pytest.raises(ValueError, match="Cannot determine the file type"):
+        await target._build_input_for_multi_modal_async([Message(message_pieces=[_file_piece(path=str(file_path))])])
+
+
+async def test_build_input_for_multi_modal_async_assistant_file_raises(target: OpenAIResponseTarget, pdf_path: str):
+    message = Message(message_pieces=[_file_piece(path=pdf_path, role="assistant")])
+
+    with pytest.raises(ValueError, match="only supported in user or developer messages"):
+        await target._build_input_for_multi_modal_async([message])
+
+
+async def test_send_prompt_async_sends_pdf_with_text(target: OpenAIResponseTarget, pdf_path: str):
+    message = Message(message_pieces=[_text_piece(text="Summarize this"), _file_piece(path=pdf_path)])
+    target._async_client.responses.create = AsyncMock(  # type: ignore[method-assign]
+        return_value=create_mock_response()
+    )
+
+    await target.send_prompt_async(message=message)
+
+    sent_input = target._async_client.responses.create.call_args.kwargs["input"]
+    assert sent_input[-1]["content"][1] == {"type": "input_file", "filename": "report.pdf", "file_data": PDF_DATA_URL}

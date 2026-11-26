@@ -2571,3 +2571,97 @@ async def test_construct_message_from_response_token_usage_omits_missing_attrs(
     assert piece.prompt_metadata["token_usage_total_tokens"] == 15
     assert "token_usage_cached_tokens" not in piece.prompt_metadata
     assert "token_usage_reasoning_tokens" not in piece.prompt_metadata
+
+
+def _pdf_piece(*, path: str, conversation_id: str = "pdf-convo") -> MessagePiece:
+    return MessagePiece(
+        role="user",
+        conversation_id=conversation_id,
+        original_value=path,
+        original_value_data_type="binary_path",
+    )
+
+
+def _text_piece(*, text: str, role: str = "user", conversation_id: str = "pdf-convo") -> MessagePiece:
+    return MessagePiece(
+        role=role, conversation_id=conversation_id, original_value=text, original_value_data_type="text"
+    )
+
+
+@pytest.fixture
+def pdf_path(tmp_path) -> str:
+    path = tmp_path / "report.pdf"
+    path.write_bytes(b"%PDF-1.4 sample")
+    return str(path)
+
+
+PDF_DATA_URL = f"data:application/pdf;base64,{base64.b64encode(b'%PDF-1.4 sample').decode()}"
+
+
+def test_default_capabilities_accept_binary_path(target: OpenAIChatTarget, pdf_path: str):
+    file_only = Message(message_pieces=[_pdf_piece(path=pdf_path)])
+    text_and_file = Message(message_pieces=[_text_piece(text="Summarize this"), _pdf_piece(path=pdf_path)])
+
+    target._validate_request(normalized_conversation=[file_only])
+    target._validate_request(normalized_conversation=[text_and_file])
+
+
+async def test_construct_request_body_serializes_file_only_message(target: OpenAIChatTarget, pdf_path: str):
+    request = Message(message_pieces=[_pdf_piece(path=pdf_path)])
+
+    body = await target._construct_request_body_async(
+        conversation=[request], json_config=JsonResponseConfig.from_metadata(metadata=None)
+    )
+
+    assert body["messages"] == [
+        {
+            "role": "user",
+            "content": [{"type": "file", "file": {"filename": "report.pdf", "file_data": PDF_DATA_URL}}],
+        }
+    ]
+
+
+async def test_construct_request_body_preserves_file_in_history(target: OpenAIChatTarget, pdf_path: str):
+    conversation = [
+        Message(message_pieces=[_text_piece(text="Summarize this"), _pdf_piece(path=pdf_path)]),
+        Message(message_pieces=[_text_piece(text="It is a report.", role="assistant")]),
+        Message(message_pieces=[_text_piece(text="What is the title?")]),
+    ]
+
+    body = await target._construct_request_body_async(
+        conversation=conversation, json_config=JsonResponseConfig.from_metadata(metadata=None)
+    )
+
+    assert body["messages"][0]["content"] == [
+        {"type": "text", "text": "Summarize this"},
+        {"type": "file", "file": {"filename": "report.pdf", "file_data": PDF_DATA_URL}},
+    ]
+    assert body["messages"][1]["content"] == [{"type": "text", "text": "It is a report."}]
+    assert body["messages"][2]["content"] == [{"type": "text", "text": "What is the title?"}]
+
+
+async def test_construct_request_body_rejects_non_pdf_file(target: OpenAIChatTarget, tmp_path):
+    docx_path = tmp_path / "brief.docx"
+    docx_path.write_bytes(b"data")
+    request = Message(message_pieces=[_pdf_piece(path=str(docx_path))])
+
+    with pytest.raises(ValueError, match="only support .pdf"):
+        await target._construct_request_body_async(
+            conversation=[request], json_config=JsonResponseConfig.from_metadata(metadata=None)
+        )
+
+
+async def test_send_prompt_async_sends_pdf_with_text(target: OpenAIChatTarget, pdf_path: str):
+    message = Message(message_pieces=[_text_piece(text="Summarize this"), _pdf_piece(path=pdf_path)])
+    target._async_client.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
+        return_value=create_mock_completion(content="A report.")
+    )
+
+    response = await target.send_prompt_async(message=message)
+
+    assert response[0].get_value() == "A report."
+    sent_messages = target._async_client.chat.completions.create.call_args.kwargs["messages"]
+    assert sent_messages[-1]["content"][1] == {
+        "type": "file",
+        "file": {"filename": "report.pdf", "file_data": PDF_DATA_URL},
+    }

@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import base64
 import os
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 from unittest.mock import AsyncMock, patch
 
@@ -9,6 +11,7 @@ import pytest
 from PIL import Image
 
 from pyrit.memory.storage import (
+    convert_local_file_to_data_url_async,
     convert_local_image_to_data_url_async,
 )
 from pyrit.memory.storage.data_url_converter import (
@@ -77,3 +80,35 @@ async def test_convert_animated_gif_returns_data_url():
         assert result == "data:image/gif;base64,AAAA"
     finally:
         os.remove(tmp)
+
+
+@pytest.mark.parametrize(
+    ("file_name", "mime_type"),
+    [
+        ("report.pdf", "application/pdf"),
+        ("notes.txt", "text/plain"),
+        ("data.csv", "text/csv"),
+        ("brief.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    ],
+)
+async def test_convert_file_returns_data_url(tmp_path: Path, file_name: str, mime_type: str):
+    file_path = tmp_path / file_name
+    file_path.write_bytes(b"%PDF-1.4 sample")
+
+    result = await convert_local_file_to_data_url_async(str(file_path))
+
+    assert result == f"data:{mime_type};base64,{base64.b64encode(b'%PDF-1.4 sample').decode()}"
+
+
+async def test_convert_file_raises_file_not_found(tmp_path: Path):
+    with pytest.raises(FileNotFoundError):
+        await convert_local_file_to_data_url_async(str(tmp_path / "missing.pdf"))
+
+
+@pytest.mark.parametrize("file_name", ["payload.bin", "payload", "payload.unknownext"])
+async def test_convert_file_raises_for_unknown_type(tmp_path: Path, file_name: str):
+    file_path = tmp_path / file_name
+    file_path.write_bytes(b"data")
+
+    with pytest.raises(ValueError, match="Cannot determine the file type"):
+        await convert_local_file_to_data_url_async(str(file_path))

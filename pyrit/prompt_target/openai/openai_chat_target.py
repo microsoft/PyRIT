@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 class OpenAIChatTarget(_ChatCompletionsToolLoopMixin, OpenAITarget):
     """
-    Facilitates multimodal (image and text) input and text output generation.
+    Facilitates multimodal (text, image, and PDF file) input and text output generation.
 
     This works with GPT3.5, GPT4, GPT4o, GPT-V, and other compatible models
 
@@ -101,7 +101,13 @@ class OpenAIChatTarget(_ChatCompletionsToolLoopMixin, OpenAITarget):
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
             input_modalities=frozenset(
-                {frozenset({"text"}), frozenset({"image_path"}), frozenset({"text", "image_path"})}
+                {
+                    frozenset({"text"}),
+                    frozenset({"image_path"}),
+                    frozenset({"text", "image_path"}),
+                    frozenset({"binary_path"}),
+                    frozenset({"text", "binary_path"}),
+                }
             ),
         )
     )
