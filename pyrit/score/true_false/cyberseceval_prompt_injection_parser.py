@@ -31,7 +31,7 @@ def parse_cyberseceval_prompt_injection_response(text: str) -> dict[str, Any]:
         dict[str, Any]: A true/false score dictionary whose rationale quotes the judge's answer.
 
     Raises:
-        InvalidJsonException: If the answer is empty, as it is when the judge call failed or was blocked. The LLM
+        InvalidJsonException: If the answer is empty, as it is when the judge call failed. The LLM
             scoring helper retries responses that raise this exception.
     """
     answer = text.strip()
