@@ -241,7 +241,7 @@ class TestPlaywrightCopilotTarget:
             call(selectors.ai_messages_selector, "elements => elements.length"),
         ]
         mock_unified_page.query_selector_all.assert_awaited_once_with(selectors.ai_messages_group_selector)
-        mock_extract.assert_awaited_once_with(selectors, 0)
+        mock_extract.assert_awaited_once_with(selectors=selectors, initial_group_count=0)
 
     def test_validate_request_unsupported_type(self, mock_page):
         """Test validation with unsupported data type."""
@@ -669,7 +669,9 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         ai_message_groups = [mock_group1, mock_group2]
 
-        result = await target._extract_text_from_message_groups_async(ai_message_groups, "p > span")
+        result = await target._extract_text_from_message_groups_async(
+            ai_message_groups=ai_message_groups, text_selector="p > span"
+        )
 
         assert result == ["Hello", "world!", "How are you?"]
         assert mock_group1.query_selector_all.call_count == 1
@@ -682,7 +684,9 @@ class TestPlaywrightCopilotTargetMultimodal:
         mock_group = AsyncMock()
         mock_group.query_selector_all.return_value = []
 
-        result = await target._extract_text_from_message_groups_async([mock_group], "p > span")
+        result = await target._extract_text_from_message_groups_async(
+            ai_message_groups=[mock_group], text_selector="p > span"
+        )
 
         assert result == []
 
@@ -695,7 +699,9 @@ class TestPlaywrightCopilotTargetMultimodal:
         mock_text_elem.text_content.return_value = None
         mock_group.query_selector_all.return_value = [mock_text_elem]
 
-        result = await target._extract_text_from_message_groups_async([mock_group], "p > span")
+        result = await target._extract_text_from_message_groups_async(
+            ai_message_groups=[mock_group], text_selector="p > span"
+        )
 
         assert result == []
 
@@ -859,7 +865,9 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         mock_page.query_selector_all.return_value = []
 
-        result = await target._extract_images_from_message_groups_async(selectors, [mock_group])
+        result = await target._extract_images_from_message_groups_async(
+            selectors=selectors, ai_message_groups=[mock_group]
+        )
 
         assert len(result) == 2
         assert result == [mock_img1, mock_img2]
@@ -880,7 +888,9 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         mock_page.query_selector_all.return_value = [mock_ai_message]
 
-        result = await target._extract_images_from_message_groups_async(selectors, [mock_group])
+        result = await target._extract_images_from_message_groups_async(
+            selectors=selectors, ai_message_groups=[mock_group]
+        )
 
         assert len(result) == 1
         assert result == [mock_img]
@@ -901,7 +911,9 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         mock_page.query_selector_all.return_value = [mock_ai_message]
 
-        result = await target._extract_images_from_message_groups_async(selectors, [mock_group])
+        result = await target._extract_images_from_message_groups_async(
+            selectors=selectors, ai_message_groups=[mock_group]
+        )
 
         assert len(result) == 1
 
@@ -986,7 +998,9 @@ class TestPlaywrightCopilotTargetMultimodal:
         with patch.object(target, "_count_images_in_groups_async", side_effect=[0, 0, 0, 2]):
             with patch.object(target, "_wait_minimum_time_async", new_callable=AsyncMock) as mock_min_wait:
                 with patch("asyncio.sleep", new_callable=AsyncMock):
-                    result = await target._wait_for_images_to_stabilize_async(selectors, initial_groups, 2)
+                    result = await target._wait_for_images_to_stabilize_async(
+                        selectors=selectors, ai_message_groups=initial_groups, initial_group_count=2
+                    )
 
         mock_min_wait.assert_awaited_once_with(3)
         assert len(result) == 2
@@ -1006,7 +1020,9 @@ class TestPlaywrightCopilotTargetMultimodal:
         with patch.object(target, "_count_images_in_groups_async", return_value=0):
             with patch.object(target, "_wait_minimum_time_async", new_callable=AsyncMock):
                 with patch("asyncio.sleep", new_callable=AsyncMock):
-                    result = await target._wait_for_images_to_stabilize_async(selectors, initial_groups, 1)
+                    result = await target._wait_for_images_to_stabilize_async(
+                        selectors=selectors, ai_message_groups=initial_groups, initial_group_count=1
+                    )
 
         assert len(result) == 1
 
@@ -1026,7 +1042,7 @@ class TestPlaywrightCopilotTargetMultimodal:
         with patch.object(target, "_wait_for_images_to_stabilize_async", return_value=[mock_group]):
             with patch.object(target, "_extract_images_from_iframes_async", return_value=[]):
                 with patch.object(target, "_extract_images_from_message_groups_async", return_value=[]):
-                    result = await target._extract_multimodal_content_async(selectors, 0)
+                    result = await target._extract_multimodal_content_async(selectors=selectors, initial_group_count=0)
 
         assert result == "Hello world"
 
@@ -1051,7 +1067,7 @@ class TestPlaywrightCopilotTargetMultimodal:
                 with patch.object(
                     target, "_process_image_elements_async", return_value=[("/path/image.png", "image_path")]
                 ):
-                    result = await target._extract_multimodal_content_async(selectors, 0)
+                    result = await target._extract_multimodal_content_async(selectors=selectors, initial_group_count=0)
 
         assert isinstance(result, list)
         assert len(result) == 2
@@ -1077,7 +1093,7 @@ class TestPlaywrightCopilotTargetMultimodal:
                 with patch.object(
                     target, "_process_image_elements_async", return_value=[("/path/image.png", "image_path")]
                 ):
-                    result = await target._extract_multimodal_content_async(selectors, 0)
+                    result = await target._extract_multimodal_content_async(selectors=selectors, initial_group_count=0)
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -1101,7 +1117,7 @@ class TestPlaywrightCopilotTargetMultimodal:
         with patch.object(target, "_wait_for_images_to_stabilize_async", return_value=[mock_group]):
             with patch.object(target, "_extract_images_from_iframes_async", return_value=[]):
                 with patch.object(target, "_extract_images_from_message_groups_async", return_value=[]):
-                    result = await target._extract_multimodal_content_async(selectors, 0)
+                    result = await target._extract_multimodal_content_async(selectors=selectors, initial_group_count=0)
 
         # Should fall back to text_content
         assert isinstance(result, str)
@@ -1114,7 +1130,7 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         mock_page.query_selector_all.return_value = []
 
-        result = await target._extract_multimodal_content_async(selectors, 0)
+        result = await target._extract_multimodal_content_async(selectors=selectors, initial_group_count=0)
 
         assert result == ""
 
@@ -1137,7 +1153,7 @@ class TestPlaywrightCopilotTargetMultimodal:
         with patch.object(target, "_wait_for_images_to_stabilize_async", return_value=[mock_new_group]):
             with patch.object(target, "_extract_images_from_iframes_async", return_value=[]):
                 with patch.object(target, "_extract_images_from_message_groups_async", return_value=[]):
-                    result = await target._extract_multimodal_content_async(selectors, 2)
+                    result = await target._extract_multimodal_content_async(selectors=selectors, initial_group_count=2)
 
         assert result == "New response"
 
