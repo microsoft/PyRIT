@@ -4,7 +4,7 @@
 """
 Prompt Automatic Iterative Refinement (PAIR) attack.
 
-Implements PAIR (Chao et al. 2023, arXiv:2310.08419) as a thin subclass of
+Implements PAIR [@chao2023pair] as a thin subclass of
 TreeOfAttacksWithPruningAttack with the PAIR-definitional structural
 parameters (no tree branching, no off-topic pruning) hardcoded.
 """

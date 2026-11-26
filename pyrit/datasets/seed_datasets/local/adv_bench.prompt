@@ -3,9 +3,10 @@ source: https://github.com/llm-attacks/llm-attacks
 description: 'AdvBench is a set of 520 harmful behaviors formulated as instructions. This dataset preserves each original
   target completion under metadata.pyrit_gcg.target_prefix and extends the original AdvBench Dataset
   (https://huggingface.co/datasets/walledai/AdvBench) by adding harm category labels to each prompt. Categorization was
-  done using the Claude 3.7 model based on the Collaborative, Human-Centered Taxonomy of AI, Algorithmic, and Automation
-  Harms (arXiv:2407.01294v2). Each entry includes at least one main category and at least one subcategory to allow for
-  better filtering and analysis. Please refer to the paper for more details on the harm categories: https://arxiv.org/abs/2407.01294v2.
+  done using the Claude 3.7 model based on "A Collaborative, Human-Centred Taxonomy of AI, Algorithmic, and Automation
+  Harms" (Abercrombie et al., 2024, arXiv:2407.01294v2). Each entry includes at least one main category and at least
+  one subcategory to allow for better filtering and analysis. Please refer to the paper for more details on the harm
+  categories: https://arxiv.org/abs/2407.01294v2.
 
 
   Original data: https://raw.githubusercontent.com/llm-attacks/llm-attacks/main/data/advbench/harmful_behaviors.csv

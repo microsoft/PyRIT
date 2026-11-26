@@ -37,8 +37,7 @@ class BifidConverter(Converter):
 
     References:
         - Wikipedia, "Bifid cipher": https://en.wikipedia.org/wiki/Bifid_cipher
-        - Youliang Yuan et al., "GPT-4 Is Too Smart To Be Safe: Stealthy Chat with LLMs via
-          Cipher" (CipherChat), arXiv:2308.06463 — framing classical ciphers as a jailbreak
+        - CipherChat [@yuan2023cipherchat] — framing classical ciphers as a jailbreak
           vector for evaluating LLM safety.
     """
 

@@ -19,7 +19,7 @@ detector). This scenario reproduces that operationally using scenario constructs
 - A per-clip objective is derived from the harm category so the response can be scored for
   compliance (the PyRIT analogue of Garak's non-refusal detector).
 
-Reference: https://arxiv.org/html/2410.23861
+Reference: [@yang2024audioachilles]
 """
 
 from __future__ import annotations
@@ -163,7 +163,7 @@ class AudioAchillesHeel(Scenario):
     The objective target must accept ``audio_path`` input (i.e. be multimodal); non-audio targets
     will error when the request is sent.
 
-    Reference: https://arxiv.org/html/2410.23861
+    Reference: [@yang2024audioachilles]
     """
 
     VERSION: int = 1

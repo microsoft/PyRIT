@@ -31,9 +31,7 @@ class LogicJailbreakConverter(LLMGenericTextConverter):
     implementation (https://github.com/Applied-Machine-Learning-Lab/ACL2026_Logibreak),
     whose README invites reuse of the code with citation.
 
-    Reference: Peng et al., "Logic Jailbreak: Efficiently Unlocking LLM Safety Restrictions
-    Through Formal Logical Expression", Findings of ACL 2026 (arXiv:2505.13527).
-    https://aclanthology.org/2026.findings-acl.25/
+    Reference: [@peng2026logic]
     """
 
     @apply_defaults
