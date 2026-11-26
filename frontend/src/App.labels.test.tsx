@@ -21,6 +21,7 @@ import { INITIAL_SCENARIO_RUN_PROGRESS_STATE } from '@/utils/scenarioRunProgress
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
+import '@/test-utils/preloadLazyScreens'
 
 const mockGetActiveAccount = jest.fn()
 const mockMsalInstance = { getActiveAccount: mockGetActiveAccount }

@@ -17,6 +17,7 @@ import { targetReference } from '@/utils/targetIdentity'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
+import '@/test-utils/preloadLazyScreens'
 
 let mockScorerRegistry: { scorers: ScorerInstance[]; loading: boolean; error: string | null } = {
   scorers: [], loading: false, error: null,

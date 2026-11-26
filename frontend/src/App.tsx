@@ -22,6 +22,7 @@ import {
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import FeedbackDialogLoading from './components/Feedback/FeedbackDialogLoading'
 import { useAttackTargetResolution } from './hooks/useAttackTargetResolution'
 import { useAuthConfig } from './auth/AuthConfigContext'
 import { useTargetPreferences } from './hooks/useTargetPreferences'
@@ -1242,7 +1243,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           </MainLayout>
           {feedbackOpen && (
             <ErrorBoundary variant="dialog" onDismiss={() => setFeedbackOpen(false)}>
-            <Suspense fallback={null}>
+            <Suspense fallback={<FeedbackDialogLoading onClose={() => setFeedbackOpen(false)} />}>
             <FeedbackDialog
               open={feedbackOpen}
               onClose={() => setFeedbackOpen(false)}

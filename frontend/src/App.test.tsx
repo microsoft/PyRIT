@@ -5,7 +5,7 @@
 
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fluentProviderClassNames } from "@fluentui/react-components";
-import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, parsePath, useLocation, useNavigate } from "react-router";
 import App from "./App";
@@ -22,6 +22,7 @@ const mockGetActiveAccount = jest.fn();
 let mockCreatedAttackRender: Promise<void> | null = null;
 let mockAnalyticsPending: Promise<void> | null = null;
 let mockAnalyticsFailure: Error | null = null;
+let mockFeedbackPending: Promise<void> | null = null;
 
 jest.mock("./hooks/useTargetRegistry", () => ({
   useTargetRegistry: () => {
@@ -143,6 +144,7 @@ jest.mock("./components/Layout/MainLayout", () => {
     children,
     currentView,
     onNavigate,
+    onOpenFeedback,
     labels,
     onLabelsChange,
     operatorReadOnly,
@@ -152,6 +154,7 @@ jest.mock("./components/Layout/MainLayout", () => {
     children: React.ReactNode;
     currentView: string;
     onNavigate: (view: string) => void;
+    onOpenFeedback: () => void;
     labels: Record<string, string>;
     onLabelsChange: (labels: Record<string, string>) => void;
     operatorReadOnly: boolean;
@@ -192,6 +195,7 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={() => onNavigate("datasets")} data-testid="nav-datasets">
           Datasets
         </button>
+        <button onClick={onOpenFeedback}>Open feedback</button>
         {featureNavigation}
         {children}
       </div>
@@ -203,6 +207,14 @@ jest.mock("./components/Layout/MainLayout", () => {
     default: MockMainLayout,
   };
 });
+
+jest.mock("./components/Feedback/FeedbackDialog", () => ({
+  __esModule: true,
+  default: function MockFeedbackDialog() {
+    if (mockFeedbackPending) throw mockFeedbackPending;
+    return <div data-testid="feedback-dialog" />;
+  },
+}));
 
 jest.mock("./components/Chat/ChatWindow", () => {
   const { useLocation } = jest.requireActual("react-router") as typeof import("react-router");
@@ -755,6 +767,7 @@ describe("App", () => {
     mockCreatedAttackRender = null;
     mockAnalyticsPending = null;
     mockAnalyticsFailure = null;
+    mockFeedbackPending = null;
     mockGetActiveAccount.mockReturnValue(null);
     mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
     mockListTargets.mockResolvedValue({
@@ -816,6 +829,27 @@ describe("App", () => {
     await act(async () => { load.resolve(); });
     expect(await screen.findByRole("region", { name: "Analytics explorer" })).toBeInTheDocument();
     expect(screen.queryByText("Loading...")).toBeNull();
+  });
+
+  it("shows a loading dialog that can be cancelled while Feedback loads for the first time", async () => {
+    const user = userEvent.setup();
+    const load = deferred<void>();
+    mockFeedbackPending = load.promise;
+    renderApp();
+    expect(await screen.findByTestId("home-view")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open feedback" }));
+    const loading = await screen.findByRole("dialog", { name: "Loading feedback" });
+    expect(within(loading).getByText("Loading feedback...")).toBeInTheDocument();
+    await user.click(within(loading).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Loading feedback" })).toBeNull());
+
+    await user.click(screen.getByRole("button", { name: "Open feedback" }));
+    expect(await screen.findByRole("dialog", { name: "Loading feedback" })).toBeInTheDocument();
+    mockFeedbackPending = null;
+    await act(async () => { load.resolve(); });
+    expect(await screen.findByTestId("feedback-dialog")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Loading feedback" })).toBeNull());
   });
 
   it("keeps the app shell when a screen fails to load and clears the error on navigation", async () => {
