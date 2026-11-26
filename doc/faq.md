@@ -156,6 +156,8 @@ With `pyrit_scan`, pass `--max-concurrency`. Scenarios take a `max_concurrency` 
 
 Models differ, and so do versions of the same model and the safety systems around them. Responses also vary from one run to the next. The outputs in the docs were recorded when a notebook was last run, against the model the author used. A different result on your side is expected.
 
+The examples are also not chosen to show the most successful attacks. We do not necessarily want to publish harmful outputs in public documentation, so an example in the docs may show a refusal or a mild result on purpose.
+
 Try the attack more than once, try other converters and attack techniques, and try a multi-turn attack. Read the conversation to see where the target pushed back. An attack that does not succeed is information about that attack, not proof that the system is safe. See [Mix Human-Led and Automated Red Teaming](./red_teaming/0_red_teaming.md).
 
 ### Does the scorer affect the attack, or does it only grade the result?
