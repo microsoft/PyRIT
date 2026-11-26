@@ -38,7 +38,7 @@ def _mock_target(*replies: str) -> MagicMock:
 
 def _sent_message(target: MagicMock) -> Message:
     _, send_kwargs = target.send_prompt_async.call_args
-    message = send_kwargs["message"]
+    message: Message = send_kwargs["message"]
     assert isinstance(message, Message)
     return message
 
