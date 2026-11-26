@@ -317,6 +317,22 @@ def test_metadata_retries_after_concurrent_registration(registry: DefaultInstanc
     assert registry.list_metadata() is metadata
 
 
+@pytest.mark.parametrize(
+    ("metadata", "origin"),
+    [
+        ({SAVED_ENTRY_METADATA_KEY: "targets"}, RegistryEntryOrigin.SAVED),
+        ({SAVED_ENTRY_METADATA_KEY: "converters", CONFIGURATION_ENTRY_METADATA_KEY: True}, RegistryEntryOrigin.SAVED),
+        ({CONFIGURATION_ENTRY_METADATA_KEY: True}, RegistryEntryOrigin.CONFIGURATION),
+        ({}, RegistryEntryOrigin.TEMPORARY),
+        ({"supports_tool_calls": True}, RegistryEntryOrigin.TEMPORARY),
+    ],
+)
+def test_registry_entry_origin_tells_where_a_registered_entry_comes_from(
+    metadata: dict[str, object], origin: RegistryEntryOrigin
+) -> None:
+    assert registry_entry_origin(metadata) is origin
+
+
 class TestInstanceTypeEnforcement:
     """Tests for the optional ``instance_type`` registration constraint."""
 

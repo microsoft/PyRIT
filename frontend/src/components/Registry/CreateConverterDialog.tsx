@@ -46,6 +46,7 @@ import {
 } from '@/components/Parameters/parameterForm'
 
 import { useCreateConverterDialogStyles } from './Registry.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 const EDITABLE_PARAMETER_TYPES = new Set([
   'str', 'int', 'float', 'bool', 'Path', 'list[str]', 'list[int]', 'list[float]', 'list[bool]',
@@ -79,7 +80,7 @@ interface CreateConverterDialogProps {
   open: boolean
   onClose: () => void
   onCreated: (converterId: string, isCurrentOpening: boolean) => void
-  editing?: { converter: ConverterInstance; spec?: SourceInstanceSpec }
+  editing?: { converter: ConverterInstance; spec?: SourceInstanceSpec | undefined }
   onTemporary?: (spec: SourceInstanceSpec, identifier: ConverterIdentifier) => void
   allowUploads?: boolean
 }
@@ -94,7 +95,7 @@ interface ParameterInputProps {
   onFiles: (files: File[], onReadSuccess?: () => void) => void
   allowUploads: boolean
   disabled?: boolean
-  selectedFile?: SelectedFile
+  selectedFile?: SelectedFile | undefined
 }
 
 interface SelectedFile {
@@ -324,7 +325,7 @@ function ParameterInput({
                 onChange(data.value)
               }}
             />}
-            <Button ref={replaceButtonRef} type="button" className={styles.fileButton} disabled={uploadsDisabled} onClick={onBrowse}>
+            <Button ref={fluentRef(replaceButtonRef)} type="button" className={styles.fileButton} disabled={uploadsDisabled} onClick={onBrowse}>
               {hasFileValue ? 'Replace' : 'Upload'}
             </Button>
             {hasFileValue && <Button type="button" className={styles.fileButton} disabled={uploadsDisabled}
@@ -716,7 +717,7 @@ export default function CreateConverterDialog({
             >
               {error && (
                 <MessageBar intent="error">
-                  <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error.message}</MessageBarBody>
+                  <MessageBarBody ref={fluentRef(errorRef)} tabIndex={-1} role="alert">{error.message}</MessageBarBody>
                 </MessageBar>
               )}
               {fileNotice && <MessageBar intent="info">
