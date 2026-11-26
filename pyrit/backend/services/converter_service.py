@@ -685,7 +685,7 @@ class ConverterService:
                 if value is None:
                     continue
                 parameter = path_params[name]
-                if not isinstance(value, str) or not value.startswith("data:"):
+                if not isinstance(value, str) or not value.lower().startswith("data:"):
                     if parameter.is_path_or_str and isinstance(value, str) and is_azure_blob_uri(value):
                         container_url = results_container_url()
                         if container_url is not None:
@@ -726,8 +726,14 @@ class ConverterService:
                 valid base64.
         """
         header, separator, payload = data_uri.partition(",")
-        media_type, _, encoding = header.removeprefix("data:").partition(";")
-        if not separator or not payload or not header.startswith("data:") or encoding.lower() != "base64":
+        if not separator or not payload or not header.lower().startswith("data:"):
+            raise ValueError(f"Path parameter '{parameter_name}' must be a base64 data URI")
+        media_type, *parameters = header[len("data:") :].split(";")
+        if (
+            not parameters
+            or any(not param.strip() for param in parameters)
+            or parameters[-1].strip().lower() != "base64"
+        ):
             raise ValueError(f"Path parameter '{parameter_name}' must be a base64 data URI")
 
         try:
