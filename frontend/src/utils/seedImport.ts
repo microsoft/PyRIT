@@ -14,8 +14,8 @@ export interface SinglePromptImport {
   type: 'single_prompt'
   text: string
   attachments: MessageAttachment[]
-  textMetadata?: Record<string, unknown>
-  objective?: string
+  textMetadata?: Record<string, unknown> | undefined
+  objective?: string | undefined
 }
 
 export interface ConversationImport {
@@ -24,10 +24,10 @@ export interface ConversationImport {
   composerDraft?: {
     text: string
     attachments: MessageAttachment[]
-    textMetadata?: Record<string, unknown>
-  }
-  objective?: string
-  systemPrompt?: string
+    textMetadata?: Record<string, unknown> | undefined
+  } | undefined
+  objective?: string | undefined
+  systemPrompt?: string | undefined
 }
 
 export interface UnsupportedImport {
@@ -85,7 +85,6 @@ function recordToDraftPiece(record: SeedRecord): ConversationDraftPiece {
     draftId: generateClientId(),
     data_type: record.data_type,
     original_value: record.value,
-    mime_type: undefined,
     previewUrl: record.value_url ?? undefined,
     filename:
       record.name ??
@@ -93,7 +92,6 @@ function recordToDraftPiece(record: SeedRecord): ConversationDraftPiece {
         ? basenameFromValue(record.value, record.data_type)
         : undefined),
     prompt_metadata: record.metadata ?? undefined,
-    source_piece_id: undefined, // Never use seed ID as chat piece ID
   }
 }
 

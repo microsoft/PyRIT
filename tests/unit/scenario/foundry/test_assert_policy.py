@@ -6,13 +6,14 @@
 import base64
 import json
 import re
+from collections import Counter
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 from unittest.mock import patch
 
 import pytest
-from unit.assert_mocks import make_assert_config, make_assert_result, make_assert_taxonomy
+from unit.assert_mocks import make_assert_config, make_assert_result, make_assert_systematization, make_assert_taxonomy
 from unit.mocks import MockPromptTarget
 
 from pyrit.analytics import compute_assert_policy_metrics_async, compute_scenario_statistics
@@ -24,6 +25,7 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     AssertCategoryJudgment,
     AssertDimensionResult,
+    AssertGenerationConfig,
     AssertGroupMetadata,
     AssertSkipReason,
     AssertTaxonomy,
@@ -100,10 +102,16 @@ def _taxonomy_b() -> AssertTaxonomy:
 
 
 def _result(
-    *, system_prompt: str = _SYSTEM_A, taxonomy: AssertTaxonomy | None = None, **config: Any
+    *,
+    system_prompt: str = _SYSTEM_A,
+    taxonomy: AssertTaxonomy | None = None,
+    config: AssertGenerationConfig | None = None,
+    **config_overrides: Any,
 ) -> AssertGeneratorResult:
     return make_assert_result(
-        config=make_assert_config(**{"group_count": 2, **config}), system_prompt=system_prompt, taxonomy=taxonomy
+        config=config or make_assert_config(**{"group_count": 2, **config_overrides}),
+        system_prompt=system_prompt,
+        taxonomy=taxonomy,
     )
 
 
@@ -310,9 +318,11 @@ async def test_each_unit_passes_its_group_policy_to_the_default_judge_async(harn
         (group,) = attack.seed_groups
         technique, logical_id = attack.atomic_attack_name.split("__")
         assert logical_id == group.logical_id
-        assert attack.display_group == technique
+        metadata = AssertGroupMetadata.from_metadata(group.objective.metadata)
         assert attack.technique_name == (None if technique == "baseline" else technique)
         system_prompt = next(prompt.value for prompt in group.prompts if prompt.role == "system")
+        policy_id = expected[system_prompt].policy_id[:8]
+        assert attack.display_group == f"customer_support (policy {policy_id}): {metadata.behavior_category}"
         config = attack.attack_technique.attack.get_attack_scoring_config()
         assert config.objective_scorer is objective
         assert [scorer.dimension_name for scorer in config.auxiliary_scorers] == ["overrefusal"]
@@ -321,23 +331,176 @@ async def test_each_unit_passes_its_group_policy_to_the_default_judge_async(harn
         assert attack._attack_execute_params["expectation"].conditions == (expected[system_prompt],)
 
 
-async def test_default_run_is_the_baseline_and_assert_package_grouped_by_technique_async(harness: _Harness) -> None:
+async def test_run_groups_baseline_and_selected_techniques_once_per_generated_category_async(harness: _Harness) -> None:
     await _store_async(name="assert_a", result=_result(group_count=4))
-    scenario = await harness.initialize_async(harness.scenario(), **_datasets("assert_a"))
+    scenario = await harness.initialize_async(
+        harness.scenario(),
+        scenario_techniques=[_technique("assert_package"), _technique("red_teaming")],
+        **_datasets("assert_a"),
+    )
 
     groups: dict[str, set[str]] = {}
     for attack in scenario._atomic_attacks:
         metadata = AssertGroupMetadata.from_metadata(attack.seed_groups[0].objective.metadata)
         groups.setdefault(attack.display_group, set()).add(metadata.behavior_category)
     assert groups == {
-        "baseline": {"public_policy", "private_disclosure"},
-        "assert_package": {"public_policy", "private_disclosure"},
+        "public_policy": {"public_policy"},
+        "private_disclosure": {"private_disclosure"},
     }
+    assert Counter(attack.display_group for attack in scenario._atomic_attacks) == dict.fromkeys(groups, 6)
+    for label in groups:
+        assert {
+            attack.atomic_attack_name.split("__")[0]
+            for attack in scenario._atomic_attacks
+            if attack.display_group == label
+        } == {"baseline", "assert_package", "red_teaming"}
+    assert set(
+        Counter(
+            (attack.atomic_attack_name.split("__")[0], str(attack.seed_groups[0].objective.id))
+            for attack in scenario._atomic_attacks
+        ).values()
+    ) == {1}
+    assert sum(len(group.seed_group_ids) for group in scenario._build_run_plan().atomic_groups) == 12
     assert all(
         isinstance(attack.attack_technique.attack, RedTeamingAttack)
         for attack in scenario._atomic_attacks
-        if attack.display_group == "assert_package"
+        if attack.technique_name == "assert_package"
     )
+
+
+async def test_baselines_report_baseline_even_when_a_category_is_named_like_a_technique_async(
+    harness: _Harness,
+) -> None:
+    taxonomy_data = make_assert_taxonomy().model_dump(mode="json")
+    taxonomy_data["behavior_categories"][0]["name"] = "red_teaming"
+    await _store_async(
+        name="assert_a", result=_result(group_count=2, taxonomy=AssertTaxonomy.model_validate(taxonomy_data))
+    )
+    scenario = await harness.initialize_async(
+        harness.scenario(),
+        scenario_techniques=[_technique("assert_package"), _technique("red_teaming")],
+        **_datasets("assert_a"),
+    )
+
+    plan = scenario._build_run_plan()
+    assert "red_teaming" in {group.display_group for group in plan.atomic_groups}
+    techniques = {
+        (group.atomic_attack_name.split("__")[0], group.technique_name, group.technique_label)
+        for group in plan.atomic_groups
+    }
+    assert techniques == {
+        ("baseline", None, "baseline"),
+        ("assert_package", "assert_package", "assert_package"),
+        ("red_teaming", "red_teaming", "red_teaming"),
+    }
+    assert all(not group.tags for group in plan.atomic_groups if group.technique_name is None)
+
+
+@pytest.mark.parametrize("difference", ["taxonomy", "behavior_description"])
+async def test_category_headers_name_the_judged_policy_async(harness: _Harness, difference: str) -> None:
+    await _store_async(name="assert_a", result=_result(group_count=1))
+    second = (
+        _result(group_count=1, taxonomy=_taxonomy_b())
+        if difference == "taxonomy"
+        else _result(group_count=1, behavior_description="Help customers with refunds.")
+    )
+    await _store_async(name="assert_b", result=second)
+    scenario = await harness.initialize_async(harness.scenario(), **_datasets("assert_a", "assert_b"))
+
+    labels = {attack.display_group for attack in scenario._atomic_attacks}
+    if difference == "behavior_description":
+        # The judge doesn't read the description, so both datasets hold one policy.
+        assert labels == {"public_policy"}
+        return
+    assert len(labels) == 2
+    for attack in scenario._atomic_attacks:
+        policy = attack._attack_execute_params["expectation"].conditions[0]
+        assert attack.display_group == f"customer_support (policy {policy.policy_id[:8]}): public_policy"
+
+
+async def test_category_headers_stay_distinct_when_names_contain_separators_async(harness: _Harness) -> None:
+    def result_with_names(*, behavior_name: str, category_name: str) -> AssertGeneratorResult:
+        taxonomy_data = make_assert_taxonomy().model_dump(mode="json")
+        taxonomy_data["behavior"]["name"] = behavior_name
+        taxonomy_data["behavior_categories"][0]["name"] = category_name
+        taxonomy = AssertTaxonomy.model_validate(taxonomy_data)
+        config = make_assert_config(behavior_name=behavior_name, group_count=1)
+        systematization = make_assert_systematization()
+        concept_spec = systematization.concept_spec.model_copy(update={"behavior": behavior_name})
+        systematization = systematization.model_copy(update={"behavior": behavior_name, "concept_spec": concept_spec})
+        with patch("unit.assert_mocks.make_assert_systematization", return_value=systematization):
+            return _result(taxonomy=taxonomy, config=config)
+
+    await _store_async(name="assert_a", result=result_with_names(behavior_name="a", category_name="b: c"))
+    await _store_async(name="assert_b", result=result_with_names(behavior_name="a: b", category_name="c"))
+    await _store_async(name="assert_c", result=result_with_names(behavior_name='d" / "e', category_name="f (policy 1)"))
+
+    sources = ("assert_a", "assert_b", "assert_c")
+    scenario = await harness.initialize_async(harness.scenario(), **_datasets(*sources))
+    reversed_scenario = await harness.initialize_async(harness.scenario(), **_datasets(*reversed(sources)))
+
+    def headers(initialized: AssertPolicy) -> dict[str | None, str]:
+        return {
+            attack.seed_groups[0].objective.dataset_name: attack.display_group for attack in initialized._atomic_attacks
+        }
+
+    policy_ids = {
+        attack.seed_groups[0].objective.dataset_name: attack._attack_execute_params["expectation"]
+        .conditions[0]
+        .policy_id[:8]
+        for attack in scenario._atomic_attacks
+    }
+    # "a: b: c" would name both of the first two policies, so each also shows its policy ID.
+    expected = {
+        "assert_a": f"a (policy {policy_ids['assert_a']}): b: c",
+        "assert_b": f"a: b (policy {policy_ids['assert_b']}): c",
+        "assert_c": 'd" / "e: f (policy 1)',
+    }
+    assert headers(scenario) == expected
+    assert headers(reversed_scenario) == expected
+
+
+async def test_distinct_effective_system_prompts_are_distinct_display_policies_async(harness: _Harness) -> None:
+    await _store_async(
+        name="assert_a",
+        result=_result(system_prompt="Follow store A's support policy.", group_count=1),
+    )
+    await _store_async(
+        name="assert_b",
+        result=_result(system_prompt="Follow store B's support policy.", group_count=1),
+    )
+
+    scenario = await harness.initialize_async(harness.scenario(), **_datasets("assert_a", "assert_b"))
+
+    labels = {attack.display_group for attack in scenario._atomic_attacks}
+    assert len(labels) == 2
+    assert all("Follow store" not in label for label in labels)
+
+
+async def test_resume_keeps_the_recorded_grouping_and_execution_identities_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(group_count=2))
+    original = harness.scenario()
+    build_async = original._build_atomic_attacks_async
+
+    async def build_technique_groups_async(**kwargs: Any) -> list[Any]:
+        # Runs saved before category grouping recorded one group per technique.
+        attacks = await build_async(**kwargs)
+        for attack in attacks:
+            attack.display_group = attack.atomic_attack_name.split("__")[0]
+        return attacks
+
+    with patch.object(original, "_build_atomic_attacks_async", side_effect=build_technique_groups_async):
+        await harness.initialize_async(original, **_datasets("assert_a"))
+    recorded = {attack.atomic_attack_name: attack.display_group for attack in original._atomic_attacks}
+    resumed = await harness.initialize_async(
+        harness.scenario(scenario_result_id=original._scenario_result_id), **_datasets("assert_a")
+    )
+
+    assert set(recorded.values()) == {"baseline", "assert_package"}
+    assert resumed._display_group_map == recorded
+    assert [attack.logical_group_id for attack in resumed._atomic_attacks] == [
+        attack.logical_group_id for attack in original._atomic_attacks
+    ]
 
 
 async def test_single_turn_sends_stored_prompts_and_keeps_both_verdicts_async(harness: _Harness) -> None:
@@ -392,7 +555,7 @@ async def test_assert_metrics_read_judgments_from_a_saved_run_async(harness: _Ha
 async def test_baseline_skips_groups_without_a_user_prompt_async(harness: _Harness) -> None:
     await _store_async(name="assert_a", result=_result(include_user_prompt=False))
     scenario = await harness.initialize_async(harness.scenario(), **_datasets("assert_a"))
-    assert {attack.display_group for attack in scenario._atomic_attacks} == {"assert_package"}
+    assert {attack.technique_name for attack in scenario._atomic_attacks} == {"assert_package"}
 
 
 async def test_multi_turn_runs_every_turn_and_judges_once_without_feedback_async(harness: _Harness) -> None:
@@ -521,7 +684,7 @@ async def test_undetermined_results_are_excluded_from_success_rates_async(harnes
     with harness.patched(), patch.object(harness.objective, "_send_prompt_to_target_async", side_effect=target_async):
         result = await scenario.run_async()
 
-    outcomes = compute_scenario_statistics(result).display_groups["prompt_sending"].outcomes
+    outcomes = compute_scenario_statistics(result).overall.outcomes
     assert outcomes is not None
     assert (outcomes.successes, outcomes.undetermined, outcomes.success_rate_decided) == (1, 1, 1.0)
 
@@ -641,7 +804,7 @@ async def test_sampled_identical_content_resumes_the_same_stored_group_async(
         original = await harness.initialize_async(harness.scenario(), **args)
     (planned,) = original._atomic_attacks
     assert _group_id(planned) == "group_2"
-    assert planned.display_group == "red_teaming"
+    assert planned.display_group == "private_disclosure"
 
     memory = CentralMemory.get_memory_instance()
     if replace_dataset:
@@ -713,7 +876,7 @@ async def test_baseline_sends_the_stored_prompts_with_the_group_judges_async(har
     )
 
     (baseline_name,) = [name for name in result.attack_results if name.startswith("baseline__")]
-    assert result.display_group_map[baseline_name] == "baseline"
+    assert result.display_group_map[baseline_name] == "public_policy"
     (baseline,) = result.attack_results[baseline_name]
     assert baseline.outcome == AttackOutcome.FAILURE
     baseline_requests = [
@@ -1030,7 +1193,7 @@ async def test_assert_package_runs_mixed_prompt_and_conversation_cases_async(har
         PromptSendingAttack,
         RedTeamingAttack,
     }
-    assert {attack.display_group for attack in scenario._atomic_attacks} == {"assert_package"}
+    assert len({attack.display_group for attack in scenario._atomic_attacks}) == 2
 
 
 @pytest.mark.parametrize("converted", [False, True])
@@ -1051,7 +1214,7 @@ async def test_default_assert_package_runs_prompt_cases_without_a_comparison_bas
     )
     (unit,) = scenario._atomic_attacks
     assert isinstance(unit.attack_technique.attack, PromptSendingAttack)
-    assert unit.display_group == "assert_package"
+    assert unit.display_group == "public_policy"
     assert unit.seed_groups[0].adversarial_prompts is None
     assert harness.adversarial_requests == []
     assert len(harness.target_requests) == 1
@@ -1102,7 +1265,7 @@ async def test_turn_taking_techniques_need_a_native_multi_turn_target_async(harn
     )
     # assert_package sends prompt cases directly, which needs no multi-turn target.
     expected = {"prompt_sending", "assert_package"} if technique == "assert_package" else {"prompt_sending"}
-    assert {attack.display_group for attack in scenario._atomic_attacks} == expected
+    assert {attack.technique_name for attack in scenario._atomic_attacks} == expected
 
 
 @pytest.mark.parametrize("policy", ["skip", "raise"])
@@ -1170,7 +1333,7 @@ async def test_incompatible_scoring_config_uses_scenario_policy_async(harness: _
             await harness.initialize_async(harness.scenario(), **args)
     else:
         scenario = await harness.initialize_async(harness.scenario(), **args)
-        assert {attack.display_group for attack in scenario._atomic_attacks} == {"prompt_sending"}
+        assert {attack.technique_name for attack in scenario._atomic_attacks} == {"prompt_sending"}
 
     scenario = harness.scenario()
     scenario.set_params_from_args(
@@ -1215,7 +1378,7 @@ async def test_turn_settings_a_technique_sets_itself_are_kept_async(harness: _Ha
         **_datasets("assert_a"),
     )
 
-    attacks = {attack.display_group: attack.attack_technique.attack for attack in scenario._atomic_attacks}
+    attacks = {attack.technique_name: attack.attack_technique.attack for attack in scenario._atomic_attacks}
     assert (attacks["red_teaming"]._max_turns, attacks["red_teaming"]._score_last_turn_only) == (4, True)
     assert (attacks["short_red_teaming"]._max_turns, attacks["short_red_teaming"]._score_last_turn_only) == (2, False)
 
@@ -1229,7 +1392,7 @@ async def test_only_techniques_with_a_tester_get_the_adversarial_chat_async(harn
         **_datasets("assert_a"),
     )
 
-    chats = {attack.display_group: attack._adversarial_chat for attack in scenario._atomic_attacks}
+    chats = {attack.technique_name: attack._adversarial_chat for attack in scenario._atomic_attacks}
     assert chats == {"prompt_sending": None, "red_teaming": harness.adversarial}
 
 

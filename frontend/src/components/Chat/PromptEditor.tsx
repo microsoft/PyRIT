@@ -28,13 +28,13 @@ interface PromptEditorProps {
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void
   onToggleConverterPanel: () => void
   isConverterPanelOpen: boolean
-  undoLastSend?: UndoLastSendAction
-  convertedValue?: string | null
+  undoLastSend?: UndoLastSendAction | undefined
+  convertedValue?: string | null | undefined
   onConvertedValueChange: (value: string) => void
   mediaConversions?: Array<Pick<PieceConversion, 'pieceId' | 'convertedValue' | 'convertedDataType'>>
   onClearMediaConversion: (pieceId: string) => void
-  convertedFileChip?: ConvertedFileChip | null
-  onClearConvertedFileChip?: () => void
+  convertedFileChip?: ConvertedFileChip | null | undefined
+  onClearConvertedFileChip?: (() => void) | undefined
 }
 
 function attachmentIcon(kind: MessageAttachment['type']): string {
