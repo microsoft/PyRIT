@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import {
@@ -71,7 +72,7 @@ async function createTarget(
 ): Promise<string> {
   const resp = await request.post("/api/targets", {
     headers: compatibilityHeaders(),
-    data: { type: targetType, params, auth_mode: authMode },
+    data: { name: `flow-${randomUUID()}`, type: targetType, params, auth_mode: authMode },
   });
   expect(resp.ok()).toBeTruthy();
   const body = await resp.json();

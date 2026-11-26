@@ -17,7 +17,6 @@ so every lookup here sees only the targets the caller in scope may use.
 
 import asyncio
 import logging
-import uuid
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from functools import lru_cache
@@ -661,10 +660,9 @@ class TargetService:
                 auth_mode=request.auth_mode,
             )
 
-        # LEGACY COMPATIBILITY: Only API callers that leave out the name reach this fallback; the GUI sends one.
-        # Remove it when the name becomes required for registered targets.
-        target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
+        target_registry_name = request.name
         if request.register_instance:
+            assert target_registry_name is not None  # the request requires a name to register a target
             try:
                 self._registry.instances.validate_name_available(target_registry_name)
             except RegistryNameTakenError as error:
@@ -701,6 +699,7 @@ class TargetService:
                 )
             finally:
                 await release_component_async(target_obj)
+        assert target_registry_name is not None  # the request requires a name to register a target
         try:
             creator = creator_metadata(
                 name=target_registry_name,

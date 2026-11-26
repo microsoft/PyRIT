@@ -107,6 +107,7 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
       const created = await request.post("/api/targets", {
         headers: compatibilityHeaders(),
         data: {
+          name: `recovery-${randomUUID()}`,
           type: "OpenAIChatTarget",
           auth_mode: "api_key",
           params: {
