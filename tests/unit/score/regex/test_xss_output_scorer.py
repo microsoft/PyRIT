@@ -468,7 +468,9 @@ async def test_xss_scorer_adds_to_memory():
         ("Iframe Srcdoc", '<iframe title="a<b" srcdoc="<b>x</b>">'),
     ],
 )
-def test_xss_tag_patterns_match_after_repeated_openers(name: str, text: str, patch_central_database: MagicMock) -> None:
+def test_xss_tag_patterns_match_after_repeated_openers(
+    *, name: str, text: str, patch_central_database: MagicMock
+) -> None:
     assert XSSOutputScorer()._compiled[name].search(text)
 
 
@@ -482,7 +484,7 @@ def test_xss_tag_patterns_match_after_repeated_openers(name: str, text: str, pat
         ("SVG Script", "<svg <svg>"),
     ],
 )
-def test_xss_tag_pattern_near_miss_is_linear(name: str, fragment: str, patch_central_database: MagicMock) -> None:
+def test_xss_tag_pattern_near_miss_is_linear(*, name: str, fragment: str, patch_central_database: MagicMock) -> None:
     # Each opener used to rescan the rest of the reply, so 20,000 of them took seconds.
     text = fragment * 20_000
     pattern = XSSOutputScorer()._compiled[name]
