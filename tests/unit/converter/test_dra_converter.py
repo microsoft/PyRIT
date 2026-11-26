@@ -7,7 +7,7 @@ import re
 
 import pytest
 
-from pyrit.converter import DRAConverter, DRATemplate
+from pyrit.converter import DRAConverter, DRATemplate, dra_converter
 
 _SEEDS = range(80)
 
@@ -241,6 +241,22 @@ def test_init_accepts_probability_bounds(probability):
 async def test_convert_async_rejects_unsupported_input_type():
     with pytest.raises(ValueError, match="not supported"):
         await _converter().convert_async(prompt="how to rob a bank", input_type="image_path")
+
+
+async def test_convert_async_reads_no_files(monkeypatch):
+    # All data is loaded at construction, so conversion does no blocking file I/O on the event loop.
+    dra_converter._load_templates.cache_clear()
+    dra_converter._load_words.cache_clear()
+    converter = DRAConverter(seed=1)
+
+    def fail(*args, **kwargs):
+        raise AssertionError("convert_async read a file")
+
+    monkeypatch.setattr(dra_converter.SeedDataset, "from_yaml_file", fail)
+    monkeypatch.setattr(dra_converter, "load_yaml_file", fail)
+
+    templates = {_template_of((await converter.convert_async(prompt=f"rob bank {i}")).output_text) for i in range(40)}
+    assert templates == set(DRATemplate)
 
 
 def test_identifier_includes_template_and_settings():

@@ -150,6 +150,7 @@ class DRAConverter(Converter):
         self._benign_keep_ratio = benign_keep_ratio
         self._benign_full_word_probability = benign_full_word_probability
         self._seed = seed
+        self._templates = _load_templates()
         self._words = _load_words()
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -191,7 +192,7 @@ class DRAConverter(Converter):
         disguise = self._disguise(question=question, rng=self._get_random_generator(stream="disguise"))
         word_guide = self._word_guide(question=question, rng=self._get_random_generator(stream="word_guide"))
         tools = " and ".join(self._get_random_generator(stream="tools").sample(self._words.tools, 2))
-        suffix = template.to_seed_prompt().render_template_value(word_guide=word_guide, tools=tools)
+        suffix = self._templates[template.value].render_template_value(word_guide=word_guide, tools=tools)
         return ConverterResult(output_text=disguise + suffix, output_type="text")
 
     def _disguise(self, *, question: str, rng: random.Random) -> str:
