@@ -23,11 +23,12 @@ import { attacksApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { AttackConversationReferencesView, ConversationReferenceView, ReadAttackConversationReferences } from '@/types'
 import { useConversationPanelStyles } from './ConversationPanel.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 interface SavedReferencePage {
   attackResultId: string
   pageSize: number
-  refreshKey?: number
+  refreshKey?: number | undefined
   response: AttackConversationReferencesView
   consumedCursors: ReadonlySet<string>
 }
@@ -60,15 +61,15 @@ interface ConversationPanelProps {
   onChangeMainConversation: (conversationId: string) => void
   onClose: () => void
   /** When set, disables mutating actions (new conversation, promote to main) and explains why. */
-  lockedReason?: string
+  lockedReason?: string | undefined
   /** Increment to trigger a conversation list refresh (e.g. after sending a message) */
   refreshKey?: number
   /** Saved evidence pages references independently from the selected transcript. */
-  referencePageSize?: number
+  referencePageSize?: number | undefined
   /** Re-reads the unpaged list at this interval, keeping its rows, such as while a scan runs the attack. */
-  pollIntervalMs?: number
+  pollIntervalMs?: number | undefined
   /** A verified read-only source for interrupted scan conversations without a saved result. */
-  readConversations?: ReadAttackConversationReferences
+  readConversations?: ReadAttackConversationReferences | undefined
 }
 
 export default function ConversationPanel({
@@ -284,7 +285,7 @@ export default function ConversationPanel({
       <div className={styles.conversationList}>
         {isLoading && (
           <div className={styles.loading}>
-            <Spinner size="tiny" label={referencePageSize === undefined ? undefined : 'Loading saved conversation references...'} />
+            <Spinner size="tiny" {...(referencePageSize !== undefined ? { label: 'Loading saved conversation references...' } : {})} />
           </div>
         )}
 
@@ -397,14 +398,14 @@ export default function ConversationPanel({
               {continuationIssue.detail} Loaded references are still available.
             </MessageBarBody></MessageBar>
           )}
-          <Text ref={pagingStatusRef} tabIndex={-1} size={200} role="status" aria-live="polite">
+          <Text ref={fluentRef(pagingStatusRef)} tabIndex={-1} size={200} role="status" aria-live="polite">
             {isLoading ? 'Loading saved conversation references... ' : isLoadingMore ? 'Loading more conversations... ' : ''}
             {conversations.length} of {currentPage.response.total_count} saved conversations loaded.{' '}
             {currentPage.response.pagination?.has_more ? 'More references are available.' : 'End of saved conversation references.'}
           </Text>
           {currentPage.response.pagination?.has_more && (
             <Button className={styles.retryButton} disabled={isLoading || isLoadingMore}
-              icon={isLoadingMore ? <Spinner size="tiny" /> : undefined}
+              {...(isLoadingMore ? { icon: <Spinner size="tiny" /> } : {})}
               onClick={(event: MouseEvent<HTMLButtonElement>) => {
                 if (event.currentTarget === document.activeElement) pagingStatusRef.current?.focus({ preventScroll: true })
                 if (continuationIssue?.restartRequired) handleRetry(); else void loadMore()

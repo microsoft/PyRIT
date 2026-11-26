@@ -19,7 +19,7 @@ import importlib.metadata
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
 
 from pydantic import Field, WrapValidator, field_validator, model_validator
 
@@ -371,7 +371,7 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
         return resolved
 
     @model_validator(mode="after")
-    def _validate_and_compute_value(self) -> SeedSimulatedConversation:
+    def _validate_and_compute_value(self) -> Self:
         if self.num_turns <= 0:
             raise ValueError("num_turns must be a positive integer")
         if self.sequence < 0:

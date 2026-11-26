@@ -330,7 +330,7 @@ class AttackExecutor:
         # This can take time if the SeedSimulatedConversation generation is included
         semaphore = self._get_semaphore()
 
-        async def build_params_async(i: int, sg: AttackSeedGroup) -> AttackParameters:
+        async def build_params_async(*, i: int, sg: AttackSeedGroup) -> AttackParameters:
             async with semaphore:
                 combined_overrides = dict(broadcast_fields)
                 if field_overrides is not None:
@@ -345,7 +345,7 @@ class AttackExecutor:
 
         build_results = list(
             await asyncio.gather(
-                *[build_params_async(i, sg) for i, sg in enumerate(seed_groups)],
+                *[build_params_async(i=i, sg=sg) for i, sg in enumerate(seed_groups)],
                 return_exceptions=True,
             )
         )
@@ -505,7 +505,7 @@ class AttackExecutor:
                 raise ValueError(f"{name} length ({len(values)}) must match params_list length ({len(params_list)})")
         persisted_result_ids: list[str | None] = [None] * len(params_list)
 
-        async def run_one_async(index: int, params: AttackParameters) -> AttackStrategyResultT:
+        async def run_one_async(*, index: int, params: AttackParameters) -> AttackStrategyResultT:
             async with semaphore:
                 context = attack._context_type(params=params)
                 if atomic_attack_identifiers is not None:
@@ -530,7 +530,7 @@ class AttackExecutor:
                     persisted_result_ids[index] = context._persisted_attack_result_id
                     self._active_contexts.pop(context_key, None)
 
-        tasks = [run_one_async(i, p) for i, p in enumerate(params_list)]
+        tasks = [run_one_async(index=i, params=p) for i, p in enumerate(params_list)]
         # Admitting the batch's Operations once lets every objective finish if one is deleted midway.
         operation_ids = {
             operation_id for p in params_list if (operation_id := getattr(p, "operation_id", None)) is not None

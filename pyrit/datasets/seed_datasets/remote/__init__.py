@@ -23,6 +23,10 @@ if TYPE_CHECKING:
         ATRVariationType,
         _AgentThreatRulesDataset,
     )
+    from pyrit.datasets.seed_datasets.remote.air_bench_dataset import (
+        AIRBenchRegion,
+        _AIRBenchDataset,
+    )
     from pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset import (
         AnthropicModelWrittenEvalCategory,
         _AnthropicModelWrittenEvalsDataset,
@@ -173,6 +177,11 @@ if TYPE_CHECKING:
         WildGuardMixSplit,
         _WildGuardMixDataset,
     )
+    from pyrit.datasets.seed_datasets.remote.wildjailbreak_dataset import (
+        WildJailbreakDataType,
+        WildJailbreakSplit,
+        _WildJailbreakDataset,
+    )
     from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
         XLSafetyBenchCountry,
         XLSafetyBenchCulturalCategory,
@@ -186,6 +195,7 @@ if TYPE_CHECKING:
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AegisHarmCategory": "pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset",
+    "AIRBenchRegion": "pyrit.datasets.seed_datasets.remote.air_bench_dataset",
     "AnthropicModelWrittenEvalCategory": "pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset",
     "AttaQCategory": "pyrit.datasets.seed_datasets.remote.attaq_dataset",
     "CoCoNotCategory": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
@@ -220,12 +230,15 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "WildGuardMixAdversarial": "pyrit.datasets.seed_datasets.remote.wildguardmix_dataset",
     "WildGuardMixPromptHarmLabel": "pyrit.datasets.seed_datasets.remote.wildguardmix_dataset",
     "WildGuardMixSplit": "pyrit.datasets.seed_datasets.remote.wildguardmix_dataset",
+    "WildJailbreakDataType": "pyrit.datasets.seed_datasets.remote.wildjailbreak_dataset",
+    "WildJailbreakSplit": "pyrit.datasets.seed_datasets.remote.wildjailbreak_dataset",
     "_AegisContentSafetyDataset": "pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset",
     "_AnthropicModelWrittenEvalsDataset": "pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset",
     "ATRCategory": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
     "ATRDetectionField": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
     "ATRVariationType": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
     "_AgentThreatRulesDataset": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
+    "_AIRBenchDataset": "pyrit.datasets.seed_datasets.remote.air_bench_dataset",
     "_AttaQDataset": "pyrit.datasets.seed_datasets.remote.attaq_dataset",
     "_AyaRedteamingDataset": "pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset",
     "_BabelscapeAlertDataset": "pyrit.datasets.seed_datasets.remote.babelscape_alert_dataset",
@@ -310,6 +323,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "VisualLeakBenchCategory": "pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset",
     "VisualLeakBenchPIIType": "pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset",
     "_WildGuardMixDataset": "pyrit.datasets.seed_datasets.remote.wildguardmix_dataset",
+    "_WildJailbreakDataset": "pyrit.datasets.seed_datasets.remote.wildjailbreak_dataset",
     "XLSafetyBenchCountry": "pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset",
     "XLSafetyBenchCulturalCategory": "pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset",
     "XLSafetyBenchJailbreakCategory": "pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset",

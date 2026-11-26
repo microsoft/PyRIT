@@ -430,7 +430,7 @@ function AssertReviewForm({
       <GenerationEstimateCard
         title="Remaining work"
         estimate={estimate.value}
-        descriptor={descriptor}
+        {...(descriptor ? { descriptor } : {})}
         updating={estimate.loading}
         emptyMessage={estimate.error ? 'No estimate: it could not be loaded.' : 'Loading the estimate...'}
       />
