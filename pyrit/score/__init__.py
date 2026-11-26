@@ -206,6 +206,13 @@ if TYPE_CHECKING:
         ShieldGemmaPolicy,
     )
     from pyrit.score.true_false.shieldgemma_scorer import ShieldGemmaScorer, render_shieldgemma_prompt
+    from pyrit.score.true_false.shieldstral_parser import parse_shieldstral_response
+    from pyrit.score.true_false.shieldstral_scorer import (
+        SHIELDSTRAL_DEFAULT_INSTRUCT,
+        SHIELDSTRAL_SYSTEM_PROMPT,
+        ShieldstralScorer,
+        render_shieldstral_request,
+    )
     from pyrit.score.true_false.substring_scorer import SubStringScorer
     from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
     from pyrit.score.true_false.true_false_fallback_scorer import TrueFalseFallbackScorer
@@ -325,6 +332,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "parse_harmbench_response": "pyrit.score.true_false.harmbench_parser",
     "parse_llamaguard_response": "pyrit.score.true_false.llamaguard_parser",
     "parse_shieldgemma_response": "pyrit.score.true_false.shieldgemma_parser",
+    "parse_shieldstral_response": "pyrit.score.true_false.shieldstral_parser",
     "parse_strongreject_response": "pyrit.score.float_scale.strongreject_parser",
     "parse_wildguard_response": "pyrit.score.true_false.wildguard_parser",
     "PathTraversalOutputScorer": "pyrit.score.true_false.regex.path_traversal_output_scorer",
@@ -341,6 +349,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "render_likert_system_prompt": "pyrit.score.float_scale.self_ask_likert_scorer",
     "render_scale_system_prompt": "pyrit.score.float_scale.self_ask_scale_scorer",
     "render_shieldgemma_prompt": "pyrit.score.true_false.shieldgemma_scorer",
+    "render_shieldstral_request": "pyrit.score.true_false.shieldstral_scorer",
     "render_strongreject_prompt": "pyrit.score.float_scale.strongreject_scorer",
     "render_true_false_system_prompt": "pyrit.score.true_false.self_ask_true_false_scorer",
     "render_wildguard_prompt": "pyrit.score.true_false.wildguard_scorer",
@@ -392,6 +401,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ShieldGemmaMessageRole": "pyrit.score.true_false.shieldgemma_policy",
     "ShieldGemmaPolicy": "pyrit.score.true_false.shieldgemma_policy",
     "ShieldGemmaScorer": "pyrit.score.true_false.shieldgemma_scorer",
+    "SHIELDSTRAL_DEFAULT_INSTRUCT": "pyrit.score.true_false.shieldstral_scorer",
+    "SHIELDSTRAL_SYSTEM_PROMPT": "pyrit.score.true_false.shieldstral_scorer",
+    "ShieldstralScorer": "pyrit.score.true_false.shieldstral_scorer",
     "ShellCommandOutputScorer": "pyrit.score.true_false.regex.shell_command_output_scorer",
     "SQLInjectionOutputScorer": "pyrit.score.true_false.regex.sql_injection_output_scorer",
     "SSRFOutputScorer": "pyrit.score.true_false.regex.ssrf_output_scorer",
