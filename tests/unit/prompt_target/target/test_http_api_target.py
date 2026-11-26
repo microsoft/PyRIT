@@ -576,3 +576,14 @@ def test_httpx_api_target_identifier_redacts_base_url_credentials(patch_central_
     assert "pass" not in identifier.model_dump_json()
     assert "secret" not in identifier.model_dump_json()
     assert "admin" not in identifier.model_dump_json()
+
+
+def test_merge_base_and_url_requires_keyword_arguments() -> None:
+    base = httpx.URL("https://example.test/api")
+    relative = httpx.URL("/v1/chat")
+
+    merged = HTTPXAPITarget._merge_base_and_url(base_url=base, url=relative)
+    assert str(merged) == "https://example.test/api/v1/chat"
+
+    with pytest.raises(TypeError):
+        HTTPXAPITarget._merge_base_and_url(base, relative)  # ty: ignore[too-many-positional-arguments]
