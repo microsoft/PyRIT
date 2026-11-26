@@ -1095,7 +1095,9 @@ class TestScenarioServiceListScenarios:
         service._compute_default_run_size_estimate_async = AsyncMock(return_value=estimate)
         assert await service._get_default_run_size_estimate_async(metadata=metadata) == estimate
 
-    async def test_completed_stale_task_cannot_block_inflight_capacity(self) -> None:
+    async def test_completed_stale_task_cannot_block_inflight_capacity(
+        self, *, estimate_watchdog_seconds: float
+    ) -> None:
         """A done task is pruned before the bounded inflight capacity check."""
         metadata = _make_scenario_metadata()
         estimate = ScenarioRunSizeEstimate(
@@ -1118,7 +1120,7 @@ class TestScenarioServiceListScenarios:
 
             result = await asyncio.wait_for(
                 service._get_default_run_size_estimate_async(metadata=metadata),
-                timeout=1,
+                timeout=TEST_WATCHDOG_SECONDS,
             )
 
         assert result == estimate

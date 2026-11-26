@@ -406,7 +406,7 @@ async def _check_token_cancellation_before_browser_coroutine_entry_is_acknowledg
             assert not authenticator._token_fetch_lock.locked()
     finally:
         release_browser.set()
-        await asyncio.gather(*callers, return_exceptions=True)
+        await settle_tasks_async(*callers)
         await authenticator.close_async()
     assert not thread.is_alive()
     assert authenticator._browser_loop is None
@@ -478,7 +478,7 @@ async def _check_token_cancellation_waits_for_browser_startup_async() -> None:
         finally:
             release_start.set()
             await asyncio.to_thread(authenticator._browser_loop_started.wait, TEST_WATCHDOG_SECONDS)
-            await asyncio.gather(caller, return_exceptions=True)
+            await settle_tasks_async(caller)
             thread = authenticator._browser_thread
             await authenticator.close_async()
         assert thread is not None
@@ -549,7 +549,7 @@ async def _check_startup_cancellation_and_close_wait_until_browser_loop_runs_asy
             assert authenticator._browser_loop is None
         finally:
             release_run.set()
-            await asyncio.gather(*callers, return_exceptions=True)
+            await settle_tasks_async(*callers)
             await authenticator.close_async()
     assert authenticator._browser_thread is None
     assert not (asyncio.all_tasks() - original_tasks)

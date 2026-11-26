@@ -16,7 +16,12 @@ from typing import TYPE_CHECKING, TypeVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async, wait_for_event_async
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    drain_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 
 from pyrit._code_execution import DockerRuntimeProfile, DockerSandboxClient, SandboxExecutionError, docker_client
 from pyrit._code_execution.docker_client import _ClientOutput, _ContainerState, _InvocationResult
@@ -494,7 +499,7 @@ async def test_startup_is_owned_until_cleanup_async(client: DockerSandboxClient,
                 await wait_for_completion_async(future=task)
         finally:
             release.set()
-            await asyncio.gather(task, return_exceptions=True)
+            await drain_tasks_async(task)
     assert control.call_args.args == ("rm", "--force", "--volumes", created[0])
     assert await asyncio.to_thread(lambda: list(tmp_path.iterdir())) == []
     if not failed:
@@ -601,7 +606,7 @@ async def test_file_work_does_not_block_or_outlive_the_call_async(
                 assert (await wait_for_completion_async(future=task)).events[0].exit_code == 0
         finally:
             release.set()
-            await asyncio.gather(task, return_exceptions=True)
+            await drain_tasks_async(task)
     assert await asyncio.to_thread(lambda: list(tmp_path.iterdir())) == []
 
 
@@ -647,7 +652,7 @@ async def test_repeated_cancellation_drains_process_cleanup_async(client: Docker
                 await wait_for_completion_async(future=task)
         finally:
             release.set()
-            await asyncio.gather(task, return_exceptions=True)
+            await drain_tasks_async(task)
     process.kill.assert_called_once()
     assert process.communicate.await_count == (2 if phase == "management" else 1)
     if phase == "container":

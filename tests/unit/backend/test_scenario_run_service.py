@@ -97,7 +97,13 @@ from pyrit.scenario.scenarios.airt import Jailbreak, Scam
 from pyrit.setup.finding_fields import get_active_finding_fields
 from pyrit.setup.initializers import ConverterInitializer, FindingsInitializer, ToolsInitializer
 from pyrit.setup.pyrit_initializer import PyRITInitializer
-from unit.async_utils import TEST_WATCHDOG_SECONDS, settle_tasks_async, wait_for_completion_async, wait_for_event_async
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    drain_tasks_async,
+    settle_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 from unit.mocks import (
     MockPromptTarget,
     get_mock_target_identifier,
@@ -2303,7 +2309,7 @@ class TestScenarioRunServiceStartRun:
             finally:
                 release.set()
                 cleanup_release.set()
-                await asyncio.gather(start, *service._abandoned_prepare_tasks, return_exceptions=True)
+                await settle_tasks_async(start, *service._abandoned_prepare_tasks)
                 service._active_scenario_result_id = None
                 await service.shutdown_async()
 
@@ -2342,7 +2348,7 @@ class TestScenarioRunServiceStartRun:
             finally:
                 release.set()
                 execution_release.set()
-                await asyncio.gather(start, return_exceptions=True)
+                await settle_tasks_async(start)
                 if queued:
                     service._active_scenario_result_id = None
                 await service.shutdown_async()
@@ -2466,7 +2472,7 @@ class TestScenarioRunServiceStartRun:
                 ):
                     with pytest.raises(asyncio.CancelledError):
                         await service.start_run_async(request=_make_request())
-                    await asyncio.gather(*service._abandoned_prepare_tasks, return_exceptions=True)
+                    await settle_tasks_async(*service._abandoned_prepare_tasks)
         with pytest.raises(ExceptionGroup, match="shutdown transitions") as caught:
             await service.shutdown_async()
         assert str(caught.value.exceptions[0]) == "cleanup exploded"
@@ -2560,7 +2566,7 @@ class TestScenarioRunServiceStartRun:
                 assert not service.has_active_work()
             finally:
                 release.set()
-                await asyncio.gather(first, *([second] if second else []), return_exceptions=True)
+                await settle_tasks_async(first, *([second] if second else []))
 
     @pytest.mark.parametrize("stage", ["introspection", "initializer"])
     @pytest.mark.parametrize("cancelled", [False, True])
@@ -2616,7 +2622,7 @@ class TestScenarioRunServiceStartRun:
                 initializer.initialize_async.assert_awaited_once()
         finally:
             release.set()
-            await asyncio.gather(task, return_exceptions=True)
+            await drain_tasks_async(task)
             await service.shutdown_async()
 
     @pytest.mark.parametrize(
@@ -2765,7 +2771,7 @@ class TestScenarioRunServiceStartRun:
                 assert not service.has_active_work()
             finally:
                 release.set()
-                await asyncio.gather(first, second, shutdown, return_exceptions=True)
+                await settle_tasks_async(first, second, shutdown)
 
     async def test_initialization_tasks_stay_on_live_backend_loop(self, mock_all_registries) -> None:
         """Preparation does not drain or cancel unrelated tasks on the live loop."""

@@ -207,7 +207,7 @@ async def test_batch_task_failure_finishes_cleanup_and_never_starts_later_batche
                     task_func=send_async,
                     task_arguments=["item"],
                 ),
-                timeout=5,
+                timeout=TEST_WATCHDOG_SECONDS,
             )
         assert finalized.is_set()
         assert len(slow_tasks) == 1 and slow_tasks[0].done()

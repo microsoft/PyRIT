@@ -44,7 +44,12 @@ from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.scenario import Scenario
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initialization import reset_setup_registries
-from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async, wait_for_event_async
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    settle_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 from unit.mocks import MockPromptTarget, make_scenario_result
 
 _RESTORED_REGISTRIES = (TargetRegistry, ConverterRegistry, ScorerRegistry, AttackTechniqueRegistry)
@@ -595,7 +600,7 @@ async def test_http_disconnect_retains_scenario_launch_async(runtime: RuntimeLif
                 assert not service._abandoned_prepare_tasks
             finally:
                 release.set()
-                await asyncio.gather(request, *runtime.operations, return_exceptions=True)
+                await settle_tasks_async(request, *runtime.operations)
                 await asyncio.wait_for(service.shutdown_async(), TEST_WATCHDOG_SECONDS)
 
 
@@ -701,7 +706,7 @@ async def test_runtime_retains_abandoned_preparation_until_memory_shutdown_async
         finally:
             release.set()
             cleanup_release.set()
-            await asyncio.gather(start, *([shutdown] if shutdown else []), return_exceptions=True)
+            await settle_tasks_async(start, *([shutdown] if shutdown else []))
 
 
 async def test_apply_denies_writes_but_allows_repair_reads(runtime: RuntimeLifecycle) -> None:
@@ -862,7 +867,7 @@ async def test_shutdown_drains_disconnected_requests_before_closing_async(
                 lifecycle_module.close_services_async.assert_awaited_once()
         finally:
             release.set()
-            await asyncio.gather(request, *children, *([shutdown] if shutdown else []), return_exceptions=True)
+            await settle_tasks_async(request, *children, *([shutdown] if shutdown else []))
 
 
 async def test_shutdown_preserves_request_and_close_failures_async(runtime: RuntimeLifecycle) -> None:
@@ -899,7 +904,7 @@ async def test_shutdown_preserves_request_and_close_failures_async(runtime: Runt
             lifecycle_module.close_services_async.assert_awaited_once()
         finally:
             release.set()
-            await asyncio.gather(request, *children, *([shutdown] if shutdown else []), return_exceptions=True)
+            await settle_tasks_async(request, *children, *([shutdown] if shutdown else []))
 
 
 async def test_shutdown_drains_sibling_after_request_failure_async(runtime: RuntimeLifecycle) -> None:
@@ -948,7 +953,7 @@ async def test_shutdown_drains_sibling_after_request_failure_async(runtime: Runt
         finally:
             for event in release:
                 event.set()
-            await asyncio.gather(*requests, *children, *([shutdown] if shutdown else []), return_exceptions=True)
+            await settle_tasks_async(*requests, *children, *([shutdown] if shutdown else []))
 
 
 async def test_shutdown_keeps_admission_closed_while_accepted_apply_finishes_async(runtime: RuntimeLifecycle) -> None:
@@ -1045,7 +1050,7 @@ async def test_shutdown_cancellation_before_entry_and_during_close_async(runtime
         lifecycle_module.close_services_async.assert_awaited_once()
     finally:
         release.set()
-        await asyncio.gather(shutdown, return_exceptions=True)
+        await settle_tasks_async(shutdown)
 
 
 def _save_recipe(root: Path, *, kind: str, name: str, document: dict[str, object]) -> Path:

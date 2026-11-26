@@ -18,7 +18,12 @@ from pyrit.scenario.core import (
     get_default_adversarial_target,
     override_default_adversarial_target,
 )
-from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async, wait_for_event_async
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    drain_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 from unit.mocks import MockPromptTarget
 
 
@@ -164,7 +169,7 @@ async def test_construction_offload_retains_context_and_ownership_async(
             assert configured == [selected]
         finally:
             release.set()
-            await asyncio.gather(task, return_exceptions=True)
+            await drain_tasks_async(task)
 
 
 def test_build_metadata_raises_when_scenario_requires_constructor_args() -> None:
