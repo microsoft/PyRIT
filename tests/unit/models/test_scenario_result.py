@@ -10,6 +10,7 @@ import pytest
 from unit.mocks import make_scenario_result
 
 from pyrit.models import (
+    SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -17,6 +18,10 @@ from pyrit.models import (
     ConversationType,
     RetryEvent,
     ScenarioResult,
+    ScenarioRunPlan,
+    ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
+    ScenarioRunPlanSeedGroup,
     ScenarioRunState,
 )
 
@@ -87,6 +92,39 @@ class TestScenarioResult:
         )
         techniques = result.get_techniques_used()
         assert sorted(techniques) == ["crescendo", "flip"]
+
+    @pytest.mark.parametrize("valid_plan", [True, False])
+    def test_get_techniques_used_reads_saved_plan_techniques(self, valid_plan):
+        # Baselines and techniques grouped under one category count under their own techniques.
+        groups = [
+            ScenarioRunPlanAtomicGroup(
+                id=name,
+                atomic_attack_name=name,
+                display_group="public_policy",
+                technique_name=technique,
+                technique_eval_hash=f"{name}-eval",
+                seed_group_ids=["seed"],
+                kind=kind,
+            )
+            for name, technique, kind in (
+                ("baseline__seed", None, ScenarioRunPlanGroupKind.BASELINE),
+                ("red_teaming__seed", "red_teaming", ScenarioRunPlanGroupKind.ATTACK),
+            )
+        ]
+        plan = ScenarioRunPlan(
+            atomic_groups=groups,
+            seed_groups=[ScenarioRunPlanSeedGroup(id="seed", objective_sha256="sha", objective="objective")],
+        ).model_dump(mode="json")
+        result = make_scenario_result(
+            scenario_name="TestScenario",
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
+            attack_results={group.atomic_attack_name: [] for group in groups},
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
+            display_group_map=dict.fromkeys((group.atomic_attack_name for group in groups), "public_policy"),
+            metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan if valid_plan else {"atomic_groups": "invalid"}},
+        )
+        expected = ["baseline", "red_teaming"] if valid_plan else ["public_policy"]
+        assert result.get_techniques_used() == expected
 
     def test_get_objectives_all(self):
         ar1 = _make_attack_result(objective="obj1")
