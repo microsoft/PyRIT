@@ -25,6 +25,7 @@ from pyrit.prompt_target.common.tool_loop import (
     run_tool_loop_async,
 )
 from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider, _ScopedToolProvider, collect_tools_async
+from pyrit.prompt_target.common.utils import nested_tools
 
 
 class _ChatCompletionsToolLoopMixin(ABC):
@@ -74,12 +75,15 @@ class _ChatCompletionsToolLoopMixin(ABC):
 
     def _configures_function_tools(self) -> bool:
         """
-        Whether function tools are configured or declared, without contacting any tool provider.
+        Whether the request advertises function tools, without contacting any tool provider.
 
         Returns:
             bool: True for configured tools, a tool provider, or a function tool declared in
-                ``extra_body_parameters["tools"]``.
+                ``extra_body_parameters["tools"]``. Tools a nested ``extra_body`` declares replace these.
         """
+        replacing = nested_tools(self._extra_body_parameters)
+        if replacing is not None:
+            return any(tool.get("type") == "function" for tool in replacing)
         declared = (self._extra_body_parameters or {}).get("tools") or []
         return bool(
             self._direct_tools or self._tool_providers or any(tool.get("type") == "function" for tool in declared)
@@ -90,11 +94,15 @@ class _ChatCompletionsToolLoopMixin(ABC):
         Report the function tools advertised to the endpoint.
 
         Includes function declarations in ``extra_body_parameters["tools"]`` and the configured tools,
-        discovering provider tools first. No tool executes.
+        discovering provider tools first. Function tools a nested ``extra_body`` declares replace these,
+        since the request applies it last. No tool executes.
 
         Returns:
             list[ToolDefinition]: The advertised function tools.
         """
+        replacing = nested_tools(self._extra_body_parameters)
+        if replacing is not None:
+            return parse_function_tool_declarations(replacing)
         declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools") or [])
         async with AsyncExitStack() as stack:
             for provider in self._tool_providers:

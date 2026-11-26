@@ -362,6 +362,48 @@ async def test_null_tool_declarations_mean_no_tools(build_target) -> None:
     assert not target.capabilities.supports_function_tools
 
 
+_SEND_EMAIL_CHAT = {"type": "function", "function": {"name": "send_email", "parameters": {"type": "object"}}}
+_SEND_EMAIL_RESPONSES = {"type": "function", "name": "send_email", "parameters": {"type": "object"}}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget])
+@pytest.mark.parametrize("nested_only", [True, False], ids=["nested_only", "nested_clear"])
+async def test_nested_extra_body_tools_replace_the_declared_tools(
+    target_class: type[OpenAIChatTarget] | type[OpenAIResponseTarget] | type[LiteLLMChatTarget], nested_only: bool
+) -> None:
+    declaration = _SEND_EMAIL_RESPONSES if target_class is OpenAIResponseTarget else _SEND_EMAIL_CHAT
+    # The request applies a nested extra_body last, so its tools are the ones sent.
+    if nested_only:
+        body = {"extra_body": {"tools": [declaration]}}
+    else:
+        body = {"tools": [declaration], "extra_body": {"tools": []}}
+    if target_class is LiteLLMChatTarget:
+        target = LiteLLMChatTarget(model_name="custom/model", extra_body_parameters=body)
+    else:
+        target = target_class(
+            model_name="gpt-4", endpoint="https://mock.azure.com", api_key="mock-key", extra_body_parameters=body
+        )
+
+    definitions = await target.get_tool_definitions_async()
+
+    assert [definition.name for definition in definitions] == (["send_email"] if nested_only else [])
+    assert target.capabilities.supports_function_tools is nested_only
+
+
+async def test_nested_extra_body_tools_replace_configured_response_tools(patch_central_database) -> None:
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tools=[add],
+        extra_body_parameters={"extra_body": {"tools": []}},
+    )
+
+    assert await target.get_tool_definitions_async() == []
+    assert not target.capabilities.supports_function_tools
+
+
 async def test_litellm_target_reports_configured_tools(patch_central_database) -> None:
     provider = MagicMock(spec=ToolProvider)
     provider.identifier = {"type": "test"}

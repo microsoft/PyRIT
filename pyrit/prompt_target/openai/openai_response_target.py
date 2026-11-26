@@ -67,6 +67,7 @@ from pyrit.prompt_target.common.tool_provider import (
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
+    nested_tools,
     validate_temperature,
     validate_top_p,
 )
@@ -345,12 +346,15 @@ class OpenAIResponseTarget(OpenAITarget):
 
     def _configures_function_tools(self) -> bool:
         """
-        Whether function tools are configured or declared, without contacting any tool provider.
+        Whether the request advertises function tools, without contacting any tool provider.
 
         Returns:
             bool: True for configured tools, a tool provider, or a function tool declared in
-                ``extra_body_parameters["tools"]``.
+                ``extra_body_parameters["tools"]``. Tools a nested ``extra_body`` declares replace these.
         """
+        replacing = nested_tools(self._extra_body_parameters)
+        if replacing is not None:
+            return any(tool.get("type") == "function" for tool in replacing)
         declared = (self._extra_body_parameters or {}).get("tools") or []
         return bool(
             self._direct_tools or self._tool_providers or any(tool.get("type") == "function" for tool in declared)
@@ -361,13 +365,17 @@ class OpenAIResponseTarget(OpenAITarget):
         Report the function tools advertised to the endpoint.
 
         Includes function declarations in ``extra_body_parameters`` and the configured tools,
-        discovering provider tools first. Legacy ``custom_functions`` are dispatch callbacks, not
+        discovering provider tools first. Function tools a nested ``extra_body`` declares replace these,
+        since the request applies it last. Legacy ``custom_functions`` are dispatch callbacks, not
         advertised tools, so they appear only through their declarations. Provider-hosted tools such
         as web search are not function tools and are omitted. No tool executes.
 
         Returns:
             list[ToolDefinition]: The advertised function tools.
         """
+        replacing = nested_tools(self._extra_body_parameters)
+        if replacing is not None:
+            return parse_function_tool_declarations(replacing)
         await self._initialize_tools_async()
         declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools") or [])
         return [*declared, *(tool.to_definition() for tool in self._tools)]

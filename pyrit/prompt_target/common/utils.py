@@ -112,6 +112,25 @@ def without_tool_settings(extra_body_parameters: Mapping[str, Any] | None) -> di
     return parameters
 
 
+def nested_tools(extra_body_parameters: Mapping[str, Any] | None) -> list[Mapping[str, Any]] | None:
+    """
+    Read the tools a nested ``extra_body`` declares.
+
+    The request applies a nested ``extra_body`` last, so these tools replace every other tool it would
+    send, including configured ones.
+
+    Args:
+        extra_body_parameters (Mapping[str, Any] | None): The passthrough request parameters.
+
+    Returns:
+        list[Mapping[str, Any]] | None: The nested tools, or None when the nested body sets no tools.
+    """
+    nested = (extra_body_parameters or {}).get("extra_body")
+    if isinstance(nested, Mapping) and "tools" in nested:
+        return list(nested["tools"] or [])
+    return None
+
+
 def limit_requests_per_minute(
     func: Callable[_P, Awaitable[_T]],
 ) -> Callable[_P, Coroutine[Any, Any, _T]]:
