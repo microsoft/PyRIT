@@ -267,6 +267,37 @@ for score in violence_scores:
     print("Violence detected:", score.get_value())
 
 # %% [markdown]
+# ### LocalPromptInjectionScorer
+#
+# `LocalPromptInjectionScorer` is an **experimental** local guard for prompt injections and jailbreaks, not an
+# LLM judge. It asks one two-way question, whether a request should be forwarded or refused as an attempt to
+# subvert the assistant, of the zero-shot engine in [vegaml](https://pypi.org/project/vegaml/), which reads the
+# request with a frozen Qwen3.5-0.8B model (pinned revision of `nandakishorm/vega-U`). The question is vegaml's own
+# guard sheet. The score is the engine's probability of refusing; nothing is trained on PyRIT data.
+#
+# Install the runtime with `pip install vegaml`. The first call downloads the checkpoint, and
+# `await scorer.load_model_async()` loads it ahead of time. On a two-core CPU a short request took about two seconds;
+# long requests take much longer and need more memory.
+#
+# The probability ranks requests well, but no single threshold suits every kind of traffic. Measured on
+# 26 November 2026 with the pinned revision, on CPU:
+#
+# | Held-out set | Attacks | Benign | AUC | Caught at 0.5 | Benign refused at 0.5 |
+# | --- | --- | --- | --- | --- | --- |
+# | `deepset/prompt-injections` test split | 60 | 56 | 0.90 | 58% | 4% |
+# | `jackhhao/jailbreak-classification` test split, first 200 rows | 79 | 121 | 0.97 | 100% | 58% |
+#
+# Short injections often score below 0.5, while benign role-play prompts often score above it, so choose a
+# threshold on data like yours, for example with `FloatScaleThresholdScorer`. The engine's own abstain flag is
+# kept in `score_metadata["engine_abstained"]`, and `abstain_band` returns `UNDETERMINED` inside a chosen
+# interval. This scorer has no default evaluation mapping or automatic best-scorer registration.
+#
+# ```python
+# from pyrit.score import FloatScaleThresholdScorer, LocalPromptInjectionScorer
+#
+# injection_scorer = FloatScaleThresholdScorer(scorer=LocalPromptInjectionScorer(), threshold=0.5)
+# ```
+#
 # ## Slow scorers (LLM self-ask)
 #
 # These ask a chat target to rate a response on a scale, then normalize the rating to 0–1.
