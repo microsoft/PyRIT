@@ -183,6 +183,6 @@ def test_invalid_settings_are_rejected(patch_central_database: None, kwargs: dic
 
 @pytest.mark.skipif(importlib.util.find_spec("vegaml") is None, reason="vegaml is not installed")
 def test_guard_question_matches_vegaml() -> None:
-    from vegaml.guard import GUARD
+    from vegaml.guard import GUARD  # type: ignore[ty:import-not-found]
 
     assert module._GUARD_QUESTION == GUARD
