@@ -58,14 +58,14 @@ function mergeTranscriptPage(
 
 export interface UseConversationMessagesOptions {
   readConversation?: (attackResultId: string, conversationId: string) => Promise<ConversationMessagesResponse>
-  readConversationById?: (conversationId: string) => Promise<ConversationMessagesResponse>
-  pollIntervalMs?: number
+  readConversationById?: ((conversationId: string) => Promise<ConversationMessagesResponse>) | undefined
+  pollIntervalMs?: number | undefined
   attackResultId: string | null
   conversationId: string | null
   activeConversationId: string | null
-  findingEvidenceId?: string | null
+  findingEvidenceId?: string | null | undefined
   /** Opts saved evidence into piece-bounded reads; live Chat keeps its existing full reads. */
-  messagePageSize?: number
+  messagePageSize?: number | undefined
   /** Conversations with an in-flight send; render-safe state used for the loading derivation. */
   sendingConversations: ReadonlySet<string>
   /** Synchronous send ownership check used by the reload guard. */

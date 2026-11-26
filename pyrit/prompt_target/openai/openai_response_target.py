@@ -14,6 +14,7 @@ from typing import (
     Any,
     ClassVar,
     Literal,
+    assert_never,
     cast,
 )
 
@@ -36,6 +37,8 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
     PromptResponseError,
+    ToolCaptureCoverage,
+    ToolCaptureGap,
     WebSearchConfig,
     WebSearchMode,
 )
@@ -98,6 +101,20 @@ class MessagePieceType(str, Enum):
     MCP_LIST_TOOLS = "mcp_list_tools"
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
 
+
+# Output sections that run no tool, or whose function calls PyRIT runs and stores itself.
+_CAPTURED_SECTION_TYPES = frozenset(
+    {
+        MessagePieceType.MESSAGE.value,
+        MessagePieceType.REASONING.value,
+        MessagePieceType.FUNCTION_CALL.value,
+        "custom_tool_call",
+    }
+)
+# Tools the provider runs itself. Their results never reach PyRIT as function_call_output pieces.
+_HOSTED_TOOL_SECTION_TYPES = frozenset(
+    piece_type.value for piece_type in MessagePieceType if piece_type.value not in _CAPTURED_SECTION_TYPES
+)
 
 # Fields of a web_search_call input item (all required); the output item has the same ones.
 _WEB_SEARCH_CALL_INPUT_FIELDS: tuple[str, ...] = ("id", "type", "status", "action")
@@ -593,6 +610,8 @@ class OpenAIResponseTarget(OpenAITarget):
             search_tool = next(tool for tool in tools if tool.get("type") in self._WEB_SEARCH_TOOL_TYPES)
             body["tool_choice"] = {"type": search_tool["type"]}
             return
+        if TYPE_CHECKING and config.mode is not WebSearchMode.DISABLED:  # pragma: no cover
+            assert_never(config.mode)
         body["tools"] = [tool for tool in tools if tool.get("type") not in self._WEB_SEARCH_TOOL_TYPES]
         choice = body.get("tool_choice")
         if isinstance(choice, dict) and choice.get("type") in self._WEB_SEARCH_TOOL_TYPES:
@@ -747,11 +766,45 @@ class OpenAIResponseTarget(OpenAITarget):
         # there, since the whole budget may have been spent on hidden reasoning with no visible
         # answer.
         self._capture_response_metadata(response=response, pieces=extracted_response_pieces)
+        extracted_response_pieces[0].prompt_metadata.update(self._tool_capture_coverage(response).to_metadata())
 
         if truncated and extracted_response_pieces:
             extracted_response_pieces[0].mark_as_truncated()
 
         return Message(message_pieces=extracted_response_pieces)
+
+    @staticmethod
+    def _tool_capture_coverage(response: Response) -> ToolCaptureCoverage:
+        """
+        Record whether the stored messages will show every tool that ran for this response.
+
+        Function calls are run and stored by this target. A tool the provider runs itself, or an
+        output section PyRIT does not model, may have run without a stored output.
+
+        Returns:
+            ToolCaptureCoverage: The coverage, with a gap for each kind of unstored section.
+        """
+        gaps: list[ToolCaptureGap] = []
+        for section in response.output or []:
+            section_type = str(getattr(section, "type", ""))
+            if section_type in _CAPTURED_SECTION_TYPES:
+                continue
+            gap = (
+                ToolCaptureGap.HOSTED_TOOL_CALL
+                if section_type in _HOSTED_TOOL_SECTION_TYPES
+                else ToolCaptureGap.UNRECOGNIZED_OUTPUT
+            )
+            if gap not in gaps:
+                gaps.append(gap)
+        return ToolCaptureCoverage(gaps=tuple(gaps))
+
+    @staticmethod
+    def _add_tool_capture_gap(*, response: Message, gap: ToolCaptureGap) -> None:
+        """Add a gap to the coverage recorded on a model response."""
+        metadata = response.message_pieces[0].prompt_metadata
+        recorded = ToolCaptureCoverage.from_metadata(metadata=metadata) or ToolCaptureCoverage()
+        if gap not in recorded.gaps:
+            metadata.update(ToolCaptureCoverage(gaps=(*recorded.gaps, gap)).to_metadata())
 
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
@@ -810,7 +863,10 @@ class OpenAIResponseTarget(OpenAITarget):
             return response
 
         if not self._execute_tools:
-            return [await send_async(normalized_conversation)]
+            result = await send_async(normalized_conversation)
+            if self._find_pending_tool_calls(result):
+                self._add_tool_capture_gap(response=result, gap=ToolCaptureGap.CALLS_NOT_EXECUTED)
+            return [result]
 
         def find_calls(reply: Message) -> list[PendingToolCall]:
             return [

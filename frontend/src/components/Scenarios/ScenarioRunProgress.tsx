@@ -41,7 +41,7 @@ export default function ScenarioRunProgress({
           <div className={styles.progressPrimary}>
             <AttackActivity label={queued ? 'Waiting to start' : 'Scan in progress'} />
             <Text weight="semibold">{status}</Text>
-            <ProgressBar value={overall.planned ? overall.completed / overall.planned : undefined} aria-label="Scan progress" />
+            <ProgressBar {...(overall.planned ? { value: overall.completed / overall.planned } : {})} aria-label="Scan progress" />
           </div>
           <div className={styles.progressTiming}>
             <ScenarioRunTiming run={run} />

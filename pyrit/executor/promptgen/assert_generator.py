@@ -16,7 +16,7 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from itertools import product
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Self, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Self, TypeVar, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, model_validator
 
@@ -452,6 +452,8 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
                 producer=producer,
             )
         else:
+            if TYPE_CHECKING and stage is not AssertGenerationStage.DIMENSIONS:  # pragma: no cover
+                assert_never(stage)
             if checkpoint.taxonomy is None:
                 raise ValueError("Dimensions need a taxonomy.")
             producer = self._stage_producer(checkpoint=checkpoint, stage=stage)
@@ -754,7 +756,11 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
             )
             payload = _taxonomy_payload(config=config, systematization=systematization)
             output_tokens = config.behavior_category_count * cls.CATEGORY_OUTPUT_TOKENS + 200
+        elif stage == AssertGenerationStage.SEED_GROUPS:
+            raise ValueError("Seed groups are estimated separately.")
         else:
+            if TYPE_CHECKING and stage is not AssertGenerationStage.DIMENSIONS:  # pragma: no cover
+                assert_never(stage)
             payload = _dimensions_payload(config=config, taxonomy=cls._estimated_taxonomy(checkpoint=checkpoint))
             output_tokens = len(config.dimensions) * config.dimension_level_count * cls.LEVEL_OUTPUT_TOKENS
         tokens = _input_tokens(config=config, stage=stage, payload=payload) + output_tokens
@@ -1053,6 +1059,8 @@ def _plan_assignments(
         return _stratified_assignments(levels=levels, count=count, stratify_by=sampling.stratify_by, rng=rng)
     if sampling.method == AssertSamplingMethod.RANDOM:
         return _random_assignments(levels=levels, count=count, with_replacement=sampling.with_replacement, rng=rng)
+    if TYPE_CHECKING and sampling.method is not AssertSamplingMethod.FULL_FACTORIAL:  # pragma: no cover
+        assert_never(sampling.method)
     return _full_factorial_assignments(levels=levels, count=count, replication=sampling.replication, rng=rng)
 
 

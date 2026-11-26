@@ -13,7 +13,7 @@ from functools import lru_cache
 from time import monotonic
 from typing import cast
 
-from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
+from pyrit.backend.models import DatasetListResponse, ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
@@ -315,6 +315,36 @@ class ScenarioService:
         return ScenarioDatasetLoadResponse(
             settings=settings, items=[item for item in metadata.items if item.name in names]
         )
+
+    async def list_compatible_datasets_async(self, *, scenario_name: str) -> DatasetListResponse | None:
+        """
+        List the catalog datasets the scenario can run, independently of launch-form settings.
+
+        The scenario decides compatibility from stored catalog facts without fetching providers.
+
+        Returns:
+            DatasetListResponse | None: The runnable catalog entries, or None for an unknown scenario.
+        """
+        try:
+            scenario_class = self._registry.get_class(scenario_name)
+        except KeyError:
+            return None
+        resolver = ScenarioConfigurationResolver()
+        kwargs = await asyncio.to_thread(
+            resolver.resolve_configuration, scenario_name=scenario_name, scenario_class=scenario_class
+        )
+        scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name)
+        scenario.set_params_from_args(args=kwargs)
+        metadata = await get_dataset_service().list_datasets_async()
+        named = [item for item in metadata.items if item.selection_key != "dataset:unnamed"]
+        async with self._configured_estimate_semaphore:
+            compatible = set(
+                await scenario.get_compatible_dataset_names_async(
+                    dataset_names=[item.name for item in named],
+                    loaded_dataset_names={item.name for item in named if item.loaded},
+                )
+            )
+        return DatasetListResponse(items=[item for item in named if item.name in compatible])
 
     async def _get_default_run_size_estimate_async(self, *, metadata: ScenarioMetadata) -> ScenarioRunSizeEstimate:
         """Return a cached, cancellation-safe scenario-owned estimate for the requesting caller."""
