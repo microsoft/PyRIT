@@ -715,11 +715,20 @@ class AttackService:
                 else []
             )
             if source:
+                source_messages = await self._memory.get_conversation_messages_async(
+                    conversation_id=str(request.source_conversation_id)
+                )
+                retained_pieces = [
+                    piece
+                    for message in source_messages
+                    if request.cutoff_index is None or message.sequence <= request.cutoff_index
+                    for piece in message.message_pieces
+                ]
                 get_chat_scoring_service().continue_manually(
                     source=source[0],
                     destination=attack_result,
                     source_conversation_id=str(request.source_conversation_id),
-                    retained_pieces=copied,
+                    retained_pieces=retained_pieces,
                     explicit_selection="chat_scorer" in request.model_fields_set,
                 )
         prepended = list(request.prepended_conversation or [])
