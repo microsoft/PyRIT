@@ -17,6 +17,8 @@ AI red teaming means probing an AI system to uncover its failure modes, includin
 Two things it is not:
 
 - **It is not measurement.** Finding five examples of a failure tells you the failure exists. It does not tell you how often it happens. Red teaming finds the problems; systematic measurement tells you how common they are, and mitigation work addresses them. "AI red teaming is not safety benchmarking" is one of the eight lessons in *Lessons From Red Teaming 100 Generative AI Products* [@bullwinkel2025airtlessons].
+
+  That said, many people mean "run large-scale automated probes", or even "run benchmarks or evals", when they say AI red teaming. The lines blur often in practice, because issues that were found by hand end up in larger test datasets and benchmarks.
 - **It is not finished after one round.** Models change, defenses change, and attackers adapt. The same paper closes with "The work of securing AI systems will never be complete."
 
 ## Questions to Ask Before You Start
