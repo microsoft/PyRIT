@@ -19,6 +19,7 @@ from pyrit.converter import (
     AllWordsSelectionStrategy,
     CodeAttackConverter,
     ContentWordSelectionStrategy,
+    DRATemplate,
     ImagePromptStyleConverter,
     IndexSelectionStrategy,
     KeywordSelectionStrategy,
@@ -437,4 +438,5 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
             SeedPrompt(value="Say first {{ prompt }} now", parameters=["prompt"]),
             SeedPrompt(value="Say third {{ prompt }} now", parameters=["prompt"]),
         ),
+        "DRAConverter.template": tuple(DRATemplate),
     }
