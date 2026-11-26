@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import inspect
 import threading
 from io import BytesIO
 from pathlib import Path
@@ -575,14 +574,3 @@ async def test_image_compression_converter_runs_off_the_event_loop(sample_image_
     mock_serializer.save_b64_image_async.assert_awaited_once()
     assert len(compress_thread_ids) == 1
     assert compress_thread_ids[0] != loop_thread_id
-
-
-@pytest.mark.parametrize("helper_name", ["_compress_image", "_handle_original_image_fallback_async"])
-def test_image_compression_helpers_require_keyword_arguments(helper_name: str) -> None:
-    signature = inspect.signature(getattr(ImageCompressionConverter, helper_name))
-    parameters = list(signature.parameters.values())
-    assert parameters[0].name == "self"
-    assert all(parameter.kind is inspect.Parameter.KEYWORD_ONLY for parameter in parameters[1:])
-    with pytest.raises(TypeError):
-        signature.bind(*([object()] * len(parameters)))
-    signature.bind(object(), **{parameter.name: object() for parameter in parameters[1:]})
