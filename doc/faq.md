@@ -213,7 +213,7 @@ Clone the repository and run `uv sync` in it. See [Contributor Local Installatio
 
 ### When is the next release?
 
-We do not publish a release schedule. Watch the [releases page](https://github.com/microsoft/PyRIT/releases) on GitHub to be notified. If you need a change that has been merged but not released, install from `main`.
+We aim to release at least once a month. The exact timing shifts with deliverable milestones, the availability of engineers, and similar factors, so there is no fixed date. Watch the [releases page](https://github.com/microsoft/PyRIT/releases) on GitHub to be notified. If you need a change that has been merged but not released, install from `main`.
 
 ## Getting Help and Contributing
 
