@@ -1,21 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 import io
-import json
 import logging
-import os
 import uuid
 from enum import Enum
-from pathlib import Path
 from typing import Any, ClassVar
 
-from datasets import DownloadMode, Features, disable_progress_bars, load_dataset, load_dataset_builder
-from huggingface_hub import HfFileSystem, hf_hub_download
-from huggingface_hub.hf_file_system import HfFileSystemResolvedRepositoryPath
+from datasets import Features, Image, Value
 
-from pyrit.common.path import DB_DATA_PATH
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
 )
@@ -90,6 +83,13 @@ _CATEGORY_TO_GITHUB_SCENARIO: dict[str, str] = {
     "Health_Consultation": "12-Health_Consultation",
     "Gov_Decision": "13-Gov_Decision",
 }
+
+# Features of every split of every MM-SafetyBench config, as declared by the
+# README ``dataset_info`` metadata. Passed explicitly because ``datasets``
+# does not apply the README features when ``data_files`` is overridden, and
+# the parquet footers carry no feature metadata — without this the ``image``
+# column would stay a raw struct instead of decoding to a PIL image.
+_MM_SAFETYBENCH_FEATURES = Features({"id": Value("string"), "question": Value("string"), "image": Image()})
 
 
 class _MMSafetyBenchDataset(_RemoteDatasetLoader):
@@ -327,142 +327,42 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
 
     async def _fetch_single_split_async(self, *, category_value: str, split: str, cache: bool) -> Any:
         """
-        Fetch one split of one config, downloading only the files that back it.
+        Fetch one split of one config, downloading only the parquet file that backs it.
 
         ``load_dataset(repo, config, split=...)`` downloads every split of the
         config (for this dataset, all three image variants plus ``Text_only``,
         ~30 MB per category when ~15 MB is needed), because ``split`` only
-        selects what gets prepared. Instead, resolve the split's data files and
-        features from the config metadata (a ~22 KB fetch), download exactly
-        those files, and load them with the parquet builder.
+        selects what gets prepared. Overriding ``data_files`` with the split's
+        parquet file (the layout the dataset README ``configs`` block declares)
+        narrows the download to exactly that file, while keeping the shared
+        helper's caching semantics: warm-cache calls reuse the prepared data.
+        (Reuse requires resolving the config metadata, ~22 KB, against the
+        hub; with ``HF_HUB_OFFLINE=1`` the cache lookup hashes the unresolved
+        ``data_files`` and cannot match, a ``datasets`` limitation for any
+        ``data_files`` override.)
 
         Args:
             category_value: HuggingFace config name (e.g. ``"Illegal_Activitiy"``).
             split: Split name within the config (e.g. ``"SD_TYPO"``).
             cache: Whether to reuse cached data. When False, files are
-                force-redownloaded, mirroring ``_fetch_from_huggingface_async``.
+                force-redownloaded.
 
         Returns:
             The HuggingFace ``Dataset`` for that split (iterable of dict rows,
-            with the ``image`` column decoded per the dataset's features).
-
-        Raises:
-            ValueError: If the config metadata lists no data files for ``split``.
+            with the ``image`` column decoded per ``_MM_SAFETYBENCH_FEATURES``).
         """
-        disable_progress_bars()
-
-        def _resolve_split_files(
-            *, cache_dir: str | None, download_mode: DownloadMode
-        ) -> tuple[list[dict[str, str]], Any]:
-            """
-            Resolve the split's backing files and features from the remote config metadata (~22 KB).
-
-            Args:
-                cache_dir: Datasets cache directory, or None to bypass the cache.
-                download_mode: Download mode forwarded to ``load_dataset_builder``.
-
-            Returns:
-                A (files, features) tuple, where each file dict carries the
-                resolved ``repo_id``/``repo_type``/``revision``/``filename``.
-
-            Raises:
-                ValueError: If the config metadata lists no data files for
-                    ``split``, or a data file is not a repository path.
-            """
-            builder = load_dataset_builder(
-                self.HF_DATASET_NAME,
-                category_value,
-                cache_dir=cache_dir,
-                download_mode=download_mode,
-                token=self.token,
-            )
-            data_files = (builder.config.data_files or {}).get(split) or []
-            if not data_files:
-                raise ValueError(
-                    f"No data files found for config {category_value!r} split {split!r} of {self.HF_DATASET_NAME}"
-                )
-
-            # data_files entries are revision-pinned hf:// URLs.
-            fs = HfFileSystem(token=self.token)
-            remote_files: list[dict[str, str]] = []
-            for url in data_files:
-                resolved = fs.resolve_path(url)
-                if not isinstance(resolved, HfFileSystemResolvedRepositoryPath):
-                    raise ValueError(f"Unexpected non-repository data file path for {self.HF_DATASET_NAME}: {url!r}")
-                remote_files.append(
-                    {
-                        "repo_id": resolved.repo_id,
-                        "repo_type": resolved.repo_type,
-                        "revision": resolved.revision,
-                        "filename": resolved.path_in_repo,
-                    }
-                )
-            return remote_files, builder.info.features
-
-        def _load_split_sync() -> Any:
-            cache_dir = (os.getenv("HF_DATASETS_CACHE") or str(DB_DATA_PATH / "huggingface")) if cache else None
-            download_mode = DownloadMode.REUSE_DATASET_IF_EXISTS if cache else DownloadMode.FORCE_REDOWNLOAD
-            manifest_path = (
-                Path(cache_dir)
-                / "pyrit_split_manifests"
-                / f"{self.HF_DATASET_NAME.replace('/', '__')}__{category_value}__{split}.json"
-                if cache_dir is not None
-                else None
-            )
-
-            try:
-                remote_files, features = _resolve_split_files(cache_dir=cache_dir, download_mode=download_mode)
-                if manifest_path is not None and features is not None:
-                    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-                    manifest_path.write_text(
-                        json.dumps({"files": remote_files, "features": features.to_dict()}), encoding="utf-8"
-                    )
-            except (ConnectionError, OSError) as exc:
-                # The hub is unreachable (e.g. HF_HUB_OFFLINE=1). The prepared
-                # dataset is cached under the local parquet builder, so the
-                # repo-name cache fallback inside load_dataset_builder cannot
-                # find it; reuse the manifest a previous successful fetch of
-                # this split persisted instead.
-                if manifest_path is None or not manifest_path.exists():
-                    raise
-                logger.warning(
-                    f"[MM-SafetyBench] Could not resolve {self.HF_DATASET_NAME} ({category_value}/{split}) "
-                    f"remotely ({exc}); reusing the cached split manifest."
-                )
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                remote_files = manifest["files"]
-                features = Features.from_dict(manifest["features"])
-
-            # Download each file through the hub cache so repeated fetches
-            # reuse existing blobs (and offline fetches resolve from cache).
-            local_files = [
-                hf_hub_download(
-                    repo_id=remote_file["repo_id"],
-                    filename=remote_file["filename"],
-                    repo_type=remote_file["repo_type"],
-                    revision=remote_file["revision"],
-                    token=self.token,
-                    force_download=not cache,
-                )
-                for remote_file in remote_files
-            ]
-
-            # features from the config metadata restore the Image decoding the
-            # plain parquet builder would otherwise lose.
-            return load_dataset(
-                "parquet",
-                data_files=local_files,
-                split="train",
-                features=features,
-                cache_dir=cache_dir,
-                download_mode=download_mode,
-            )
-
-        try:
-            return await asyncio.to_thread(_load_split_sync)
-        except Exception as e:
-            logger.error(f"Failed to load HuggingFace dataset {self.HF_DATASET_NAME} ({category_value}/{split}): {e}")
-            raise
+        return await self._fetch_from_huggingface_async(
+            dataset_name=self.HF_DATASET_NAME,
+            config=category_value,
+            split=split,
+            cache=cache,
+            token=self.token,
+            data_files={split: f"data/{category_value}/{split}.parquet"},
+            features=_MM_SAFETYBENCH_FEATURES,
+            # The config's README metadata declares four splits and we
+            # deliberately prepare only one, so split verification must be off.
+            verification_mode="no_checks",
+        )
 
     async def _load_variant_split_async(self, *, category_value: str, cache: bool) -> Any:
         """
