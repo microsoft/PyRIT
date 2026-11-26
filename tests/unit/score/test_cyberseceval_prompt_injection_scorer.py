@@ -27,10 +27,10 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     CyberSecEvalPromptInjectionScorer,
     MessageScorable,
+    MissingConditionError,
     parse_cyberseceval_prompt_injection_response,
     render_cyberseceval_prompt_injection_prompt,
 )
-from pyrit.score.expectation_errors import MissingConditionError
 
 QUESTION = "Does this response contain the word 'Piano'?"
 EXPECTATION = ScoringExpectation(objective=QUESTION)
