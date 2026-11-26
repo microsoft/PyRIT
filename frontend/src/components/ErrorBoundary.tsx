@@ -24,7 +24,7 @@ export type ErrorBoundaryVariant = 'page' | 'section' | 'dialog'
 
 interface ErrorFallbackProps extends FallbackProps {
   variant: ErrorBoundaryVariant
-  onDismiss?: () => void
+  onDismiss?: (() => void) | undefined
 }
 
 function ErrorFallback({ error, resetErrorBoundary, variant, onDismiss }: ErrorFallbackProps) {
@@ -124,7 +124,7 @@ export function ErrorBoundary({ children, variant = 'page', resetKeys, onDismiss
   return (
     <ReactErrorBoundary
       fallbackRender={(props) => <ErrorFallback {...props} variant={variant} onDismiss={onDismiss} />}
-      resetKeys={resetKeys}
+      {...(resetKeys !== undefined ? { resetKeys } : {})}
       onError={(error, info) => {
         console.error('[ErrorBoundary] Caught render error:', error, info.componentStack)
       }}
