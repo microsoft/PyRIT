@@ -305,7 +305,7 @@ apiClient.interceptors.response.use(
       (error?.response?.status === 409 && problem?.type === 'urn:pyrit:compatibility:mismatch')
     ) {
       compatibility.block('The backend rejected this frontend build identity.', problem.expected, problem.actual)
-      return Promise.reject(error instanceof Error ? error : new Error('Compatibility mismatch'))
+      throw error
     }
     const originalRequest = error?.config
     if (
@@ -330,7 +330,7 @@ apiClient.interceptors.response.use(
         `requestId=${requestId} | ${apiError.detail}`
     )
 
-    return Promise.reject(error instanceof Error ? error : new Error(apiError.detail))
+    throw error
   }
 )
 
