@@ -555,14 +555,14 @@ class AttackPrompt:
 
         return output_ids[self._assistant_role_slice.stop :]
 
-    def generate_str(self, model: Any, gen_config: Any = None) -> Any:
+    def generate_str(self, model: Any, gen_config: Any = None) -> str:
         """
         Generate and decode a model continuation.
 
         Returns:
-            Any: The decoded continuation.
+            str: The decoded continuation.
         """
-        return self.tokenizer.decode(self.generate(model, gen_config))
+        return self._decode(self.generate(model, gen_config))
 
     def test(self, model: Any, gen_config: Any = None) -> tuple[bool, int]:
         """
@@ -960,7 +960,7 @@ class AttackPrompt:
 
     @control_toks.setter
     def control_toks(self, input_control_toks: torch.Tensor) -> None:
-        self.control = self.tokenizer.decode(input_control_toks)
+        self.control = self._decode(input_control_toks)
         self._update_ids()
 
     @property

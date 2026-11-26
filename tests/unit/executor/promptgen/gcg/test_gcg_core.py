@@ -272,6 +272,60 @@ class TestAttackPromptModelBoundaries:
         with pytest.raises(TypeError, match="Model generate must return token id tensors, got list"):
             prompt.generate(model, SimpleNamespace(max_new_tokens=2))
 
+    def test_generate_str_decodes_the_continuation(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.pad_token_id = 0
+        prompt.tokenizer.decode.side_effect = lambda ids: "-".join(str(token) for token in ids.tolist())
+        prompt.input_ids = torch.tensor([10, 11, 12, 13])
+        prompt._assistant_role_slice = slice(2, 3)
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.return_value = torch.tensor([[10, 11, 12, 20, 21]])
+
+        assert prompt.generate_str(model, SimpleNamespace(max_new_tokens=2)) == "20-21"
+
+    def test_generate_str_raises_when_tokenizer_returns_non_string(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.pad_token_id = 0
+        prompt.tokenizer.decode.return_value = ["batched", "output"]
+        prompt.input_ids = torch.tensor([10, 11, 12, 13])
+        prompt._assistant_role_slice = slice(2, 3)
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.return_value = torch.tensor([[10, 11, 12, 20, 21]])
+
+        with pytest.raises(TypeError, match="Tokenizer decode must return a string, got list"):
+            prompt.generate_str(model, SimpleNamespace(max_new_tokens=2))
+
+    def test_control_toks_setter_stores_decoded_control(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.decode.return_value = "new control"
+        prompt.control = "old control"
+
+        with patch.object(prompt, "_update_ids") as update_ids:
+            prompt.control_toks = torch.tensor([7, 8])
+
+        assert prompt.control == "new control"
+        update_ids.assert_called_once_with()
+
+    def test_control_toks_setter_raises_and_keeps_control_when_tokenizer_returns_non_string(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.decode.return_value = ["batched", "output"]
+        prompt.control = "old control"
+
+        with (
+            patch.object(prompt, "_update_ids") as update_ids,
+            pytest.raises(TypeError, match="Tokenizer decode must return a string, got list"),
+        ):
+            prompt.control_toks = torch.tensor([7, 8])
+
+        assert prompt.control == "old control"
+        update_ids.assert_not_called()
+
 
 class TestTargetAndControlLoss:
     """Tests for AttackPrompt.target_loss and control_loss."""
