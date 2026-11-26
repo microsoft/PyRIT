@@ -124,9 +124,8 @@ class XSSOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         # The tag body stops at the next "<iframe", as in "Script Tag External Src".
         "Iframe Srcdoc": r"(?i)<iframe(?:(?!<iframe)[^>])*srcdoc\s*=",
         # <svg>...<script ...> — SVG documents execute embedded script tags.
-        # Any <script> after the first complete <svg ...> tag counts. The search from one tag
-        # stops at the next complete <svg ...> tag with no "<script" inside it, which the next
-        # search covers, so text after many <svg> tags is not rescanned from each of them.
+        # Any <script> after a complete <svg ...> tag counts. The scan stops at the next complete
+        # <svg ...> tag without "<script" in it, whose own search covers the rest, so it stays linear.
         "SVG Script": (
             r"(?i)<svg(?:(?!<svg)[^>])*>"
             r"(?:(?!<script|<svg(?:(?!<svg|<script)[^>])*>)[\s\S])*<script"
