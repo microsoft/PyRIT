@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import math
+import threading
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -90,14 +91,20 @@ class _VegaGuard:
         self._device = device
         self._threads = threads
         self._engine: Any | None = None
-        self._load_lock = asyncio.Lock()
-        self._inference_lock = asyncio.Lock()
+        # Thread locks, held by the worker threads themselves, so a cancelled call cannot release
+        # them while its thread is still loading or reading.
+        self._load_lock = threading.Lock()
+        self._inference_lock = threading.Lock()
 
     async def load_model_async(self) -> None:
         """Download as needed and load the engine exactly once."""
-        async with self._load_lock:
+        await asyncio.to_thread(self._loaded_engine)
+
+    def _loaded_engine(self) -> Any:
+        with self._load_lock:
             if self._engine is None:
-                self._engine = await asyncio.to_thread(self._load_model)
+                self._engine = self._load_model()
+            return self._engine
 
     def _load_model(self) -> Any:
         try:
@@ -127,9 +134,7 @@ class _VegaGuard:
         Raises:
             ValueError: If the engine returns a probability that is not a finite value in [0, 1].
         """
-        await self.load_model_async()
-        async with self._inference_lock:
-            result = await asyncio.to_thread(self._decide, text)
+        result = await asyncio.to_thread(self._decide, text)
         answer = result["answers"][_QUESTION_ID]
         probability = float(answer["probs"][_BLOCK])
         if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
@@ -137,10 +142,9 @@ class _VegaGuard:
         return _GuardDecision(block_probability=probability, engine_abstained=bool(answer.get("abstain", False)))
 
     def _decide(self, text: str) -> dict[str, Any]:
-        engine = self._engine
-        if engine is None:  # pragma: no cover - load_model_async either sets it or raises.
-            raise RuntimeError("The guard engine is not loaded.")
-        return engine.decide(text, {_QUESTION_ID: _GUARD_QUESTION}, mode="engine")
+        engine = self._loaded_engine()
+        with self._inference_lock:
+            return engine.decide(text, {_QUESTION_ID: _GUARD_QUESTION}, mode="engine")
 
 
 class LocalPromptInjectionScorer(MessageFloatScaleScorer):

@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import builtins
 import importlib.util
+import threading
 from typing import Any
 from unittest.mock import patch
 
@@ -140,6 +142,66 @@ def test_engine_loads_with_the_pinned_checkpoint_in_engine_mode(patch_central_da
             },
         )
     ]
+
+
+async def test_a_cancelled_load_does_not_start_a_second_load(patch_central_database: None) -> None:
+    loading = threading.Event()
+    release = threading.Event()
+    loads: list[str] = []
+
+    class _SlowVegaml:
+        @staticmethod
+        def load(*args: Any, **kwargs: Any) -> _FakeEngine:
+            loads.append(args[0])
+            loading.set()
+            release.wait(5)
+            return _FakeEngine()
+
+    scorer = LocalPromptInjectionScorer()
+    with patch.dict("sys.modules", {"vegaml": _SlowVegaml}):
+        first = asyncio.create_task(scorer.load_model_async())
+        assert await asyncio.to_thread(loading.wait, 5)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        second = asyncio.create_task(scorer.load_model_async())
+        await asyncio.sleep(0.2)
+        release.set()
+        await second
+
+    assert len(loads) == 1
+    assert isinstance(scorer._guard._engine, _FakeEngine)
+
+
+async def test_a_cancelled_call_does_not_let_another_read_concurrently(patch_central_database: None) -> None:
+    reading = threading.Event()
+    release = threading.Event()
+    counter = threading.Lock()
+    active = [0, 0]
+
+    class _SlowEngine(_FakeEngine):
+        def decide(self, state: str, questions: dict[str, Any], mode: str = "auto") -> dict[str, Any]:
+            with counter:
+                active[0] += 1
+                active[1] = max(active[1], active[0])
+            reading.set()
+            release.wait(5)
+            with counter:
+                active[0] -= 1
+            return super().decide(state, questions, mode)
+
+    scorer = _scorer_with(_SlowEngine(block=0.2))
+    first = asyncio.create_task(scorer._guard.decide_async(text="first"))
+    assert await asyncio.to_thread(reading.wait, 5)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    second = asyncio.create_task(scorer._guard.decide_async(text="second"))
+    await asyncio.sleep(0.2)
+    release.set()
+    await second
+
+    assert active[1] == 1
 
 
 def test_missing_vegaml_raises_an_install_hint(patch_central_database: None) -> None:
