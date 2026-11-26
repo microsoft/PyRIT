@@ -381,6 +381,53 @@ def select_execution_attack_result_ids(
     }
 
 
+def select_effective_attack_results(
+    scenario_result: ScenarioResult,
+    *,
+    plan: ScenarioRunPlan | None,
+) -> dict[ScenarioExecutionUnit, tuple[ScenarioAttempt, AttackResult]]:
+    """
+    Select the latest top-level attempt for each counted execution unit.
+
+    Counted units are the planned units of ``plan``, or every resolved unit when ``plan`` is None,
+    matching ``compute_scenario_statistics``. Attempts are ordered by timestamp, then attempt ID.
+    A unit without a top-level completion has no entry.
+
+    Args:
+        scenario_result (ScenarioResult): The scenario result with its hydrated attack results.
+        plan (ScenarioRunPlan | None): The run plan to resolve units against, or None for a legacy run.
+
+    Returns:
+        dict[ScenarioExecutionUnit, tuple[ScenarioAttempt, AttackResult]]: The selected attempt and
+        its attack result for each unit that has one.
+    """
+    lookup = ScenarioPlanLookup.from_plan(plan=plan)
+    planned = (
+        {
+            ScenarioExecutionUnit(atomic_group_id=group.id, seed_group_id=seed)
+            for group in plan.atomic_groups
+            for seed in group.seed_group_ids
+        }
+        if plan is not None
+        else None
+    )
+    attempts: dict[ScenarioExecutionUnit, list[tuple[ScenarioAttempt, AttackResult]]] = {}
+    for name, results in scenario_result.attack_results.items():
+        for result in results:
+            attempt = resolve_attack_result_attempt(atomic_attack_name=name, attack_result=result, plan_lookup=lookup)
+            if planned is None or attempt.unit in planned:
+                attempts.setdefault(attempt.unit, []).append((attempt, result))
+    effective: dict[ScenarioExecutionUnit, tuple[ScenarioAttempt, AttackResult]] = {}
+    for unit, entries in attempts.items():
+        completions = sorted(
+            (entry for entry in entries if entry[0].attempt_index is None),
+            key=lambda entry: (entry[0].timestamp, entry[0].attempt_id),
+        )
+        if completions:
+            effective[unit] = completions[-1]
+    return effective
+
+
 def retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Iterable[int]) -> int:
     """
     Combine per-attempt retries with re-attempts of the same execution unit.

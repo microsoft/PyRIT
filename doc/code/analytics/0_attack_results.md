@@ -212,9 +212,54 @@ identity, score type, or scoring expectation is absent, compatibility cannot be
 fully verified. Different matched seed groups may use different scoring contexts
 if each individual baseline/attack pair has the same expectation.
 Older runs without a saved run plan and separately executed runs are not
-supported. The reported difference is descriptive and does not establish that
+supported; to compare reruns, use `compute_outcome_repeatability` (below). The reported difference is descriptive and does not establish that
 the attack caused an outcome to change. No confidence interval is provided,
 because small and constant paired samples need careful uncertainty treatment.
+
+### Compare reruns of the same scenario
+
+Targets and scorers are stochastic, so one run is one sample per objective: two
+runs with the same success rate can still disagree on which objectives
+succeeded. `compute_outcome_repeatability` compares two or more **separately
+executed** runs of the same scenario configuration and reports, for each
+objective planned in all of them, whether the attack always succeeded, always
+failed, or changed between runs.
+
+```python
+from pyrit.analytics import compute_outcome_repeatability
+
+# run_a, run_b and run_c are loaded ScenarioResults of the same configuration,
+# each containing hydrated AttackResults.
+report = compute_outcome_repeatability([run_a, run_b, run_c])
+counts = report.overall
+print(counts.always_success, counts.always_failure, counts.mixed)
+print(counts.agreement_rate, counts.run_success_rates, counts.rate_range)
+print(counts.shared_units, counts.decided_units)
+for technique, technique_counts in report.by_technique.items():
+    print(technique, technique_counts.agreement_rate)
+```
+
+Units are matched across runs by their planned
+`(atomic_group_id, seed_group_id)`, which are deterministic, and each run
+contributes its latest top-level result per unit, selected as
+`compute_scenario_statistics` does. `shared_units` counts units planned in every
+run, and `decided_units` the shared units whose outcome is success or failure in
+every run. `agreement_rate` is `(always_success + always_failure) / decided_units`.
+`run_success_counts` and `run_success_rates` follow the order the runs were
+passed in, and the rates use `decided_units` as their denominator, so
+`rate_range` (highest rate minus lowest) compares the same objectives. All three
+are `None` when no unit is decided in every run.
+
+Errored, undetermined and missing outcomes stay out of the denominator and are
+counted instead: `error_units`, `undetermined_units` and `missing_units` count
+shared units with that outcome in at least one run, so they may overlap.
+`partially_planned_units` counts units planned in only some runs. `by_technique`
+gives the same counts per technique label; the baseline is labelled `baseline`.
+
+Every run needs a valid saved run plan, and all runs must share one scenario
+evaluation hash, the check resume uses to refuse a changed scenario, technique
+or dataset selection, target, or scorer; otherwise `ValueError` is raised. The
+counts describe agreement and do not include confidence intervals.
 
 ### ASSERT policy metrics
 

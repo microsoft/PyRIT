@@ -21,11 +21,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from pyrit.analytics.scenario_statistics import (
-    ScenarioPlanLookup,
-    load_scenario_run_plan,
-    resolve_attack_result_attempt,
-)
+from pyrit.analytics.scenario_statistics import load_scenario_run_plan, select_effective_attack_results
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AssertBinaryRate,
@@ -33,7 +29,6 @@ from pyrit.models import (
     AssertDimensionResult,
     AssertPolicyMetrics,
     AttackOutcome,
-    ScenarioExecutionUnit,
     ScenarioRunPlanGroupKind,
     ScoreStatus,
     ViolatesAssertPolicy,
@@ -49,7 +44,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
     from datetime import datetime
 
-    from pyrit.analytics.scenario_statistics import ScenarioAttempt
     from pyrit.memory import MemoryInterface
     from pyrit.models import (
         AssertNodeJudgment,
@@ -232,34 +226,14 @@ def _select_effective_results(scenario_result: ScenarioResult) -> list[_Effectiv
         list[_EffectiveResult]: The effective results.
     """
     plan = load_scenario_run_plan(scenario_result)
-    lookup = ScenarioPlanLookup.from_plan(plan=plan)
     groups = {group.id: group for group in plan.atomic_groups} if plan is not None else {}
-    planned = (
-        {
-            ScenarioExecutionUnit(atomic_group_id=group.id, seed_group_id=seed)
-            for group in plan.atomic_groups
-            for seed in group.seed_group_ids
-        }
-        if plan is not None
-        else None
-    )
-    attempts: dict[ScenarioExecutionUnit, list[tuple[ScenarioAttempt, AttackResult]]] = {}
-    for name, results in scenario_result.attack_results.items():
-        for result in results:
-            attempt = resolve_attack_result_attempt(atomic_attack_name=name, attack_result=result, plan_lookup=lookup)
-            if planned is None or attempt.unit in planned:
-                attempts.setdefault(attempt.unit, []).append((attempt, result))
-    effective = []
-    for unit, entries in attempts.items():
-        completions = sorted(
-            (entry for entry in entries if entry[0].attempt_index is None),
-            key=lambda entry: (entry[0].timestamp, entry[0].attempt_id),
+    return [
+        _EffectiveResult(
+            technique=_technique(attempt.atomic_attack_name, group=groups.get(unit.atomic_group_id)),
+            result=result,
         )
-        if completions:
-            attempt, result = completions[-1]
-            technique = _technique(attempt.atomic_attack_name, group=groups.get(unit.atomic_group_id))
-            effective.append(_EffectiveResult(technique=technique, result=result))
-    return effective
+        for unit, (attempt, result) in select_effective_attack_results(scenario_result, plan=plan).items()
+    ]
 
 
 def _technique(atomic_attack_name: str, *, group: ScenarioRunPlanAtomicGroup | None) -> str:
