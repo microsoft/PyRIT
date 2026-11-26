@@ -132,7 +132,8 @@ class AssertPolicy(Scenario):
     Each conversation is judged against its group's stored policy. By default, a judge on the
     scoring target decides success by policy violation and also records overrefusal. Choose
     another objective scorer to judge other dimensions or execution traces. Blocked or errored
-    target replies stay undetermined. Results are grouped by technique.
+    target replies stay undetermined. Results are grouped by each case's generated category, across
+    baseline and selected techniques, qualified by behavior name when several policies are selected.
 
     ``assert_package_spanish`` translates target-bound user requests with the configured adversarial
     chat, including later conversation turns, before that technique's ``technique_converters``. It
@@ -440,13 +441,21 @@ class AssertPolicy(Scenario):
         """
         if ViolatesAssertPolicy not in self._objective_scorer.get_condition_types():
             return None
+        return ScoringExpectation(conditions=(self._get_policy(group),))
+
+    def _get_policy(self, group: AttackSeedGroup) -> ViolatesAssertPolicy:
+        """
+        Build the policy that the group's conversations are judged against.
+
+        Returns:
+            ViolatesAssertPolicy: The group's taxonomy, application context, and judged instructions.
+        """
         metadata = AssertGroupMetadata.from_metadata(group.objective.metadata)
-        policy = ViolatesAssertPolicy(
+        return ViolatesAssertPolicy(
             taxonomy=metadata.taxonomy,
             application_context=metadata.config.context,
             target_instructions=self._get_judged_system_prompt(group),
         )
-        return ScoringExpectation(conditions=(policy,))
 
     @staticmethod
     def _get_stored_system_prompt(group: AttackSeedGroup) -> str | None:
@@ -497,7 +506,10 @@ class AssertPolicy(Scenario):
         counts = Counter(group.logical_id for group in context.seed_groups)
         self._repeated_ids = {logical_id for logical_id, count in counts.items() if count > 1}
         self._auxiliary_scorers = self._get_auxiliary_scorers()
-        attacks = self._build_baselines(context=context) if context.include_baseline else []
+        display_groups = self._get_display_groups(seed_groups=context.seed_groups)
+        attacks = (
+            self._build_baselines(context=context, display_groups=display_groups) if context.include_baseline else []
+        )
         local = {name: _build_assert_package_factory(name) for name in _ASSERT_PACKAGES}
         for name, factory in resolve_technique_factories(context=context, extra_factories=local).items():
             # ASSERT's packages choose their attack per case, so their target is checked per group.
@@ -535,10 +547,59 @@ class AssertPolicy(Scenario):
                 for group in sorted(selected, key=self._get_generation_order):
                     attacks.append(
                         await asyncio.to_thread(
-                            self._build_unit, context=context, technique_name=name, factory=factory, group=group
+                            self._build_unit,
+                            context=context,
+                            technique_name=name,
+                            factory=factory,
+                            group=group,
+                            display_group=display_groups[str(group.objective.id)],
                         )
                     )
         return attacks
+
+    def _get_display_groups(self, *, seed_groups: Sequence[AttackSeedGroup]) -> dict[str, str]:
+        """
+        Group each case's baseline and technique results under its generated category.
+
+        With several judged policies, the behavior name qualifies each category, as in the ASSERT
+        metrics. A policy whose behavior name another policy shares, or whose label would still match
+        another policy's, also shows the start of its policy ID.
+
+        Returns:
+            dict[str, str]: The display group of each objective seed ID.
+        """
+        behaviors: dict[str, str] = {}
+        cases: dict[str, tuple[str, str]] = {}
+        for group in seed_groups:
+            policy = self._get_policy(group)
+            policy_id = policy.policy_id
+            behaviors[policy_id] = policy.taxonomy.behavior.name
+            category = AssertGroupMetadata.from_metadata(group.objective.metadata).behavior_category
+            cases[str(group.objective.id)] = (policy_id, category)
+        if len(behaviors) == 1:
+            return {seed_id: category for seed_id, (_, category) in cases.items()}
+
+        shared = Counter(behaviors.values())
+        labels = {
+            (policy_id, category): self._get_category_label(
+                behavior=behaviors[policy_id],
+                category=category,
+                policy_id=policy_id if shared[behaviors[policy_id]] > 1 else None,
+            )
+            for policy_id, category in set(cases.values())
+        }
+        repeated = Counter(labels.values())
+        for (policy_id, category), label in labels.items():
+            if repeated[label] > 1:
+                labels[policy_id, category] = self._get_category_label(
+                    behavior=behaviors[policy_id], category=category, policy_id=policy_id
+                )
+        return {seed_id: labels[case] for seed_id, case in cases.items()}
+
+    @staticmethod
+    def _get_category_label(*, behavior: str, category: str, policy_id: str | None) -> str:
+        policy = f"{behavior} (policy {policy_id[:8]})" if policy_id else behavior
+        return f"{policy}: {category}"
 
     @staticmethod
     def _get_target_requirements(factory: AttackTechniqueFactory) -> TechniqueRequirements:
@@ -597,6 +658,7 @@ class AssertPolicy(Scenario):
         technique_name: str,
         factory: AttackTechniqueFactory,
         group: AttackSeedGroup,
+        display_group: str,
     ) -> AtomicAttack:
         prompt_case = technique_name in _ASSERT_PACKAGES and group.adversarial_prompts is None
         if technique_name in _ASSERT_PACKAGES:
@@ -636,7 +698,7 @@ class AssertPolicy(Scenario):
             attack_technique = factory.create(**create_kwargs, seed_group=group)
         return AtomicAttack(
             atomic_attack_name=self._get_unit_name(prefix=technique_name, group=group),
-            display_group=technique_name,
+            display_group=display_group,
             technique_name=technique_name,
             attack_technique=attack_technique,
             seed_groups=[group],
@@ -682,7 +744,7 @@ class AssertPolicy(Scenario):
     def _get_tester_instructions(group: AttackSeedGroup) -> str | None:
         return AssertGroupMetadata.from_metadata(group.objective.metadata).tester_instructions
 
-    def _build_baselines(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+    def _build_baselines(self, *, context: ScenarioContext, display_groups: dict[str, str]) -> list[AtomicAttack]:
         """
         Send each group's stored system and user prompts once, judged against that group's policy.
 
@@ -715,7 +777,7 @@ class AssertPolicy(Scenario):
             baselines.append(
                 AtomicAttack(
                     atomic_attack_name=self._get_unit_name(prefix="baseline", group=group),
-                    display_group="baseline",
+                    display_group=display_groups[str(group.objective.id)],
                     # Keep the stored group so baseline and technique results share its logical ID and resume.
                     # The prompt case doesn't use the group's tester prompts; this records that on the technique.
                     attack_technique=AttackTechnique(attack=attack, adversarial_prompts=group.adversarial_prompts),

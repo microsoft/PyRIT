@@ -206,7 +206,7 @@ class ScenarioRunSizeComponent(BaseModel):
     note: str | None = None
 
     @model_validator(mode="after")
-    def validate_factor_product(self) -> "ScenarioRunSizeComponent":
+    def validate_factor_product(self) -> Self:
         """
         Require known component totals to equal their ordered factor product.
 
@@ -351,7 +351,7 @@ class ScenarioRunSizeEstimate(BaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def validate_estimate(self) -> "ScenarioRunSizeEstimate":
+    def validate_estimate(self) -> Self:
         """
         Ensure status, bounds, and additive components describe one estimate.
 

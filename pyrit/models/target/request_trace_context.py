@@ -18,7 +18,7 @@ class RequestTraceContext(BaseModel):
     traceparent: str = Field(pattern=r"^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$")
 
     @model_validator(mode="after")
-    def _validate_identifiers(self) -> "RequestTraceContext":
+    def _validate_identifiers(self) -> Self:
         if int(self.trace_id, 16) == 0 or int(self.traceparent.split("-")[2], 16) == 0:
             raise ValueError("Trace and span identifiers must be nonzero.")
         return self

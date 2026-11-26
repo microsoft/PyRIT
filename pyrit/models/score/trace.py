@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, model_validator
 
@@ -36,7 +37,7 @@ class _TraceInterval(BaseModel):
     end_time: AwareDatetime | None = None
 
     @model_validator(mode="after")
-    def _validate_time_bounds(self) -> _TraceInterval:
+    def _validate_time_bounds(self) -> Self:
         """
         Reject an end time that precedes the beginning of the interval.
 
@@ -82,7 +83,7 @@ class TraceCoverage(BaseModel):
     reasons: tuple[str, ...] = ()
 
     @model_validator(mode="after")
-    def _validate_reasons(self) -> TraceCoverage:
+    def _validate_reasons(self) -> Self:
         """
         Prevent completeness from contradicting known coverage limitations.
 
@@ -124,7 +125,7 @@ class TraceQueryResult(BaseModel):
     coverage: TraceCoverage = Field(default_factory=TraceCoverage)
 
     @model_validator(mode="after")
-    def _validate_availability(self) -> TraceQueryResult:
+    def _validate_availability(self) -> Self:
         """
         Reject evidence or complete coverage when acquisition is unavailable.
 

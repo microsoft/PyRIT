@@ -32,7 +32,7 @@ interface FieldControlProps {
 }
 
 interface ChoiceFieldInputProps extends FieldControlProps {
-  onOtherBlankChange?: (blank: boolean) => void
+  onOtherBlankChange?: ((blank: boolean) => void) | undefined
 }
 
 interface PickerOption {
@@ -43,7 +43,7 @@ interface PickerOption {
 interface LevelState {
   options: PickerOption[]
   selected: string
-  hint?: string
+  hint: string | null
   /** Required only where the path offers options, as the backend checks a required cascade. */
   required: boolean
   unavailable: boolean
@@ -66,7 +66,7 @@ function levelState(field: FindingField, values: Record<string, string>, depth: 
   return {
     options: unmatched ? [{ value, text: value }, ...options] : options,
     selected: otherChosen ? OTHER_VALUE : value,
-    hint: unmatched ? UNMATCHED_HINT : depth === 0 ? field.hint ?? undefined : undefined,
+    hint: unmatched ? UNMATCHED_HINT : depth === 0 ? field.hint : null,
     required: field.required && fieldOptions.length > 0,
     unavailable: depth > 0 && (parentBlank || (options.length === 0 && !unmatched)),
   }
@@ -101,7 +101,7 @@ function selectedText(options: PickerOption[], selected: string): string {
 
 interface ChoiceLevelPickerProps {
   label: string
-  hint?: string
+  hint: string | null
   required: boolean
   disabled: boolean
   /** The options the typed text filters. Not set and Other always show. */
@@ -123,7 +123,7 @@ function ChoiceLevelPicker({
   return (
     <Field label={label} hint={hint} required={required}>
       <Combobox className={styles.picker} inlinePopup open={open} disabled={disabled}
-        placeholder={offerNotSet ? NOT_SET_TEXT : undefined}
+        {...(offerNotSet ? { placeholder: NOT_SET_TEXT } : {})}
         value={open ? search : selectedText(options, selected)} selectedOptions={[selected]}
         onOpenChange={(_, data) => { setOpen(data.open); setSearch('') }}
         onChange={(event) => { setSearch(event.target.value); setOpen(true) }}
@@ -191,7 +191,7 @@ function TextFieldInput({ field, values, disabled, onChange }: FieldControlProps
   const value = ownValue(values, field.key) ?? ''
   const report = (text: string): void => { onChange({ [field.key]: text }) }
   return (
-    <Field label={field.label} hint={field.hint ?? undefined} required={field.required}>
+    <Field label={field.label} hint={field.hint} required={field.required}>
       {field.type === 'multiline'
         ? <Textarea value={value} disabled={disabled} resize="vertical" name={field.key} autoComplete="off"
           onChange={(_, data) => { report(data.value) }} />

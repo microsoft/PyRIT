@@ -4,7 +4,7 @@
 """Scenario dataset size estimates: selected seed groups before technique expansion."""
 
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -71,7 +71,7 @@ class DatasetLimitInput(BaseModel):
     value: int | None = Field(default=None, gt=0, strict=True)
 
     @model_validator(mode="after")
-    def validate_value(self) -> "DatasetLimitInput":
+    def validate_value(self) -> Self:
         """
         Require a numeric value only for the value state.
 

@@ -8,7 +8,7 @@ import logging
 import sys
 import typing
 from enum import StrEnum
-from typing import Any, Union
+from typing import TYPE_CHECKING, Any, Union, assert_never
 
 from pyrit.executor.attack import AttackScoringConfig
 
@@ -124,10 +124,18 @@ class _ConstructorCompatibilityHelper:
         Raises:
             ValueError: If the policy is RAISE.
         """
-        if self._scorer_override_policy == ScorerOverridePolicy.RAISE:
-            raise ValueError(message)
-        if self._scorer_override_policy == ScorerOverridePolicy.WARN:
-            logger.warning(message)
+        policy = self._scorer_override_policy
+        match policy:
+            case ScorerOverridePolicy.RAISE:
+                raise ValueError(message)
+            case ScorerOverridePolicy.WARN:
+                logger.warning(message)
+            case ScorerOverridePolicy.SKIP:
+                pass
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(policy)
+                # Preserve the historical runtime fallback for values outside the declared enum: ignore silently.
 
     def _derive_scoring_config_type(self) -> type | None:
         """

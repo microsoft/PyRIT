@@ -58,7 +58,13 @@ async def test_send_prompt_async_file_upload_preserves_query_params(mock_request
         tmp.flush()
         file_path = tmp.name
 
-    message_piece = MessagePiece(role="user", original_value="mock", converted_value=file_path)
+    message_piece = MessagePiece(
+        role="user",
+        original_value=file_path,
+        original_value_data_type="binary_path",
+        converted_value=file_path,
+        converted_value_data_type="binary_path",
+    )
     message = Message(message_pieces=[message_piece])
 
     mock_response = MagicMock()
@@ -72,10 +78,10 @@ async def test_send_prompt_async_file_upload_preserves_query_params(mock_request
         params={"alpha": "1"},
         timeout=180,
     )
-    with pytest.warns(DeprecationWarning, match="implicit text-path uploads"):
-        await target.send_prompt_async(message=message)
+    await target.send_prompt_async(message=message)
 
     assert mock_request.call_args.kwargs["params"] == {"alpha": "1"}
+    assert "files" in mock_request.call_args.kwargs
 
     os.unlink(file_path)
 
@@ -238,29 +244,54 @@ async def test_send_prompt_async_binary_path_upload(mock_request, patch_central_
 
 
 @patch("httpx.AsyncClient.request")
-async def test_send_prompt_async_file_upload_without_allowed_directory_warns(
-    mock_request, patch_central_database, tmp_path
-):
+async def test_send_prompt_async_text_naming_a_file_is_sent_as_text(mock_request, patch_central_database, tmp_path):
     file_path = tmp_path / "document.pdf"
     file_path.write_bytes(b"content")
     message_piece = MessagePiece(role="user", original_value=str(file_path), converted_value=str(file_path))
     message = Message(message_pieces=[message_piece])
-    mock_response = MagicMock()
-    mock_response.content = b"uploaded"
-    mock_request.return_value = mock_response
+    mock_request.return_value = httpx.Response(200, content=b"ok")
     target = HTTPXAPITarget(
         http_url="http://example.com/upload/",
         method="POST",
-        follow_redirects=True,
+        allowed_upload_directory=tmp_path,
+        json_data={"prompt": "value"},
     )
 
-    with pytest.warns(DeprecationWarning) as warning_records:
+    await target.send_prompt_async(message=message)
+
+    mock_request.assert_called_once()
+    assert "files" not in mock_request.call_args.kwargs
+    assert mock_request.call_args.kwargs["json"] == {"prompt": "value"}
+
+
+@patch("httpx.AsyncClient.request")
+async def test_send_prompt_async_rejects_path_typed_upload_without_allowed_directory(
+    mock_request, patch_central_database, tmp_path
+):
+    file_path = tmp_path / "document.pdf"
+    file_path.write_bytes(b"content")
+    message_piece = MessagePiece(
+        role="user",
+        original_value=str(file_path),
+        original_value_data_type="binary_path",
+        converted_value=str(file_path),
+        converted_value_data_type="binary_path",
+    )
+    message = Message(message_pieces=[message_piece])
+    target = HTTPXAPITarget(http_url="http://example.com/upload/", method="POST")
+
+    with pytest.raises(ValueError, match="allowed_upload_directory"):
         await target.send_prompt_async(message=message)
 
-    warning_messages = [str(record.message) for record in warning_records]
-    assert any("implicit text-path uploads" in message for message in warning_messages)
-    assert any("without allowed_upload_directory" in message for message in warning_messages)
-    mock_request.assert_called_once()
+    mock_request.assert_not_called()
+
+
+def test_file_path_without_allowed_directory_is_rejected_at_construction(patch_central_database, tmp_path):
+    file_path = tmp_path / "document.pdf"
+    file_path.write_bytes(b"content")
+
+    with pytest.raises(ValueError, match="allowed_upload_directory"):
+        HTTPXAPITarget(http_url="http://example.com/upload/", method="POST", file_path=str(file_path))
 
 
 @patch("httpx.AsyncClient.request")
