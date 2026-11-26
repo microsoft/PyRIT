@@ -43,12 +43,6 @@ export interface SelectableTechnique extends ScenarioTechniqueSummary {
   disabled: boolean
 }
 
-export const BASELINE_TECHNIQUE: ScenarioTechniqueSummary = {
-  name: 'baseline',
-  description: 'Sends each objective directly to the target for comparison.',
-  tags: ['baseline', 'single_turn'],
-}
-
 /** The related launch-form fields that change together through explicit actions. */
 export interface ScenarioLaunchFormState {
   targetName: string
@@ -101,7 +95,7 @@ interface InitialFormInput {
   /** Techniques already resolved from the preset; falls back to the scenario defaults. */
   seededTechniques?: string[]
   /** A saved run to start from. Its values win over the preset's. Seeds initial state only. */
-  initialRun?: RunScenarioRequest
+  initialRun?: RunScenarioRequest | undefined
   /**
    * Dataset names a link preselected. When given, they replace the sources from the saved run or
    * preset; that request's other dataset settings, such as limits, still apply.

@@ -18,6 +18,7 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 from pyrit.common.attack_result_scope import get_current_attack_result_id
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.converter import Converter
 from pyrit.exceptions import (
     ComponentRole,
@@ -32,6 +33,7 @@ from pyrit.models import (
     Conversation,
     Message,
     MessagePiece,
+    ProviderTraceReference,
     RequestGenerationConfig,
     RequestTraceContext,
     construct_response_from_request,
@@ -224,6 +226,7 @@ class PromptNormalizer:
             )
             error_response.get_piece().prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
             error_response.get_piece().prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+            ProviderTraceReference.clear_metadata(error_response.get_piece().prompt_metadata)
             RequestGenerationConfig.clear_metadata(error_response.get_piece().prompt_metadata)
 
             await self._calc_hash_async(request=error_response)
@@ -245,6 +248,7 @@ class PromptNormalizer:
             )
             empty_response.get_piece().prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
             empty_response.get_piece().prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+            ProviderTraceReference.clear_metadata(empty_response.get_piece().prompt_metadata)
             RequestGenerationConfig.clear_metadata(empty_response.get_piece().prompt_metadata)
             await self._calc_hash_async(request=empty_response)
             (await self.memory.add_message_to_memory_async(request=empty_response))
@@ -261,6 +265,7 @@ class PromptNormalizer:
                 piece.conversation_id = conversation_id
                 piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
                 piece.prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+                ProviderTraceReference.clear_metadata(piece.prompt_metadata)
                 RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
             is_last = i == len(responses) - 1
             if is_last:
@@ -480,8 +485,8 @@ class PromptNormalizer:
 
     async def _calc_hash_async(self, request: Message) -> None:
         """Add a request to the memory."""
-        tasks = [asyncio.create_task(set_message_piece_sha256_async(piece)) for piece in request.message_pieces]
-        await asyncio.gather(*tasks)
+        # A failed hash cancels the others, so they stop updating the message once this raises.
+        await gather_with_cleanup_async(set_message_piece_sha256_async(piece) for piece in request.message_pieces)
 
     async def hash_and_persist_message_async(self, *, message: Message) -> None:
         """

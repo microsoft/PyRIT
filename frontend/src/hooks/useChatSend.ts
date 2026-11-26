@@ -234,11 +234,11 @@ export interface ChatSendNewAttack {
   objective: string
   systemPrompt: string
   supportsSystemPrompt: boolean
-  labels?: Record<string, string>
+  labels?: Record<string, string> | undefined
   operationId: string | null
   /** The operator's explicit draft scorer choice, or undefined to use the default. */
   draftScorer: RegisteredComponentReference | null | undefined
-  defaultChatScorer?: RegisteredComponentReference | null
+  defaultChatScorer?: RegisteredComponentReference | null | undefined
 }
 
 export interface ScoringNotice {
@@ -320,7 +320,7 @@ export interface ChatSendCallbacks {
   onCreatedDestination: (attackResultId: string, conversationId: string) => void
   /** A first send created this attack; routing to it is not navigation, so the generation draft is kept. */
   onAttackCreated: (attackResultId: string) => void
-  onAttackChange?: (attack: AttackSummary) => void
+  onAttackChange?: ((attack: AttackSummary) => void) | undefined
 }
 
 export interface UseChatSendOptions {
@@ -560,11 +560,11 @@ export function useChatSend({
       : attacksApi.getMessageSend(sendAttackId, previousProgress.send_id, operation.controller.signal)
     if (!group) return read()
     // Every conversation uses the same in-flight GET, but settles its own evidence reads and ownership.
-    group.read ??= read().then((progress: MessageSendStatus) => {
+    const readPromise = group.read ??= read().then((progress: MessageSendStatus) => {
       receiveRepeatProgress(group, progress)
       return progress
     }).finally(() => { group.read = undefined })
-    const progress = await group.read
+    const progress = await readPromise
     const conversation = progress.conversations?.find(
       (candidate: MessageSendConversation) => candidate.conversation_id === operation.conversationId,
     )
@@ -821,12 +821,13 @@ export function useChatSend({
         const createRequest: CreateAttackRequest = {
           target_registry_name: activeTarget.target_registry_name,
           ...(selectedTarget.binding ? { target_binding: selectedTarget.binding } : {}),
-          objective: pendingObjective || undefined,
+          ...(pendingObjective ? { objective: pendingObjective } : {}),
           // TODO(PyRIT 1.4): Pass only dedicated attribution after legacy label aliases are removed.
           // The create-attack API normalizes these aliases through _AttackAttributionInput.
-          labels: newAttack.labels,
-          operation_id: newAttack.operationId ?? undefined,
-          system_prompt: newAttack.supportsSystemPrompt ? newAttack.systemPrompt.trim() || undefined : undefined,
+          ...(newAttack.labels ? { labels: newAttack.labels } : {}),
+          ...(newAttack.operationId ? { operation_id: newAttack.operationId } : {}),
+          ...(newAttack.supportsSystemPrompt && newAttack.systemPrompt.trim()
+            ? { system_prompt: newAttack.systemPrompt.trim() } : {}),
           ...(draftScorer !== undefined ? { chat_scorer: draftScorer }
             : defaultChatScorer === null || pendingObjective.trim() && defaultChatScorer
               ? { chat_scorer: defaultChatScorer } : {}),

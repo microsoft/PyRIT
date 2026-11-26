@@ -18,7 +18,7 @@ interface PromptGenerationStatusBadgeProps {
   readonly testId?: string
 }
 
-function statusIcon(status: PromptGenerationStatus): ReactElement | undefined {
+function statusIcon(status: PromptGenerationStatus): ReactElement | null {
   switch (status) {
     case 'completed':
       return <CheckmarkCircleRegular />
@@ -30,7 +30,7 @@ function statusIcon(status: PromptGenerationStatus): ReactElement | undefined {
     case 'awaiting_review':
       return <PauseCircleRegular />
     default:
-      return undefined
+      return null
   }
 }
 

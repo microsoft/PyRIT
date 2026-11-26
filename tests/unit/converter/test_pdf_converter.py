@@ -86,7 +86,7 @@ async def test_convert_async_no_template(pdf_converter_no_template):
         # Assertions
         mock_prepare.assert_called_once_with(prompt)
         mock_generate.assert_called_once_with(prompt)
-        mock_serialize.assert_called_once_with(mock_pdf_bytes, prompt)
+        mock_serialize.assert_called_once_with(mock_pdf_bytes, content=prompt)
 
         assert isinstance(result, ConverterResult)
         assert result.output_type == "binary_path"
@@ -116,7 +116,7 @@ async def test_convert_async_with_template(pdf_converter_with_template):
         # Assertions
         mock_prepare.assert_called_once_with(prompt)
         mock_generate.assert_called_once_with(expected_rendered_content)
-        mock_serialize.assert_called_once_with(mock_pdf_bytes, expected_rendered_content)
+        mock_serialize.assert_called_once_with(mock_pdf_bytes, content=expected_rendered_content)
 
         assert isinstance(result, ConverterResult)
         assert result.output_type == "binary_path"

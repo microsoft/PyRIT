@@ -12,13 +12,13 @@ import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NotRequired, get_type_hints
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
 
 import pytest
 from fastapi import Request, status
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import AuthenticatedUser
@@ -50,13 +50,13 @@ from pyrit.backend.models.common import (
 from pyrit.backend.models.scores import ApplyChatScorerResponse
 from pyrit.backend.models.targets import TargetTypeResponse
 from pyrit.backend.routes import version as version_routes
-from pyrit.backend.routes.common import parse_label_query_params
+from pyrit.backend.routes.common import parse_label_query_params, saved_entry_owner_from_request
 from pyrit.backend.routes.scores import _get_user_identifier
-from pyrit.backend.routes.targets import _saved_entry_owner
 from pyrit.backend.services import AttackService
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError
 from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
+from pyrit.backend.services.saved_entries import SavedEntryRemovalError
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
@@ -1603,7 +1603,7 @@ class TestTargetRoutes:
         owner = SavedEntryOwner(oid="user-oid", name="Ada")
         with (
             patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
-            patch("pyrit.backend.routes.targets._saved_entry_owner", return_value=owner),
+            patch("pyrit.backend.routes.targets.saved_entry_owner_from_request", return_value=owner),
         ):
             mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("stop"))
 
@@ -1614,7 +1614,7 @@ class TestTargetRoutes:
     def test_create_target_records_no_owner_when_not_saving(self, client: TestClient) -> None:
         with (
             patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
-            patch("pyrit.backend.routes.targets._saved_entry_owner") as saved_entry_owner,
+            patch("pyrit.backend.routes.targets.saved_entry_owner_from_request") as saved_entry_owner,
         ):
             mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("stop"))
 
@@ -1644,8 +1644,8 @@ class TestTargetRoutes:
         request = Request({"type": "http"})
         request.state.user = AuthenticatedUser(oid="user-oid", name=name, email="ada@example.invalid", groups=[])
 
-        assert _saved_entry_owner(request) == SavedEntryOwner(oid="user-oid", name=expected)
-        assert _saved_entry_owner(Request({"type": "http"})) is None
+        assert saved_entry_owner_from_request(request) == SavedEntryOwner(oid="user-oid", name=expected)
+        assert saved_entry_owner_from_request(Request({"type": "http"})) is None
 
     def test_create_target_passes_admin_flag_from_request(self, client: TestClient) -> None:
         """The route resolves administrator access and forwards it to the service."""
@@ -1968,6 +1968,148 @@ class TestConverterRoutes:
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_delete_converter_refuses_a_saved_converter(self, client: TestClient) -> None:
+        refusal = SavedEntryRemovalError(
+            "Saved converter 'base64_converter' can't be removed yet, since it comes back from its saved file at "
+            "every start."
+        )
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_get_service.return_value.delete_converter_async = AsyncMock(side_effect=refusal)
+
+            response = client.delete("/api/converters/base64_converter")
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json()["detail"] == str(refusal)
+
+    @pytest.mark.parametrize(
+        ("error", "status_code"),
+        [
+            (SavedEntryConflictError("A saved converter named 'shift' already exists."), status.HTTP_409_CONFLICT),
+            (
+                SavedEntryStorageError("Saved converters can't be written right now."),
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+            ),
+        ],
+    )
+    def test_create_converter_maps_save_errors(self, client: TestClient, error: Exception, status_code: int) -> None:
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=error)
+
+            response = client.post(
+                "/api/converters", json={"name": "shift", "type": "CaesarConverter", "params": {}, "persist": True}
+            )
+
+        assert response.status_code == status_code
+        assert response.json()["detail"] == str(error)
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("persist", [False, True])
+    def test_create_converter_answers_a_taken_name_with_an_untyped_conflict(
+        self, client: TestClient, tmp_path: Path, persist: bool
+    ) -> None:
+        name = f"taken_{uuid.uuid4().hex[:8]}"
+        body = {"name": name, "type": "ROT13Converter", "params": {}}
+        assert client.post("/api/converters", json=body).status_code == status.HTTP_201_CREATED
+
+        with patch.object(client.app.state, "registry_recipes_source", str(tmp_path), create=True):
+            response = client.post("/api/converters", json={**body, "persist": persist})
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json() == {"detail": f"Instance '{name}' already exists"}
+
+    @pytest.mark.parametrize(
+        ("path", "entry_type", "message"),
+        [
+            ("/api/converters", "ROT13Converter", "A private converter can't be saved"),
+            ("/api/scorers", "SubStringScorer", "A private scorer can't be saved"),
+        ],
+    )
+    def test_create_refuses_to_save_a_private_entry(
+        self, client: TestClient, path: str, entry_type: str, message: str
+    ) -> None:
+        response = client.post(
+            path, json={"name": "mine", "type": entry_type, "params": {}, "persist": True, "private": True}
+        )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert message in response.text
+
+    def test_create_converter_marks_a_save_refusal_so_it_can_be_created_without_saving(
+        self, client: TestClient
+    ) -> None:
+        refusal = NotSaveableError("Saved converters can't keep uploaded files yet ('font_name').")
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=refusal)
+
+            response = client.post(
+                "/api/converters",
+                json={"name": "banner", "type": "AddTextImageConverter", "params": {}, "persist": True},
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {
+            "type": "/errors/not-saveable",
+            "title": "Can't be saved",
+            "status": 400,
+            "detail": str(refusal),
+            "instance": "/api/converters",
+            "not_saveable_reason": refusal.cause,
+        }
+
+    def test_create_converter_passes_the_signed_in_user_and_the_saved_entries_source(self, client: TestClient) -> None:
+        owner = SavedEntryOwner(oid="user-oid", name="Ada")
+        with (
+            patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service,
+            patch("pyrit.backend.routes.converters.saved_entry_owner_from_request", return_value=owner),
+            patch.object(client.app.state, "registry_recipes_source", "/srv/registry-recipes", create=True),
+        ):
+            mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post(
+                "/api/converters", json={"name": "shift", "type": "CaesarConverter", "params": {}, "persist": True}
+            )
+
+        kwargs = mock_get_service.return_value.create_converter_async.call_args.kwargs
+        assert (kwargs["owner"], kwargs["recipes_source"], kwargs["request"].persist) == (
+            owner,
+            "/srv/registry-recipes",
+            True,
+        )
+
+    def test_create_converter_records_no_owner_when_not_saving(self, client: TestClient) -> None:
+        with (
+            patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service,
+            patch("pyrit.backend.routes.converters.saved_entry_owner_from_request") as saved_entry_owner,
+        ):
+            mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post("/api/converters", json={"name": "shift", "type": "CaesarConverter", "params": {}})
+
+        assert mock_get_service.return_value.create_converter_async.call_args.kwargs["owner"] is None
+        saved_entry_owner.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("fields", "message"),
+        [
+            ({}, "name is required when register=true"),
+            ({"name": "Shift-Two"}, "Invalid registry name"),
+            ({"name": "shift", "register": False}, "persist requires register=true"),
+            (
+                {"name": "shift", "source": {"source_name": "caesar", "source_hash": "a" * 64, "params": {}}},
+                "persist can't be used with source",
+            ),
+        ],
+    )
+    def test_create_converter_checks_what_persist_needs(
+        self, client: TestClient, fields: dict[str, object], message: str
+    ) -> None:
+        body: dict[str, object] = {"type": "CaesarConverter", "persist": True, **fields}
+
+        response = client.post("/api/converters", json=body)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert message in json.dumps(response.json())
+
     def test_preview_conversion_success(self, client: TestClient) -> None:
         """Test previewing a conversion."""
         with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
@@ -2071,7 +2213,7 @@ class TestVersionRoutes:
     @pytest.mark.parametrize("commit", ["abc123", None])
     def test_get_version_with_build_info(self, *, client: TestClient, commit: str | None) -> None:
         """Test getting version with build info from Docker."""
-        build_info: version_routes.BuildInfo = {
+        build_info: dict[str, str | bool | None] = {
             "source": "git" if commit is not None else "pypi",
             "commit": commit,
             "modified": False,
@@ -2124,16 +2266,10 @@ class TestVersionRoutes:
         assert data["commit"] is None
 
     def test_build_info_keys_are_not_required(self) -> None:
-        """The BuildInfo contract keeps absent keys distinguishable from nullable values."""
-        assert get_type_hints(version_routes.BuildInfo, include_extras=True) == {
-            "source": NotRequired[str],
-            "commit": NotRequired[str | None],
-            "modified": NotRequired[bool],
-            "display": NotRequired[str],
-        }
-        assert version_routes.BuildInfo.__required_keys__ == frozenset()
-        assert version_routes.BuildInfo.__optional_keys__ == {"source", "commit", "modified", "display"}
-        assert version_routes.BuildInfo() == {}
+        """Every build-info key may be absent and defaults to None."""
+        assert version_routes.BuildInfo() == version_routes.BuildInfo(
+            source=None, commit=None, modified=None, display=None
+        )
 
     def test_get_version_build_info_absent_display_falls_back(self, client: TestClient) -> None:
         """A build-info file without `display` falls back to the package version."""
@@ -2141,7 +2277,7 @@ class TestVersionRoutes:
         with (
             patch("pyrit.backend.routes.version.Path") as mock_path_class,
             patch("pyrit.backend.routes.version.asyncio.to_thread", new=to_thread_mock),
-            patch.object(version_routes, "_load_build_info", return_value={"source": "git"}),
+            patch.object(version_routes, "_load_build_info", return_value=version_routes.BuildInfo(source="git")),
         ):
             mock_path_instance = MagicMock()
             mock_path_instance.exists.return_value = True
@@ -2154,6 +2290,59 @@ class TestVersionRoutes:
         assert data["source"] == "git"
         assert data["commit"] is None
         assert data["modified"] is None
+        assert data["display"] == data["version"]
+
+    def test_load_build_info_reads_known_keys(self, tmp_path: Path) -> None:
+        """Known keys are returned as written and extra keys from the Docker build are dropped."""
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(
+            json.dumps(
+                {"source": "git", "version": "1.0.0", "commit": None, "modified": True, "display": "abc + local"}
+            )
+        )
+
+        assert version_routes._load_build_info(build_info_path) == version_routes.BuildInfo(
+            source="git",
+            commit=None,
+            modified=True,
+            display="abc + local",
+        )
+
+    def test_load_build_info_rejects_non_object(self, tmp_path: Path) -> None:
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(json.dumps(["git"]))
+
+        with pytest.raises(ValidationError, match="Input should be an object"):
+            version_routes._load_build_info(build_info_path)
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("source", 1),
+            ("commit", 123),
+            ("modified", "true"),
+            ("display", 5),
+        ],
+    )
+    def test_load_build_info_rejects_wrong_value_type(self, *, tmp_path: Path, key: str, value: object) -> None:
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(json.dumps({key: value}))
+
+        with pytest.raises(ValidationError, match=key):
+            version_routes._load_build_info(build_info_path)
+
+    def test_get_version_ignores_malformed_build_info(self, *, client: TestClient, tmp_path: Path) -> None:
+        """A wrongly typed build-info value falls back to defaults instead of failing the response."""
+        build_info_path = tmp_path / "build_info.json"
+        build_info_path.write_text(json.dumps({"source": "git", "commit": 123, "display": "abc"}))
+
+        with patch("pyrit.backend.routes.version.Path", return_value=build_info_path):
+            response = client.get("/api/version")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["source"] is None
+        assert data["commit"] is None
         assert data["display"] == data["version"]
 
 

@@ -556,8 +556,8 @@ export async function attachmentToMessagePieceRequest(att: MessageAttachment): P
     data_type: att.sourceDataType ?? mimeTypeToDataType(att.mimeType),
     original_value: base64Value,
     mime_type: att.mimeType,
-    original_prompt_id: att.pieceId,
-    prompt_metadata: att.metadata,
+    ...(att.pieceId !== undefined ? { original_prompt_id: att.pieceId } : {}),
+    ...(att.metadata !== undefined ? { prompt_metadata: att.metadata } : {}),
   }
 }
 
