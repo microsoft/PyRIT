@@ -107,7 +107,7 @@ That said, the choice of scoring model matters too. A scorer has to read harmful
 Adaptive attacks need a model that writes attack prompts, and most hosted models with safety training refuse to do that. A model with fewer restrictions works better. There are two places to look:
 
 - **Open-weight models.** Hugging Face hosts abliterated models, which are open-weight models modified so that they refuse less. They can be a decent starting point. You can run one on your own machine or deploy it yourself.
-- **Hosted providers.** Several providers serve such models behind an OpenAI-compatible API, so `OpenAIChatTarget` works with them. Providers that have been suggested to us include [Abliteration.ai](https://abliteration.ai) and [AbliteratedLLM](https://abliteratedllm.dev), listed alphabetically. [Issue #791](https://github.com/microsoft/PyRIT/issues/791) collects more pointers.
+- **Hosted providers.** Several providers serve such models behind an OpenAI-compatible API, so `OpenAIChatTarget` works with them. Providers that have been suggested to us include [Abliteration.ai](https://abliteration.ai), [AbliteratedLLM](https://abliteratedllm.dev), and [DemonRoute](https://demonroute.com), listed alphabetically. [Issue #791](https://github.com/microsoft/PyRIT/issues/791) collects more pointers.
 
 :::{important}
 We do not endorse, recommend, or vouch for any of these models or providers. This list only reflects what others have suggested to us, and being listed says nothing about quality, safety, or suitability. Any interaction is between you and the provider: their terms, pricing, and handling of your data are yours to review, and using them is your decision and at your own risk.
