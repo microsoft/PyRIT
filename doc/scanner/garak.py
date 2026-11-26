@@ -476,7 +476,8 @@ await output_scenario_async(doctor_result)
 # `garak_drh_system_prompts` / `garak_tm_system_prompts` libraries) is installed on the target, then
 # an extraction request asks the model to reveal it. Responses are scored deterministically by
 # `SystemPromptExtractionScorer`, a character n-gram containment overlap between the response and the
-# known system prompt (a faithful port of Garak's `PromptExtraction` detector), wrapped by a
+# known system prompt, adapted from Garak's `PromptExtraction` detector. Truncated-excerpt leniency
+# requires the target to mark the response as truncated. The scorer is wrapped by a
 # `FloatScaleThresholdScorer` at threshold 0.5.
 #
 # Each of the 9 attack-template categories is a technique; across the selected categories the total

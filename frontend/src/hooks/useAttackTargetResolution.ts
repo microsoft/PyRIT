@@ -29,9 +29,9 @@ interface UseAttackTargetResolutionOptions {
   attackLoadSequence: number
   attackTarget: TargetInfo | null
   attackTargetSource: 'persisted' | 'created'
-  createdTarget?: TargetInstance | null
-  targetUnbound?: boolean
-  createdTargetGeneration?: string
+  createdTarget?: TargetInstance | null | undefined
+  targetUnbound?: boolean | undefined
+  createdTargetGeneration?: string | undefined
 }
 
 interface UseAttackTargetResolutionResult {

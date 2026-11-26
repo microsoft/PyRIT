@@ -62,6 +62,7 @@ from pyrit.models import (
     ScenarioRunExecutionToken,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
     ScenarioRunState,
     ScenarioTechniqueSummary,
@@ -5938,6 +5939,51 @@ async def test_get_progress_techniques_used_prefers_technique_name_over_display_
 
     assert progress is not None
     assert progress.run.techniques_used == ["ignore_print"]
+
+
+async def test_get_progress_keeps_a_baseline_named_like_a_technique_unbound(mock_memory) -> None:
+    """A baseline whose display group matches a known technique runs no technique."""
+    groups = [
+        ScenarioRunPlanAtomicGroup(
+            id=f"group-{kind.value}",
+            atomic_attack_name=f"{kind.value}__goal_0",
+            display_group="ignore_print",
+            technique_name=technique_name,
+            technique_eval_hash="eval",
+            seed_group_ids=[],
+            kind=kind,
+        )
+        for kind, technique_name in (
+            (ScenarioRunPlanGroupKind.BASELINE, None),
+            (ScenarioRunPlanGroupKind.ATTACK, "ignore_print"),
+        )
+    ]
+    header = make_scenario_result(
+        scenario_name="garak.prompt_inject",
+        attack_results={},
+        metadata={
+            SCENARIO_RUN_PLAN_METADATA_KEY: ScenarioRunPlan(
+                scenario_registry_name="garak.prompt_inject", atomic_groups=groups, seed_groups=[]
+            ).model_dump(mode="json"),
+        },
+    )
+    mock_memory.get_scenario_result_header_async.return_value = header
+    mock_memory.get_scenario_attack_result_deltas_async.return_value = ([], False)
+    service = ScenarioRunService()
+    summaries = {"ignore_print": ScenarioTechniqueSummary(name="ignore_print", tags=["injection"])}
+
+    with patch.object(service, "_get_scenario_technique_summaries", return_value=summaries):
+        progress = await service.get_run_progress_from_storage_async(
+            scenario_result_id=str(header.id), since=None, limit=25, active_group_ids=[]
+        )
+
+    assert progress is not None and progress.plan is not None
+    techniques = {group.kind: (group.technique_name, group.tags) for group in progress.plan.atomic_groups}
+    assert techniques == {
+        ScenarioRunPlanGroupKind.BASELINE: (None, []),
+        ScenarioRunPlanGroupKind.ATTACK: ("ignore_print", ["injection"]),
+    }
+    assert progress.run.techniques_used == ["baseline", "ignore_print"]
 
 
 @pytest.mark.parametrize("started_at", ["not-a-timestamp", "2026-08-08T12:30:00"])
