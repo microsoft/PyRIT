@@ -57,14 +57,22 @@ def _stable_replay_value(value: Any, *, fallback_to_type_name: bool = False) -> 
             "value": value.model_dump(mode="json"),
         }
     if isinstance(value, dict):
-        if not all(isinstance(key, str) for key in value):
-            if fallback_to_type_name:
-                return f"<{type(value).__module__}.{type(value).__qualname__}>"
-            return _UNSTABLE_REPLAY_VALUE
-        normalized = {
-            key: _stable_replay_value(item, fallback_to_type_name=fallback_to_type_name) for key, item in value.items()
+        if all(isinstance(key, str) for key in value):
+            normalized = {
+                key: _stable_replay_value(item, fallback_to_type_name=fallback_to_type_name)
+                for key, item in value.items()
+            }
+            return _UNSTABLE_REPLAY_VALUE if _UNSTABLE_REPLAY_VALUE in normalized.values() else normalized
+        normalized_dict_items: list[dict[str, Any]] = []
+        for key, item in value.items():
+            norm_key = _stable_replay_value(key, fallback_to_type_name=fallback_to_type_name)
+            norm_val = _stable_replay_value(item, fallback_to_type_name=fallback_to_type_name)
+            if _UNSTABLE_REPLAY_VALUE in (norm_key, norm_val):
+                return _UNSTABLE_REPLAY_VALUE
+            normalized_dict_items.append({"key": norm_key, "value": norm_val})
+        return {
+            "dict_items": sorted(normalized_dict_items, key=lambda entry: json.dumps(entry, sort_keys=True)),
         }
-        return _UNSTABLE_REPLAY_VALUE if _UNSTABLE_REPLAY_VALUE in normalized.values() else normalized
     if isinstance(value, (list, tuple)):
         normalized_items = [_stable_replay_value(item, fallback_to_type_name=fallback_to_type_name) for item in value]
         if _UNSTABLE_REPLAY_VALUE in normalized_items:
@@ -112,6 +120,42 @@ def _callable_replay_identifier(parser: Callable[[str], dict[str, Any]]) -> dict
     }
 
 
+def _extract_callable_state(function: Any) -> tuple[dict[str, Any], bool]:
+    """
+    Extract captured closure variables or callable-instance attributes.
+
+    Returns:
+        tuple[dict[str, Any], bool]: Extracted state mapping and whether the callable shape
+            is natively representable (functions or instances exposing ``__dict__``).
+    """
+    if inspect.isfunction(function):
+        if not function.__closure__:
+            return {}, True
+        closure: dict[str, Any] = {}
+        for name, cell in zip(function.__code__.co_freevars, function.__closure__, strict=True):
+            try:
+                closure[name] = cell.cell_contents
+            except ValueError:
+                closure[name] = _UNSTABLE_REPLAY_VALUE
+        return closure, True
+    if hasattr(function, "__dict__"):
+        return dict(vars(function)), True
+    return {}, False
+
+
+def _callable_has_representable_config(parser: Callable[[str], dict[str, Any]]) -> bool:
+    """Return True when the parser's arguments and captured state serialize deterministically."""
+    function, parser_args, parser_keywords = _extract_callable_parts(parser)
+    state, representable_shape = _extract_callable_state(function)
+    if not representable_shape:
+        return False
+    return _UNSTABLE_REPLAY_VALUE not in (
+        _stable_replay_value(parser_args),
+        _stable_replay_value(parser_keywords),
+        _stable_replay_value(state),
+    )
+
+
 def _callable_component_identifier(parser: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
     """
     Build a JSON-serializable identity description for any parser callable.
@@ -125,11 +169,15 @@ def _callable_component_identifier(parser: Callable[[str], dict[str, Any]]) -> d
     else:
         function_type = type(function)
         function_name = f"{function_type.__module__}.{function_type.__qualname__}"
-    return {
+    descriptor: dict[str, Any] = {
         "function": function_name,
         "args": _stable_replay_value(parser_args, fallback_to_type_name=True),
         "keywords": _stable_replay_value(parser_keywords, fallback_to_type_name=True),
     }
+    state, _ = _extract_callable_state(function)
+    if state:
+        descriptor["state"] = _stable_replay_value(state, fallback_to_type_name=True)
+    return descriptor
 
 
 def _build_unvalidated_score(
@@ -778,9 +826,18 @@ class CallableResponseHandler(ResponseHandler):
             description_output_key (str): Key holding the description. Defaults to "description".
             metadata_output_key (str): Key holding the metadata. Defaults to "metadata".
             category_output_key (str): Key holding the category. Defaults to "category".
+
+        Raises:
+            ValueError: If ``parser_fingerprint`` is omitted and the parser callable or its
+                configuration cannot be represented deterministically.
         """
         self._parser = parser
         self._parser_fingerprint = parser_fingerprint
+        if not parser_fingerprint and not _callable_has_representable_config(parser):
+            raise ValueError(
+                "parser_fingerprint is required when the parser callable or its configuration "
+                "cannot be represented deterministically."
+            )
         self._score_value_output_key = score_value_output_key
         self._rationale_output_key = rationale_output_key
         self._description_output_key = description_output_key

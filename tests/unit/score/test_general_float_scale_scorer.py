@@ -533,3 +533,38 @@ def test_general_float_scale_scorer_identifier_reflects_callable_response_handle
     assert isinstance(wire_ident, ComponentIdentifier)
     assert wire_ident == custom_handler.get_identifier()
     assert wire_ident.params[key_name] == custom_value
+
+
+def test_general_float_scale_scorer_distinguishes_callable_dict_and_closure_scores() -> None:
+    from functools import partial
+
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    def parse_with_scores(text: str, *, scores: dict[int, str]) -> dict[str, str]:
+        return {"score_value": scores[int(text)], "rationale": "r"}
+
+    def parser_for(val: str):
+        def parse(_: str) -> dict[str, str]:
+            return {"score_value": val, "rationale": "r"}
+
+        return parse
+
+    for first_parser, second_parser in [
+        (partial(parse_with_scores, scores={1: "10"}), partial(parse_with_scores, scores={1: "90"})),
+        (parser_for("10"), parser_for("90")),
+    ]:
+        scorer_1 = SelfAskGeneralFloatScaleScorer(
+            chat_target=chat_target,
+            system_prompt_format_string="Prompt.",
+            scale=DEFAULT_RANGE,
+            response_handler=CallableResponseHandler(parser=first_parser),
+        )
+        scorer_2 = SelfAskGeneralFloatScaleScorer(
+            chat_target=chat_target,
+            system_prompt_format_string="Prompt.",
+            scale=DEFAULT_RANGE,
+            response_handler=CallableResponseHandler(parser=second_parser),
+        )
+        assert scorer_1.get_identifier().hash != scorer_2.get_identifier().hash
+        assert scorer_1.get_identifier().eval_hash != scorer_2.get_identifier().eval_hash

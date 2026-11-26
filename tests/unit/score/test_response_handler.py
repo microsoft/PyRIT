@@ -438,9 +438,12 @@ def test_callable_response_handler_identifier_handles_callable_instance_and_fall
     )
     assert fallback_handler._get_replay_identifier() is None
     keywords = fallback_handler.get_identifier().params["parser"]["keywords"]
-    assert keywords["non_str_dict"] == "<builtins.dict>"
+    assert keywords["non_str_dict"] == {"dict_items": [{"key": 1, "value": "a"}]}
     assert keywords["opaque"] == "<builtins.object>"
     assert keywords["tags"] == {"set_type": "set", "items": ["a", "b"]}
+
+    with pytest.raises(ValueError, match="parser_fingerprint is required"):
+        CallableResponseHandler(parser=partial(_top_level_parser, opaque=object()))
 
     frozenset_handler = CallableResponseHandler(
         parser=partial(_top_level_parser, tags=frozenset({"b", "a"})),
@@ -449,6 +452,25 @@ def test_callable_response_handler_identifier_handles_callable_instance_and_fall
     replay_id = frozenset_handler._get_replay_identifier()
     assert replay_id is not None
     assert replay_id["parser"]["keywords"]["tags"] == {"set_type": "frozenset", "items": ["a", "b"]}
+
+
+def test_callable_response_handler_distinguishes_non_str_dicts_and_closures() -> None:
+    def parse_with_labels(text: str, *, labels: dict[int, str]) -> dict[str, Any]:
+        return {"score_value": labels[int(text)], "rationale": "r"}
+
+    dict_true = CallableResponseHandler(parser=partial(parse_with_labels, labels={1: "true"}))
+    dict_false = CallableResponseHandler(parser=partial(parse_with_labels, labels={1: "false"}))
+    assert dict_true.get_identifier().hash != dict_false.get_identifier().hash
+
+    def parser_for(verdict: str) -> Any:
+        def parse(_: str) -> dict[str, Any]:
+            return {"score_value": verdict, "rationale": "r"}
+
+        return parse
+
+    closure_true = CallableResponseHandler(parser=parser_for("true"))
+    closure_false = CallableResponseHandler(parser=parser_for("false"))
+    assert closure_true.get_identifier().hash != closure_false.get_identifier().hash
 
 
 def test_response_handler_default_build_identifier_uses_component_identity() -> None:

@@ -352,3 +352,36 @@ def test_general_true_false_scorer_identifier_reflects_callable_response_handler
     assert isinstance(wire_ident, ComponentIdentifier)
     assert wire_ident == custom_handler.get_identifier()
     assert wire_ident.params[key_name] == custom_value
+
+
+def test_general_true_false_scorer_distinguishes_callable_dict_and_closure_verdicts() -> None:
+    from functools import partial
+
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    def parse_with_labels(text: str, *, labels: dict[int, str]) -> dict[str, str]:
+        return {"score_value": labels[int(text)], "rationale": "r"}
+
+    def parser_for(verdict: str):
+        def parse(_: str) -> dict[str, str]:
+            return {"score_value": verdict, "rationale": "r"}
+
+        return parse
+
+    for first_parser, second_parser in [
+        (partial(parse_with_labels, labels={1: "true"}), partial(parse_with_labels, labels={1: "false"})),
+        (parser_for("true"), parser_for("false")),
+    ]:
+        scorer_1 = SelfAskGeneralTrueFalseScorer(
+            chat_target=chat_target,
+            system_prompt_format_string="Score this.",
+            response_handler=CallableResponseHandler(parser=first_parser),
+        )
+        scorer_2 = SelfAskGeneralTrueFalseScorer(
+            chat_target=chat_target,
+            system_prompt_format_string="Score this.",
+            response_handler=CallableResponseHandler(parser=second_parser),
+        )
+        assert scorer_1.get_identifier().hash != scorer_2.get_identifier().hash
+        assert scorer_1.get_identifier().eval_hash != scorer_2.get_identifier().eval_hash
