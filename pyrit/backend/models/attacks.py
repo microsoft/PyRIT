@@ -11,7 +11,7 @@ This is the attack-centric API design where every user interaction targets a mod
 import copy
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, Self, cast
 
 from pydantic import (
     AfterValidator,
@@ -491,7 +491,7 @@ class MessagePieceRequest(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_converted_value_data_type(self) -> "MessagePieceRequest":
+    def _validate_converted_value_data_type(self) -> Self:
         """
         Validate that an explicit converted type accompanies a converted value.
 
@@ -648,7 +648,7 @@ class CreateAttackRequest(_AttackAttributionInput):
     )
 
     @model_validator(mode="after")
-    def _normalize_legacy_objective(self) -> "CreateAttackRequest":
+    def _normalize_legacy_objective(self) -> Self:
         """
         Normalize the deprecated name input.
 
@@ -698,7 +698,7 @@ class UpdateAttackRequest(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_update(self) -> "UpdateAttackRequest":
+    def _validate_update(self) -> Self:
         """
         Validate that the request contains a supported update.
 
@@ -774,7 +774,7 @@ class SaveConversationRequest(_AttackAttributionInput):
     expected_source_piece_ids: list[uuid.UUID] | None = None
 
     @model_validator(mode="after")
-    def _validate_destination(self) -> "SaveConversationRequest":
+    def _validate_destination(self) -> Self:
         """
         Validate source and destination references.
 
@@ -913,7 +913,7 @@ class AddMessageRequest(MessageRequest):
         return data
 
     @model_validator(mode="after")
-    def _validate_converter_configurations(self) -> "AddMessageRequest":
+    def _validate_converter_configurations(self) -> Self:
         """
         Validate converter configuration combinations and request indexes.
 
