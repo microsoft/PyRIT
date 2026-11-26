@@ -7,7 +7,7 @@ import type { FindingFields } from '@/types'
 import { useRuntime } from './useRuntime'
 
 interface FindingFieldsState {
-  /** Null until the fields first load. A reload keeps the last fields until the new ones arrive. */
+  /** Null until the fields for the current operation load. A reload of the same operation keeps the last fields until the new ones arrive. */
   readonly fields: FindingFields | null
   /** The last load failure, or an empty string. */
   readonly error: string
@@ -24,23 +24,42 @@ interface FindingFieldsState {
  */
 export function useFindingFields(operationId?: string, enabled = true): FindingFieldsState {
   const { generation } = useRuntime()
+  const [trackedOperationId, setTrackedOperationId] = useState(operationId)
+  const [trackedEnabled, setTrackedEnabled] = useState(enabled)
   const [fields, setFields] = useState<FindingFields | null>(null)
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [fieldsRevision, setFieldsRevision] = useState(0)
-  const loadedFields = useRef<string | null>(null)
+  const loadedFields = useRef<{ operationId: string | undefined; serialized: string } | null>(null)
+
+  if (operationId !== trackedOperationId) {
+    setTrackedOperationId(operationId)
+    setFields(null)
+    setError('')
+  }
+  if (enabled !== trackedEnabled) {
+    setTrackedEnabled(enabled)
+    if (enabled) setError('')
+  }
 
   useEffect(() => {
+    if (loadedFields.current?.operationId !== operationId) {
+      loadedFields.current = null
+    }
     if (!enabled) return
     let ignore = false
     operationsApi.getFindingFields(operationId)
       .then((loaded: FindingFields) => {
         if (!ignore) {
           const serialized = JSON.stringify(loaded)
-          if (loadedFields.current !== null && loadedFields.current !== serialized) {
+          if (
+            loadedFields.current !== null
+            && loadedFields.current.operationId === operationId
+            && loadedFields.current.serialized !== serialized
+          ) {
             setFieldsRevision((count: number) => count + 1)
           }
-          loadedFields.current = serialized
+          loadedFields.current = { operationId, serialized }
           setFields(loaded)
           setError('')
         }
