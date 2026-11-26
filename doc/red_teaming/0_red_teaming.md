@@ -12,7 +12,7 @@ If you would rather start with guides, talks, or hands-on practice, go straight 
 
 ## What AI Red Teaming Is
 
-AI red teaming means probing an AI system the way an adversary would, and also the way an unlucky ordinary user would, to find out how it fails. That covers security failures such as prompt injection or data exfiltration, and safety failures such as harmful content or bad advice to a vulnerable user. Both adversarial and benign use can produce harmful output, so both are in scope.
+AI red teaming means probing an AI system to uncover its failure modes, including the ones that affect benign users and not only the ones an adversary would exploit. That covers security failures such as prompt injection or data exfiltration, and safety failures such as harmful content or bad advice to a vulnerable user. Both adversarial and benign use can produce harmful output, so both are in scope.
 
 Two things it is not:
 
