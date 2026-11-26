@@ -67,6 +67,32 @@ def test_math_obfuscation_digits_and_letters_in_one_prompt():
     assert result.output_text == "A = 4A - 3A\n1 = 3*1 - 2*1"
 
 
+@pytest.mark.parametrize(
+    "character",
+    [
+        "é",  # e + combining acute accent (decomposed é)
+        "ना",  # Devanagari ना: consonant + vowel sign
+        "\U0001f44d\U0001f3fd",  # thumbs up + skin tone modifier
+        "\U0001f1fa\U0001f1f8",  # regional indicator flag pair
+    ],
+)
+def test_math_obfuscation_keeps_grapheme_clusters_whole(character):
+    converter = MathObfuscationConverter(rng=random.Random(1), hint="", suffix="")
+
+    result = asyncio.run(converter.convert_async(prompt=character))
+
+    assert result.output_text == f"{character} = 4{character} - 3{character}"
+
+
+def test_math_obfuscation_keycap_digit_uses_explicit_multiplication():
+    keycap = "1️⃣"
+    converter = MathObfuscationConverter(rng=random.Random(1), hint="", suffix="")
+
+    result = asyncio.run(converter.convert_async(prompt=keycap))
+
+    assert result.output_text == f"{keycap} = 4*{keycap} - 3*{keycap}"
+
+
 def test_math_obfuscation_spaces_and_newlines():
     """Spaces -> blank lines, newlines -> blank lines."""
     rng = random.Random(1)

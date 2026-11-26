@@ -5,6 +5,7 @@ import hashlib
 import logging
 import random
 
+from pyrit.common.text_helper import graphemes
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
 
@@ -22,7 +23,8 @@ class MathObfuscationConverter(Converter):
 
     The transformation follows these rules:
 
-    * Each non-space character becomes one algebraic line.
+    * Each non-space character becomes one algebraic line. Characters are grapheme
+      clusters, so combining marks, Indic vowel signs and emoji sequences stay whole.
     * Numeric characters, such as digits, superscripts and fractions, write the
       multiplication explicitly, as in `5 = 8*5 - 7*5`, because `85 - 75` would
       read as two-digit numbers.
@@ -145,7 +147,7 @@ class MathObfuscationConverter(Converter):
 
         normalized_prompt = prompt.replace("\r\n", "\n").replace("\r", "\n")
 
-        for ch in normalized_prompt:
+        for ch in graphemes(normalized_prompt):
             if ch == "\n":
                 lines.append("")
                 continue
@@ -155,7 +157,8 @@ class MathObfuscationConverter(Converter):
                 continue
 
             n = rng.randint(self._min_n, self._max_n)
-            multiply = "*" if ch.isnumeric() else ""
+            # Check the base character, since a cluster such as the keycap "1️⃣" starts with a digit.
+            multiply = "*" if ch[0].isnumeric() else ""
             line = f"{ch} = {n}{multiply}{ch} - {n - 1}{multiply}{ch}"
 
             # Add hint inline after the first equation
