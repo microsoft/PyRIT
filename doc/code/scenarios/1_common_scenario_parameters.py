@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.6
 # ---
 
 # %% [markdown]
@@ -132,6 +132,76 @@ baseline_scenario.set_params_from_args(  # type: ignore
 await baseline_scenario.initialize_async()  # type: ignore
 baseline_result = await baseline_scenario.run_async()  # type: ignore
 await output_scenario_async(baseline_result)  # type: ignore [top-level-await]
+
+# %% [markdown]
+# ### Reading Attack and Baseline Summaries
+#
+# The overall attack rate excludes groups explicitly marked as baselines in the saved run plan.
+# Baseline results retain their own counts and rate, and all groups remain in the breakdown.
+# For a baseline-only result, the attack rate is undefined: `N/A` in text/HTML and `null` in JSON,
+# not 0% failed attacks.
+#
+# The following synthetic recorded results demonstrate both cases without initializing targets,
+# calling models, or reading memory. This cell can also run independently of the live examples above.
+# These are reporting examples, not measured model performance.
+
+# %%
+from pyrit.common.utils import to_sha256
+from pyrit.models import (
+    SCENARIO_RUN_PLAN_METADATA_KEY,
+    AttackOutcome,
+    AttackResult,
+    ScenarioIdentifier,
+    ScenarioResult,
+    ScenarioRunPlan,
+    ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
+    ScenarioRunPlanSeedGroup,
+)
+from pyrit.output.scenario_result.json import JsonScenarioResultPrinter
+from pyrit.output.scenario_result.pretty import PrettyScenarioResultPrinter
+
+objective = "Synthetic reporting example"
+summary_plan = ScenarioRunPlan(
+    seed_groups=[ScenarioRunPlanSeedGroup(id="seed", objective=objective, objective_sha256=to_sha256(objective))],
+    atomic_groups=[
+        ScenarioRunPlanAtomicGroup(
+            id=kind.value,
+            atomic_attack_name=kind.value,
+            display_group=kind.value,
+            technique_eval_hash=kind.value,
+            seed_group_ids=["seed"],
+            kind=kind,
+        )
+        for kind in (ScenarioRunPlanGroupKind.ATTACK, ScenarioRunPlanGroupKind.BASELINE)
+    ],
+)
+summary_result = ScenarioResult(
+    scenario_identifier=ScenarioIdentifier(class_name="SyntheticSummary", class_module="example", version=1),
+    metadata={SCENARIO_RUN_PLAN_METADATA_KEY: summary_plan.model_dump(mode="json")},
+    attack_results={
+        kind: [
+            AttackResult(
+                conversation_id=f"synthetic-{kind}",
+                objective=objective,
+                outcome=outcome,
+                attribution_data={"parent_collection": kind, "parent_eval_hash": kind, "seed_group_id": "seed"},
+            )
+        ]
+        for kind, outcome in (("attack", AttackOutcome.SUCCESS), ("baseline", AttackOutcome.FAILURE))
+    },
+)
+baseline_only_plan = summary_plan.model_copy(update={"atomic_groups": [summary_plan.atomic_groups[1]]})
+baseline_only_result = summary_result.model_copy(
+    update={
+        "attack_results": {"baseline": summary_result.attack_results["baseline"]},
+        "metadata": {SCENARIO_RUN_PLAN_METADATA_KEY: baseline_only_plan.model_dump(mode="json")},
+    }
+)
+for label, recorded_result in (("Mixed", summary_result), ("Baseline only", baseline_only_result)):
+    print(f"\n{label} (synthetic)")
+    print(await PrettyScenarioResultPrinter(enable_colors=False).render_async(recorded_result))
+    print(await JsonScenarioResultPrinter().render_async(recorded_result))
 
 # %% [markdown]
 # ### Sorting the Per-Group Breakdown by Success Rate

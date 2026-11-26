@@ -10,6 +10,7 @@ from unit.mocks import make_suite_execution, make_suite_execution_entry, make_su
 
 from pyrit.models import SCENARIO_RUN_PLAN_METADATA_KEY, AttackOutcome
 from pyrit.output._derivation import scenario_overview, suite_entry_statistics
+from pyrit.output.scenario_result.html import HtmlScenarioReportPrinter
 from pyrit.output.scenario_result.json import JsonScenarioResultPrinter
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultPrinter
 from pyrit.output.scenario_suite_result.json import JsonScenarioSuiteResultPrinter
@@ -82,13 +83,28 @@ async def test_mixed_populations_keep_baseline_out_of_attack_rate(shared_name):
     assert result.model_dump(mode="json") == before
 
 
-async def test_baseline_only_is_not_an_attack_failure():
+@pytest.mark.parametrize("baseline_outcome", [AttackOutcome.SUCCESS, AttackOutcome.FAILURE])
+async def test_baseline_only_is_not_an_attack_failure(baseline_outcome):
     execution, result = _result(baseline_only=True)
+    result.attack_results["control"][0].outcome = baseline_outcome
     counts = suite_entry_statistics(result)
     assert counts.completed == 0
     assert counts.planned == 0
     assert counts.success_percentage is None
     assert scenario_overview(result).baseline.completed == 1
+    scenario = json.loads(await JsonScenarioResultPrinter().render_async(result))
+    assert scenario["stats"]["overall_success_rate"] is None
+    assert scenario["stats"]["total_objective_executions"] == 0
+    baseline_rate = 100 if baseline_outcome == AttackOutcome.SUCCESS else 0
+    assert scenario["baseline_statistics"]["success_percentage"] == baseline_rate
+    text = await PrettyScenarioResultPrinter(enable_colors=False).render_async(result)
+    assert "Overall Success Rate: N/A" in text
+    assert f"Success Rate: {baseline_rate}%" in text.split("Baseline Statistics", 1)[1]
+    html = await HtmlScenarioReportPrinter().render_async(
+        {"scenario_result_id": str(result.id), "overview": scenario, "conversations": []}
+    )
+    assert ">N/A</div>" in html
+    assert "None%" not in html
     payload = json.loads(
         await JsonScenarioSuiteResultPrinter().render_async(execution, results={str(result.id): result})
     )

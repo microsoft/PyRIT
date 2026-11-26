@@ -78,12 +78,12 @@ def test_resolve_target_info_missing_fields_are_none():
 # --- scenario_overview ---
 
 
-def test_scenario_overview_empty_is_zero():
+def test_scenario_overview_empty_has_no_success_rate():
     result = make_scenario_result(scenario_name="S", attack_results={"s1": []})
 
     overview = scenario_overview(result)
 
-    assert (overview.objective_executions, overview.attempts, overview.success_rate) == (0, 0, 0)
+    assert (overview.objective_executions, overview.attempts, overview.success_rate) == (0, 0, None)
     assert overview.groups == [
         GroupStatistics(
             name="s1",

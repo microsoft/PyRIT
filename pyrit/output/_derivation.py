@@ -88,7 +88,7 @@ class ScenarioOverview(NamedTuple):
 
     objective_executions: int
     attempts: int
-    success_rate: int
+    success_rate: int | None
     groups: list[GroupStatistics]
     outcomes: OutcomeStatistics | None = None
     producer_counts: ScenarioProducerCounts | None = None
@@ -181,7 +181,7 @@ def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
     return ScenarioOverview(
         objective_executions=attack_statistics.overall.completed,
         attempts=attack_statistics.attempts,
-        success_rate=attack_statistics.overall.success_percentage or 0,
+        success_rate=attack_statistics.overall.success_percentage,
         groups=groups,
         outcomes=attack_statistics.overall.outcomes,
         producer_counts=attack_statistics.overall.producer_counts,

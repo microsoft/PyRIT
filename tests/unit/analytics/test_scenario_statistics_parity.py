@@ -504,7 +504,7 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
 
     # Reports
     report = json.loads(await JsonScenarioResultPrinter().render_async(scenario_result))
-    assert report["stats"]["overall_success_rate"] == (expected or 0)
+    assert report["stats"]["overall_success_rate"] == expected
     assert report["stats"]["outcomes"] == TypeAdapter(OutcomeStatistics).dump_python(sdk.overall.outcomes, mode="json")
     assert report["stats"]["producer_counts"] == TypeAdapter(ScenarioProducerCounts).dump_python(
         sdk.overall.producer_counts, mode="json"

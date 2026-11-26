@@ -47,7 +47,8 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
 
   <div class="cards">
     <div class="card"><div class="label">Success rate</div>
-      <div class="value">{{ report.overview.stats.overall_success_rate }}%</div></div>
+      {% set rate = report.overview.stats.overall_success_rate %}
+      <div class="value">{% if rate is not none %}{{ rate }}%{% else %}N/A{% endif %}</div></div>
     <div class="card"><div class="label">Techniques</div>
       <div class="value">{{ report.overview.stats.total_techniques }}</div></div>
     <div class="card"><div class="label">Objective executions</div>

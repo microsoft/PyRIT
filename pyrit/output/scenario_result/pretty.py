@@ -167,7 +167,9 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         lines.append(self._format_colored(f"{self._indent * 2}• Total Attempts: {overview.attempts}", Fore.GREEN))
         lines.append(
             self._format_colored(
-                f"{self._indent * 2}• Overall Success Rate: {overall_rate}%", self._get_rate_color(overall_rate)
+                f"{self._indent * 2}• Overall Success Rate: "
+                + (f"{overall_rate}%" if overall_rate is not None else "N/A"),
+                self._get_rate_color(overall_rate) if overall_rate is not None else Fore.CYAN,
             )
         )
 
