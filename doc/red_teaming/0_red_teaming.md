@@ -51,13 +51,16 @@ Many people go straight to automated runs, often because they do not have subjec
 If you run automation without inspecting the results and iterating on what you find, you will delude yourself into thinking that your system is safe. AI helps you scale, but it is not perfect. The attacks will miss areas that could be attacked. The scorers will misjudge some responses.
 :::
 
-Each approach covers for the other's weaknesses:
+Human-led does not mean doing everything by hand. There are three ways to work, and each covers for the others' weaknesses:
 
-| | Human-led | Automated |
-|---|---|---|
-| **Good at** | Finding new kinds of failures. Judging context, tone, and severity. Applying domain and cultural knowledge. | Scale and repetition. Covering many known techniques. Re-testing after every change. |
-| **Weak at** | Scale and consistency. It is slow and tiring. | It only tries what someone already thought of. Its judgments are sometimes wrong. It cannot tell you what it did not test. |
-| **In PyRIT** | [GUI](../gui/0_gui.md) | [Scanner](../scanner/0_scanner.md) and [Framework](../code/framework.md) |
+| | Completely manual | Human-led | Automated |
+|---|---|---|---|
+| **What it is** | A person writes every prompt and reads every response. | A person directs the work and makes the judgments, with AI doing part of the work. It is not hands-off. | Runs that execute without a person in the loop. |
+| **Good at** | Finding new kinds of failures. Judging context, tone, and severity. Applying domain and cultural knowledge. | Keeping human subject matter expertise in charge while covering far more ground than one person can by hand. | Scale and repetition. Covering many known techniques. Re-testing after every change. |
+| **Weak at** | Scale and consistency. It is slow and tiring. | It still needs an expert's time and attention, and the AI's contributions have to be checked. | It only tries what someone already thought of. Its judgments are sometimes wrong. It cannot tell you what it did not test. |
+| **In PyRIT** | Chat in the [GUI](../gui/0_gui.md) | The [GUI](../gui/0_gui.md) with converters and scorers, or the [Framework](../code/framework.md) | [Scanner](../scanner/0_scanner.md) and [Framework](../code/framework.md) |
+
+Human-led red teaming bridges the gap between scale and human expertise. The person decides what to go after and judges what comes back. AI augmentation generates variations, transforms prompts, runs the conversation, or gives a first opinion on a response.
 
 Here is what goes wrong when you only automate:
 
