@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 def token_gradients(
     model: Any,
+    *,
     input_ids: torch.Tensor,
     input_slice: slice,
     target_slice: slice,
@@ -64,7 +65,7 @@ def token_gradients(
     input_embeds = (one_hot @ embed_weights).unsqueeze(0)
 
     # now stitch it together with the rest of the embeddings
-    embeds = get_embeddings(model, input_ids.unsqueeze(0)).detach()
+    embeds = get_embeddings(model, input_ids=input_ids.unsqueeze(0)).detach()
     full_embeds = torch.cat([embeds[:, : input_slice.start, :], input_embeds, embeds[:, input_slice.stop :, :]], dim=1)
 
     logits = model(inputs_embeds=full_embeds).logits
@@ -91,7 +92,11 @@ class GCGAttackPrompt(AttackPrompt):
             torch.Tensor: Gradients with respect to control tokens.
         """
         return token_gradients(
-            model, self.input_ids.to(model.device), self._control_slice, self._target_slice, self._loss_slice
+            model,
+            input_ids=self.input_ids.to(model.device),
+            input_slice=self._control_slice,
+            target_slice=self._target_slice,
+            loss_slice=self._loss_slice,
         )
 
 
@@ -101,6 +106,7 @@ class GCGPromptManager(PromptManager):
     def sample_control(
         self,
         grad: torch.Tensor,
+        *,
         batch_size: int,
         topk: int = 256,
         temp: float = 1.0,
@@ -142,6 +148,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
 
     def __init__(
         self,
+        *,
         goals: list[str],
         targets: list[str],
         workers: list[Any],
@@ -152,7 +159,6 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         test_goals: list[str] | None = None,
         test_targets: list[str] | None = None,
         test_workers: list[Any] | None = None,
-        *,
         sampling: SamplingStrategy | None = None,
         loss: LossFunction | None = None,
         candidate_filter: CandidateFilter | None = None,
@@ -160,16 +166,16 @@ class GCGMultiPromptAttack(MultiPromptAttack):
     ) -> None:
         """Initialize a GCG attack with optional algorithm extensions."""
         super().__init__(
-            goals,
-            targets,
-            workers,
-            control_init,
-            test_prefixes,
-            logfile,
-            managers,
-            test_goals,
-            test_targets,
-            test_workers,
+            goals=goals,
+            targets=targets,
+            workers=workers,
+            control_init=control_init,
+            test_prefixes=test_prefixes,
+            logfile=logfile,
+            managers=managers,
+            test_goals=test_goals,
+            test_targets=test_targets,
+            test_workers=test_workers,
         )
         self._sampling = sampling
         self._loss = loss

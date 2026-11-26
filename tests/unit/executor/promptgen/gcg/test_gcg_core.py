@@ -156,7 +156,7 @@ class TestGetFilteredCands:
         worker.tokenizer.side_effect = lambda text, **kwargs: MagicMock(input_ids=[0])
 
         cands = torch.tensor([[5], [6], [7]])
-        result = attack.get_filtered_cands(0, cands, filter_cand=False)
+        result = attack.get_filtered_cands(0, control_cand=cands, filter_cand=False)
         assert isinstance(result, list)
         assert len(result) == 3
         assert all(isinstance(s, str) for s in result)
@@ -170,7 +170,7 @@ class TestGetFilteredCands:
         worker.tokenizer.return_value = MagicMock(input_ids=[0])
 
         cands = torch.tensor([[5], [6], [7]])
-        result = attack.get_filtered_cands(0, cands, filter_cand=False)
+        result = attack.get_filtered_cands(0, control_cand=cands, filter_cand=False)
         assert len(result) == 3
 
     def test_clamps_out_of_vocab_tokens(self) -> None:
@@ -180,7 +180,7 @@ class TestGetFilteredCands:
         worker.tokenizer.side_effect = lambda text, **kwargs: MagicMock(input_ids=[0])
 
         cands = torch.tensor([[5], [15], [7]])  # 15 > vocab_size=10
-        attack.get_filtered_cands(0, cands, filter_cand=False)
+        attack.get_filtered_cands(0, control_cand=cands, filter_cand=False)
         # After clamping, the out-of-range token should have been replaced
         assert cands[1][0].item() != 15
 
@@ -204,7 +204,7 @@ class TestGetFilteredCands:
         worker.tokenizer.side_effect = lambda text, **kwargs: MagicMock(input_ids=[0])
 
         cands = torch.tensor([[1], [2], [3]])
-        result = attack.get_filtered_cands(0, cands, filter_cand=True, curr_control="same_control")
+        result = attack.get_filtered_cands(0, control_cand=cands, filter_cand=True, curr_control="same_control")
         # Should always return exactly len(cands) results
         assert len(result) == 3
 
@@ -223,7 +223,7 @@ class TestTargetAndControlLoss:
         logits = torch.randn(batch_size, seq_len, vocab_size)
         ids = torch.randint(0, vocab_size, (batch_size, seq_len))
 
-        loss = prompt.target_loss(logits, ids)
+        loss = prompt.target_loss(logits, ids=ids)
         assert loss.shape == (batch_size, 3)
 
     def test_target_loss_is_finite(self) -> None:
@@ -234,7 +234,7 @@ class TestTargetAndControlLoss:
         logits = torch.randn(2, 8, 30)
         ids = torch.randint(0, 30, (2, 8))
 
-        loss = prompt.target_loss(logits, ids)
+        loss = prompt.target_loss(logits, ids=ids)
         assert torch.isfinite(loss).all()
 
     def test_control_loss_returns_correct_shape(self) -> None:
@@ -248,7 +248,7 @@ class TestTargetAndControlLoss:
         logits = torch.randn(batch_size, seq_len, vocab_size)
         ids = torch.randint(0, vocab_size, (batch_size, seq_len))
 
-        loss = prompt.control_loss(logits, ids)
+        loss = prompt.control_loss(logits, ids=ids)
         assert loss.shape == (batch_size, 3)
 
     def test_control_loss_is_finite(self) -> None:
@@ -259,7 +259,7 @@ class TestTargetAndControlLoss:
         logits = torch.randn(2, 8, 30)
         ids = torch.randint(0, 30, (2, 8))
 
-        loss = prompt.control_loss(logits, ids)
+        loss = prompt.control_loss(logits, ids=ids)
         assert torch.isfinite(loss).all()
 
     def test_target_loss_higher_for_wrong_predictions(self) -> None:
@@ -282,8 +282,8 @@ class TestTargetAndControlLoss:
         bad_logits[0, 2, 7] = 10.0  # predicts wrong token
         bad_logits[0, 3, 8] = 10.0  # predicts wrong token
 
-        good_loss = prompt.target_loss(good_logits, ids).mean()
-        bad_loss = prompt.target_loss(bad_logits, ids).mean()
+        good_loss = prompt.target_loss(good_logits, ids=ids).mean()
+        bad_loss = prompt.target_loss(bad_logits, ids=ids).mean()
         assert bad_loss > good_loss
 
 
@@ -307,7 +307,7 @@ class TestSampleControl:
         pm = self._make_prompt_manager(n_control_tokens=n_control, vocab_size=vocab_size)
 
         grad = torch.randn(n_control, vocab_size)
-        result = pm.sample_control(grad, batch_size, topk=10)
+        result = pm.sample_control(grad, batch_size=batch_size, topk=10)
         assert result.shape == (batch_size, n_control)
 
     def test_output_tokens_within_vocab(self) -> None:
@@ -318,7 +318,7 @@ class TestSampleControl:
         pm = self._make_prompt_manager(n_control_tokens=n_control, vocab_size=vocab_size)
 
         grad = torch.randn(n_control, vocab_size)
-        result = pm.sample_control(grad, batch_size, topk=10)
+        result = pm.sample_control(grad, batch_size=batch_size, topk=10)
         assert (result >= 0).all()
         assert (result < vocab_size).all()
 
@@ -337,7 +337,7 @@ class TestSampleControl:
 
         grad = torch.randn(n_control, vocab_size)
         original_toks = pm._prompts[0].control_toks.clone()
-        result = pm.sample_control(grad, batch_size, topk=10)
+        result = pm.sample_control(grad, batch_size=batch_size, topk=10)
 
         for i in range(batch_size):
             diffs = (result[i] != original_toks.to(result.device)).sum().item()
@@ -363,7 +363,7 @@ class TestSampleControl:
         grad = torch.zeros(n_control, vocab_size)
         grad[:, 15:20] = -100.0  # Negative gradient = top candidates after negation
 
-        result = pm.sample_control(grad, batch_size, topk=5, allow_non_ascii=False)
+        result = pm.sample_control(grad, batch_size=batch_size, topk=5, allow_non_ascii=False)
         original = pm._prompts[0].control_toks
         non_ascii_set = {15, 16, 17, 18, 19}
 
@@ -430,21 +430,21 @@ class TestEmbeddingHelpers:
         assert get_embedding_layer(model) is expected
         assert get_embedding_matrix(model) is expected.weight
 
-        embedded = get_embeddings(model, torch.tensor([[1, 2, 3]]))
+        embedded = get_embeddings(model, input_ids=torch.tensor([[1, 2, 3]]))
         assert embedded.shape[-1] == model.config.hidden_size
 
     @pytest.mark.parametrize("model_type", _HALF_PRECISION_ARCHITECTURES)
     def test_get_embeddings_keeps_half_precision_for_legacy_architectures(self, model_type: str) -> None:
         """GPT-2, GPT-J and GPT-NeoX returned float16 before this path existed."""
         model = _tiny_model(model_type)
-        assert get_embeddings(model, torch.tensor([[1, 2, 3]])).dtype == torch.float16
+        assert get_embeddings(model, input_ids=torch.tensor([[1, 2, 3]])).dtype == torch.float16
 
     @pytest.mark.parametrize("model_type", _OTHER_ARCHITECTURES)
     def test_get_embeddings_keeps_embedding_dtype_for_other_architectures(self, model_type: str) -> None:
         """Everything else keeps the embedding dtype rather than being downcast."""
         model = _tiny_model(model_type)
         expected_dtype = model.get_input_embeddings().weight.dtype
-        assert get_embeddings(model, torch.tensor([[1, 2, 3]])).dtype == expected_dtype
+        assert get_embeddings(model, input_ids=torch.tensor([[1, 2, 3]])).dtype == expected_dtype
 
 
 class TestPromptManagerInit:
@@ -1046,8 +1046,8 @@ class TestPromptSliceWiring:
             candidates = manager.control_toks.repeat(2, 1)
             candidates[1, 0] = tokenizer("now", add_special_tokens=False).input_ids[0]
             logits, ids = manager.logits(model, test_controls=candidates, return_ids=True)
-            assert torch.isfinite(manager.target_loss(logits, ids)).all()
-            assert torch.isfinite(manager.control_loss(logits, ids)).all()
+            assert torch.isfinite(manager.target_loss(logits, ids=ids)).all()
+            assert torch.isfinite(manager.control_loss(logits, ids=ids)).all()
             for prompt, candidate_ids in zip(manager, ids, strict=True):
                 assert torch.equal(candidate_ids[:, prompt._control_slice], candidates)
                 assert torch.equal(candidate_ids[:, prompt._target_slice], prompt.target_toks.repeat(2, 1))
@@ -1070,7 +1070,8 @@ class TestPromptSliceWiring:
         with patch.object(attack, "test", return_value=([], [], [])) as evaluate:
             attack.test_all()
 
-        all_workers, all_prompts = evaluate.call_args.args
+        all_workers = evaluate.call_args.kwargs["workers"]
+        all_prompts = evaluate.call_args.kwargs["prompts"]
         assert all_workers == [*workers, test_worker]
         assert evaluate.call_args.kwargs["include_loss"] is True
         for manager in [*attack.prompts, *all_prompts]:
@@ -1556,7 +1557,7 @@ def test_model_worker_run_uses_worker_owned_model(operation: ModelWorkerOperatio
     tasks.get.side_effect = [task, None]
     results = MagicMock()
 
-    ModelWorker.run(model, tasks, results)
+    ModelWorker.run(model=model, tasks=tasks, results=results)
 
     model.requires_grad_.assert_called_once_with(False)
     model.zero_grad.assert_called_once_with(set_to_none=True)
@@ -1571,7 +1572,7 @@ def test_multi_prompt_test_dispatches_without_model_payload() -> None:
     worker.results.get.side_effect = [[(True, 1)], [0.25]]
     prompt = MagicMock()
 
-    result = attack.test([worker], [prompt], include_loss=True)
+    result = attack.test(workers=[worker], prompts=[prompt], include_loss=True)
 
     assert result == ([[True]], [[1]], [[0.25]])
     assert worker.call_args_list == [
@@ -1618,7 +1619,7 @@ class _WorkerStub:
         elif operation is ModelWorkerOperation.LOGITS:
             self.results.put((self._logits, self._token_ids))
         elif operation is ModelWorkerOperation.LOSS:
-            loss_function = operation_args[1]
+            loss_function = kwargs["loss_function"]
             self.results.put(
                 loss_function.compute_loss(
                     logits=self._logits,
@@ -1839,20 +1840,20 @@ class TestGCGMultiPromptAttackStepWiring:
         torch.manual_seed(2026)
         legacy_control_cand = legacy_prompt_manager.sample_control(
             normalized_gradient.clone(),
-            1,
+            batch_size=1,
             topk=3,
             temp=1.0,
             allow_non_ascii=True,
         )
         legacy_controls = legacy_attack.get_filtered_cands(
             0,
-            legacy_control_cand,
+            control_cand=legacy_control_cand,
             filter_cand=True,
             curr_control=current_control,
         )
-        legacy_loss = target_weight * legacy_prompt_for_loss.target_loss(logits, token_ids).mean(
+        legacy_loss = target_weight * legacy_prompt_for_loss.target_loss(logits, ids=token_ids).mean(
             dim=-1
-        ) + control_weight * legacy_prompt_for_loss.control_loss(logits, token_ids).mean(dim=-1)
+        ) + control_weight * legacy_prompt_for_loss.control_loss(logits, ids=token_ids).mean(dim=-1)
 
         assert actual_control == legacy_controls[0]
         assert actual_loss == pytest.approx(legacy_loss[0].item())
@@ -1862,10 +1863,11 @@ class TestGCGMultiPromptAttackStepWiring:
         loss_args, loss_kwargs = worker.calls[1]
         assert loss_args[0] is prompt
         assert loss_args[1] is ModelWorkerOperation.LOSS
-        assert loss_args[2] == legacy_controls
-        assert isinstance(loss_args[3], CrossEntropyLoss)
+        assert loss_kwargs["test_controls"] == legacy_controls
+        assert isinstance(loss_kwargs["loss_function"], CrossEntropyLoss)
         assert all(argument is not worker.model for argument in loss_args)
-        assert loss_kwargs == {"use_prefix_cache": False}
+        assert all(value is not worker.model for value in loss_kwargs.values())
+        assert loss_kwargs["use_prefix_cache"] is False
 
     def test_step_uses_custom_protocol_implementations_when_supplied(self) -> None:
         gradient = torch.randn(3, 6)
@@ -1937,7 +1939,11 @@ class TestGCGMultiPromptAttackStepWiring:
             )
 
         assert mock_base_init.call_count == 1
-        assert mock_base_init.call_args.args[:4] == (["goal"], ["target"], workers, "seed control")
+        base_init_kwargs = mock_base_init.call_args.kwargs
+        assert base_init_kwargs["goals"] == ["goal"]
+        assert base_init_kwargs["targets"] == ["target"]
+        assert base_init_kwargs["workers"] is workers
+        assert base_init_kwargs["control_init"] == "seed control"
 
         assert attack._sampling is sampling
         assert attack._loss is loss
@@ -2262,11 +2268,13 @@ def test_token_gradients_matches_backward_without_model_parameter_gradients() ->
 
     with (
         patch.object(gcg_attack_mod, "get_embedding_matrix", side_effect=lambda model: model.embedding.weight),
-        patch.object(gcg_attack_mod, "get_embeddings", side_effect=lambda model, ids: model.embedding(ids)),
+        patch.object(
+            gcg_attack_mod, "get_embeddings", side_effect=lambda model, *, input_ids: model.embedding(input_ids)
+        ),
     ):
         actual = token_gradients(
             input_only_model,
-            input_ids,
+            input_ids=input_ids,
             input_slice=input_slice,
             target_slice=target_slice,
             loss_slice=loss_slice,
@@ -2294,7 +2302,7 @@ def test_token_gradients_raises_when_coordinate_gradient_missing() -> None:
     ):
         token_gradients(
             model,
-            torch.tensor([0, 1, 2]),
+            input_ids=torch.tensor([0, 1, 2]),
             input_slice=slice(0, 1),
             target_slice=slice(1, 2),
             loss_slice=slice(0, 1),
@@ -2348,9 +2356,9 @@ def _run_trajectory(
     workers = [TrajectoryWorker(i, run_id=run_id, barrier=barrier, events=switches) for i in range(n_workers)]
     managers = {"PM": TrajectoryPromptManager, "MPA": partial(RecordingGCGAttack, events=events, bundles=bundles)}
     attack = attack_cls(
-        [f"goal {i}" for i in range(n_goals)],
-        ["10 11", "12 13"][:n_goals],
-        workers,
+        goals=[f"goal {i}" for i in range(n_goals)],
+        targets=["10 11", "12 13"][:n_goals],
+        workers=workers,
         control_init="1 2 3",
         test_prefixes=[],
         logfile=str(logfile),

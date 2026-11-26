@@ -278,14 +278,14 @@ class TestGCGCandidateEvaluatorExecution:
         candidates = torch.tensor([[9, 10], [11, 12]])
         loss_fn = CrossEntropyLoss(target_weight=0.7, control_weight=0.3)
 
-        full_logits, token_ids = prompt.logits(model, candidates, return_ids=True)
+        full_logits, token_ids = prompt.logits(model, test_controls=candidates, return_ids=True)
         expected = loss_fn.compute_loss(
             logits=full_logits,
             token_ids=token_ids,
             target_slice=prompt._target_slice,
             control_slice=prompt._control_slice,
         )
-        actual = prompt.loss(model, candidates, loss_fn)
+        actual = prompt.loss(model, test_controls=candidates, loss_function=loss_fn)
 
         assert torch.equal(actual, expected)
 
@@ -310,7 +310,7 @@ class TestGCGCandidateEvaluatorExecution:
         candidates = torch.tensor([[11, 12], [13, 14], [15, 16]])
         loss_fn = CrossEntropyLoss(target_weight=0.7, control_weight=0.3)
 
-        full_logits, token_ids = prompt.logits(model, candidates, return_ids=True)
+        full_logits, token_ids = prompt.logits(model, test_controls=candidates, return_ids=True)
         expected = loss_fn.compute_loss(
             logits=full_logits,
             token_ids=token_ids,
@@ -326,7 +326,7 @@ class TestGCGCandidateEvaluatorExecution:
 
         hook = model.register_forward_hook(capture_forward, with_kwargs=True)
         try:
-            actual = prompt.loss(model, candidates, loss_fn, use_prefix_cache=True)
+            actual = prompt.loss(model, test_controls=candidates, loss_function=loss_fn, use_prefix_cache=True)
         finally:
             hook.remove()
 
@@ -373,7 +373,7 @@ class TestGCGCandidateEvaluatorExecution:
         candidates = torch.tensor([[11, 12], [13, 14], [15, 16]])
         loss_fn = CrossEntropyLoss(target_weight=0.7, control_weight=0.3)
 
-        expected = prompt.loss(model, candidates, loss_fn)
+        expected = prompt.loss(model, test_controls=candidates, loss_function=loss_fn)
         forward_calls = []
 
         def capture_forward(_module, _args, kwargs, _output):
@@ -381,7 +381,7 @@ class TestGCGCandidateEvaluatorExecution:
 
         hook = model.register_forward_hook(capture_forward, with_kwargs=True)
         try:
-            actual = prompt.loss(model, candidates, loss_fn, use_prefix_cache=True)
+            actual = prompt.loss(model, test_controls=candidates, loss_function=loss_fn, use_prefix_cache=True)
         finally:
             hook.remove()
 
@@ -403,7 +403,7 @@ class TestGCGCandidateEvaluatorExecution:
         model = MagicMock()
         candidates = ["cand-1", "cand-2"]
 
-        actual = AttackPrompt.loss(prompt, model, candidates, loss_fn)
+        actual = AttackPrompt.loss(prompt, model, test_controls=candidates, loss_function=loss_fn)
         expected = loss_fn.compute_loss(
             logits=logits,
             token_ids=token_ids,
@@ -412,7 +412,7 @@ class TestGCGCandidateEvaluatorExecution:
         )
 
         assert torch.equal(actual, expected)
-        prompt.logits.assert_called_once_with(model, candidates, return_ids=True)
+        prompt.logits.assert_called_once_with(model, test_controls=candidates, return_ids=True)
 
     def test_attack_prompt_loss_handles_uninspectable_model_forward(self) -> None:
         logits = torch.randn(2, 6, 10)
@@ -425,7 +425,7 @@ class TestGCGCandidateEvaluatorExecution:
         model = MagicMock()
         model.forward = object()
 
-        actual = AttackPrompt.loss(prompt, model, ["cand-1", "cand-2"], loss_fn)
+        actual = AttackPrompt.loss(prompt, model, test_controls=["cand-1", "cand-2"], loss_function=loss_fn)
 
         expected = loss_fn.compute_loss(
             logits=logits,
@@ -434,7 +434,7 @@ class TestGCGCandidateEvaluatorExecution:
             control_slice=prompt._control_slice,
         )
         assert torch.equal(actual, expected)
-        prompt.logits.assert_called_once_with(model, ["cand-1", "cand-2"], return_ids=True)
+        prompt.logits.assert_called_once_with(model, test_controls=["cand-1", "cand-2"], return_ids=True)
 
     def test_attack_prompt_worker_loss_selects_only_required_logits_when_supported(self) -> None:
         class SelectiveModel:
@@ -453,7 +453,7 @@ class TestGCGCandidateEvaluatorExecution:
         prompt.logits.return_value = (full_logits[:, expected_positions, :], token_ids)
         model = SelectiveModel()
 
-        actual = AttackPrompt.loss(prompt, model, ["cand-1", "cand-2"], loss_fn)
+        actual = AttackPrompt.loss(prompt, model, test_controls=["cand-1", "cand-2"], loss_function=loss_fn)
         expected = loss_fn.compute_loss(
             logits=full_logits,
             token_ids=token_ids,
@@ -464,7 +464,8 @@ class TestGCGCandidateEvaluatorExecution:
         assert torch.equal(actual, expected)
         prompt.logits.assert_called_once()
         args, kwargs = prompt.logits.call_args
-        assert args == (model, ["cand-1", "cand-2"])
+        assert args == (model,)
+        assert kwargs["test_controls"] == ["cand-1", "cand-2"]
         assert kwargs["return_ids"] is True
         assert torch.equal(kwargs["logits_to_keep"], expected_positions)
 
@@ -487,8 +488,8 @@ class TestGCGCandidateEvaluatorExecution:
         assert torch.equal(result.losses, computed_losses)
         assert len(worker.calls) == 1
         args, kwargs = worker.calls[0]
-        assert args == (prompt, ModelWorkerOperation.LOSS, candidates[0], loss_fn)
-        assert kwargs == {"use_prefix_cache": False}
+        assert args == (prompt, ModelWorkerOperation.LOSS)
+        assert kwargs == {"test_controls": candidates[0], "loss_function": loss_fn, "use_prefix_cache": False}
 
     def test_builtin_loss_accumulates_across_workers(self) -> None:
         prompts = [
@@ -533,8 +534,8 @@ class TestGCGCandidateEvaluatorExecution:
 
         assert worker.calls == [
             (
-                (prompt, ModelWorkerOperation.LOSS, ["cand-1", "cand-2"], loss_fn),
-                {"use_prefix_cache": True},
+                (prompt, ModelWorkerOperation.LOSS),
+                {"test_controls": ["cand-1", "cand-2"], "loss_function": loss_fn, "use_prefix_cache": True},
             )
         ]
 
@@ -595,8 +596,7 @@ class TestGCGCandidateEvaluatorExecution:
         args, kwargs = worker.calls[0]
         assert args[0] is prompt
         assert args[1] == ModelWorkerOperation.LOGITS
-        assert args[2] == ["cand-1", "cand-2"]
-        assert kwargs == {"return_ids": True}
+        assert kwargs == {"test_controls": ["cand-1", "cand-2"], "return_ids": True}
 
         # Check loss computation parameters
         loss_fn.compute_loss.assert_called_once_with(

@@ -85,7 +85,7 @@ def _resolve_output(*, output: GCGOutputConfig, output_dir: str | None) -> GCGOu
     return replace(output, result_prefix=str(Path(output_dir) / base))
 
 
-async def _main_async(config_path: str, data_path: str, output_dir: str | None = None) -> None:
+async def _main_async(*, config_path: str, data_path: str, output_dir: str | None = None) -> None:
     _load_environment_files(env_files=None)
     config = GCGConfig.from_json_file(config_path)
     data = GCGDataConfig.from_json_file(data_path)
@@ -117,4 +117,4 @@ async def _main_async(config_path: str, data_path: str, output_dir: str | None =
 
 if __name__ == "__main__":
     args = _parse_arguments()
-    asyncio.run(_main_async(args.config, args.data, args.output_dir))
+    asyncio.run(_main_async(config_path=args.config, data_path=args.data, output_dir=args.output_dir))
