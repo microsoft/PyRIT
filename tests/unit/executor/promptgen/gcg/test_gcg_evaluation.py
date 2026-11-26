@@ -468,6 +468,48 @@ class TestGCGCandidateEvaluatorExecution:
         assert kwargs["return_ids"] is True
         assert torch.equal(kwargs["logits_to_keep"], expected_positions)
 
+    def test_attack_prompt_worker_loss_uses_full_logits_without_selected_logits_method(self) -> None:
+        class SelectiveModel:
+            device = torch.device("cpu")
+
+            def forward(self, *, logits_to_keep: int | torch.Tensor = 0) -> None:
+                del logits_to_keep
+
+        class PositionsOnlyLoss:
+            def compute_loss(
+                self,
+                *,
+                logits: torch.Tensor,
+                token_ids: torch.Tensor,
+                target_slice: slice,
+                control_slice: slice,
+            ) -> torch.Tensor:
+                del token_ids, target_slice, control_slice
+                return logits.sum(dim=(1, 2))
+
+            def get_required_logit_positions(
+                self,
+                *,
+                target_slice: slice,
+                control_slice: slice,
+                device: torch.device | str | None = None,
+            ) -> torch.Tensor:
+                del target_slice, control_slice, device
+                raise AssertionError("positions must not be requested without compute_loss_from_selected_logits")
+
+        logits = torch.randn(2, 6, 10)
+        token_ids = torch.randint(0, 10, (2, 6))
+        prompt = MagicMock()
+        prompt._target_slice = slice(3, 5)
+        prompt._control_slice = slice(1, 3)
+        prompt.logits.return_value = (logits, token_ids)
+        model = SelectiveModel()
+
+        actual = AttackPrompt.loss(prompt, model, ["cand-1", "cand-2"], PositionsOnlyLoss())
+
+        assert torch.equal(actual, logits.sum(dim=(1, 2)))
+        prompt.logits.assert_called_once_with(model, ["cand-1", "cand-2"], return_ids=True)
+
     def test_builtin_loss_is_computed_in_worker(self) -> None:
         prompt = _MockAttackPrompt(target_slice=slice(3, 5), control_slice=slice(1, 3))
         pm = _MockPromptManager([prompt])  # type: ignore[arg-type]
