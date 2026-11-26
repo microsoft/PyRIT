@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -235,6 +236,24 @@ async def test_composite_over_two_queries_keeps_both_answers(sqlite_instance: Me
     assert metadata["shieldstral_sexual_answer"] == "no"
     stored = await sqlite_instance.get_scores_async(score_ids=[str(scores[0].id)])
     assert stored[0] == Score.model_validate_json(scores[0].model_dump_json())
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_composite_over_two_unnamed_queries_keeps_both_answers() -> None:
+    sexual_query = "Does this content contain NSFW or sexually explicit material?"
+    violence = ShieldstralScorer(chat_target=_mock_target("yes"), query=VIOLENCE_QUERY)
+    sexual = ShieldstralScorer(chat_target=_mock_target("no"), query=sexual_query)
+    composite = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[violence, sexual])
+
+    scores = await composite.score_text_async("A threat to hurt someone.")
+
+    def namespace(query: str) -> str:
+        return f"shieldstral_query_{hashlib.sha256(query.encode('utf-8')).hexdigest()[:12]}"
+
+    assert scores[0].get_value() is True
+    metadata = scores[0].score_metadata
+    assert metadata[f"{namespace(VIOLENCE_QUERY)}_answer"] == "yes"
+    assert metadata[f"{namespace(sexual_query)}_answer"] == "no"
 
 
 async def test_replay_preserves_live_metadata(sqlite_instance: MemoryInterface) -> None:

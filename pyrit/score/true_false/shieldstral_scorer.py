@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -110,7 +111,8 @@ class ShieldstralScorer(MessageTrueFalseScorer):
             instruct (str): Context and strictness for the judgement. Defaults to the model
                 card's instruction for strict text moderation.
             query_name (str | None): A short name for the query, used to namespace score metadata
-                so several composed scorers keep separate keys. Defaults to None.
+                so several composed scorers keep separate keys. Defaults to None, which namespaces
+                the keys by a digest of the query and also sets ``shieldstral_answer``.
             validator (ScorerPromptValidator | None): Custom validator. Defaults to text and images.
             score_aggregator (TrueFalseAggregatorFunc): Aggregator for multi-piece scores.
                 Defaults to TrueFalseScoreAggregator.OR.
@@ -131,6 +133,9 @@ class ShieldstralScorer(MessageTrueFalseScorer):
         self._query = query
         self._instruct = instruct
         self._query_name = query_name
+        self._query_namespace = (
+            None if query_name else f"query_{hashlib.sha256(query.encode('utf-8')).hexdigest()[:12]}"
+        )
         super().__init__(
             validator=validator or self._DEFAULT_VALIDATOR,
             score_aggregator=score_aggregator,
@@ -156,9 +161,16 @@ class ShieldstralScorer(MessageTrueFalseScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
+    def _metadata_scope(self, scope: str | None = None) -> str | None:
+        # An unnamed scorer adds its query's digest, so unnamed scorers composed over different
+        # queries keep separate metadata keys.
+        if self._query_namespace is None:
+            return scope
+        return f"{self._query_namespace}_{scope}" if scope else self._query_namespace
+
     def _response_handler(self, *, scope: str) -> CallableResponseHandler:
         return CallableResponseHandler(
-            parser=partial(parse_shieldstral_response, query_name=self._query_name, scope=scope),
+            parser=partial(parse_shieldstral_response, query_name=self._query_name, scope=self._metadata_scope(scope)),
             parser_fingerprint=self.RESPONSE_PARSER_FINGERPRINT,
         )
 
@@ -271,8 +283,11 @@ class ShieldstralScorer(MessageTrueFalseScorer):
         return scores
 
     def _answer_metadata(self, score: Score) -> dict[str, Any]:
-        prefix = _metadata_prefix(query_name=self._query_name)
-        return {
-            **(score.score_metadata or {}),
-            f"{prefix}_answer": _MEETS_CONDITION if score.get_value() else _DOES_NOT_MEET_CONDITION,
-        }
+        prefix = _metadata_prefix(query_name=self._query_name, scope=self._metadata_scope())
+        answer = _MEETS_CONDITION if score.get_value() else _DOES_NOT_MEET_CONDITION
+        metadata = {**(score.score_metadata or {}), f"{prefix}_answer": answer}
+        if self._query_name is None:
+            # Kept for a standalone unnamed scorer. A composite drops it when two unnamed scorers
+            # disagree, and keeps the digest-namespaced keys.
+            metadata["shieldstral_answer"] = answer
+        return metadata
