@@ -3,6 +3,8 @@
 
 """Request and response models for scorer registry endpoints."""
 
+from typing import Self
+
 from pydantic import BaseModel, Field, model_validator
 
 from pyrit.backend.models.common import (
@@ -66,13 +68,13 @@ class CreateScorerRequest(RegistrationRequest):
     )
 
     @model_validator(mode="after")
-    def _validate_registration(self) -> "CreateScorerRequest":
+    def _validate_registration(self) -> Self:
         if self.register_instance and not self.name:
             raise ValueError("name is required when register=true")
         return self
 
     @model_validator(mode="after")
-    def _validate_persist(self) -> "CreateScorerRequest":
+    def _validate_persist(self) -> Self:
         if not self.persist:
             return self
         if not self.register_instance:
