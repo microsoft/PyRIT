@@ -20,7 +20,7 @@ import type {
 } from '@/types'
 import { scoreSummaryFromProgressScore } from '@/utils/scoreSummary'
 
-import { formatAttemptTiming, formatScoreRationale } from './attackAttemptFormatting'
+import { formatAttemptTiming, formatScoreRationale, plannedTechniqueLabel } from './attackAttemptFormatting'
 import { useAttackAttemptDetailsStyles } from './AttackAttemptDetails.styles'
 
 interface AttackAttemptDetailsProps {
@@ -29,14 +29,14 @@ interface AttackAttemptDetailsProps {
   /** The attack has not started yet but will; otherwise a missing attempt is unavailable. */
   readonly preparing?: boolean
   readonly objective?: string | null
-  readonly atomicGroup?: ScenarioRunPlanAtomicGroup | null
+  readonly atomicGroup?: ScenarioRunPlanAtomicGroup | null | undefined
   readonly techniqueDetails?: ScenarioAttackTechniqueDetails | null
-  readonly objectiveScorer?: ScenarioObjectiveScorer | null
+  readonly objectiveScorer?: ScenarioObjectiveScorer | null | undefined
   /** Route to the attempt's conversation. Supplied by the host so this stays route-agnostic. */
   readonly conversationPath: string | null
   readonly conversationState?: unknown
   /** Offered first when attaching this attack to a finding. */
-  readonly findingOperationId?: string | null
+  readonly findingOperationId?: string | null | undefined
   /** Frame the details as a standalone card when they are shown inline on a page. */
   readonly framed?: boolean
 }
@@ -60,7 +60,8 @@ export default function AttackAttemptDetails({
   const { fields: findingFields, error: findingFieldsError, retry: retryFindingFields } = useFindingFields(
     undefined, findings.length > 0,
   )
-  const techniqueName = atomicGroup?.technique_name ?? atomicGroup?.display_group ?? attempt?.atomic_attack_name ?? 'Not recorded'
+  const techniqueName = (atomicGroup ? plannedTechniqueLabel(atomicGroup) : null) ?? atomicGroup?.display_group
+    ?? attempt?.atomic_attack_name ?? 'Not recorded'
   const seeds = attempt && 'seed_identifiers' in attempt ? attempt.seed_identifiers ?? [] : []
   const datasetNames = [...new Set(seeds.flatMap((seed) =>
     typeof seed.parameters.dataset_name === 'string' ? [seed.parameters.dataset_name] : []))]

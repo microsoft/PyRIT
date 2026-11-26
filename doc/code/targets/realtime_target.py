@@ -161,3 +161,34 @@ red_teaming_attack = RedTeamingAttack(
 # passed-in memory labels are combined with global memory labels
 result = await red_teaming_attack.execute_async(objective=objective, memory_labels={"harm_category": "illegal"})  # type: ignore
 await output_attack_async(result)
+
+# %% [markdown]
+# ## Server-side voice activity detection (VAD)
+#
+# `RealtimeTarget.open_streaming_session` streams audio to the Realtime API in chunks, and the server uses voice activity detection (VAD) to decide when the speaker has finished a turn. `BargeInAttack` opens its session this way with the default settings. The examples above send each prompt as one complete turn and do not use VAD.
+#
+# Change the settings when turns end at the wrong time, for example when audio with long pauses gets cut off early. Pass a `ServerVadConfig` as `server_vad` when you open the session. Its fields map to the [Realtime API VAD settings](https://developers.openai.com/api/docs/guides/realtime-vad):
+#
+# | Field | Default | Range | What it controls |
+# |---|---|---|---|
+# | `threshold` | `0.4` | 0.0 to 1.0 | How loud audio must be to count as speech. Raise it for noisy audio. |
+# | `prefix_padding_ms` | `200` | 0 or more | How much audio from before the detected speech is kept with the turn. |
+# | `silence_duration_ms` | `1500` | 0 or more | How long a pause ends the turn. Raise it if long pauses cut turns short; lower it for quicker replies. |
+#
+# A value outside its range raises a `ValueError`. `server_vad=True`, the default, uses the values above. `server_vad=False` turns VAD off, but a streaming session needs it, so `run_async` raises a `ValueError` after it connects.
+#
+# ```python
+# from pyrit.prompt_normalizer import PromptNormalizer
+# from pyrit.prompt_target import RealtimeTarget, ServerVadConfig
+#
+# target = RealtimeTarget()
+#
+# # audio_chunks is any async generator yielding 24 kHz mono PCM16 bytes.
+# session = target.open_streaming_session(
+#     audio_chunks=my_audio_source(),
+#     prompt_normalizer=PromptNormalizer(),
+#     server_vad=ServerVadConfig(silence_duration_ms=3000),
+# )
+# async for response in session.run_async():
+#     print(response)
+# ```

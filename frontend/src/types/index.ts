@@ -25,13 +25,13 @@ export interface ThemePreset {
 export interface ThemeContextValue {
   readonly mode: ThemeMode
   readonly resolved: ResolvedTheme
-  readonly background?: ThemeBackground
+  readonly background?: ThemeBackground | undefined
   readonly setMode: (mode: ThemeMode) => void
 }
 
 export interface MessageAttachment {
   /** Client-side identity of one attachment in the editable draft. */
-  draftId?: string
+  draftId?: string | undefined
   type: 'image' | 'audio' | 'video' | 'file'
   name: string
   url: string
@@ -41,16 +41,16 @@ export interface MessageAttachment {
    * values (e.g. `/api/media?path=...`) where the value is a reference, not
    * the payload, so its string length would be meaningless.
    */
-  size?: number
-  file?: File
+  size?: number | undefined
+  file?: File | undefined
   /** Raw backend value used when reconstructing a persisted attachment for resubmission. */
-  sourceValue?: string
+  sourceValue?: string | undefined
   /** Backend data type paired with sourceValue so persisted attachments retain their original semantics. */
-  sourceDataType?: string
+  sourceDataType?: string | undefined
   /** Backend piece ID — preserved so remix/copy can trace back to the original piece */
-  pieceId?: string
+  pieceId?: string | undefined
   /** Backend prompt_metadata — preserved so video_id etc. carry over on remix/copy */
-  metadata?: Record<string, unknown>
+  metadata?: Record<string, unknown> | undefined
 }
 
 export interface MediaUploadRequest {
@@ -75,7 +75,7 @@ export interface ConverterInputPiece {
   name: string
   dataType: string
   value: string
-  file?: File
+  file?: File | undefined
 }
 
 export interface PieceConversion {
@@ -83,7 +83,7 @@ export interface PieceConversion {
   pieceId: string
   pieceType: string
   converterInstanceIds: string[]
-  converterProvenance?: Array<string | null>
+  converterProvenance?: Array<string | null> | undefined
   convertedValue: string
   originalValue: string
   convertedDataType: string
@@ -117,39 +117,39 @@ export interface ChatConverterSnapshot {
 export interface PendingComposerDraft {
   text: string
   attachments?: MessageAttachment[]
-  textMetadata?: Record<string, unknown>
+  textMetadata?: Record<string, unknown> | undefined
 }
 
 export interface ConversationEditState {
   messages: ConversationDraftMessage[]
-  baselineMessages?: ConversationDraftMessage[]
+  baselineMessages?: ConversationDraftMessage[] | undefined
   baselineTargetKey?: string | null
-  converters?: ChatConverterSnapshot
+  converters?: ChatConverterSnapshot | undefined
   objective?: string
   initialObjective?: string
   sourceConversationId?: string | null
   sourceAttackId?: string | null
-  sourcePieceIds?: string[]
+  sourcePieceIds?: string[] | undefined
   target?: TargetReference | null
-  pendingPromptId?: string
-  unsavedImport?: boolean
+  pendingPromptId?: string | undefined
+  unsavedImport?: boolean | undefined
 }
 
 export interface ChatDraftContent {
   text: string
   attachments: MessageAttachment[]
-  systemPrompt?: string
-  objective?: string
-  generationDraft?: RequestGenerationDraft
-  chatScorer?: RegisteredComponentReference | null
-  target?: TargetReference | null
-  converters?: ChatConverterSnapshot
-  textMetadata?: Record<string, unknown>
-  conversation?: ConversationEditState
+  systemPrompt?: string | undefined
+  objective?: string | undefined
+  generationDraft?: RequestGenerationDraft | undefined
+  chatScorer?: RegisteredComponentReference | null | undefined
+  target?: TargetReference | null | undefined
+  converters?: ChatConverterSnapshot | undefined
+  textMetadata?: Record<string, unknown> | undefined
+  conversation?: ConversationEditState | undefined
   /** Backend send ID for status verification before reconciling this snapshot with history. */
-  acceptedSendId?: string
+  acceptedSendId?: string | undefined
   /** Where the accepted send belongs in history, so only this send's saved request reconciles the draft. */
-  acceptedSendHistory?: AcceptedSendHistory
+  acceptedSendHistory?: AcceptedSendHistory | undefined
 }
 
 export interface AcceptedSendHistory {
@@ -173,9 +173,9 @@ export type ImportDestinationType = 'new_attack' | 'current_conversation' | 'new
 
 export interface PendingImportConversation {
   messages: ConversationDraftMessage[]
-  objective?: string
-  systemPrompt?: string
-  composerDraft?: PendingComposerDraft
+  objective?: string | undefined
+  systemPrompt?: string | undefined
+  composerDraft?: PendingComposerDraft | undefined
 }
 
 export interface PendingImportPayload {
@@ -187,11 +187,11 @@ export interface PendingImportPayload {
   content: {
     text: string
     attachments?: MessageAttachment[]
-    textMetadata?: Record<string, unknown>
+    textMetadata?: Record<string, unknown> | undefined
   }
-  conversation?: PendingImportConversation
-  objective?: string
-  setup?: ChatDraftContent
+  conversation?: PendingImportConversation | undefined
+  objective?: string | undefined
+  setup?: ChatDraftContent | undefined
   replaceDirty?: boolean
   focus?: boolean
   stagedAt: number
@@ -235,13 +235,13 @@ export interface ChatDraftHandoffContextValue {
 }
 
 export interface UndoLastSendAction {
-  readonly disabledReason?: string
+  readonly disabledReason?: string | undefined
   readonly isUndoing: boolean
   readonly onUndo: () => void
 }
 
 export interface ChatConverterController {
-  readonly repeatDisabledReason?: string
+  readonly repeatDisabledReason?: string | undefined
   readonly editRevision: number
   inputs: ConverterInputPiece[]
   workingInputs: Record<string, string>
@@ -279,7 +279,7 @@ export interface MessageTextDisplayPiece {
   pieceId: string
   pieceIndex: number
   content: string
-  scores?: DisplayScore[]
+  scores?: DisplayScore[] | undefined
 }
 
 export interface MessageMediaDisplayPiece {
@@ -292,8 +292,8 @@ export interface MessageMediaDisplayPiece {
    * scores to present — such pieces must never enter copy/download/export
    * paths, so they deliberately have no attachment.
    */
-  attachment?: MessageAttachment
-  scores?: DisplayScore[]
+  attachment?: MessageAttachment | undefined
+  scores?: DisplayScore[] | undefined
 }
 
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
@@ -332,22 +332,22 @@ export interface Message {
    * messages keep scores on their corresponding `displayPieces` entry.
    */
   scores?: DisplayScore[]
-  attachments?: MessageAttachment[]
+  attachments?: MessageAttachment[] | undefined
   /** Converted text and media pieces in backend order, with piece-local scores. */
-  displayPieces?: MessageDisplayPiece[]
+  displayPieces?: MessageDisplayPiece[] | undefined
   /** If the backend returned an error for this message */
-  error?: MessageError
+  error?: MessageError | undefined
   /** True while waiting for the backend response */
   isLoading?: boolean
   /** Reasoning summaries from model thinking (e.g. OpenAI reasoning tokens) */
-  reasoningSummaries?: string[]
+  reasoningSummaries?: string[] | undefined
   /**
    * Original text content before conversion. Only set when it differs
    * from `content` (which holds the converted value).
    */
-  originalContent?: string
+  originalContent?: string | undefined
   /** Original media attachments before conversion (when different from converted). */
-  originalAttachments?: MessageAttachment[]
+  originalAttachments?: MessageAttachment[] | undefined
   /** Saved provider parameter evidence, not a new request option. */
   generationDescription?: string
   generationDetails?: string
@@ -355,7 +355,7 @@ export interface Message {
 
 export interface MessageError {
   type: string // e.g. 'blocked', 'processing', 'empty', 'unknown'
-  description?: string
+  description?: string | undefined
 }
 
 export interface ChatSendOutcome {
@@ -408,7 +408,7 @@ export interface EnvironmentFileContent {
   path: string
   content: string
   exists: boolean
-  version?: string | null
+  version?: string | null | undefined
   read_only?: boolean
   read_only_reason?: string | null
 }
@@ -446,7 +446,7 @@ export interface UserPreferences {
   readonly operation?: OperationSelection | null
   readonly theme: ThemeMode
   readonly chatMarkdown: boolean
-  readonly chatScorer?: RegisteredComponentReference | null
+  readonly chatScorer?: RegisteredComponentReference | null | undefined
   readonly sidebarExpanded?: boolean
 }
 
@@ -529,9 +529,9 @@ export interface TargetInstance {
   identifier: TargetIdentifier
   capabilities?: TargetCapabilities | null
   /** Inclusive runtime bounds by option; missing entries mean unknown bounds, not lack of support. */
-  generation_ranges?: Partial<Record<keyof RequestGenerationConfig, readonly [number, number]>>
+  generation_ranges?: Partial<Record<keyof RequestGenerationConfig, readonly [number, number]>> | undefined
   /** Effective replay support, including configured adapters and provider restoration. */
-  supports_history_replay?: boolean
+  supports_history_replay?: boolean | undefined
   /** Non-promoted constructor params, curated for display (e.g., RoundRobin weights). */
   target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */
@@ -730,10 +730,10 @@ export interface CreateTechniqueRequest {
 
 export interface SimulationSettings {
   num_turns?: number | null
-  adversarial_chat_system_prompt?: string | null
-  simulated_target_system_prompt?: string | null
-  next_message_system_prompt?: string | null
-  final_user_message?: string | null
+  adversarial_chat_system_prompt?: string | null | undefined
+  simulated_target_system_prompt?: string | null | undefined
+  next_message_system_prompt?: string | null | undefined
+  final_user_message?: string | null | undefined
 }
 
 export type SimulationChanges = Partial<SimulationSettings>
@@ -977,8 +977,8 @@ export interface AttackAnalyticsQuery {
   readonly filters?: AttackAnalyticsFilters
   readonly group_by?: AttackAnalyticsDimension
   readonly compare_by?: AttackAnalyticsDimension | null
-  readonly group_limit?: number
-  readonly group_offset?: number
+  readonly group_limit?: number | undefined
+  readonly group_offset?: number | undefined
   readonly axis_limit?: number
   readonly result_limit?: number
 }
@@ -1143,16 +1143,16 @@ export interface AttackMetadata extends Pick<AttackSummary,
 }
 
 export interface CreateAttackRequest {
-  target_registry_name?: string
+  target_registry_name?: string | undefined
   target_binding?: TargetBinding
   /** The attack goal, independent of the ManualAttack strategy type. */
-  objective?: string | null
+  objective?: string | null | undefined
   /** @deprecated Use objective. Non-null name and objective must match if both are supplied. */
   name?: string
   chat_scorer?: RegisteredComponentReference | null
   operator?: string
   operation_id?: string
-  labels?: Record<string, string>
+  labels?: Record<string, string> | undefined
   source_conversation_id?: string
   cutoff_index?: number
   system_prompt?: string
@@ -1171,33 +1171,33 @@ export type ConversationDraftRole = 'system' | 'user' | 'simulated_assistant' | 
 
 export interface ConversationDraftPiece extends MessagePieceRequest {
   readonly draftId: string
-  previewUrl?: string
-  filename?: string
-  file?: File
+  previewUrl?: string | undefined
+  filename?: string | undefined
+  file?: File | undefined
 }
 
 export interface ConversationSaveInput {
-  initialConverters?: ChatConverterSnapshot
-  sourcePieceIds?: string[]
+  initialConverters?: ChatConverterSnapshot | undefined
+  sourcePieceIds?: string[] | undefined
   messages: ConversationDraftMessage[]
   objective: string
   initialObjective: string
   target: TargetInstance | null
   sourceAttackId: string | null
   sourceConversationId: string | null
-  labels?: Record<string, string>
-  baselineMessages?: ConversationDraftMessage[]
-  baselineTargetKey?: string | null
-  unsavedImport?: boolean
-  pendingPromptId?: string
+  labels?: Record<string, string> | undefined
+  baselineMessages?: ConversationDraftMessage[] | undefined
+  baselineTargetKey?: string | null | undefined
+  unsavedImport?: boolean | undefined
+  pendingPromptId?: string | undefined
 }
 
 export interface NewAttackContext {
   generation: string
   ready: boolean
-  labels?: Record<string, string>
+  labels?: Record<string, string> | undefined
   operationId?: string | null
-  chatScorer?: RegisteredComponentReference | null
+  chatScorer?: RegisteredComponentReference | null | undefined
   chatScorerExplicit?: boolean
 }
 
@@ -1218,16 +1218,16 @@ export interface SaveConversationRequest {
   chat_scorer?: RegisteredComponentReference | null
   default_chat_scorer?: RegisteredComponentReference | null
   destination: 'same_attack' | 'new_attack'
-  attack_result_id?: string
-  source_attack_result_id?: string
-  source_conversation_id?: string
-  expected_objective?: string
-  objective?: string
-  target_registry_name?: string
+  attack_result_id?: string | undefined
+  source_attack_result_id?: string | undefined
+  source_conversation_id?: string | undefined
+  expected_objective?: string | undefined
+  objective?: string | undefined
+  target_registry_name?: string | undefined
   target_binding?: TargetBinding
-  operator?: string
-  operation_id?: string
-  labels?: Record<string, string>
+  operator?: string | undefined
+  operation_id?: string | undefined
+  labels?: Record<string, string> | undefined
   messages: MessageRequest[]
   reuse_unsent_conversation?: boolean
   expected_source_piece_ids?: string[]
@@ -1309,11 +1309,11 @@ export interface DisplayScore extends BackendScore {
 /** Message-score fields displayed by ScoreDetails. */
 export interface ScoreSummary {
   scorer: string
-  value?: string | null
-  status?: string
-  rationale?: string | null
-  categories?: string[] | null
-  isObjective?: boolean
+  value?: string | null | undefined
+  status?: string | undefined
+  rationale?: string | null | undefined
+  categories?: string[] | null | undefined
+  isObjective?: boolean | undefined
 }
 
 export interface BackendMessagePiece {
@@ -1367,14 +1367,14 @@ export interface ConversationMessagesResponse {
 export interface MessagePieceRequest {
   data_type: string // 'text' | 'image_path' | 'audio_path' | 'video_path' | 'binary_path'
   original_value: string
-  converted_value?: string
-  converted_value_data_type?: string
-  applied_converter_ids?: string[]
-  applied_converter_provenance?: Array<string | null>
-  mime_type?: string
+  converted_value?: string | undefined
+  converted_value_data_type?: string | undefined
+  applied_converter_ids?: string[] | undefined
+  applied_converter_provenance?: Array<string | null> | undefined
+  mime_type?: string | undefined
   original_prompt_id?: string
-  source_piece_id?: string
-  prompt_metadata?: Record<string, unknown>
+  source_piece_id?: string | undefined
+  prompt_metadata?: Record<string, unknown> | undefined
 }
 
 export interface MessageRequest {
@@ -1596,7 +1596,7 @@ export interface SeedRecord {
    * A non-URL or a missing field means the file cannot be previewed.
    * `value` remains the stable stored reference.
    */
-  value_url?: string | null
+  value_url?: string | null | undefined
   data_type: PromptDataType
   name: string | null
   dataset_name: string | null
@@ -1798,7 +1798,7 @@ export interface ScenarioPresetResponse {
    * List responses fill this in only when estimates are explicitly requested
    * (off by default); it stays null for a preset this deployment cannot resolve.
    */
-  run_size?: ScenarioRunSizeEstimateResponse | null
+  run_size?: ScenarioRunSizeEstimateResponse | null | undefined
 }
 
 export interface ScenarioPresetListResponse {
@@ -1989,7 +1989,7 @@ export interface ScenarioRunSizeEstimateResponse {
   dataset_limit: DatasetLimitInput
   dataset_options?: ScenarioDatasetOptions
   dataset_defaults?: ScenarioDatasetSettings
-  effective_datasets?: ScenarioDatasetSettings
+  effective_datasets?: ScenarioDatasetSettings | undefined
   estimated_attack_count: number | null
   minimum_attack_count?: number | null
   maximum_attack_count?: number | null
@@ -2066,7 +2066,7 @@ export type ScenarioRunEstimateResult =
       status: 'unavailable'
       scope: 'default' | 'request'
       label: string
-      note?: string
+      note?: string | undefined
     }
 
 export type ScenarioRunEstimateState =
@@ -2185,7 +2185,7 @@ export interface ScenarioRunListItem {
   operation_id?: string | null
   /** The saved Operation's current name, or the historical name of a legacy run. */
   operation_name?: string | null
-  completed_at?: string | null
+  completed_at?: string | null | undefined
   pyrit_version?: string | null
   target?: ScenarioTargetSummary | null
   datasets_used: string[]
@@ -2205,7 +2205,7 @@ export interface ScenarioRunListResponse {
 export interface ScenarioProgressHeader {
   scenario_result_id: string
   scenario_name: string
-  scenario_registry_name?: string | null
+  scenario_registry_name?: string | null | undefined
   scenario_version: number
   description?: string | null
   operation_id?: string | null
@@ -2213,18 +2213,18 @@ export interface ScenarioProgressHeader {
   scenario_identity?: ScenarioComponentIdentity | null
   status: ScenarioRunState
   created_at: string
-  started_at?: string | null
-  completed_at?: string | null
-  error?: string | null
-  error_type?: string | null
-  pyrit_version?: string | null
-  target?: ScenarioTargetSummary | null
+  started_at?: string | null | undefined
+  completed_at?: string | null | undefined
+  error?: string | null | undefined
+  error_type?: string | null | undefined
+  pyrit_version?: string | null | undefined
+  target?: ScenarioTargetSummary | null | undefined
   techniques_used?: string[]
   datasets_used?: string[]
   scenario_parameters?: Record<string, unknown>
   labels?: Record<string, string>
-  queue_position?: number | null
-  active_scenario_result_id?: string | null
+  queue_position?: number | null | undefined
+  active_scenario_result_id?: string | null | undefined
   overload_summaries?: ScenarioOverloadSummary[]
 }
 

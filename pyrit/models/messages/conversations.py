@@ -232,12 +232,11 @@ def construct_response_from_request(
         Message: Constructed response message.
 
     """
-    if request.prompt_metadata:
-        # A response states its own tool capture coverage; it never inherits the request's.
-        inherited = {
-            key: value for key, value in request.prompt_metadata.items() if key != ToolCaptureCoverage.METADATA_KEY
-        }
-        prompt_metadata = {**inherited, **(prompt_metadata or {})}
+    # A response states its own tool capture coverage; it never inherits the request's.
+    response_metadata = dict[str, object](request.prompt_metadata)
+    response_metadata.pop(ToolCaptureCoverage.METADATA_KEY, None)
+    if prompt_metadata:
+        response_metadata.update(prompt_metadata)
 
     return Message(
         message_pieces=[
@@ -247,7 +246,7 @@ def construct_response_from_request(
                 conversation_id=request.conversation_id,
                 original_value_data_type=response_type,
                 converted_value_data_type=response_type,
-                prompt_metadata=prompt_metadata or {},
+                prompt_metadata=response_metadata,
                 response_error=error,
             )
             for resp_text in response_text_pieces
