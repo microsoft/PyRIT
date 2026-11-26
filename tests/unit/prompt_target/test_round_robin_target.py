@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import logging
 from contextlib import ExitStack
 from functools import partial
 from unittest.mock import AsyncMock, patch
@@ -11,7 +12,7 @@ from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
 from pyrit.models import CapabilityName, Message
-from pyrit.prompt_target import RoundRobinTarget, TargetCapabilities, TargetConfiguration
+from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget, TargetCapabilities, TargetConfiguration
 
 # ── Construction validation ──────────────────────────────────────────────────
 
@@ -240,6 +241,38 @@ def test_aggregate_capabilities_rejects_missing_results_and_disjoint_inputs() ->
                 TargetCapabilities(input_modalities=frozenset({frozenset({"image_path"})})),
             ]
         )
+
+
+def _chat_target_declaring(name: str) -> OpenAIChatTarget:
+    declaration = {"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
+    return OpenAIChatTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        extra_body_parameters={"tools": [declaration]},
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_get_tool_definitions_reports_the_tools_every_target_advertises() -> None:
+    target = RoundRobinTarget(targets=[_chat_target_declaring("read_ticket"), _chat_target_declaring("read_ticket")])
+
+    definitions = await target.get_tool_definitions_async()
+
+    assert definitions is not None
+    assert [definition.name for definition in definitions] == ["read_ticket"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_get_tool_definitions_reports_none_when_targets_advertise_different_tools(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    target = RoundRobinTarget(targets=[_chat_target_declaring("read_ticket"), _chat_target_declaring("send_email")])
+
+    with caplog.at_level(logging.WARNING, logger="pyrit.prompt_target.round_robin_target"):
+        assert await target.get_tool_definitions_async() is None
+
+    assert "advertise different ones" in caplog.text
 
 
 @pytest.mark.usefixtures("patch_central_database")

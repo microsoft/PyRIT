@@ -18,6 +18,7 @@ from pyrit.models import (
     RequestGenerationInfo,
     TargetCapabilities,
     ToolCaptureCoverage,
+    ToolDefinition,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
@@ -262,6 +263,22 @@ class RoundRobinTarget(PromptTarget):
                 "output_modalities": frozenset.union(*(result.output_modalities for result in child_capabilities)),
             }
         )
+
+    async def get_tool_definitions_async(self) -> list[ToolDefinition] | None:
+        """
+        Report the function tools the inner targets advertise when they all advertise the same ones.
+
+        A request can reach any inner target, so there is no single set to report when they differ.
+
+        Returns:
+            list[ToolDefinition] | None: The shared tools, or None when the inner targets cannot report
+                their tools or advertise different ones.
+        """
+        reported = [await target.get_tool_definitions_async() for target in self._targets]
+        if any(tools != reported[0] for tools in reported[1:]):
+            logger.warning("RoundRobinTarget cannot report its function tools: its targets advertise different ones.")
+            return None
+        return reported[0]
 
     def _next_target(self) -> PromptTarget:
         """
