@@ -132,6 +132,8 @@ See [OpenAI Chat Target](./code/targets/1_openai_chat_target.ipynb), [OpenAI Res
 
 Yes. For Azure resources you can use Entra authentication through the Azure CLI. Run `az login`, then pass `api_key=get_azure_openai_auth(endpoint)` when you create the target. `get_azure_openai_auth` is in `pyrit.auth`. You do not need an API key for those resources. See [OpenAI Chat Target](./code/targets/1_openai_chat_target.ipynb) for an example and [Configuration File](./getting_started/pyrit_conf.md) for the configuration side.
 
+Key-based authentication is inherently less secure than identity-based authentication. An API key is a long-lived secret that anyone who obtains it can use, and it has to be stored somewhere. We encourage everyone to use identity-based authentication wherever the provider offers it. Azure does.
+
 ## Running Attacks and Reading Results
 
 ### Where are my results stored?
