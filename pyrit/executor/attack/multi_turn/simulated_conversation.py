@@ -21,6 +21,7 @@ import referencing
 import referencing.exceptions
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
+from jsonschema.validators import validator_for
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from pyrit.common.path import EXECUTOR_SIMULATED_TARGET_PATH
@@ -200,7 +201,8 @@ async def generate_simulated_conversation_async(
     Raises:
         ValueError: If num_turns is not a positive integer, if no adversarial chat system prompt
             is supplied, if a prompt and its deprecated path input are both supplied, if
-            ``ONE_SHOT`` mode has no tools or duplicate tool names, or is given a next-message
+            ``ONE_SHOT`` mode has no tools, duplicate tool names, or a tool parameter schema that is
+            invalid or has a reference that cannot be resolved offline, or is given a next-message
             prompt, converters, a simulated target, or memory labels, if both ``tools`` and a
             ``simulated_target`` with its own tools are given, if an adversarial chat cannot hold a
             multi-turn conversation with a system prompt, if ``TURN_BY_TURN`` mode has no objective
@@ -544,7 +546,8 @@ async def _generate_one_shot_history_async(
 
     Raises:
         ValueError: If the adversarial chat cannot hold a multi-turn conversation with a system
-            prompt, or ``max_attempts`` is less than 1.
+            prompt, ``max_attempts`` is less than 1, or a tool's parameter schema is invalid or has
+            a reference that cannot be resolved offline.
     """
     RedTeamingAttack.ADVERSARIAL_TARGET_REQUIREMENTS.validate(target=adversarial_chat)
     if max_attempts < 1:
@@ -608,6 +611,8 @@ async def _write_one_shot_history_async(
 
     Raises:
         _InvalidHistoryError: If no attempt produced a valid history.
+        ValueError: If a tool's parameter schema is invalid or has a reference that cannot be
+            resolved offline.
     """
     json_config = JsonResponseConfig(
         json_schema=system_prompt.response_json_schema, schema_name="SimulatedToolHistory", strict=False
@@ -661,27 +666,29 @@ async def _write_one_shot_history_async(
 _OFFLINE_SCHEMA_REGISTRY: referencing.Registry = referencing.Registry()
 
 
-def _build_argument_validators(*, tools: Sequence[ToolDefinition]) -> dict[str, Validator | None]:
+def _build_argument_validators(*, tools: Sequence[ToolDefinition]) -> dict[str, Validator]:
     """
-    Compile each tool's argument schema once.
+    Compile each tool's argument schema once, under the JSON Schema draft it declares.
 
     Returns:
-        dict[str, Validator | None]: A validator per tool name, or None for a tool whose
-            schema is invalid, so its calls are checked by name only.
+        dict[str, Validator]: A validator per tool name.
+
+    Raises:
+        ValueError: If a tool's parameter schema is invalid, since its calls could not be checked.
     """
-    validators: dict[str, Validator | None] = {}
+    validators: dict[str, Validator] = {}
     for tool in tools:
+        validator_class = validator_for(tool.parameters, default=Draft202012Validator)
         try:
-            Draft202012Validator.check_schema(tool.parameters)
-            validators[tool.name] = Draft202012Validator(tool.parameters, registry=_OFFLINE_SCHEMA_REGISTRY)
-        except SchemaError:
-            logger.warning("Tool '%s' has an invalid parameter schema; its arguments are not checked.", tool.name)
-            validators[tool.name] = None
+            validator_class.check_schema(tool.parameters)
+        except SchemaError as error:
+            raise ValueError(f"Tool '{tool.name}' has an invalid parameter schema: {error.message}") from error
+        validators[tool.name] = validator_class(tool.parameters, registry=_OFFLINE_SCHEMA_REGISTRY)
     return validators
 
 
 def _read_one_shot_history(
-    *, response: Message, validators: dict[str, Validator | None], num_tool_calls: int
+    *, response: Message, validators: dict[str, Validator], num_tool_calls: int
 ) -> tuple[list[SeedPrompt], list[str]]:
     """
     Parse and check one response.
@@ -692,6 +699,7 @@ def _read_one_shot_history(
     Raises:
         InvalidJsonException: If the response is not a single JSON object, so the shared JSON retry
             resends the request instead of spending an attempt.
+        ValueError: If a tool's schema has a reference that cannot be resolved offline.
     """
     _raise_for_adversarial_error(response)
     texts = [piece.converted_value for piece in response.message_pieces if piece.converted_value_data_type == "text"]
@@ -716,7 +724,7 @@ def _read_one_shot_history(
 def _check_one_shot_items(
     *,
     items: Sequence[_AuthoredMessage | _AuthoredCall | _AuthoredOutput],
-    validators: dict[str, Validator | None],
+    validators: dict[str, Validator],
     num_tool_calls: int,
 ) -> list[str]:
     issues: list[str] = []
@@ -753,7 +761,7 @@ def _check_one_shot_items(
     return issues
 
 
-def _check_arguments(*, call: _AuthoredCall, validators: dict[str, Validator | None]) -> list[str]:
+def _check_arguments(*, call: _AuthoredCall, validators: dict[str, Validator]) -> list[str]:
     if call.name not in validators:
         return [f"'{call.name}' is not an available tool. Available tools: {sorted(validators)}."]
     arguments = call.arguments
@@ -765,13 +773,13 @@ def _check_arguments(*, call: _AuthoredCall, validators: dict[str, Validator | N
     if not isinstance(arguments, dict):
         return [f"arguments for '{call.name}' must be a JSON object."]
     validator = validators[call.name]
-    if validator is None:
-        return []
     try:
         errors = sorted(validator.iter_errors(arguments), key=lambda error: (error.json_path, error.message))
-    except referencing.exceptions.Unresolvable:
-        logger.warning("Tool '%s' has a schema reference that cannot be resolved offline.", call.name)
-        return []
+    except referencing.exceptions.Unresolvable as error:
+        raise ValueError(
+            f"Tool '{call.name}' has a schema reference that cannot be resolved offline, so its arguments "
+            f"cannot be checked: {error.ref}"
+        ) from error
     return [f"arguments for '{call.name}' at {error.json_path}: {error.message}." for error in errors]
 
 

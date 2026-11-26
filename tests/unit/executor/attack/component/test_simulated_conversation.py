@@ -1849,18 +1849,50 @@ class TestOneShotToolHistory:
         assert result.preparation_failure is not None
         assert result.preparation_failure.kind is AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED
 
-    async def test_remote_schema_references_are_never_retrieved_async(self) -> None:
-        remote_tool = ToolDefinition(
+    async def test_unresolvable_schema_reference_fails_without_retrieving_it_async(self) -> None:
+        tool = ToolDefinition(
             name="lookup_ticket",
-            parameters={"type": "object", "properties": {"ticket_id": {"$ref": "https://example.invalid/id.json"}}},
+            parameters={
+                "type": "object",
+                "properties": {"ticket_id": {"type": "string"}, "note": {"$ref": "https://example.invalid/note.json"}},
+            },
         )
-        with patch("urllib.request.urlopen") as urlopen:
-            result, _ = await _generate_one_shot_async(
-                responses=[_history_response([_CALL, _OUTPUT])], tools=[remote_tool], num_turns=1
-            )
+        call = {**_CALL, "arguments": {"ticket_id": 5, "note": 0}}
+
+        with patch("urllib.request.urlopen") as urlopen, pytest.raises(ValueError, match="cannot be resolved offline"):
+            await _generate_one_shot_async(responses=[_history_response([call, _OUTPUT])], tools=[tool], num_turns=1)
 
         urlopen.assert_not_called()
-        assert result.preparation_failure is None
+
+    async def test_invalid_tool_schema_fails_before_any_send_async(self) -> None:
+        tool = ToolDefinition(
+            name="lookup_ticket", parameters={"type": "object", "properties": {"id": {"type": "strin"}}}
+        )
+
+        with pytest.raises(ValueError, match="Tool 'lookup_ticket' has an invalid parameter schema"):
+            await _generate_one_shot_async(responses=[], tools=[tool], num_turns=1)
+
+    async def test_tool_schemas_are_checked_under_the_draft_they_declare_async(self) -> None:
+        tool = ToolDefinition(
+            name="lookup_ticket",
+            parameters={
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {"range": {"type": "array", "items": [{"type": "integer"}, {"type": "integer"}]}},
+            },
+        )
+
+        _, send = await _generate_one_shot_async(
+            responses=[
+                _history_response([{**_CALL, "arguments": {"range": [1, "2"]}}, _OUTPUT]),
+                _history_response([{**_CALL, "arguments": {"range": [1, 2]}}, _OUTPUT]),
+            ],
+            tools=[tool],
+            num_turns=1,
+        )
+
+        feedback = send.call_args_list[1].kwargs["message"].get_value()
+        assert "arguments for 'lookup_ticket' at $.range[1]: '2' is not of type 'integer'." in feedback
 
     @pytest.mark.parametrize(
         ("items", "problem"),
