@@ -136,7 +136,7 @@ export default function FindingPathsDialog({
         )}
         <div className={styles.row}>
           <Field className={styles.grow} label="Add step"
-            hint={available.length === 0 ? 'Every sub-finding is already a step of this path.' : undefined}>
+            hint={available.length === 0 ? 'Every sub-finding is already a step of this path.' : null}>
             <Select value="" disabled={saving || available.length === 0} onChange={event => {
               const step = event.target.value
               if (byId.has(step)) update(draft.key, value => ({ ...value, steps: [...value.steps, step] }))

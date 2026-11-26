@@ -36,7 +36,7 @@ export interface ApiError {
   /** Human-readable error message extracted from the response or synthesized. */
   detail: string
   /** RFC 7807 `type` URI, if the backend included one. */
-  type?: string
+  type?: string | undefined
   /** Per-field validation errors from the RFC 7807 `errors` array; empty when the body has none. */
   fieldErrors: FieldError[]
   /** True when no HTTP response was received (DNS failure, CORS block, etc.). */
