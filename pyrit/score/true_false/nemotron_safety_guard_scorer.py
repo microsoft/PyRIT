@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import (
     ComponentIdentifier,
-    ContentScorable,
     Message,
     MessagePiece,
     Score,
@@ -19,7 +18,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.llm_scoring import _parse_judgment_observation
-from pyrit.score.message_scorable_resolver import MessageScorableResolver
+from pyrit.score.message_scorable_resolver import _AssistantContentMessageResolver
 from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
 from pyrit.score.response_handler import CallableResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -113,16 +112,6 @@ def render_nemotron_safety_guard_prompt(
     )
 
 
-class _NemotronSafetyGuardMessageResolver(MessageScorableResolver):
-    """Treat role-free content as a model response without relabeling stored turns."""
-
-    @staticmethod
-    def _adapt_content(*, scorable: ContentScorable) -> Message:
-        message = MessageScorableResolver._adapt_content(scorable=scorable)
-        message.get_piece().role = "assistant"
-        return message
-
-
 class NemotronSafetyGuardScorer(MessageTrueFalseScorer):
     """
     Classify a prompt and response pair with an NVIDIA Nemotron Safety Guard model.
@@ -200,7 +189,7 @@ class NemotronSafetyGuardScorer(MessageTrueFalseScorer):
         super().__init__(
             validator=validator or self._DEFAULT_VALIDATOR,
             score_aggregator=score_aggregator,
-            message_resolver=_NemotronSafetyGuardMessageResolver(),
+            message_resolver=_AssistantContentMessageResolver(),
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
