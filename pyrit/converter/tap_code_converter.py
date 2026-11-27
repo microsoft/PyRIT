@@ -3,7 +3,7 @@
 
 
 from pyrit.converter.converter import Converter, ConverterResult
-from pyrit.models import ComponentIdentifier, PromptDataType
+from pyrit.models import PromptDataType
 
 
 class TapCodeConverter(Converter):
@@ -44,28 +44,14 @@ class TapCodeConverter(Converter):
     # The 25-letter tap-code alphabet laid out row by row (K is omitted and shares C's cell).
     _GRID = "ABCDEFGHIJLMNOPQRSTUVWXYZ"
 
-    def __init__(
-        self,
-        *,
-        tap_symbol: str = ".",
-        group_separator: str = " ",
-        letter_separator: str = "  ",
-    ) -> None:
-        """
-        Initialize the converter with configurable tap and separator symbols.
+    # The rendering is fixed so the output is uniquely decodable: a single tap symbol, a single space
+    # between the row-tap and column-tap group of a letter, and two spaces between letters.
+    _TAP_SYMBOL = "."
+    _GROUP_SEPARATOR = " "
+    _LETTER_SEPARATOR = "  "
 
-        Args:
-            tap_symbol (str): The symbol used to represent a single tap. Defaults to ".".
-            group_separator (str): The separator placed between the row-tap group and the
-                column-tap group of a single letter. Defaults to " " (a single space).
-            letter_separator (str): The separator placed between encoded letters. Defaults
-                to "  " (two spaces), chosen to stay visually distinct from the
-                ``group_separator``.
-        """
-        self.tap_symbol = tap_symbol
-        self.group_separator = group_separator
-        self.letter_separator = letter_separator
-
+    def __init__(self) -> None:
+        """Initialize the converter and precompute the tap-code coordinate of each letter."""
         # Precompute the (row, column) coordinate for each supported letter.
         self._coordinates: dict[str, tuple[int, int]] = {}
         for index, letter in enumerate(self._GRID):
@@ -73,20 +59,22 @@ class TapCodeConverter(Converter):
         # K shares C's cell.
         self._coordinates["K"] = self._coordinates["C"]
 
-    def _build_identifier(self) -> ComponentIdentifier:
+    @classmethod
+    def to_ascii_equivalent(cls, *, text: str) -> str:
         """
-        Build identifier with tap-code converter parameters.
+        Return ``text`` with every ``K`` folded to ``C`` to match what a faithful tap-code decode yields.
+
+        The grid has no cell for ``K`` (it shares ``C``'s cell), so a target that decodes the taps correctly
+        answers with ``C`` wherever the seed had ``K``. The Encoding scenario attaches this value to the seed
+        copies as ``decoded_text`` so ``DecodingScorer`` accepts the correct decode instead of failing it.
+
+        Args:
+            text (str): The original seed text.
 
         Returns:
-            ComponentIdentifier: The identifier for this converter.
+            str: ``text`` with ``K``/``k`` replaced by ``C``/``c``.
         """
-        return self._create_identifier(
-            params={
-                "tap_symbol": self.tap_symbol,
-                "group_separator": self.group_separator,
-                "letter_separator": self.letter_separator,
-            }
-        )
+        return text.replace("K", "C").replace("k", "c")
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
@@ -111,10 +99,10 @@ class TapCodeConverter(Converter):
         """
         Encode the input text into tap code.
 
-        Each ASCII letter is replaced with its row-tap and column-tap groups joined by the
-        ``group_separator``; encoded letters are joined by the ``letter_separator``. Any
-        character that is not an ASCII letter is preserved verbatim so surrounding structure
-        (spaces, digits, punctuation) survives the transformation.
+        Each ASCII letter is replaced with its row-tap and column-tap groups joined by a single
+        space; encoded letters are joined by two spaces. Any character that is not an ASCII letter
+        is preserved verbatim so surrounding structure (spaces, digits, punctuation) survives the
+        transformation.
 
         Args:
             text (str): The input text to encode.
@@ -124,11 +112,14 @@ class TapCodeConverter(Converter):
         """
         tokens: list[str] = []
         for char in text:
-            coordinate = self._coordinates.get(char.upper())
+            # Only ASCII letters have a tap-code cell. Guarding on ``isascii`` before uppercasing keeps
+            # non-ASCII characters whose upper-case form is an ASCII letter (e.g. Turkish ``ı`` -> ``I``,
+            # ``ſ`` -> ``S``) in the verbatim branch, so multilingual prompts are not silently re-encoded.
+            coordinate = self._coordinates.get(char.upper()) if char.isascii() else None
             if coordinate is None:
                 # Preserve non-letters verbatim.
                 tokens.append(char)
                 continue
             row, column = coordinate
-            tokens.append(f"{self.tap_symbol * row}{self.group_separator}{self.tap_symbol * column}")
-        return self.letter_separator.join(tokens)
+            tokens.append(f"{self._TAP_SYMBOL * row}{self._GROUP_SEPARATOR}{self._TAP_SYMBOL * column}")
+        return self._LETTER_SEPARATOR.join(tokens)

@@ -6,39 +6,24 @@ import pytest
 from pyrit.converter import ConverterResult, TapCodeConverter
 
 
-async def test_tap_code_converter_single_letter():
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        # A is at (row 1, column 1).
+        ("A", ". ."),
+        # Standard tap-code worked example WATER: W=(5,2) A=(1,1) T=(4,4) E=(1,5) R=(4,2).
+        ("WATER", "..... ..  . .  .... ....  . .....  .... .."),
+        # Corner letters: A=(1,1), E=(1,5), V=(5,1), Z=(5,5).
+        ("AEVZ", ". .  . .....  ..... .  ..... ....."),
+        # C and K share (row 1, column 3), so both encode identically.
+        ("C", ". ..."),
+        ("K", ". ..."),
+    ],
+)
+async def test_tap_code_converter_encodes_letters(prompt, expected):
     converter = TapCodeConverter()
-    result = await converter.convert_async(prompt="A", input_type="text")
-    assert isinstance(result, ConverterResult)
-    # A is at (row 1, column 1).
-    assert result.output_text == ". ."
-    assert result.output_type == "text"
-
-
-async def test_tap_code_converter_known_example():
-    # Standard tap-code worked example: WATER.
-    # W=(5,2) A=(1,1) T=(4,4) E=(1,5) R=(4,2)
-    converter = TapCodeConverter()
-    result = await converter.convert_async(prompt="WATER", input_type="text")
-    assert result.output_text == "..... ..  . .  .... ....  . .....  .... .."
-    assert result.output_type == "text"
-
-
-async def test_tap_code_converter_corner_letters():
-    converter = TapCodeConverter()
-    # A=(1,1), E=(1,5), V=(5,1), Z=(5,5)
-    result = await converter.convert_async(prompt="AEVZ", input_type="text")
-    assert result.output_text == ". .  . .....  ..... .  ..... ....."
-
-
-async def test_tap_code_converter_c_and_k_share_cell():
-    converter = TapCodeConverter()
-    c_result = await converter.convert_async(prompt="C", input_type="text")
-    k_result = await converter.convert_async(prompt="K", input_type="text")
-    # Both C and K map to (row 1, column 3).
-    assert c_result.output_text == ". ..."
-    assert k_result.output_text == ". ..."
-    assert c_result.output_text == k_result.output_text
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+    assert result.output_text == expected
 
 
 async def test_tap_code_converter_case_insensitive():
@@ -55,27 +40,29 @@ async def test_tap_code_converter_preserves_non_letters():
     assert result.output_text == ". .  1  !"
 
 
-async def test_tap_code_converter_custom_symbols():
-    converter = TapCodeConverter(tap_symbol="*", group_separator="-", letter_separator="/")
-    result = await converter.convert_async(prompt="AB", input_type="text")
-    # A=(1,1)->"*-*", B=(1,2)->"*-**"
-    assert result.output_text == "*-*/*-**"
+@pytest.mark.parametrize("char", ["ı", "ſ", "é", "ß"])
+async def test_tap_code_converter_preserves_non_ascii(char):
+    # Characters whose upper-case form is an ASCII letter (ı->I, ſ->S) must still pass through verbatim
+    # rather than being silently re-encoded; é and ß have no ASCII upper-case letter at all.
+    converter = TapCodeConverter()
+    result = await converter.convert_async(prompt=char, input_type="text")
+    assert result.output_text == char
 
 
 async def test_tap_code_converter_empty():
     converter = TapCodeConverter()
     result = await converter.convert_async(prompt="", input_type="text")
+    assert isinstance(result, ConverterResult)
     assert result.output_text == ""
     assert result.output_type == "text"
 
 
-async def test_tap_code_converter_identifier_includes_params():
-    converter = TapCodeConverter(tap_symbol="*", group_separator="-", letter_separator="/")
-    identifier = converter.get_identifier()
-    params = identifier.params
-    assert params["tap_symbol"] == "*"
-    assert params["group_separator"] == "-"
-    assert params["letter_separator"] == "/"
+def test_tap_code_converter_folds_k_to_c_for_decoding():
+    # The grid has no K cell, so a faithful decode returns C wherever the seed had K. The scenario reads
+    # this hook to mark the decoded text as acceptable; folding must preserve case and leave the rest intact.
+    assert TapCodeConverter.to_ascii_equivalent(text="Kaffir") == "Caffir"
+    assert TapCodeConverter.to_ascii_equivalent(text="KICK kick") == "CICC cicc"
+    assert TapCodeConverter.to_ascii_equivalent(text="cat") == "cat"
 
 
 async def test_tap_code_converter_input_not_supported():
