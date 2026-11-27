@@ -514,7 +514,7 @@ class TestLengthPreservingFilter:
 
         legacy_attack = self._make_legacy_attack(tokenizer=_make_filter_tokenizer())
         legacy_out = legacy_attack.get_filtered_cands(
-            0, candidate_template.clone(), filter_cand=True, curr_control="current"
+            0, control_cand=candidate_template.clone(), filter_cand=True, curr_control="current"
         )
 
         default_out = LengthPreservingFilter(filter=True).filter_candidates(
@@ -529,7 +529,7 @@ class TestLengthPreservingFilter:
     def test_legacy_filter_raises_clear_error_when_all_rejected_without_current_control(self) -> None:
         legacy_attack = self._make_legacy_attack(tokenizer=_make_filter_tokenizer())
         with pytest.raises(RuntimeError, match="All GCG candidates were filtered out"):
-            legacy_attack.get_filtered_cands(0, torch.tensor([[5, 0, 0]]), filter_cand=True)
+            legacy_attack.get_filtered_cands(0, control_cand=torch.tensor([[5, 0, 0]]), filter_cand=True)
 
     def test_filter_candidates_drops_unchanged_candidate_with_leading_space(self) -> None:
         """Regression for #4545: ``current_control`` is the stripped
@@ -549,7 +549,7 @@ class TestLengthPreservingFilter:
 
         legacy_attack = self._make_legacy_attack(tokenizer=make_tokenizer())
         legacy_out = legacy_attack.get_filtered_cands(
-            0, candidate_template.clone(), filter_cand=True, curr_control="ab"
+            0, control_cand=candidate_template.clone(), filter_cand=True, curr_control="ab"
         )
 
         default_out = LengthPreservingFilter(filter=True).filter_candidates(
