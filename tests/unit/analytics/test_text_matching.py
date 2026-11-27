@@ -50,6 +50,18 @@ class TestExactTextMatching:
         matcher = ExactTextMatching()  # Default is case_sensitive=False
         assert matcher.is_match(target="hello", text="HELLO WORLD") is True
 
+    @pytest.mark.parametrize(
+        ("target", "text"),
+        [
+            ("STRASSE", "Die Straße ist gesperrt"),
+            ("straße", "DIE STRASSE IST GESPERRT"),
+            ("\ufb01le", "FILE"),
+        ],
+    )
+    def test_case_insensitive_match_folds_non_ascii_case(self, target, text):
+        matcher = ExactTextMatching(case_sensitive=False)
+        assert matcher.is_match(target=target, text=text) is True
+
 
 class TestApproximateTextMatching:
     def test_perfect_match_above_threshold(self):
@@ -74,6 +86,10 @@ class TestApproximateTextMatching:
         matcher = ApproximateTextMatching(threshold=0.8, n=3, case_sensitive=False)
         assert matcher.is_match(target="HELLO", text="hello world") is True
         assert matcher.is_match(target="hello", text="HELLO WORLD") is True
+
+    def test_case_insensitive_folds_non_ascii_case(self):
+        matcher = ApproximateTextMatching(threshold=0.5, n=3, case_sensitive=False)
+        assert matcher.get_overlap_score(target="STRASSE", text="Die Straße") == 1.0
 
     def test_case_sensitive(self):
         matcher = ApproximateTextMatching(threshold=0.8, n=3, case_sensitive=True)
