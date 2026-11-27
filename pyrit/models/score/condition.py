@@ -20,8 +20,6 @@ from pyrit.models.score.text_matcher import TextMatcher  # noqa: TC001 (runtime-
 from pyrit.models.seeds.assert_generation import AssertTaxonomy  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
-    from typing import Self
-
     from pydantic import GetJsonSchemaHandler
     from pydantic.config import ExtraValues
     from pydantic.json_schema import JsonSchemaValue
