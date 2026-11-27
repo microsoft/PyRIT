@@ -13,7 +13,7 @@ import { attackConversationRoutePath } from '@/utils/routeParams'
 export interface ScenarioRunDetailsContext {
   readonly scenarioResultId: string
   /** The run's Operation, offered first when attaching an attack to a finding. */
-  readonly operationId?: string | null
+  readonly operationId?: string | null | undefined
   readonly plan: ScenarioRunPlan | null
   readonly summary: ScenarioProgressSummary
   readonly activeConversations: readonly ScenarioActiveConversation[]

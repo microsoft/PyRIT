@@ -182,6 +182,7 @@ project:
             - file: code/scoring/7_program_execution_scorer.ipynb
             - file: code/scoring/8_trace_evidence_scoring.ipynb
             - file: code/scoring/multi_label_true_false.md
+            - file: code/scoring/scorer_stability.md
         - file: code/memory/0_memory.md
           children:
             - file: code/memory/1_sqlite_memory.ipynb
@@ -199,6 +200,7 @@ project:
             - file: code/setup/1_configuration.ipynb
             - file: code/setup/2_resiliency.ipynb
             - file: code/setup/default_values.md
+            - file: code/setup/finding_fields.md
             - file: code/setup/pyrit_initializer.ipynb
         - file: code/scenarios/0_scenarios.ipynb
           children:
@@ -213,6 +215,8 @@ project:
             - file: code/registry/2_instance_registry.ipynb
         - file: code/output/0_output.ipynb
         - file: code/analytics/0_attack_results.md
+          children:
+            - file: code/analytics/1_conversation_analytics.ipynb
     - file: api/index.md
       children:
         - file: api/pyrit_analytics.md

@@ -12,6 +12,7 @@ from pyrit.models.harm_category import (
     HARM_CATEGORY_TAXONOMY_VERSION,
     HarmCategory,
     HarmCategoryPillar,
+    _parse_taxonomy,
     normalize_harm_category_key,
     standardize_harm_categories,
 )
@@ -19,6 +20,26 @@ from pyrit.models.harm_category import (
 
 def test_taxonomy_version_read_from_yaml() -> None:
     assert HARM_CATEGORY_TAXONOMY_VERSION == "v1.0.0"
+
+
+@pytest.mark.parametrize("data", [None, {}, {"version": None, "definitions": None}])
+def test_parse_taxonomy_defaults_missing_values(data: object) -> None:
+    assert _parse_taxonomy(data) == ("v1.0.0", {})
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        ([], "taxonomy must be a mapping"),
+        ({"version": 1}, "version must be a string"),
+        ({"definitions": []}, "definitions must map strings to strings"),
+        ({"definitions": {1: "definition"}}, "definitions must map strings to strings"),
+        ({"definitions": {"OTHER": False}}, "definitions must map strings to strings"),
+    ],
+)
+def test_parse_taxonomy_rejects_invalid_data(data: object, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        _parse_taxonomy(data)
 
 
 def test_str_returns_display_value() -> None:

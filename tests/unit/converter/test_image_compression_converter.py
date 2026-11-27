@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import threading
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -234,7 +235,9 @@ async def test_image_compression_converter_transparency_handling(
 
     assert image.has_transparency_data  # before compression, the image should have transparency
 
-    res_compressed_io, res_output_format = converter._compress_image(image, input_format, len(image_bytes))
+    res_compressed_io, res_output_format = converter._compress_image(
+        image=image, original_format=input_format, original_size=len(image_bytes)
+    )
     assert res_compressed_io
     assert res_output_format == expected_output_format
 
@@ -291,7 +294,9 @@ async def test_image_compression_converter_actually_compresses(sqlite_instance, 
     original_size = len(large_image_bytes)
     image = Image.open(BytesIO(large_image_bytes))
 
-    compressed_io, output_format = converter._compress_image(image, "PNG", original_size)
+    compressed_io, output_format = converter._compress_image(
+        image=image, original_format="PNG", original_size=original_size
+    )
     compressed_size = len(compressed_io.getvalue())
 
     assert compressed_size < original_size
@@ -322,9 +327,14 @@ async def test_image_compression_converter_url_format_conversion(sqlite_instance
             mock_serializer.save_b64_image_async.assert_called_once()
 
 
-async def test_image_compression_converter_url_input_fallback_scenarios(sqlite_instance, sample_image_bytes):
-    """Test URL input fallback scenarios (small image size)."""
-    converter = ImageCompressionConverter(min_compression_threshold=5000, fallback_to_original=True)
+@pytest.mark.parametrize("min_compression_threshold", [0, 5000])
+async def test_image_compression_converter_url_input_fallback_scenarios(
+    sqlite_instance, sample_image_bytes, min_compression_threshold
+):
+    """Test URL fallback for small images and compression that increases file size."""
+    converter = ImageCompressionConverter(
+        min_compression_threshold=min_compression_threshold, fallback_to_original=True
+    )
     test_url = "https://example.com/small_image.png"
     small_image_bytes = sample_image_bytes(format="PNG", size=(100, 100))
 
@@ -335,7 +345,12 @@ async def test_image_compression_converter_url_input_fallback_scenarios(sqlite_i
         mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
-        with patch.object(converter, "_read_image_from_url_async") as mock_read_url:
+        with (
+            patch.object(converter, "_read_image_from_url_async") as mock_read_url,
+            patch.object(
+                converter, "_compress_image", return_value=(BytesIO(small_image_bytes + b"larger"), "PNG")
+            ) as mock_compress,
+        ):
             mock_read_url.return_value = small_image_bytes
 
             result = await converter.convert_async(prompt=test_url, input_type="url")
@@ -343,6 +358,10 @@ async def test_image_compression_converter_url_input_fallback_scenarios(sqlite_i
             assert result.output_text == "fallback_image.png"
             assert result.output_type == "image_path"
             mock_read_url.assert_called_once_with(test_url)
+            if min_compression_threshold:
+                mock_compress.assert_not_called()
+            else:
+                mock_compress.assert_called_once()
             mock_serializer.save_data_async.assert_called_once_with(small_image_bytes)
             mock_serializer.save_b64_image_async.assert_not_called()
 
@@ -391,7 +410,9 @@ def test_image_compression_converter_cmyk_to_png_conversion(icc_profile: bytes |
         if icc_profile is not None:
             cmyk_image.info["icc_profile"] = icc_profile
 
-        compressed_io, output_format = converter._compress_image(cmyk_image, "JPEG", 500)
+        compressed_io, output_format = converter._compress_image(
+            image=cmyk_image, original_format="JPEG", original_size=500
+        )
         assert output_format == "PNG"
         assert cmyk_image.info.get("icc_profile") == icc_profile
 
@@ -426,7 +447,7 @@ def test_image_compression_converter_preserves_rgb_icc_profile(mode: str) -> Non
     with Image.new(mode, (40, 40)) as image:
         image.info["icc_profile"] = icc_profile
 
-        compressed_io, _ = converter._compress_image(image, "PNG", 500)
+        compressed_io, _ = converter._compress_image(image=image, original_format="PNG", original_size=500)
 
         with compressed_io, Image.open(compressed_io) as output:
             assert output.mode == mode
@@ -524,3 +545,32 @@ def test_image_compression_identifier_is_stable_for_equal_settings() -> None:
         .get_identifier()
         .hash
     )
+
+
+async def test_image_compression_converter_runs_off_the_event_loop(sample_image_bytes):
+    loop_thread_id = threading.get_ident()
+    compress_thread_ids: list[int] = []
+    converter = ImageCompressionConverter(
+        output_format="JPEG", quality=50, min_compression_threshold=0, fallback_to_original=False
+    )
+    compress_image = converter._compress_image
+
+    def recording_compress(*, image: Image.Image, original_format: str, original_size: int) -> tuple[BytesIO, str]:
+        compress_thread_ids.append(threading.get_ident())
+        return compress_image(image=image, original_format=original_format, original_size=original_size)
+
+    with (
+        patch("pyrit.converter.image_compression_converter.data_serializer_factory") as mock_factory,
+        patch.object(converter, "_compress_image", side_effect=recording_compress),
+    ):
+        mock_serializer = AsyncMock()
+        mock_serializer.read_data_async.return_value = sample_image_bytes(format="PNG", size=(400, 400))
+        mock_serializer.value = "compressed.jpeg"
+        mock_factory.return_value = mock_serializer
+
+        result = await converter.convert_async(prompt="input.png", input_type="image_path")
+
+    assert result.output_text == "compressed.jpeg"
+    mock_serializer.save_b64_image_async.assert_awaited_once()
+    assert len(compress_thread_ids) == 1
+    assert compress_thread_ids[0] != loop_thread_id
