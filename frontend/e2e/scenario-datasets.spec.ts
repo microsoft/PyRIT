@@ -455,7 +455,11 @@ test('configures, saves, refreshes, estimates without a target, and launches the
   const started = await starting
   expect(started.status(), await started.text()).toBe(202)
   const launchRequest: RunScenarioRequest = started.request().postDataJSON()
-  expect(launchRequest.datasets).toEqual(datasets)
+  // The scanner sends only the scan-level loading policy, so the saved preset's unset per-source fetch (null) is
+  // left out of the launch request; every other dataset setting is sent as saved.
+  expect(launchRequest.datasets).toEqual({
+    ...datasets, sources: datasets?.sources?.map((source) => ({ ...source, fetch: undefined })),
+  })
   const run: ScenarioRunSummary = await started.json()
   const completed = await completedRun(request, run)
   expect(completed).toMatchObject({ total_attacks: 4, completed_attacks: 4, planned_total_available: true, error: null })
