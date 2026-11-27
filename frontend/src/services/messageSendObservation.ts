@@ -42,6 +42,9 @@ export function observeMessageSend(
   }).finally(() => { pending = undefined })
   let attackRead: Promise<AttackSummary> | undefined
   let attackRevision = -1
+  // Replays the original rejection cause unchanged: callers inspect it (toApiError),
+  // so it must not be wrapped in an Error, and an async throw satisfies
+  // prefer-promise-reject-errors where Promise.reject(unknown) would not.
   const replayFailure = async (cause: unknown): Promise<never> => {
     throw cause
   }
