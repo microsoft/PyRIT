@@ -11,7 +11,7 @@ import random
 import time
 from copy import copy, deepcopy
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from uuid import uuid4
 
@@ -84,7 +84,7 @@ class _SelectiveLossFunction(Protocol):
         ...
 
 
-class StopReason(str, Enum):
+class StopReason(StrEnum):
     """Why an optimization run stopped iterating."""
 
     MAX_STEPS_REACHED = "max_steps_reached"
@@ -2317,7 +2317,7 @@ class EvaluateAttack:
         return total_jb, total_em, test_total_jb, test_total_em, total_outputs, test_total_outputs
 
 
-class ModelWorkerOperation(str, Enum):
+class ModelWorkerOperation(StrEnum):
     """A model operation supported by ``ModelWorker``."""
 
     GRAD = "grad"

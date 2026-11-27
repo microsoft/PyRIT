@@ -15,11 +15,11 @@ if TYPE_CHECKING:
     from pyrit.models import AttackResult
 
 
-class AttackPreparationFailureKind(str, enum.Enum):
+class AttackPreparationFailureKind(enum.StrEnum):
     """
     Why an attack terminated before it could send anything to the objective target.
 
-    Inherits from ``str`` so the value round-trips through ``AttackResult.metadata``
+    A ``StrEnum``, so the value round-trips through ``AttackResult.metadata``
     persistence without a dedicated mapping function.
     """
 

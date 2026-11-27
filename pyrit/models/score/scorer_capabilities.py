@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from pyrit.models.score.scorable import Scorable
 
 
-class ScorerCapabilityName(str, Enum):
+class ScorerCapabilityName(StrEnum):
     """
     An output guarantee a scorer can make and a consumer can require.
 

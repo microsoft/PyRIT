@@ -14,7 +14,7 @@ canonical models.
 """
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from math import prod
 from typing import Annotated, Any, Literal, Self
 from uuid import UUID
@@ -133,7 +133,7 @@ class ScenarioLaunchConfiguration(_ScenarioLaunchOptions):
     target_name: _RequestName = Field(..., min_length=1, description="Registered objective target name")
 
 
-class ScenarioRunSizeEstimateStatus(str, Enum):
+class ScenarioRunSizeEstimateStatus(StrEnum):
     """Confidence level for a scenario run-size estimate."""
 
     Exact = "exact"
@@ -181,7 +181,7 @@ class _DatasetRequestModel(BaseModel):
         return bool(self.dataset_names) or self.max_dataset_size != "default" or bool(self.dataset_filters)
 
 
-class ScenarioRunSizeEstimateCondition(str, Enum):
+class ScenarioRunSizeEstimateCondition(StrEnum):
     """Reason an estimate remains conditional until launch."""
 
     TargetCapabilities = "target_capabilities"

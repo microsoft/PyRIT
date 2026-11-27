@@ -6,7 +6,7 @@
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from pyrit.models import (
@@ -30,7 +30,7 @@ _LINE_BREAK = re.compile("\r\n|[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]")
 _UNPRINTABLE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\ud800-\udfff\ufffe\uffff]")
 
 
-class FindingReportColumn(str, Enum):
+class FindingReportColumn(StrEnum):
     """The column of a two-column report that a field belongs in."""
 
     FINDING = "finding"

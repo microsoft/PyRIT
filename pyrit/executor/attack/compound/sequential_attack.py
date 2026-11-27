@@ -25,7 +25,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, assert_never
 
 from pydantic import Field
@@ -57,7 +57,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SequenceCompletionPolicy(str, Enum):
+class SequenceCompletionPolicy(StrEnum):
     """
     How a ``SequentialAttack`` iterates and aggregates its child attacks.
 

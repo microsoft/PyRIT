@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, MutableSequence, Sequence
 from contextlib import AsyncExitStack
 from copy import deepcopy
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -85,7 +85,7 @@ class _SerializedPiece:
     placement: Literal["inline", "top_level"]
 
 
-class MessagePieceType(str, Enum):
+class MessagePieceType(StrEnum):
     """Enumeration of different types of message pieces."""
 
     MESSAGE = "message"

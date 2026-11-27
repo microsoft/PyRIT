@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -18,7 +18,7 @@ from pyrit.models.score._trace_validation import (  # noqa: TC001 (runtime-requi
 from pyrit.models.score.scorable import TraceScorable  # noqa: TC001 (runtime-required by Pydantic)
 
 
-class TraceSpanStatus(str, Enum):
+class TraceSpanStatus(StrEnum):
     """The status of an observed execution attempt, not its scoring verdict."""
 
     UNSET = "unset"
@@ -149,7 +149,7 @@ class ToolExecution(_TraceInterval):
     status: TraceSpanStatus = TraceSpanStatus.UNSET
 
 
-class ExecutionStepKind(str, Enum):
+class ExecutionStepKind(StrEnum):
     """The role an execution span played, normalized across tracing conventions."""
 
     LLM = "llm"

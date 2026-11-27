@@ -13,7 +13,7 @@ output is fully reproducible and unit-testable.
 import random
 import string
 from collections import Counter
-from enum import Enum
+from enum import StrEnum
 
 from pyrit.converter.puzzled._text import _letter_units
 
@@ -45,7 +45,7 @@ _MAX_ANAGRAM_SHUFFLES = 100
 _MAX_GRID_GROWTHS = 25
 
 
-class PuzzleType(str, Enum):
+class PuzzleType(StrEnum):
     """The three puzzle encodings described in the PUZZLED paper."""
 
     WORD_SEARCH = "word_search"

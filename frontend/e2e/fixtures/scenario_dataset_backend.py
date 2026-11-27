@@ -11,7 +11,7 @@ import random
 from contextlib import ExitStack
 from contextvars import ContextVar
 from datetime import UTC
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.scenario_context import ScenarioContext
 
 
-class FixtureAction(str, Enum):
+class FixtureAction(StrEnum):
     """Explicit, one-shot faults used only by the isolated acceptance server."""
 
     RESET = "reset"

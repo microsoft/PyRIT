@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
@@ -19,7 +19,7 @@ _Identifier = Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)]
 _TechniqueTag = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
 
 
-class RegistryEntryOrigin(str, Enum):
+class RegistryEntryOrigin(StrEnum):
     """Where a registered entry comes from, and so whether it is still there after a restart."""
 
     SAVED = "saved"
@@ -27,7 +27,7 @@ class RegistryEntryOrigin(str, Enum):
     TEMPORARY = "temporary"
 
 
-class RegistryRecipeKind(str, Enum):
+class RegistryRecipeKind(StrEnum):
     """The registries whose entries can be saved, named after their storage folders."""
 
     TARGETS = "targets"
@@ -144,7 +144,7 @@ class StoredRecipe(BaseModel):
         return self
 
 
-class RestoreFailureReason(str, Enum):
+class RestoreFailureReason(StrEnum):
     """Why a saved entry couldn't be restored."""
 
     UNREADABLE_STORAGE = "unreadable_storage"

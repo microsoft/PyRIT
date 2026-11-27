@@ -11,7 +11,7 @@ import binascii
 import mimetypes
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import ParseResult, parse_qs, unquote, urlparse
@@ -33,7 +33,7 @@ class MediaAccessDeniedError(ValueError):
     """A media path or URL is outside the API's allowed storage directories."""
 
 
-class MediaOrigin(str, Enum):
+class MediaOrigin(StrEnum):
     """Origin recognized for one path-typed media value."""
 
     REMOTE_URL = "remote_url"

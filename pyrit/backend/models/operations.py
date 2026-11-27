@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, computed_field, field_validator
@@ -234,7 +234,7 @@ class FindingEvidenceAttachResponse(BaseModel):
     created: bool
 
 
-class EvidenceAvailability(str, Enum):
+class EvidenceAvailability(StrEnum):
     """Whether a linked attack result can still be opened."""
 
     AVAILABLE = "available"
@@ -275,7 +275,7 @@ class FindingEvidenceListResponse(BaseModel):
     next_offset: int | None
 
 
-class FindingExportFormat(str, Enum):
+class FindingExportFormat(StrEnum):
     """A file format for exported findings."""
 
     DOCX = "docx"

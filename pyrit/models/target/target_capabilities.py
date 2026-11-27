@@ -19,7 +19,7 @@ they are not modeled on the typed identifier projections in
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer
@@ -34,7 +34,7 @@ _DEFAULT_TEXT_MODALITIES: frozenset[frozenset[PromptDataType]] = cast(
 )
 
 
-class CapabilityName(str, Enum):
+class CapabilityName(StrEnum):
     """
     Canonical identifiers for target capabilities.
 

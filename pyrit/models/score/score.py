@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 from uuid import uuid4
 
@@ -35,7 +35,7 @@ from pyrit.models.score.scorable import (  # runtime-required by Pydantic field 
 ScoreType = Literal["true_false", "float_scale", "unknown"]
 
 
-class ScoreStatus(str, Enum):
+class ScoreStatus(StrEnum):
     """
     Whether a verdict was reachable at all.
 
@@ -43,7 +43,7 @@ class ScoreStatus(str, Enum):
     both score types at once: a complete true/false score has a boolean, a complete float
     score has a number, and an undetermined score of either type has nothing.
 
-    Inherits from ``str`` so values serialize naturally in Pydantic models and REST responses.
+    A ``StrEnum``, so values serialize naturally in Pydantic models and REST responses.
     """
 
     #: A value is present.

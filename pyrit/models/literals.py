@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 PromptDataType = Literal[
@@ -38,11 +38,11 @@ ChatMessageRole = Literal["system", "user", "assistant", "simulated_assistant", 
 SeedType = Literal["prompt", "objective", "simulated_conversation"]
 
 
-class Modality(str, Enum):
+class Modality(StrEnum):
     """
     Canonical high-level modalities for dataset content and target capabilities.
 
-    Inherits from ``str`` so members compare equal to their string values
+    A ``StrEnum``, so members compare equal to their string values
     (e.g. ``Modality.TEXT == "text"``) and JSON-serialize as plain strings.
     This keeps the enum interoperable with existing string-typed APIs while
     giving authors autocomplete and lint-time typo protection.

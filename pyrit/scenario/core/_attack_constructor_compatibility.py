@@ -7,7 +7,7 @@ import inspect
 import logging
 import sys
 import typing
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Union, assert_never
 
 from pyrit.executor.attack import AttackScoringConfig
@@ -15,7 +15,7 @@ from pyrit.executor.attack import AttackScoringConfig
 logger = logging.getLogger(__name__)
 
 
-class ScorerOverridePolicy(str, Enum):
+class ScorerOverridePolicy(StrEnum):
     """Policy for what to do when the scenario's scorer is incompatible with an attack's annotation."""
 
     SKIP = "skip"
