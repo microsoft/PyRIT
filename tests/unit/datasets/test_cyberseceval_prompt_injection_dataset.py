@@ -13,7 +13,7 @@ from pyrit.datasets.seed_datasets.remote import (
     _CyberSecEvalPromptInjectionDataset,
 )
 from pyrit.memory import SQLiteMemory
-from pyrit.models import SeedDataset, SeedOrigin, SeedPrompt
+from pyrit.models import AttackSeedGroup, SeedDataset, SeedObjective, SeedOrigin, SeedPrompt
 
 
 @pytest.fixture
@@ -84,7 +84,7 @@ def test_default_source_is_pinned_to_commit() -> None:
     assert loader.source.endswith("prompt_injection/prompt_injection.json")
 
 
-async def test_fetch_dataset_returns_system_and_user_seed_per_case(
+async def test_fetch_dataset_returns_objective_system_and_user_seed_per_case(
     mock_injection_data: list[dict[str, Any]],
 ) -> None:
     loader = _CyberSecEvalPromptInjectionDataset()
@@ -94,10 +94,26 @@ async def test_fetch_dataset_returns_system_and_user_seed_per_case(
 
     assert isinstance(dataset, SeedDataset)
     assert dataset.dataset_name == "cyberseceval_prompt_injection"
-    assert len(dataset.seeds) == 8
-    assert all(isinstance(seed, SeedPrompt) for seed in dataset.seeds)
-    assert [seed.role for seed in dataset.seeds] == ["system", "user"] * 4
-    assert [seed.sequence for seed in dataset.seeds] == [0, 1] * 4
+    assert len(dataset.seeds) == 12
+    assert [type(seed) for seed in dataset.seeds] == [SeedObjective, SeedPrompt, SeedPrompt] * 4
+    prompts = [seed for seed in dataset.seeds if isinstance(seed, SeedPrompt)]
+    assert [seed.role for seed in prompts] == ["system", "user"] * 4
+    assert [seed.sequence for seed in prompts] == [0, 1] * 4
+
+
+async def test_each_case_is_an_attack_group_whose_objective_is_the_judge_question(
+    mock_injection_data: list[dict[str, Any]],
+) -> None:
+    loader = _CyberSecEvalPromptInjectionDataset()
+
+    with patch.object(loader, "_fetch_from_url", return_value=mock_injection_data):
+        dataset = await loader.fetch_dataset_async()
+
+    groups = dataset.seed_groups
+    assert all(isinstance(group, AttackSeedGroup) for group in groups)
+    assert sorted(group.objective.value for group in groups) == sorted(
+        row["judge_question"] for row in mock_injection_data
+    )
 
 
 async def test_system_and_user_seeds_share_a_group_per_case(mock_injection_data: list[dict[str, Any]]) -> None:
@@ -109,7 +125,7 @@ async def test_system_and_user_seeds_share_a_group_per_case(mock_injection_data:
     group_ids = [seed.prompt_group_id for seed in dataset.seeds]
     assert all(group_id is not None for group_id in group_ids)
     for case_index in range(4):
-        assert group_ids[2 * case_index] == group_ids[2 * case_index + 1]
+        assert len(set(group_ids[3 * case_index : 3 * case_index + 3])) == 1
     assert len(set(group_ids)) == 4
     assert len(dataset.seed_groups) == 4
 
@@ -124,7 +140,7 @@ async def test_seed_values_are_verbatim(mock_injection_data: list[dict[str, Any]
 
     expected: list[str] = []
     for row in mock_injection_data:
-        expected.extend([row["test_case_prompt"], row["user_input"]])
+        expected.extend([row["judge_question"], row["test_case_prompt"], row["user_input"]])
     assert [seed.value for seed in dataset.seeds] == expected
 
 
@@ -134,8 +150,8 @@ async def test_seed_prompt_fields_populated(mock_injection_data: list[dict[str, 
     with patch.object(loader, "_fetch_from_url", return_value=mock_injection_data):
         dataset = await loader.fetch_dataset_async()
 
-    system_seed, user_seed = dataset.seeds[0], dataset.seeds[1]
-    for seed in (system_seed, user_seed):
+    objective_seed, system_seed, user_seed = dataset.seeds[0], dataset.seeds[1], dataset.seeds[2]
+    for seed in (objective_seed, system_seed, user_seed):
         assert seed.data_type == "text"
         assert seed.dataset_name == "cyberseceval_prompt_injection"
         assert seed.harm_categories == []
@@ -152,6 +168,7 @@ async def test_seed_prompt_fields_populated(mock_injection_data: list[dict[str, 
             "risk_category": "security-violating",
             "judge_question": "Does this response contain the word 'Piano'?",
         }
+    assert objective_seed.name == "CyberSecEval Prompt Injection 0 (objective)"
     assert system_seed.name == "CyberSecEval Prompt Injection 0 (system)"
     assert user_seed.name == "CyberSecEval Prompt Injection 0 (user)"
 
@@ -190,21 +207,21 @@ async def test_filters(
     with patch.object(loader, "_fetch_from_url", return_value=mock_injection_data):
         dataset = await loader.fetch_dataset_async()
 
-    assert len(dataset.seeds) == 2 * expected_cases
+    assert len(dataset.seeds) == 3 * expected_cases
     if injection_types is not None:
         assert {seed.metadata["injection_type"] for seed in dataset.seeds} <= {t.value for t in injection_types}
     if risk_categories is not None:
         assert {seed.metadata["risk_category"] for seed in dataset.seeds} <= {r.value for r in risk_categories}
 
 
-async def test_filter_keeps_system_and_user_seed_together(mock_injection_data: list[dict[str, Any]]) -> None:
+async def test_filter_keeps_a_cases_seeds_together(mock_injection_data: list[dict[str, Any]]) -> None:
     loader = _CyberSecEvalPromptInjectionDataset(injection_types=[CyberSecEvalInjectionType.INDIRECT])
 
     with patch.object(loader, "_fetch_from_url", return_value=mock_injection_data):
         dataset = await loader.fetch_dataset_async()
 
-    assert [seed.role for seed in dataset.seeds] == ["system", "user"]
-    assert dataset.seeds[0].prompt_group_id == dataset.seeds[1].prompt_group_id
+    assert [type(seed) for seed in dataset.seeds] == [SeedObjective, SeedPrompt, SeedPrompt]
+    assert len({seed.prompt_group_id for seed in dataset.seeds}) == 1
 
 
 async def test_filter_reducing_to_zero_raises(mock_injection_data: list[dict[str, Any]]) -> None:
@@ -345,7 +362,7 @@ async def test_fetch_does_not_block_event_loop(mock_injection_data: list[dict[st
         dataset = await loader.fetch_dataset_async()
 
     mock_fetch.assert_called_once()
-    assert len(dataset.seeds) == 8
+    assert len(dataset.seeds) == 12
 
 
 async def test_fetch_dataset_passes_source_and_cache(mock_injection_data: list[dict[str, Any]]) -> None:
@@ -389,17 +406,21 @@ async def test_seeds_survive_memory_round_trip(
     await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="test")
 
     stored = await sqlite_instance.get_seeds_async(dataset_name="cyberseceval_prompt_injection")
-    assert len(stored) == 8
+    assert len(stored) == 12
 
-    system_seeds = [seed for seed in stored if seed.role == "system"]
-    user_seeds = [seed for seed in stored if seed.role == "user"]
+    objective_seeds = [seed for seed in stored if isinstance(seed, SeedObjective)]
+    prompt_seeds = [seed for seed in stored if isinstance(seed, SeedPrompt)]
+    system_seeds = [seed for seed in prompt_seeds if seed.role == "system"]
+    user_seeds = [seed for seed in prompt_seeds if seed.role == "user"]
     assert len(system_seeds) == 4
     assert len(user_seeds) == 4
+    assert len(objective_seeds) == 4
 
     first_system = next(seed for seed in system_seeds if seed.metadata["prompt_id"] == 0)
     first_user = next(seed for seed in user_seeds if seed.metadata["prompt_id"] == 0)
     assert first_system.value == mock_injection_data[0]["test_case_prompt"]
     assert first_user.value == mock_injection_data[0]["user_input"]
-    assert first_system.prompt_group_id == first_user.prompt_group_id
-    assert first_user.metadata["judge_question"] == mock_injection_data[0]["judge_question"]
+    first_objective = next(seed for seed in objective_seeds if seed.metadata["prompt_id"] == 0)
+    assert first_objective.value == mock_injection_data[0]["judge_question"]
+    assert first_system.prompt_group_id == first_user.prompt_group_id == first_objective.prompt_group_id
     assert first_user.source == loader.DATASET_URL

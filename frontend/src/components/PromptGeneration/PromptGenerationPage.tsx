@@ -117,7 +117,7 @@ function PromptGenerationPageContent({ generationId }: PromptGenerationPageConte
     try {
       if (action === 'delete') {
         await promptGenerationsApi.remove(generation.id)
-        navigate(PROMPT_GENERATIONS_PATH)
+        void navigate(PROMPT_GENERATIONS_PATH)
         return
       }
       const call = action === 'cancel' ? promptGenerationsApi.cancel : promptGenerationsApi.retry

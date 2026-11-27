@@ -3,7 +3,7 @@
 
 import asyncio
 import re
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
@@ -168,6 +168,8 @@ class PinyinConverter(Converter):
                 reading = reading[0]
             elif self._mode == "mixed":
                 reading = rng.choice((reading, reading[0]))
+            elif TYPE_CHECKING and self._mode != "full":  # pragma: no cover
+                assert_never(self._mode)
 
             out.append(reading)
             if self._separator and reading != ch and i < len(prompt) - 1:

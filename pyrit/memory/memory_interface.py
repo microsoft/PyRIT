@@ -18,7 +18,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, NoReturn, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, NoReturn, ParamSpec, Self, TypeVar, cast
 from urllib.parse import urlparse
 
 from sqlalchemy import (
@@ -513,7 +513,7 @@ class ScenarioHistoryAggregate:
     group_counts: dict[str, ScenarioProgressCounts] = field(default_factory=dict)
 
     @classmethod
-    def empty(cls, *, scenario_result_id: str) -> "ScenarioHistoryAggregate":
+    def empty(cls, *, scenario_result_id: str) -> Self:
         """
         Build the zero-valued aggregate for a run with no persisted attempts.
 
@@ -626,7 +626,7 @@ class AttackConversationPage:
         limit: int = 50,
         conversation_id: str | None = None,
         objective_score_id: str | None = None,
-    ) -> "AttackConversationPage":
+    ) -> Self:
         """
         Page main and pruned references in stored order: main first, then pruned in their recorded order.
 
@@ -3487,8 +3487,9 @@ class MemoryInterface(abc.ABC):
         """
         Return sorted unique converter class names used across all attack results.
 
-        Extracts class_name values from the nested request_converters array
-        within the atomic_attack_identifier JSON column via a database-level query.
+        Extracts class_name values from the request_converters array of either
+        identifier layout within the atomic_attack_identifier JSON column via a
+        database-level query.
 
         Returns:
             Sorted list of unique converter class name strings.
@@ -7987,10 +7988,21 @@ class MemoryInterface(abc.ABC):
             conditions.append(
                 or_(
                     *[
-                        self._get_condition_json_property_match(
-                            json_column=AttackResultEntry.atomic_attack_identifier,
-                            property_path="$.children.attack_technique.children.attack.class_name",
-                            value=attack_class,
+                        # Rows written before the identifier grew its nested
+                        # structure keep the class name at $.children.attack,
+                        # the layout get_attack_strategy_identifier still
+                        # displays, so both spellings answer the filter.
+                        or_(
+                            self._get_condition_json_property_match(
+                                json_column=AttackResultEntry.atomic_attack_identifier,
+                                property_path="$.children.attack_technique.children.attack.class_name",
+                                value=attack_class,
+                            ),
+                            self._get_condition_json_property_match(
+                                json_column=AttackResultEntry.atomic_attack_identifier,
+                                property_path="$.children.attack.class_name",
+                                value=attack_class,
+                            ),
                         )
                         for attack_class in query.attack_classes
                     ]
@@ -8020,24 +8032,58 @@ class MemoryInterface(abc.ABC):
             list[Any]: SQLAlchemy conditions for converter filters.
         """
         conditions: list[Any] = []
+        converter_paths = (
+            "$.children.attack_technique.children.attack.children.request_converters",
+            "$.children.attack.children.request_converters",
+        )
         if query.converter_classes is not None:
-            conditions.append(
+            if not query.converter_classes:
+                # The empty list is the absence overload: it may only match a
+                # row whose own identifier layout, whichever it is, carries no
+                # converters at all.
+                conditions.append(
+                    and_(
+                        *[
+                            self._get_condition_json_array_match(
+                                json_column=AttackResultEntry.atomic_attack_identifier,
+                                property_path=property_path,
+                                array_element_path="$.class_name",
+                                array_to_match=[],
+                            )
+                            for property_path in converter_paths
+                        ]
+                    )
+                )
+            else:
+                conditions.append(
+                    or_(
+                        *[
+                            self._get_condition_json_array_match(
+                                json_column=AttackResultEntry.atomic_attack_identifier,
+                                property_path=property_path,
+                                array_element_path="$.class_name",
+                                array_to_match=query.converter_classes,
+                                match_mode=query.converter_classes_match,
+                            )
+                            for property_path in converter_paths
+                        ]
+                    )
+                )
+        if query.has_converters is not None and not (query.has_converters is True and query.converter_classes):
+            # A row from either identifier layout counts its converters where
+            # its own structure records them, so a row only has no converters
+            # when neither layout carries any.
+            empty_conditions = [
                 self._get_condition_json_array_match(
                     json_column=AttackResultEntry.atomic_attack_identifier,
-                    property_path="$.children.attack_technique.children.attack.children.request_converters",
+                    property_path=property_path,
                     array_element_path="$.class_name",
-                    array_to_match=query.converter_classes,
-                    match_mode=query.converter_classes_match,
+                    array_to_match=[],
                 )
-            )
-        if query.has_converters is not None and not (query.has_converters is True and query.converter_classes):
-            empty_condition = self._get_condition_json_array_match(
-                json_column=AttackResultEntry.atomic_attack_identifier,
-                property_path="$.children.attack_technique.children.attack.children.request_converters",
-                array_element_path="$.class_name",
-                array_to_match=[],
-            )
-            conditions.append(not_(empty_condition) if query.has_converters else empty_condition)
+                for property_path in converter_paths
+            ]
+            no_converters = and_(*empty_conditions)
+            conditions.append(not_(no_converters) if query.has_converters else no_converters)
         return conditions
 
     def _build_attack_result_label_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
@@ -11035,8 +11081,9 @@ class MemoryInterface(abc.ABC):
         """
         Return sorted unique converter class names used across all attack results.
 
-        Extracts class_name values from the nested request_converters array
-        within the atomic_attack_identifier JSON column via a database-level query.
+        Extracts class_name values from the request_converters array of either
+        identifier layout within the atomic_attack_identifier JSON column via a
+        database-level query.
 
         Returns:
             Sorted list of unique converter class name strings.
