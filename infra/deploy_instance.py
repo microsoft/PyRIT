@@ -336,6 +336,7 @@ def create_sql_server_and_db(
     server_name: str,
     database_name: str,
     tags: list[str] | None = None,
+    service_objective: str = "Basic",
 ) -> dict[str, str]:
     """
     Create an Azure SQL server with Entra-only auth and a database.
@@ -346,6 +347,7 @@ def create_sql_server_and_db(
         server_name (str): The SQL server name.
         database_name (str): The database name.
         tags (list[str] | None): Tags in 'Key=Value' format.
+        service_objective (str): The database service objective, such as ``Basic``, ``S3`` or ``P1``.
 
     Returns:
         dict: A dict with keys 'server_fqdn' and 'database_name'.
@@ -417,10 +419,8 @@ def create_sql_server_and_db(
         resource_group,
         "--server",
         server_name,
-        "--edition",
-        "Basic",
-        "--capacity",
-        "5",
+        "--service-objective",
+        service_objective,
     ]
     if tags:
         sql_db_cmd += ["--tags"] + tags
@@ -1352,6 +1352,14 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--sql-service-objective",
+        default="Basic",
+        help=(
+            "Azure SQL database service objective (default: Basic). Basic (5 DTU) saturates under "
+            "concurrent campaigns; S3 or larger is recommended for shared instances."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print what would be done without executing",
@@ -1487,7 +1495,7 @@ def main(args: list[str] | None = None) -> int:
         logger.info("Resource group: %s", rg_name)
         logger.info("App name: %s", app_name)
         logger.info("SQL server: %s", sql_server_name)
-        logger.info("SQL database: %s", sql_db_name)
+        logger.info("SQL database: %s (%s)", sql_db_name, parsed.sql_service_objective)
         logger.info("Key Vault: %s", kv_name)
         logger.info("Storage account: %s (container: %s)", storage_account_name, _STORAGE_CONTAINER_NAME)
         logger.info("Entra app: %s", entra_app_name)
@@ -1542,6 +1550,7 @@ def main(args: list[str] | None = None) -> int:
             server_name=sql_server_name,
             database_name=sql_db_name,
             tags=resource_tags,
+            service_objective=parsed.sql_service_objective,
         )
 
         # Step 6: Create storage account + blob container
