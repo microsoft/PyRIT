@@ -31,13 +31,19 @@
 # another if it doesn't land*. A `SequenceCompletionPolicy` controls both when iteration stops and how
 # the envelope's outcome is derived:
 #
-# | Policy | Stops when | Envelope outcome |
-# |---|---|---|
-# | `FIRST_SUCCESS` *(default)* | a child succeeds (continues past all other outcomes) | SUCCESS if any child did |
-# | `FIRST_DECISIVE` | a child succeeds **or** errors | SUCCESS if any child did |
-# | `STRICT_ALL` | the first non-success | SUCCESS only if **every** child did (pipeline) |
-# | `EXHAUSTIVE` | never (runs all) | SUCCESS if any child did |
-# | `LAST_RESULT` | never (runs all) | inherits the last child's outcome |
+# | Policy | Stops when | If a child raises | Envelope outcome |
+# |---|---|---|---|
+# | `FIRST_SUCCESS` *(default)* | a child succeeds (continues past all other outcomes) | recorded as ERROR; the next child runs | SUCCESS if any child did |
+# | `FIRST_DECISIVE` | a child succeeds **or** errors | stops; the exception propagates | SUCCESS if any child did |
+# | `STRICT_ALL` | the first non-success | stops; the exception propagates | SUCCESS only if **every** child did (pipeline) |
+# | `EXHAUSTIVE` | never (runs all) | recorded as ERROR; the next child runs | SUCCESS if any child did |
+# | `LAST_RESULT` | never (runs all) | stops; the exception propagates | inherits the last child's outcome |
+#
+# **Child exceptions:** under `FIRST_SUCCESS` and `EXHAUSTIVE`, a child attack that raises (for example a target
+# error after its retries, or a scorer or converter error) is recorded as ERROR: its error result is already stored
+# and linked from the compound's result, and the next child runs. If every child raises, the last child's exception
+# is re-raised with a note counting the failures, so the objective is still reported as incomplete. Cancellation is
+# never swallowed, and a child whose result could not be stored still stops the sequence.
 #
 # **Outcome correction:** An undecided child no longer becomes FAILURE in the compound result.
 # Without success, the any-success policies report ERROR when every child errored, UNDETERMINED

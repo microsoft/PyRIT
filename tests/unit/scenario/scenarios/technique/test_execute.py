@@ -375,12 +375,19 @@ class TestExecute:
         ] == before
 
     @pytest.mark.parametrize("saved_resume", [False, True])
-    async def test_late_child_error_does_not_complete_the_compound_async(
+    async def test_child_error_is_recorded_and_the_other_attempts_run_async(
         self,
         *,
         scorer: MagicMock,
         saved_resume: bool,
     ) -> None:
+        """
+        A failing attempt is recorded as ERROR and the remaining attempts still run (FIRST_SUCCESS).
+
+        Only when every attempt of a run raises does the objective stay incomplete; the saved_resume case
+        makes the whole first run fail and resumes it.
+        """
+        failing_calls = {1, 2, 3} if saved_resume else {2}
         target = MockPromptTarget()
         scorer.score_async.return_value = [
             Score(
@@ -400,11 +407,11 @@ class TestExecute:
         send = target._send_prompt_to_target_async
         calls = 0
 
-        async def fail_second_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        async def fail_some_async(*, normalized_conversation: list[Message]) -> list[Message]:
             nonlocal calls
             calls += 1
-            if calls == 2:
-                raise ValueError("late mock transport failure")
+            if calls in failing_calls:
+                raise ValueError("mock transport failure")
             responses = await send(normalized_conversation=normalized_conversation)
             assert isinstance(responses, list)
             messages: list[Message] = []
@@ -413,7 +420,7 @@ class TestExecute:
                 messages.append(message)
             return messages
 
-        with patch.object(target, "_send_prompt_to_target_async", side_effect=fail_second_async):
+        with patch.object(target, "_send_prompt_to_target_async", side_effect=fail_some_async):
             if saved_resume:
                 with pytest.raises(ScenarioPartialFailureException):
                     await original.run_async()
@@ -429,26 +436,28 @@ class TestExecute:
                 result = await resumed.run_async()
             else:
                 result = await original.run_async()
-        assert calls == 5
+        # One run of three attempts, or a failed first run and a resumed one.
+        attempts, errors = (6, 3) if saved_resume else (3, 1)
+        assert calls == attempts
         counts = compute_scenario_statistics(result)
         assert result.scenario_run_state.value == "COMPLETED"
         assert counts.overall.completed == 1
-        assert counts.attempts == 5
-        assert counts.overall.errors == 1
-        assert counts.overall.retries == 4
+        assert counts.attempts == attempts
+        assert counts.overall.errors == errors
+        assert counts.overall.retries == attempts - 1
         from pyrit.backend.services import ScenarioRunService
 
         service = ScenarioRunService()
         try:
             detail = await service.get_run_from_storage_async(scenario_result_id=str(result.id), active_error=None)
             assert detail.completed_attacks == 1
-            assert detail.error_attacks == 1
-            assert detail.total_retries == 4
+            assert detail.error_attacks == errors
+            assert detail.total_retries == attempts - 1
             runs = await service.list_runs_async()
             history = next(run for run in runs.items if run.scenario_result_id == str(result.id))
             assert history.completed_attacks == 1
-            assert history.error_attacks == 1
-            assert history.total_retries == 4
+            assert history.error_attacks == errors
+            assert history.total_retries == attempts - 1
         finally:
             await service.close_async()
 
@@ -1364,7 +1373,10 @@ class TestExecute:
 
         with patch.object(target, "_send_prompt_to_target_async", side_effect=fail_once_async):
             result = await scenario.run_async()
-        assert calls == retries + 2
+        # retries=0: the only attempt fails, the objective stays incomplete and the scenario's error retry
+        # (max_retries) runs it again. retries=1: the failed first attempt is recorded as ERROR and the second
+        # attempt still runs (FIRST_SUCCESS), so the objective completes without a scenario-level retry.
+        assert calls == 2
         assert result.attack_results["prompt_sending_objective"][-1].outcome is AttackOutcome.FAILURE
 
     @pytest.mark.parametrize("retries", [0, 1])

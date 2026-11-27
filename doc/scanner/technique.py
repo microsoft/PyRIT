@@ -178,8 +178,9 @@ await output_scenario_async(demo_result)  # type: ignore
 # A value of 2 permits up to three fresh technique attempts, stopping at the first success.
 # The technique is configured once. Each attempt gets a fresh execution context and conversation.
 # Failure, undetermined, and completed error outcomes can start the next attempt.
-# Exceptions return to the scenario's error retry path.
-# A finished child does not complete the compound unit if a later child raises an error.
+# An attempt that raises is recorded as an error attempt, and the next attempt starts.
+# The unit returns to the scenario's error retry path only when every attempt raises,
+# or at once when an attempt cannot be prepared or its result cannot be stored.
 # Error retries and saved-run resume can run that incomplete unit again.
 #
 # With objective retries, one compound unit holds the child attempt results. The run preview

@@ -34,6 +34,7 @@ from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_result_attribution import enrich_attack_result_identifier_async
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
+from pyrit.executor.core.strategy import _StrategyRuntimeError
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -69,25 +70,28 @@ class SequenceCompletionPolicy(str, Enum):
     FIRST_SUCCESS = "first_success"
     """Stop on the first ``AttackOutcome.SUCCESS``; continue past other outcomes.
     Outcome: SUCCESS if any succeeded, ERROR if all errored, UNDETERMINED if any are undecided, else FAILURE.
-    Resilient adaptive default — keep trying other strategies past transient errors."""
+    Resilient adaptive default — keep trying other strategies past transient errors: a child attack that
+    raises is recorded as ERROR (its persisted error result is linked) and the next one runs. If every
+    child attack raises, the last one's exception is re-raised."""
 
     FIRST_DECISIVE = "first_decisive"
     """Stop on the first ``AttackOutcome.SUCCESS`` or ``AttackOutcome.ERROR``;
     continue past FAILURE and UNDETERMINED. Use the same outcome rule as FIRST_SUCCESS.
-    Use when ERRORs should short-circuit the sequence."""
+    Use when ERRORs should short-circuit the sequence; a child attack that raises propagates its exception."""
 
     STRICT_ALL = "strict_all"
     """Stop on the first non-SUCCESS. Outcome: SUCCESS only if every child attack succeeded,
     ERROR if any errored, FAILURE if any failed, otherwise UNDETERMINED.
-    Pipeline semantics — each child attack is required."""
+    Pipeline semantics — each child attack is required; a child attack that raises propagates its exception."""
 
     EXHAUSTIVE = "exhaustive"
     """Run every child attack. Use the same outcome rule as FIRST_SUCCESS.
-    Use for evaluation sweeps where you want to try everything."""
+    Use for evaluation sweeps where you want to try everything: a child attack that raises is recorded as
+    ERROR and the rest still run. If every child attack raises, the last one's exception is re-raised."""
 
     LAST_RESULT = "last_result"
     """Run every child attack; inherit the last child attack's outcome verbatim. Use for chained
-    refinement where the final attempt is canonical."""
+    refinement where the final attempt is canonical; a child attack that raises propagates its exception."""
 
 
 @dataclass(frozen=True)
@@ -227,6 +231,14 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
     COMPLETION_POLICY_KEY: str = "completion_policy"
     """Metadata key under which the active ``SequenceCompletionPolicy`` value is stored."""
 
+    _POLICIES_CONTINUING_PAST_CHILD_EXCEPTIONS: ClassVar[frozenset[SequenceCompletionPolicy]] = frozenset(
+        {SequenceCompletionPolicy.FIRST_SUCCESS, SequenceCompletionPolicy.EXHAUSTIVE}
+    )
+
+    # Set on a child failure that stops the sequence, so an enclosing SequentialAttack also stops after
+    # the strategy layer wraps it in a new ``_StrategyRuntimeError`` with a stored ERROR row.
+    _STOPS_SEQUENCE_ATTRIBUTE: ClassVar[str] = "_pyrit_stops_sequential_attack"
+
     def __init__(
         self,
         *,
@@ -330,23 +342,60 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             }
         )
 
+        child_errors: list[Exception] = []
+        completed_children = 0
         for attempt_index, child_attack in enumerate(self._child_attacks, start=1):
             labels = {**context.memory_labels, **dict(child_attack.memory_labels)}
             # Each child shares the parent's attribution plus its own position.
             attribution = replace(context._attribution, attempt_index=attempt_index) if context._attribution else None
-            result = await self._run_child_attack_async(
-                child_attack=child_attack,
-                memory_labels=labels,
-                attribution=attribution,
-                expectation=context.params.expectation,
-                child_result_ids=child_ids,
-                operation_id=context.params.operation_id,
-            )
+            linked_before = len(child_ids)
+            try:
+                result = await self._run_child_attack_async(
+                    child_attack=child_attack,
+                    memory_labels=labels,
+                    attribution=attribution,
+                    expectation=context.params.expectation,
+                    child_result_ids=child_ids,
+                    operation_id=context.params.operation_id,
+                )
+            except Exception as child_error:
+                linked_result_ids = child_ids[linked_before:]
+                if not self._is_recorded_child_failure(error=child_error, linked_result_ids=linked_result_ids):
+                    setattr(child_error, self._STOPS_SEQUENCE_ATTRIBUTE, True)
+                    raise
+                error_result = await self._get_recorded_child_error_async(linked_result_ids=linked_result_ids)
+                if error_result is None:
+                    raise
+                # The child's ERROR result is already persisted and linked in child_ids.
+                child_errors.append(child_error)
+                results.append(error_result)
+                self._logger.warning(
+                    f"Child attack {attempt_index} of {len(self._child_attacks)} raised "
+                    f"{type(child_error).__name__}: {self._first_line(child_error)}; its error result "
+                    f"{error_result.attack_result_id} is linked and the {self._completion_policy.value} sequence "
+                    "continues"
+                )
+                continue
+            completed_children += 1
             results.append(result)
             child_ids.append(result.attack_result_id)
             await self._enrich_child_result_async(child_attack=child_attack, result=result)
             if self._should_stop_after(result=result):
                 break
+
+        if child_errors and completed_children == 0:
+            # Every child raised: report the objective as incomplete, as a lone failing child would.
+            last_error = child_errors[-1]
+            earlier = "; ".join(
+                f"child {index}: {type(error).__name__}: {self._first_line(error)}"
+                for index, error in enumerate(child_errors[:-1], start=1)
+            )
+            last_error.add_note(
+                f"All {len(child_errors)} child attacks of this SequentialAttack "
+                f"({self._completion_policy.value}) raised; this is the last one's exception."
+                + (f" Earlier: {earlier}." if earlier else "")
+            )
+            raise last_error
 
         outcome = self._compute_outcome(results=results)
 
@@ -453,6 +502,78 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         raise RuntimeError(  # pragma: no cover - defensive
             "AttackExecutor returned neither completed nor incomplete results."
         )
+
+    @classmethod
+    def _is_recorded_child_failure(cls, *, error: Exception, linked_result_ids: Sequence[str]) -> bool:
+        """
+        Return whether a child failure is an attack that raised after its own ERROR result was stored.
+
+        That is the strategy layer's ``_StrategyRuntimeError`` with a confirmed, linked result. A child
+        that could not be prepared, whose error result could not be stored (an ``ExceptionGroup`` with
+        the persistence error), or whose completed result could not be stored (the persistence error
+        itself, even when the stored row is ERROR) is not. Neither is a nested compound child that
+        stopped for one of these reasons, although its own ERROR result was stored.
+
+        Args:
+            error (Exception): The exception the child attack raised.
+            linked_result_ids (Sequence[str]): Result IDs linked while dispatching this child: its confirmed
+                persisted result, if any.
+
+        Returns:
+            bool: True when sequences continuing past child exceptions may continue past this one.
+        """
+        if not isinstance(error, _StrategyRuntimeError) or not linked_result_ids:
+            return False
+        current: BaseException | None = error
+        visited: set[int] = set()
+        while current is not None and id(current) not in visited:
+            visited.add(id(current))
+            if getattr(current, cls._STOPS_SEQUENCE_ATTRIBUTE, False):
+                return False
+            current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+        return True
+
+    async def _get_recorded_child_error_async(self, *, linked_result_ids: Sequence[str]) -> AttackResult | None:
+        """
+        Return the stored ERROR result of a recorded child failure, when the sequence continues past it.
+
+        Only ``FIRST_SUCCESS`` and ``EXHAUSTIVE`` continue, and only past a failure that
+        ``_is_recorded_child_failure`` accepts and whose stored row reads back as ERROR.
+
+        Args:
+            linked_result_ids (Sequence[str]): Result IDs linked while dispatching this child: its confirmed
+                persisted result.
+
+        Returns:
+            AttackResult | None: The child's stored ERROR result, or None when the error should propagate.
+        """
+        if self._completion_policy not in self._POLICIES_CONTINUING_PAST_CHILD_EXCEPTIONS:
+            return None
+        try:
+            stored = await self._memory.get_attack_results_async(
+                attack_result_ids=[linked_result_ids[0]],
+                result_selection=AttackResultSelection.ALL_RESULTS,
+            )
+        except Exception:
+            self._logger.exception(
+                "Unable to load error result %s of a failed child attack; the error propagates", linked_result_ids[0]
+            )
+            return None
+        if not stored or stored[0].outcome is not AttackOutcome.ERROR:
+            return None
+        return stored[0]
+
+    @staticmethod
+    def _first_line(error: BaseException) -> str:
+        """
+        Return the first line of an exception message, shortened for logs and notes.
+
+        Returns:
+            str: At most 200 characters of the message's first line.
+        """
+        lines = str(error).strip().splitlines()
+        first = lines[0] if lines else ""
+        return first if len(first) <= 200 else first[:197] + "..."
 
     async def _enrich_child_result_async(self, *, child_attack: SequentialChildAttack, result: AttackResult) -> None:
         if child_attack.technique_identifier is not None:

@@ -1411,14 +1411,21 @@ class TestScenarioResultRoles:
             expect_partial_failure=True,
         )
 
-        by_role = {result.result_role: result for result in snapshot.results}
-        assert set(by_role) == {AttackResultRole.ORCHESTRATION, AttackResultRole.TARGET_FACING}
-        parent = by_role[AttackResultRole.ORCHESTRATION]
-        child = by_role[AttackResultRole.TARGET_FACING]
-        assert parent.outcome == child.outcome == AttackOutcome.ERROR
+        assert {result.result_role for result in snapshot.results} == {
+            AttackResultRole.ORCHESTRATION,
+            AttackResultRole.TARGET_FACING,
+        }
+        [parent] = [result for result in snapshot.results if result.result_role is AttackResultRole.ORCHESTRATION]
+        children = sorted(
+            (result for result in snapshot.results if result.result_role is AttackResultRole.TARGET_FACING),
+            key=lambda result: result.attempt_index or 0,
+        )
+        assert parent.outcome == AttackOutcome.ERROR
+        assert [child.outcome for child in children] == [AttackOutcome.ERROR, AttackOutcome.ERROR]
         # An error result gets a generated conversation ID, so an empty ID would misclassify it.
         assert parent.conversation_id != ""
-        assert child.attempt_index == 1
+        # FIRST_SUCCESS runs the second attempt after the first one raises; both fail here.
+        assert [child.attempt_index for child in children] == [1, 2]
 
     async def test_nested_compound_attempt_index_is_relative_to_its_own_parent_async(
         self, sqlite_instance: MemoryInterface
