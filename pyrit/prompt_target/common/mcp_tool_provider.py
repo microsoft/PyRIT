@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
@@ -93,16 +94,39 @@ class MCPConfig(BaseModel):
 class _MCPTool(Tool):
     """An executable tool discovered from an MCP server."""
 
+    _MAX_NAME_LENGTH = 64
+    _NAME_HASH_LENGTH = 8
+    _UNSUPPORTED_NAME_CHARACTERS = re.compile(r"[^A-Za-z0-9_-]")
+
     def __init__(self, *, provider: MCPToolProvider, definition: MCPToolDefinition) -> None:
         super().__init__(
-            name=definition.name,
+            name=self._tool_name(definition.name),
             description=definition.description or "",
             parameters=dict(definition.input_schema),
         )
+        self._mcp_name = definition.name
         self._provider = provider
 
+    @classmethod
+    def _tool_name(cls, mcp_name: str) -> str:
+        """
+        Map an MCP tool name to a name that ``Tool`` accepts.
+
+        Args:
+            mcp_name (str): The tool name listed by the MCP server.
+
+        Returns:
+            str: The name with unsupported characters replaced by ``_``. A name over 64 characters
+            is cut to 64 and ends in a hash of ``mcp_name``, so names with a shared prefix stay distinct.
+        """
+        name = cls._UNSUPPORTED_NAME_CHARACTERS.sub("_", mcp_name)
+        if len(name) <= cls._MAX_NAME_LENGTH:
+            return name
+        digest = hashlib.sha256(mcp_name.encode("utf-8")).hexdigest()[: cls._NAME_HASH_LENGTH]
+        return f"{name[: cls._MAX_NAME_LENGTH - cls._NAME_HASH_LENGTH - 1]}_{digest}"
+
     async def execute_async(self, *, arguments: dict[str, object]) -> object:
-        return await self._provider.call_tool_async(name=self.name, arguments=arguments)
+        return await self._provider.call_tool_async(name=self._mcp_name, arguments=arguments)
 
 
 class MCPToolProvider:
@@ -333,10 +357,29 @@ class MCPToolProvider:
         """
         Discover executable MCP tools.
 
+        MCP allows tool names that ``Tool`` rejects, such as ``admin.tools.list`` or names
+        longer than 64 characters. Such a tool is advertised with ``_`` in place of each
+        character outside ``[A-Za-z0-9_-]``, and a name that is still too long is cut and
+        ends with a short hash. Calls go to the server under the MCP name.
+
         Returns:
             Tools that carry both their definitions and execution behavior.
+
+        Raises:
+            ValueError: If two MCP tools map to the same tool name.
         """
-        return [_MCPTool(provider=self, definition=definition) for definition in await self.list_tools_async()]
+        tools: list[Tool] = []
+        mcp_name_by_tool_name: dict[str, str] = {}
+        for definition in await self.list_tools_async():
+            mcp_tool = _MCPTool(provider=self, definition=definition)
+            if mcp_tool.name in mcp_name_by_tool_name:
+                raise ValueError(
+                    f"MCP server '{self._server_name}' has tools '{mcp_name_by_tool_name[mcp_tool.name]}' "
+                    f"and '{definition.name}' that both map to the tool name '{mcp_tool.name}'"
+                )
+            mcp_name_by_tool_name[mcp_tool.name] = definition.name
+            tools.append(mcp_tool)
+        return tools
 
     @staticmethod
     def _get_stdio_stderr() -> TextIO:
