@@ -927,7 +927,8 @@ def _render_type_name(param_type: Any) -> str:
         members = [member for member in args if member is not None]
         if not members:
             return "None"
-        name: str = type(members[0]).__name__
+        member: object = members[0]
+        name = type(member).__name__
         return f"{name} | None" if None in args else name
     if get_origin(param_type) is list:
         type_args = get_args(param_type)

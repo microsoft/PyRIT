@@ -38,6 +38,13 @@ async def test_base64_converter_empty():
     assert result.output_type == "text"
 
 
+async def test_base64_converter_unsupported_encoding_func_raises():
+    converter = Base64Converter()
+    converter._encoding_func = "invalid"  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="Unsupported encoding function"):
+        await converter.convert_async(prompt="hello", input_type="text")
+
+
 async def test_base64_converter_input_not_supported():
     converter = Base64Converter()
     with pytest.raises(ValueError):

@@ -25,6 +25,7 @@
 # (text-to-image)=
 # ## Text to Image
 #
+# `AddImageTextConverter`, `AddTextImageConverter`, and `GridCompositeConverter` use Pillow's limited built-in font by default. For multilingual text, pass `font_name=pathlib.Path("/path/to/font.ttf")` with a font covering the characters you need. These converters log a warning when the selected font lacks characters; the warning does not replace the missing glyphs.
 #
 # ### GridCompositeConverter
 #
@@ -245,6 +246,23 @@ print(f"Rotated image saved to: {rotate_result.output_text}")
 
 rotate_img = Image.open(rotate_result.output_text)
 display(rotate_img)
+
+# %% [markdown]
+# ### ImageNoiseConverter
+#
+# The `ImageNoiseConverter` adds random Gaussian pixel noise to an image, to check how robust a target's image understanding and image-based safety filtering are. `standard_deviation` sets the noise level on the 0-255 scale (default `25.0`). The noise follows PyRIT's seeded randomness, so a configured seed gives the same noise for the same image.
+
+# %%
+from pyrit.converter import ImageNoiseConverter
+
+# Add Gaussian noise with a standard deviation of 25 to every color channel
+noise_converter = ImageNoiseConverter(standard_deviation=25.0)
+noise_result = await noise_converter.convert_async(prompt=image_location)  # type: ignore
+
+print(f"Noisy image saved to: {noise_result.output_text}")
+
+noise_img = Image.open(noise_result.output_text)
+display(noise_img)
 
 # %% [markdown]
 # ### TransparencyAttackConverter

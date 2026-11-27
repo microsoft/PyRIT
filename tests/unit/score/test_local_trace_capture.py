@@ -12,6 +12,7 @@ from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.context import Context
 from opentelemetry.sdk.trace import ReadableSpan
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 from pyrit.models import (
     Acquisition,
@@ -267,7 +268,7 @@ async def test_root_ending_during_a_child_export_waits_for_it_async(capture: Loc
     def slow_export(self: InMemoryTraceExporter, spans: Sequence[ReadableSpan]) -> object:
         if spans[0].name == "child":
             exporting.set()
-            release.wait(5)
+            release.wait(TEST_WATCHDOG_SECONDS)
         return export(self, spans)
 
     root = capture.tracer.start_span("pyrit.target", context=Context())
@@ -275,13 +276,13 @@ async def test_root_ending_during_a_child_export_waits_for_it_async(capture: Loc
     with patch.object(InMemoryTraceExporter, "export", slow_export):
         child_thread = threading.Thread(target=child.end)
         child_thread.start()
-        assert exporting.wait(5)
+        assert exporting.wait(TEST_WATCHDOG_SECONDS)
         root_thread = threading.Thread(target=root.end)
         root_thread.start()
         root_thread.join(0.1)
         release.set()
-        child_thread.join(5)
-        root_thread.join(5)
+        child_thread.join(TEST_WATCHDOG_SECONDS)
+        root_thread.join(TEST_WATCHDOG_SECONDS)
 
     trace_id = f"{root.get_span_context().trace_id:032x}"
     observation = await capture.source().acquire_async(scorable=TraceScorable(trace_ids=(trace_id,)))

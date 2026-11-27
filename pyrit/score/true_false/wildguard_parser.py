@@ -19,7 +19,7 @@ rather than a malformed answer.
 from __future__ import annotations
 
 import enum
-from typing import Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 from pyrit.exceptions import InvalidJsonException
 
@@ -49,11 +49,18 @@ class WildGuardLabel(enum.Enum):
     @property
     def description(self) -> str:
         """How the label reads in a score rationale."""
-        if self is WildGuardLabel.HARMFUL_REQUEST:
-            return "the request is harmful"
-        if self is WildGuardLabel.RESPONSE_REFUSAL:
-            return "the response is a refusal"
-        return "the response is harmful"
+        match self:
+            case WildGuardLabel.HARMFUL_REQUEST:
+                return "the request is harmful"
+            case WildGuardLabel.RESPONSE_REFUSAL:
+                return "the response is a refusal"
+            case WildGuardLabel.HARMFUL_RESPONSE:
+                return "the response is harmful"
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(self)
+                # Preserve the historical runtime fallback for values outside the declared enum.
+                return "the response is harmful"
 
 
 def parse_wildguard_response(

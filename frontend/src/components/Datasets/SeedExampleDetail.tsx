@@ -131,7 +131,7 @@ interface MemberViewProps {
   copiedField: MemberCopyField | null
   copyFailed: boolean
   onCopy: (key: string, value: string) => void
-  onRefreshUrls?: (memberId: string) => Promise<string | null>
+  onRefreshUrls?: ((memberId: string) => Promise<string | null>) | undefined
 }
 
 function memberCopyKey(memberId: string, field: MemberCopyField): string {
@@ -149,7 +149,7 @@ function MemberMedia({
   onRefreshUrls,
 }: {
   member: SeedRecord
-  onRefreshUrls?: (memberId: string) => Promise<string | null>
+  onRefreshUrls?: ((memberId: string) => Promise<string | null>) | undefined
 }) {
   const styles = useSeedExampleDetailStyles()
   const mapped = mapMediaUrl({

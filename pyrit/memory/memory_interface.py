@@ -62,6 +62,7 @@ from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.pagination import DecodedKeysetCursor
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.memory._finding_decomposition import (
     FindingHierarchyError,
     delete_subtree_async,
@@ -106,6 +107,7 @@ from pyrit.memory.memory_models import (
     ComponentIdentifierEntry,
     ConversationEntry,
     ConverterIdentifierEntry,
+    CustomUUID,
     EmbeddingDataEntry,
     FindingEntry,
     FindingEvidenceEntry,
@@ -186,6 +188,7 @@ from pyrit.models import (
     ScoreStatus,
     Seed,
     SeedDataset,
+    SeedDatasetGroupProfile,
     SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
@@ -211,6 +214,10 @@ logger = logging.getLogger(__name__)
 
 # Callers that don't pass the active fields' severity order get PyRIT 1.2's, which the default fields keep.
 _DEFAULT_SEVERITY_ORDER: tuple[str, ...] = tuple(DEFAULT_FINDING_FIELDS.severity_order)
+
+# Upper bound on the terms in one JSON "match any" condition. SQL Server allows 2100 bound parameters per
+# statement and each term uses two; SQLite rejects expression trees deeper than 1000 levels.
+_MAX_JSON_MATCH_BATCH = 500
 
 
 @dataclass(frozen=True)
@@ -3210,9 +3217,17 @@ class MemoryInterface(abc.ABC):
             return results
 
         filtered_results: list[Model] = list(results)
-        for _col, vals, attr_name in other_large_params:
-            vals_set = set(vals)
-            filtered_results = [e for e in filtered_results if getattr(e, attr_name, None) in vals_set]
+        for col, vals, attr_name in other_large_params:
+            # UUID columns load as uuid.UUID, but callers pass their string form, so compare those as strings.
+            # As with SQL IN, NULL matches nothing, on either side.
+            uuid_column = isinstance(col.type, CustomUUID)
+            vals_set = {str(value) if uuid_column else value for value in vals if value is not None}
+            filtered_results = [
+                e
+                for e in filtered_results
+                if (value := getattr(e, attr_name, None)) is not None
+                and (str(value) if uuid_column else value) in vals_set
+            ]
 
         return filtered_results
 
@@ -3472,8 +3487,9 @@ class MemoryInterface(abc.ABC):
         """
         Return sorted unique converter class names used across all attack results.
 
-        Extracts class_name values from the nested request_converters array
-        within the atomic_attack_identifier JSON column via a database-level query.
+        Extracts class_name values from the request_converters array of either
+        identifier layout within the atomic_attack_identifier JSON column via a
+        database-level query.
 
         Returns:
             Sorted list of unique converter class name strings.
@@ -3700,8 +3716,9 @@ class MemoryInterface(abc.ABC):
             )
             return
 
-        prepared_content = await asyncio.gather(
-            *(self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables)
+        # A failed copy cancels the others, so no media files are written for scores that are not stored.
+        prepared_content = await gather_with_cleanup_async(
+            self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables
         )
         prepared_by_source = {content.source: content for content in prepared_content}
         prepared_hashes = {content.stored: content.value_sha256 for content in prepared_content}
@@ -4329,7 +4346,9 @@ class MemoryInterface(abc.ABC):
         entries_by_id = {entry.id: entry for entry in score_entries}
 
         original_id_values = [str(original_id) for original_id in original_ids]
-        json_batch_size = max(1, self._MAX_BIND_VARS - 1)
+        # Each JSON term binds two parameters on SQL Server (the path repeats per term) and adds one level
+        # of expression depth on SQLite, so these batches are capped independently of _MAX_BIND_VARS.
+        json_batch_size = max(1, min(self._MAX_BIND_VARS, _MAX_JSON_MATCH_BATCH) - 1)
         for start in range(0, len(original_id_values), json_batch_size):
             batch = original_id_values[start : start + json_batch_size]
             scorable_condition = self._get_condition_json_array_match(
@@ -6540,6 +6559,110 @@ class MemoryInterface(abc.ABC):
         for dataset in datasets:
             await self.add_seeds_to_memory_async(seeds=dataset.seeds, added_by=added_by)
 
+    @staticmethod
+    def _build_seed_dataset_group_profiles_statement(*, metadata_keys: Sequence[str]) -> "Select[Any]":
+        """
+        Bound profile materialization by boolean facts, not conversation lengths.
+
+        Returns:
+            Select[Any]: Portable aggregate query without seed bodies or taxonomy materialization.
+        """
+        keys = tuple(dict.fromkeys(metadata_keys))
+        objective = SeedEntry.seed_type == "objective"
+
+        def key_present(key: str) -> "ColumnElement[bool]":
+            items = JsonArrayItems(JsonContainer(SeedEntry.prompt_metadata, "$")).table_valued(column("key", Unicode))
+            return select(1).select_from(items).where(items.c.key == key).correlate(SeedEntry).exists()
+
+        flags = [
+            case((and_(objective, key_present(key)), 1), else_=0).label(f"metadata_{index}")
+            for index, key in enumerate(keys)
+        ]
+        # SQL Server requires correlated key-presence subqueries to be projected before aggregation.
+        seeds = (
+            select(
+                SeedEntry.dataset_name,
+                func.coalesce(SeedEntry.prompt_group_id, SeedEntry.id).label("group_id"),
+                # Standalone seed IDs and explicit group IDs occupy different grouping namespaces.
+                case((SeedEntry.prompt_group_id.is_(None), 1), else_=0).label("ungrouped"),
+                SeedEntry.seed_type,
+                SeedEntry.role,
+                *flags,
+            )
+            .where(SeedEntry.dataset_name.is_not(None), SeedEntry.dataset_name != "")
+            .subquery()
+        )
+        prompt = seeds.c.seed_type == "prompt"
+
+        def flag(condition: "ColumnElement[bool]") -> "ColumnElement[Any]":
+            return case((condition, 1), else_=0)
+
+        def seed_count(condition: "ColumnElement[bool]") -> "ColumnElement[Any]":
+            return func.sum(flag(condition))
+
+        # Each group's facts are columns here, so the outer query groups by plain columns. SQL Server can't
+        # match bound parameters repeated in SELECT and GROUP BY (see attack_analytics_query.py).
+        groups = (
+            select(
+                seeds.c.dataset_name,
+                flag(seed_count(seeds.c.seed_type == "objective") == 1).label("single_objective"),
+                flag(func.count() == 1).label("single_seed"),
+                # Unset roles can hydrate as user or inherit their sequence's role; keep them unverified.
+                flag(seed_count(and_(prompt, or_(seeds.c.role == "user", seeds.c.role.is_(None)))) > 0).label(
+                    "has_user_prompt"
+                ),
+                flag(seed_count(and_(prompt, seeds.c.role != "user")) > 0).label("has_non_user_prompt"),
+                flag(seed_count(seeds.c.seed_type == "simulated_conversation") > 0).label("has_simulated_conversation"),
+                *(func.max(seeds.c[f"metadata_{index}"]).label(f"metadata_{index}") for index in range(len(keys))),
+            )
+            .group_by(seeds.c.dataset_name, seeds.c.ungrouped, seeds.c.group_id)
+            .subquery()
+        )
+        columns = [
+            groups.c.dataset_name,
+            groups.c.single_objective,
+            groups.c.single_seed,
+            groups.c.has_user_prompt,
+            groups.c.has_non_user_prompt,
+            groups.c.has_simulated_conversation,
+            *(groups.c[f"metadata_{index}"] for index in range(len(keys))),
+        ]
+        return select(*columns, func.count().label("group_count")).group_by(*columns)
+
+    def _execute_get_seed_dataset_group_profiles(
+        self, *, metadata_keys: Sequence[str]
+    ) -> Sequence[SeedDatasetGroupProfile]:
+        keys = tuple(dict.fromkeys(metadata_keys))
+        statement = self._build_seed_dataset_group_profiles_statement(metadata_keys=keys)
+        with closing(self._get_session()) as session:
+            rows = session.execute(statement).mappings().all()
+        return [
+            SeedDatasetGroupProfile(
+                dataset_name=row["dataset_name"],
+                group_count=int(row["group_count"]),
+                single_objective=bool(row["single_objective"]),
+                single_seed=bool(row["single_seed"]),
+                has_user_prompt=bool(row["has_user_prompt"]),
+                has_non_user_prompt=bool(row["has_non_user_prompt"]),
+                has_simulated_conversation=bool(row["has_simulated_conversation"]),
+                metadata_keys=tuple(key for index, key in enumerate(keys) if row[f"metadata_{index}"]),
+            )
+            for row in rows
+        ]
+
+    async def get_seed_dataset_group_profiles_async(
+        self, *, metadata_keys: Sequence[str] = ()
+    ) -> Sequence[SeedDatasetGroupProfile]:
+        """
+        Read compressed group structure without hydrating seeds, policies, or prompt values.
+
+        Returns:
+            Sequence[SeedDatasetGroupProfile]: Counts of groups sharing the same stored structural facts.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_seed_dataset_group_profiles, metadata_keys=tuple(metadata_keys)
+        )
+
     def _execute_get_seed_dataset_summaries(self) -> Sequence[SeedDatasetSummary]:
         """
         Return aggregate metadata for datasets already loaded in memory.
@@ -7865,10 +7988,21 @@ class MemoryInterface(abc.ABC):
             conditions.append(
                 or_(
                     *[
-                        self._get_condition_json_property_match(
-                            json_column=AttackResultEntry.atomic_attack_identifier,
-                            property_path="$.children.attack_technique.children.attack.class_name",
-                            value=attack_class,
+                        # Rows written before the identifier grew its nested
+                        # structure keep the class name at $.children.attack,
+                        # the layout get_attack_strategy_identifier still
+                        # displays, so both spellings answer the filter.
+                        or_(
+                            self._get_condition_json_property_match(
+                                json_column=AttackResultEntry.atomic_attack_identifier,
+                                property_path="$.children.attack_technique.children.attack.class_name",
+                                value=attack_class,
+                            ),
+                            self._get_condition_json_property_match(
+                                json_column=AttackResultEntry.atomic_attack_identifier,
+                                property_path="$.children.attack.class_name",
+                                value=attack_class,
+                            ),
                         )
                         for attack_class in query.attack_classes
                     ]
@@ -7898,24 +8032,58 @@ class MemoryInterface(abc.ABC):
             list[Any]: SQLAlchemy conditions for converter filters.
         """
         conditions: list[Any] = []
+        converter_paths = (
+            "$.children.attack_technique.children.attack.children.request_converters",
+            "$.children.attack.children.request_converters",
+        )
         if query.converter_classes is not None:
-            conditions.append(
+            if not query.converter_classes:
+                # The empty list is the absence overload: it may only match a
+                # row whose own identifier layout, whichever it is, carries no
+                # converters at all.
+                conditions.append(
+                    and_(
+                        *[
+                            self._get_condition_json_array_match(
+                                json_column=AttackResultEntry.atomic_attack_identifier,
+                                property_path=property_path,
+                                array_element_path="$.class_name",
+                                array_to_match=[],
+                            )
+                            for property_path in converter_paths
+                        ]
+                    )
+                )
+            else:
+                conditions.append(
+                    or_(
+                        *[
+                            self._get_condition_json_array_match(
+                                json_column=AttackResultEntry.atomic_attack_identifier,
+                                property_path=property_path,
+                                array_element_path="$.class_name",
+                                array_to_match=query.converter_classes,
+                                match_mode=query.converter_classes_match,
+                            )
+                            for property_path in converter_paths
+                        ]
+                    )
+                )
+        if query.has_converters is not None and not (query.has_converters is True and query.converter_classes):
+            # A row from either identifier layout counts its converters where
+            # its own structure records them, so a row only has no converters
+            # when neither layout carries any.
+            empty_conditions = [
                 self._get_condition_json_array_match(
                     json_column=AttackResultEntry.atomic_attack_identifier,
-                    property_path="$.children.attack_technique.children.attack.children.request_converters",
+                    property_path=property_path,
                     array_element_path="$.class_name",
-                    array_to_match=query.converter_classes,
-                    match_mode=query.converter_classes_match,
+                    array_to_match=[],
                 )
-            )
-        if query.has_converters is not None and not (query.has_converters is True and query.converter_classes):
-            empty_condition = self._get_condition_json_array_match(
-                json_column=AttackResultEntry.atomic_attack_identifier,
-                property_path="$.children.attack_technique.children.attack.children.request_converters",
-                array_element_path="$.class_name",
-                array_to_match=[],
-            )
-            conditions.append(not_(empty_condition) if query.has_converters else empty_condition)
+                for property_path in converter_paths
+            ]
+            no_converters = and_(*empty_conditions)
+            conditions.append(not_(no_converters) if query.has_converters else no_converters)
         return conditions
 
     def _build_attack_result_label_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
@@ -10913,8 +11081,9 @@ class MemoryInterface(abc.ABC):
         """
         Return sorted unique converter class names used across all attack results.
 
-        Extracts class_name values from the nested request_converters array
-        within the atomic_attack_identifier JSON column via a database-level query.
+        Extracts class_name values from the request_converters array of either
+        identifier layout within the atomic_attack_identifier JSON column via a
+        database-level query.
 
         Returns:
             Sorted list of unique converter class name strings.
