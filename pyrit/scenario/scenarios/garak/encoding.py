@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.converter import (
+    AffineConverter,
     AsciiSmugglerConverter,
     AskToDecodeConverter,
     AtbashConverter,
@@ -131,6 +132,7 @@ class EncodingTechnique(ScenarioTechnique):
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
+    Affine = ("affine", set[str]())
     Pigpen = ("pigpen", set[str]())
     Disemvowel = ("disemvowel", set[str]())
     UbbiDubbi = ("ubbi_dubbi", set[str]())
@@ -322,6 +324,7 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
+            ([AffineConverter()], "affine", "affine"),
             ([PigpenConverter()], "pigpen", "pigpen"),
             # "disemvowel": remove all vowels ("disemvoweling"), a comment-moderation technique
             # popularized on the Making Light blog (https://nielsenhayden.com/makinglight/).
