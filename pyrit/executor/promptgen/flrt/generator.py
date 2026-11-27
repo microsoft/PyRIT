@@ -117,6 +117,7 @@ class FLRTContext(PromptGeneratorStrategyContext):
     template_prefix: str = ""
     template_mid: str = ""
     template_suffix: str = ""
+    template_trims: bool = False
     rng: random.Random | None = None
     torch_rng: torch.Generator | None = None
     buffer: list[tuple[str, float]] = field(default_factory=list)
@@ -242,6 +243,7 @@ class FLRTGenerator(
         context.template_prefix, context.template_mid, context.template_suffix = self._probe_template(
             tokenizer=context.tokenizer
         )
+        context.template_trims = self._detect_template_trim(tokenizer=context.tokenizer)
         for goal, target in zip(context.goals, context.targets, strict=True):
             self._validate_template_roundtrip(tokenizer=context.tokenizer, goal=goal, target=target, context=context)
 
@@ -474,6 +476,12 @@ class FLRTGenerator(
                 attack tokens merge across the user-content boundary or contain
                 special tokens.
         """
+        # A padded attack would be silently trimmed by templates that strip
+        # message content, so the scored prompt must never differ from the one
+        # the real template renders.
+        if context.template_trims and attack != attack.strip():
+            return None
+
         goal = context.goals[goal_index]
         target = context.targets[goal_index]
         # An empty attack contributes no trailing space, because templates that
@@ -587,6 +595,26 @@ class FLRTGenerator(
         prefix, rest = probe.split(user_marker)
         mid, suffix = rest.split(target_marker)
         return prefix, mid, suffix
+
+    @staticmethod
+    def _detect_template_trim(*, tokenizer: PreTrainedTokenizerBase) -> bool:
+        """
+        Probe whether the chat template trims whitespace from message content.
+
+        Returns:
+            bool: True if a marker padded with a space and a newline on both
+                sides does not survive the template verbatim.
+        """
+        marker = f"pyritflrttrim{uuid4().hex}"
+        padded = " \n" + marker + "\n "
+        rendered = tokenizer.apply_chat_template(
+            [
+                {"role": "user", "content": padded},
+                {"role": "assistant", "content": "x"},
+            ],
+            tokenize=False,
+        )
+        return not isinstance(rendered, str) or padded not in rendered
 
     def _validate_template_roundtrip(
         self, *, tokenizer: PreTrainedTokenizerBase, goal: str, target: str, context: FLRTContext

@@ -348,6 +348,28 @@ class TestExecuteAsyncLifecycle:
         assert result.step_count == 4
         assert result.final_loss < float("inf")
 
+    async def test_trimming_template_rejects_padded_attack_and_run_continues(self, tmp_path: Path) -> None:
+        gen = _make_generator(output_dir=tmp_path)
+        tokenizer, model = TrimmingTinyTokenizer(), TinyModel()
+        gen._load_model_and_tokenizer = lambda: (tokenizer, model)  # type: ignore[method-assign]
+
+        # Mirror what setup computes: the trimming template is detected and
+        # whitespace-padded attacks are rejected as unrenderable.
+        context = FLRTContext(goals=["aa"], targets=["tt"])
+        context.tokenizer = tokenizer
+        context.template_prefix, context.template_mid, context.template_suffix = gen._probe_template(
+            tokenizer=tokenizer
+        )
+        context.template_trims = gen._detect_template_trim(tokenizer=tokenizer)
+        assert context.template_trims is True
+        assert gen._encode_attack(context=context, attack="cc" + chr(10), goal_index=0) is None
+        assert gen._encode_attack(context=context, attack="cc", goal_index=0) is not None
+
+        result = await gen.execute_async(goals=["aa"], targets=["tt"])
+
+        assert result.step_count == 4
+        assert result.final_loss < float("inf")
+
     async def test_run_continues_when_step_zero_candidates_all_illegal(self, tmp_path: Path) -> None:
         gen = _patched_generator(output_dir=tmp_path)
         original = FLRTGenerator._evaluate_attacks
