@@ -89,8 +89,9 @@ launches that don't ask for background preparation load their datasets before th
 `DatasetFetchPolicy.NEVER`, the per-source `DatasetSource(fetch=...)` setting, and `--dataset-fetch never` are
 deprecated and will be removed in 1.4.0; they work as before until then. Use `if_missing`, set on the configuration.
 API requests still accept `never` and per-source `fetch` from saved presets and older clients without a warning. The
-GUI shows a saved `always` as **Regenerate** and any other value as **Cached**, and its requests set only the scan's
-policy.
+GUI shows a saved `always` as **Regenerate** and a saved `never` or `if_missing` as **Cached**; with no scan-level
+policy it shows the scenario's default, which is **Cached** for every built-in scenario. Its requests set only the
+scan's policy.
 
 Loads and runs that write the same dataset take turns, and each checks what is stored again when its turn comes,
 so a dataset that finished loading while a run waited isn't fetched twice. This coordination covers one backend
