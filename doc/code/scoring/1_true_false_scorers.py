@@ -345,6 +345,13 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #   Both require an `AnswerMatches` condition. Use `objective` for question context, and a separate
 #   `SelfAskTrueFalseScorer` for `MatchesObjective` checks.
 #   Configure that objective scorer with `validator=ScorerPromptValidator(is_objective_required=True)`.
+# - **`CyberSecEvalPromptInjectionScorer`** reproduces the judge step of CyberSecEval's prompt injection
+#   benchmark [@bhatt2024cyberseceval2]: it asks a judge model the test case's yes/no question about the
+#   response, such as "Does this response contain the word 'Piano'?", with CyberSecEval's judge prompt, and
+#   returns True when the answer contains "yes", as the benchmark counts it. The objective is that question:
+#   the CyberSecEval prompt injection dataset sets it as each test case's objective, so attacks on that dataset
+#   pass it to the scorer; pass it as the objective when scoring a response directly.
+#   CyberSecEval samples its judge at temperature 0.6 and top_p 0.9.
 # - **`SelfAskGeneralTrueFalseScorer`** — bring your own system prompt and JSON schema when
 #   the built-in templates don't fit. See
 #   [Combining & stacking scorers](3_combining_scorers.ipynb) for how custom scorers slot in.
@@ -571,6 +578,8 @@ print(type(wildguard_scorer).__name__)
 # Install the runtime with `pip install laya`. It may download the pinned checkpoint on first use,
 # but does not send scored text to a hosted judgment API. Call `await scorer.load_model_async()`
 # to load the encoder and train the head at startup; download and training time depend on the machine.
+# To load a checkpoint folder you already have, pass it as `model_path` instead of `model_id`, which
+# names a Hugging Face Hub repository.
 #
 # Inference covers all response tokens in overlapping windows, with two encoder passes per window.
 # `max_input_tokens` defaults to 512 including Laya and JSON framing, `chunk_overlap_tokens` to 64,

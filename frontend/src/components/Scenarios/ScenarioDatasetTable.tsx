@@ -17,6 +17,7 @@ import type {
 import DatasetLimitControl from './DatasetLimitControl'
 import { canEditDatasetLoading, datasetChoices, datasetFacts, datasetNameWithOrigin, datasetPolicies, datasetSize, datasetTotalLimit, parseCaseLimit } from './datasetPresentation'
 import { useScenarioDatasetTableStyles } from './ScenarioDatasetTable.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 interface ScenarioDatasetTableProps {
   request: ScenarioDatasetRequest
@@ -153,7 +154,7 @@ export default function ScenarioDatasetTable({
     : policies[0] === 'always' ? 'Refresh datasets for each new scan'
     : policies[0] === 'never' ? 'Only use datasets already in memory'
     : 'Load missing datasets'
-  const picker = <Combobox ref={pickerRef} aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
+  const picker = <Combobox ref={fluentRef(pickerRef)} aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
     placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]}
     disabled={busy || (compatibleOnly && Boolean(metadataError))}
     onOpenChange={(_, data) => { if (data.open && !compatibleOnly) onReload() }}
@@ -291,7 +292,7 @@ export default function ScenarioDatasetTable({
           <Text id={`${loadingId}-label`} className={styles.loadingLabel}>Dataset loading</Text>
           <div className={styles.loadingControl}>
             <RadioGroup aria-labelledby={`${loadingId}-label`} aria-describedby={`${loadingId}-hint`}
-              value={mixedPolicies ? '' : policies[0]} layout="horizontal"
+              value={mixedPolicies ? '' : (policies[0] ?? '')} layout="horizontal"
               className={styles.policyTrack}
               disabled={busy || !canSetLoading} onChange={(_, data) => {
                 if (data.value === 'never' || data.value === 'if_missing' || data.value === 'always') changeLoading(data.value)

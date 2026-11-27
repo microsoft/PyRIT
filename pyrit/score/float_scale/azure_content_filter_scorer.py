@@ -6,7 +6,8 @@ from __future__ import annotations
 import base64
 import logging
 from collections.abc import Awaitable, Callable  # noqa: TC003 - registry annotation resolution
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, ClassVar
 
 from azure.ai.contentsafety.aio import ContentSafetyClient
 from azure.ai.contentsafety.models import (
@@ -32,6 +33,8 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.text_chunking import iter_chunk_spans
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
@@ -56,6 +59,10 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
 
     API_KEY_ENVIRONMENT_VARIABLE: str = "AZURE_CONTENT_SAFETY_API_KEY"
     ENDPOINT_URI_ENVIRONMENT_VARIABLE: str = "AZURE_CONTENT_SAFETY_API_ENDPOINT"
+
+    # A saved scorer's endpoint can't carry a credential in its URL. Left empty, it takes this
+    # server's setting, which a saved scorer may use.
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": False})
 
     # Mapping from Azure TextCategory to evaluation file configurations
     _CATEGORY_EVAL_FILES: dict[TextCategory, tuple[list[str], str, str]] = {

@@ -614,7 +614,7 @@ class ComponentIdentifier(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def _promote_typed_fields(self) -> ComponentIdentifier:
+    def _promote_typed_fields(self) -> Self:
         """
         Mirror promoted typed fields into ``params`` / ``children``, then hash.
 

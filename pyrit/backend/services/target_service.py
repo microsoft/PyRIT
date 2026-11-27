@@ -1001,17 +1001,16 @@ class TargetService:
             RegistryEntry(name=name, instance=target_obj, metadata=dict(creator)), origin=RegistryEntryOrigin.SAVED
         )
         auth_parameters = target_cls.get_auth_mode_parameters(auth_mode=auth_mode)
-        recipe = ComponentRecipe(
-            class_module=target_cls.__module__,
-            class_name=type_name,
-            auth_mode=auth_mode,
-            params={key: value for key, value in params.items() if key not in auth_parameters},
-            owner=owner,
-        )
         await save_then_register_async(
             kind=RegistryRecipeKind.TARGETS,
             name=name,
-            recipe=recipe,
+            recipe=ComponentRecipe(
+                class_module=target_cls.__module__,
+                class_name=type_name,
+                auth_mode=auth_mode,
+                params={key: value for key, value in params.items() if key not in auth_parameters},
+                owner=owner,
+            ),
             register=lambda metadata: self._registry.instances.register(
                 target_obj, name=name, metadata={**creator, **metadata}
             ),
