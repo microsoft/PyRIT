@@ -156,6 +156,11 @@ opencv = [
     "opencv-python>=4.11.0.86",
 ]
 
+presidio = [
+    "presidio-analyzer>=2.2.0",
+    "spacy>=3.8.13,!=3.8.14,!=3.8.15",  # 3.8.14-3.8.15 missing cp314 wheels
+]
+
 speech = [
     "azure-cognitiveservices-speech>=1.44.0",
 ]
@@ -185,6 +190,7 @@ all = [
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
+    "presidio-analyzer>=2.2.0",
     "pyarrow>=22.0.0; python_version >= '3.14'",
     "sentencepiece>=0.2.0",
     "spacy>=3.8.13,!=3.8.14,!=3.8.15",  # 3.8.14-3.8.15 missing cp314 wheels

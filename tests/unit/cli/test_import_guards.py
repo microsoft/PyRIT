@@ -132,6 +132,18 @@ class TestImportGuards:
         )
         assert not loaded, f"Scorer catalog discovery loaded inference frameworks: {loaded}."
 
+    def test_scorer_catalog_does_not_load_presidio(self) -> None:
+        """Scorer discovery must include PresidioPiiScorer without importing Presidio or spaCy."""
+        loaded = _check_forbidden_imports(
+            import_statement=(
+                "from pyrit.registry import ScorerRegistry\n"
+                "metadata = ScorerRegistry.get_registry_singleton().get_all_registered_class_metadata()\n"
+                "assert any(item.class_name == 'PresidioPiiScorer' for item in metadata)"
+            ),
+            forbidden=["presidio_analyzer", "spacy"],
+        )
+        assert not loaded, f"Scorer catalog discovery loaded Presidio dependencies: {loaded}."
+
     def test_cli_arg_parsing_does_not_load_heavy_modules(self):
         """
         Importing pyrit_scan's module-level symbols (for --help) must not
