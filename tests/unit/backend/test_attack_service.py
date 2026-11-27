@@ -1081,6 +1081,71 @@ class TestCreateAttack:
         assert (updated.objective, updated.attack_type) == ("Edited objective", "ManualAttack")
         assert updated.get_attack_strategy_identifier() == identifier
 
+    @pytest.mark.parametrize(("cutoff_index", "expect_response"), [(1, True), (0, False)])
+    async def test_create_attack_branch_records_source_response_id_async(
+        self, *, sqlite_instance: SQLiteMemory, cutoff_index: int, expect_response: bool
+    ) -> None:
+        target = MockPromptTarget()
+        source_id = str(uuid.uuid4())
+        source_attack_id = str(uuid.uuid4())
+        await sqlite_instance.add_conversation_to_memory_async(
+            conversation=Conversation(
+                conversation_id=source_id,
+                target_identifier=target.get_identifier(),
+                attack_result_id=source_attack_id,
+            )
+        )
+        retained_response = MessagePiece(
+            role="assistant", original_value="retained response", conversation_id=source_id, sequence=1
+        )
+        excluded_response = MessagePiece(
+            role="assistant", original_value="later response", conversation_id=source_id, sequence=3
+        )
+        for piece in (
+            MessagePiece(role="user", original_value="first prompt", conversation_id=source_id, sequence=0),
+            retained_response,
+            MessagePiece(role="user", original_value="second prompt", conversation_id=source_id, sequence=2),
+            excluded_response,
+        ):
+            await sqlite_instance.add_message_to_memory_async(request=piece.to_message())
+        attack_identifier = AttackIdentifier(
+            class_name="PromptSendingAttack",
+            class_module="pyrit.executor.attack",
+            children={"objective_target": target.get_identifier()},
+        )
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                AttackResult(
+                    attack_result_id=source_attack_id,
+                    conversation_id=source_id,
+                    objective="Original automated objective",
+                    atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack_identifier),
+                )
+            ]
+        )
+
+        with patch("pyrit.backend.services.attack_service.get_target_service") as targets:
+            targets.return_value.get_target_async = AsyncMock(return_value=target_object_to_instance("target", target))
+            targets.return_value.get_target_object.return_value = target
+            service = AttackService()
+            created = await service.create_attack_async(
+                request=CreateAttackRequest(
+                    target_registry_name="target",
+                    objective="Continued manual objective",
+                    source_conversation_id=source_id,
+                    cutoff_index=cutoff_index,
+                )
+            )
+
+        summary = await service.get_attack_async(attack_result_id=created.attack_result_id)
+        assert summary is not None
+        assert summary.manual_continuation is not None
+        assert summary.manual_continuation.source_attack_result_id == source_attack_id
+        assert summary.manual_continuation.source_conversation_id == source_id
+        assert summary.manual_continuation.source_response_id == (
+            str(retained_response.id) if expect_response else None
+        )
+
     async def test_create_attack_validates_target_exists(self, attack_service) -> None:
         """Test that create_attack validates target exists."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
