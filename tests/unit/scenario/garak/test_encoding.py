@@ -276,7 +276,7 @@ class TestEncodingTechniqueDefault:
         }
         all_names = {t.value for t in EncodingTechnique.get_all_techniques()}
         assert default_names < all_names
-        assert len(all_names) == 22
+        assert len(all_names) == 25
         # The niche/lossy schemes stay ALL-only.
         assert all_names - default_names == {
             "braille",
@@ -288,6 +288,9 @@ class TestEncodingTechniqueDefault:
             "ubbi_dubbi",
             "bifid",
             "columnar_transposition",
+            "four_square",
+            "trifid",
+            "two_square",
         }
 
     def test_get_aggregate_tags_includes_default(self):
