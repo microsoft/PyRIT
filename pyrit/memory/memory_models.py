@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Self, TypeVar, assert_never, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 from sqlalchemy import (
     ARRAY,
     INTEGER,
@@ -104,6 +104,7 @@ LEGACY_PYRIT_VERSION = "<0.10.0"
 #: ``conversation_id`` validator checks it on every assignment, including updates.
 CONVERSATION_ID_MAX_LENGTH = 128
 _LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY = "__pyrit_legacy_unsupported_identifier__"
+_DISPLAY_GROUP_MAP_ADAPTER: TypeAdapter[dict[str, str] | None] = TypeAdapter(dict[str, str] | None)
 
 
 def _bounded_conversation_id(  # pyrit-keyword-only-exempt SQLAlchemy @validates callback
@@ -2800,7 +2801,7 @@ class ScenarioResultEntry(Base):
         # Deserialize display_group_map if stored
         display_group_map: dict[str, str] | None = None
         if self.display_group_map_json:
-            display_group_map = json.loads(self.display_group_map_json)
+            display_group_map = _DISPLAY_GROUP_MAP_ADAPTER.validate_json(self.display_group_map_json)
 
         return ScenarioResult(
             id=self.id,
