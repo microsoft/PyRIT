@@ -212,7 +212,6 @@ pyrit.registry.components.scenario_registry:ScenarioRegistry._build_metadata
 pyrit.registry.registry:Registry._build_metadata
 pyrit.scenario.core.scenario:Scenario._execute_atomic_attacks_parallel_async.<locals>.record_interrupted
 pyrit.scenario.core.scenario_technique:ScenarioTechnique.__new__
-pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy:_derive_rng
 pyrit.scenario:_ScenarioAliasFinder.find_spec
 pyrit.score.scorer:Scorer.scale_value_float
 pyrit.score.scorer_evaluation.krippendorff:krippendorff_alpha

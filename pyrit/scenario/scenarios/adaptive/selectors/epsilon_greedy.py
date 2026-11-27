@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _derive_rng(random_seed: int | None, decision_key: str) -> random.Random:
+def _derive_rng(*, random_seed: int | None, decision_key: str) -> random.Random:
     """
     Derive a per-decision ``Random`` from ``(random_seed, decision_key)``.
 
@@ -121,7 +121,7 @@ class EpsilonGreedyTechniqueSelector:
         # Fold scenario_result_id into the RNG key so two different scenario runs
         # over the same objective explore differently.
         decision_key = f"{objective}|{scenario_result_id or ''}"
-        rng = _derive_rng(self._seed, decision_key)
+        rng = _derive_rng(random_seed=self._seed, decision_key=decision_key)
 
         effective_run_id = scenario_result_id if self._scope.current_run_only else None
         stats = await compute_technique_stats_async(
