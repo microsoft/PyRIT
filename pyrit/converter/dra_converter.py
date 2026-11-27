@@ -9,6 +9,7 @@
 
 import enum
 import functools
+import hashlib
 import pathlib
 import random
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from pyrit.models import ComponentIdentifier, PromptDataType, SeedDataset, SeedP
 
 _TEMPLATE_PATH = pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "dra_converter.yaml"
 _WORDS_PATH = pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "dra_converter_words.yaml"
+_TEMPLATE_PARAMETERS = frozenset({"word_guide", "tools"})
 
 
 class DRATemplate(enum.Enum):
@@ -102,7 +104,7 @@ class DRAConverter(Converter):
     def __init__(
         self,
         *,
-        template: DRATemplate | None = None,
+        prompt_template: SeedPrompt | None = None,
         harmful_keep_ratio: float = 0.5,
         benign_keep_ratio: float = 0.5,
         benign_full_word_probability: float = 0.33,
@@ -112,8 +114,10 @@ class DRAConverter(Converter):
         Initialize the converter.
 
         Args:
-            template (DRATemplate | None): The template appended after the disguised prompt. If not
-                provided, each conversion picks one from the seeded random stream.
+            prompt_template (SeedPrompt | None): The template appended after the disguised prompt, such
+                as ``DRATemplate.PREPARE_TOOLS.to_seed_prompt()``. It must declare a ``word_guide``
+                parameter and may also declare ``tools``. If not provided, each conversion picks a
+                ``DRATemplate`` from the seeded random stream.
             harmful_keep_ratio (float): Lowest share of a flagged word of 5 or more characters to keep.
                 The cut falls at a random index from ``max(2, int(length * harmful_keep_ratio))``
                 to ``length - 1``, so a higher value keeps more of the word. Must be between 0 and 1,
@@ -130,13 +134,21 @@ class DRAConverter(Converter):
                 ``initialize_pyrit_async(seed=...)``.
 
         Raises:
-            TypeError: If ``template`` is not a ``DRATemplate`` member or None.
-            ValueError: If a ratio is not between 0 and 1, exclusive, or the probability is not
-                between 0 and 1, inclusive.
+            TypeError: If ``prompt_template`` is not a ``SeedPrompt`` or None.
+            ValueError: If ``prompt_template`` does not declare ``word_guide`` or declares parameters
+                other than ``word_guide`` and ``tools``, if a ratio is not between 0 and 1, exclusive,
+                or if the probability is not between 0 and 1, inclusive.
         """
         super().__init__()
-        if template is not None and not isinstance(template, DRATemplate):
-            raise TypeError(f"template must be a DRATemplate member or None, got {template!r}.")
+        if prompt_template is not None:
+            if not isinstance(prompt_template, SeedPrompt):
+                raise TypeError(f"prompt_template must be a SeedPrompt or None, got {prompt_template!r}.")
+            declared = set(prompt_template.parameters or [])
+            if "word_guide" not in declared or not declared <= _TEMPLATE_PARAMETERS:
+                raise ValueError(
+                    "prompt_template must declare a word_guide parameter and may also declare tools, "
+                    f"got {sorted(declared)}."
+                )
         for name, ratio in (("harmful_keep_ratio", harmful_keep_ratio), ("benign_keep_ratio", benign_keep_ratio)):
             if not 0 < ratio < 1:
                 raise ValueError(f"{name} must be between 0 and 1, exclusive, got {ratio}.")
@@ -145,7 +157,7 @@ class DRAConverter(Converter):
                 f"benign_full_word_probability must be between 0 and 1, inclusive, got {benign_full_word_probability}."
             )
 
-        self._template = template
+        self._prompt_template = prompt_template
         self._harmful_keep_ratio = harmful_keep_ratio
         self._benign_keep_ratio = benign_keep_ratio
         self._benign_full_word_probability = benign_full_word_probability
@@ -160,9 +172,13 @@ class DRAConverter(Converter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        template = self._prompt_template
         return self._create_identifier(
             params={
-                "template": self._template.value if self._template else None,
+                "template": template.name if template else None,
+                "template_hash": (
+                    hashlib.sha256(str(template.value).encode("utf-8")).hexdigest()[:16] if template else None
+                ),
                 "harmful_keep_ratio": self._harmful_keep_ratio,
                 "benign_keep_ratio": self._benign_keep_ratio,
                 "benign_full_word_probability": self._benign_full_word_probability,
@@ -187,12 +203,15 @@ class DRAConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError(f"Input type {input_type} not supported")
 
-        template = self._template or self._get_random_generator(stream="template").choice(list(DRATemplate))
+        template = (
+            self._prompt_template
+            or self._templates[self._get_random_generator(stream="template").choice(list(DRATemplate)).value]
+        )
         question = prompt.lower()
         disguise = self._disguise(question=question, rng=self._get_random_generator(stream="disguise"))
         word_guide = self._word_guide(question=question, rng=self._get_random_generator(stream="word_guide"))
         tools = " and ".join(self._get_random_generator(stream="tools").sample(self._words.tools, 2))
-        suffix = self._templates[template.value].render_template_value(word_guide=word_guide, tools=tools)
+        suffix = template.render_template_value(word_guide=word_guide, tools=tools)
         return ConverterResult(output_text=disguise + suffix, output_type="text")
 
     def _disguise(self, *, question: str, rng: random.Random) -> str:

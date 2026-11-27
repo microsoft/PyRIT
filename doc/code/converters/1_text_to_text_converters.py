@@ -252,13 +252,13 @@ print("CodeAttack:", await code_attack.convert_async(prompt=prompt))  # type: ig
 # #### Disguise and reconstruction (DRA)
 #
 # `DRAConverter` [@liu2024dra] spells the prompt one letter per line inside harmless phrases, then adds
-# a word guide and instructions to rebuild the request and answer it. Choose a template with
-# `DRATemplate`, or leave it out to pick one per conversion.
+# a word guide and instructions to rebuild the request and answer it. Pass a `DRATemplate` as a
+# `SeedPrompt` (or your own template), or leave it out to pick one per conversion.
 
 # %%
 from pyrit.converter import DRAConverter, DRATemplate
 
-dra = DRAConverter(template=DRATemplate.PREPARE_TOOLS, seed=1)
+dra = DRAConverter(prompt_template=DRATemplate.PREPARE_TOOLS.to_seed_prompt(), seed=1)
 print("DRA:", await dra.convert_async(prompt=prompt))  # type: ignore
 
 # %% [markdown]

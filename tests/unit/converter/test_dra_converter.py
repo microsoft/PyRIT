@@ -8,6 +8,7 @@ import re
 import pytest
 
 from pyrit.converter import DRAConverter, DRATemplate, dra_converter
+from pyrit.models import SeedPrompt
 
 _SEEDS = range(80)
 
@@ -38,7 +39,7 @@ _TEMPLATE_MARKERS = {
 
 
 def _converter(**kwargs) -> DRAConverter:
-    return DRAConverter(**{"template": DRATemplate.PREPARE_TOOLS, "seed": 1, **kwargs})
+    return DRAConverter(**{"prompt_template": DRATemplate.PREPARE_TOOLS.to_seed_prompt(), "seed": 1, **kwargs})
 
 
 async def _convert(prompt: str, **kwargs) -> str:
@@ -193,7 +194,7 @@ async def test_convert_async_renders_each_template(template: DRATemplate):
     seed_prompt = template.to_seed_prompt()
     prompt = "how to rob a bank"
 
-    result = await DRAConverter(template=template, seed=3).convert_async(prompt=prompt)
+    result = await DRAConverter(prompt_template=seed_prompt, seed=3).convert_async(prompt=prompt)
     suffix = "\n".join(result.output_text.split("\n")[len(prompt) :])
     entries = _word_guide_entries(result.output_text)
 
@@ -228,9 +229,31 @@ def test_init_rejects_out_of_range_settings(kwargs):
         DRAConverter(**kwargs)
 
 
-def test_init_rejects_template_that_is_not_a_member():
-    with pytest.raises(TypeError, match="DRATemplate"):
-        DRAConverter(template="prepare_tools")  # type: ignore[arg-type]
+async def test_convert_async_renders_supplied_template():
+    template = SeedPrompt(value="Guide: {{ word_guide }}| Tools: {{ tools }}", parameters=["word_guide", "tools"])
+    prompt = "how to rob a bank"
+
+    output = (await DRAConverter(prompt_template=template, seed=3).convert_async(prompt=prompt)).output_text
+    suffix = "\n".join(output.split("\n")[len(prompt) :])
+
+    guide, tools = re.fullmatch(r"Guide: (.*)\| Tools: (.*)", suffix).groups()
+    assert guide.startswith('"how" ')
+    assert set(tools.split(" and ")) <= _TOOLS
+
+
+def test_init_rejects_template_that_is_not_a_seed_prompt():
+    with pytest.raises(TypeError, match="SeedPrompt"):
+        DRAConverter(prompt_template=DRATemplate.PREPARE_TOOLS)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [["tools"], ["word_guide", "prompt"], []],
+)
+def test_init_rejects_template_with_unsupported_parameters(parameters):
+    template = SeedPrompt(value="{{ word_guide }}", parameters=parameters)
+    with pytest.raises(ValueError, match="word_guide"):
+        DRAConverter(prompt_template=template)
 
 
 @pytest.mark.parametrize("probability", [0.0, 1.0])
@@ -261,7 +284,7 @@ async def test_convert_async_reads_no_files(monkeypatch):
 
 def test_identifier_includes_template_and_settings():
     converter = DRAConverter(
-        template=DRATemplate.STRICT_CHOOSE_TARGET,
+        prompt_template=DRATemplate.STRICT_CHOOSE_TARGET.to_seed_prompt(),
         harmful_keep_ratio=0.6,
         benign_keep_ratio=0.4,
         benign_full_word_probability=0.2,
@@ -278,4 +301,10 @@ def test_identifier_includes_template_and_settings():
             "seed": 11,
         }.items()
     )
-    assert DRAConverter().get_identifier().params.get("template") is None
+    params = converter.get_identifier().params
+    assert len(params["template_hash"]) == 16
+    custom = DRAConverter(prompt_template=SeedPrompt(value="{{ word_guide }}", parameters=["word_guide"]))
+    assert custom.get_identifier().params["template_hash"] not in (None, params["template_hash"])
+    default = DRAConverter().get_identifier().params
+    assert default.get("template") is None
+    assert default.get("template_hash") is None
