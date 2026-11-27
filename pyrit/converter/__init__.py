@@ -92,6 +92,7 @@ if TYPE_CHECKING:
     from pyrit.converter.noise_converter import NoiseConverter
     from pyrit.converter.pdf_converter import PDFConverter
     from pyrit.converter.persuasion_converter import PersuasionConverter
+    from pyrit.converter.pigpen_converter import PigpenConverter
     from pyrit.converter.pinyin_converter import PinyinConverter
     from pyrit.converter.policy_puppetry_converter import PolicyPuppetryConverter, PolicyPuppetryTemplate
     from pyrit.converter.prompt_template_converter import PromptTemplateConverter
@@ -228,6 +229,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "NoiseConverter": "pyrit.converter.noise_converter",
     "PDFConverter": "pyrit.converter.pdf_converter",
     "PersuasionConverter": "pyrit.converter.persuasion_converter",
+    "PigpenConverter": "pyrit.converter.pigpen_converter",
     "PinyinConverter": "pyrit.converter.pinyin_converter",
     "PolicyPuppetryConverter": "pyrit.converter.policy_puppetry_converter",
     "PolicyPuppetryTemplate": "pyrit.converter.policy_puppetry_converter",

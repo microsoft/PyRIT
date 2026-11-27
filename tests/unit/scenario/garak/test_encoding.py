@@ -14,6 +14,7 @@ from pyrit.converter import (
     Base64Converter,
     Base91Converter,
     ColumnarTranspositionConverter,
+    PigpenConverter,
     SearchReplaceConverter,
 )
 from pyrit.executor.attack import (
@@ -276,13 +277,14 @@ class TestEncodingTechniqueDefault:
         }
         all_names = {t.value for t in EncodingTechnique.get_all_techniques()}
         assert default_names < all_names
-        assert len(all_names) == 22
+        assert len(all_names) == 23
         # The niche/lossy schemes stay ALL-only.
         assert all_names - default_names == {
             "braille",
             "ecoji",
             "zalgo",
             "ascii_smuggler",
+            "pigpen",
             "disemvowel",
             "ubbi_dubbi",
             "bifid",
@@ -517,6 +519,56 @@ class TestEncodingAtomicNameUniqueness:
             assert row_converters, "base91 row applies no Base91Converter"
             result = await row_converters[0].convert_async(prompt="Hello World!")
             assert result.output_text == ">OwJh>Io0Tv!8PE"
+
+    async def test_pigpen_technique_builds_registered_row(
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
+    ):
+        """Selecting Pigpen must register a row that applies PigpenConverter.
+
+        This exercises the registered ``pigpen`` row end to end, so a deleted or misnamed row in
+        ``_converter_variants()`` is caught: such a regression leaves the enum intact while the
+        technique builds no attacks.
+        """
+        from unittest.mock import patch
+
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_attack_seed_groups},
+        ):
+            scenario = Encoding(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                    "scenario_techniques": [EncodingTechnique.Pigpen],
+                }
+            )
+            await scenario.initialize_async()
+
+            attacks = scenario._get_converter_attacks(
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+            )
+
+            assert attacks, "pigpen technique built no attacks"
+            assert all(aa.display_group == "pigpen" for aa in attacks)
+            names = {aa.atomic_attack_name for aa in attacks}
+            assert "pigpen_raw" in names, "missing raw variant"
+            assert any(n != "pigpen_raw" for n in names), "missing decode variant"
+
+            # The registered row applies PigpenConverter and encodes to the key's glyphs.
+            raw = next(aa for aa in attacks if aa.atomic_attack_name == "pigpen_raw")
+            row_converters = [
+                conv
+                for config in raw.attack_technique.attack.get_request_converters()
+                for conv in config.converters
+                if isinstance(conv, PigpenConverter)
+            ]
+            assert row_converters, "pigpen row applies no PigpenConverter"
+            result = await row_converters[0].convert_async(prompt="cat")
+            # c, a, t written independently from the key: └ ┘ ▷
+            assert result.output_text == "└┘▷"
 
     async def test_memory_labels_propagate_to_atomic_attacks(
         self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups

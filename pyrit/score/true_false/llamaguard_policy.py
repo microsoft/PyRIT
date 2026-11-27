@@ -13,6 +13,7 @@ from pyrit.common.yaml_helper import safe_load_yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Self
 
 
 class LlamaGuardCategory(BaseModel):
@@ -72,7 +73,7 @@ class LlamaGuardPolicy(BaseModel):
         return self
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> LlamaGuardPolicy:
+    def from_yaml(cls, path: str | Path) -> Self:
         """
         Load a LlamaGuard policy from YAML.
 
