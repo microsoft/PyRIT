@@ -14,6 +14,8 @@ UEB_SYMBOL_CELLS = {
     "*": "\u2810\u2814",  # dot 5, dots 35
     "+": "\u2810\u2816",  # dot 5, dots 235
     "/": "\u2838\u280c",  # dots 456, dots 34
+    "(": "\u2810\u2823",  # dot 5, dots 126
+    ")": "\u2810\u281c",  # dot 5, dots 345
     "<": "\u2808\u2823",  # dot 4, dots 126
     "=": "\u2810\u2836",  # dot 5, dots 2356
     ">": "\u2808\u281c",  # dot 4, dots 345
@@ -169,6 +171,27 @@ async def test_braille_converter_ascii_symbol_cells(char, expected):
     converter = BrailleConverter()
 
     result = await converter.convert_async(prompt=char, input_type="text")
+    assert result.output_text == expected
+
+
+@pytest.mark.parametrize(
+    "prompt, expected",
+    [
+        ("(a)", "\u2810\u2823\u2801\u2810\u281c"),
+        (")a(", "\u2810\u281c\u2801\u2810\u2823"),
+    ],
+    ids=["parenthesized", "reversed"],
+)
+async def test_braille_converter_parentheses_are_distinct(prompt, expected):
+    """Opening and closing parentheses must encode to different cells.
+
+    Regression: both were mapped to U+2836 (dots 2356), so "(a)" and ")a(" produced
+    identical braille and the encoded prompt could not be read back. UEB distinguishes
+    them as dots 5-126 ("(") and dots 5-345 (")"), per en-ueb-chardefs.uti.
+    """
+    converter = BrailleConverter()
+
+    result = await converter.convert_async(prompt=prompt, input_type="text")
     assert result.output_text == expected
 
 

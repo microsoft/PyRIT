@@ -109,8 +109,8 @@ class BrailleConverter(Converter):
             "$": "\u2808\u280e",
             ":": "\u2812",
             ";": "\u2806",
-            "(": "\u2836",
-            ")": "\u2836",
+            "(": "\u2810\u2823",
+            ")": "\u2810\u281c",
             # Remaining printable ASCII, as two-cell UEB symbol sequences.
             "@": "\u2808\u2801",
             "#": "\u2838\u2839",
