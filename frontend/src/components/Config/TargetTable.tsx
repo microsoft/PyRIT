@@ -116,7 +116,7 @@ const FunctionCallOutputIcon = forwardRef<HTMLSpanElement, React.HTMLAttributes<
     const styles = useTargetTableStyles()
     return (
       <span ref={ref} className={styles.compositeIcon} {...rest}>
-        <MathFormulaRegular className={className} />
+        <MathFormulaRegular {...(className ? { className } : {})} />
         <ArrowHookUpLeftRegular className={styles.compositeBadge} />
       </span>
     )

@@ -23,9 +23,17 @@ if TYPE_CHECKING:
         ATRVariationType,
         _AgentThreatRulesDataset,
     )
+    from pyrit.datasets.seed_datasets.remote.air_bench_dataset import (
+        AIRBenchRegion,
+        _AIRBenchDataset,
+    )
     from pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset import (
         AnthropicModelWrittenEvalCategory,
         _AnthropicModelWrittenEvalsDataset,
+    )
+    from pyrit.datasets.seed_datasets.remote.attaq_dataset import (
+        AttaQCategory,
+        _AttaQDataset,
     )
     from pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset import _AyaRedteamingDataset
     from pyrit.datasets.seed_datasets.remote.babelscape_alert_dataset import _BabelscapeAlertDataset
@@ -120,6 +128,7 @@ if TYPE_CHECKING:
     from pyrit.datasets.seed_datasets.remote.moral_integrity_corpus_dataset import _MICDataset
     from pyrit.datasets.seed_datasets.remote.mossbench_dataset import MossBenchOversensitivityType, _MossBenchDataset
     from pyrit.datasets.seed_datasets.remote.msts_dataset import _MSTSDataset
+    from pyrit.datasets.seed_datasets.remote.multijail_dataset import MultiJailLanguage, _MultiJailDataset
     from pyrit.datasets.seed_datasets.remote.multilingual_vulnerability_dataset import _MultilingualVulnerabilityDataset
     from pyrit.datasets.seed_datasets.remote.odin_dataset import (
         ODINSecurityBoundary,
@@ -169,6 +178,11 @@ if TYPE_CHECKING:
         WildGuardMixSplit,
         _WildGuardMixDataset,
     )
+    from pyrit.datasets.seed_datasets.remote.wildjailbreak_dataset import (
+        WildJailbreakDataType,
+        WildJailbreakSplit,
+        _WildJailbreakDataset,
+    )
     from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
         XLSafetyBenchCountry,
         XLSafetyBenchCulturalCategory,
@@ -182,7 +196,9 @@ if TYPE_CHECKING:
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AegisHarmCategory": "pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset",
+    "AIRBenchRegion": "pyrit.datasets.seed_datasets.remote.air_bench_dataset",
     "AnthropicModelWrittenEvalCategory": "pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset",
+    "AttaQCategory": "pyrit.datasets.seed_datasets.remote.attaq_dataset",
     "CoCoNotCategory": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
     "CoCoNotSplit": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
     "CoSafeCategory": "pyrit.datasets.seed_datasets.remote.cosafe_dataset",
@@ -201,6 +217,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "MMSafetyBenchCategory": "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset",
     "MMSafetyBenchVariant": "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset",
     "MossBenchOversensitivityType": "pyrit.datasets.seed_datasets.remote.mossbench_dataset",
+    "MultiJailLanguage": "pyrit.datasets.seed_datasets.remote.multijail_dataset",
     "ODINSecurityBoundary": "pyrit.datasets.seed_datasets.remote.odin_dataset",
     "ODINSeverity": "pyrit.datasets.seed_datasets.remote.odin_dataset",
     "ODINTaxonomyCategory": "pyrit.datasets.seed_datasets.remote.odin_dataset",
@@ -215,12 +232,16 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "WildGuardMixAdversarial": "pyrit.datasets.seed_datasets.remote.wildguardmix_dataset",
     "WildGuardMixPromptHarmLabel": "pyrit.datasets.seed_datasets.remote.wildguardmix_dataset",
     "WildGuardMixSplit": "pyrit.datasets.seed_datasets.remote.wildguardmix_dataset",
+    "WildJailbreakDataType": "pyrit.datasets.seed_datasets.remote.wildjailbreak_dataset",
+    "WildJailbreakSplit": "pyrit.datasets.seed_datasets.remote.wildjailbreak_dataset",
     "_AegisContentSafetyDataset": "pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset",
     "_AnthropicModelWrittenEvalsDataset": "pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset",
     "ATRCategory": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
     "ATRDetectionField": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
     "ATRVariationType": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
     "_AgentThreatRulesDataset": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
+    "_AIRBenchDataset": "pyrit.datasets.seed_datasets.remote.air_bench_dataset",
+    "_AttaQDataset": "pyrit.datasets.seed_datasets.remote.attaq_dataset",
     "_AyaRedteamingDataset": "pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset",
     "_BabelscapeAlertDataset": "pyrit.datasets.seed_datasets.remote.babelscape_alert_dataset",
     "_BeaverTailsDataset": "pyrit.datasets.seed_datasets.remote.beaver_tails_dataset",
@@ -278,6 +299,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "_MMSafetyBenchDataset": "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset",
     "_MossBenchDataset": "pyrit.datasets.seed_datasets.remote.mossbench_dataset",
     "_MSTSDataset": "pyrit.datasets.seed_datasets.remote.msts_dataset",
+    "_MultiJailDataset": "pyrit.datasets.seed_datasets.remote.multijail_dataset",
     "_MultilingualVulnerabilityDataset": "pyrit.datasets.seed_datasets.remote.multilingual_vulnerability_dataset",
     "_ODINDataset": "pyrit.datasets.seed_datasets.remote.odin_dataset",
     "_ORBench80KDataset": "pyrit.datasets.seed_datasets.remote.or_bench_dataset",
@@ -304,6 +326,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "VisualLeakBenchCategory": "pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset",
     "VisualLeakBenchPIIType": "pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset",
     "_WildGuardMixDataset": "pyrit.datasets.seed_datasets.remote.wildguardmix_dataset",
+    "_WildJailbreakDataset": "pyrit.datasets.seed_datasets.remote.wildjailbreak_dataset",
     "XLSafetyBenchCountry": "pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset",
     "XLSafetyBenchCulturalCategory": "pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset",
     "XLSafetyBenchJailbreakCategory": "pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset",
