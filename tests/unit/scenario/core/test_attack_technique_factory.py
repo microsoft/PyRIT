@@ -4,7 +4,7 @@
 """Tests for the AttackTechniqueFactory class."""
 
 import warnings
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, assert_type, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +13,7 @@ from pyrit.converter import Base64Converter, QRCodeConverter, ROT13Converter, Tr
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackScoringConfig,
+    CrescendoAttack,
     PromptSendingAttack,
     TreeOfAttacksWithPruningAttack,
 )
@@ -20,10 +21,12 @@ from pyrit.executor.attack.core.attack_config import (
     DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
 )
 from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
+from pyrit.models.technique_edit import SimulationSettings
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.scenario import AttackTechnique, AttackTechniqueFactory
 from pyrit.scenario.core import ScorerOverridePolicy
+from pyrit.scenario.core.attack_technique_factory import EditableTechniqueSettings
 from pyrit.score import Scorer, SubStringScorer, TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -1624,3 +1627,118 @@ class TestCheckObjectiveScorer:
             scorer=scorer
         )
         assert any("requires 'preserves_float_scale_value'" in error for error in errors)
+
+
+class TestGetEditableSettings:
+    """Tests for AttackTechniqueFactory.get_editable_settings (PyRIT #4505 Case 1).
+
+    Key presence is the contract: an absent key means the setting is not editable
+    (opaque on the source), while an explicit None value means it is editable but
+    unset. ``description`` is always present.
+    """
+
+    def test_plain_factory_exposes_only_description_and_empty_converters(self) -> None:
+        factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
+        settings = factory.get_editable_settings()
+        assert_type(settings, EditableTechniqueSettings)
+        assert settings == {
+            "description": None,
+            "request_converters": [],
+            "response_converters": [],
+        }
+
+    def test_description_is_always_present(self) -> None:
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_StubAttack,
+            description="Does the thing.",
+        )
+        assert factory.get_editable_settings()["description"] == "Does the thing."
+
+    def test_adversarial_chat_is_live_reference_and_prompts_stay_opaque_without_config(self) -> None:
+        chat = MagicMock(spec=PromptTarget)
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=PromptSendingAttack,
+            adversarial_chat=chat,
+        )
+        settings = factory.get_editable_settings()
+        assert settings["adversarial_chat"] is chat
+        # PromptSendingAttack does not accept attack_adversarial_config, so the
+        # prompt fields are opaque even though a chat target is configured.
+        assert "adversarial_system_prompt" not in settings
+        assert "adversarial_seed_prompt" not in settings
+        assert "adversarial_prompt_template" not in settings
+
+    def test_adversarial_prompts_nullable_and_non_text_is_opaque(self) -> None:
+        chat = MagicMock(spec=PromptTarget)
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=CrescendoAttack,
+            adversarial_chat=chat,
+            adversarial_system_prompt="Be evil",
+            adversarial_seed_prompt=SeedPrompt(value="seed text", data_type="text"),
+            adversarial_prompt_template=None,
+        )
+        settings = factory.get_editable_settings()
+        assert settings["adversarial_system_prompt"] == "Be evil"
+        assert settings["adversarial_seed_prompt"] == "seed text"
+        assert settings["adversarial_prompt_template"] is None
+        assert "adversarial_prompt_template" in settings
+
+        unset = AttackTechniqueFactory(name="test", attack_class=CrescendoAttack, adversarial_chat=chat)
+        unset_settings = unset.get_editable_settings()
+        assert unset_settings["adversarial_system_prompt"] is None
+        assert unset_settings["adversarial_seed_prompt"] is None
+        assert unset_settings["adversarial_prompt_template"] is None
+
+        opaque = AttackTechniqueFactory(
+            name="test",
+            attack_class=CrescendoAttack,
+            adversarial_chat=chat,
+            adversarial_system_prompt=SeedPrompt(value="aGVsbG8=", data_type="image_path"),
+        )
+        assert "adversarial_system_prompt" not in opaque.get_editable_settings()
+
+    def test_converters_live_empty_and_conditional(self) -> None:
+        converter = ROT13Converter()
+        config = AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[converter]),
+        )
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_StubAttack,
+            attack_kwargs={"attack_converter_config": config},
+        )
+        settings = factory.get_editable_settings()
+        assert settings["request_converters"] == [converter]
+        assert settings["response_converters"] == []
+
+        conditional = AttackConverterConfig(
+            request_converters=[
+                ConverterConfiguration(converters=[converter], indexes_to_apply=[0]),
+            ],
+        )
+        conditional_factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_StubAttack,
+            attack_kwargs={"attack_converter_config": conditional},
+        )
+        conditional_settings = conditional_factory.get_editable_settings()
+        assert "request_converters" not in conditional_settings
+        assert conditional_settings["response_converters"] == []
+
+    def test_simulation_present_only_with_seed_technique(self) -> None:
+        plain = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
+        assert "simulation" not in plain.get_editable_settings()
+
+        simulated = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_journalist_interview",
+        )
+        settings = simulated.get_editable_settings()
+        assert isinstance(settings["simulation"], SimulationSettings)
+        assert settings["simulation"].num_turns == 3
+        # The simulated conversation uses an adversarial chat, but no target is
+        # baked in: the key is present with an explicit None.
+        assert settings["adversarial_chat"] is None
+        assert "adversarial_chat" in settings

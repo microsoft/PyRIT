@@ -24,7 +24,7 @@ import logging
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import lru_cache, wraps
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, NotRequired, TypedDict, cast
 from weakref import WeakSet
 
 from pydantic import ValidationError
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from typing import Protocol
 
     from pyrit.models import Parameter
-    from pyrit.models.technique_edit import TechniqueChanges
+    from pyrit.models.technique_edit import SimulationSettings, TechniqueChanges
     from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.scenario import (
         AttackTechniqueFactory,
@@ -214,6 +214,28 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
             self.register(factory, name=factory.name, tags=factory.technique_tags, metadata=metadata)
 
 
+class ProjectedEditableTechniqueSettings(TypedDict):
+    """
+    Editable settings projected onto registered names, for registry input.
+
+    Same key contract as ``EditableTechniqueSettings``: an absent key means the
+    setting is not editable, an explicit ``None`` means it is editable but unset.
+    Live targets and converters are replaced by their registry names; a setting
+    whose live value is not registered is dropped instead of projected.
+    ``description`` and the prompt fields pass through unchanged; ``simulation``
+    passes through unchanged (never ``None`` when present).
+    """
+
+    description: str | None
+    adversarial_chat: NotRequired[str | None]
+    adversarial_system_prompt: NotRequired[str | None]
+    adversarial_seed_prompt: NotRequired[str | None]
+    adversarial_prompt_template: NotRequired[str | None]
+    request_converters: NotRequired[list[str]]
+    response_converters: NotRequired[list[str]]
+    simulation: NotRequired[SimulationSettings]
+
+
 class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechniqueMetadata]):
     """
     Registry that holds reusable ``AttackTechniqueFactory`` instances.
@@ -356,27 +378,45 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         return self._with_replay_converter_roles(factory) if strict_json and request_converters else factory
 
     @staticmethod
-    def get_editable_settings(factory: AttackTechniqueFactory) -> dict[str, Any]:
+    def get_editable_settings(factory: AttackTechniqueFactory) -> ProjectedEditableTechniqueSettings:
         """
         Project supported factory fields onto registered names without reconstructing source state.
 
         Returns:
-            dict[str, Any]: Fields that can be represented losslessly through registry input.
+            ProjectedEditableTechniqueSettings: Fields that can be represented losslessly through registry input.
         """
         from pyrit.registry.resolution import reference_name
 
-        settings = factory.get_editable_settings()
-        for key in ("adversarial_chat", "request_converters", "response_converters"):
-            if key not in settings or settings[key] is None:
-                continue
-            component_type = ComponentType.TARGET if key == "adversarial_chat" else ComponentType.CONVERTER
-            values = [settings[key]] if key == "adversarial_chat" else settings[key]
-            names = [reference_name(component_type=component_type, value=value) for value in values]
-            if None in names:
-                del settings[key]
+        live = factory.get_editable_settings()
+        # Build in the factory's key order (description, adversarial chat, prompt
+        # fields, converters, simulation) so the projection only changes values.
+        projected: ProjectedEditableTechniqueSettings = {"description": live["description"]}
+        if "adversarial_chat" in live:
+            chat = live["adversarial_chat"]
+            if chat is None:
+                projected["adversarial_chat"] = None
             else:
-                settings[key] = names[0] if key == "adversarial_chat" else names
-        return settings
+                name = reference_name(component_type=ComponentType.TARGET, value=chat)
+                if name is not None:
+                    projected["adversarial_chat"] = name
+        for key in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
+            if key in live:
+                projected[key] = live[key]
+        for key in ("request_converters", "response_converters"):
+            if key in live:
+                names: list[str] = []
+                unregistered = False
+                for converter in live[key]:
+                    name = reference_name(component_type=ComponentType.CONVERTER, value=converter)
+                    if name is None:
+                        unregistered = True
+                        break
+                    names.append(name)
+                if not unregistered:
+                    projected[key] = names
+        if "simulation" in live:
+            projected["simulation"] = live["simulation"]
+        return projected
 
     @classmethod
     def get_editable_parameters(cls, factory: AttackTechniqueFactory) -> list[Parameter]:
