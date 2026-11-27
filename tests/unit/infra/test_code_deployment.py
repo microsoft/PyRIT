@@ -66,6 +66,49 @@ JOB_TEMPLATE = {
     ],
     "volumes": [{"name": "data", "storageType": "EmptyDir"}],
 }
+BLOB = "https://profilestore.blob.core.windows.net"
+SEED_INPUTS = APP_INPUTS | {
+    "PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/test/.pyrit_conf",
+    "PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/seed",
+    "PYRIT_SOURCE_BRANCH": "refs/heads/releases/v1.2.3",
+    "SEED_FILES": "1",
+}
+# Prints each Azure CLI call without its local folder argument. A download writes the release seed when
+# SEED_FILES is set, an upload lists the top-level entries it would send, and a list prints its call to stderr
+# and returns config blobs that the seed both has and lacks.
+SEED_AZ = r"""
+az() {
+  local command=$3 local_flag="" printed=() local_path=""
+  case "$command" in
+    download-batch) local_flag=--destination ;;
+    upload-batch) local_flag=--source ;;
+  esac
+  while (($#)); do
+    if [[ "$1" == "$local_flag" ]]; then
+      local_path=$2
+      shift 2
+      continue
+    fi
+    printed+=("$1")
+    shift
+  done
+  if [[ "$command" == download-batch && -n "${SEED_FILES:-}" ]]; then
+    local seed="$local_path/seed/releases/v1.2.3"
+    mkdir -p "$seed/internal_initializers"
+    touch "$seed/.pyrit_conf" "$seed/internal_initializers/sample.py"
+  fi
+  if [[ "$command" == upload-batch ]]; then
+    printed+=("uploaded=$(cd "$local_path" && LC_ALL=C ls -A | paste -sd, -)")
+  fi
+  if [[ "$command" == list ]]; then
+    echo "${printed[*]}" >&2
+    printf '%s\n' test/.pyrit_conf test/stale.json test/internal_initializers/sample.py \
+      test/internal_initializers/old.py
+    return
+  fi
+  echo "${printed[*]}"
+}
+"""
 
 
 def _find_bash() -> str | None:
@@ -270,6 +313,7 @@ class TestPypiBuild(unittest.TestCase):
         for state in ("legacy", "missing-stamp", "malformed-stamp", "stamped"):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
+                (root / "litellm.py").write_text("", encoding="utf-8")
                 package = root / "pyrit"
                 package.mkdir()
                 (package / "__init__.py").write_text("from ._version import __version__\n", encoding="utf-8")
@@ -447,10 +491,11 @@ printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
         statuses: list[str],
         attempts: int = 3,
         check_only: bool = False,
+        command: str = "",
         azure_failure: str = "",
         job_template: dict[str, object] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        command = (
+        command = command or (
             "if schema_is_current; then echo current; else echo migration-needed; fi"
             if check_only
             else "run_database_migration"
@@ -458,7 +503,8 @@ printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
         template_json = shlex.quote(json.dumps(JOB_TEMPLATE if job_template is None else job_template))
         return self._run(
             script="deploy_app.sh",
-            inputs=APP_INPUTS | {"PYRIT_MIGRATION_POLL_ATTEMPTS": str(attempts)},
+            inputs=APP_INPUTS
+            | {"PYRIT_MIGRATION_POLL_ATTEMPTS": str(attempts), "PYRIT_SCHEMA_CHECK_POLL_ATTEMPTS": str(attempts)},
             command=f"""
 immutable_image={shlex.quote(IMAGE)}
 deployment_name=pyrit-test-42-app
@@ -490,6 +536,7 @@ az() {{
       echo execution-1
       ;;
     "containerapp job execution") echo poll >> "$poll_file"; echo "${{statuses[$(($(wc -l < "$poll_file") - 1))]}}" ;;
+    "containerapp job stop") echo "stop $*" >&2 ;;
     *) echo "Unexpected az $*" >&2; exit 97 ;;
   esac
 }}
@@ -514,10 +561,46 @@ echo done
         assert "ended with status Failed; the app is stopped and was not deployed" in result.stdout
         assert "done" not in result.stdout
 
-    def test_database_migration_timeout_stops_deployment(self) -> None:
+    def test_database_migration_timeout_stops_execution_and_deployment(self) -> None:
         result = self._run_migration(statuses=["Running", "Running"], attempts=2)
         assert result.returncode == 1
-        assert "did not finish in time" in result.stdout
+        assert "did not finish in time and was stopped; the app is stopped" in result.stdout
+        assert "--job-execution-name execution-1" in next(
+            line for line in result.stderr.splitlines() if line.startswith("stop containerapp job stop")
+        )
+        assert "done" not in result.stdout
+
+    def test_database_job_timeout_with_failed_stop_reports_unknown_state(self) -> None:
+        for command, outcome in [
+            ("run_database_migration", "the app is stopped and was not deployed"),
+            ("ensure_schema_upgradable", "deployment was not continued"),
+        ]:
+            with self.subTest(command=command):
+                result = self._run_migration(
+                    statuses=["Running", "Running"], attempts=2, command=command, azure_failure="stop"
+                )
+                assert result.returncode == 1
+                assert "could not be stopped; its state is unknown" in result.stdout
+                assert "Confirm it has stopped before retrying" in result.stdout
+                assert outcome in result.stdout
+                assert "was stopped;" not in result.stdout
+                assert "done" not in result.stdout
+
+    def test_revision_check_preserves_full_execution_template(self) -> None:
+        result = self._run_migration(statuses=["Running", "Succeeded"], command="ensure_schema_upgradable")
+        assert result.returncode == 0, result.stdout + result.stderr
+        template = next(
+            line.removeprefix("template ") for line in result.stderr.splitlines() if line.startswith("template ")
+        )
+        expected = json.loads(json.dumps(JOB_TEMPLATE))
+        expected["containers"][0]["args"] = ["--check-upgradable"]
+        assert json.loads(template) == expected
+
+    def test_failed_revision_check_does_not_stop_app(self) -> None:
+        result = self._run_migration(statuses=["Running", "Failed"], command="ensure_schema_upgradable")
+        assert result.returncode == 1
+        assert "migrating with this image cannot fix the schema" in result.stdout
+        assert "The app was not stopped or deployed" in result.stdout
         assert "done" not in result.stdout
 
     def test_schema_check_preserves_full_execution_template(self) -> None:
@@ -584,21 +667,23 @@ echo done
                 assert "migration-needed" not in result.stdout
 
     def test_app_deployment_migrates_only_when_schema_check_fails(self) -> None:
-        for check_exit in (0, 1):
-            with self.subTest(check_exit=check_exit):
-                self._assert_app_deployment_order(check_exit=check_exit)
+        for check_exit, upgradable_exit in ((0, 0), (1, 0), (1, 1)):
+            with self.subTest(check_exit=check_exit, upgradable_exit=upgradable_exit):
+                self._assert_app_deployment_order(check_exit=check_exit, upgradable_exit=upgradable_exit)
 
-    def _assert_app_deployment_order(self, *, check_exit: int) -> None:
+    def _assert_app_deployment_order(self, *, check_exit: int, upgradable_exit: int) -> None:
         result = self._run(
             script="deploy_app.sh",
             inputs=APP_INPUTS,
             command=f"""
 for step in validate_app_inputs initialize_deployment_scope read_existing_topology read_app_access_mode \
-  build_app_parameters prepare_database_migration stop_app run_database_migration start_unchanged_revision \
+  build_app_parameters prepare_database_migration stop_app run_database_migration reset_configuration_from_seed \
   verify_readiness wait_for_runtime_readiness warn_if_sql_public; do
   eval "$step() {{ echo $step; }}"
 done
+start_unchanged_revision() {{ echo "start_unchanged_revision app_stopped=$app_stopped"; }}
 schema_is_current() {{ echo schema-check; return {check_exit}; }}
+ensure_schema_upgradable() {{ echo revision-check; return {upgradable_exit}; }}
 preview_deployment() {{ echo "preview $1"; }}
 az() {{ echo "az $1 $2 $3"; }}
 revision=r health_url=h egress_ip=e expected_public_access=Enabled immutable_image=i
@@ -606,20 +691,30 @@ template_file=t deployment_name=d parameters=(appName=test)
 main
 """,
         )
-        assert result.returncode == 0, result.stdout + result.stderr
         lines = result.stdout.splitlines()
+        if upgradable_exit:
+            assert result.returncode != 0
+            assert lines[-1] == "revision-check"
+            return
+        assert result.returncode == 0, result.stdout + result.stderr
         assert lines[4:] == [
             "build_app_parameters",
             "preview app",
+            "reset_configuration_from_seed",
             "prepare_database_migration",
             "schema-check",
             *(
-                ["stop_app", "run_database_migration"]
+                [
+                    "revision-check",
+                    "This image can upgrade the database; migrating with the app stopped",
+                    "stop_app",
+                    "run_database_migration",
+                ]
                 if check_exit
                 else ["Schema is current; deploying without stopping the app"]
             ),
             "az deployment group create",
-            "start_unchanged_revision",
+            f"start_unchanged_revision app_stopped={'true' if check_exit else 'false'}",
             "verify_readiness",
             "wait_for_runtime_readiness",
             "warn_if_sql_public",
@@ -789,6 +884,21 @@ start_unchanged_revision""",
                 assert result.returncode == 0, result.stdout + result.stderr
                 assert ("az containerapp revision activate" in result.stdout) == activates
 
+    def test_seeded_unchanged_revision_is_stopped_before_starting_unless_already_stopped(self) -> None:
+        for app_stopped, stops in (("false", True), ("true", False)):
+            with self.subTest(app_stopped=app_stopped):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=SEED_INPUTS,
+                    command=f"""current_revision=app--old app_stopped={app_stopped}
+az() {{ if [[ "$2" == show ]]; then echo app--old; else echo "az $2 $3"; fi; }}
+stop_app() {{ echo stop_app; }}
+start_unchanged_revision""",
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                calls = [line for line in result.stdout.splitlines() if line in ("stop_app", "az revision activate")]
+                assert calls == (["stop_app"] if stops else []) + ["az revision activate"]
+
     def test_public_sql_server_only_warns(self) -> None:
         for access, warns in (("Enabled", True), ("", True), ("Disabled", False)):
             with self.subTest(access=access):
@@ -861,9 +971,14 @@ initialize_deployment_scope
             ("PYRIT_ENV_SECRET_NAME", "invalid/secret", "Invalid SQL"),
             ("PYRIT_ALLOWED_CLIENT_CIDR", "$(allowed)", "Optional deployment value"),
             ("PYRIT_CONFIG_FILE_URI", "$(config)", "Optional deployment value"),
+            ("PYRIT_CONFIG_SEED_URI", "$(seed)", "Optional deployment value"),
             ("PYRIT_ALLOWED_CLIENT_CIDR", "192.0.2.0/24", "leave PYRIT_ALLOWED_CLIENT_CIDR empty"),
-            ("PYRIT_CONFIG_FILE_URI", "https://example.com/container/config", "Invalid Entra"),
-            ("PYRIT_CONFIG_FILE_URI", "https://account.blob.core.windows.net/container/config?sas=1", "Invalid Entra"),
+            ("PYRIT_CONFIG_FILE_URI", "https://example.com/container/config", "pyritConfigFileUri must be"),
+            (
+                "PYRIT_CONFIG_FILE_URI",
+                "https://account.blob.core.windows.net/container/config?sas=1",
+                "pyritConfigFileUri must be",
+            ),
             (
                 "PYRIT_KEY_VAULT_RESOURCE_ID",
                 APP_INPUTS["PYRIT_KEY_VAULT_RESOURCE_ID"].replace(SUBSCRIPTION, "22222222-2222-2222-2222-222222222222"),
@@ -877,6 +992,109 @@ initialize_deployment_scope
                 )
                 assert result.returncode != 0
                 assert message in result.stdout, result.stdout + result.stderr
+
+    def test_config_seed_requires_separate_folders_and_a_branch(self) -> None:
+        separate = "need separate folders"
+        not_a_branch = "is not a branch"
+        cases = [
+            ({"PYRIT_CONFIG_FILE_URI": ""}, "pyritConfigSeedUri requires pyritConfigFileUri"),
+            ({"PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/.pyrit_conf"}, separate),
+            ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/test/seed"}, separate),
+            ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles", "PYRIT_SOURCE_BRANCH": "refs/heads/test"}, separate),
+            # The config folder is another branch's seed, or the seed is the whole container.
+            ({"PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/seed/main/.pyrit_conf"}, separate),
+            ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles"}, separate),
+            (
+                {
+                    "PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles//seed",
+                    "PYRIT_CONFIG_FILE_URI": f"{BLOB}/profiles/seed/main/.pyrit_conf",
+                },
+                separate,
+            ),
+            ({"PYRIT_CONFIG_SEED_URI": BLOB}, separate),
+            ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/my%20seed"}, separate),
+            ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}/profiles/seed?sig=secret"}, "pyritConfigSeedUri must be"),
+            ({"PYRIT_CONFIG_SEED_URI": "https://example.com/profiles/seed"}, "pyritConfigSeedUri must be"),
+            ({"PYRIT_CONFIG_SEED_URI": f"{BLOB}:port/profiles/seed"}, "pyritConfigSeedUri must be"),
+            ({"PYRIT_SOURCE_BRANCH": "refs/tags/v1.2.3"}, not_a_branch),
+            ({"PYRIT_SOURCE_BRANCH": ""}, not_a_branch),
+            ({"PYRIT_SOURCE_BRANCH": "refs/heads/releases/../main"}, not_a_branch),
+        ]
+        for inputs, message in cases:
+            with self.subTest(inputs=inputs):
+                result = self._run(script="deploy_app.sh", inputs=SEED_INPUTS | inputs, command="validate_app_inputs")
+                assert result.returncode != 0
+                assert message in result.stdout, result.stdout + result.stderr
+
+    def test_missing_seed_stops_the_deployment_before_the_migration_or_app_changes(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS,
+            command="""
+for step in validate_app_inputs initialize_deployment_scope read_existing_topology read_app_access_mode \
+  build_app_parameters prepare_database_migration stop_app run_database_migration; do
+  eval "$step() { echo $step; }"
+done
+preview_deployment() { echo "preview $1"; }
+reset_configuration_from_seed() { echo reset; return 1; }
+template_file=t parameters=(appName=test)
+main
+""",
+        )
+        assert result.returncode != 0
+        assert result.stdout.splitlines()[-2:] == ["preview app", "reset"]
+
+    def test_deployment_replaces_the_config_folder_with_the_branch_seed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            result = self._run(
+                script="deploy_app.sh",
+                inputs=SEED_INPUTS | {"PYRIT_AGENT_TEMP_DIRECTORY": Path(temporary).as_posix()},
+                command=SEED_AZ + "validate_app_inputs\nreset_configuration_from_seed",
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            storage = "--auth-mode login --account-name profilestore"
+            quiet = "--only-show-errors -o none"
+            assert result.stdout.splitlines() == [
+                f"storage blob download-batch {storage} --source profiles --pattern seed/releases/v1.2.3/* {quiet}",
+                (
+                    f"storage blob upload-batch {storage} --destination profiles --destination-path test "
+                    f"--overwrite {quiet} uploaded=.pyrit_conf,internal_initializers"
+                ),
+                f"storage blob delete {storage} --container-name profiles --name test/stale.json {quiet}",
+                (
+                    f"storage blob delete {storage} --container-name profiles "
+                    f"--name test/internal_initializers/old.py {quiet}"
+                ),
+                "Reset profiles/test from the profiles/seed/releases/v1.2.3 seed",
+            ]
+            assert (
+                f"storage blob list {storage} --container-name profiles --prefix test/ --num-results * "
+                "--query [].name -o tsv"
+            ) in result.stderr
+            assert not list(Path(temporary).iterdir())
+
+    def test_missing_branch_seed_stops_before_changing_the_config_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            result = self._run(
+                script="deploy_app.sh",
+                inputs=SEED_INPUTS | {"PYRIT_AGENT_TEMP_DIRECTORY": Path(temporary).as_posix(), "SEED_FILES": ""},
+                command=SEED_AZ + "validate_app_inputs\nreset_configuration_from_seed",
+            )
+            assert result.returncode != 0
+            assert (
+                "The config seed has no .pyrit_conf for this branch at profiles/seed/releases/v1.2.3" in result.stdout
+            )
+            assert "storage blob delete" not in result.stdout and "upload-batch" not in result.stdout
+            assert not list(Path(temporary).iterdir())
+
+    def test_deployment_without_a_seed_keeps_the_config_folder(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS | {"PYRIT_SOURCE_BRANCH": "refs/heads/main"},
+            command="validate_app_inputs\nreset_configuration_from_seed",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout == ""
 
     def test_shared_image_validation_requires_registry_digest_and_valid_repository(self) -> None:
         for image, message in (

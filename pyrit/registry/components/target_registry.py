@@ -24,7 +24,7 @@ is the buildable class catalog. Pre-configured instances live under the
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pyrit.models import TargetIdentifier
 from pyrit.registry.registry import InstanceHoldingRegistry
@@ -54,8 +54,9 @@ class TargetMetadata(RegistryMetadata):
     @property
     def supported_auth_modes(self) -> tuple[str, ...]:
         """Auth modes this target type accepts (e.g. ``"api_key"``, ``"identity"``)."""
-        auth_modes: tuple[str, ...] = tuple(self.class_attributes.get("supported_auth_modes") or ())
-        return auth_modes
+        # TargetIdentifier projects this from PromptTarget's typed supported_auth_modes class attribute.
+        auth_modes = cast("tuple[str, ...] | None", self.class_attributes.get("supported_auth_modes"))
+        return tuple(auth_modes or ())
 
 
 class TargetRegistry(InstanceHoldingRegistry["PromptTarget", TargetMetadata]):
@@ -105,6 +106,26 @@ class TargetRegistry(InstanceHoldingRegistry["PromptTarget", TargetMetadata]):
     def _metadata_class(self) -> type[TargetMetadata]:
         """Return ``TargetMetadata``; the base populates it from the common fields."""
         return TargetMetadata
+
+    def get_credential_parameter_names(self, name: str) -> frozenset[str]:
+        """
+        Return the names of a target class's credential parameters.
+
+        A target's credentials are the parameters its class marks ``sensitive``, such as ``api_key``,
+        ``sas_token``, or ``github_token``.
+
+        Args:
+            name (str): The catalog name of the target class.
+
+        Returns:
+            frozenset[str]: The credential parameter names, or none for an unknown class.
+        """
+        metadata = self.get_registered_class_metadata(name)
+        return (
+            frozenset(parameter.name for parameter in metadata.parameters if parameter.sensitive)
+            if metadata
+            else frozenset()
+        )
 
     async def create_instance_async(
         self,

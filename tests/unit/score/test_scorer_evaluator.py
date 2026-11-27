@@ -386,6 +386,27 @@ async def test_evaluate_dataset_async_excludes_undetermined_responses(mock_objec
     assert metrics.trial_scores.shape == (2, 1)
 
 
+async def test_evaluate_dataset_async_rejects_ragged_human_scores_before_scoring(mock_objective_scorer):
+    responses = [
+        Message(message_pieces=[MessagePiece(role="assistant", original_value=value, original_value_data_type="text")])
+        for value in ["one rater", "two raters"]
+    ]
+    entries = [
+        ObjectiveHumanLabeledEntry([response], human_scores, "Test objective")
+        for response, human_scores in zip(responses, [[True], [True, False]], strict=True)
+    ]
+    dataset = HumanLabeledDataset(
+        name="test_dataset", metrics_type=MetricsType.OBJECTIVE, entries=entries, version="1.0"
+    )
+    evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
+    evaluator._score_responses_grouped_async = AsyncMock()
+
+    with pytest.raises(ValueError, match="inhomogeneous"):
+        await evaluator.evaluate_dataset_async(labeled_dataset=dataset, num_scorer_trials=3)
+
+    evaluator._score_responses_grouped_async.assert_not_called()
+
+
 async def test_evaluate_dataset_async_selects_category_before_filtering_undetermined(mock_harm_scorer):
     responses = [
         Message(message_pieces=[MessagePiece(role="assistant", original_value=value)]) for value in ["unknown", "known"]

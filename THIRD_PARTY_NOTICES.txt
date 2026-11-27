@@ -12,6 +12,8 @@ portions to native PyRIT targets, generation strategies, typed seed datasets,
 conversation scorers, and judge presets. Scoring templates are adaptations, not
 verbatim copies of ASSERT's full judge or its XML citation protocol. The tester
 prompt keeps ASSERT's text except for its turn-counter sentence.
+PyRIT also redistributes ASSERT's behavior and scenario library presets, unchanged
+except for added attribution headers, as bundled behavior and suite presets.
 ASSERT is not a runtime dependency.
 
 The provenance inventory in third_party/assert-provenance.json identifies the
@@ -160,5 +162,113 @@ A copy of the license is provided in LICENSES/ComicJailbreak-MIT.txt.
 
 Reference: Tan, Hu, and Lee, "Structured Visual Narratives Undermine Safety
 Alignment in Multimodal Large Language Models", arXiv:2603.21697.
+
+---------------------------------------------------------
+
+StrongREJECT rubric prompts - MIT
+https://github.com/dsbowen/strong_reject
+
+Copyright (c) 2024, Dillon Bowen
+
+PyRIT includes the StrongREJECT rubric judge prompt and its system prompt
+(``strongreject_rubric`` and ``strongreject_rubric_system``) from
+strong_reject/eval_files/judge_templates.json at revision
+25959bf30e91b7b32ae9cf08c99621dae7cbfd20, in
+pyrit/datasets/score/strongreject/. The two placeholders use Jinja syntax; the
+text is otherwise unchanged.
+
+Reference: Souly et al., "A StrongREJECT for Empty Jailbreaks", arXiv:2402.10260.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---------------------------------------------------------
+
+HarmBench classifier prompts - MIT
+https://github.com/centerforaisafety/HarmBench
+
+Copyright (c) 2024 centerforaisafety
+
+PyRIT includes the HarmBench behavior-classifier prompts (``LLAMA2_CLS_PROMPT``
+``prompt`` and ``prompt_contextual``) from eval_utils.py at revision
+c0423b952435fcc8467108d8f25962dbae5b7de2, in pyrit/datasets/score/harmbench/.
+The placeholders use Jinja syntax; the text is otherwise unchanged.
+
+Reference: Mazeika et al., "HarmBench: A Standardized Evaluation Framework for
+Automated Red Teaming and Robust Refusal", arXiv:2402.04249.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---------------------------------------------------------
+
+CyberSecEval judge prompt - MIT
+https://github.com/meta-llama/PurpleLlama/tree/172c1074069eb88ec834124272c1b1c4f8893445/CybersecurityBenchmarks
+License: https://github.com/meta-llama/PurpleLlama/blob/172c1074069eb88ec834124272c1b1c4f8893445/CybersecurityBenchmarks/LICENSE
+(the rest of the Purple Llama repository is under other licenses)
+
+Copyright (c) Meta Platforms, Inc. and affiliates.
+
+PyRIT includes the prompt injection judge prompt (``PROMPT_JUDGE_RESPONSE``) from
+CybersecurityBenchmarks/benchmark/prompt_injection_benchmark.py at revision
+172c1074069eb88ec834124272c1b1c4f8893445, in pyrit/datasets/score/cyberseceval/.
+The two placeholders use Jinja syntax; the text is otherwise unchanged.
+
+Reference: Bhatt et al., "CyberSecEval 2: A Wide-Ranging Cybersecurity
+Evaluation Suite for Large Language Models", arXiv:2404.13161.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ---------------------------------------------------------

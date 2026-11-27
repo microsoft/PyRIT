@@ -13,14 +13,18 @@ from pyrit.converter import (
     AtbashConverter,
     Base64Converter,
     Base2048Converter,
+    BifidConverter,
     BinAsciiConverter,
     BrailleConverter,
+    ColumnarTranspositionConverter,
     Converter,
     EcojiConverter,
     LeetspeakConverter,
     MorseConverter,
     NatoConverter,
+    PigpenConverter,
     ROT13Converter,
+    SearchReplaceConverter,
     ZalgoConverter,
 )
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
@@ -102,12 +106,12 @@ class EncodingTechnique(ScenarioTechnique):
     ALL = ("all", {"all"})
     DEFAULT = ("default", {"default"})
 
-    # Individual encoding techniques (the enum value is the encoding scheme name). Members tagged ``default``
-    # form the curated DEFAULT aggregate: a broad spread across encoding families so the default scan is a
-    # meaningful scanner run — base-N (Base64, Base2048, Base16, Base32, ASCII85, Hex), byte-encodings
-    # (QuotedPrintable, UUencode), substitution ciphers (ROT13, Atbash, LeetSpeak), and symbolic alphabets
-    # (MorseCode, NATO). The remaining niche/lossy schemes (Braille, Ecoji, Zalgo, AsciiSmuggler) are
-    # ALL-only.
+    # Individual encoding techniques (the enum value is the encoding scheme name). Each member's tag set
+    # drives the aggregates: members tagged ``default`` form the curated DEFAULT aggregate — a broad spread
+    # across encoding families (base-N, byte-encodings, substitution ciphers, symbolic alphabets) so the
+    # default scan is meaningful. Members with no ``default`` tag are ALL-only, run only by the exhaustive
+    # ``ALL`` aggregate (the niche or lossy schemes). The ALL-only set is defined by these tags, not listed
+    # here, so it stays correct as techniques are added.
     Base64 = ("base64", {"default"})
     Base2048 = ("base2048", {"default"})
     Base16 = ("base16", {"default"})
@@ -125,6 +129,11 @@ class EncodingTechnique(ScenarioTechnique):
     Zalgo = ("zalgo", set[str]())
     LeetSpeak = ("leet_speak", {"default"})
     AsciiSmuggler = ("ascii_smuggler", set[str]())
+    Bifid = ("bifid", set[str]())
+    ColumnarTransposition = ("columnar_transposition", set[str]())
+    Pigpen = ("pigpen", set[str]())
+    Disemvowel = ("disemvowel", set[str]())
+    UbbiDubbi = ("ubbi_dubbi", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -311,6 +320,15 @@ class Encoding(Scenario):
             ([ZalgoConverter()], "zalgo", "zalgo"),
             ([LeetspeakConverter()], "leet_speak", "leet_speak"),
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
+            ([BifidConverter()], "bifid", "bifid"),
+            ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
+            ([PigpenConverter()], "pigpen", "pigpen"),
+            # "disemvowel": remove all vowels ("disemvoweling"), a comment-moderation technique
+            # popularized on the Making Light blog (https://nielsenhayden.com/makinglight/).
+            ([SearchReplaceConverter(pattern="[AEIOUaeiou]", replace="")], "disemvowel", "disemvowel"),
+            # "ubbi_dubbi": a language game that prefixes each vowel run with "ub", popularized by
+            # the PBS children's show Zoom (1972). https://en.wikipedia.org/wiki/Ubbi_dubbi
+            ([SearchReplaceConverter(pattern=r"([aeiouAEIOU]+)", replace=r"ub\1")], "ubbi_dubbi", "ubbi_dubbi"),
         ]
 
     # These are the same as Garak encoding attacks
@@ -389,8 +407,19 @@ class Encoding(Scenario):
             )
         ]
 
+        # Keyed ciphers (e.g. columnar transposition) cannot be reversed from the encoding name alone,
+        # so a converter may expose ``decode_prompt_description`` disclosing its key and convention. Use
+        # it only in the decode prompts; the slug, selection, display grouping, and raw variant are
+        # unaffected since those still key off ``encoding_name``.
+        decode_name = encoding_name
+        for converter in converters:
+            description = getattr(converter, "decode_prompt_description", None)
+            if description:
+                decode_name = description
+                break
+
         for decode_index, decode_type in enumerate(self._encoding_templates):
-            converters_ = converters[:] + [AskToDecodeConverter(template=decode_type, encoding_name=encoding_name)]
+            converters_ = converters[:] + [AskToDecodeConverter(template=decode_type, encoding_name=decode_name)]
 
             converter_configs.append(
                 (
@@ -401,6 +430,7 @@ class Encoding(Scenario):
                 )
             )
 
+        seed_groups = self._seed_groups_for_converters(converters=converters, seed_groups=context.seed_groups)
         atomic_attacks = []
         for config_suffix, attack_converter_config in converter_configs:
             attack = PromptSendingAttack(
@@ -413,9 +443,53 @@ class Encoding(Scenario):
                     atomic_attack_name=f"{variant_slug}_{config_suffix}",
                     display_group=encoding_name,
                     attack_technique=AttackTechnique(attack=attack),
-                    seed_groups=list(context.seed_groups),
+                    seed_groups=seed_groups,
                     memory_labels=context.memory_labels,
                 )
             )
 
         return atomic_attacks
+
+    @staticmethod
+    def _seed_groups_for_converters(
+        *, converters: Sequence[Converter], seed_groups: Sequence[AttackSeedGroup]
+    ) -> list[AttackSeedGroup]:
+        """
+        Return the seed groups one converter variant attacks.
+
+        A converter may expose ``to_ascii_equivalent`` when it replaces characters before encoding, as
+        ``AsciiSmugglerConverter`` does with curly quotes, dashes and newlines, so a target that decodes it
+        correctly answers with that replaced text. Such a variant gets copies of the seed groups whose prompts
+        carry that text as ``decoded_text`` metadata, which ``DecodingScorer`` accepts alongside the original
+        value. Other variants and the baseline keep the shared groups, so their scoring still requires the
+        exact original text.
+
+        Args:
+            converters (Sequence[Converter]): The converters this variant applies.
+            seed_groups (Sequence[AttackSeedGroup]): The seed groups selected for this run.
+
+        Returns:
+            list[AttackSeedGroup]: The seed groups for this variant's atomic attacks.
+        """
+        fold = next(
+            (
+                to_ascii_equivalent
+                for converter in converters
+                if (to_ascii_equivalent := getattr(converter, "to_ascii_equivalent", None)) is not None
+            ),
+            None,
+        )
+        if fold is None:
+            return list(seed_groups)
+
+        variant_seed_groups = []
+        for seed_group in seed_groups:
+            copied_group = seed_group.model_copy(deep=True)
+            for prompt in copied_group.prompts:
+                if prompt.data_type != "text":
+                    continue
+                ascii_value = fold(text=prompt.value)
+                if ascii_value is not None and ascii_value != prompt.value:
+                    prompt.metadata = {**(prompt.metadata or {}), "decoded_text": ascii_value}
+            variant_seed_groups.append(copied_group)
+        return variant_seed_groups

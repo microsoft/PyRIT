@@ -5,13 +5,14 @@ import copy
 import math
 import uuid
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Self, cast
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
 from pyrit.models import (
     ComponentIdentifier,
+    FloatFeedback,
     Scorable,
     ScorableUnion,
     Score,
@@ -95,9 +96,9 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         return self._create_identifier(
             params={
                 "threshold": self._threshold,
-                "float_scale_aggregator": self._float_scale_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+                "float_scale_aggregator": self._float_scale_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             sub_scorers=[self._scorer.get_identifier()],
         )
 
@@ -110,7 +111,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
-    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Self:
         """
         Apply the policy to the wrapped float-scale scorer.
 
@@ -121,14 +122,21 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             Scorer: ``self`` when the wrapped scorer is unchanged, otherwise a copy wrapping
             the updated scorer.
         """
-        scoped_inner = cast(
-            "FloatScaleScorer", self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
-        )
+        scoped_inner = self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
         if scoped_inner is self._scorer:
             return self
         scoped = copy.copy(self)
         scoped._scorer = scoped_inner
         return scoped
+
+    def _preserves_float_scale_value(self) -> bool:
+        """
+        Promise the aggregated scale value on every complete verdict.
+
+        Returns:
+            bool: Always True; each complete result keeps the value the threshold was applied to.
+        """
+        return True
 
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return the scorer whose value is compared to the threshold."""
@@ -216,7 +224,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             # threshold can only be applied to a single value. Silently taking the
             # first one would decide the verdict from one category and drop the rest.
             raise ValueError(
-                f"{self._float_scale_aggregator.__name__} returned {len(aggregate_results)} results. "  # type: ignore[ty:unresolved-attribute]
+                f"{self._float_scale_aggregator.__name__} returned {len(aggregate_results)} results. "  # type: ignore[ty:missing-attribute]
                 "FloatScaleThresholdScorer requires an aggregator that combines the scores into exactly "
                 "one result, such as FloatScaleScoreAggregator.MAX; a by-category aggregator such as "
                 "FloatScaleScorerByCategory.MAX cannot be thresholded."
@@ -278,9 +286,6 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         score.scorer_class_identifier = self.get_identifier()
         score.observation_ids = _merge_observation_ids(scores=scores)
         # Store the original float value in metadata for granular comparison
-        score.score_metadata = {
-            **aggregate_score.metadata,
-            ORIGINAL_FLOAT_VALUE_KEY: aggregate_value,
-        }
+        score.score_metadata = FloatFeedback(value=aggregate_value).write_to(aggregate_score.metadata)
 
         return [score]

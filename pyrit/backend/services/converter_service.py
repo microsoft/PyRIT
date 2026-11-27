@@ -49,11 +49,22 @@ from pyrit.backend.services.media_persistence import (
     results_container_url,
     validate_blob_media_url,
 )
+from pyrit.backend.services.saved_entries import SavedEntryRemovalError
 from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
 from pyrit.models import ConverterIdentifier, MessagePiece, Parameter, PromptDataType
+from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.registry import ConverterRegistry
+from pyrit.registry import (
+    ConverterRegistry,
+    NotSaveableError,
+    SavedEntryConflictError,
+    creator_metadata,
+    prepare_saved_params_async,
+    record_private_references,
+    save_then_register_async,
+)
+from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin
 from pyrit.registry.registry import Reconstructable
 
 _OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
@@ -76,7 +87,9 @@ class ConverterService:
         self._artifact_lock = asyncio.Lock()
         self._provenance_key = secrets.token_bytes(32)
 
-    def _build_instance_from_object(self, *, converter_id: str, converter_obj: Any) -> ConverterInstance:
+    def _build_instance_from_object(
+        self, *, converter_id: str, converter_obj: Any, origin: RegistryEntryOrigin | None = None
+    ) -> ConverterInstance:
         """
         Build a ConverterInstance from a registry object.
 
@@ -92,6 +105,7 @@ class ConverterService:
             converter_obj=converter_obj,
             is_llm_based=metadata.is_llm_based if metadata else False,
             description=description,
+            origin=origin,
         )
         if isinstance(converter_obj, Reconstructable):
             try:
@@ -121,11 +135,12 @@ class ConverterService:
         """Remove this backend's temporary inputs after requests have stopped."""
         owned_entries = [
             entry
-            for entry in self._registry.instances.get_all_instances()
+            for entry in self._registry.instances.get_all_instances_of_every_owner()
             if any(path.is_relative_to(self._upload_path) for path in self._get_owned_artifact_paths(entry.metadata))
         ]
         await asyncio.to_thread(self._upload_directory.cleanup)
         for entry in owned_entries:
+            # Holding the entry removes it whoever owns it.
             self._registry.instances.unregister(entry.name, expected_entry=entry)
 
     async def list_converters_async(self) -> ConverterInstanceListResponse:
@@ -136,7 +151,9 @@ class ConverterService:
             ConverterInstanceListResponse containing all registered converters.
         """
         items = [
-            self._build_instance_from_object(converter_id=entry.name, converter_obj=entry.instance)
+            self._build_instance_from_object(
+                converter_id=entry.name, converter_obj=entry.instance, origin=registry_entry_origin(entry.metadata)
+            )
             for entry in self._registry.instances.get_all_instances()
         ]
         return ConverterInstanceListResponse(items=items)
@@ -178,10 +195,12 @@ class ConverterService:
         Returns:
             ConverterInstance if found, None otherwise.
         """
-        obj = self._registry.instances.get(converter_id)
-        if obj is None:
+        entry = self._registry.instances.get_entry(converter_id)
+        if entry is None:
             return None
-        return self._build_instance_from_object(converter_id=converter_id, converter_obj=obj)
+        return self._build_instance_from_object(
+            converter_id=converter_id, converter_obj=entry.instance, origin=registry_entry_origin(entry.metadata)
+        )
 
     def get_converter_object(self, *, converter_id: str) -> Any | None:
         """
@@ -198,16 +217,25 @@ class ConverterService:
 
         Returns:
             bool: True when an instance was removed, otherwise False.
+
+        Raises:
+            SavedEntryRemovalError: If the converter is saved, so it would come back from its saved file.
         """
         async with self._artifact_lock:
             entry = self._registry.instances.get_entry(converter_id)
             if entry is None:
                 return False
+            if registry_entry_origin(entry.metadata) is RegistryEntryOrigin.SAVED:
+                raise SavedEntryRemovalError(
+                    f"Saved converter '{converter_id}' can't be removed yet, since it comes back from its saved "
+                    "file at every start."
+                )
 
             owned_paths = self._get_owned_artifact_paths(entry.metadata)
+            # Other callers' private converters can share these files too.
             shared_paths = {
                 path
-                for other in self._registry.instances.get_all_instances()
+                for other in self._registry.instances.get_all_instances_of_every_owner()
                 if other is not entry
                 for path in self._get_owned_artifact_paths(other.metadata)
             }
@@ -216,17 +244,26 @@ class ConverterService:
             return self._registry.instances.unregister(converter_id, expected_entry=entry) is not None
 
     async def create_converter_async(
-        self, *, request: CreateConverterRequest
+        self,
+        *,
+        request: CreateConverterRequest,
+        owner: SavedEntryOwner | None = None,
+        recipes_source: str | None = None,
     ) -> ConverterInstance | UnregisteredConverter:
         """
         Create a new converter instance from API request.
 
         Instantiates the converter with the given type and params and builds the
         response before registering it, so a request that fails at any step leaves
-        no registered converter and removes its uploaded files.
+        no registered converter and removes its uploaded files. A converter built from
+        the caller's private target or converter is private to the caller too. With
+        ``persist``, the converter is saved so it is restored at every start; otherwise
+        it is Temporary.
 
         Args:
             request: The create converter request with type and params.
+            owner: The signed-in user, recorded on a saved converter, or None when sign-in is off.
+            recipes_source: Where saved entries are stored, or None for the default folder.
 
         Returns:
             ConverterInstance with the new converter's details.
@@ -234,9 +271,45 @@ class ConverterService:
         Raises:
             ValueError: If the converter type is not found or the registry name is
                 unavailable.
+            NotSaveableError: If a converter to save would hold a credential or use an uploaded file, or
+                names a Temporary entry.
+            SavedEntryConflictError: If a converter to save has the name of a registered or saved converter.
+            SavedEntryStorageError: If a converter to save can't be written to storage.
+        """
+        if request.private and not request.register_instance:
+            raise ValueError("A private converter must be registered; set register=true.")
+        with record_private_references() as private_references:
+            return await self._create_converter_recording_private_references_async(
+                request=request, private_references=private_references, owner=owner, recipes_source=recipes_source
+            )
+
+    async def _create_converter_recording_private_references_async(
+        self,
+        *,
+        request: CreateConverterRequest,
+        private_references: dict[str, str],
+        owner: SavedEntryOwner | None,
+        recipes_source: str | None,
+    ) -> ConverterInstance | UnregisteredConverter:
+        """
+        Create a converter while the private entries it uses are recorded in ``private_references``.
+
+        Returns:
+            ConverterInstance | UnregisteredConverter: The new converter's details.
+
+        Raises:
+            ValueError: If the converter type is not found or the registry name is unavailable.
         """
         if request.type not in self._registry:
             raise ValueError(f"Converter type '{request.type}' not found")
+        if request.persist and request.name is not None:
+            return await self._save_converter_async(
+                name=request.name,
+                request=request,
+                private_references=private_references,
+                owner=owner,
+                recipes_source=recipes_source,
+            )
         if request.register_instance:
             if request.name is None:
                 raise ValueError("name is required when register=true")
@@ -288,7 +361,9 @@ class ConverterService:
                 )
             if request.name is None:
                 raise ValueError("name is required when register=true")
-            converter = self._build_instance_from_object(converter_id=request.name, converter_obj=converter_obj)
+            converter = self._build_instance_from_object(
+                converter_id=request.name, converter_obj=converter_obj, origin=RegistryEntryOrigin.TEMPORARY
+            )
             # Do not inherit files while deletion is already removing them.
             async with self._artifact_lock:
                 inherited_paths: list[Path] = []
@@ -302,11 +377,15 @@ class ConverterService:
                         if entry.instance is source
                         for path in self._get_owned_artifact_paths(entry.metadata)
                     ]
+                creator = creator_metadata(
+                    name=request.name, requested_private=request.private, private_references=private_references
+                )
                 self._registry.instances.register(
                     converter_obj,
                     name=request.name,
                     metadata={
-                        _OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in dict.fromkeys(owned_paths + inherited_paths)]
+                        _OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in dict.fromkeys(owned_paths + inherited_paths)],
+                        **creator,
                     },
                 )
         except (Exception, asyncio.CancelledError):
@@ -317,6 +396,68 @@ class ConverterService:
             if not request.register_instance:
                 await self._remove_owned_artifacts_async(paths=owned_paths)
 
+        return converter
+
+    async def _save_converter_async(
+        self,
+        *,
+        name: str,
+        request: CreateConverterRequest,
+        private_references: dict[str, str],
+        owner: SavedEntryOwner | None,
+        recipes_source: str | None,
+    ) -> ConverterInstance:
+        """
+        Build the requested converter, save its recipe, then register it as a saved entry.
+
+        It is built as restore builds it, with no file parameters, and the recipe names the class by
+        the registry name the request used, which restore looks up.
+
+        Returns:
+            ConverterInstance: The saved converter.
+
+        Raises:
+            NotSaveableError: If the converter would hold a credential or use an uploaded file, or names a
+                Temporary entry.
+            SavedEntryConflictError: If a saved or registered converter already has the name.
+            SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
+        """
+        refusal = self._required_upload_refusal(converter_type=request.type)
+        if refusal is not None:
+            raise NotSaveableError(refusal)
+        upload_params = self._upload_params(converter_type=request.type)
+        # An optional file left empty means no file, so the converter is saved without it, as restore builds it.
+        left_empty = self._optional_uploads_left_empty(upload_params=upload_params, params=request.params)
+        requested = {name: value for name, value in request.params.items() if name not in left_empty}
+        uploads = [parameter for parameter in upload_params if parameter in requested]
+        if uploads:
+            raise NotSaveableError(f"Saved converters can't keep uploaded files yet ('{uploads[0]}').")
+        converter_cls = self._registry.get_class(request.type)
+        params = await prepare_saved_params_async(
+            registry=self._registry, type_name=request.type, cls=converter_cls, params=requested
+        )
+        try:
+            self._registry.instances.validate_name_available(name)
+        except RegistryNameTakenError as error:
+            raise SavedEntryConflictError(str(error)) from error
+        converter_obj = await construct_component_async(
+            self._registry.create_instance_from_external_input, request.type, params=params
+        )
+        converter = self._build_instance_from_object(
+            converter_id=name, converter_obj=converter_obj, origin=RegistryEntryOrigin.SAVED
+        )
+        creator = creator_metadata(name=name, requested_private=request.private, private_references=private_references)
+        await save_then_register_async(
+            kind=RegistryRecipeKind.CONVERTERS,
+            name=name,
+            recipe=ComponentRecipe(
+                class_module=converter_cls.__module__, class_name=request.type, params=params, owner=owner
+            ),
+            source=recipes_source,
+            register=lambda metadata: self._registry.instances.register(
+                converter_obj, name=name, metadata={**creator, **metadata}
+            ),
+        )
         return converter
 
     async def preview_conversion_async(self, *, request: ConverterPreviewRequest) -> ConverterPreviewResponse:
@@ -456,6 +597,41 @@ class ConverterService:
             if parameter.is_path or parameter.is_path_or_str
         }
 
+    def _required_upload_refusal(self, *, converter_type: str) -> str | None:
+        """
+        Return why a converter type that needs an uploaded file can't be saved.
+
+        Args:
+            converter_type (str): The registered converter class name.
+
+        Returns:
+            str | None: The reason, or None when the type needs no uploaded file.
+        """
+        if any(parameter.required for parameter in self._upload_params(converter_type=converter_type).values()):
+            return "It needs an uploaded file, which saved converters can't keep yet."
+        return None
+
+    @staticmethod
+    def _optional_uploads_left_empty(*, upload_params: dict[str, Parameter], params: dict[str, Any]) -> frozenset[str]:
+        """
+        Return the optional upload parameters that ``params`` leaves empty, as None or ``''``, which means no file.
+
+        Saving and the Temporary create both use this, so an empty optional file means the same on both. An empty
+        required upload isn't included, so it's refused as before.
+
+        Args:
+            upload_params (dict[str, Parameter]): The converter's upload parameters by name.
+            params (dict[str, Any]): The constructor parameters from the request.
+
+        Returns:
+            frozenset[str]: The names of the optional upload parameters left empty.
+        """
+        return frozenset(
+            name
+            for name, parameter in upload_params.items()
+            if not parameter.required and name in params and params[name] in (None, "")
+        )
+
     async def _persist_data_uri_params_async(
         self,
         *,
@@ -474,7 +650,8 @@ class ConverterService:
         ``Path | str`` parameters also accept Azure Blob URLs, which pass through
         unchanged; with Azure Blob results storage they must name a file in the
         results container's media subdirectories. Their data-URI uploads use the
-        same local storage.
+        same local storage. An optional file left empty (None or ``''``) means no
+        file, as when saving, and is passed as None.
 
         Inputs remain local until converter deletion or backend shutdown, even with
         Azure-backed memory. Converter outputs still use the configured result storage.
@@ -496,8 +673,10 @@ class ConverterService:
                 is outside the results container's media subdirectories.
         """
         path_params = self._upload_params(converter_type=converter_type)
+        # None, not a left-out key, so a copy doesn't keep its source's file.
+        left_empty = self._optional_uploads_left_empty(upload_params=path_params, params=params)
 
-        result = dict(params)
+        result = {name: None if name in left_empty else value for name, value in params.items()}
         owned_paths: list[Path] = []
         try:
             for name, value in result.items():

@@ -6,7 +6,7 @@ from __future__ import annotations
 import enum
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -40,6 +40,7 @@ from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
+    from typing import Self
 
     from pyrit.score.observation.execution import _ObservationEvidence
 
@@ -73,7 +74,7 @@ class ContentClassifier(BaseModel):
     no_category_found: str
 
     @model_validator(mode="after")
-    def _validate_fallback_category(self) -> ContentClassifier:
+    def _validate_fallback_category(self) -> Self:
         category_names = [category.name for category in self.categories]
         if len(set(category_names)) != len(category_names):
             raise ValueError("Content classifier category names must be unique.")
@@ -82,7 +83,7 @@ class ContentClassifier(BaseModel):
         return self
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> ContentClassifier:
+    def from_yaml(cls, path: str | Path) -> Self:
         """
         Load a content classifier from a YAML file.
 
@@ -291,7 +292,7 @@ class SelfAskCategoryScorer(MessageTrueFalseScorer):
         response_handler: ResponseHandler | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
         validator: ScorerPromptValidator | None = None,
-    ) -> SelfAskCategoryScorer:
+    ) -> Self:
         """
         Build a scorer whose system prompt and response contract use one content classifier.
 
@@ -345,7 +346,7 @@ class SelfAskCategoryScorer(MessageTrueFalseScorer):
                 "content_classifier": self._content_classifier.model_dump(),
                 "response_json_schema": self._response_handler.json_response_config.json_schema,
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             prompt_target=self._prompt_target.get_identifier(),
         )
 

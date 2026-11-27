@@ -4,10 +4,10 @@
 import uuid
 from pathlib import Path
 
-from unit.mocks import make_scenario_result
+from unit.mocks import make_judged_scenario_result, make_scenario_result
 
-from build_scripts.export_adversarial_benchmark_result import _write_overview_async
-from pyrit.models import AttackOutcome, AttackResult, ScenarioResult
+from build_scripts.export_adversarial_benchmark_result import _build_technique_metrics, _write_overview_async
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioResult
 
 
 def _attack_result() -> AttackResult:
@@ -91,3 +91,34 @@ async def test_write_overview_deduplicates_datasets_without_attack_results_async
     assert "Distinct Adversarial Models: 2" in overview
     assert "Technique/Model Combinations: 2" in overview
     assert "Total Objective Executions: 0" in overview
+
+
+def test_technique_metrics_count_each_seed_group_even_when_objectives_repeat() -> None:
+    result = make_judged_scenario_result(
+        groups=[("tap__model_a", None, None, [AttackOutcome.SUCCESS, AttackOutcome.FAILURE])],
+        display_group_map={"tap__model_a": "model_a"},
+    )
+    for attack_result in result.attack_results["tap__model_a"]:
+        attack_result.objective = "same objective"
+
+    [metrics] = _build_technique_metrics(result=result)
+
+    assert (metrics["technique"], metrics["adversarial_model"]) == ("tap", "model_a")
+    assert (metrics["total"], metrics["success"], metrics["failure"], metrics["retry_records"]) == (2, 1, 1, 0)
+    assert (metrics["success_rate"], metrics["success_rate_decided"]) == (0.5, 0.5)
+
+
+def test_technique_metrics_name_the_judge_and_leave_undecided_rates_empty() -> None:
+    objective_scorer = ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers")
+    result = make_judged_scenario_result(
+        groups=[("tap__model_a", None, objective_scorer, [AttackOutcome.UNDETERMINED])],
+        display_group_map={"tap__model_a": "model_a"},
+    )
+
+    [metrics] = _build_technique_metrics(result=result)
+
+    assert (metrics["success_rate"], metrics["success_rate_decided"]) == (0.0, None)
+    assert (metrics["objective_scorer"], metrics["objective_scorer_attribution"]) == (
+        f"JudgeA ({objective_scorer.hash[:12]})",
+        "recorded",
+    )

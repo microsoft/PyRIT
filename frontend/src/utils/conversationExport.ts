@@ -138,6 +138,7 @@ export async function exportConversation({
  * Free text is wrapped in dynamically sized code fences, and inline metadata
  * (attachment names, error text) has its newlines collapsed, so untrusted
  * content cannot corrupt the document structure.
+ * Converted text and media descriptions retain their display-piece order.
  */
 export function conversationToMarkdown(
   messages: Message[],
@@ -154,7 +155,8 @@ export function conversationToMarkdown(
   ]
 
   for (const message of exported) {
-    lines.push('', `## ${ROLE_LABELS[message.role]} — ${inlineText(message.timestamp)}`, '', fencedBlock(message.content))
+    lines.push('', `## ${ROLE_LABELS[message.role]} — ${inlineText(message.timestamp)}`)
+    appendMarkdownBody(lines, message)
 
     if (message.originalContent != null && message.originalContent !== message.content) {
       lines.push('', '**Original (before conversion):**', '', fencedBlock(message.originalContent))
@@ -167,7 +169,6 @@ export function conversationToMarkdown(
       const description = message.error.description ? `: ${inlineText(message.error.description)}` : ''
       lines.push('', `**Error (${inlineText(message.error.type)})**${description}`)
     }
-    appendAttachmentList(lines, 'Attachments:', message.attachments)
   }
 
   return `${lines.join('\n')}\n`
@@ -328,6 +329,10 @@ function attachmentForExport(attachment: MessageAttachment): MessageAttachment {
   return next
 }
 
+function formatAttachmentItem(attachment: MessageAttachment): string {
+  return `- ${inlineText(attachment.type)}: ${inlineText(attachment.name)} (${inlineText(attachment.mimeType)})`
+}
+
 function appendAttachmentList(
   lines: string[],
   heading: string,
@@ -338,7 +343,74 @@ function appendAttachmentList(
   }
   lines.push('', `**${heading}**`, '')
   for (const attachment of attachments) {
-    lines.push(`- ${inlineText(attachment.type)}: ${inlineText(attachment.name)} (${inlineText(attachment.mimeType)})`)
+    lines.push(formatAttachmentItem(attachment))
+  }
+}
+
+type OrderedBodySegment =
+  | { type: 'text'; content: string }
+  | { type: 'media'; attachment: MessageAttachment }
+
+function orderedBodySegments(message: Message): OrderedBodySegment[] | null {
+  const pieces = message.displayPieces
+  if (!pieces || pieces.length === 0) {
+    return null
+  }
+  // HTML pairs these attachments with budgeted resolutions by position.
+  // The flat representation still lists every attachment if the counts disagree.
+  const mediaPieces = pieces.filter((piece) => piece.type === 'media' && piece.attachment)
+  if (mediaPieces.length !== (message.attachments?.length ?? 0)) {
+    return null
+  }
+
+  const segments: OrderedBodySegment[] = []
+  let pendingText: string[] = []
+  const flushText = () => {
+    if (pendingText.length > 0) {
+      segments.push({ type: 'text', content: pendingText.join('\n') })
+      pendingText = []
+    }
+  }
+  for (const piece of pieces) {
+    if (piece.type === 'text') {
+      if (piece.content !== '') {
+        pendingText.push(piece.content)
+      }
+      continue
+    }
+    if (!piece.attachment) {
+      continue
+    }
+    flushText()
+    segments.push({ type: 'media', attachment: piece.attachment })
+  }
+  flushText()
+  return segments
+}
+
+function appendMarkdownBody(lines: string[], message: Message): void {
+  const segments = orderedBodySegments(message)
+  if (segments === null) {
+    lines.push('', fencedBlock(message.content))
+    appendAttachmentList(lines, 'Attachments:', message.attachments)
+    return
+  }
+
+  let inList = false
+  for (const segment of segments) {
+    if (segment.type === 'text') {
+      lines.push('', fencedBlock(segment.content))
+      inList = false
+      continue
+    }
+    if (!inList) {
+      lines.push('')
+      inList = true
+    }
+    lines.push(formatAttachmentItem(segment.attachment))
+  }
+  if (segments.length === 0 && message.content === '') {
+    lines.push('', fencedBlock(''))
   }
 }
 
@@ -682,48 +754,22 @@ function renderMessage(message: Message, resolved: ResolvedMedia['perMessage'][n
  * fields remain the fallback rather than the primary path.
  */
 function renderBody(message: Message, resolved: ResolvedAttachment[]): string[] {
-  const flat = () => [renderText(message.content), renderAttachments('Attachments:', message.attachments, resolved)]
-  const pieces = message.displayPieces
-  if (!pieces || pieces.length === 0) {
-    return flat()
-  }
-  // Every attachment resolved above was billed against the budget and counted
-  // in the summary, so the pieces have to account for exactly those. If they
-  // ever disagree, the flat list is the only rendering that still shows all of
-  // them, and an honest count matters more than the order.
-  const mediaPieces = pieces.filter((piece) => piece.type === 'media' && piece.attachment)
-  if (mediaPieces.length !== (message.attachments?.length ?? 0)) {
-    return flat()
+  const segments = orderedBodySegments(message)
+  if (segments === null) {
+    return [renderText(message.content), renderAttachments('Attachments:', message.attachments, resolved)]
   }
   const parts: string[] = []
-  let pending: string[] = []
   // `message.attachments` lists piece attachments in piece order, so the nth
   // media piece that has one is the nth entry — and the nth resolution.
   let attachmentIndex = 0
-  const flushText = () => {
-    if (pending.length > 0) {
-      parts.push(renderText(pending.join('\n')))
-      pending = []
-    }
-  }
-  for (const piece of pieces) {
-    if (piece.type === 'text') {
-      // Consecutive text pieces stay in one block: splitting them would add
-      // paragraph breaks the chat never showed.
-      if (piece.content !== '') {
-        pending.push(piece.content)
-      }
+  for (const segment of segments) {
+    if (segment.type === 'text') {
+      parts.push(renderText(segment.content))
       continue
     }
-    // A scores-only media piece has no bytes to show.
-    if (!piece.attachment) {
-      continue
-    }
-    flushText()
-    parts.push(renderAttachment(piece.attachment, resolved[attachmentIndex] ?? { source: null, reason: 'unreadable' }))
+    parts.push(renderAttachment(segment.attachment, resolved[attachmentIndex] ?? { source: null, reason: 'unreadable' }))
     attachmentIndex += 1
   }
-  flushText()
   return parts
 }
 

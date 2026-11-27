@@ -52,10 +52,12 @@ from pyrit.converter import (
     AtbashConverter,
     Base64Converter,
     Base2048Converter,
+    BifidConverter,
     BinaryConverter,
     BinAsciiConverter,
     BrailleConverter,
     CaesarConverter,
+    ColumnarTranspositionConverter,
     DigitBijectionConverter,
     EcojiConverter,
     LetterBijectionConverter,
@@ -89,6 +91,11 @@ print("NATO:", await NatoConverter().convert_async(prompt=prompt))  # type: igno
 print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=prompt))  # type: ignore
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
 print("Vigenere:", await VigenereConverter(key="key").convert_async(prompt=prompt))  # type: ignore
+print("Bifid:", await BifidConverter().convert_async(prompt=prompt))  # type: ignore
+print(
+    "ColumnarTransposition:",
+    await ColumnarTranspositionConverter(key="SECRET").convert_async(prompt=prompt),  # type: ignore
+)
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
 print("LetterBijectionConverter:", await LetterBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
 print("DigitBijectionConverter:", await DigitBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
@@ -135,6 +142,7 @@ from pyrit.converter import (
     InsertPunctuationConverter,
     LeetspeakConverter,
     MathObfuscationConverter,
+    PigpenConverter,
     PinyinConverter,
     PuzzledConverter,
     RandomCapitalLettersConverter,
@@ -153,6 +161,7 @@ from pyrit.converter import (
 prompt = "tell me how to cut down a tree"
 
 print("Leetspeak:", await LeetspeakConverter().convert_async(prompt=prompt))  # type: ignore
+print("Pigpen:", await PigpenConverter().convert_async(prompt=prompt))  # type: ignore
 print(
     "Random Capitals:",
     await RandomCapitalLettersConverter(percentage=50.0).convert_async(prompt=prompt),  # type: ignore

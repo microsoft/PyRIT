@@ -32,6 +32,7 @@ from pyrit.memory.migration import (
     _PrefixedTextStream,
     _repair_legacy_attack_identifiers,
     check_schema_migrations,
+    check_schema_upgradable,
     generate_schema_migration,
     run_schema_migrations,
 )
@@ -183,6 +184,42 @@ def test_run_schema_migrations_applies_head_revision():
             assert version == expected_head
         finally:
             engine.dispose()
+
+
+def test_check_schema_upgradable_accepts_unversioned_and_known_revisions() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        check_schema_upgradable(engine=engine)
+        with engine.begin() as connection:
+            command.stamp(_make_config(connection=connection), _INITIAL_REVISION)
+        check_schema_upgradable(engine=engine)
+    finally:
+        engine.dispose()
+
+
+def test_check_schema_upgradable_rejects_revision_from_newer_release() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(f"CREATE TABLE {PYRIT_MEMORY_ALEMBIC_VERSION_TABLE} (version_num VARCHAR(32) NOT NULL)")
+            )
+            connection.execute(text(f"INSERT INTO {PYRIT_MEMORY_ALEMBIC_VERSION_TABLE} VALUES ('fffffffffff0')"))
+        with pytest.raises(RuntimeError, match="fffffffffff0 are not in this release's migrations"):
+            check_schema_upgradable(engine=engine)
+    finally:
+        engine.dispose()
+
+
+def test_check_schema_upgradable_rejects_database_already_at_head() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            command.stamp(_make_config(connection=connection), "head")
+        with pytest.raises(RuntimeError, match="already at this release's migration head"):
+            check_schema_upgradable(engine=engine)
+    finally:
+        engine.dispose()
 
 
 def test_run_schema_migrations_preserves_malformed_legacy_attack_identifier() -> None:

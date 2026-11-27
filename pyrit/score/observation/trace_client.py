@@ -190,6 +190,30 @@ class InMemoryTraceClient:
                 coverage=TraceCoverage(complete=not reasons, reasons=tuple(reasons)),
             )
 
+    def find_trace_ids(self, *, keys: Sequence[str], value: str) -> set[str]:
+        """
+        Find the retained traces with a span whose attribute under any of ``keys`` equals ``value``.
+
+        Used to resolve a provider's own identifiers to the trace that recorded them.
+
+        Args:
+            keys (Sequence[str]): The attribute names to check.
+            value (str): The identifier to match exactly.
+
+        Returns:
+            set[str]: The matching trace ids; empty when none match.
+
+        Raises:
+            TraceAcquisitionError: If capture is closed.
+        """
+        with self._lock:
+            self._check_open()
+            return {
+                trace_id
+                for (trace_id, _), span in self._spans.items()
+                if any(span.attributes.get(key) == value for key in keys)
+            }
+
     def close(self) -> None:
         """Stop capture and retrieval without affecting any SDK provider."""
         with self._lock:

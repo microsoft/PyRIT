@@ -23,6 +23,8 @@ from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.promptgen import AssertGenerator, AssertGeneratorContext
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
+    AssertGenerationCheckpoint,
+    AssertGenerationStage,
     AssertGroupMetadata,
     JsonResponseConfig,
     Message,
@@ -143,8 +145,8 @@ class TestAssertGenerator:
         with patch.object(target, "_send_prompt_to_target_async", side_effect=assert_generation_response_async) as send:
             await AssertGenerator(target=target).execute_async(config=config)
         stages = [
-            call.kwargs["normalized_conversation"][-1].get_piece().prompt_metadata["assert_stage"]
-            for call in send.call_args_list
+            send_call.kwargs["normalized_conversation"][-1].get_piece().prompt_metadata["assert_stage"]
+            for send_call in send.call_args_list
         ]
         assert "dimensions" not in stages
 
@@ -167,8 +169,8 @@ class TestAssertGenerator:
         )
         with patch.object(target, "_send_prompt_to_target_async", side_effect=assert_generation_response_async) as send:
             await AssertGenerator(target=target).execute_async(config=config)
-        for call in send.call_args_list:
-            request = call.kwargs["normalized_conversation"][-1].get_piece()
+        for send_call in send.call_args_list:
+            request = send_call.kwargs["normalized_conversation"][-1].get_piece()
             payload = json.loads(request.converted_value)
             assert payload["behavior_description"] == config.behavior_description
             assert payload["context"] == config.context
@@ -494,12 +496,12 @@ class TestAssertGenerator:
         ):
             await AssertGenerator(target=target, research_target=research).execute_async(config=config)
         research_stages = {
-            call.kwargs["normalized_conversation"][-1].get_piece().prompt_metadata["assert_stage"]
-            for call in search.call_args_list
+            send_call.kwargs["normalized_conversation"][-1].get_piece().prompt_metadata["assert_stage"]
+            for send_call in search.call_args_list
         }
         generation_stages = {
-            call.kwargs["normalized_conversation"][-1].get_piece().prompt_metadata["assert_stage"]
-            for call in send.call_args_list
+            send_call.kwargs["normalized_conversation"][-1].get_piece().prompt_metadata["assert_stage"]
+            for send_call in send.call_args_list
         }
         assert research_stages == {"systematization", "dimensions"}
         assert generation_stages == {"taxonomy", "seed_groups"}
@@ -676,3 +678,8 @@ class TestAssertGenerator:
         )
         with pytest.raises(ValueError, match="supports_editable_history"):
             AssertGenerator(target=target)
+
+    def test_estimate_policy_stage_rejects_seed_groups(self) -> None:
+        checkpoint = AssertGenerationCheckpoint(config=make_assert_config())
+        with pytest.raises(ValueError, match="estimated separately"):
+            AssertGenerator._estimate_policy_stage(checkpoint=checkpoint, stage=AssertGenerationStage.SEED_GROUPS)
