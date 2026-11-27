@@ -10,6 +10,7 @@ import type { AttackMetadata, AttackSummary, ConversationMessagesResponse, Regis
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
+import '@/test-utils/preloadLazyScreens'
 
 const mockGetActiveAccount = jest.fn()
 const mockMsalInstance = { getActiveAccount: mockGetActiveAccount }
@@ -195,7 +196,7 @@ describe('App target selection with the chat composer', () => {
       items: [sdkTarget, targetA], pagination: { limit: 200, has_more: false },
     })
     render(<App />, { wrapper: TestWrapper })
-    const selector = screen.getByRole('combobox', { name: 'Objective target' })
+    const selector = await screen.findByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(selector).toBeEnabled())
     expect(selector).toHaveValue('')
     expect(screen.queryByRole('option', { name: /sdk-demo/ })).not.toBeInTheDocument()
@@ -222,7 +223,7 @@ describe('App target selection with the chat composer', () => {
   it('selects a new-chat target from the badge without changing the default', async () => {
     const user = userEvent.setup()
     render(<App />, { wrapper: TestWrapper })
-    const selector = screen.getByRole('combobox', { name: 'Objective target' })
+    const selector = await screen.findByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(selector).toBeEnabled())
     await user.selectOptions(selector, 'target-b')
     expect(selector).toHaveValue('target-b')
@@ -252,7 +253,7 @@ describe('App target selection with the chat composer', () => {
     saveDefault('alice', targetA)
     jest.mocked(attacksApi.createAttack).mockResolvedValue(savedAttack)
     render(<App />, { wrapper: TestWrapper })
-    const selector = screen.getByRole('combobox', { name: 'Objective target' })
+    const selector = await screen.findByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(selector).toHaveValue('target-a'))
     await user.selectOptions(selector, 'target-b')
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Prompt for B')
@@ -364,7 +365,7 @@ describe('App target selection with the chat composer', () => {
       isAxiosError: true, response: { status: 409, data: { detail: 'Configured scorer is unavailable.' } },
     })
     render(<App />, { wrapper: TestWrapper })
-    const target = screen.getByRole('combobox', { name: 'Objective target', exact: true })
+    const target = await screen.findByRole('combobox', { name: 'Objective target', exact: true })
     await waitFor(() => expect(target).toBeEnabled())
     await user.selectOptions(target, 'target-a')
     await user.click(screen.getByRole('button', { name: 'Add objective', exact: true }))

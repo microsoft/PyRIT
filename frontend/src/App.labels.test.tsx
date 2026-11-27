@@ -21,6 +21,7 @@ import { INITIAL_SCENARIO_RUN_PROGRESS_STATE } from '@/utils/scenarioRunProgress
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
+import '@/test-utils/preloadLazyScreens'
 
 const mockGetActiveAccount = jest.fn()
 const mockMsalInstance = { getActiveAccount: mockGetActiveAccount }
@@ -359,7 +360,7 @@ describe('Shared new run labels', () => {
       pagination: { limit: 200, has_more: false },
     })
     renderApp('/attack/chat')
-    const toolbar = screen.getByRole('group', { name: 'Chat controls' })
+    const toolbar = await screen.findByRole('group', { name: 'Chat controls' })
     expect(currentLabels()).not.toContainElement(toolbar)
     expect(currentLabels().compareDocumentPosition(toolbar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(toolbar.compareDocumentPosition(screen.getByTestId('objective-header')) & Node.DOCUMENT_POSITION_FOLLOWING)
@@ -417,7 +418,7 @@ describe('Shared new run labels', () => {
   it('leaves saved scenario attribution unchanged when future launch labels change', async () => {
     const user = userEvent.setup()
     renderApp('/scanner/history/saved_run')
-    const saved = screen.getByRole('link', { name: 'Operation: original_op' })
+    const saved = await screen.findByRole('link', { name: 'Operation: original_op' })
     await screen.findByRole('combobox', { name: 'Operation' })
     await chooseOperation(user, 'future_op')
     expect(saved).toHaveTextContent('original_op')

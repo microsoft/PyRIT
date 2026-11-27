@@ -1,3 +1,5 @@
+import { lazy } from 'react'
+import type { ReactElement } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
@@ -33,6 +35,57 @@ function renderLayout(initialPath = '/registry/targets') {
 }
 
 describe('RegistryLayout', () => {
+  it('keeps the tabs in place while a tab is still loading', async () => {
+    let resolveTab: (module: { default: () => ReactElement }) => void = () => {}
+    const LoadingTab = lazy(() => new Promise<{ default: () => ReactElement }>((resolve) => { resolveTab = resolve }))
+    render(
+      <FluentProvider theme={webLightTheme}>
+        <MemoryRouter initialEntries={['/registry/converters']}>
+          <Routes>
+            <Route path="/registry" element={<RegistryLayout />}>
+              <Route path="converters" element={<LoadingTab />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </FluentProvider>,
+    )
+
+    expect(screen.getByRole('tab', { name: 'Converters' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Loading...')).toBeInTheDocument()
+
+    resolveTab({ default: () => <div>Converter registry content</div> })
+
+    expect(await screen.findByText('Converter registry content')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Converters' })).toBeInTheDocument()
+  })
+
+  it('keeps the tabs when a tab fails to load and clears the error on another tab', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    const user = userEvent.setup()
+    const FailingTab = () => { throw new Error('Failed to fetch dynamically imported module') }
+    render(
+      <FluentProvider theme={webLightTheme}>
+        <MemoryRouter initialEntries={['/registry/converters']}>
+          <Routes>
+            <Route path="/registry" element={<RegistryLayout />}>
+              <Route path="targets" element={<div>Target registry content</div>} />
+              <Route path="converters" element={<FailingTab />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </FluentProvider>,
+    )
+
+    expect(screen.getByTestId('error-boundary-fallback')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Converters' })).toHaveAttribute('aria-selected', 'true')
+
+    await user.click(screen.getByRole('tab', { name: 'Targets' }))
+
+    expect(screen.queryByTestId('error-boundary-fallback')).not.toBeInTheDocument()
+    expect(screen.getByText('Target registry content')).toBeInTheDocument()
+    consoleSpy.mockRestore()
+  })
+
   it('shows target, converter, and scenario preset registry tabs', () => {
     renderLayout()
 

@@ -17,6 +17,7 @@ import { targetReference } from '@/utils/targetIdentity'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
+import '@/test-utils/preloadLazyScreens'
 
 let mockScorerRegistry: { scorers: ScorerInstance[]; loading: boolean; error: string | null } = {
   scorers: [], loading: false, error: null,
@@ -1537,7 +1538,7 @@ describe('App draft handoff with the real chat and composer', () => {
     await user.click(await screen.findByRole('button', { name: /Show wikipedia with title/i }))
 
     // User attempts to import to new conversation
-    await user.click(screen.getByTestId('import-into-chat-button'))
+    await user.click(await screen.findByTestId('import-into-chat-button'))
     const newConvItem = await screen.findByTestId('import-new-conversation-item')
     await user.click(newConvItem)
 
