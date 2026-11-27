@@ -5,7 +5,7 @@ import logging
 import math
 from typing import Any, Literal
 
-from pyrit.common import forward_init_parameters
+from pyrit.common import forward_init_parameters, print_deprecation_message
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
@@ -28,7 +28,13 @@ _MAX_SPEED = 4.0
 
 
 class OpenAITTSTarget(OpenAITarget):
-    """A prompt target for OpenAI Text-to-Speech (TTS) endpoints."""
+    """
+    A deprecated prompt target for OpenAI Text-to-Speech (TTS) endpoints.
+
+    Deprecated in 1.3.0 and removed in 1.5.0 because provider TTS models are being retired.
+    Use AzureSpeechTextToAudioConverter for text-to-audio conversion. RealtimeTarget is
+    for conversational audio, not a drop-in replacement that speaks the supplied text verbatim.
+    """
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
@@ -85,6 +91,12 @@ class OpenAITTSTarget(OpenAITarget):
             raise ValueError(f"speed must be a finite number from {_MIN_SPEED} to {_MAX_SPEED}, got {speed!r}")
 
         super().__init__(custom_configuration=custom_configuration, **kwargs)
+
+        print_deprecation_message(
+            old_item=OpenAITTSTarget,
+            new_item="pyrit.converter.AzureSpeechTextToAudioConverter",
+            removed_in="1.5.0",
+        )
 
         self._voice = voice
         self._response_format = response_format

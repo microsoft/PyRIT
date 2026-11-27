@@ -1,11 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import inspect
 import json
+import subprocess
+import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.models import ComponentIdentifier
@@ -17,6 +22,7 @@ from pyrit.score import (
 from pyrit.score.response_handler import (
     NumericRangeResponseHandler,
     TrueFalseResponseHandler,
+    _build_unvalidated_score,
 )
 
 SCORER_IDENTIFIER = ComponentIdentifier(class_name="TestScorer", class_module=__name__)
@@ -326,3 +332,80 @@ def test_numeric_range_response_handler_replay_identifier_includes_range() -> No
     assert identifier["minimum_value"] == 1
     assert identifier["maximum_value"] == 10
     assert handler.json_response_config == wrapped.json_response_config
+
+
+def _ty_check_probe(probe: Path) -> tuple[int, str]:
+    """Type-check ``probe`` with the repo's ``ty`` settings and return the exit code and output."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ty",
+            "check",
+            "--project",
+            str(Path(__file__).resolve().parents[3]),
+            "--python-version",
+            "3.11",
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=TEST_WATCHDOG_SECONDS,
+        check=False,
+    )
+    return result.returncode, result.stdout + result.stderr
+
+
+def test_build_unvalidated_score_unknown_conflict_policy_keeps_rejecting() -> None:
+    """A policy outside CategoryConflictPolicy keeps the historical rejection of a category conflict."""
+    with pytest.raises(ValueError, match="^Category is present in the response and an argument$"):
+        _build_unvalidated_score(
+            parsed_response={"score_value": "true", "rationale": "r", "category": "violence"},
+            score_value_output_key="score_value",
+            rationale_output_key="rationale",
+            description_output_key="description",
+            metadata_output_key="metadata",
+            category_output_key="category",
+            scorer_identifier=SCORER_IDENTIFIER,
+            scored_prompt_id="00000000-0000-0000-0000-000000000000",
+            category="harm",
+            objective=None,
+            category_conflict_policy="future_policy",  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
+def test_build_unvalidated_score_dispatch_type_exhaustiveness(tmp_path: Path, *, extend_enum: bool) -> None:
+    """
+    The ``assert_never`` guard in ``_build_unvalidated_score`` makes ``ty`` flag a new ``CategoryConflictPolicy``.
+
+    The probe is built from the real enum and function source. The current enum must type-check
+    cleanly; with a temporary extra member ``ty`` must report exactly one error.
+    """
+    enum_source = inspect.getsource(CategoryConflictPolicy)
+    if extend_enum:
+        enum_source += '    FUTURE = "future"\n'
+    probe = tmp_path / "dispatch.py"
+    probe.write_text(
+        "\n".join(
+            [
+                "from __future__ import annotations",
+                "import uuid",
+                "from collections.abc import Sequence",
+                "from enum import Enum",
+                "from typing import TYPE_CHECKING, Any, assert_never",
+                "from pyrit.exceptions import InvalidJsonException",
+                "from pyrit.models import ComponentIdentifier, FloatFeedback, UnvalidatedScore",
+                enum_source,
+                inspect.getsource(_build_unvalidated_score),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    returncode, output = _ty_check_probe(probe)
+    assert returncode == (1 if extend_enum else 0), output
+    if extend_enum:
+        assert output.count("error[") == 1, output
+        assert "type-assertion-failure" in output, output
+        assert "assert_never(category_conflict_policy)" in output, output
+        assert "CategoryConflictPolicy.FUTURE" in output, output
