@@ -16,6 +16,7 @@ from starlette.responses import JSONResponse
 
 from pyrit.auth import get_caller_principal
 from pyrit.backend.authentication_policy import AuthenticationPolicy
+from pyrit.backend.mcp_server import MCPEndpoint
 from pyrit.backend.middleware.auth import (
     AuthenticatedUser,
     AuthenticationError,
@@ -393,3 +394,75 @@ def test_middleware_scopes_routes_and_the_tasks_they_start(policy: Authenticatio
         response = TestClient(app).get("/api/principal", headers={"Authorization": "Bearer token"})
 
     assert response.json() == {"route": expected, "task": expected}
+
+
+MCP_CHALLENGE = (
+    'Bearer resource_metadata="http://localhost:8000/.well-known/oauth-protected-resource/api/mcp", '
+    'scope="https://graph.microsoft.com/User.Read"'
+)
+
+
+def _mcp_app(*, cors_origins: frozenset[str] = frozenset()) -> FastAPI:
+    app = FastAPI()
+    app.state.authentication_policy = _entra_policy()
+    app.state.cors_origins = cors_origins
+    app.add_middleware(EntraAuthMiddleware)
+
+    @app.post(MCPEndpoint.PATH)
+    async def mcp_async() -> dict[str, str]:
+        return {}
+
+    @app.get("/api/targets")
+    async def targets_async() -> dict[str, str]:
+        return {}
+
+    return app
+
+
+@pytest.mark.parametrize(
+    ("authorization", "detail", "challenge"),
+    [
+        (None, "Missing or invalid Authorization header", MCP_CHALLENGE),
+        ("Basic dXNlcg==", "Missing or invalid Authorization header", MCP_CHALLENGE),
+        ("Bearer expired-token", "Invalid or expired token", MCP_CHALLENGE + ', error="invalid_token"'),
+    ],
+)
+def test_mcp_401_tells_the_client_where_to_sign_in(authorization: str | None, detail: str, challenge: str) -> None:
+    headers = {"Authorization": authorization} if authorization else {}
+    rejected = AuthenticationError(status_code=401, detail="Invalid or expired token")
+
+    with patch.object(
+        EntraAuthMiddleware, "_authenticate_with_graph_async", new_callable=AsyncMock, side_effect=rejected
+    ):
+        response = TestClient(_mcp_app(), base_url="http://localhost:8000").post(MCPEndpoint.PATH, headers=headers)
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": detail}
+    assert response.headers["www-authenticate"] == challenge
+
+
+def test_mcp_challenge_names_a_listed_forwarded_origin() -> None:
+    app = _mcp_app(cors_origins=frozenset({"https://fd.example"}))
+
+    response = TestClient(app, base_url="http://aca.example").post(
+        MCPEndpoint.PATH, headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "fd.example"}
+    )
+
+    assert response.headers["www-authenticate"] == (
+        'Bearer resource_metadata="https://fd.example/.well-known/oauth-protected-resource/api/mcp", '
+        'scope="https://graph.microsoft.com/User.Read"'
+    )
+
+
+def test_other_api_401s_and_mcp_403s_carry_no_sign_in_challenge() -> None:
+    client = TestClient(_mcp_app())
+    denied = AuthenticationError(status_code=403, detail="You are not authorized to access this application")
+
+    unauthenticated = client.get("/api/targets")
+    with patch.object(EntraAuthMiddleware, "_authenticate_request_async", new_callable=AsyncMock, side_effect=denied):
+        forbidden = client.post(MCPEndpoint.PATH, headers={"Authorization": "Bearer token"})
+
+    assert unauthenticated.status_code == 401
+    assert forbidden.status_code == 403
+    assert "www-authenticate" not in unauthenticated.headers
+    assert "www-authenticate" not in forbidden.headers

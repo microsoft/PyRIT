@@ -320,7 +320,7 @@ Surfaces put PyRIT in front of people. Keep them thin: they expose and present t
 
 ## Backend
 
-**Responsibility**: Expose the library through a FastAPI REST API for the GUI and CLI.
+**Responsibility**: Expose the library through a FastAPI REST API for the GUI, CLI, and MCP clients.
 
 The backend is an adapter, not a second library. It owns HTTP and process concerns: routes, request validation and limits, authentication, error mapping, background runs, and runtime lifecycle. Everything else belongs in the library.
 

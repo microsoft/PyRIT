@@ -927,6 +927,27 @@ from `frontend`. Set `PYRIT_PYTHON` to this worktree's Python interpreter if Vit
 find `python` (for example, `<worktree>\.venv\Scripts\python.exe` on Windows).
 Stop these test-owned servers after the run.
 
+### REST tools
+
+MCP tools are generated from this server's OpenAPI document; none are hand-written. To offer
+another operation as a tool, add its route function's name to `RestToolset.OPERATIONS` in
+`pyrit/backend/rest_tools.py`. The list is curated because every tool schema is sent with each
+model request, and some operations, such as reading environment files, must not be given to a
+model.
+
+### MCP
+
+External MCP clients can use these [tools](#rest-tools) over Streamable HTTP at `/api/mcp`. To
+connect one, see [Using an AI Agent](../../doc/scanner/0_scanner.md#using-an-ai-agent).
+Authentication and runtime admission apply as for the rest of `/api`, and the endpoint accepts
+only POST. A request with an `Origin` header, which browsers send, must come from an origin in
+`PYRIT_CORS_ORIGINS`.
+
+With Entra authentication, the sign-in metadata names the URL the client connected to. Behind a
+proxy that changes the scheme or host, such as Azure Container Apps or Front Door, list the
+public origin in `PYRIT_CORS_ORIGINS`, as the deployment templates do; the backend then takes
+the scheme and host from `X-Forwarded-Proto` and `X-Forwarded-Host`.
+
 ### Request Limits
 
 Attachments upload in the background while editing remains available, with up to three
@@ -1048,7 +1069,7 @@ Problem responses use `application/problem+json` and include `expected` (backend
 `actual` (caller or null), `status`, `title`, and `detail`. On failure, stop further
 business requests and explain which matching artifacts are needed. Do not replay
 mutations. Backend replacement is detected by the next request even after a successful
-startup handshake. Health, authentication discovery, version, and media retain their
+startup handshake. Health, authentication discovery, version, media, and MCP retain their
 existing authentication behavior and bypass only compatibility enforcement.
 
 Example using the packaged CLI client (authentication and handshake are automatic):

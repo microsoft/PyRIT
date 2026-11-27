@@ -15,6 +15,9 @@ from pyrit.common.authentication import (
 
 AuthenticationMode = Literal["local", "entra"]
 
+# Delegated Microsoft Graph scopes a caller signs in with; the backend checks the token through Graph.
+GRAPH_SCOPES: tuple[str, ...] = ("https://graph.microsoft.com/User.Read",)
+
 _ENTRA_VARIABLES = (*REQUIRED_ENTRA_ENVIRONMENT_VARIABLES, "ENTRA_ADMIN_GROUP_ID")
 _UNAUTHENTICATED_ADMIN_VARIABLE = "PYRIT_ALLOW_UNAUTHENTICATED_ADMIN"
 
