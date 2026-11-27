@@ -224,11 +224,15 @@ class AzureBlobStorageIO(StorageIO):
         self._container_url: str = container_url
         self._sas_token = sas_token
         self._client_async: AsyncContainerClient | None = None
+        self._client_users = 0
         self._credential: DefaultAzureCredential | None = None
 
     async def _create_container_client_async(self) -> AsyncContainerClient:
         """
         Create an asynchronous ContainerClient for Azure Storage.
+
+        This must not await anything: ``_acquire_client_async`` relies on creation finishing without
+        yielding to the event loop, so concurrent first operations share one client.
 
         If a SAS token is provided via the
         AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable or the init sas_token parameter, it will be used
@@ -270,6 +274,28 @@ class AzureBlobStorageIO(StorageIO):
         )
         return self._client_async
 
+    async def _acquire_client_async(self) -> AsyncContainerClient:
+        """
+        Open the shared container client if needed and count this operation as a user.
+
+        Creation doesn't yield to the event loop, so no other operation can observe the client as
+        missing while it's being created.
+
+        Returns:
+            AsyncContainerClient: The shared client, open until the last user releases it.
+        """
+        if not self._client_async:
+            self._client_async = await self._create_container_client_async()
+        self._client_users += 1
+        return self._client_async
+
+    async def _release_client_async(self) -> None:
+        """Close the shared container client after the last concurrent operation finishes with it."""
+        self._client_users -= 1
+        if self._client_users <= 0:
+            self._client_users = 0
+            await self._close_client_async()
+
     async def _close_client_async(self) -> None:
         """Close the container client and credential, resetting both to None."""
         client, self._client_async = self._client_async, None
@@ -281,17 +307,17 @@ class AzureBlobStorageIO(StorageIO):
             if credential:
                 await credential.close()
 
-    async def _upload_blob_async(self, file_name: str, data: bytes, content_type: str) -> None:
+    async def _upload_blob_async(
+        self, *, client: AsyncContainerClient, file_name: str, data: bytes, content_type: str
+    ) -> None:
         """
         (Async) Handles uploading blob to given storage container.
 
         Args:
+            client (AsyncContainerClient): The client acquired by the current operation.
             file_name (str): File name to assign to uploaded blob.
             data (bytes): Byte representation of content to upload to container.
             content_type (str): Content type to upload.
-
-        Raises:
-            RuntimeError: If the Azure container client is not initialized.
         """
         from azure.core.exceptions import ClientAuthenticationError
         from azure.storage.blob import ContentSettings
@@ -300,9 +326,7 @@ class AzureBlobStorageIO(StorageIO):
         logger.info(msg="\nUploading to Azure Storage as blob:\n\t" + file_name)
 
         try:
-            if self._client_async is None:
-                raise RuntimeError("Azure container client not initialized")
-            await self._client_async.upload_blob(
+            await client.upload_blob(
                 name=file_name,
                 data=data,
                 content_settings=content_settings,
@@ -381,23 +405,21 @@ class AzureBlobStorageIO(StorageIO):
         """Delete one blob created by the caller."""
         from azure.core.exceptions import ResourceNotFoundError
 
-        if not self._client_async:
-            self._client_async = await self._create_container_client_async()
+        client = await self._acquire_client_async()
         try:
-            await self._client_async.delete_blob(self._resolve_blob_name(path))
+            await client.delete_blob(self._resolve_blob_name(path))
         except ResourceNotFoundError:
             pass
         finally:
-            await self._close_client_async()
+            await self._release_client_async()
 
     async def write_stream_async(self, *, path: Path | str, chunks: AsyncIterable[bytes]) -> None:
         """Stream a generated blob as opaque bytes, never replacing an existing blob."""
         from azure.storage.blob import ContentSettings
 
-        if not self._client_async:
-            self._client_async = await self._create_container_client_async()
+        client = await self._acquire_client_async()
         try:
-            await self._client_async.upload_blob(
+            await client.upload_blob(
                 name=self._resolve_blob_name(path),
                 data=chunks,
                 overwrite=False,
@@ -406,7 +428,7 @@ class AzureBlobStorageIO(StorageIO):
                 ),
             )
         finally:
-            await self._close_client_async()
+            await self._release_client_async()
 
     async def read_file_async(self, path: Path | str) -> bytes:
         """
@@ -432,13 +454,10 @@ class AzureBlobStorageIO(StorageIO):
             ``file_content = await read_file_async("dir1/dir2/1726627689003831.png")``
 
         """
-        if not self._client_async:
-            self._client_async = await self._create_container_client_async()
-
         blob_name = self._resolve_blob_name(path)
-
+        client = await self._acquire_client_async()
         try:
-            blob_client = self._client_async.get_blob_client(blob=blob_name)
+            blob_client = client.get_blob_client(blob=blob_name)
 
             # Download the blob
             blob_stream = await blob_client.download_blob()
@@ -448,7 +467,7 @@ class AzureBlobStorageIO(StorageIO):
             logger.exception(f"Failed to read file at {blob_name}: {exc}")
             raise
         finally:
-            await self._close_client_async()
+            await self._release_client_async()
 
     async def write_file_async(self, path: Path | str, data: bytes) -> None:
         """
@@ -461,17 +480,16 @@ class AzureBlobStorageIO(StorageIO):
             path (Path | str): Full blob URL or relative blob path.
             data (bytes): The data to write.
         """
-        if not self._client_async:
-            self._client_async = await self._create_container_client_async()
         blob_name = self._resolve_blob_name(path)
         content_type = get_mime_type(blob_name) or self._blob_content_type
+        client = await self._acquire_client_async()
         try:
-            await self._upload_blob_async(file_name=blob_name, data=data, content_type=content_type)
+            await self._upload_blob_async(client=client, file_name=blob_name, data=data, content_type=content_type)
         except Exception as exc:
             logger.exception(f"Failed to write file at {blob_name}: {exc}")
             raise
         finally:
-            await self._close_client_async()
+            await self._release_client_async()
 
     async def path_exists_async(self, path: Path | str) -> bool:
         """
@@ -485,17 +503,16 @@ class AzureBlobStorageIO(StorageIO):
         """
         from azure.core.exceptions import ResourceNotFoundError
 
-        if not self._client_async:
-            self._client_async = await self._create_container_client_async()
+        client = await self._acquire_client_async()
         try:
             blob_name = self._resolve_blob_name(path)
-            blob_client = self._client_async.get_blob_client(blob=blob_name)
+            blob_client = client.get_blob_client(blob=blob_name)
             await blob_client.get_blob_properties()
             return True
         except ResourceNotFoundError:
             return False
         finally:
-            await self._close_client_async()
+            await self._release_client_async()
 
     async def is_file_async(self, path: Path | str) -> bool:
         """
@@ -509,19 +526,18 @@ class AzureBlobStorageIO(StorageIO):
         """
         from azure.core.exceptions import ResourceNotFoundError
 
-        if not self._client_async:
-            self._client_async = await self._create_container_client_async()
+        client = await self._acquire_client_async()
         try:
             blob_name = self._resolve_blob_name(path)
-            blob_client = self._client_async.get_blob_client(blob=blob_name)
+            blob_client = client.get_blob_client(blob=blob_name)
             blob_properties = await blob_client.get_blob_properties()
             return bool(blob_properties.size > 0)
         except ResourceNotFoundError:
             return False
         finally:
-            await self._close_client_async()
+            await self._release_client_async()
 
-    async def create_directory_if_not_exists_async(self, directory_path: Path | str) -> None:  # type: ignore[ty:invalid-method-override]
+    async def create_directory_if_not_exists_async(self, directory_path: Path | str) -> None:  # type: ignore[ty:lost-keyword-for-regular-parameter]
         """
         Log a no-op directory creation for Azure Blob Storage.
 

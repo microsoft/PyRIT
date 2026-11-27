@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from pyrit.exceptions import AdversarialChatRefusedException, AdversarialChatResponseBlockedException
 
@@ -111,7 +111,7 @@ class AttackPreparationFailure:
         return {self.METADATA_KEY: self.kind.value}
 
     @classmethod
-    def from_result(cls, *, result: AttackResult) -> AttackPreparationFailure | None:
+    def from_result(cls, *, result: AttackResult) -> Self | None:
         """
         Read the signal back off a result.
 

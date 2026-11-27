@@ -40,6 +40,13 @@ class TestPipelineGuardrails(unittest.TestCase):
             if "template" in stage
         }
 
+    def test_test_deploys_daily_from_main_instead_of_on_every_merge(self) -> None:
+        assert (self.pipeline["trigger"], self.pipeline["pr"]) == ("none", "none")
+        [schedule] = self.pipeline["schedules"]
+        assert schedule["cron"] == "0 15 * * *"
+        assert schedule["branches"] == {"include": ["main"]}
+        assert schedule["always"] is True
+
     def test_published_images_require_verified_clean_source_provenance(self) -> None:
         assert "source_commit=$(git rev-parse HEAD)" in self.pipeline_text
         assert '"$source_commit" != "$PYRIT_SOURCE_VERSION"' in self.pipeline_text
@@ -138,12 +145,16 @@ class TestPipelineGuardrails(unittest.TestCase):
             "PYRIT_ALLOWED_GROUP_OBJECT_IDS",
             "PYRIT_ADMIN_GROUP_OBJECT_ID",
             "PYRIT_CONFIG_FILE_URI",
+            "PYRIT_CONFIG_SEED_URI",
+            "PYRIT_SOURCE_BRANCH",
             "PYRIT_SQL_SERVER_FQDN",
             "PYRIT_SQL_DATABASE_NAME",
             "PYRIT_KEY_VAULT_RESOURCE_ID",
             "PYRIT_ENV_SECRET_NAME",
         }
         assert app["PYRIT_CONTAINER_IMAGE"] == "$(immutableImage)"
+        assert app["PYRIT_CONFIG_SEED_URI"] == "$(pyritConfigSeedUri)"
+        assert app["PYRIT_SOURCE_BRANCH"] == "$(Build.SourceBranch)"
         image = stage["variables"][2]["${{ if eq(parameters.phase, 'app') }}"][0]
         assert image == {
             "name": "immutableImage",

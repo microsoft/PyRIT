@@ -39,6 +39,7 @@ import CreateConverterDialog from './CreateConverterDialog'
 import { useConverterRegistryPageStyles } from './ConverterRegistry.styles'
 import RegistryIdentityRow from './RegistryIdentityRow'
 import { useConverterRegistryStyles } from './Registry.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 // One token per dialog opening. A create response can land after the dialog it
 // was submitted from is gone, and by then another dialog may be open, so the
@@ -183,7 +184,7 @@ export default function ConverterRegistry() {
   useEffect(() => {
     mounted.current = true
     let active = true
-    Promise.resolve().then(() => {
+    void Promise.resolve().then(() => {
       if (active) void loadConverters()
     })
     return () => { active = false; mounted.current = false; listEpoch.current = {} }
@@ -273,7 +274,7 @@ export default function ConverterRegistry() {
         <div className={styles.actions}>
           <Button
             {...restoreFocusTarget}
-            ref={newConverterRef}
+            ref={fluentRef(newConverterRef)}
             className={styles.action}
             appearance="primary"
             icon={<AddRegular />}

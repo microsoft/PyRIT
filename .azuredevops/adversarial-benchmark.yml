@@ -260,8 +260,7 @@ jobs:
             fi
 
             echo "start-server" > "$artifact_dir/phase.txt"
-            uv run pyrit_scan \
-              --start-server \
+            uv run pyrit_scan start-server \
               --config-file "$config_file" \
               --log-level "$LOG_LEVEL_INPUT" \
               --startup-timeout 180

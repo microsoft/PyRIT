@@ -9,7 +9,7 @@ import uuid
 from abc import abstractmethod
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, final, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar, cast, final, overload
 
 from pyrit.common import print_deprecation_message
 from pyrit.common.task_utils import gather_with_cleanup_async
@@ -209,11 +209,15 @@ async def _legacy_score_scorable_async(
     )
     resolver = getattr(self, "_message_resolver", None) or MessageScorableResolver()
     message = await resolver.resolve_async(scorable=scorable, memory=self._memory)
-    legacy_score_async = self._score_async  # type: ignore[ty:unresolved-attribute]
+    legacy_score_async = self._score_async  # type: ignore[ty:missing-attribute]
     with _scoring_message_context(message):
-        scores: list[Score] = await legacy_score_async(
-            message,
-            objective=expectation.objective if expectation else None,
+        # The legacy hook contract returns list[Score]; the call is Any because the hook is read dynamically.
+        scores: list[Score] = cast(
+            "list[Score]",
+            await legacy_score_async(
+                message,
+                objective=expectation.objective if expectation else None,
+            ),
         )
     return scores
 
@@ -274,15 +278,15 @@ def _adapt_legacy_message_scorer(cls: type) -> None:
         else:
             score_async = MessageScorer._score_async
 
-        cls._score_async = score_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+        cls._score_async = score_async  # type: ignore[ty:invalid-assignment, ty:missing-attribute]
         if not defines("_score_piece_with_expectation_async"):
-            cls._score_piece_with_expectation_async = MessageScorer._score_piece_with_expectation_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+            cls._score_piece_with_expectation_async = MessageScorer._score_piece_with_expectation_async  # type: ignore[ty:invalid-assignment, ty:missing-attribute]
         if not defines("_get_supported_pieces"):
-            cls._get_supported_pieces = MessageScorer._get_supported_pieces  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+            cls._get_supported_pieces = MessageScorer._get_supported_pieces  # type: ignore[ty:invalid-assignment, ty:missing-attribute]
 
-    if not cls.SUPPORTED_SCORABLE_TYPES:  # type: ignore[ty:unresolved-attribute]
-        cls.SUPPORTED_SCORABLE_TYPES = MessageScorer.SUPPORTED_SCORABLE_TYPES  # type: ignore[ty:unresolved-attribute]
-    cls._score_scorable_async = _legacy_score_scorable_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+    if not cls.SUPPORTED_SCORABLE_TYPES:  # type: ignore[ty:missing-attribute]
+        cls.SUPPORTED_SCORABLE_TYPES = MessageScorer.SUPPORTED_SCORABLE_TYPES  # type: ignore[ty:missing-attribute]
+    cls._score_scorable_async = _legacy_score_scorable_async  # type: ignore[ty:invalid-assignment, ty:missing-attribute]
 
 
 class Scorer(Identifiable, abc.ABC):
@@ -551,10 +555,10 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             PromptTarget | None: The chat target, or None if not applicable.
         """
-        prompt_target: PromptTarget | None = getattr(self, "_prompt_target", None)
-        return prompt_target
+        # Only scorers that hold a target define _prompt_target; absence means no target.
+        return cast("PromptTarget | None", getattr(self, "_prompt_target", None))
 
-    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Self:
         """
         Return a scorer whose LLM-backed leaves use the given blocked-response policy.
 

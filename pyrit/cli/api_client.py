@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
@@ -95,7 +95,7 @@ class PyRITApiClient:
         self._compatibility_id: str | None = None
         self._compatibility_error: CompatibilityError | None = None
 
-    async def __aenter__(self) -> PyRITApiClient:
+    async def __aenter__(self) -> Self:
         """
         Open the underlying ``httpx.AsyncClient``.
 
@@ -735,10 +735,11 @@ class PyRITApiClient:
             pagination = payload.get("pagination", {})
             if not pagination.get("has_more"):
                 return items
-            cursor = pagination.get("next_cursor")
-            if not isinstance(cursor, str) or not cursor or cursor in seen_cursors:
+            next_cursor = pagination.get("next_cursor")
+            if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen_cursors:
                 raise ValueError(f"Catalog response from {path} has a missing or repeated next-page cursor.")
-            seen_cursors.add(cursor)
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
 
     async def _get_json_async(self, *, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """
@@ -788,7 +789,7 @@ class PyRITApiClient:
             if detail_value is not None:
                 return str(detail_value)
 
-        text = getattr(resp, "text", "")
+        text: object = getattr(resp, "text", "")
         if isinstance(text, bytes):
             text = text.decode(errors="replace")
         if isinstance(text, str):
