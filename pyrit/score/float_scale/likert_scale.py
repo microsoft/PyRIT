@@ -4,7 +4,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -71,7 +71,7 @@ class LikertScale(BaseModel):
         return category
 
     @model_validator(mode="after")
-    def _validate_ordered_values(self) -> "LikertScale":
+    def _validate_ordered_values(self) -> Self:
         values = [entry.score_value for entry in self.entries]
         if len(values) < 2 or any(current >= following for current, following in zip(values, values[1:], strict=False)):
             raise ValueError("Likert scale score values must be unique and strictly increasing.")
@@ -83,7 +83,7 @@ class LikertScale(BaseModel):
         path: Path | str,
         *,
         evaluation_files: LikertScaleEvalFiles | None = None,
-    ) -> "LikertScale":
+    ) -> Self:
         """
         Load a Likert scale from a YAML file.
 

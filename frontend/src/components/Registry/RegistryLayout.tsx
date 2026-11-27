@@ -42,7 +42,7 @@ export default function RegistryLayout() {
         className={styles.tabs}
         data-tour="registry-tabs"
         selectedValue={selectedTab}
-        onTabSelect={(_, data) => navigate(`/registry/${String(data.value)}`)}
+        onTabSelect={(_, data) => { void navigate(`/registry/${String(data.value)}`) }}
         aria-label="Registry sections"
       >
         <Tooltip relationship="description" content="Model or endpoint connections that send prompts and return responses.">

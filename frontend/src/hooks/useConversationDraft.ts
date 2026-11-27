@@ -23,7 +23,7 @@ interface DraftState extends ConversationSaveInput {
   id: string
   baselineMessages: ConversationDraftMessage[]
   baselineTargetKey: string | null
-  unsavedImport?: boolean
+  unsavedImport?: boolean | undefined
 }
 
 export function useConversationDraft(

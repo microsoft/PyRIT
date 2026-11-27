@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import textwrap
 import typing
 import warnings
@@ -10,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 import pyrit.datasets.seed_datasets.remote  # noqa: F401  triggers loader registration
 from pyrit.datasets import (
@@ -143,6 +145,47 @@ class TestSeedDatasetProvider:
 
         assert exc_info.value is failure
         assert exc_info.value.__notes__ == ["Failed to fetch dataset 'empty_dataset' using provider FailingProvider."]
+
+    async def test_fetch_datasets_async_failure_cancels_sibling_fetches_async(self) -> None:
+        sibling_started = asyncio.Event()
+        sibling_cancelled = asyncio.Event()
+        failure = RuntimeError("Status code: 503")
+
+        async def slow_fetch_async(*, cache: bool = True) -> SeedDataset:
+            sibling_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                sibling_cancelled.set()
+                raise
+            raise AssertionError("unreachable")
+
+        async def failing_fetch_async(*, cache: bool = True) -> SeedDataset:
+            await asyncio.wait_for(sibling_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            raise failure
+
+        slow_provider = MagicMock(__name__="SlowProvider")
+        slow_provider.return_value.dataset_name = "slow"
+        slow_provider.return_value.fetch_dataset_async = slow_fetch_async
+        failing_provider = MagicMock(__name__="FailingProvider")
+        failing_provider.return_value.dataset_name = "failing"
+        failing_provider.return_value.fetch_dataset_async = failing_fetch_async
+
+        with (
+            patch.dict(
+                SeedDatasetProvider._registry,
+                {"SlowProvider": slow_provider, "FailingProvider": failing_provider},
+                clear=True,
+            ),
+            patch.object(SeedDatasetProvider, "_materialize_builtin_providers"),
+            patch("pyrit.datasets.seed_datasets.seed_dataset_provider.tqdm") as mock_tqdm,
+            pytest.raises(RuntimeError, match="503") as exc_info,
+        ):
+            await SeedDatasetProvider.fetch_datasets_async(max_concurrency=2)
+
+        assert exc_info.value is failure
+        assert sibling_cancelled.is_set()
+        mock_tqdm.return_value.close.assert_called_once()
 
     async def test_fetch_datasets_async_with_filter(self):
         """Test fetching datasets with filter."""
@@ -492,6 +535,7 @@ class TestMetadataParsingRemote:
 
     async def test_no_metadata(self):
         """Provider without metadata is skipped when filters are applied."""
+        await asyncio.to_thread(SeedDatasetProvider.get_all_providers)
         mock_provider_cls = MagicMock(__name__="NoProv")
         mock_provider_instance = mock_provider_cls.return_value
         mock_provider_instance.dataset_name = "no_metadata"

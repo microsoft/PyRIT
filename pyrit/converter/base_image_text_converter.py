@@ -5,11 +5,13 @@ import logging
 import string
 import textwrap
 from collections.abc import Callable
+from io import BytesIO
 from pathlib import Path
 from typing import cast
 
 from PIL import Image, ImageDraw, ImageFont
 from PIL.ImageFont import FreeTypeFont
+from reportlab.pdfbase.ttfonts import TTFError, TTFontFile
 
 from pyrit.converter.converter import Converter
 
@@ -95,14 +97,28 @@ class _BaseImageTextConverter(Converter):
         Returns:
             FreeTypeFont: The loaded font, falling back to Pillow's built-in font on error.
         """
+        font: FreeTypeFont
         if self._font_load_failed:
-            return cast("FreeTypeFont", ImageFont.load_default(size=size))
-        try:
-            return ImageFont.truetype(self._font_name, size)  # type: ignore[ty:invalid-argument-type]
-        except OSError:
-            logger.warning(f"Cannot open font resource: {self._font_name}. Using Pillow built-in default font.")
-            self._font_load_failed = True
-            return cast("FreeTypeFont", ImageFont.load_default(size=size))
+            font = cast("FreeTypeFont", ImageFont.load_default(size=size))
+        else:
+            try:
+                font = ImageFont.truetype(self._font_name, size)  # type: ignore[ty:invalid-argument-type]
+            except OSError:
+                logger.warning(f"Cannot open font resource: {self._font_name}. Using Pillow built-in default font.")
+                self._font_load_failed = True
+                font = cast("FreeTypeFont", ImageFont.load_default(size=size))
+
+        # Coverage is independent of size; refresh only when switching to the fallback font.
+        if getattr(self, "_coverage_uses_default", None) != self._font_load_failed:
+            self._coverage_uses_default = self._font_load_failed
+            self._font_codepoints: frozenset[int] | None = None
+            try:
+                source = BytesIO(font.font_bytes) if hasattr(font, "font_bytes") else font.path
+                charmap = TTFontFile(source, subfontIndex=font.index).charToGlyph or {}
+                self._font_codepoints = frozenset(codepoint for codepoint, glyph in charmap.items() if glyph)
+            except (OSError, TTFError):
+                logger.warning("Unable to check image font coverage. Verify that the font supports the text.")
+        return font
 
     def _fit_font_to_box(
         self,
@@ -212,6 +228,16 @@ class _BaseImageTextConverter(Converter):
         Returns:
             Image.Image: The RGBA overlay with rendered text.
         """
+        if self._font_codepoints is not None:
+            missing = {
+                char for line in lines for char in line if not char.isspace() and ord(char) not in self._font_codepoints
+            }
+            if missing:
+                logger.warning(
+                    "The image font cannot render %d distinct character(s). "
+                    "Set font_name to a TrueType font that covers the text; otherwise characters may appear as boxes.",
+                    len(missing),
+                )
         overlay = Image.new("RGBA", (box_width, box_height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
         fill_color = color + (255,)

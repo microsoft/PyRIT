@@ -19,7 +19,7 @@ interface MultiSendSettingsProps {
   options: MultiSendOptions
   disabled: boolean
   onChange: (options: MultiSendOptions) => void
-  disabledReason?: string
+  disabledReason?: string | undefined
 }
 
 export default function MultiSendSettings({ options, disabled, onChange, disabledReason }: MultiSendSettingsProps) {
