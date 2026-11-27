@@ -40,14 +40,20 @@ class ScorerIdentifier(ComponentIdentifier):
     aggregation verdict does not depend on child order.
 
     A source-backed scorer's ``source`` and ``trace_source`` constructor arguments
-    are references resolved by name from the source registry. Their identities
-    already sit in ``children``, so they are declared in ``constructor_references``
-    rather than promoted to typed fields.
+    are references resolved by name from the source registry, and a scorer's
+    ``expansion_target`` (a second model, as in ``CyberSecEvalMitreScorer``) is
+    resolved from the target registry. Their identities already sit in
+    ``children``, so they are declared in ``constructor_references`` rather than
+    promoted to typed fields.
     """
 
     component_type: ClassVar[ComponentType | None] = ComponentType.SCORER
     constructor_references: ClassVar[Mapping[str, ComponentType]] = MappingProxyType(
-        {"source": ComponentType.SOURCE, "trace_source": ComponentType.SOURCE}
+        {
+            "source": ComponentType.SOURCE,
+            "trace_source": ComponentType.SOURCE,
+            "expansion_target": ComponentType.TARGET,
+        }
     )
 
     #: The scorer category (e.g., ``"true_false"`` or ``"float_scale"``).
