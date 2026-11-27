@@ -99,7 +99,7 @@ class DatasetUploadManifest(BaseModel):
     delete_seed_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _validate_operations(self) -> "DatasetUploadManifest":
+    def _validate_operations(self) -> Self:
         if self.mode == "create":
             if not self.seeds or self.delete_seed_ids or self.expected_version is not None:
                 raise ValueError("Create requires seeds and forbids deletions and expected_version.")

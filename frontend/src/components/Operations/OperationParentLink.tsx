@@ -4,8 +4,8 @@ import { Link } from 'react-router'
 import { useOperationParentLinkStyles } from './OperationParentLink.styles'
 
 interface OperationParentLinkProps {
-  readonly id?: string | null
-  readonly name?: string | null
+  readonly id?: string | null | undefined
+  readonly name?: string | null | undefined
 }
 
 /** The Operation an item belongs to, shown as small parent context above its title. */

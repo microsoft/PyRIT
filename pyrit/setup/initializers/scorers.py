@@ -18,7 +18,7 @@ scorers reference core scorers via these best tags.
 
 import logging
 from collections.abc import Callable, Sequence
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar, TypeVar, cast
 
 from azure.ai.contentsafety.models import TextCategory
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 RequiredDependencyT = TypeVar("RequiredDependencyT")
 
 
-class ScorerInitializerTags(str, Enum):
+class ScorerInitializerTags(StrEnum):
     """Tags applied to scorer registry entries by ScorerInitializer."""
 
     # Category tags — every scorer in the category gets this tag

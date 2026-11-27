@@ -20,7 +20,7 @@ export function DocFeedback({ values, onChange, primaryTooShort }: DocFeedbackPr
       <Field
         label="Describe the issue linked to the documentation"
         required
-        validationMessage={primaryTooShort ? tooShortMessage : undefined}
+        validationMessage={primaryTooShort ? tooShortMessage : null}
         validationState={primaryTooShort ? 'warning' : 'none'}
       >
         <Textarea

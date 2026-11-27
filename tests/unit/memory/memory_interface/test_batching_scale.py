@@ -146,6 +146,39 @@ class TestBatchingScale:
 
         assert len(results) == num_scores, f"Expected {num_scores} results, got {len(results)}"
 
+    async def test_get_prompt_scores_json_batches_stay_capped_with_large_bind_limit(
+        self, sqlite_instance: MemoryInterface
+    ):
+        """
+        Test that JSON batches stay small when a backend allows many bind variables.
+
+        Azure SQL uses a larger _MAX_BIND_VARS (2000) and binds two parameters per JSON term, so uncapped
+        batches would exceed SQL Server's 2100-parameter limit. On SQLite the same sizing exceeds the
+        expression depth limit, so this runs the full query with the larger limit.
+        """
+        num_pieces = 1500
+        pieces = [_create_message_piece() for _ in range(num_pieces)]
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+        scores = [_create_score(str(pieces[i].id)) for i in range(0, num_pieces, 3)]
+        await sqlite_instance.add_scores_to_memory_async(scores=scores)
+
+        batch_sizes: list[int] = []
+        original = sqlite_instance._get_condition_json_array_match
+
+        def record_batch(**kwargs):
+            batch_sizes.append(len(kwargs["array_to_match"]))
+            return original(**kwargs)
+
+        with (
+            patch.object(type(sqlite_instance), "_MAX_BIND_VARS", 2000),
+            patch.object(sqlite_instance, "_get_condition_json_array_match", side_effect=record_batch),
+        ):
+            results = await sqlite_instance.get_prompt_scores_async(prompt_ids=[piece.id for piece in pieces])
+
+        assert len(results) == len(scores)
+        assert len(batch_sizes) > 1
+        assert max(batch_sizes) <= 499, f"JSON batch of {max(batch_sizes)} terms would exceed SQL Server's limit"
+
     async def test_get_message_pieces_batching_preserves_other_filters(self, sqlite_instance: MemoryInterface):
         """Test that batching still applies other filter conditions correctly."""
         # Create pieces with different roles
@@ -342,6 +375,30 @@ class TestBatchingScale:
         # Verify all results have SHA256 in the filter list
         result_sha256 = {r.converted_value_sha256 for r in results}
         assert result_sha256.issubset(set(filter_sha256)), "Results contain unexpected SHA256 values"
+
+    async def test_get_message_pieces_promoted_prompt_ids_keep_matches(self, sqlite_instance: MemoryInterface):
+        """Prompt IDs moved to the in-Python filter still match the stored UUID ids."""
+        num_pieces = 300
+        pieces = [_create_message_piece(original_value=f"promoted_{i}") for i in range(num_pieces)]
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+
+        # original_values exceeds the limit on its own and is batched in SQL. prompt_ids and
+        # converted_values fit individually but not together, so the larger one, prompt_ids,
+        # is filtered in Python against the rows the batched query returns.
+        original_values = [piece.original_value for piece in pieces] + [f"missing_{i}" for i in range(_MAX_BIND_VARS)]
+        matching = pieces[:250]
+        converted_values = [piece.converted_value for piece in matching]
+
+        # The first matching piece's id is left out, so the in-Python filter must drop it
+        prompt_ids = [str(uuid.uuid4())] + [piece.id for piece in pieces[1:]]
+
+        results = await sqlite_instance.get_message_pieces_async(
+            prompt_ids=prompt_ids,
+            original_values=original_values,
+            converted_values=converted_values,
+        )
+
+        assert {str(result.id) for result in results} == {str(piece.id) for piece in matching[1:]}
 
 
 class TestExecuteBatchedQuery:
