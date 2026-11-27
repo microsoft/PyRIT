@@ -7,7 +7,7 @@ Converter-related request and response models.
 This module defines the Instance models and preview functionality.
 """
 
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -132,7 +132,7 @@ class CreateConverterRequest(RegistrationRequest):
     )
 
     @model_validator(mode="after")
-    def _validate_registration(self) -> "CreateConverterRequest":
+    def _validate_registration(self) -> Self:
         if self.register_instance and not self.name:
             raise ValueError("name is required when register=true")
         if self.source is not None and self.params:
@@ -140,7 +140,7 @@ class CreateConverterRequest(RegistrationRequest):
         return self
 
     @model_validator(mode="after")
-    def _validate_persist(self) -> "CreateConverterRequest":
+    def _validate_persist(self) -> Self:
         if not self.persist:
             return self
         if not self.register_instance:
@@ -190,7 +190,7 @@ class ConverterPreviewRequest(BaseModel):
     converter_specs: list[SourceInstanceSpec | None] | None = Field(None, max_length=MAX_ITEMS)
 
     @model_validator(mode="after")
-    def _validate_specs(self) -> "ConverterPreviewRequest":
+    def _validate_specs(self) -> Self:
         if self.converter_specs is not None and len(self.converter_specs) != len(self.converter_ids):
             raise ValueError("converter_specs must match converter_ids in order")
         return self

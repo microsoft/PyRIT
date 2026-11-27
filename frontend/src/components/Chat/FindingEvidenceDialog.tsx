@@ -15,6 +15,7 @@ import { toApiError } from '@/services/errors'
 import type { FindingCreate, FindingListItem, FindingListResponse, Operation } from '@/types'
 
 import { useFindingEvidenceDialogStyles } from './FindingEvidenceDialog.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 const PAGE_SIZE = 20
 // The findings list API rejects longer title searches.
@@ -30,7 +31,7 @@ interface FindingEvidenceDialogProps {
   /** Receives focus when the dialog closes, such as the control that opened it. */
   returnFocusRef?: React.RefObject<HTMLElement | null>
   /** Called after the attack is linked to a finding, new or existing. */
-  onAttached?: () => void
+  onAttached?: (() => void) | undefined
 }
 
 interface AttachmentSource {
@@ -197,7 +198,7 @@ export default function FindingEvidenceDialog({
           <DialogContent className={styles.content}>
             <div className={styles.pickerHeader}>
               <Field label="Operation" validationState={operationsError ? 'error' : 'none'}
-                validationMessage={operationsError ? `Could not load operations: ${operationsError}` : undefined}>
+                {...(operationsError ? { validationMessage: `Could not load operations: ${operationsError}` } : {})}>
                 <Dropdown placeholder="Choose an operation" value={operation?.name ?? ''}
                   selectedOptions={operation ? [operation.id] : []} disabled={submitting}
                   onOptionSelect={(_, data) => {
@@ -209,7 +210,7 @@ export default function FindingEvidenceDialog({
                   {operations.map(item => <Option key={item.id} value={item.id}>{item.name}</Option>)}
                 </Dropdown>
               </Field>
-              <Button ref={newFindingRef} className={styles.button} icon={<AddRegular />}
+              <Button ref={fluentRef(newFindingRef)} className={styles.button} icon={<AddRegular />}
                 disabled={submitting || disabled || !operation || fields === null}
                 onClick={() => {
                   if (operation) {

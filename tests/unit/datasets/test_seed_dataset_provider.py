@@ -535,6 +535,7 @@ class TestMetadataParsingRemote:
 
     async def test_no_metadata(self):
         """Provider without metadata is skipped when filters are applied."""
+        await asyncio.to_thread(SeedDatasetProvider.get_all_providers)
         mock_provider_cls = MagicMock(__name__="NoProv")
         mock_provider_instance = mock_provider_cls.return_value
         mock_provider_instance.dataset_name = "no_metadata"

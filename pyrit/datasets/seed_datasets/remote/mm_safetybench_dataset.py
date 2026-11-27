@@ -7,6 +7,8 @@ import uuid
 from enum import Enum
 from typing import Any, ClassVar
 
+from datasets import Features, Image, Value
+
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
 )
@@ -82,6 +84,12 @@ _CATEGORY_TO_GITHUB_SCENARIO: dict[str, str] = {
     "Gov_Decision": "13-Gov_Decision",
 }
 
+# Features of every split of every MM-SafetyBench config, as declared by the
+# README ``dataset_info`` metadata (the parquet footers carry no feature
+# metadata). See ``_fetch_single_split_async`` for when these must be passed
+# explicitly.
+_MM_SAFETYBENCH_FEATURES = Features({"id": Value("string"), "question": Value("string"), "image": Image()})
+
 
 class _MMSafetyBenchDataset(_RemoteDatasetLoader):
     """
@@ -121,8 +129,9 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
     GitHub repo remains the canonical reference and hosts
     ``TinyVersion_ID_List.json`` (used by the ``use_tiny`` filter).
 
-    The first call downloads ~500 MB of imagery from HuggingFace and caches it
-    locally. Subsequent calls are fast.
+    Only the parquet files backing the selected categories and variant are
+    downloaded (~250 MB for the default all-categories ``SD_TYPOGRAPHY`` load,
+    7-25 MB per single category) and cached locally. Subsequent calls are fast.
 
     Reference: https://isxinliu.github.io/Project/MM-SafetyBench/
     Paper: [@liu2024mmsafetybench]
@@ -312,14 +321,50 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         Returns:
             dict mapping ``id`` (string) to the objective text.
         """
-        text_only = await self._fetch_from_huggingface_async(
+        text_only = await self._fetch_single_split_async(category_value=category_value, split="Text_only", cache=cache)
+        return {str(row.get("id", "")): row.get("question", "") for row in text_only}
+
+    async def _fetch_single_split_async(self, *, category_value: str, split: str, cache: bool) -> Any:
+        """
+        Fetch one split of one config, downloading only the parquet file that backs it.
+
+        ``load_dataset(repo, config, split=...)`` downloads every split of the
+        config — for this dataset, all three image variants plus ``Text_only``,
+        about twice the bytes the default ``SD_TYPO`` load needs — because
+        ``split`` only selects what gets prepared. Overriding ``data_files`` with the split's
+        parquet file (the layout the dataset README ``configs`` block declares)
+        narrows the download to exactly that file, while keeping the shared
+        helper's caching semantics: warm-cache calls reuse the prepared data.
+        (Reuse requires resolving the config metadata, ~22 KB, against the
+        hub; with ``HF_HUB_OFFLINE=1`` the cache lookup hashes the unresolved
+        ``data_files`` and cannot match, a ``datasets`` limitation for any
+        ``data_files`` override.)
+
+        Args:
+            category_value: HuggingFace config name (e.g. ``"Illegal_Activitiy"``).
+            split: Split name within the config (e.g. ``"SD_TYPO"``).
+            cache: Whether to reuse cached data. When False, files are
+                force-redownloaded.
+
+        Returns:
+            The HuggingFace ``Dataset`` for that split (iterable of dict rows,
+            with the ``image`` column decoded per ``_MM_SAFETYBENCH_FEATURES``).
+        """
+        return await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
             config=category_value,
-            split="Text_only",
+            split=split,
             cache=cache,
             token=self.token,
+            data_files={split: f"data/{category_value}/{split}.parquet"},
+            # datasets <5.1 keeps the README dataset_info (four declared
+            # splits) when data_files is set, so split verification must be
+            # off; datasets >=5.1 drops it when data_files is set, so features
+            # must be explicit or the image column stays raw bytes. Both
+            # overrides are needed to cover the supported range (>=4.8.0).
+            features=_MM_SAFETYBENCH_FEATURES,
+            verification_mode="no_checks",
         )
-        return {str(row.get("id", "")): row.get("question", "") for row in text_only}
 
     async def _load_variant_split_async(self, *, category_value: str, cache: bool) -> Any:
         """
@@ -332,12 +377,10 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         Returns:
             The HuggingFace dataset split (an iterable of dict-like rows).
         """
-        return await self._fetch_from_huggingface_async(
-            dataset_name=self.HF_DATASET_NAME,
-            config=category_value,
+        return await self._fetch_single_split_async(
+            category_value=category_value,
             split=self.variant.value,
             cache=cache,
-            token=self.token,
         )
 
     def _load_tiny_id_map(self, *, cache: bool) -> dict[str, set[int]]:

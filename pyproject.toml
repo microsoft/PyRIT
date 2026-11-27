@@ -322,20 +322,6 @@ include = ["pyrit/memory/memory_models.py"]
 [tool.ty.overrides.rules]
 unsound-assignment = "ignore"
 
-# TEMPORARY: files with unsound-assignment findings still to fix, tracked in
-# https://github.com/microsoft/PyRIT/issues/4402 (chunks UA-1 to UA-7). Each chunk's PR
-# fixes its findings and removes its files from this list; the PR that empties the list
-# deletes this override. Do not add files here: new code is checked by the rule.
-[[tool.ty.overrides]]
-include = [
-    "pyrit/executor/promptgen/gcg/attack/base/attack_manager.py",
-    "pyrit/executor/promptgen/gcg/attack/gcg/candidate_proposer.py",
-    "pyrit/executor/promptgen/gcg/attack/gcg/gcg_attack.py",
-    "pyrit/executor/promptgen/gcg/default_implementations.py",
-]
-[tool.ty.overrides.rules]
-unsound-assignment = "ignore"
-
 [tool.uv]
 constraint-dependencies = [
     "aiohttp>=3.13.4",

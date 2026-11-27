@@ -25,6 +25,7 @@
 # (text-to-image)=
 # ## Text to Image
 #
+# `AddImageTextConverter`, `AddTextImageConverter`, and `GridCompositeConverter` use Pillow's limited built-in font by default. For multilingual text, pass `font_name=pathlib.Path("/path/to/font.ttf")` with a font covering the characters you need. These converters log a warning when the selected font lacks characters; the warning does not replace the missing glyphs.
 #
 # ### GridCompositeConverter
 #
