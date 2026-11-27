@@ -157,7 +157,10 @@ def test_tool_execution_round_trips_arguments() -> None:
     assert "arguments" not in ToolExecution.model_validate(_model_data(ToolExecution)).model_dump(mode="json")
 
 
-@pytest.mark.parametrize("arguments", ["{}", ["to"], {"to": object()}])
+@pytest.mark.parametrize(
+    "arguments",
+    ["{}", ["to"], {"to": object()}, {"to": float("nan")}, {"to": {"sizes": [1, float("-inf")]}}],
+)
 def test_tool_execution_rejects_unstructured_arguments(arguments: object) -> None:
     with pytest.raises(ValidationError):
         ToolExecution.model_validate({**_model_data(ToolExecution), "arguments": arguments})

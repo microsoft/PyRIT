@@ -310,12 +310,13 @@ async def test_absent_name_only_tool_refutes_alongside_an_undetermined_argument_
     assert (await scorer.score_async(scorable=scope, expectation=_argument_expectation()))[0].is_undetermined
 
 
-def _argument_scorer(*arguments: JsonValue) -> OtelToolCallScorer:
+def _argument_scorer(*arguments: JsonValue, convention: str = "genai") -> OtelToolCallScorer:
     client = InMemoryTraceClient()
+    attribute = "gen_ai.tool.call.arguments" if convention == "genai" else "input.value"
     for index, value in enumerate(arguments):
-        span = _span(name="send_email", span_id=f"{index + 2:016x}")
+        span = _span(name="send_email", span_id=f"{index + 2:016x}", convention=convention)
         if value is not None:
-            span.attributes["gen_ai.tool.call.arguments"] = value
+            span.attributes[attribute] = value
         client.add_span(span)
     client.mark_complete(trace_ids=("1" * 32,))
     return OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
@@ -361,7 +362,10 @@ async def test_source_stores_parsed_arguments_not_the_raw_attribute_async(sqlite
         {"to": float("inf")},
         {"to": "a@example.com", "body": {"sizes": [1, float("nan")]}},
         3,
+        '{"to": ' + "[" * 100 + "1" + "]" * 100 + "}",
+        '{"to": ' + "[" * 100_000 + "1" + "]" * 100_000 + "}",
     ],
+    ids=lambda value: f"depth-{str(value).count('[')}" if str(value).count("[") > 10 else None,
 )
 async def test_unreadable_trace_arguments_are_not_retained_and_stay_undetermined_async(
     sqlite_instance: SQLiteMemory, arguments: JsonValue
@@ -392,10 +396,11 @@ async def test_unreadable_trace_arguments_are_not_retained_and_stay_undetermined
         ('{"to": "a@example.com", "body": "other"}', {"to": "a@example.com", "body": "invoice"}, False),
     ],
 )
+@pytest.mark.parametrize("convention", ["genai", "openinference"])
 async def test_trace_arguments_decide_argument_requirements_in_scoring_and_replay_async(
-    sqlite_instance: SQLiteMemory, arguments: JsonValue, matchers: dict[str, str], expected: bool
+    sqlite_instance: SQLiteMemory, arguments: JsonValue, matchers: dict[str, str], expected: bool, convention: str
 ) -> None:
-    scorer = _argument_scorer(arguments)
+    scorer = _argument_scorer(arguments, convention=convention)
     expectation = _send_email_expectation(**matchers)
 
     score = (await scorer.score_async(scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=expectation))[0]

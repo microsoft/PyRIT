@@ -5,10 +5,11 @@
 
 from __future__ import annotations
 
+import math
 from enum import Enum
 from typing import Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from pyrit.models.score._trace_validation import (  # noqa: TC001 (runtime-required by Pydantic)
     SpanId,
@@ -154,6 +155,29 @@ class ToolExecution(_TraceInterval):
     status: TraceSpanStatus = TraceSpanStatus.UNSET
     #: Left out of serialization while None, so name-only evidence keeps its stored form.
     arguments: dict[str, JsonValue] | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("arguments")
+    @classmethod
+    def _validate_finite_arguments(cls, value: dict[str, JsonValue] | None) -> dict[str, JsonValue] | None:
+        """
+        Reject arguments that hold a number JSON cannot represent.
+
+        Returns:
+            dict[str, JsonValue] | None: The validated arguments.
+
+        Raises:
+            ValueError: If the arguments hold a NaN or infinite number anywhere.
+        """
+        pending: list[JsonValue] = [value]
+        while pending:
+            item = pending.pop()
+            if isinstance(item, float) and not math.isfinite(item):
+                raise ValueError("Tool arguments must hold only finite numbers.")
+            if isinstance(item, dict):
+                pending.extend(item.values())
+            elif isinstance(item, list):
+                pending.extend(item)
+        return value
 
 
 class ExecutionStepKind(str, Enum):
