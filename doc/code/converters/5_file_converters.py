@@ -27,6 +27,8 @@
 # 1. **Template-Based PDF Generation**: Use YAML templates to render dynamic content into PDFs
 # 2. **Direct Prompt PDF Generation**: Convert plain text strings into PDFs without templates
 # 3. **Modify Existing PDFs**: Inject text into existing PDF documents
+#
+# For multilingual text, use `PDFConverter(font_path=pathlib.Path("/path/to/font.ttf"))` to embed a local TrueType font. It overrides `font_type` for generated PDFs and provides the default font for injected text; an injection item's explicit `font` still takes precedence. The converter warns when the selected font cannot render characters. Choose a font covering your text and check the rendered output, especially for scripts requiring shaping. PyRIT does not bundle or download fonts.
 # %% [markdown]
 # ### Template-Based PDF Generation
 #
