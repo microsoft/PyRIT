@@ -69,6 +69,7 @@ export default function Configuration() {
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
   const [readError, setReadError] = useState<string | null>(null)
   const [environmentHasUnsavedChanges, setEnvironmentHasUnsavedChanges] = useState(false)
+  const [environmentSaving, setEnvironmentSaving] = useState(false)
   const pending = useRef(false)
   const editRevision = useRef(0)
   const selectedTab = configurationTabFromSearchParams(searchParams)
@@ -76,6 +77,7 @@ export default function Configuration() {
   const hasUnsavedChanges = selectedTab === 'configuration'
     ? configurationHasUnsavedChanges
     : selectedTab === 'environment' && environmentHasUnsavedChanges
+  const saveInFlight = saving || environmentSaving
   const blocker = useBlocker(hasUnsavedChanges)
 
   useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
@@ -195,8 +197,12 @@ export default function Configuration() {
     setSearchParams(nextSearchParams)
   }
 
-  const handleDiscardChanges = (): void => {
-    setContent(savedContent)
+  const handleConfirmLeave = (): void => {
+    // A save in flight is already sending the draft, so the draft stays: if that save fails,
+    // the operator finds their edits on this tab instead of a reverted editor.
+    if (!saving) {
+      setContent(savedContent)
+    }
     if (blocker.state === 'blocked') {
       blocker.proceed()
     }
@@ -252,6 +258,7 @@ export default function Configuration() {
       ) : selectedTab === 'environment' ? (
         <EnvironmentFiles
           onUnsavedChangesChange={setEnvironmentHasUnsavedChanges}
+          onSavingChange={setEnvironmentSaving}
         />
       ) : loading ? (
         <div className={styles.loadingState}>
@@ -293,13 +300,17 @@ export default function Configuration() {
       )}
       <ConfirmDialog
         open={blocker.state === 'blocked'}
-        title="Discard unsaved changes?"
-        confirmLabel="Discard changes"
-        cancelLabel="Keep editing"
-        onConfirm={handleDiscardChanges}
+        title={saveInFlight ? 'Leave while saving?' : 'Discard unsaved changes?'}
+        confirmLabel={saveInFlight ? 'Leave' : 'Discard changes'}
+        cancelLabel={saveInFlight ? 'Stay' : 'Keep editing'}
+        onConfirm={handleConfirmLeave}
         onCancel={handleKeepEditing}
       >
-        Your unsaved configuration changes will be lost if you continue.
+        {environmentSaving
+          ? 'The save is still running and continues after you leave. If it fails, you will not see it here, and the draft does not stay on this tab.'
+          : saving
+            ? 'The save is still running and continues after you leave. You will only be told about a failure on this tab.'
+            : 'Your unsaved configuration changes will be lost if you continue.'}
       </ConfirmDialog>
       <ConfirmDialog
         open={confirmRecovery}

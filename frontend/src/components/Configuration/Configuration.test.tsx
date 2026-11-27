@@ -522,6 +522,120 @@ describe('Configuration', () => {
     expect(screen.getByLabelText('Current URL')).toHaveTextContent(/^\/$/)
   })
 
+  it('should describe a save in progress instead of offering to discard it', async () => {
+    const user = userEvent.setup()
+    const saving = deferred<Awaited<ReturnType<typeof configurationApi.updateContent>>>()
+    mockedConfigurationApi.updateContent.mockReturnValueOnce(saving.promise)
+    renderPage()
+
+    const editor = await screen.findByLabelText('Configuration YAML')
+    await user.type(editor, '# draft')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Go to scanner' }))
+
+    // The request is already on its way, so nothing can be discarded from here on.
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveAccessibleName('Leave while saving?')
+    expect(dialog).not.toHaveTextContent(/will be lost/)
+    expect(screen.getByRole('button', { name: 'Stay' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Discard changes' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Stay' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await screen.findByLabelText('Current URL')).toHaveTextContent(/^\/config$/)
+
+    await user.click(await screen.findByRole('button', { name: 'Go to scanner' }))
+    await user.click(await screen.findByRole('button', { name: 'Leave' }))
+    expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
+    expect(mockedConfigurationApi.updateContent).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      saving.resolve({
+        content: '# draft', source: 'C:/Users/test/.pyrit/config.yaml',
+        version: 'config-v2', live_reinitialization_enabled: false,
+      })
+    })
+  })
+
+  it('should keep the configuration draft when a save fails after the operator left during it', async () => {
+    const user = userEvent.setup()
+    const saving = deferred<Awaited<ReturnType<typeof configurationApi.updateContent>>>()
+    mockedConfigurationApi.updateContent.mockReturnValueOnce(saving.promise)
+    renderPage()
+
+    const editor = await screen.findByLabelText('Configuration YAML')
+    await user.clear(editor)
+    await user.type(editor, '# draft')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(screen.getByRole('tab', { name: 'Environment & Secrets' }))
+    await user.click(await screen.findByRole('button', { name: 'Leave' }))
+    expect(await screen.findByLabelText('Environment file contents')).toBeInTheDocument()
+
+    await act(async () => {
+      saving.reject({ isAxiosError: true, response: { status: 409, data: { detail: 'Configuration save failed.' } } })
+    })
+
+    await user.click(await screen.findByRole('tab', { name: 'PyRIT Configuration' }))
+    expect(await screen.findByText('Configuration save failed.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Configuration YAML')).toHaveValue('# draft')
+
+    // Leaving promised that the save continues, so the draft stays protected until it has.
+    const event = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('should describe an environment file save in progress instead of offering to discard it', async () => {
+    const user = userEvent.setup()
+    const saving = deferred<Awaited<ReturnType<typeof configurationApi.updateEnvironmentFile>>>()
+    mockedConfigurationApi.updateEnvironmentFile.mockReturnValueOnce(saving.promise)
+    renderPage('/config?tab=environment')
+
+    const editor = await screen.findByLabelText('Environment file contents')
+    await user.clear(editor)
+    await user.type(editor, '# draft')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Go to scanner' }))
+
+    // Leaving closes this editor, so a failure would be reported nowhere and the draft would not stay.
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveAccessibleName('Leave while saving?')
+    expect(dialog).not.toHaveTextContent(/will be lost/)
+    expect(dialog).toHaveTextContent('the draft does not stay on this tab')
+
+    await user.click(screen.getByRole('button', { name: 'Leave' }))
+    expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
+    expect(mockedConfigurationApi.updateEnvironmentFile).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      saving.resolve({
+        id: '0', name: '.env', path: 'C:/Users/test/.pyrit/.env', content: '# draft', exists: true, version: 'v2',
+      })
+    })
+  })
+
+  it('should stop describing a save once the environment editor has closed', async () => {
+    const user = userEvent.setup()
+    const saving = deferred<Awaited<ReturnType<typeof configurationApi.updateEnvironmentFile>>>()
+    mockedConfigurationApi.updateEnvironmentFile.mockReturnValueOnce(saving.promise)
+    renderPage('/config?tab=environment')
+
+    const editor = await screen.findByLabelText('Environment file contents')
+    await user.clear(editor)
+    await user.type(editor, '# draft')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(screen.getByRole('tab', { name: 'PyRIT Configuration' }))
+    await user.click(await screen.findByRole('button', { name: 'Leave' }))
+    const configuration = await screen.findByLabelText('Configuration YAML')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    // That editor is gone, so an ordinary unsaved edit gets the ordinary prompt again.
+    await user.type(configuration, '# draft')
+    await user.click(await screen.findByRole('button', { name: 'Go to scanner' }))
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+  })
+
   it('should request browser confirmation before unloading unsaved changes', async () => {
     const user = userEvent.setup()
     renderPage()
