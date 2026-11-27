@@ -94,10 +94,7 @@ SINGLE_VALUE_SETTINGS: dict[tuple[str, str], str] = {
     )
 }
 
-KNOWN_GAPS: dict[tuple[str, str], str] = {
-    ("CodeChameleonConverter", "encrypt_function"): "custom functions are not identified yet, see #3761",
-    ("CodeChameleonConverter", "decrypt_function"): "custom functions are not identified yet, see #3761",
-}
+KNOWN_GAPS: dict[tuple[str, str], str] = {}
 
 BASELINE_SETTINGS: dict[str, dict[str, Any]] = {
     "AzureSpeechAudioToTextConverter": {"azure_speech_region": "eastus", "azure_speech_key": "test-key"},
