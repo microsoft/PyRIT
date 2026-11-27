@@ -55,8 +55,8 @@ from pyrit.score.text_matching import match_text
         (StartsWith(value="O.K+"), "OXKK walked in.", False),
         (StartsWith(value="Iris", case_sensitive=True), "iris", False),
         (StartsWith(value="Iris", ignore_whitespace=False), " Iris", False),
-        # ignore_whitespace strips the expected value too, the same rule
-        # Equals and Contains apply one row above: surrounding whitespace in a
+        # ignore_whitespace strips the expected value too, the same rule the
+        # Equals and Contains rows above rely on: surrounding whitespace in a
         # configured criterion is incidental formatting, never part of the match.
         (StartsWith(value=" Iris "), " Iris ", True),
         (StartsWith(value="\nhello", ignore_whitespace=True), "hello world", True),
