@@ -1915,10 +1915,13 @@ class SeedEntry(Base):
         self.data_type = entry.data_type
         self.name = entry.name
         self.dataset_name = entry.dataset_name
-        self.harm_categories = list(entry.harm_categories) if entry.harm_categories else None
+        # The list valued facets keep their shape: an empty list is stored as
+        # an empty list, so a seed read back matches what was written instead
+        # of silently becoming None.
+        self.harm_categories = list(entry.harm_categories) if entry.harm_categories is not None else None
         self.description = entry.description
-        self.authors = list(entry.authors) if entry.authors else None
-        self.groups = list(entry.groups) if entry.groups else None
+        self.authors = list(entry.authors) if entry.authors is not None else None
+        self.groups = list(entry.groups) if entry.groups is not None else None
         self.source = entry.source
         self.date_added = entry.date_added
         self.added_by = entry.added_by
@@ -1941,7 +1944,7 @@ class SeedEntry(Base):
 
         # SeedPrompt-specific fields
         if isinstance(entry, SeedPrompt):
-            self.parameters = list(entry.parameters) if entry.parameters else None
+            self.parameters = list(entry.parameters) if entry.parameters is not None else None
             self.sequence = entry.sequence
             self.role = entry.role
         else:
