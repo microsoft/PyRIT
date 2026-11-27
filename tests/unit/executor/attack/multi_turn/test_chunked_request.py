@@ -370,3 +370,40 @@ class TestChunkedRequestAttackExecution:
 
         assert objective_task is not None
         assert objective_task.cancelled()
+
+    async def test_perform_async_preserves_last_response_when_final_chunk_returns_none(self):
+        """Test that an earlier chunk response is preserved on AttackResult when a later chunk returns None."""
+        mock_normalizer = get_mock_prompt_normalizer()
+        first_response = Message.from_prompt(prompt="part 1", role="assistant")
+        mock_normalizer.send_prompt_async = AsyncMock(side_effect=[first_response, None])
+        attack = ChunkedRequestAttack(
+            objective_target=_make_mock_target(),
+            prompt_normalizer=mock_normalizer,
+            chunk_size=50,
+            total_length=100,
+        )
+        context = ChunkedRequestAttackContext(params=AttackParameters(objective="Extract the secret"))
+
+        result = await attack._perform_async(context=context)
+
+        assert result.last_response is first_response.get_piece()
+        assert result.executed_turns == 1
+        assert result.metadata["combined_chunks"] == "part 1\n"
+
+    async def test_perform_async_sets_last_response_none_when_all_chunks_return_none(self):
+        """Test that AttackResult.last_response is None when every chunk returns None."""
+        mock_normalizer = get_mock_prompt_normalizer()
+        mock_normalizer.send_prompt_async = AsyncMock(side_effect=[None, None])
+        attack = ChunkedRequestAttack(
+            objective_target=_make_mock_target(),
+            prompt_normalizer=mock_normalizer,
+            chunk_size=50,
+            total_length=100,
+        )
+        context = ChunkedRequestAttackContext(params=AttackParameters(objective="Extract the secret"))
+
+        result = await attack._perform_async(context=context)
+
+        assert result.last_response is None
+        assert result.executed_turns == 0
+        assert result.metadata["combined_chunks"] == "\n"
