@@ -371,7 +371,8 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({ items: [{
       name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: false, provider_available: true,
-      logical_examples: null, modalities: [], harm_categories: [], has_unlabeled_harm_categories: false,
+      logical_examples: null, seed_pieces: null, objectives: null, modalities: [], harm_categories: [],
+      has_unlabeled_harm_categories: false,
     }] })
     mockEstimateRun.mockResolvedValue({
       ...makeEstimate(8), effective_datasets: {
