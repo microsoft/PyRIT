@@ -707,6 +707,98 @@ describe('LabelsBar', () => {
     expect(last).not.toHaveProperty('team')
   })
 
+
+  it('should not bring back a label removed after a different edit started', async () => {
+    // Blur schedules the save, picking another label up bumps the edit session,
+    // and the remove then finds nothing to cancel: the late save has to be
+    // called off by the label it belongs to, not only by the live session.
+    const onChange = jest.fn()
+    const Harness = () => {
+      const [labels, setLabels] = useState({ ...FRESH_GLOBAL_LABELS, team: 'blue' })
+      return (
+        <TestWrapper>
+          <LabelsBar
+            labels={labels}
+            onLabelsChange={next => { onChange(next); setLabels(next) }}
+          />
+        </TestWrapper>
+      )
+    }
+    render(<Harness />)
+
+    fireEvent.click(screen.getByTestId('label-team'))
+    const teamInput = await screen.findByTestId('edit-label-team')
+    fireEvent.change(teamInput, { target: { value: 'green' } })
+    fireEvent.blur(teamInput)
+    fireEvent.focus(screen.getByTestId('edit-label-operator'))
+    fireEvent.change(screen.getByTestId('edit-label-operator'), { target: { value: 'dana' } })
+    fireEvent.click(screen.getByTestId('remove-label-team'))
+
+    await act(async () => { await new Promise(r => setTimeout(r, 400)) })
+
+    const [last] = onChange.mock.calls[onChange.mock.calls.length - 1]
+    expect(last).not.toHaveProperty('team')
+  })
+
+
+  it('should not revert a fresh operator edit refocused inside the save window', async () => {
+    // Blurring schedules the save, and focusing right back restarts the edit
+    // from the not yet committed labels, so the pending save then overwrites
+    // the fresh value with the pre edit one.
+    const onChange = jest.fn()
+    const Harness = () => {
+      const [labels, setLabels] = useState({ ...FRESH_GLOBAL_LABELS })
+      return (
+        <TestWrapper>
+          <LabelsBar
+            labels={labels}
+            onLabelsChange={next => { onChange(next); setLabels(next) }}
+          />
+        </TestWrapper>
+      )
+    }
+    render(<Harness />)
+
+    const operatorInput = screen.getByTestId('edit-label-operator')
+    fireEvent.focus(operatorInput)
+    fireEvent.change(operatorInput, { target: { value: 'dana' } })
+    fireEvent.blur(operatorInput)
+    fireEvent.focus(operatorInput)
+
+    await act(async () => { await new Promise(r => setTimeout(r, 400)) })
+
+    expect(screen.getByTestId('edit-label-operator')).toHaveValue('dana')
+  })
+
+
+  it('should keep a refocused label editor open instead of saving under the cursor', async () => {
+    // Focusing the editor right back inside the save window continues the
+    // edit; the deferred save must not close the editor mid typing.
+    const Harness = () => {
+      const [labels, setLabels] = useState({ ...FRESH_GLOBAL_LABELS, team: 'blue' })
+      return (
+        <TestWrapper>
+          <LabelsBar
+            labels={labels}
+            onLabelsChange={next => setLabels(next) }
+          />
+        </TestWrapper>
+      )
+    }
+    render(<Harness />)
+
+    fireEvent.click(screen.getByTestId('label-team'))
+    const teamInput = await screen.findByTestId('edit-label-team')
+    fireEvent.change(teamInput, { target: { value: 'green' } })
+    fireEvent.blur(teamInput)
+    fireEvent.focus(teamInput)
+    fireEvent.change(teamInput, { target: { value: 'greenish' } })
+
+    await act(async () => { await new Promise(r => setTimeout(r, 400)) })
+
+    expect(screen.getByTestId('edit-label-team')).toHaveValue('greenish')
+  })
+
   it('should cancel edit on Escape key', async () => {
     const onChange = jest.fn()
     render(
