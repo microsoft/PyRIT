@@ -225,14 +225,10 @@ class EnvironmentFileService:
         path = self._get_file_path(file_id)
         await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(_replace_file, path=path, content=content)
-        return EnvironmentFileContent(
-            id=file_id,
-            name=path.name,
-            path=str(path),
-            content=content,
-            exists=True,
-            version=_content_version(content=content),
-        )
+        # The write is byte exact while reads normalize newlines, so report the stored
+        # document through the read path; otherwise the returned version hashes content
+        # that no read will ever see and the next save fails the conflict check.
+        return await self._read_file_source_async(file_id=file_id)
 
     async def _write_akv_source_async(self, *, file_id: str, content: str) -> EnvironmentFileContent:
         secret_url = self._get_akv_source(file_id)

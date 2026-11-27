@@ -72,6 +72,32 @@ async def test_environment_file_service_preserves_local_content_without_validati
     assert env_file.read_text(encoding="utf-8") == content
 
 
+async def test_update_reports_the_stored_newline_form_the_next_read_sees(tmp_path: Path) -> None:
+    """Test a byte exact write still reports the version the next read computes."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("FIRST=before\n", encoding="utf-8")
+    service = EnvironmentFileService(resolved_env_files=[env_file])
+    item = await service.read_async(file_id=(await service.list_async())[0].id)
+
+    updated = await service.update_async(
+        file_id=item.id,
+        content="FIRST=after\r\nSECOND=value\r\n",
+        expected_version=item.version or "",
+    )
+    reloaded = await service.read_async(file_id=item.id)
+
+    assert reloaded.version == updated.version
+    assert reloaded.content == updated.content
+    assert env_file.read_bytes() == b"FIRST=after\r\nSECOND=value\r\n"
+    followup = await service.update_async(
+        file_id=item.id,
+        content="FIRST=after\n",
+        expected_version=updated.version,
+    )
+    assert followup.content == "FIRST=after\n"
+    assert env_file.read_bytes() == b"FIRST=after\n"
+
+
 async def test_environment_file_service_rejects_inline_materialized_source(tmp_path: Path) -> None:
     """Test deployment-secret materialized files are exposed as read-only."""
     env_file = tmp_path / ".env"
