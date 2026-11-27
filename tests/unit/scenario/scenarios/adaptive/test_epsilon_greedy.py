@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -127,6 +127,27 @@ class TestEpsilonGreedyTechniqueSelectorSelect:
         selector = _seeded_selector()
         result = await selector.select_async(technique_identifiers=["a", "b"], objective="obj", num_top_techniques=5)
         assert len(result) == 2
+
+    @patch(_COMPUTE_PATH, side_effect=_empty_rates)
+    async def test_select_seeded_choices_depend_on_seed_and_run_id_async(self, _mock: MagicMock) -> None:
+        async def _picks_async(*, random_seed: int, scenario_result_id: str) -> list[str]:
+            selector = _seeded_selector(random_seed=random_seed)
+            return [
+                (
+                    await selector.select_async(
+                        technique_identifiers=TECHNIQUES,
+                        objective=f"obj-{i}",
+                        scenario_result_id=scenario_result_id,
+                    )
+                )[0]
+                for i in range(20)
+            ]
+
+        baseline = await _picks_async(random_seed=0, scenario_result_id="run-1")
+
+        assert await _picks_async(random_seed=0, scenario_result_id="run-1") == baseline
+        assert await _picks_async(random_seed=1, scenario_result_id="run-1") != baseline
+        assert await _picks_async(random_seed=0, scenario_result_id="run-2") != baseline
 
 
 class TestEpsilonGreedySelectorScope:
