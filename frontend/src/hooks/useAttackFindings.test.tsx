@@ -8,7 +8,7 @@ import { useAttackFindings } from './useAttackFindings'
 jest.mock('@/services/api', () => ({ attacksApi: { getAttackFindings: jest.fn() } }))
 
 const FINDING = {
-  id: 'finding-1', operation_id: 'operation-1', title: 'Prompt leak', severity: 'high', description: '',
+  id: 'finding-1', operation_id: 'operation-1', title: 'Prompt leak', severity: 'high', field_values: {},
   created_at: '2026-10-08T12:00:00Z', operation_name: 'Review', evidence_id: 'evidence-1',
 } as AttackFindingItem
 

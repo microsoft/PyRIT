@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
@@ -38,7 +39,7 @@ class SurfaceEntry(BaseModel):
     content_truncated: bool = False
 
     @model_validator(mode="after")
-    def _validate_retained_content(self) -> SurfaceEntry:
+    def _validate_retained_content(self) -> Self:
         """
         Keep the truncation marker consistent with what was retained.
 
@@ -86,7 +87,7 @@ class SurfaceBaseline(BaseModel):
     concurrent: bool = False
 
     @model_validator(mode="after")
-    def _validate_entries(self) -> SurfaceBaseline:
+    def _validate_entries(self) -> Self:
         """
         Keep baseline entries unique.
 

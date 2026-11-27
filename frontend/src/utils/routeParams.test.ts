@@ -4,8 +4,10 @@ import {
   catalogPathFromNavigationState,
   DATASET_DETAIL_PATH,
   datasetDetailPath,
-  DATASET_QUERY_PARAM,
   datasetNamesFromSearchParams,
+  isNamedDatasetSelectionKey,
+  namedDatasetSelectionKey,
+  scenarioLaunchRoutePath,
   routerPathParamValue,
   scenarioRunAttackRoutePath,
   scenarioRunProvenance,
@@ -161,17 +163,36 @@ describe('isDatasetsPath and isChatPath', () => {
 })
 
 describe('scenario dataset links', () => {
+  it('builds a launch path with one repeatable dataset parameter per name', () => {
+    expect(scenarioLaunchRoutePath('foundry.assert_policy')).toBe('/scanner/launch/foundry.assert_policy')
+    expect(scenarioLaunchRoutePath('foundry/x', ['a&b', 'c d'])).toBe(
+      '/scanner/launch/foundry%2Fx?dataset=a%26b&dataset=c+d',
+    )
+  })
+
   it('reads distinct dataset names exactly as written, keeping blanks for the server to reject', () => {
     const params = new URLSearchParams('dataset=a&dataset=%20b%20&dataset=&dataset=a&preset=p')
     expect(datasetNamesFromSearchParams(params)).toEqual(['a', ' b ', ''])
     expect(datasetNamesFromSearchParams(new URLSearchParams())).toEqual([])
   })
 
-  it('round-trips names through a launch link without merging whitespace variants', () => {
-    const names = ['returns_policy', 'x+y', 'a&b', ' returns ', 'returns ', 'returns']
-    const params = new URLSearchParams()
-    for (const name of [...names, ' returns ']) params.append(DATASET_QUERY_PARAM, name)
-    const search = new URL(`/scanner/launch/scenario?${params.toString()}`, 'http://localhost').searchParams
+  it('round-trips names through the launch path without merging whitespace variants', () => {
+    const names = ['returns_policy', 'x+y', ' returns ', 'returns ', 'returns']
+    const path = scenarioLaunchRoutePath('scenario', [...names, ' returns '])
+    const search = new URL(path, 'http://localhost').searchParams
     expect(datasetNamesFromSearchParams(search)).toEqual(names)
+  })
+
+  it('builds the catalog selection key for a named dataset', () => {
+    expect(namedDatasetSelectionKey('returns_policy')).toBe('dataset:named:returns_policy')
+    expect(datasetDetailPath(namedDatasetSelectionKey('a&b'))).toBe(
+      '/datasets/detail?selection_key=dataset%3Anamed%3Aa%26b',
+    )
+  })
+
+  it('recognizes named dataset selection keys built by the shared helper', () => {
+    expect(isNamedDatasetSelectionKey(namedDatasetSelectionKey('returns'))).toBe(true)
+    expect(isNamedDatasetSelectionKey('dataset:named:')).toBe(false)
+    expect(isNamedDatasetSelectionKey('dataset:unnamed')).toBe(false)
   })
 })
