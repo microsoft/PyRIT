@@ -14,6 +14,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -21,10 +23,22 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _INNER_CONFTEST = textwrap.dedent(
     """
     import asyncio
+    import importlib
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     import pytest
 
-    from test_support.async_fixture_errors import pytest_fixture_setup  # noqa: F401
+    from pyrit.memory import CentralMemory, SQLiteMemory
+
+    pytest_plugins = ["{fixture_plugin}"]
+
+    # Load the real hook registration without reading local configuration or initializing memory.
+    with (
+        patch("pyrit.setup.initialize_pyrit_async", new_callable=AsyncMock),
+        patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock(spec=SQLiteMemory)) as memory,
+    ):
+        memory.return_value.dispose_loop_resources_async = AsyncMock()
+        importlib.import_module(pytest_plugins[0])
 
     _calls = []
 
@@ -67,14 +81,15 @@ _INNER_TESTS = textwrap.dedent(
 )
 
 
-def test_async_fixture_loop_error_is_reported_once_and_later_tests_run(tmp_path: Path) -> None:
+@pytest.mark.parametrize("fixture_plugin", ["unit.conftest", "integration.conftest", "partner_integration.conftest"])
+def test_async_fixture_loop_error_is_reported_once_and_later_tests_run(*, tmp_path: Path, fixture_plugin: str) -> None:
     (tmp_path / "pytest.ini").write_text(
         "[pytest]\nasyncio_mode = auto\nasyncio_default_fixture_loop_scope = function\n", encoding="utf-8"
     )
-    (tmp_path / "conftest.py").write_text(_INNER_CONFTEST, encoding="utf-8")
+    (tmp_path / "conftest.py").write_text(_INNER_CONFTEST.format(fixture_plugin=fixture_plugin), encoding="utf-8")
     (tmp_path / "test_inner.py").write_text(_INNER_TESTS, encoding="utf-8")
     env = {key: value for key, value in os.environ.items() if key not in {"PYTEST_ADDOPTS", "PYTEST_PLUGINS"}}
-    env["PYTHONPATH"] = str(_REPO_ROOT)
+    env["PYTHONPATH"] = os.pathsep.join((str(_REPO_ROOT), str(_REPO_ROOT / "tests")))
 
     result = subprocess.run(
         [

@@ -61,9 +61,10 @@ upgrade that changes this fixture contract fails explicitly.
 If loop creation fails while an async fixture is being set up, pytest 9.1 and later
 can turn that one error into an `assert not self._finalizers` setup error for every
 later test that uses the fixture ([pytest#14800](https://github.com/pytest-dev/pytest/issues/14800)).
-`tests/unit/conftest.py` imports a `pytest_fixture_setup` hook from
-`test_support/async_fixture_errors.py` that caches the setup error the way pytest's own
-hook does. The test that hit the error still reports it, and later tests run normally.
+The unit, integration, and partner-integration conftests import a `pytest_fixture_setup`
+hook from `test_support/async_fixture_errors.py` that caches the setup error the way
+pytest's own hook does. The isolated regression checks each tier's hook registration.
+The test that hit the error still reports it, and later tests run normally.
 Remove the hook once the locked pytest includes a fix, and keep its regression test.
 
 ## SQLite memory fixtures

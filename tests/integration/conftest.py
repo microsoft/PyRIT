@@ -13,6 +13,7 @@ from sqlalchemy import inspect
 
 from pyrit.memory import AzureSQLMemory, CentralMemory, SQLiteMemory
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+from test_support.async_fixture_errors import pytest_fixture_setup  # noqa: F401
 
 # This limits retries to 10 attempts with a 1 second wait between retries
 os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "9"
