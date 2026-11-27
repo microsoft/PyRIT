@@ -126,6 +126,13 @@ export default function MediaPreview({
   // Hold a refreshed URL until the src prop catches up, without an effect.
   const [replacement, setReplacement] = useState<{ readonly from: string; readonly next: string } | null>(null)
   const activeSrc = replacement != null && replacement.from === src ? replacement.next : src
+  const [shownSrc, setShownSrc] = useState(activeSrc)
+  if (shownSrc !== activeSrc) {
+    setShownSrc(activeSrc)
+    setLoaded(false)
+    setError(false)
+    setRefreshFailed(false)
+  }
   const onLoad = useCallback(() => setLoaded(true), [])
   const onError = useCallback(() => {
     setError(true)
