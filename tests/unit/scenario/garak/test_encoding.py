@@ -14,6 +14,7 @@ from pyrit.converter import (
     Base64Converter,
     ColumnarTranspositionConverter,
     PigpenConverter,
+    PolybiusConverter,
     SearchReplaceConverter,
 )
 from pyrit.executor.attack import (
@@ -276,7 +277,7 @@ class TestEncodingTechniqueDefault:
         }
         all_names = {t.value for t in EncodingTechnique.get_all_techniques()}
         assert default_names < all_names
-        assert len(all_names) == 22
+        assert len(all_names) == 23
         # The niche/lossy schemes stay ALL-only.
         assert all_names - default_names == {
             "braille",
@@ -288,6 +289,7 @@ class TestEncodingTechniqueDefault:
             "ubbi_dubbi",
             "bifid",
             "columnar_transposition",
+            "polybius",
         }
 
     def test_get_aggregate_tags_includes_default(self):
@@ -517,6 +519,56 @@ class TestEncodingAtomicNameUniqueness:
             result = await row_converters[0].convert_async(prompt="cat")
             # c, a, t written independently from the key: └ ┘ ▷
             assert result.output_text == "└┘▷"
+
+    async def test_polybius_technique_builds_registered_row(
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
+    ):
+        """Selecting Polybius must register a row whose converter applies the Polybius square.
+
+        This exercises the registered ``polybius`` row end to end (not a hand-built converter), so a
+        deleted or misnamed row in ``_converter_variants()`` is caught: such a regression leaves the
+        enum intact while the technique builds no attacks.
+        """
+        from unittest.mock import patch
+
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_attack_seed_groups},
+        ):
+            scenario = Encoding(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                    "scenario_techniques": [EncodingTechnique.Polybius],
+                }
+            )
+            await scenario.initialize_async()
+
+            attacks = scenario._get_converter_attacks(
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+            )
+
+            assert attacks, "polybius technique built no attacks"
+            assert all(aa.display_group == "polybius" for aa in attacks)
+            names = {aa.atomic_attack_name for aa in attacks}
+            assert "polybius_raw" in names, "missing raw variant"
+            assert any(n != "polybius_raw" for n in names), "missing decode variant"
+
+            # The registered row's converter actually applies the Polybius square.
+            raw = next(aa for aa in attacks if aa.atomic_attack_name == "polybius_raw")
+            row_converters = [
+                conv
+                for config in raw.attack_technique.attack.get_request_converters()
+                for conv in config.converters
+                if isinstance(conv, PolybiusConverter)
+            ]
+            assert row_converters, "polybius row applies no PolybiusConverter"
+            result = await row_converters[0].convert_async(prompt="Hello World")
+            # Each word is encoded independently and joined with the "/" word token.
+            assert result.output_text == "23 15 31 31 34 / 52 34 42 31 14"
 
     async def test_memory_labels_propagate_to_atomic_attacks(
         self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups
@@ -1045,3 +1097,30 @@ class TestEncodingAsciiSmugglerDecodedText:
         outcome = await self._outcome(converter=Base64Converter(), target=_ReplyTarget(reply=self._ASCII_VALUE))
 
         assert outcome != AttackOutcome.SUCCESS
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestEncodingPolybiusDecodedText:
+    """Tests that the polybius variant folds J to I so J-containing seeds can still score true."""
+
+    def _seed_groups(self, value: str) -> list[AttackSeedGroup]:
+        config = EncodingDatasetConfiguration(sources=[DatasetSource(name="garak_slur_terms_en")])
+        return config._build_attack_groups([SeedPrompt(value=value, data_type="text")])
+
+    @pytest.mark.parametrize(
+        ("value", "expected_metadata"),
+        [
+            ("no special letters", {}),
+            ("Java jungle", {"decoded_text": "Iava iungle"}),
+        ],
+    )
+    def test_polybius_variant_records_j_to_i_decoded_text_on_copies(self, value, expected_metadata):
+        # A correctly decoded polybius prompt answers with I for each J, so the scenario attaches the
+        # J->I folded text as decoded_text for seeds that contain a J (and nothing otherwise).
+        shared_groups = self._seed_groups(value)
+
+        [group] = Encoding._seed_groups_for_converters(converters=[PolybiusConverter()], seed_groups=shared_groups)
+
+        assert group.seeds[1].value == value
+        assert group.seeds[1].metadata == expected_metadata
+        assert shared_groups[0].seeds[1].metadata == {}
