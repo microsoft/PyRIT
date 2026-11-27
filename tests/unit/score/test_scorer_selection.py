@@ -9,7 +9,10 @@ import pytest
 from pyrit.models import (
     MessageScorable,
     ProgramExecutionScorable,
+    ScenarioRunPlanGroupKind,
     ScorerCapabilityName,
+    ScorerSelectionReport,
+    ScorerVerdictStatus,
     ScoringExpectation,
     ToolCallRequirement,
     ToolsCalled,
@@ -26,6 +29,7 @@ from pyrit.score import (
     ScorerCandidate,
     ScorerMismatchKind,
     ScorerRequirements,
+    ScorerSelection,
     SelfAskTrueFalseScorer,
     SubStringScorer,
     TrueFalseQuestion,
@@ -347,6 +351,74 @@ def test_scorer_validation_raises_typed_errors_with_existing_messages():
         MessageToolCallScorer().prepare_expectation(expectation=ScoringExpectation())
     assert isinstance(excinfo.value, ValueError)
     assert excinfo.value.scorer_name == "MessageToolCallScorer"
+
+
+# --- what a selection keeps for the scenario's report ---
+
+
+def test_a_selection_keeps_its_requirements_and_the_candidates_it_rejected():
+    first, chosen, later = _substring("a"), _substring("b"), _substring("c")
+    pool = CompatibleScorers(
+        candidates=[
+            ScorerCandidate(scorer=first, evaluation=CRISIS),
+            ScorerCandidate(scorer=chosen, evaluation=THERAPIST),
+            ScorerCandidate(scorer=later, evaluation=THERAPIST),
+        ]
+    )
+    requirements = ScorerRequirements(evaluation=THERAPIST, required=frozenset({TRUE_FALSE}))
+
+    selection = pool.select(requirements=requirements, scorable_type=MessageScorable, expectations=[None])
+
+    assert selection.requirements == requirements
+    assert [(mismatch.candidate_index, mismatch.kind) for mismatch in selection.rejected] == [
+        (0, ScorerMismatchKind.EVALUATION)
+    ]
+
+
+def test_report_entry_lists_rejected_candidates_then_the_selected_one():
+    pool = CompatibleScorers(
+        candidates=[
+            ScorerCandidate(scorer=_substring("a"), evaluation=CRISIS),
+            ScorerCandidate(scorer=_substring("b"), evaluation=THERAPIST),
+            ScorerCandidate(scorer=_substring("c"), evaluation=THERAPIST),
+        ]
+    )
+    selection = pool.select(
+        requirements=ScorerRequirements(evaluation=THERAPIST), scorable_type=MessageScorable, expectations=[None]
+    )
+
+    entry = selection.to_report_entry(
+        atomic_attack_name="therapy_role_play",
+        display_group="therapy",
+        technique="role_play",
+        group_kind=ScenarioRunPlanGroupKind.ATTACK,
+    )
+
+    assert [(verdict.candidate_index, verdict.status) for verdict in entry.candidates] == [
+        (0, ScorerVerdictStatus.REJECTED),
+        (1, ScorerVerdictStatus.SELECTED),
+    ]
+    assert entry.rejected[0].reason_kind == "evaluation"
+    assert entry.rejected[0].reason == f"is bound to {CRISIS!r}; the population requires {THERAPIST!r}."
+    assert entry.selected.candidate_label == f"SubStringScorer [{THERAPIST}]"
+    assert entry.required_evaluation == THERAPIST
+    report = ScorerSelectionReport(entries=[entry])
+    assert ScorerSelectionReport.model_validate_json(report.model_dump_json()) == report
+
+
+def test_report_entry_lists_every_required_capability():
+    selection = ScorerSelection(
+        candidate=ScorerCandidate(scorer=_substring("a")),
+        candidate_index=0,
+        requirements=ScorerRequirements(required=frozenset({TRUE_FALSE, KEEPS_FLOAT})),
+    )
+
+    entry = selection.to_report_entry(
+        atomic_attack_name="tap", display_group="tap", technique="tap", group_kind=ScenarioRunPlanGroupKind.ATTACK
+    )
+
+    assert entry.required_capabilities == ["preserves_float_scale_value", "true_false"]
+    assert entry.rejected == []
 
 
 def test_self_factories_return_subclass() -> None:

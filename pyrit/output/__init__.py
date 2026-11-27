@@ -32,6 +32,7 @@ if TYPE_CHECKING:
         output_scenario_suite_async,
         output_score_async,
         output_scorer_async,
+        output_scorer_selection_report_async,
     )
     from pyrit.output.sink import FileSink, IPythonMarkdownSink, OutputFormat, Sink, StdoutSink, get_default_sink
 
@@ -50,6 +51,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "output_scenario_suite_async": "pyrit.output.helpers",
     "output_score_async": "pyrit.output.helpers",
     "output_scorer_async": "pyrit.output.helpers",
+    "output_scorer_selection_report_async": "pyrit.output.helpers",
     "PrinterBase": "pyrit.output.base",
     "Sink": "pyrit.output.sink",
     "StdoutSink": "pyrit.output.sink",

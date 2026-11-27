@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from datasets import Features, Image, Value
 
 from pyrit.datasets.seed_datasets.remote import (
     MMSafetyBenchCategory,
@@ -12,6 +13,8 @@ from pyrit.datasets.seed_datasets.remote import (
     _MMSafetyBenchDataset,
 )
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
+
+_REPO = "PKU-Alignment/MM-SafetyBench"
 
 
 class _FakePILImage:
@@ -51,19 +54,19 @@ def _category_split(
 
 def _patch_loader(loader: _MMSafetyBenchDataset, *, hf_lookup: dict[tuple[str, str], list[dict[str, Any]]]):
     """
-    Patch ``_fetch_from_huggingface_async`` so it returns rows from ``hf_lookup`` keyed by (config, split),
+    Patch ``_fetch_single_split_async`` so it returns rows from ``hf_lookup`` keyed by (config, split),
     and patch ``_save_pil_image_async`` so no real image cache is touched.
     """
 
-    async def fake_fetch_from_huggingface_async(*, dataset_name: str, config: str, split: str, **_: Any) -> Any:
-        return hf_lookup.get((config, split), [])
+    async def fake_fetch_single_split_async(*, category_value: str, split: str, **_: Any) -> Any:
+        return hf_lookup.get((category_value, split), [])
 
     fake_save = AsyncMock(
         side_effect=lambda *, pil_image, category_value, question_id: f"/fake/{category_value}_{question_id}.jpg"
     )
 
     return (
-        patch.object(loader, "_fetch_from_huggingface_async", side_effect=fake_fetch_from_huggingface_async),
+        patch.object(loader, "_fetch_single_split_async", side_effect=fake_fetch_single_split_async),
         patch.object(loader, "_save_pil_image_async", new=fake_save),
     )
 
@@ -187,16 +190,16 @@ class TestMMSafetyBenchDataset:
 
         observed_splits: list[tuple[str, str]] = []
 
-        async def fake_fetch_from_huggingface_async(*, dataset_name: str, config: str, split: str, **_: Any) -> Any:
-            observed_splits.append((config, split))
-            return hf_lookup.get((config, split), [])
+        async def fake_fetch_single_split_async(*, category_value: str, split: str, **_: Any) -> Any:
+            observed_splits.append((category_value, split))
+            return hf_lookup.get((category_value, split), [])
 
         fake_save = AsyncMock(
             side_effect=lambda *, pil_image, category_value, question_id: f"/fake/{category_value}_{question_id}.jpg"
         )
 
         with (
-            patch.object(loader, "_fetch_from_huggingface_async", side_effect=fake_fetch_from_huggingface_async),
+            patch.object(loader, "_fetch_single_split_async", side_effect=fake_fetch_single_split_async),
             patch.object(loader, "_save_pil_image_async", new=fake_save),
         ):
             dataset = await loader.fetch_dataset_async(cache=False)
@@ -214,9 +217,9 @@ class TestMMSafetyBenchDataset:
 
         observed_configs: set[str] = set()
 
-        async def fake_fetch_from_huggingface_async(*, dataset_name: str, config: str, split: str, **_: Any) -> Any:
-            observed_configs.add(config)
-            if config != MMSafetyBenchCategory.FRAUD.value:
+        async def fake_fetch_single_split_async(*, category_value: str, split: str, **_: Any) -> Any:
+            observed_configs.add(category_value)
+            if category_value != MMSafetyBenchCategory.FRAUD.value:
                 return []
             if split == "Text_only":
                 return [_text_only_row(qid="2", question="Run a fraudulent scheme.")]
@@ -227,7 +230,7 @@ class TestMMSafetyBenchDataset:
         )
 
         with (
-            patch.object(loader, "_fetch_from_huggingface_async", side_effect=fake_fetch_from_huggingface_async),
+            patch.object(loader, "_fetch_single_split_async", side_effect=fake_fetch_single_split_async),
             patch.object(loader, "_save_pil_image_async", new=fake_save),
         ):
             dataset = await loader.fetch_dataset_async(cache=False)
@@ -403,8 +406,8 @@ class TestMMSafetyBenchDataset:
             ],
         )
 
-        async def fake_fetch_from_huggingface_async(*, dataset_name: str, config: str, split: str, **_: Any) -> Any:
-            return hf_lookup.get((config, split), [])
+        async def fake_fetch_single_split_async(*, category_value: str, split: str, **_: Any) -> Any:
+            return hf_lookup.get((category_value, split), [])
 
         async def flaky_save(*, pil_image: Any, category_value: str, question_id: str) -> str:
             if question_id == "0":
@@ -412,7 +415,7 @@ class TestMMSafetyBenchDataset:
             return f"/fake/{category_value}_{question_id}.jpg"
 
         with (
-            patch.object(loader, "_fetch_from_huggingface_async", side_effect=fake_fetch_from_huggingface_async),
+            patch.object(loader, "_fetch_single_split_async", side_effect=fake_fetch_single_split_async),
             patch.object(loader, "_save_pil_image_async", side_effect=flaky_save),
             caplog.at_level("WARNING", logger="pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset"),
         ):
@@ -512,3 +515,31 @@ class TestMMSafetyBenchDataset:
             "mm_safetybench_HateSpeech_SD_3.jpg",
             "mm_safetybench_HateSpeech_SD_4.jpg",
         ]
+
+
+class TestFetchSingleSplit:
+    """Tests for the selective-download delegation in ``_fetch_single_split_async``."""
+
+    @pytest.mark.parametrize("cache", [True, False])
+    async def test_forwards_split_data_files_and_features(self, cache):
+        """The split's single parquet file and explicit features are forwarded to the shared helper."""
+        loader = _MMSafetyBenchDataset(token="hf-token")
+
+        with patch.object(
+            loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value="sentinel-dataset")
+        ) as mock_fetch:
+            result = await loader._fetch_single_split_async(category_value="Fraud", split="SD_TYPO", cache=cache)
+
+        assert result == "sentinel-dataset"
+        mock_fetch.assert_awaited_once_with(
+            dataset_name=_REPO,
+            config="Fraud",
+            split="SD_TYPO",
+            cache=cache,
+            token="hf-token",
+            data_files={"SD_TYPO": "data/Fraud/SD_TYPO.parquet"},
+            # datasets >=5.1 needs the explicit features (image decoding);
+            # datasets <5.1 needs verification off (four declared splits).
+            features=Features({"id": Value("string"), "question": Value("string"), "image": Image()}),
+            verification_mode="no_checks",
+        )

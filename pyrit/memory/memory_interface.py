@@ -54,6 +54,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql import visitors
 from sqlalchemy.sql.elements import BindParameter, ClauseElement
+from sqlalchemy.sql.operators import asc_op, desc_op
 
 from pyrit.analytics import compute_outcome_statistics
 from pyrit.analytics.outcome_statistics import success_percentage
@@ -61,6 +62,7 @@ from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.pagination import DecodedKeysetCursor
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.memory._finding_decomposition import (
     FindingHierarchyError,
     delete_subtree_async,
@@ -105,6 +107,7 @@ from pyrit.memory.memory_models import (
     ComponentIdentifierEntry,
     ConversationEntry,
     ConverterIdentifierEntry,
+    CustomUUID,
     EmbeddingDataEntry,
     FindingEntry,
     FindingEvidenceEntry,
@@ -134,6 +137,7 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     DATASET_NAME_RELEASING_STATUSES,
+    DEFAULT_FINDING_FIELDS,
     MEDIA_PATH_DATA_TYPES,
     AdversarialPrompts,
     AtomicAttackEvaluationIdentifier,
@@ -158,7 +162,6 @@ from pyrit.models import (
     Finding,
     FindingCreate,
     FindingEvidence,
-    FindingSeverity,
     IdentifierFilter,
     IdentifierType,
     Message,
@@ -185,6 +188,7 @@ from pyrit.models import (
     ScoreStatus,
     Seed,
     SeedDataset,
+    SeedDatasetGroupProfile,
     SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
@@ -208,6 +212,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Callers that don't pass the active fields' severity order get PyRIT 1.2's, which the default fields keep.
+_DEFAULT_SEVERITY_ORDER: tuple[str, ...] = tuple(DEFAULT_FINDING_FIELDS.severity_order)
+
+# Upper bound on the terms in one JSON "match any" condition. SQL Server allows 2100 bound parameters per
+# statement and each term uses two; SQLite rejects expression trees deeper than 1000 levels.
+_MAX_JSON_MATCH_BATCH = 500
+
 
 @dataclass(frozen=True)
 class PreparedSeedBatch:
@@ -219,6 +230,33 @@ class PreparedSeedBatch:
     def seeds(self) -> list[Seed[Any]]:
         """Independent copies of the prepared seeds for candidate validation."""
         return [seed.model_copy(deep=True) for seed in self._seeds]
+
+
+def _order_by_attribute_keys(order_by: Any) -> "list[tuple[str, bool]]":
+    """
+    Extract ``(attribute name, ascending)`` pairs from a plain column ``order_by`` clause.
+
+    Batched queries merge rows that came back from separate statements, so the
+    caller's ordering has to be re-applied in Python across the merged rows.
+    Only plain ascending or descending single columns are supported, which is
+    every ordering the batched call sites use.
+
+    Returns:
+        list[tuple[str, bool]]: One ``(attribute name, ascending)`` pair per order key.
+
+    Raises:
+        ValueError: If the clause is not made of plain ascending or descending columns.
+    """
+    expressions = order_by if isinstance(order_by, (list, tuple)) else [order_by]
+    keys: list[tuple[str, bool]] = []
+    for expression in expressions:
+        inner = getattr(expression, "element", expression)
+        name = getattr(inner, "key", None) or getattr(inner, "name", None)
+        modifier = getattr(expression, "modifier", None)
+        if name is None or modifier not in (None, asc_op, desc_op):
+            raise ValueError("Cannot merge a batched query whose order_by clause has no plain columns.")
+        keys.append((name, modifier is not desc_op))
+    return keys
 
 
 def _deprecate_message_labels(*, method: str) -> None:
@@ -1481,21 +1519,27 @@ class MemoryInterface(abc.ABC):
         limit: int = 20,
         offset: int = 0,
         title_query: str | None = None,
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
         title_pattern: str | None = None,
         parent_finding_id: uuid.UUID | None = None,
         top_level_only: bool = False,
     ) -> list[Finding]:
         """
-        Read one page of findings, highest severity first, then newest first.
+        Read one page of findings in ``severity_order``, then newest first.
 
         Without a parent or top-level filter, every finding is listed, including sub-findings. A parent's direct
         sub-findings are listed oldest first instead, the order a decomposition is usually written in.
 
         Args:
-            operation_id (uuid.UUID | None): Only findings of this operation. Defaults to None.
-            limit (int): The page size. Defaults to 20.
-            offset (int): The number of findings to skip. Defaults to 0.
-            title_query (str | None): Case-insensitive literal title substring. Defaults to None.
+            operation_id (uuid.UUID | None): The operation whose findings to read. Defaults to None, which reads
+                findings from every operation.
+            limit (int): Maximum number of findings to return. Defaults to 20.
+            offset (int): Number of findings to skip. Defaults to 0.
+            title_query (str | None): Case-insensitive text the title must contain. Wildcard characters match
+                literally. Defaults to None.
+            severity_order (Sequence[str]): Severity keys from highest to lowest. Stored values that aren't listed
+                sort after them. Defaults to the default finding fields' order, as in PyRIT 1.2. An empty order
+                sorts newest first.
             title_pattern (str | None): Full LIKE pattern instead of title_query. Defaults to None.
             parent_finding_id (uuid.UUID | None): Only the direct sub-findings of this finding, oldest first.
                 Defaults to None.
@@ -1529,13 +1573,17 @@ class MemoryInterface(abc.ABC):
                     casefold=title_pattern is None,
                 )
             )
-        order = self._sub_finding_order() if parent_finding_id is not None else self._finding_order()
+        order = self._sub_finding_order() if parent_finding_id is not None else self._finding_order(severity_order)
         statement = statement.order_by(*order).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
 
     async def get_finding_subtrees_async(
-        self, *, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+        self,
+        *,
+        operation_id: uuid.UUID,
+        finding_ids: Sequence[uuid.UUID],
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
     ) -> list[Finding]:
         """
         Read findings of one operation together with all of their sub-findings, at any depth.
@@ -1545,6 +1593,12 @@ class MemoryInterface(abc.ABC):
         every path step is in the result.
 
         IDs that are not in the operation are omitted.
+
+        Args:
+            operation_id (uuid.UUID): The operation whose findings to read.
+            finding_ids (Sequence[uuid.UUID]): The findings whose subtrees to read.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to the default finding fields' order.
 
         Returns:
             list[Finding]: Each finding once, in the same order as ``get_findings_async``.
@@ -1559,6 +1613,7 @@ class MemoryInterface(abc.ABC):
                 session=session,
                 operation_id=operation_id,
                 finding_ids=[finding_id for level in levels for finding_id in level],
+                severity_order=severity_order,
             )
 
     async def get_finding_child_counts_async(self, *, finding_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
@@ -1582,12 +1637,22 @@ class MemoryInterface(abc.ABC):
         return counts
 
     async def get_findings_by_ids_async(
-        self, *, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+        self,
+        *,
+        operation_id: uuid.UUID,
+        finding_ids: Sequence[uuid.UUID],
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
     ) -> list[Finding]:
         """
-        Read selected findings of one operation, highest severity first, then newest first.
+        Read selected findings of one operation in ``severity_order``, then newest first.
 
         IDs that are not in the operation are omitted.
+
+        Args:
+            operation_id (uuid.UUID): The operation whose findings to read.
+            finding_ids (Sequence[uuid.UUID]): The findings to read.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to the default finding fields' order.
 
         Returns:
             list[Finding]: The selected findings, in the same order as ``get_findings_async``.
@@ -1596,11 +1661,16 @@ class MemoryInterface(abc.ABC):
             return []
         async with await self.get_session_async() as session:
             return await self._read_findings_by_ids_async(
-                session=session, operation_id=operation_id, finding_ids=finding_ids
+                session=session, operation_id=operation_id, finding_ids=finding_ids, severity_order=severity_order
             )
 
     async def _read_findings_by_ids_async(
-        self, *, session: AsyncSession, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+        self,
+        *,
+        session: AsyncSession,
+        operation_id: uuid.UUID,
+        finding_ids: Sequence[uuid.UUID],
+        severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER,
     ) -> list[Finding]:
         """
         Read selected findings of one operation within the caller's session, in dashboard order.
@@ -1612,7 +1682,9 @@ class MemoryInterface(abc.ABC):
         # The operation filter takes one of the statement's binds.
         chunk_size = max(1, self._MAX_BIND_VARS - 1)
         ordered_ids = await session.scalars(
-            select(FindingEntry.id).where(FindingEntry.operation_id == operation_id).order_by(*self._finding_order())
+            select(FindingEntry.id)
+            .where(FindingEntry.operation_id == operation_id)
+            .order_by(*self._finding_order(severity_order))
         )
         selected_ids = [finding_id for finding_id in ordered_ids if finding_id in requested]
         findings: dict[uuid.UUID, Finding] = {}
@@ -1741,10 +1813,15 @@ class MemoryInterface(abc.ABC):
             return entry.get_evidence() if entry else None
 
     async def get_findings_for_attack_result_async(
-        self, *, attack_result_id: uuid.UUID
+        self, *, attack_result_id: uuid.UUID, severity_order: Sequence[str] = _DEFAULT_SEVERITY_ORDER
     ) -> list[tuple[Finding, FindingEvidence]]:
         """
-        Read every finding that links an attack result as evidence, highest severity first, then newest first.
+        Read every finding that links an attack result as evidence, in ``severity_order``, then newest first.
+
+        Args:
+            attack_result_id (uuid.UUID): The attack result the findings link as evidence.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to the default finding fields' order.
 
         Returns:
             list[tuple[Finding, FindingEvidence]]: Each linked finding with the evidence that links it.
@@ -1753,7 +1830,7 @@ class MemoryInterface(abc.ABC):
             select(FindingEntry, FindingEvidenceEntry)
             .join(FindingEvidenceEntry, FindingEvidenceEntry.finding_id == FindingEntry.id)
             .where(FindingEvidenceEntry.attack_result_id == attack_result_id)
-            .order_by(*self._finding_order())
+            .order_by(*self._finding_order(severity_order))
         )
         async with await self.get_session_async() as session:
             rows = (await session.execute(statement)).all()
@@ -1795,29 +1872,34 @@ class MemoryInterface(abc.ABC):
         async with await self.get_session_async() as session:
             return dict((await session.execute(statement)).all())
 
-    async def get_finding_severity_counts_async(self) -> dict[uuid.UUID, dict[FindingSeverity, int]]:
+    async def get_finding_severity_counts_async(self) -> dict[uuid.UUID, dict[str, int]]:
         """
         Count every operation's findings by severity in one query.
 
         Returns:
-            dict[uuid.UUID, dict[FindingSeverity, int]]: Counts for operations with findings.
+            dict[uuid.UUID, dict[str, int]]: Counts for operations with findings.
         """
         statement = select(FindingEntry.operation_id, FindingEntry.severity, func.count()).group_by(
             FindingEntry.operation_id, FindingEntry.severity
         )
-        counts: dict[uuid.UUID, dict[FindingSeverity, int]] = {}
+        counts: dict[uuid.UUID, dict[str, int]] = {}
         async with await self.get_session_async() as session:
             for operation_id, severity, count in (await session.execute(statement)).all():
-                counts.setdefault(operation_id, {})[FindingSeverity(severity)] = count
+                counts.setdefault(operation_id, {})[severity] = count
         return counts
 
     @staticmethod
-    def _finding_order() -> "tuple[ColumnElement[Any], ...]":
-        severity_order = case(
-            {severity.value: position for position, severity in enumerate(FindingSeverity)},
+    def _finding_order(severity_order: Sequence[str]) -> "tuple[ColumnElement[Any], ...]":
+        newest_first = (FindingEntry.created_at.desc(), FindingEntry.id.desc())
+        if not severity_order:
+            # case() with no branches compiles to SQL that both dialects reject.
+            return newest_first
+        rank = case(
+            {key: position for position, key in enumerate(severity_order)},
             value=FindingEntry.severity,
+            else_=len(severity_order),
         )
-        return severity_order, FindingEntry.created_at.desc(), FindingEntry.id.desc()
+        return rank, *newest_first
 
     @staticmethod
     def _sub_finding_order() -> "tuple[ColumnElement[Any], ...]":
@@ -3024,12 +3106,16 @@ class MemoryInterface(abc.ABC):
             batch = batch_values[i : i + effective_size]
             conditions = other_conditions + [batch_column.in_(batch)]
 
+            # The limit cannot select inside one batch alone, but rows past it
+            # in a batch can never be in the overall top rows either, so each
+            # statement may fetch at most the limit it will be trimmed to.
             results = self._query_entries(
                 model_class,
                 conditions=and_(*conditions) if conditions else None,
                 distinct=distinct,
                 join_scores=join_scores,
                 order_by=order_by,
+                limit=limit,
             )
 
             # Deduplicate by primary key (id)
@@ -3043,6 +3129,19 @@ class MemoryInterface(abc.ABC):
                 else:
                     all_results.append(result)
 
+        if order_by is not None:
+            # Rows come back per statement, so the merged sequence is in batch
+            # order and any limit only applied inside each batch. The caller's
+            # ordering is re-applied across the merged rows before the limit
+            # trims. Rows that tie on every order key keep their row id order,
+            # so the result does not depend on batch order, but which tied rows
+            # each statement returned under its limit is still up to the database.
+            order_keys = _order_by_attribute_keys(order_by)
+            all_results.sort(key=lambda row: str(getattr(row, "id", "")))
+            for name, ascending in reversed(order_keys):
+                all_results.sort(key=lambda row: getattr(row, name), reverse=not ascending)
+        if limit is not None:
+            return all_results[:limit]
         return all_results
 
     def _query_with_list_params(
@@ -3118,9 +3217,17 @@ class MemoryInterface(abc.ABC):
             return results
 
         filtered_results: list[Model] = list(results)
-        for _col, vals, attr_name in other_large_params:
-            vals_set = set(vals)
-            filtered_results = [e for e in filtered_results if getattr(e, attr_name, None) in vals_set]
+        for col, vals, attr_name in other_large_params:
+            # UUID columns load as uuid.UUID, but callers pass their string form, so compare those as strings.
+            # As with SQL IN, NULL matches nothing, on either side.
+            uuid_column = isinstance(col.type, CustomUUID)
+            vals_set = {str(value) if uuid_column else value for value in vals if value is not None}
+            filtered_results = [
+                e
+                for e in filtered_results
+                if (value := getattr(e, attr_name, None)) is not None
+                and (str(value) if uuid_column else value) in vals_set
+            ]
 
         return filtered_results
 
@@ -3380,8 +3487,9 @@ class MemoryInterface(abc.ABC):
         """
         Return sorted unique converter class names used across all attack results.
 
-        Extracts class_name values from the nested request_converters array
-        within the atomic_attack_identifier JSON column via a database-level query.
+        Extracts class_name values from the request_converters array of either
+        identifier layout within the atomic_attack_identifier JSON column via a
+        database-level query.
 
         Returns:
             Sorted list of unique converter class name strings.
@@ -3608,8 +3716,9 @@ class MemoryInterface(abc.ABC):
             )
             return
 
-        prepared_content = await asyncio.gather(
-            *(self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables)
+        # A failed copy cancels the others, so no media files are written for scores that are not stored.
+        prepared_content = await gather_with_cleanup_async(
+            self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables
         )
         prepared_by_source = {content.source: content for content in prepared_content}
         prepared_hashes = {content.stored: content.value_sha256 for content in prepared_content}
@@ -4237,7 +4346,9 @@ class MemoryInterface(abc.ABC):
         entries_by_id = {entry.id: entry for entry in score_entries}
 
         original_id_values = [str(original_id) for original_id in original_ids]
-        json_batch_size = max(1, self._MAX_BIND_VARS - 1)
+        # Each JSON term binds two parameters on SQL Server (the path repeats per term) and adds one level
+        # of expression depth on SQLite, so these batches are capped independently of _MAX_BIND_VARS.
+        json_batch_size = max(1, min(self._MAX_BIND_VARS, _MAX_JSON_MATCH_BATCH) - 1)
         for start in range(0, len(original_id_values), json_batch_size):
             batch = original_id_values[start : start + json_batch_size]
             scorable_condition = self._get_condition_json_array_match(
@@ -6448,6 +6559,110 @@ class MemoryInterface(abc.ABC):
         for dataset in datasets:
             await self.add_seeds_to_memory_async(seeds=dataset.seeds, added_by=added_by)
 
+    @staticmethod
+    def _build_seed_dataset_group_profiles_statement(*, metadata_keys: Sequence[str]) -> "Select[Any]":
+        """
+        Bound profile materialization by boolean facts, not conversation lengths.
+
+        Returns:
+            Select[Any]: Portable aggregate query without seed bodies or taxonomy materialization.
+        """
+        keys = tuple(dict.fromkeys(metadata_keys))
+        objective = SeedEntry.seed_type == "objective"
+
+        def key_present(key: str) -> "ColumnElement[bool]":
+            items = JsonArrayItems(JsonContainer(SeedEntry.prompt_metadata, "$")).table_valued(column("key", Unicode))
+            return select(1).select_from(items).where(items.c.key == key).correlate(SeedEntry).exists()
+
+        flags = [
+            case((and_(objective, key_present(key)), 1), else_=0).label(f"metadata_{index}")
+            for index, key in enumerate(keys)
+        ]
+        # SQL Server requires correlated key-presence subqueries to be projected before aggregation.
+        seeds = (
+            select(
+                SeedEntry.dataset_name,
+                func.coalesce(SeedEntry.prompt_group_id, SeedEntry.id).label("group_id"),
+                # Standalone seed IDs and explicit group IDs occupy different grouping namespaces.
+                case((SeedEntry.prompt_group_id.is_(None), 1), else_=0).label("ungrouped"),
+                SeedEntry.seed_type,
+                SeedEntry.role,
+                *flags,
+            )
+            .where(SeedEntry.dataset_name.is_not(None), SeedEntry.dataset_name != "")
+            .subquery()
+        )
+        prompt = seeds.c.seed_type == "prompt"
+
+        def flag(condition: "ColumnElement[bool]") -> "ColumnElement[Any]":
+            return case((condition, 1), else_=0)
+
+        def seed_count(condition: "ColumnElement[bool]") -> "ColumnElement[Any]":
+            return func.sum(flag(condition))
+
+        # Each group's facts are columns here, so the outer query groups by plain columns. SQL Server can't
+        # match bound parameters repeated in SELECT and GROUP BY (see attack_analytics_query.py).
+        groups = (
+            select(
+                seeds.c.dataset_name,
+                flag(seed_count(seeds.c.seed_type == "objective") == 1).label("single_objective"),
+                flag(func.count() == 1).label("single_seed"),
+                # Unset roles can hydrate as user or inherit their sequence's role; keep them unverified.
+                flag(seed_count(and_(prompt, or_(seeds.c.role == "user", seeds.c.role.is_(None)))) > 0).label(
+                    "has_user_prompt"
+                ),
+                flag(seed_count(and_(prompt, seeds.c.role != "user")) > 0).label("has_non_user_prompt"),
+                flag(seed_count(seeds.c.seed_type == "simulated_conversation") > 0).label("has_simulated_conversation"),
+                *(func.max(seeds.c[f"metadata_{index}"]).label(f"metadata_{index}") for index in range(len(keys))),
+            )
+            .group_by(seeds.c.dataset_name, seeds.c.ungrouped, seeds.c.group_id)
+            .subquery()
+        )
+        columns = [
+            groups.c.dataset_name,
+            groups.c.single_objective,
+            groups.c.single_seed,
+            groups.c.has_user_prompt,
+            groups.c.has_non_user_prompt,
+            groups.c.has_simulated_conversation,
+            *(groups.c[f"metadata_{index}"] for index in range(len(keys))),
+        ]
+        return select(*columns, func.count().label("group_count")).group_by(*columns)
+
+    def _execute_get_seed_dataset_group_profiles(
+        self, *, metadata_keys: Sequence[str]
+    ) -> Sequence[SeedDatasetGroupProfile]:
+        keys = tuple(dict.fromkeys(metadata_keys))
+        statement = self._build_seed_dataset_group_profiles_statement(metadata_keys=keys)
+        with closing(self._get_session()) as session:
+            rows = session.execute(statement).mappings().all()
+        return [
+            SeedDatasetGroupProfile(
+                dataset_name=row["dataset_name"],
+                group_count=int(row["group_count"]),
+                single_objective=bool(row["single_objective"]),
+                single_seed=bool(row["single_seed"]),
+                has_user_prompt=bool(row["has_user_prompt"]),
+                has_non_user_prompt=bool(row["has_non_user_prompt"]),
+                has_simulated_conversation=bool(row["has_simulated_conversation"]),
+                metadata_keys=tuple(key for index, key in enumerate(keys) if row[f"metadata_{index}"]),
+            )
+            for row in rows
+        ]
+
+    async def get_seed_dataset_group_profiles_async(
+        self, *, metadata_keys: Sequence[str] = ()
+    ) -> Sequence[SeedDatasetGroupProfile]:
+        """
+        Read compressed group structure without hydrating seeds, policies, or prompt values.
+
+        Returns:
+            Sequence[SeedDatasetGroupProfile]: Counts of groups sharing the same stored structural facts.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_seed_dataset_group_profiles, metadata_keys=tuple(metadata_keys)
+        )
+
     def _execute_get_seed_dataset_summaries(self) -> Sequence[SeedDatasetSummary]:
         """
         Return aggregate metadata for datasets already loaded in memory.
@@ -6762,8 +6977,8 @@ class MemoryInterface(abc.ABC):
                     .where(SeedEntry.dataset_name.isnot(None), SeedEntry.dataset_name != "")
                     .distinct()
                 )
-                names: Sequence[str | None] = session.scalars(statement).all()
-                return [name for name in names if name is not None]
+                # SeedEntry.dataset_name has no Mapped annotation, so the rows are typed Any.
+                return [name for name in session.scalars(statement).all() if isinstance(name, str)]
         except SQLAlchemyError as e:
             logger.exception(f"Failed to retrieve dataset names with error {e}")
             raise
@@ -7773,10 +7988,21 @@ class MemoryInterface(abc.ABC):
             conditions.append(
                 or_(
                     *[
-                        self._get_condition_json_property_match(
-                            json_column=AttackResultEntry.atomic_attack_identifier,
-                            property_path="$.children.attack_technique.children.attack.class_name",
-                            value=attack_class,
+                        # Rows written before the identifier grew its nested
+                        # structure keep the class name at $.children.attack,
+                        # the layout get_attack_strategy_identifier still
+                        # displays, so both spellings answer the filter.
+                        or_(
+                            self._get_condition_json_property_match(
+                                json_column=AttackResultEntry.atomic_attack_identifier,
+                                property_path="$.children.attack_technique.children.attack.class_name",
+                                value=attack_class,
+                            ),
+                            self._get_condition_json_property_match(
+                                json_column=AttackResultEntry.atomic_attack_identifier,
+                                property_path="$.children.attack.class_name",
+                                value=attack_class,
+                            ),
                         )
                         for attack_class in query.attack_classes
                     ]
@@ -7806,24 +8032,58 @@ class MemoryInterface(abc.ABC):
             list[Any]: SQLAlchemy conditions for converter filters.
         """
         conditions: list[Any] = []
+        converter_paths = (
+            "$.children.attack_technique.children.attack.children.request_converters",
+            "$.children.attack.children.request_converters",
+        )
         if query.converter_classes is not None:
-            conditions.append(
+            if not query.converter_classes:
+                # The empty list is the absence overload: it may only match a
+                # row whose own identifier layout, whichever it is, carries no
+                # converters at all.
+                conditions.append(
+                    and_(
+                        *[
+                            self._get_condition_json_array_match(
+                                json_column=AttackResultEntry.atomic_attack_identifier,
+                                property_path=property_path,
+                                array_element_path="$.class_name",
+                                array_to_match=[],
+                            )
+                            for property_path in converter_paths
+                        ]
+                    )
+                )
+            else:
+                conditions.append(
+                    or_(
+                        *[
+                            self._get_condition_json_array_match(
+                                json_column=AttackResultEntry.atomic_attack_identifier,
+                                property_path=property_path,
+                                array_element_path="$.class_name",
+                                array_to_match=query.converter_classes,
+                                match_mode=query.converter_classes_match,
+                            )
+                            for property_path in converter_paths
+                        ]
+                    )
+                )
+        if query.has_converters is not None and not (query.has_converters is True and query.converter_classes):
+            # A row from either identifier layout counts its converters where
+            # its own structure records them, so a row only has no converters
+            # when neither layout carries any.
+            empty_conditions = [
                 self._get_condition_json_array_match(
                     json_column=AttackResultEntry.atomic_attack_identifier,
-                    property_path="$.children.attack_technique.children.attack.children.request_converters",
+                    property_path=property_path,
                     array_element_path="$.class_name",
-                    array_to_match=query.converter_classes,
-                    match_mode=query.converter_classes_match,
+                    array_to_match=[],
                 )
-            )
-        if query.has_converters is not None and not (query.has_converters is True and query.converter_classes):
-            empty_condition = self._get_condition_json_array_match(
-                json_column=AttackResultEntry.atomic_attack_identifier,
-                property_path="$.children.attack_technique.children.attack.children.request_converters",
-                array_element_path="$.class_name",
-                array_to_match=[],
-            )
-            conditions.append(not_(empty_condition) if query.has_converters else empty_condition)
+                for property_path in converter_paths
+            ]
+            no_converters = and_(*empty_conditions)
+            conditions.append(not_(no_converters) if query.has_converters else no_converters)
         return conditions
 
     def _build_attack_result_label_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
@@ -8408,7 +8668,11 @@ class MemoryInterface(abc.ABC):
             )
             if not updated_rows:
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
-            new_tries: int = session.query(ScenarioResultEntry.number_tries).filter_by(id=scenario_result_id).scalar()
+            new_tries = session.scalar(
+                select(ScenarioResultEntry.number_tries).where(ScenarioResultEntry.id == scenario_result_id)
+            )
+            if new_tries is None:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
             session.commit()
             return new_tries
 
@@ -10817,8 +11081,9 @@ class MemoryInterface(abc.ABC):
         """
         Return sorted unique converter class names used across all attack results.
 
-        Extracts class_name values from the nested request_converters array
-        within the atomic_attack_identifier JSON column via a database-level query.
+        Extracts class_name values from the request_converters array of either
+        identifier layout within the atomic_attack_identifier JSON column via a
+        database-level query.
 
         Returns:
             Sorted list of unique converter class name strings.

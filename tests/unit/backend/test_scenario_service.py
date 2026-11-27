@@ -22,6 +22,7 @@ from pyrit.backend.main import app
 from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.routes.scenarios import estimate_scenario_run_size
 from pyrit.backend.services import (
+    DatasetService,
     ScenarioService,
     get_scenario_service,
 )
@@ -29,8 +30,13 @@ from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfi
 from pyrit.backend.services.scenario_service import (
     _metadata_to_registered_scenario,
 )
+from pyrit.datasets import SeedDatasetDescriptor, SeedDatasetProvider
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.memory import SQLiteMemory
 from pyrit.models import (
+    AssertGroupMetadata,
+    AttackSeedGroup,
+    DatasetSelectionMode,
     Parameter,
     ScenarioDatasetSizeCap,
     ScenarioDatasetSummary,
@@ -38,11 +44,15 @@ from pyrit.models import (
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
     ScenarioTechniqueSummary,
+    SeedGroupRequirements,
+    SeedMetadataRequirement,
+    SeedObjective,
+    SeedPrompt,
 )
 from pyrit.models.catalog import RegisteredScenario
 from pyrit.prompt_target import TargetCapabilities
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry, TargetRegistry, owner_metadata
-from pyrit.scenario import DatasetSource, Scenario
+from pyrit.scenario import DatasetSource, Scenario, ScenarioRequiredData
 from pyrit.scenario.core import (
     AttackTechniqueFactory,
     DatasetAttackConfiguration,
@@ -51,9 +61,16 @@ from pyrit.scenario.core import (
     override_default_adversarial_target,
 )
 from pyrit.scenario.scenarios.airt import Scam
-from pyrit.scenario.scenarios.garak import Exploitation
+from pyrit.scenario.scenarios.garak import ApiKey, Exploitation, FigStep
 from pyrit.score import SubStringScorer
-from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks
+from unit.assert_mocks import make_assert_config, make_assert_result
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    get_defined_tasks,
+    settle_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 from unit.mocks import MockPromptTarget, make_technique_class
 
 # The estimate key's registry view when the caller sees no private entries.
@@ -204,6 +221,138 @@ def test_catalog_support_names_match_real_scenario_declarations(scenario_class: 
     assert "dataset_config" not in [parameter.name for parameter in summary.supported_parameters]
     assert "scenario_techniques" in summary.supported_parameter_names
     assert "memory_labels" in summary.supported_parameter_names
+
+
+@pytest.mark.usefixtures("patch_central_database", "block_dataset_provider_lookup")
+@pytest.mark.parametrize("scenario_class", [Scam, FigStep, ApiKey])
+async def test_compatible_listing_respects_real_scenario_sources_without_loading_async(
+    *, sqlite_instance: SQLiteMemory, scenario_class: type[Scenario]
+) -> None:
+    required_names = ApiKey.required_datasets()
+    stored_names = {"figstep", "other", required_names[0]}
+    all_names = {*stored_names, "figstep_pro", "airt_scams", *required_names}
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            *(SeedObjective(value=f"Stored {name}.", dataset_name=name) for name in sorted(stored_names)),
+            SeedObjective(value="Unnamed example."),
+        ],
+        added_by="test",
+    )
+    with (
+        patch.object(ScenarioRegistry, "_discover"),
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=SubStringScorer(substring="test")),
+        override_default_adversarial_target(MockPromptTarget()),
+    ):
+        registry = ScenarioRegistry()
+        registry.register_class(scenario_class, name="test.source_options")
+        scenario = registry.create_instance("test.source_options")
+        assert scenario.get_dataset_requirements() == SeedGroupRequirements()
+        options = scenario.get_dataset_options()
+        expected_names = (
+            all_names
+            if options.mode is DatasetSelectionMode.ANY
+            else (set(required_names) if options.mode is DatasetSelectionMode.FIXED else set(options.allowed_names))
+        )
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(SeedDatasetProvider, "get_all_dataset_descriptors_async", new_callable=AsyncMock) as discovery,
+            patch("pyrit.backend.services.scenario_service.get_dataset_service", return_value=DatasetService()),
+            patch.object(
+                sqlite_instance, "get_seeds_async", side_effect=AssertionError("Listing must not hydrate seeds.")
+            ),
+            patch.object(Scenario, "load_datasets_async", side_effect=AssertionError("Listing must not prepare data.")),
+        ):
+            discovery.return_value = {
+                name: SeedDatasetDescriptor(name=name) for name in sorted(all_names - stored_names)
+            }
+            service = ScenarioService()
+            result = await service.list_compatible_datasets_async(scenario_name="test.source_options")
+        assert result is not None
+        assert {item.name for item in result.items} == expected_names
+        assert {item.name for item in result.items if item.loaded} == expected_names & stored_names
+        assert all(item.selection_key != "dataset:unnamed" for item in result.items)
+        if scenario_class is ApiKey:
+            assert scenario._default_dataset_config.dataset_names == []
+
+
+@pytest.mark.usefixtures("patch_central_database", "block_dataset_provider_lookup")
+async def test_compatible_listing_keeps_required_ingredients_but_validates_population_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    class RequiredPolicyScenario(Scam):
+        def get_required_data(self) -> ScenarioRequiredData:
+            return ScenarioRequiredData(
+                sources=[DatasetSource(name="required_template"), DatasetSource(name="required_unloaded")]
+            )
+
+        def get_dataset_requirements(self) -> SeedGroupRequirements:
+            return SeedGroupRequirements(
+                required_user_prompt=True,
+                metadata=(
+                    SeedMetadataRequirement(
+                        name="assert_generation",
+                        key=AssertGroupMetadata.METADATA_KEY,
+                        description="ASSERT policy metadata",
+                        validator=AssertGroupMetadata.from_metadata,
+                    ),
+                ),
+            )
+
+    valid = make_assert_result(config=make_assert_config(group_count=1, include_adversarial_prompt=False)).seed_groups[
+        0
+    ]
+    for seed in valid.seeds:
+        seed.dataset_name = "valid_population"
+    malformed = AttackSeedGroup(
+        seeds=[
+            SeedObjective(
+                value="Malformed policy case.",
+                dataset_name="malformed_population",
+                metadata={AssertGroupMetadata.METADATA_KEY: {}},
+            ),
+            SeedPrompt(value="Malformed policy request.", dataset_name="malformed_population", role="user"),
+        ]
+    )
+    template = SeedPrompt(value="Required template.", dataset_name="required_template", role="user")
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            template,
+            *valid.seeds,
+            *malformed.seeds,
+            SeedObjective(value="No user prompt.", dataset_name="missing_prompt"),
+        ],
+        added_by="test",
+    )
+    with (
+        patch.object(ScenarioRegistry, "_discover"),
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=SubStringScorer(substring="test")),
+        override_default_adversarial_target(MockPromptTarget()),
+    ):
+        registry = ScenarioRegistry()
+        registry.register_class(RequiredPolicyScenario, name="test.required_policy")
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(SeedDatasetProvider, "get_all_dataset_descriptors_async", new_callable=AsyncMock) as discovery,
+            patch("pyrit.backend.services.scenario_service.get_dataset_service", return_value=DatasetService()),
+            patch.object(Scenario, "load_datasets_async", side_effect=AssertionError("Listing must not prepare data.")),
+            patch.object(
+                ScenarioRequiredData, "load_async", side_effect=AssertionError("Listing must not assemble ingredients.")
+            ),
+        ):
+            discovery.return_value = {
+                name: SeedDatasetDescriptor(name=name) for name in ("required_unloaded", "unloaded_population")
+            }
+            result = await ScenarioService().list_compatible_datasets_async(scenario_name="test.required_policy")
+    assert result is not None
+    assert {item.name: item.loaded for item in result.items} == {
+        "required_template": True,
+        "required_unloaded": False,
+        "valid_population": True,
+    }
+    requirements = RequiredPolicyScenario().get_dataset_requirements()
+    assert not requirements.check(seed_group=valid)
+    assert requirements.check(seed_group=malformed)
+    assert template.prompt_group_id is None
 
 
 def test_catalog_describes_scenario_parameters_in_the_form_callers_send() -> None:
@@ -928,7 +1077,7 @@ class TestScenarioServiceListScenarios:
         service = ScenarioService()
         service._compute_default_run_size_estimate_async = AsyncMock(side_effect=cancelled_estimate_async)
         waiter = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
-        await asyncio.wait_for(started.wait(), timeout=1)
+        await wait_for_event_async(event=started, tasks=[waiter])
 
         service._estimate_tasks[
             (
@@ -946,7 +1095,9 @@ class TestScenarioServiceListScenarios:
         service._compute_default_run_size_estimate_async = AsyncMock(return_value=estimate)
         assert await service._get_default_run_size_estimate_async(metadata=metadata) == estimate
 
-    async def test_completed_stale_task_cannot_block_inflight_capacity(self) -> None:
+    async def test_completed_stale_task_cannot_block_inflight_capacity(
+        self, *, estimate_watchdog_seconds: float
+    ) -> None:
         """A done task is pruned before the bounded inflight capacity check."""
         metadata = _make_scenario_metadata()
         estimate = ScenarioRunSizeEstimate(
@@ -969,7 +1120,7 @@ class TestScenarioServiceListScenarios:
 
             result = await asyncio.wait_for(
                 service._get_default_run_size_estimate_async(metadata=metadata),
-                timeout=1,
+                timeout=TEST_WATCHDOG_SECONDS,
             )
 
         assert result == estimate
@@ -1071,7 +1222,7 @@ class TestScenarioServiceListScenarios:
 
         catalog_task = asyncio.create_task(service.list_scenarios_async())
         try:
-            await asyncio.wait_for(two_started.wait(), timeout=30)
+            await wait_for_event_async(event=two_started, tasks=[catalog_task])
             await asyncio.sleep(0)
 
             assert service._run_default_estimate_async.await_count == 2
@@ -1267,18 +1418,18 @@ class TestScenarioServiceListScenarios:
                 cache_key=(metadata.registry_name, metadata.scenario_version),
             )
         )
-        await asyncio.wait_for(started.wait(), timeout=1)
+        await wait_for_event_async(event=started, tasks=[compute_task])
 
         compute_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await compute_task
 
-        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        await asyncio.wait_for(cancelled.wait(), timeout=TEST_WATCHDOG_SECONDS)
         assert service._estimate_semaphore.locked()
         assert len(service._timed_out_estimate_workers) == 1
 
         release.set()
-        async with asyncio.timeout(1):
+        async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
             while service._timed_out_estimate_workers:
                 await asyncio.sleep(0)
 
@@ -1332,13 +1483,13 @@ class TestScenarioServiceListScenarios:
             try:
                 with patch("pyrit.backend.services.scenario_service._DEFAULT_ESTIMATE_TIMEOUT_SECONDS", 0.02):
                     first_result = await service._get_default_run_size_estimate_async(metadata=first_metadata)
-                await asyncio.wait_for(first_started.wait(), timeout=10)
+                await asyncio.wait_for(first_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
 
                 with patch.object(service._estimate_semaphore, "acquire", side_effect=acquire_second_async):
                     second_task = asyncio.create_task(
                         service._get_default_run_size_estimate_async(metadata=second_metadata)
                     )
-                    await asyncio.wait_for(second_waiting.wait(), timeout=10)
+                    await wait_for_event_async(event=second_waiting, tasks=[second_task])
 
                     assert first_started.is_set()
                     assert service._estimate_semaphore.locked()
@@ -1346,12 +1497,12 @@ class TestScenarioServiceListScenarios:
                     assert not second_task.done()
 
                     release_first.set()
-                    second_result = await asyncio.wait_for(second_task, timeout=10)
+                    second_result = await wait_for_completion_async(future=second_task)
             finally:
                 release_first.set()
                 tasks = [*service._estimate_tasks.values(), *service._timed_out_estimate_workers]
                 tasks.extend(get_defined_tasks(second_task))
-                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10)
+                await settle_tasks_async(*tasks)
 
         assert first_result.estimated_attack_count is None
         assert first_result.note is not None and "timed out" in first_result.note
@@ -1665,7 +1816,7 @@ class TestScenarioServiceListScenarios:
             for index in range(3)
         ]
         try:
-            await asyncio.wait_for(two_started.wait(), timeout=30)
+            await wait_for_event_async(event=two_started, tasks=tasks)
             await asyncio.sleep(0)
 
             assert service._estimate_configured_run_size_async.await_count == 2
@@ -1706,10 +1857,10 @@ class TestScenarioServiceListScenarios:
         service._run_default_estimate_async = AsyncMock(side_effect=estimate_async)
 
         estimate_task = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
-        await asyncio.wait_for(started.wait(), timeout=1)
+        await wait_for_event_async(event=started, tasks=[estimate_task])
         catalog = await asyncio.wait_for(
             service.list_scenarios_async(include_estimates=False),
-            timeout=1,
+            timeout=TEST_WATCHDOG_SECONDS,
         )
         assert not estimate_task.done()
 
@@ -1826,6 +1977,20 @@ class TestScenarioServiceListScenarios:
             assert result.items[0].scenario_name == "test.scenario_2"
             assert result.items[1].scenario_name == "test.scenario_3"
             assert result.pagination.has_more is True
+
+    async def test_list_scenarios_rejects_a_cursor_naming_no_scenario(self) -> None:
+        """A stale cursor must not silently replay the first page."""
+        metadata_list = [
+            _make_scenario_metadata(registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}") for i in range(3)
+        ]
+
+        with patch.object(ScenarioService, "__init__", lambda self: None):
+            service = ScenarioService()
+            service._registry = MagicMock()
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
+
+            with pytest.raises(ValueError, match="not valid for the scenario catalog"):
+                await service.list_scenarios_async(limit=2, cursor="test.removed_scenario")
 
     async def test_list_scenarios_last_page_has_more_false(self) -> None:
         """Test that last page shows has_more=False."""
@@ -2080,6 +2245,25 @@ class TestScenarioRoutes:
             data = response.json()
             assert data["items"] == []
             assert data["pagination"]["has_more"] is False
+
+    def test_list_scenarios_rejects_stale_cursor(self, client: TestClient) -> None:
+        """Test that a stale catalog cursor returns the standard 400 problem detail."""
+        message = "The cursor is not valid for the scenario catalog"
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_scenarios_async = AsyncMock(side_effect=ValueError(message))
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/scenarios/catalog", params={"cursor": "test.removed_scenario"})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {
+            "type": "/errors/bad-request",
+            "title": "Bad Request",
+            "status": 400,
+            "detail": message,
+            "instance": "/api/scenarios/catalog",
+        }
 
     def test_list_scenarios_with_items(self, client: TestClient) -> None:
         """Test that GET /api/scenarios/catalog returns scenario data."""

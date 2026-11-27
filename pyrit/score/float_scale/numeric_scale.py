@@ -46,7 +46,7 @@ class NumericRange(BaseModel):
     category: str | None = None
 
     @model_validator(mode="after")
-    def _validate_range(self) -> "NumericRange":
+    def _validate_range(self) -> Self:
         if self.minimum_value >= self.maximum_value:
             raise ValueError("minimum_value must be less than maximum_value.")
         if self.category is not None and not self.category:
