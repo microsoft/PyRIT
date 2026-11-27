@@ -385,6 +385,6 @@ The backend snapshots capabilities when a manual chat selects a target, with or 
 
 Like most of PyRIT, targets can be multi-modal.
 
-- [OpenAI Chat Target](./1_openai_chat_target.ipynb) (*text + image --> text*)
+- [OpenAI Chat Target](./1_openai_chat_target.ipynb) (*text + image + PDF --> text*)
 - [OpenAI Image Target](./3_openai_image_target.ipynb) (*text --> image* or *text + image --> image*)
 - [OpenAI TTS Target](./5_openai_tts_target.ipynb) (*text --> audio*) **Deprecated; scheduled for removal in 1.5.0.** Use `AzureSpeechTextToAudioConverter` for text-to-audio conversion.

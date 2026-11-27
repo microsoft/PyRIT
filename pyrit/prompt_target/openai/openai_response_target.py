@@ -9,6 +9,7 @@ from contextlib import AsyncExitStack
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -17,6 +18,7 @@ from typing import (
     assert_never,
     cast,
 )
+from urllib.parse import urlparse
 
 from openai.types.responses import FunctionToolParam, Response, ResponseOutputRefusal, ResponseOutputText
 from openai.types.shared import ReasoningEffort
@@ -29,7 +31,7 @@ from pyrit.exceptions import (
     PyritException,
     pyrit_target_retry,
 )
-from pyrit.memory.storage import convert_local_image_to_data_url_async
+from pyrit.memory.storage import convert_local_file_to_data_url_async, convert_local_image_to_data_url_async
 from pyrit.models import (
     ComponentIdentifier,
     JsonResponseConfig,
@@ -70,7 +72,11 @@ from pyrit.prompt_target.openai._response_adapter import token_usage_from_respon
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 if TYPE_CHECKING:
-    from openai.types.responses import ResponseFunctionToolCallParam, ResponseInputImageParam
+    from openai.types.responses import (
+        ResponseFunctionToolCallParam,
+        ResponseInputFileParam,
+        ResponseInputImageParam,
+    )
     from openai.types.responses.response_input_item_param import FunctionCallOutput
 
 logger = logging.getLogger(__name__)
@@ -155,6 +161,8 @@ class OpenAIResponseTarget(OpenAITarget):
                 {
                     frozenset(["text"]),
                     frozenset(["text", "image_path"]),
+                    frozenset(["binary_path"]),
+                    frozenset(["text", "binary_path"]),
                     frozenset(["function_call"]),
                     frozenset(["tool_call"]),
                     frozenset(["function_call_output"]),
@@ -386,13 +394,14 @@ class OpenAIResponseTarget(OpenAITarget):
         Convert a single inline piece into a Responses API content item.
 
         Args:
-            piece: The inline piece (text, image_path, blocked error, or structured refusal).
+            piece: The inline piece (text, image_path, binary_path, blocked error, or structured refusal).
 
         Returns:
             A dict in the Responses API content item shape.
 
         Raises:
-            ValueError: If the piece type is not supported for inline content.
+            ValueError: If the piece type is not supported for inline content, or a file is not in
+                a user or developer message.
         """
         structured_refusal = piece.structured_refusal
         if structured_refusal:
@@ -415,7 +424,38 @@ class OpenAIResponseTarget(OpenAITarget):
                 "image_url": data_url,
             }
             return dict(image_item)
+        if piece.converted_value_data_type == "binary_path":
+            return await self._construct_input_file_item_async(piece)
         raise ValueError(f"Unsupported piece type for inline content: {piece.converted_value_data_type}")
+
+    async def _construct_input_file_item_async(self, piece: MessagePiece) -> dict[str, Any]:
+        """
+        Convert a ``binary_path`` piece into a Responses API ``input_file`` content item.
+
+        The file is sent inline as a base64 data URL. Supported formats and size limits depend
+        on the API and model; OpenAI accepts PDFs, documents, spreadsheets, presentations, and
+        text files, with up to 50 MB across all files in one request.
+
+        Args:
+            piece: The ``binary_path`` piece.
+
+        Returns:
+            A dict in the Responses API ``input_file`` shape.
+
+        Raises:
+            ValueError: If the piece is not in a user or developer message.
+        """
+        if piece.api_role not in ["developer", "user"]:
+            raise ValueError(
+                f"File inputs are only supported in user or developer messages. Received role: {piece.api_role}."
+            )
+        file_data = await convert_local_file_to_data_url_async(piece.converted_value)
+        file_item: ResponseInputFileParam = {
+            "type": "input_file",
+            "filename": Path(urlparse(piece.converted_value).path).name,
+            "file_data": file_data,
+        }
+        return dict(file_item)
 
     def _serialize_system_message(self, pieces: list[MessagePiece]) -> dict[str, Any]:
         content = [{"type": "input_text", "text": piece.converted_value} for piece in pieces]
@@ -477,7 +517,11 @@ class OpenAIResponseTarget(OpenAITarget):
         data_type = piece.converted_value_data_type
         if data_type == "reasoning":
             return None
-        if data_type in {"text", "image_path"} or piece.is_blocked_error() or piece.structured_refusal is not None:
+        if (
+            data_type in {"text", "image_path", "binary_path"}
+            or piece.is_blocked_error()
+            or piece.structured_refusal is not None
+        ):
             item = await self._construct_input_item_from_piece_async(piece)
             return _SerializedPiece(item=item, placement="inline")
         if data_type == "function_call":

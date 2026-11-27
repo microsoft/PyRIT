@@ -6,6 +6,7 @@
 import base64
 import inspect
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,6 +15,7 @@ import pytest
 from pyrit.exceptions import EmptyResponseException, PyritException
 from pyrit.models import JsonResponseConfig, Message, MessagePiece, ReasoningContentMetadata, TokenUsage
 from pyrit.prompt_target.common.chat_completions_message_builder import (
+    build_file_content_entry_async,
     build_multimodal_chat_messages_async,
     build_response_format,
     build_text_chat_messages,
@@ -580,6 +582,61 @@ async def test_build_multimodal_chat_messages_includes_audio():
         result = await build_multimodal_chat_messages_async([message], prefer_transcript_for_history=False)
     content_types = [part["type"] for part in result[0]["content"]]
     assert content_types == ["text", "input_audio"]
+
+
+def _file_piece(path, role="user"):
+    return MessagePiece(
+        role=role, conversation_id="c", original_value=str(path), original_value_data_type="binary_path"
+    )
+
+
+async def test_build_file_content_entry_async_pdf(tmp_path: Path):
+    pdf_path = tmp_path / "report.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 sample")
+
+    entry = await build_file_content_entry_async(message_piece=_file_piece(pdf_path))
+
+    expected_data = base64.b64encode(b"%PDF-1.4 sample").decode()
+    assert entry == {
+        "type": "file",
+        "file": {"filename": "report.pdf", "file_data": f"data:application/pdf;base64,{expected_data}"},
+    }
+
+
+@pytest.mark.parametrize("file_name", ["notes.txt", "brief.docx", "payload.bin", "payload"])
+async def test_build_file_content_entry_async_rejects_non_pdf(tmp_path: Path, file_name: str):
+    file_path = tmp_path / file_name
+    file_path.write_bytes(b"data")
+
+    with pytest.raises(ValueError, match="only support .pdf"):
+        await build_file_content_entry_async(message_piece=_file_piece(file_path))
+
+
+async def test_build_file_content_entry_async_missing_file_raises(tmp_path: Path):
+    with pytest.raises(FileNotFoundError, match="missing.pdf"):
+        await build_file_content_entry_async(message_piece=_file_piece(tmp_path / "missing.pdf"))
+
+
+async def test_build_file_content_entry_async_rejects_assistant_role(tmp_path: Path):
+    with pytest.raises(ValueError, match="only supported in user messages"):
+        await build_file_content_entry_async(message_piece=_file_piece(tmp_path / "a.pdf", role="assistant"))
+
+
+async def test_build_multimodal_chat_messages_includes_multiple_files(tmp_path: Path):
+    first = tmp_path / "first.pdf"
+    second = tmp_path / "second.pdf"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    text_piece = MessagePiece(
+        role="user", conversation_id="c", original_value="Compare these", original_value_data_type="text"
+    )
+    message = Message(message_pieces=[text_piece, _file_piece(first), _file_piece(second)])
+
+    result = await build_multimodal_chat_messages_async([message])
+
+    content = result[0]["content"]
+    assert [part["type"] for part in content] == ["text", "file", "file"]
+    assert [part["file"]["filename"] for part in content[1:]] == ["first.pdf", "second.pdf"]
 
 
 async def test_save_audio_response_async_wav():

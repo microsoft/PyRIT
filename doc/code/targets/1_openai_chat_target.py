@@ -175,6 +175,34 @@ result = await attack.execute_async(
 await output_attack_async(result)
 
 # %% [markdown]
+# ## File Inputs
+#
+# `OpenAIChatTarget` and `OpenAIResponseTarget` send `binary_path` pieces, such as the output of `PDFConverter`, to the model as native file inputs. The target reads the file through PyRIT's storage layer and sends it inline as base64 data. A message can contain only a file, a file with text instructions, or more than one file.
+#
+# Supported formats and size limits depend on the API and the model:
+#
+# - Chat Completions (`OpenAIChatTarget`) accepts only PDF files, and only in user messages. Other formats raise a `ValueError` before the request is sent.
+# - The Responses API (`OpenAIResponseTarget`) also accepts documents, spreadsheets, presentations, and text files. The MIME type comes from the file extension, so a file without a recognized extension (for example `.bin`) raises a `ValueError`.
+# - OpenAI allows up to 50 MB across all files in one request, and PDF page images need a model that accepts image inputs. See OpenAI's [file inputs guide](https://developers.openai.com/api/docs/guides/pdf-files) for the current limits. Other OpenAI-compatible providers may not support file inputs.
+#
+# ```python
+# from pyrit.executor.attack import PromptSendingAttack
+# from pyrit.models import SeedGroup, SeedPrompt
+# from pyrit.prompt_target import OpenAIChatTarget
+#
+# attack = PromptSendingAttack(objective_target=OpenAIChatTarget())
+#
+# seed = SeedGroup(
+#     seeds=[
+#         SeedPrompt(value="Summarize this document in one sentence.", data_type="text"),
+#         SeedPrompt(value="path/to/report.pdf", data_type="binary_path"),
+#     ]
+# )
+#
+# result = await attack.execute_async(objective="Summarize the document", next_message=seed.next_message)
+# ```
+
+# %% [markdown]
 # ## Audio Output
 #
 # Chat Completions models that support audio output (for example `gpt-4o-audio-preview`) can reply with speech as well as text. Pass an `OpenAIChatAudioConfig` as `audio_response_config` to turn this on:

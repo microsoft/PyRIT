@@ -21,7 +21,10 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
-    from pyrit.memory.storage.data_url_converter import convert_local_image_to_data_url_async
+    from pyrit.memory.storage.data_url_converter import (
+        convert_local_file_to_data_url_async,
+        convert_local_image_to_data_url_async,
+    )
     from pyrit.memory.storage.serializers import (
         AllowedCategories,
         AudioPathDataTypeSerializer,
@@ -43,6 +46,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AudioPathDataTypeSerializer": "pyrit.memory.storage.serializers",
     "AzureBlobStorageIO": "pyrit.memory.storage.storage",
     "BinaryPathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "convert_local_file_to_data_url_async": "pyrit.memory.storage.data_url_converter",
     "convert_local_image_to_data_url_async": "pyrit.memory.storage.data_url_converter",
     "DataTypeSerializer": "pyrit.memory.storage.serializers",
     "data_serializer_factory": "pyrit.memory.storage.serializers",

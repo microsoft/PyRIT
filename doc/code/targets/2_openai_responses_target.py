@@ -11,7 +11,7 @@
 # %% [markdown]
 # # OpenAI Responses Target
 #
-# In this demo, we show an example of the `OpenAIResponseTarget`. [Responses](https://platform.openai.com/docs/api-reference/responses) is a newer protocol than chat completions and provides additional functionality with a somewhat modified API. The allowed input types include text, image, web search, file search, functions, reasoning, and computer use.
+# In this demo, we show an example of the `OpenAIResponseTarget`. [Responses](https://platform.openai.com/docs/api-reference/responses) is a newer protocol than chat completions and provides additional functionality with a somewhat modified API. The allowed input types include text, image, files (see File Inputs in the [OpenAI Chat Target](./1_openai_chat_target.ipynb) guide), web search, file search, functions, reasoning, and computer use.
 #
 #
 #
