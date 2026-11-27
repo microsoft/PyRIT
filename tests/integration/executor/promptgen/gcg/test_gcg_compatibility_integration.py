@@ -94,6 +94,7 @@ class _InProcessWorker(ModelWorker):
         self.model.requires_grad_(False)
         self.tokenizer = tokenizer
         self._vocabulary_identities: dict[int, str] = {}
+        self._unsampleable_toks: dict[int, torch.Tensor] = {}
         self.results: queue.Queue[Any] = queue.Queue()
         self.operations: list[ModelWorkerOperation] = []
 

@@ -15,6 +15,7 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     ModelWorker,
     ModelWorkerOperation,
     PromptManager,
+    get_unsampleable_toks,
 )
 from pyrit.executor.promptgen.gcg.extension_protocols import CandidateFilter, SamplingStrategy
 
@@ -150,6 +151,10 @@ class GCGCandidateProposer:
             if key not in identities:
                 identities[key] = _hf_vocabulary_identity(tokenizer=worker.tokenizer, num_embeddings=new_grad.shape[-1])
             new_vocab = identities[key]
+            # Masked per worker before summing, so a group excludes the union of its workers' ids.
+            if key not in worker._unsampleable_toks:
+                worker._unsampleable_toks[key] = get_unsampleable_toks(tokenizer=worker.tokenizer, num_embeddings=key)
+            new_grad[..., worker._unsampleable_toks[key].to(new_grad.device)] = float("inf")
 
             if grad is None:
                 grad = torch.zeros_like(new_grad)

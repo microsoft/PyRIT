@@ -71,7 +71,8 @@ class GCGModelConfig:
         device (str): Torch device string for this model. Defaults to ``"cuda:0"``.
         model_kwargs (dict[str, Any]): Extra keyword arguments forwarded to
             ``AutoModelForCausalLM.from_pretrained``. Defaults to
-            ``{"low_cpu_mem_usage": True, "use_cache": False}``.
+            ``{"low_cpu_mem_usage": True, "use_cache": False}``. Models load in
+            float16 unless this sets ``torch_dtype`` or ``dtype``.
         tokenizer_kwargs (dict[str, Any]): Extra keyword arguments forwarded to
             ``AutoTokenizer.from_pretrained``. Defaults to ``{"use_fast": True}``
             because GCG needs the character offsets only fast tokenizers provide.

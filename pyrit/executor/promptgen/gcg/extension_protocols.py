@@ -84,7 +84,8 @@ class SamplingStrategy(Protocol):
         Args:
             gradient (torch.Tensor): Aggregated gradient over the control
                 tokens with shape ``(control_length, vocab_size)`` and dtype
-                matching the model's embedding matrix.
+                matching the model's embedding matrix. Unsampleable ids (see
+                ``get_unsampleable_toks``) are already set to ``+inf``.
             control_tokens (torch.Tensor): The current suffix token sequence
                 with shape ``(control_length,)`` and integer dtype.
             batch_size (int): Number of candidate suffix rows to return.
