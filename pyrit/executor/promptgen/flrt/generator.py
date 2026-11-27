@@ -273,9 +273,11 @@ class FLRTGenerator(
                 self._logger.info(f"Stopping after {step} steps: runtime limit reached.")
                 break
             await asyncio.to_thread(self._step, context=context, step=step)
-            self._write_log(context=context)
+            await asyncio.to_thread(self._write_log, context=context)
 
-        return self._read_result(logfile_path=context.logfile_path, memory_labels=context.memory_labels)
+        return await asyncio.to_thread(
+            self._read_result, logfile_path=context.logfile_path, memory_labels=context.memory_labels
+        )
 
     async def _teardown_async(self, *, context: FLRTContext) -> None:
         """Release the model. Runs even when _perform_async raises."""
@@ -296,7 +298,7 @@ class FLRTGenerator(
         algorithm = self._algorithm
         probabilities = algorithm.early_update_probs if step < algorithm.schedule_step else algorithm.late_update_probs
 
-        attack, _ = context.buffer[0]
+        attack, parent_loss = context.buffer[0]
         goal_index = context.rng.randrange(len(context.goals))
         encoded = self._encode_attack(context=context, attack=attack, goal_index=goal_index)
         if encoded is None:
@@ -327,8 +329,12 @@ class FLRTGenerator(
         candidates = [self._decode_ids(context=context, ids=ids) for ids in mutated]
 
         losses, breakdowns = self._evaluate_attacks(context=context, attacks=candidates)
-        pool = [*context.buffer[1:], *zip(candidates, losses, strict=True)]
+        finite = [(candidate, loss) for candidate, loss in zip(candidates, losses, strict=True) if math.isfinite(loss)]
+        pool = [*context.buffer[1:], *finite]
         pool.sort(key=lambda entry: entry[1])
+        if not pool:
+            # Every candidate was illegal this step; keep the parent alive.
+            pool = [(attack, parent_loss)]
         context.buffer = pool[: algorithm.buffer_size]
 
         best_index = min(range(len(losses)), key=lambda i: losses[i])
@@ -470,14 +476,17 @@ class FLRTGenerator(
         """
         goal = context.goals[goal_index]
         target = context.targets[goal_index]
-        content = f"{goal} {attack}"
+        # An empty attack contributes no trailing space, because templates that
+        # trim message content (like Llama 3's) would otherwise eat it.
+        content = f"{goal} {attack}" if attack else goal
         prompt = context.template_prefix + content + context.template_mid + target + context.template_suffix
         encoding = context.tokenizer(prompt, add_special_tokens=False, return_offsets_mapping=True)
         ids = cast("list[int]", encoding.input_ids)
         offsets = cast("list[tuple[int, int]]", encoding["offset_mapping"])
 
         user_start_char = len(context.template_prefix)
-        attack_start_char = user_start_char + len(goal) + 1
+        # For an empty attack the insertion point sits right after the goal tokens.
+        attack_start_char = user_start_char + len(goal) + (1 if attack else 0)
         attack_end_char = attack_start_char + len(attack)
         user_end_char = user_start_char + len(content)
         target_start_char = user_end_char + len(context.template_mid)
@@ -589,7 +598,8 @@ class FLRTGenerator(
             ValueError: If the template transforms message content or does not
                 tokenize into at least one target token.
         """
-        content = f"{goal} {self._algorithm.initial_attack}"
+        initial = self._algorithm.initial_attack
+        content = f"{goal} {initial}" if initial else goal
         expected = context.template_prefix + content + context.template_mid + target + context.template_suffix
         messages = [
             {"role": "user", "content": content},
@@ -627,8 +637,9 @@ class FLRTGenerator(
                 "cannot be set up. Pick a chat-tuned model or set tokenizer.chat_template explicitly."
             )
         self._logger.info(f"Loading model {config.name} on {config.device}...")
+        model_kwargs = {"dtype": torch.float16, **config.model_kwargs}
         model: Any = AutoModelForCausalLM.from_pretrained(
-            config.name, token=self._hf_token, dtype=torch.float16, trust_remote_code=False, **config.model_kwargs
+            config.name, token=self._hf_token, trust_remote_code=False, **model_kwargs
         )
         model = model.to(torch.device(config.device)).eval()
         model.requires_grad_(False)

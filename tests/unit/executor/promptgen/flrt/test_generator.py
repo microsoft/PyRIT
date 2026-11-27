@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -86,6 +87,20 @@ class TinyTokenizer:
                 self.inverse[i] = token
                 self.vocab[token] = i
         return " ".join(self.inverse[i] for i in ids)
+
+
+class TrimmingTinyTokenizer(TinyTokenizer):
+    """A TinyTokenizer whose chat template strips message content, like Llama 3's."""
+
+    def apply_chat_template(self, messages: list[dict[str, str]], tokenize: bool = False) -> str:
+        rendered = ""
+        for message in messages:
+            content = message["content"].strip()
+            if message["role"] == "user":
+                rendered += f"<|user|> {content} <|end|>"
+            else:
+                rendered += f" <|assistant|> {content} <|end|>"
+        return rendered
 
 
 class TinyModel:
@@ -224,6 +239,24 @@ class TestEncodeAttack:
 
         assert gen._encode_attack(context=context, attack="cc <eos>", goal_index=0) is None
 
+    def test_empty_attack_points_after_goal_tokens_with_trimming_template(self) -> None:
+        gen = _patched_generator()
+        tokenizer = TrimmingTinyTokenizer()
+        context = FLRTContext(goals=["aa bb"], targets=["tt"])
+        context.tokenizer = tokenizer
+        context.template_prefix, context.template_mid, context.template_suffix = gen._probe_template(
+            tokenizer=tokenizer
+        )
+
+        encoded = gen._encode_attack(context=context, attack="", goal_index=0)
+
+        assert encoded is not None
+        assert encoded.attack_start == encoded.attack_end
+        # Insertion happens right after the last goal token "bb", at the <|end|> scaffold.
+        pieces = [tokenizer.inverse[i] for i in encoded.ids]
+        assert pieces == ["<|user|>", "aa", "bb", "<|end|>", "<|assistant|>", "tt", "<|end|>"]
+        assert encoded.attack_start == 3
+
 
 class TestTokenProposals:
     def test_proposals_have_one_row_per_position_plus_end(self) -> None:
@@ -305,6 +338,37 @@ class TestExecuteAsyncLifecycle:
         with pytest.raises(Exception, match="does not tokenize cleanly"):
             await gen.execute_async(goals=["aa"], targets=["tt"])
 
+    async def test_trimming_template_runs_with_empty_initial_attack(self, tmp_path: Path) -> None:
+        gen = _make_generator(output_dir=tmp_path, initial_attack="", min_tokens=0)
+        tokenizer, model = TrimmingTinyTokenizer(), TinyModel()
+        gen._load_model_and_tokenizer = lambda: (tokenizer, model)  # type: ignore[method-assign]
+
+        result = await gen.execute_async(goals=["aa bb"], targets=["tt uu"])
+
+        assert result.step_count == 4
+        assert result.final_loss < float("inf")
+
+    async def test_run_continues_when_step_zero_candidates_all_illegal(self, tmp_path: Path) -> None:
+        gen = _patched_generator(output_dir=tmp_path)
+        original = FLRTGenerator._evaluate_attacks
+        calls = {"n": 0}
+
+        def illegal_on_first_step(self: FLRTGenerator, *, context: FLRTContext, attacks: list[str]) -> Any:
+            losses, breakdowns = original(self, context=context, attacks=attacks)
+            calls["n"] += 1
+            # Call 1 is the initial attack in setup; call 2 evaluates step 0's candidates.
+            # Infinite loss is how illegal candidates present, so this simulates all of
+            # them failing to encode.
+            if calls["n"] == 2:
+                return [math.inf] * len(losses), breakdowns
+            return losses, breakdowns
+
+        with patch.object(FLRTGenerator, "_evaluate_attacks", illegal_on_first_step):
+            result = await gen.execute_async(goals=["aa"], targets=["tt"])
+
+        assert result.step_count == 4
+        assert result.final_loss < float("inf")
+
     async def test_teardown_releases_model_and_tokenizer(self, tmp_path: Path) -> None:
         gen = _patched_generator(output_dir=tmp_path)
         captured: dict[str, Any] = {}
@@ -379,3 +443,48 @@ class TestProbeTemplate:
         gen = _patched_generator()
         with pytest.raises(ValueError, match="Cannot safely locate message content"):
             gen._probe_template(tokenizer=BrokenTokenizer())
+
+
+class TestLoadModelAndTokenizer:
+    def _loader_capturing_kwargs(self) -> tuple[Any, dict[str, Any]]:
+        captured: dict[str, Any] = {}
+
+        class FakeModelLoader:
+            @staticmethod
+            def from_pretrained(name: str, **kwargs: Any) -> Any:
+                captured.update(kwargs)
+                return TinyModel()
+
+        return FakeModelLoader, captured
+
+    def test_dtype_defaults_to_float16(self) -> None:
+        pytest.importorskip("transformers")
+        loader, captured = self._loader_capturing_kwargs()
+        tokenizer, _ = _fakes()
+        gen = FLRTGenerator(model=FLRTModelConfig(name=_MODEL_NAME, device="cpu"))
+
+        with (
+            patch("transformers.models.auto.modeling_auto.AutoModelForCausalLM", loader),
+            patch("transformers.models.auto.tokenization_auto.AutoTokenizer") as auto_tokenizer,
+        ):
+            auto_tokenizer.from_pretrained.return_value = tokenizer
+            gen._load_model_and_tokenizer()
+
+        assert captured["dtype"] is torch.float16
+
+    def test_model_kwargs_dtype_overrides_default(self) -> None:
+        pytest.importorskip("transformers")
+        loader, captured = self._loader_capturing_kwargs()
+        tokenizer, _ = _fakes()
+        gen = FLRTGenerator(
+            model=FLRTModelConfig(name=_MODEL_NAME, device="cpu", model_kwargs={"dtype": torch.bfloat16})
+        )
+
+        with (
+            patch("transformers.models.auto.modeling_auto.AutoModelForCausalLM", loader),
+            patch("transformers.models.auto.tokenization_auto.AutoTokenizer") as auto_tokenizer,
+        ):
+            auto_tokenizer.from_pretrained.return_value = tokenizer
+            gen._load_model_and_tokenizer()
+
+        assert captured["dtype"] is torch.bfloat16
