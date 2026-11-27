@@ -53,7 +53,7 @@ class JsonResponseConfig(BaseModel):
     strict: bool = True
 
     @model_validator(mode="after")
-    def _schema_implies_enabled(self) -> JsonResponseConfig:
+    def _schema_implies_enabled(self) -> Self:
         if self.json_schema is not None:
             self.enabled = True
         return self

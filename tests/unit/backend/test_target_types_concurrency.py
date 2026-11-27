@@ -83,7 +83,7 @@ async def test_health_remains_schedulable_during_cold_target_types(
                         pytest.fail("Target types request completed before discovery was held")
                     assert discovery_waiter in done, "Discovery did not start before the test watchdog expired"
                     health_request = asyncio.create_task(client.get("/api/health"))
-                    health_response = await wait_for_completion_async(future=health_request, timeout=10)
+                    health_response = await wait_for_completion_async(future=health_request)
                     assert health_response.status_code == 200
                     assert not discovery_finished.is_set()
                     assert not types_request.done()
