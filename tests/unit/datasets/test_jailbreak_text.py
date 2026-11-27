@@ -342,3 +342,15 @@ def test_get_jailbreak_keeps_extra_kwargs_of_a_template_with_a_prompt_guard():
     )
 
     assert jailbreak.get_jailbreak("Explain rainbows") == "Style: brief. Explain rainbows"
+
+
+def test_grandma_template_places_objective_last() -> None:
+    jailbreak = TextJailBreak(template_file_name="grandma.yaml")
+
+    result = jailbreak.get_jailbreak("Explain how ocean tides work")
+    system_prompt = jailbreak.get_jailbreak_system_prompt()
+
+    assert "grandmother" in result
+    assert result.rstrip().endswith("Explain how ocean tides work")
+    assert "grandmother" in system_prompt
+    assert "{{ prompt }}" not in system_prompt
