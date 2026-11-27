@@ -139,7 +139,12 @@ async def _get_snapshot_async(*, read_model: ScenarioProgressReadModel, run_id: 
 
 
 def _write_objective_metrics(
-    *, file_path: Path, scorer_identifier: ComponentIdentifier, accuracy: float, age_seconds: int | None = None
+    *,
+    file_path: Path,
+    scorer_identifier: ComponentIdentifier,
+    accuracy: float,
+    age_seconds: int | None = None,
+    num_input_responses: int | None = None,
 ) -> None:
     """Write one metrics entry, optionally backdating the file so the read model may cache it."""
     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -149,6 +154,7 @@ def _write_objective_metrics(
                 "eval_hash": ScorerEvaluationIdentifier(scorer_identifier).eval_hash,
                 "metrics": {
                     "num_responses": 100,
+                    **({"num_input_responses": num_input_responses} if num_input_responses is not None else {}),
                     "num_human_raters": 3,
                     "accuracy": accuracy,
                     "accuracy_standard_error": 0.01,
@@ -216,10 +222,14 @@ async def test_progress_reuses_metrics_until_file_changes_even_for_finished_runs
             scorer_identifier=scorer_identifier,
             accuracy=updated_accuracy,
             age_seconds=20,
+            num_input_responses=125,
         )
         updated = await read_progress_async()
         assert updated.summary.objective_scorer.metrics.accuracy == updated_accuracy
+        assert updated.summary.objective_scorer.metrics.num_responses == 100
+        assert updated.summary.objective_scorer.metrics.num_input_responses == 125
         assert first.summary.objective_scorer.metrics.accuracy == initial_accuracy
+        assert first.summary.objective_scorer.metrics.num_input_responses is None
         assert load_metrics.call_count == 2
 
         await asyncio.to_thread(file_path.unlink)
