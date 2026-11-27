@@ -166,7 +166,9 @@ class TestModelWorkerDtype:
     )
     def test_model_kwargs_override_the_dtype(self, model_kwargs: dict, expected: dict) -> None:
         with patch.object(attack_manager_mod.AutoModelForCausalLM, "from_pretrained") as from_pretrained:
-            attack_manager_mod.ModelWorker("m", None, dict(model_kwargs), MagicMock(), "cpu")
+            attack_manager_mod.ModelWorker(
+                model_path="m", token=None, model_kwargs=dict(model_kwargs), tokenizer=MagicMock(), device="cpu"
+            )
 
         kwargs = from_pretrained.call_args.kwargs
         assert {k: kwargs[k] for k in ("torch_dtype", "dtype") if k in kwargs} == expected
