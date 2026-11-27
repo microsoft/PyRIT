@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel
 from unit.mocks import MockPromptTarget, get_mock_prompt_normalizer
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -48,7 +49,7 @@ from pyrit.models import (
     load_simulated_target_prompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import LiteLLMChatTarget, OpenAIChatTarget, OpenAIResponseTarget, PromptTarget, Tool
+from pyrit.prompt_target import LiteLLMChatTarget, OpenAIChatTarget, OpenAIResponseTarget, PromptTarget, Tool, tool
 from pyrit.score import TrueFalseScorer
 
 
@@ -1751,6 +1752,16 @@ _SECOND_CALL = {**_CALL, "call_id": "call_2"}
 _SECOND_OUTPUT = {**_OUTPUT, "call_id": "call_2"}
 
 
+class _Location(BaseModel):
+    city: str
+
+
+@tool
+async def find_office(location: _Location) -> str:  # pyrit-async-suffix-exempt
+    """Find the office nearest a location."""
+    return "HQ"
+
+
 def _history_response(items: list[dict[str, object]], *, fenced: bool = False) -> Message:
     text = json.dumps({"items": items})
     return Message.from_prompt(prompt=f"```json\n{text}\n```" if fenced else text, role="assistant")
@@ -1893,6 +1904,31 @@ class TestOneShotToolHistory:
 
         feedback = send.call_args_list[1].kwargs["message"].get_value()
         assert "arguments for 'lookup_ticket' at $.range[1]: '2' is not of type 'integer'." in feedback
+
+    async def test_schema_references_that_resolve_check_the_referenced_schema_async(self) -> None:
+        # @tool describes a model argument through a reference into "$defs".
+        assert find_office.parameters["properties"]["location"] == {"$ref": "#/$defs/_Location"}
+        call = {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "find_office",
+            "arguments": {"location": {"city": 5}},
+        }
+        output = {"type": "function_call_output", "call_id": "call_1", "output": "Paris HQ."}
+
+        result, send = await _generate_one_shot_async(
+            responses=[
+                _history_response([call, output]),
+                _history_response([{**call, "arguments": {"location": {"city": "Paris"}}}, output]),
+            ],
+            tools=[find_office.to_definition()],
+            num_turns=1,
+        )
+
+        feedback = send.call_args_list[1].kwargs["message"].get_value()
+        assert "arguments for 'find_office' at $.location.city: 5 is not of type 'string'." in feedback
+        assert result.preparation_failure is None
+        assert json.loads(json.loads(result.seed_prompts[0].value)["arguments"]) == {"location": {"city": "Paris"}}
 
     @pytest.mark.parametrize(
         ("items", "problem"),
