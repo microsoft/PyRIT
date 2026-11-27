@@ -5,9 +5,12 @@ import sys
 import types
 import warnings
 
+import pytest
+
 from pyrit.common import (
     print_deprecation_message,
 )
+from pyrit.common.constructor_capture import capture_constructor_parameters
 from pyrit.common.deprecation import (
     deprecated_kwarg,
     module_deprecation_getattr,
@@ -67,6 +70,24 @@ def test_deprecation_warning_mixed_types():
     assert len(w) == 1
     assert "_OldClass" in str(w[0].message)
     assert "some.new.path" in str(w[0].message)
+
+
+@pytest.mark.parametrize("capture_depth", [0, 1, 2])
+def test_deprecation_warning_attributes_constructor_call_to_caller(capture_depth: int) -> None:
+    class DeprecatedClass:
+        def __init__(self) -> None:
+            print_deprecation_message(old_item="OldName", new_item="NewName", removed_in="4.0")
+
+    for _ in range(capture_depth):
+        DeprecatedClass.__init__ = capture_constructor_parameters(DeprecatedClass.__init__)
+
+    with pytest.warns(DeprecationWarning, match="OldName is deprecated") as captured_warnings:
+        expected_lineno = sys._getframe().f_lineno + 1
+        DeprecatedClass()
+
+    assert len(captured_warnings) == 1
+    assert captured_warnings[0].filename == __file__
+    assert captured_warnings[0].lineno == expected_lineno
 
 
 # --- deprecated_kwarg ----------------------------------------------------

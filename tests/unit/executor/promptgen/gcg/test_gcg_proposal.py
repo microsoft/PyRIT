@@ -133,6 +133,32 @@ class TestGCGCandidateProposer:
         assert batch.control_candidates_by_group == [["filtered_1", "filtered_2"]]
         assert batch.group_worker_indices == [0]
 
+    def test_non_tensor_worker_gradient_raises_type_error(self) -> None:
+        worker = _create_mock_worker((1, 3, 4))
+        worker.results.get.side_effect = lambda: [[0.1, 0.2, 0.3, 0.4]]
+        sampling = MagicMock(spec=SamplingStrategy)
+        candidate_filter = MagicMock(spec=CandidateFilter)
+
+        proposer = GCGCandidateProposer(
+            workers=[worker],
+            prompts=[_create_mock_prompt_manager()],
+            sampling=sampling,
+            candidate_filter=candidate_filter,
+            main_device=torch.device("cpu"),
+        )
+
+        with pytest.raises(TypeError, match="GCG worker 0 must return a gradient tensor, got list"):
+            proposer.propose_candidates(
+                batch_size=2,
+                topk=5,
+                temp=1.0,
+                allow_non_ascii=True,
+                filter_cand=True,
+                current_control_str="! ! !",
+            )
+
+        sampling.sample_candidates.assert_not_called()
+
     def test_same_shape_multiple_workers_accumulate_into_single_group(self) -> None:
         worker1 = _create_mock_worker((1, 3, 4))
         worker2 = _create_mock_worker((1, 3, 4))

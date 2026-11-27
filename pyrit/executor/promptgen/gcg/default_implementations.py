@@ -202,22 +202,23 @@ class CrossEntropyLoss:
         Raises:
             RuntimeError: If the instance has no enabled loss term.
         """
-        criterion = nn.CrossEntropyLoss(reduction="none")
         total: torch.Tensor | None = None
 
         if self._target_weight > 0:
             target_loss_slice = slice(target_slice.start - 1, target_slice.stop - 1)
-            target_term = criterion(
+            target_term = nn.functional.cross_entropy(
                 logits[:, target_loss_slice, :].transpose(1, 2),
                 token_ids[:, target_slice],
+                reduction="none",
             ).mean(dim=-1)
             total = self._target_weight * target_term
 
         if self._control_weight > 0:
             control_loss_slice = slice(control_slice.start - 1, control_slice.stop - 1)
-            control_term = criterion(
+            control_term = nn.functional.cross_entropy(
                 logits[:, control_loss_slice, :].transpose(1, 2),
                 token_ids[:, control_slice],
+                reduction="none",
             ).mean(dim=-1)
             weighted_control = self._control_weight * control_term
             total = weighted_control if total is None else total + weighted_control
@@ -229,8 +230,7 @@ class CrossEntropyLoss:
                 "CrossEntropyLoss.compute_loss produced no terms; "
                 "this indicates a corrupted instance with both weights at 0."
             )
-        result: torch.Tensor = total
-        return result
+        return total
 
     def get_required_logit_positions(
         self,
@@ -300,22 +300,23 @@ class CrossEntropyLoss:
                 f"expected {expected_length}, got {logits.shape[1]}"
             )
 
-        criterion = nn.CrossEntropyLoss(reduction="none")
         total: torch.Tensor | None = None
         offset = 0
 
         if self._target_weight > 0:
-            target_term = criterion(
+            target_term = nn.functional.cross_entropy(
                 logits[:, offset : offset + target_length, :].transpose(1, 2),
                 token_ids[:, target_slice],
+                reduction="none",
             ).mean(dim=-1)
             total = self._target_weight * target_term
             offset += target_length
 
         if self._control_weight > 0:
-            control_term = criterion(
+            control_term = nn.functional.cross_entropy(
                 logits[:, offset : offset + control_length, :].transpose(1, 2),
                 token_ids[:, control_slice],
+                reduction="none",
             ).mean(dim=-1)
             weighted_control = self._control_weight * control_term
             total = weighted_control if total is None else total + weighted_control
@@ -325,8 +326,7 @@ class CrossEntropyLoss:
                 "CrossEntropyLoss.compute_loss_from_selected_logits produced no terms; "
                 "this indicates a corrupted instance with both weights at 0."
             )
-        result: torch.Tensor = total
-        return result
+        return total
 
 
 class LengthPreservingFilter:

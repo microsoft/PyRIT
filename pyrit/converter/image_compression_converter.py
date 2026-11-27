@@ -164,7 +164,7 @@ class ImageCompressionConverter(Converter):
         """
         return original_size >= self._min_compression_threshold
 
-    def _compress_image(self, image: Image.Image, original_format: str, original_size: int) -> tuple[BytesIO, str]:
+    def _compress_image(self, *, image: Image.Image, original_format: str, original_size: int) -> tuple[BytesIO, str]:
         """
         Compress the image with the specified settings. Returns the compressed image bytes and output format.
 
@@ -233,6 +233,7 @@ class ImageCompressionConverter(Converter):
 
     async def _handle_original_image_fallback_async(
         self,
+        *,
         prompt: str,
         input_type: PromptDataType,
         img_serializer: Any,
@@ -310,14 +311,18 @@ class ImageCompressionConverter(Converter):
         if not self._should_compress(original_size):
             logger.warning(f"Image too small ({original_size} bytes), skipping compression")
             return await self._handle_original_image_fallback_async(
-                prompt, input_type, img_serializer, original_img_bytes, original_format
+                prompt=prompt,
+                input_type=input_type,
+                img_serializer=img_serializer,
+                original_img_bytes=original_img_bytes,
+                original_format=original_format,
             )
 
         # Compress the image and get back a BytesIO buffer containing the compressed data
         # along with the actual output format used (which may differ from input format).
         # Decoding and re-encoding is CPU-bound, so keep it off the event loop.
         compressed_bytes, output_format = await asyncio.to_thread(
-            self._compress_image, original_img, original_format, original_size
+            self._compress_image, image=original_img, original_format=original_format, original_size=original_size
         )
         compressed_bytes_value = compressed_bytes.getvalue()
         compressed_size = len(compressed_bytes_value)
@@ -326,7 +331,11 @@ class ImageCompressionConverter(Converter):
         if self._fallback_to_original and compressed_size >= original_size:
             logger.warning(f"Compression increased file size ({original_size} → {compressed_size}), using original")
             return await self._handle_original_image_fallback_async(
-                prompt, input_type, img_serializer, original_img_bytes, original_format
+                prompt=prompt,
+                input_type=input_type,
+                img_serializer=img_serializer,
+                original_img_bytes=original_img_bytes,
+                original_format=original_format,
             )
 
         # This ensures the saved file has the correct extension for its actual format

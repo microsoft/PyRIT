@@ -102,6 +102,21 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
     #: The selected objective scorer for pool runs; absent for single-scorer runs.
     objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None
 
+    @property
+    def technique_label(self) -> str:
+        """
+        Name the technique this group's results count toward.
+
+        A baseline counts as ``baseline`` whatever its display group. Groups saved without a
+        technique name otherwise count under their display group.
+
+        Returns:
+            str: The technique label.
+        """
+        if self.kind == ScenarioRunPlanGroupKind.BASELINE:
+            return ScenarioRunPlanGroupKind.BASELINE.value
+        return self.technique_name or self.display_group
+
 
 class ScenarioRunPlan(BaseModel):
     """Versioned normalized execution plan persisted in ScenarioResult metadata."""
@@ -114,7 +129,7 @@ class ScenarioRunPlan(BaseModel):
     stores_seed_groups: Literal[True] | None = None
 
     @model_validator(mode="after")
-    def _validate_normalized_plan(self) -> "ScenarioRunPlan":
+    def _validate_normalized_plan(self) -> Self:
         """
         Reject ambiguous IDs and invalid normalized references.
 

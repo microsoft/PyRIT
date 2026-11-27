@@ -40,7 +40,7 @@ export function useConversationSave(newAttackContext?: NewAttackContext) {
       }
       const labels = currentContext ? currentContext.labels : input.labels
       const operationId = currentContext?.operationId ?? undefined
-      const payload = {
+      const payload: Omit<SaveConversationRequest, 'save_id'> = {
         destination,
         attack_result_id: destination === 'same_attack' ? input.sourceAttackId ?? undefined : undefined,
         source_attack_result_id: input.sourceConversationId ? input.sourceAttackId ?? undefined : undefined,
