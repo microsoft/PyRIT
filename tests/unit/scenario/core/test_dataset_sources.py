@@ -4,6 +4,7 @@
 """Named selection, explicit preparation, and durable storage contracts."""
 
 import asyncio
+import logging
 import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import closing
@@ -765,12 +766,17 @@ async def test_refresh_replaces_complete_dataset_and_repeats_on_new_preparation_
     assert len(await sqlite_instance.get_seeds_async(dataset_name="other")) == 1
 
 
+@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("compound", [False, True])
-async def test_refresh_preflight_rejects_stored_memory_only_source_before_fetch_async(
-    *, memory: MagicMock, compound: bool
+async def test_refresh_keeps_stored_copy_of_source_without_provider_async(
+    *, sqlite_instance: SQLiteMemory, compound: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
+    for name in ("a", "b"):
+        await sqlite_instance.add_seeds_to_memory_async(seeds=dataset(name, 2).seeds, added_by="test")
+    kept = {seed.id: seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="b")}
     provider = MagicMock(spec=SeedDatasetProvider)
     provider.dataset_name = "a"
+    provider.fetch_dataset_async.return_value = dataset("a", 3)
     sources = [DatasetSource(name="a", provider=provider), DatasetSource(name="b")]
     config = (
         CompoundDatasetAttackConfiguration(
@@ -782,13 +788,36 @@ async def test_refresh_preflight_rejects_stored_memory_only_source_before_fetch_
         else DatasetAttackConfiguration(sources=sources, fetch=DatasetFetchPolicy.ALWAYS)
     )
     with (
+        patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={}),
+        caplog.at_level(logging.WARNING, logger=dataset_configuration.__name__),
+    ):
+        await config.check_preparation_async()
+        await config.prepare_async()
+    provider.fetch_dataset_async.assert_awaited_once_with(cache=False)
+    assert sorted(seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="a")) == [
+        "a-0",
+        "a-1",
+        "a-2",
+    ]
+    assert {seed.id: seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="b")} == kept
+    assert "Datasets ['b'] have no provider to refresh from; keeping their stored copies." in caplog.text
+
+
+async def test_refresh_still_rejects_missing_source_without_provider_async(*, memory: MagicMock) -> None:
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.dataset_name = "a"
+    config = DatasetAttackConfiguration(
+        sources=[DatasetSource(name="a", provider=provider), DatasetSource(name="absent")],
+        fetch=DatasetFetchPolicy.ALWAYS,
+    )
+    with (
         patch.object(CentralMemory, "get_memory_instance", return_value=memory),
         patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={}),
-        pytest.raises(DatasetConstraintError, match="no provider to refresh"),
+        pytest.raises(DatasetConstraintError, match=r"\['absent'\] are missing and have no provider"),
     ):
         await config.prepare_async()
     provider.fetch_dataset_async.assert_not_awaited()
-    memory.replace_seeds_for_dataset_async.assert_not_awaited()
+    memory.add_seed_datasets_to_memory_async.assert_not_awaited()
 
 
 @pytest.mark.parametrize("policy", [DatasetFetchPolicy.NEVER, DatasetFetchPolicy.IF_MISSING])

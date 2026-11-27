@@ -104,6 +104,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetSource,
     DatasetSourceKind,
     MissingDatasetError,
+    _without_fetch_deprecation,
     prepare_configurations_async,
 )
 from pyrit.scenario.core.dataset_overrides import (
@@ -1157,9 +1158,11 @@ class Scenario(ABC):
         config = self._dataset_config
         if self._required_data is None or config.dataset_names or config.source_kind is DatasetSourceKind.INLINE:
             return
-        self._required_data = self._required_data.with_sources(
-            sources=self._required_data.sources, fetch=config.fetch, filters=config.filters
-        )
+        # The configuration already warned about any deprecated policy it was given.
+        with _without_fetch_deprecation():
+            self._required_data = self._required_data.with_sources(
+                sources=self._required_data.sources, fetch=config.fetch, filters=config.filters
+            )
 
     def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
         """
@@ -1210,20 +1213,21 @@ class Scenario(ABC):
         # The legacy configuration read these datasets as its population, so its own validators
         # validated the raw template/corpus seeds. Those seeds are now required data, so the
         # validators move with them; the configuration keeps only its defaults and limits.
-        self._required_data = required.with_sources(
-            sources=[
-                DatasetSource(
-                    name=source.name,
-                    max_size=config.source_limit(source.name),
-                    fetch=source.fetch,
-                    provider=source.provider,
-                )
-                for source in config.sources
-            ],
-            fetch=config.fetch,
-            filters=config.filters,
-            validators=config._user_validators,
-        )
+        with _without_fetch_deprecation():
+            self._required_data = required.with_sources(
+                sources=[
+                    DatasetSource(
+                        name=source.name,
+                        max_size=config.source_limit(source.name),
+                        fetch=source.fetch,
+                        provider=source.provider,
+                    )
+                    for source in config.sources
+                ],
+                fetch=config.fetch,
+                filters=config.filters,
+                validators=config._user_validators,
+            )
         stripped = config.with_overrides(sources=[])
         # Remove the moved validators by identity: a validator may be any callable, including an
         # unhashable instance, so they can't go in a set.

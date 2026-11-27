@@ -55,7 +55,7 @@ def test_common_filters_work_with_either_form(source_flags: str) -> None:
 
 
 @pytest.mark.parametrize("policy", ["never", "if_missing", "always"])
-def test_scanner_and_shell_accept_dataset_fetch_policy(policy: str) -> None:
+def test_scanner_and_shell_accept_dataset_fetch_policy(policy: str, recwarn: pytest.WarningsRecorder) -> None:
     flags = f"--datasets harmbench --dataset-fetch {policy}"
     parsed = parse_args(["run", "test", "--target", "target", *flags.split()])
     scanner = _build_run_request(parsed_args=parsed, scenario_name="test")
@@ -63,6 +63,18 @@ def test_scanner_and_shell_accept_dataset_fetch_policy(policy: str) -> None:
     assert scanner.datasets == shell["datasets"]
     assert scanner.datasets is not None
     assert scanner.datasets.fetch == policy
+    deprecations = [warning for warning in recwarn if "--dataset-fetch never" in str(warning.message)]
+    assert len(deprecations) == (2 if policy == "never" else 0)
+
+
+def test_dataset_fetch_never_warns_with_a_visible_note(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.warns(
+        DeprecationWarning, match=r"--dataset-fetch never is deprecated and will be removed in 1\.4\.0"
+    ) as record:
+        fields = build_dataset_request_fields(parse_run_arguments(args_string="test --dataset-fetch never"))
+    assert len(record) == 1
+    assert fields["datasets"].fetch == "never"
+    assert "'--dataset-fetch never' is deprecated; use '--dataset-fetch if_missing'" in capsys.readouterr().err
 
 
 def test_scanner_lists_dataset_fetch_choices(capsys: pytest.CaptureFixture[str]) -> None:

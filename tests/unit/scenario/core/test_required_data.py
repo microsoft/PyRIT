@@ -112,9 +112,10 @@ async def test_load_never_fetches_a_missing_dataset_async() -> None:
 @pytest.mark.usefixtures("patch_central_database")
 async def test_never_policy_requires_stored_data_async() -> None:
     provider = _provider(_dataset("a"))
-    required = ScenarioRequiredData(
-        sources=[DatasetSource(name="a", provider=provider)], fetch=DatasetFetchPolicy.NEVER
-    )
+    with pytest.warns(DeprecationWarning, match=r"DatasetFetchPolicy\.NEVER is deprecated"):
+        required = ScenarioRequiredData(
+            sources=[DatasetSource(name="a", provider=provider)], fetch=DatasetFetchPolicy.NEVER
+        )
 
     with pytest.raises(DatasetConstraintError, match="fetch is 'never'"):
         await required.prepare_async()
@@ -265,6 +266,21 @@ class TestApplyOverrides:
         ]
         assert remaining.fetch is DatasetFetchPolicy.NEVER
         assert remaining.max_total == 3
+
+    def test_deprecated_request_fetch_settings_apply_without_warning(self, recwarn: pytest.WarningsRecorder) -> None:
+        request = ScenarioDatasetRequest.model_validate(
+            {"sources": [{"name": "a", "fetch": "always"}, {"name": "b"}, {"name": "c"}], "fetch": "never"}
+        )
+
+        required, remaining = self._required().apply_overrides(request=request, options=self._ANY, population_names=[])
+
+        assert not recwarn
+        assert required.fetch is DatasetFetchPolicy.NEVER
+        assert [(source.name, source.fetch) for source in required.sources] == [
+            ("a", DatasetFetchPolicy.ALWAYS),
+            ("b", None),
+        ]
+        assert remaining.fetch is DatasetFetchPolicy.NEVER
 
     @pytest.mark.parametrize("with_sources", [False, True])
     def test_filters_stay_on_the_request_for_the_population(self, *, with_sources: bool) -> None:

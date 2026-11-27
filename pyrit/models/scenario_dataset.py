@@ -25,7 +25,13 @@ DatasetLimitInputValue = Annotated[
 
 
 class DatasetFetchPolicy(str, Enum):
-    """When scenario preparation may load a dataset."""
+    """
+    When scenario preparation may load a dataset.
+
+    ``IF_MISSING`` loads datasets that aren't stored yet. ``ALWAYS`` refreshes every dataset with a
+    configured or registered provider and keeps the stored copy of one without. ``NEVER`` is deprecated
+    and will be removed in 1.4.0; use ``IF_MISSING``.
+    """
 
     NEVER = "never"
     IF_MISSING = "if_missing"
@@ -78,7 +84,10 @@ class DatasetSourceInput(BaseModel):
 
     name: str = Field(min_length=1, max_length=MAX_IDENTIFIER_LENGTH, strict=True)
     max_size: DatasetLimitInputValue = "default"
-    fetch: Annotated[DatasetFetchPolicy | None, BeforeValidator(_normalize_fetch)] = None
+    fetch: Annotated[DatasetFetchPolicy | None, BeforeValidator(_normalize_fetch)] = Field(
+        None,
+        description="Deprecated and accepted until 1.4.0: set fetch on the request instead.",
+    )
 
     @field_validator("name")
     @classmethod
@@ -96,7 +105,13 @@ class ScenarioDatasetRequest(BaseModel):
     sources: list[DatasetSourceInput] | None = Field(None, min_length=1, max_length=MAX_ITEMS)
     max_per_dataset: DatasetLimitInputValue = "default"
     max_total: DatasetLimitInputValue = "default"
-    fetch: Annotated[DatasetFetchPolicy | None, BeforeValidator(_normalize_fetch)] = None
+    fetch: Annotated[DatasetFetchPolicy | None, BeforeValidator(_normalize_fetch)] = Field(
+        None,
+        description=(
+            "Dataset loading for the scan: 'if_missing' (cached) or 'always' (regenerate). "
+            "'never' is deprecated and still accepted until 1.4.0."
+        ),
+    )
     filters: dict[str, list[str]] | None = Field(None, max_length=MAX_ITEMS)
 
     @field_validator("sources")
