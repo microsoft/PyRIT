@@ -574,6 +574,18 @@ def test_from_csv_validates_each_objective_rater_column(tmp_path: Path, label: s
         HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=MetricsType.OBJECTIVE, version="1.0")
 
 
+@pytest.mark.parametrize("label", ["N/A", "None", "nan", "inf", "1.5", "high"])
+def test_from_csv_rejects_invalid_harm_label_naming_its_column(tmp_path: Path, label: str) -> None:
+    csv_path = tmp_path / "invalid_harm.csv"
+    csv_path.write_text(
+        f"assistant_response,harm_category,human_score_1,human_score_2\nresponse,hate_speech,0.5,{label}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="human_score_2.*between 0.0 and 1.0"):
+        HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=MetricsType.HARM, version="1.0")
+
+
 def test_from_csv_harm_dataset():
     """Load a harm dataset from the standard mini_hate_speech.csv."""
     csv_path = SCORER_EVALS_PATH / "harm" / "mini_hate_speech.csv"

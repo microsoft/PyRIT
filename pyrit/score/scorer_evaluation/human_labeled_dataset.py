@@ -3,6 +3,7 @@
 
 
 import logging
+import math
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -492,14 +493,15 @@ class HumanLabeledDataset:
     @classmethod
     def _validate_csv_columns(cls, *, eval_df: pd.DataFrame, metrics_type: MetricsType) -> None:
         """
-        Validate required columns and binary labels for objective datasets.
+        Validate required columns and human labels: binary for objective datasets, 0.0 to 1.0 for harm datasets.
 
         Args:
             eval_df (pd.DataFrame): The DataFrame to validate.
             metrics_type (MetricsType): The type of dataset (HARM or OBJECTIVE).
 
         Raises:
-            ValueError: If required columns are missing, names are not unique, or objective labels are not binary.
+            ValueError: If required columns are missing, names are not unique, objective labels are not binary,
+                or harm labels are not numbers between 0.0 and 1.0.
         """
         if len(eval_df.columns) != len(set(eval_df.columns)):
             raise ValueError("Column names in the dataset must be unique.")
@@ -542,6 +544,18 @@ class HumanLabeledDataset:
                     raise ValueError(
                         f"Human score column '{col}' must contain only binary values (0 or 1) for OBJECTIVE datasets."
                     ) from error
+            elif metrics_type == MetricsType.HARM:
+                for score in eval_df[col]:
+                    try:
+                        numeric_score = float(score)
+                    except ValueError:
+                        numeric_score = math.nan
+                    # NaN fails the range check, so non-numeric and "nan" text are rejected with out-of-range values.
+                    if not 0.0 <= numeric_score <= 1.0:
+                        raise ValueError(
+                            f"Human score column '{col}' must contain only numbers between 0.0 and 1.0 for HARM "
+                            f"datasets; found {score!r}."
+                        )
 
     @staticmethod
     def _construct_harm_entry(*, messages: list[Message], harm: str, human_scores: list[Any]) -> HarmHumanLabeledEntry:
