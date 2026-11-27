@@ -2037,7 +2037,11 @@ class TestGCGMultiPromptAttackStepWiring:
         assert sampling.calls[0]["batch_size"] == 2
         assert sampling.calls[0]["top_k"] == 4
         assert sampling.calls[0]["allow_non_ascii"] is False
-        assert candidate_filter.calls[0]["current_control"] == "current control"
+        # The filter gets the unstripped decode of the current ids, not the stripped control_str,
+        # so a padded fallback re-tokenizes to the same ids.
+        assert candidate_filter.calls[0]["current_control"] == tokenizer.decode(
+            control_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
 
     def test_gcg_multi_prompt_attack_init_with_custom_protocols(self) -> None:
         """Test GCGMultiPromptAttack.__init__ stores custom sampling/loss/filter."""

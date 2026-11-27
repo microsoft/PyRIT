@@ -1292,8 +1292,16 @@ class MultiPromptAttack:
         """
         Decode candidates and retain controls whose token length is stable.
 
+        ``curr_control`` is compared ignoring surrounding whitespace, and pads the result when
+        every candidate is rejected. Pass the unstripped decode of the current control tokens
+        (see ``decode_control_tokens``) rather than the stripped ``control_str`` so the padded
+        rows re-tokenize to the current ids.
+
         Returns:
             list[str]: Decoded candidate controls.
+
+        Raises:
+            RuntimeError: If filtering rejects every candidate and ``curr_control`` is None.
         """
         cands: list[str] = []
         count = 0
@@ -1303,12 +1311,15 @@ class MultiPromptAttack:
         vocab_size = worker.tokenizer.vocab_size
         control_cand[control_cand > vocab_size] = worker.tokenizer("!").input_ids[0]
 
+        # ``curr_control`` comes from the stripped ``control_str``; compare
+        # stripped forms so an unchanged candidate with a leading space is dropped.
+        stripped_control = curr_control.strip() if curr_control is not None else None
         for i in range(control_cand.shape[0]):
             decoded_str = worker.tokenizer.decode(
                 control_cand[i], skip_special_tokens=True, clean_up_tokenization_spaces=False
             )
             if filter_cand:
-                if decoded_str != curr_control and len(
+                if decoded_str.strip() != stripped_control and len(
                     worker.tokenizer(decoded_str, add_special_tokens=False).input_ids
                 ) == len(control_cand[i]):
                     cands.append(decoded_str)
@@ -1318,6 +1329,11 @@ class MultiPromptAttack:
                 cands.append(decoded_str)
 
         if filter_cand:
+            if not cands:
+                if curr_control is None:
+                    raise RuntimeError("All GCG candidates were filtered out and no current control is available")
+                # Every row was rejected: re-score the current suffix instead of indexing an empty list.
+                cands = [curr_control]
             cands = cands + [cands[-1]] * (len(control_cand) - len(cands))
         return cands
 

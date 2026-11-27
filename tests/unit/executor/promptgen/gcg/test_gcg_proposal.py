@@ -3,6 +3,7 @@
 
 # ruff: noqa: E402
 
+import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -463,10 +464,51 @@ def test_proposal_uses_last_worker_in_each_group(
         assert sample_kwargs["allow_non_ascii"] is False
         filter_kwargs = candidate_filter.filter_candidates.call_args_list[group_index].kwargs
         assert filter_kwargs["tokenizer"] is workers[worker_index].tokenizer
-        assert filter_kwargs["current_control"] == "seed"
+        # The attack callback decodes the worker's current ids unstripped instead of passing control_str through.
+        assert filter_kwargs["current_control"] == (f"worker-{worker_index}" if use_callbacks else "seed")
         assert torch.equal(filter_kwargs["candidate_tokens"], prompts[worker_index].control_toks.repeat(2, 1))
         group_start = worker_index + 1
     if sample_fn is not None and filter_fn is not None:
         assert [call.kwargs["worker_index"] for call in sample_fn.call_args_list] == representatives
         assert [call.kwargs["worker_index"] for call in filter_fn.call_args_list] == representatives
         assert all(call.kwargs["filter_cand"] is False for call in filter_fn.call_args_list)
+
+
+class _SpacePrefixTokenizer:
+    """Byte-level-BPE-like tokenizer where ``" !"`` and ``"!"`` are different tokens."""
+
+    vocab_size = 10
+    _vocab = {"!": 1, " !": 2}
+
+    def __call__(self, text: str, **_kwargs):
+        result = MagicMock()
+        result.input_ids = [self._vocab[piece] for piece in re.findall(r" ?[^ ]", text)]
+        return result
+
+    def decode(self, ids, **_kwargs) -> str:
+        inverse = {value: key for key, value in self._vocab.items()}
+        return "".join(inverse[int(token)] for token in ids)
+
+
+def test_all_rejected_fallback_retokenizes_to_current_ids() -> None:
+    """Regression for #4546 review: the fallback must score the current ids, not a stripped re-tokenization."""
+    tokenizer = _SpacePrefixTokenizer()
+    current_ids = torch.tensor([2, 2])  # " ! !", whose stripped control_str "! !" tokenizes to [1, 2]
+    worker = MagicMock(spec=ModelWorker)
+    worker.tokenizer = tokenizer
+    prompt = MagicMock(spec=PromptManager)
+    prompt.control_toks = current_ids
+    prompt.control_str = tokenizer.decode(current_ids).strip()
+
+    attack = object.__new__(GCGMultiPromptAttack)
+    attack.workers = [worker]
+    attack.prompts = [prompt]
+    attack._candidate_filter = LengthPreservingFilter(enabled=True)
+
+    # Every row is the unchanged suffix, so every row is rejected.
+    candidates = attack._filter_control_candidates(
+        worker_index=0, control_cand=current_ids.repeat(3, 1), filter_cand=True
+    )
+
+    assert len(candidates) == 3
+    assert all(tokenizer(candidate).input_ids == current_ids.tolist() for candidate in candidates)
