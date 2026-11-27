@@ -23,7 +23,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol, Self, TypeVar
 
 from pydantic import ValidationError
 
@@ -97,7 +97,7 @@ class ScenarioPlanLookup:
     seed_ids_by_group_and_objective: dict[tuple[str, str], tuple[str, ...]]
 
     @classmethod
-    def from_plan(cls, *, plan: ScenarioRunPlan | None) -> ScenarioPlanLookup:
+    def from_plan(cls, *, plan: ScenarioRunPlan | None) -> Self:
         """
         Build constant-time lookup tables for one run plan.
 

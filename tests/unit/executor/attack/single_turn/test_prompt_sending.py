@@ -1877,7 +1877,8 @@ async def test_cancelled_target_call_keeps_the_request_without_a_response() -> N
     memory = CentralMemory.get_memory_instance()
     pieces = await memory.get_message_pieces_async()
     assert [(piece.api_role, piece.original_value) for piece in pieces] == [("user", _CANCELLED_OBJECTIVE)]
-    # Interrupted attempts are recorded as scenario provenance, not as attack results.
+    # A cancelled attempt has no result, because no outcome was reached. Inside a scenario the
+    # conversation stays reachable through the run's recorded conversations.
     assert await memory.get_attack_results_async(objective=_CANCELLED_OBJECTIVE) == []
 
 
@@ -1895,4 +1896,23 @@ async def test_cancellation_before_the_target_call_records_nothing() -> None:
 
     memory = CentralMemory.get_memory_instance()
     assert await memory.get_message_pieces_async() == []
+    assert await memory.get_attack_results_async(objective=_CANCELLED_OBJECTIVE) == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_cancellation_while_scoring_keeps_the_exchange_without_a_result() -> None:
+    entered = asyncio.Event()
+    attack = PromptSendingAttack(objective_target=MockPromptTarget())
+
+    async def block_scoring(**kwargs: Any) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    with patch.object(attack, "_evaluate_response_async", side_effect=block_scoring):
+        await _cancel_once_entered_async(attack=attack, entered=entered)
+
+    memory = CentralMemory.get_memory_instance()
+    pieces = await memory.get_message_pieces_async()
+    assert [piece.api_role for piece in pieces] == ["user", "assistant"]
+    assert pieces[0].original_value == _CANCELLED_OBJECTIVE
     assert await memory.get_attack_results_async(objective=_CANCELLED_OBJECTIVE) == []

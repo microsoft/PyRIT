@@ -11,6 +11,7 @@ attack service depends only on these types, so it never imports scenario schedul
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Self
 
 from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
 from pyrit.memory.memory_interface import AttackConversationPage
@@ -25,7 +26,7 @@ class LiveAttack:
     execution: ActiveAttackExecution
 
     @classmethod
-    def from_execution(cls, *, scenario_result_id: str, execution: ActiveAttackExecution) -> "LiveAttack | None":
+    def from_execution(cls, *, scenario_result_id: str, execution: ActiveAttackExecution) -> Self | None:
         """
         Wrap an execution once it has an objective conversation to read.
 
