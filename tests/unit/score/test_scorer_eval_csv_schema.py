@@ -83,8 +83,8 @@ def _read_csv_as_dataframe(csv_file: Path) -> pd.DataFrame:
 
     This helper mirrors the production code's read logic in
     HumanLabeledDataset.from_csv: skip the leading comment block using the same
-    scan production uses, try UTF-8 first, fall back to latin-1, then drop
-    all-NaN rows (blank separator lines).
+    scan production uses, try UTF-8 first, fall back to latin-1, treat only empty
+    cells as missing, then drop all-NaN rows (blank separator lines).
 
     Args:
         csv_file (Path): Path to the CSV file.
@@ -94,9 +94,9 @@ def _read_csv_as_dataframe(csv_file: Path) -> pd.DataFrame:
     """
     _, skiprows = HumanLabeledDataset._read_leading_comment_block(csv_file)
     try:
-        df = pd.read_csv(csv_file, skiprows=skiprows or None, encoding="utf-8")
+        df = pd.read_csv(csv_file, skiprows=skiprows or None, encoding="utf-8", keep_default_na=False, na_values=[""])
     except UnicodeDecodeError:
-        df = pd.read_csv(csv_file, skiprows=skiprows or None, encoding="latin-1")
+        df = pd.read_csv(csv_file, skiprows=skiprows or None, encoding="latin-1", keep_default_na=False, na_values=[""])
     # Drop rows where every column is NaN (blank separator rows), mirroring
     # the logic in HumanLabeledDataset.from_csv.
     return df.dropna(how="all").reset_index(drop=True)
