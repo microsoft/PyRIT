@@ -1,11 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import inspect
+import subprocess
+import sys
 import unicodedata
 from enum import Enum
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import mock_memory_resolving, store_message_async
 
 from pyrit.memory import CentralMemory, SQLiteMemory
@@ -634,3 +639,80 @@ class TestPlagiarismMetricEnum:
         assert PlagiarismMetric.LCS in PlagiarismMetric
         assert PlagiarismMetric.LEVENSHTEIN in PlagiarismMetric
         assert PlagiarismMetric.JACCARD in PlagiarismMetric
+
+
+def _ty_check_probe(probe: Path) -> tuple[int, str]:
+    """Type-check ``probe`` with the repo's ``ty`` settings and return the exit code and output."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ty",
+            "check",
+            "--project",
+            str(Path(__file__).resolve().parents[3]),
+            "--python-version",
+            "3.11",
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=TEST_WATCHDOG_SECONDS,
+        check=False,
+    )
+    return result.returncode, result.stdout + result.stderr
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("metric", list(PlagiarismMetric), ids=lambda m: m.name)
+def test_plagiarism_score_handles_every_metric(metric: PlagiarismMetric) -> None:
+    """Every PlagiarismMetric reaches its own branch instead of the trailing ValueError."""
+    scorer = PlagiarismScorer(reference_text="the quick brown fox jumps", metric=metric, n=2)
+    score = scorer._plagiarism_score(
+        "a quick brown fox sleeps", reference="the quick brown fox jumps", metric=metric, n=2
+    )
+    assert 0.0 < score < 1.0
+
+
+@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
+def test_plagiarism_score_dispatch_type_exhaustiveness(tmp_path: Path, *, extend_enum: bool) -> None:
+    """
+    The ``assert_never`` guard in ``_plagiarism_score`` makes ``ty`` flag a new, unhandled ``PlagiarismMetric``.
+
+    The probe is built from the real enum and method source with stub helpers. The current enum
+    must type-check cleanly; with a temporary extra member ``ty`` must report exactly one error.
+    """
+    enum_source = inspect.getsource(PlagiarismMetric)
+    if extend_enum:
+        enum_source += '    FUTURE = "future"\n'
+    probe = tmp_path / "dispatch.py"
+    probe.write_text(
+        "\n".join(
+            [
+                "from enum import Enum",
+                "from typing import TYPE_CHECKING, assert_never",
+                enum_source,
+                "class DispatchProbe:",
+                "    def _tokenize(self, text: str) -> list[str]:\n        return text.split()\n",
+                (
+                    "    def _is_contiguous_sublist(self, *, sub: list[str], full: list[str]) -> bool:\n"
+                    "        return False\n"
+                ),
+                "    def _lcs_length(self, a: list[str], *, b: list[str]) -> int:\n        return 0\n",
+                "    def _levenshtein_distance(self, a: list[str], *, b: list[str]) -> int:\n        return 0\n",
+                (
+                    "    def _ngram_set(self, tokens: list[str], *, n: int) -> set[tuple[str, ...]]:\n"
+                    "        return set()\n"
+                ),
+                inspect.getsource(PlagiarismScorer._plagiarism_score),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    returncode, output = _ty_check_probe(probe)
+    assert returncode == (1 if extend_enum else 0), output
+    if extend_enum:
+        assert output.count("error[") == 1, output
+        assert "type-assertion-failure" in output, output
+        assert "assert_never(metric)" in output, output
+        assert "PlagiarismMetric.FUTURE" in output, output

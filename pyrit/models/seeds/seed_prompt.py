@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import Field, model_validator
 from tinytag import TinyTag
@@ -25,6 +25,7 @@ from pyrit.models.target.json_schema_definition import (  # runtime-required by 
     JsonSchemaDefinition,
     get_common_json_schema,
 )
+from pyrit.models.target.provider_trace_reference import ProviderTraceReference
 from pyrit.models.target.request_trace_context import RequestTraceContext
 
 if TYPE_CHECKING:
@@ -104,7 +105,7 @@ class SeedPrompt(Seed[PromptDataType | None]):
         return data
 
     @model_validator(mode="after")
-    def _render_and_infer_data_type(self) -> SeedPrompt:
+    def _render_and_infer_data_type(self) -> Self:
         """
         Render template placeholders and infer data_type after initialization.
 
@@ -401,6 +402,7 @@ class SeedPrompt(Seed[PromptDataType | None]):
                 metadata = deepcopy(piece.prompt_metadata)
                 metadata.pop(RequestTraceContext.METADATA_KEY, None)
                 metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+                ProviderTraceReference.clear_metadata(metadata)
                 seed_prompt = SeedPrompt(
                     value=piece.converted_value,
                     data_type=piece.converted_value_data_type,

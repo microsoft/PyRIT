@@ -159,3 +159,13 @@ class MessageScorableResolver:
         )
         piece.not_in_memory = True
         return piece.to_message()
+
+
+class _AssistantContentMessageResolver(MessageScorableResolver):
+    """Treat role-free content as a model response without relabeling stored turns."""
+
+    @staticmethod
+    def _adapt_content(*, scorable: ContentScorable) -> Message:
+        message = MessageScorableResolver._adapt_content(scorable=scorable)
+        message.get_piece().role = "assistant"
+        return message

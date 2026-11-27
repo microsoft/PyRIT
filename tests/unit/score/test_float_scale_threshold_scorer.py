@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import uuid
+from typing import assert_type
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -522,5 +523,25 @@ def test_with_scorer_block_policy_returns_self_when_already_compliant(patch_cent
     inner = PlagiarismScorer(reference_text="unused")
     inner.raise_if_scorer_blocks = True
     scorer = FloatScaleThresholdScorer(scorer=inner, threshold=0.5)
+
+    assert scorer.with_scorer_block_policy(raise_if_scorer_blocks=True) is scorer
+
+
+def test_with_scorer_block_policy_returns_subclass(patch_central_database):
+    """Self-typed with_scorer_block_policy preserves the subclass (PyRIT #4504)."""
+    from pyrit.score import PlagiarismScorer
+
+    class _SubScorer(FloatScaleThresholdScorer):
+        pass
+
+    inner = PlagiarismScorer(reference_text="unused")
+    inner.raise_if_scorer_blocks = True
+    scorer = _SubScorer(scorer=inner, threshold=0.5)
+
+    scoped = scorer.with_scorer_block_policy(raise_if_scorer_blocks=False)
+    assert_type(scoped, _SubScorer)
+    assert isinstance(scoped, _SubScorer)
+    assert scoped is not scorer
+    assert scoped._scorer.raise_if_scorer_blocks is False
 
     assert scorer.with_scorer_block_policy(raise_if_scorer_blocks=True) is scorer
