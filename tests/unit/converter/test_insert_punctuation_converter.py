@@ -107,3 +107,33 @@ async def test_insert_within_words_without_words_async(prompt: str) -> None:
 
     assert result.output_text == f"!{prompt}"
     assert result.output_type == "text"
+
+
+@pytest.mark.parametrize("prompt", ["cafe\u0301 au lait", "नमस्ते दुनिया", "H₂O and CO₂"])
+@pytest.mark.parametrize("seed", range(5))
+async def test_insert_between_words_keeps_combining_marks_with_their_word_async(*, prompt: str, seed: int) -> None:
+    converter = InsertPunctuationConverter(word_swap_ratio=1.0, seed=seed)
+    result = await converter.convert_async(prompt=prompt, punctuation_list=["!"])
+
+    # Every word gets exactly one "!" before or after it, never inside it.
+    for original, converted in zip(prompt.split(" "), result.output_text.split(" "), strict=True):
+        assert converted in (f"!{original}", f"{original}!")
+
+
+@pytest.mark.parametrize(
+    ("prompt", "word_count"),
+    [
+        ("cafe\u0301 au lait", 3),
+        ("नमस्ते दुनिया", 2),
+        ("H₂O and CO₂", 3),
+        ("hello \u0301world", 2),
+    ],
+)
+@pytest.mark.parametrize("between_words", [True, False])
+async def test_insert_punctuation_counts_words_with_marks_and_number_signs_async(
+    *, prompt: str, word_count: int, between_words: bool
+) -> None:
+    converter = InsertPunctuationConverter(word_swap_ratio=1.0, between_words=between_words, seed=0)
+    result = await converter.convert_async(prompt=prompt, punctuation_list=["!"])
+
+    assert result.output_text.count("!") == word_count
