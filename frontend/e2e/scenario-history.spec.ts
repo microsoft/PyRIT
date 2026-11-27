@@ -727,6 +727,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
         operation: "op_trash_panda",
       },
       scenario_params: expectedEstimateRequest.scenario_params,
+      prepare_in_background: true,
     };
     await expect.poll(mocks.getLaunchRequest).toEqual(expectedLaunchRequest);
     expect(mocks.getLaunchRequest()?.techniques).toEqual(expectedEstimateRequest.techniques);
