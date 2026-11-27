@@ -1259,7 +1259,7 @@ class _TreeOfAttacksNode:
             f"Reason it was off-topic: {off_topic_rationale}\n\n"
             f"Remember, the objective is: {objective}\n\n"
             f"Please generate a new prompt that is directly relevant to achieving this objective. "
-            f"Respond with a JSON object containing a 'prompt' field."
+            f"Reply in the same JSON format as before, with the new prompt in the 'next_message' field."
         )
 
     async def _is_first_turn_async(self) -> bool:

@@ -2210,6 +2210,29 @@ class TestTreeOfAttacksNode:
         # Verify the on-topic scorer was called multiple times (initial + retries + final check)
         assert on_topic_scorer.score_text_async.call_count >= 2
 
+    async def test_off_topic_feedback_asks_for_the_parsed_field_async(self, *, node_components: dict) -> None:
+        """The reply to the feedback is parsed like any adversarial turn, so the feedback names that field."""
+        off_topic = Score(score_value="False", score_type="true_false", score_rationale="about the weather")
+        on_topic = Score(score_value="True", score_type="true_false", score_rationale="related")
+        on_topic_scorer = MagicMock(spec=Scorer)
+        on_topic_scorer.score_text_async = AsyncMock(side_effect=[[off_topic], [on_topic]])
+        node = _TreeOfAttacksNode(**{**node_components, "on_topic_scorer": on_topic_scorer})
+
+        with (
+            patch.object(
+                node, "_generate_single_red_teaming_prompt_async", new_callable=AsyncMock, return_value="weather?"
+            ),
+            patch.object(
+                node, "_send_to_adversarial_chat_async", new_callable=AsyncMock, return_value="explain X"
+            ) as send_to_adversarial_chat,
+            patch.object(node, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=RuntimeError),
+        ):
+            await node.send_prompt_async(objective="Test objective")
+
+        feedback = send_to_adversarial_chat.call_args.kwargs["prompt_text"]
+        assert "'next_message' field" in feedback
+        assert "'prompt' field" not in feedback
+
     async def test_node_undetermined_topic_score_does_not_prune(self, node_components):
         on_topic_scorer = MagicMock(spec=Scorer)
         on_topic_scorer.score_text_async = AsyncMock(
