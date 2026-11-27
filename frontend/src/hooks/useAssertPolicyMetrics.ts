@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { useRuntime } from '@/hooks/useRuntime'
-import { scenariosApi } from '@/services/api'
+import { analyticsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { AssertPolicyMetrics } from '@/types'
 
@@ -29,7 +29,7 @@ export function useAssertPolicyMetrics(scenarioResultId: string): AssertPolicyMe
   useEffect(() => {
     if (!ready) return
     const controller = new AbortController()
-    scenariosApi
+    analyticsApi
       .getAssertPolicyMetrics(scenarioResultId, controller.signal)
       .then((data) => {
         if (controller.signal.aborted) return

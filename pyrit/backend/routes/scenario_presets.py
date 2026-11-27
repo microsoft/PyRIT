@@ -19,7 +19,6 @@ Route structure:
 
 from typing import Annotated
 
-from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from pyrit.backend.middleware.auth import current_user_name, require_admin
@@ -36,19 +35,6 @@ from pyrit.models.catalog import RunScenarioRequest
 from pyrit.registry import ScenarioPresetConflictError, ScenarioPresetNameRegisteredError
 
 router = APIRouter(prefix="/scenario-presets", tags=["scenario-presets"])
-
-
-def _storage_unavailable() -> HTTPException:
-    """
-    Create a sanitized response for unavailable preset storage.
-
-    Returns:
-        HTTPException: A service-unavailable response without SDK details.
-    """
-    return HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Scenario preset storage is temporarily unavailable",
-    )
 
 
 def _not_found(name: str) -> HTTPException:
@@ -79,8 +65,6 @@ async def _load_preset_or_404_async(name: str) -> ScenarioPresetResponse:
     """
     try:
         preset = await get_scenario_preset_service().get_preset_async(name=name)
-    except AzureError as exc:
-        raise _storage_unavailable() from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
@@ -106,10 +90,7 @@ async def list_scenario_presets(  # pyrit-async-suffix-exempt
     Returns:
         ScenarioPresetListResponse: The configured source and the stored presets.
     """
-    try:
-        return await get_scenario_preset_service().list_presets_async(include_estimates=include_estimates)
-    except AzureError as exc:
-        raise _storage_unavailable() from exc
+    return await get_scenario_preset_service().list_presets_async(include_estimates=include_estimates)
 
 
 @router.get(
@@ -177,8 +158,6 @@ async def create_scenario_preset(  # pyrit-async-suffix-exempt
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Scenario preset '{preset.name}' already exists",
         ) from exc
-    except AzureError as exc:
-        raise _storage_unavailable() from exc
 
 
 @router.put(
@@ -239,8 +218,6 @@ async def update_scenario_preset(  # pyrit-async-suffix-exempt
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Scenario preset '{name}' changed since it was read; re-read it and retry",
         ) from exc
-    except AzureError as exc:
-        raise _storage_unavailable() from exc
 
 
 @router.delete(
@@ -278,8 +255,6 @@ async def delete_scenario_preset(  # pyrit-async-suffix-exempt
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Scenario preset '{name}' changed since it was read; re-read it and retry",
         ) from None
-    except (AzureError, TimeoutError) as exc:
-        raise _storage_unavailable() from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
@@ -329,8 +304,6 @@ async def resolve_scenario_preset(  # pyrit-async-suffix-exempt
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Scenario preset '{name}' changed since it was read; re-read it and retry",
         ) from None
-    except AzureError as exc:
-        raise _storage_unavailable() from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 

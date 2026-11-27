@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="640" viewBox="0 0 1400 640" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title description">
+  <title id="title">A finding, its sub-findings, and the paths between them</title>
+  <desc id="description">Finding 1, CRM data exfiltration, has four sub-findings numbered 1.1 to 1.4 in the order they were added; 1.2 Obtain creds was not demonstrated. Two paths order the sub-findings: Credential theft is partial because of 1.2, and Phishing is complete. The exported report numbers and nests the sub-findings and marks each path complete or partial.</desc>
+  <defs>
+    <marker id="an" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6675"/></marker>
+    <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b8742a"/></marker>
+  </defs>
+  <rect width="1400" height="640" fill="#ffffff"/>
+  <text x="24" y="48" font-size="28" font-weight="700" fill="#1d2733">A finding, its sub-findings, and the paths between them</text>
+
+  <!-- the finding tree -->
+  <rect x="16" y="78" width="780" height="546" rx="12" fill="#fdf6e3" stroke="#d4b25a" stroke-width="2.5"/>
+  <text x="38" y="114" font-size="15" font-weight="700" fill="#5b6675" letter-spacing="1">OPERATIONS PAGE</text>
+
+  <rect x="186" y="132" width="440" height="74" rx="10" fill="#ffffff" stroke="#2b2f36" stroke-width="2"/>
+  <text x="206" y="164" font-size="19" font-weight="700" fill="#1d2733">1 CRM data exfiltration</text>
+  <text x="206" y="190" font-size="15" fill="#3c4a5c">Critical · 4 sub-findings · 2 paths</text>
+
+  <g stroke="#8a99ad" stroke-width="2" fill="none">
+    <path d="M406,206 V234"/>
+    <path d="M121,234 H691"/>
+    <path d="M121,234 V256"/>
+    <path d="M311,234 V256"/>
+    <path d="M501,234 V256"/>
+    <path d="M691,234 V256"/>
+  </g>
+  <text x="416" y="226" font-size="13" font-style="italic" fill="#5b6675">sub-findings, in the order they were added</text>
+
+  <g>
+    <rect x="36" y="256" width="170" height="84" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+    <text x="52" y="284" font-size="16.5" font-weight="700" fill="#1d2733">1.1 Recon</text>
+    <text x="52" y="306" font-size="14" fill="#3c4a5c">Moderate</text>
+    <text x="52" y="328" font-size="13.5" font-weight="700" fill="#1e8a4c">✓ demonstrated</text>
+
+    <rect x="226" y="256" width="170" height="84" rx="10" fill="#fffaf2" stroke="#b8742a" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="242" y="284" font-size="16.5" font-weight="700" fill="#1d2733">1.2 Obtain creds</text>
+    <text x="242" y="306" font-size="14" fill="#3c4a5c">Important</text>
+    <text x="242" y="328" font-size="13.5" font-weight="700" fill="#b8742a">✗ not demonstrated</text>
+
+    <rect x="416" y="256" width="170" height="84" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+    <text x="432" y="284" font-size="16.5" font-weight="700" fill="#1d2733">1.3 Phish an admin</text>
+    <text x="432" y="306" font-size="14" fill="#3c4a5c">Important</text>
+    <text x="432" y="328" font-size="13.5" font-weight="700" fill="#1e8a4c">✓ demonstrated</text>
+
+    <rect x="606" y="256" width="170" height="84" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+    <text x="622" y="284" font-size="16.5" font-weight="700" fill="#1d2733">1.4 Pull records</text>
+    <text x="622" y="306" font-size="14" fill="#3c4a5c">Critical</text>
+    <text x="622" y="328" font-size="13.5" font-weight="700" fill="#1e8a4c">✓ demonstrated</text>
+  </g>
+
+  <text x="38" y="384" font-size="17" font-weight="700" fill="#1d2733">Paths: ordered steps through the sub-findings</text>
+
+  <rect x="36" y="400" width="740" height="70" rx="12" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+  <text x="54" y="428" font-size="16" font-weight="700" fill="#1d2733">Credential theft</text>
+  <rect x="54" y="438" width="78" height="24" rx="12" fill="#fdf0e1" stroke="#b8742a"/>
+  <text x="93" y="455" font-size="13.5" font-weight="700" fill="#8a5418" text-anchor="middle">Partial</text>
+  <g font-size="15" fill="#1d2733">
+    <rect x="230" y="416" width="130" height="38" rx="19" fill="#ffffff" stroke="#8a99ad"/><text x="295" y="441" text-anchor="middle">1.1 Recon</text>
+    <rect x="406" y="416" width="176" height="38" rx="19" fill="#fffaf2" stroke="#b8742a" stroke-width="1.5" stroke-dasharray="5 4"/><text x="494" y="441" text-anchor="middle" fill="#8a5418">1.2 Obtain creds ✗</text>
+    <rect x="628" y="416" width="140" height="38" rx="19" fill="#ffffff" stroke="#8a99ad"/><text x="698" y="441" text-anchor="middle">1.4 Pull records</text>
+  </g>
+  <path d="M364,435 H400" stroke="#5b6675" stroke-width="2.5" fill="none" marker-end="url(#an)"/>
+  <path d="M586,435 H622" stroke="#5b6675" stroke-width="2.5" fill="none" marker-end="url(#an)"/>
+
+  <rect x="36" y="484" width="740" height="70" rx="12" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+  <text x="54" y="512" font-size="16" font-weight="700" fill="#1d2733">Phishing</text>
+  <rect x="54" y="522" width="92" height="24" rx="12" fill="#e6f4ea" stroke="#1e8a4c"/>
+  <text x="100" y="539" font-size="13.5" font-weight="700" fill="#1e5d36" text-anchor="middle">Complete</text>
+  <g font-size="15" fill="#1d2733">
+    <rect x="230" y="500" width="130" height="38" rx="19" fill="#ffffff" stroke="#8a99ad"/><text x="295" y="525" text-anchor="middle">1.1 Recon</text>
+    <rect x="406" y="500" width="176" height="38" rx="19" fill="#ffffff" stroke="#8a99ad"/><text x="494" y="525" text-anchor="middle">1.3 Phish an admin</text>
+    <rect x="628" y="500" width="140" height="38" rx="19" fill="#ffffff" stroke="#8a99ad"/><text x="698" y="525" text-anchor="middle">1.4 Pull records</text>
+  </g>
+  <path d="M364,519 H400" stroke="#5b6675" stroke-width="2.5" fill="none" marker-end="url(#an)"/>
+  <path d="M586,519 H622" stroke="#5b6675" stroke-width="2.5" fill="none" marker-end="url(#an)"/>
+  <text x="38" y="592" font-size="14.5" font-style="italic" fill="#5b6675">A path is complete only when every step was demonstrated.</text>
+
+  <!-- REPORT -->
+  <rect x="836" y="78" width="548" height="546" rx="14" fill="#fbf3ea" stroke="#e2b98f" stroke-width="2"/>
+  <text x="856" y="114" font-size="15" font-weight="700" fill="#5b6675" letter-spacing="1">EXPORTED REPORT · MARKDOWN OR WORD</text>
+  <rect x="854" y="132" width="512" height="474" rx="10" fill="#ffffff" stroke="#e2b98f" stroke-width="1.5"/>
+  <g font-size="15" fill="#1d2733" font-family="Consolas, 'Courier New', monospace">
+    <text x="872" y="168" font-weight="700">1 CRM data exfiltration</text>
+    <text x="872" y="196">Severity: Critical</text>
+    <text x="872" y="224">Paths:</text>
+    <text x="872" y="252">1. Credential theft (partial):</text>
+    <text x="896" y="278">1.1 Recon</text>
+    <text x="896" y="304">→ 1.2 Obtain creds <tspan fill="#b8742a" font-weight="700">(not demonstrated)</tspan></text>
+    <text x="896" y="330">→ 1.4 Pull records</text>
+    <text x="872" y="360">2. Phishing (complete):</text>
+    <text x="896" y="386">1.1 Recon → 1.3 Phish an admin</text>
+    <text x="896" y="412">→ 1.4 Pull records</text>
+    <text x="872" y="444" fill="#5b6675">…</text>
+    <text x="872" y="476" font-weight="700">1.2 Obtain creds</text>
+    <text x="872" y="504">Severity: Important</text>
+    <text x="872" y="532">Status: <tspan fill="#b8742a" font-weight="700">Not demonstrated</tspan></text>
+    <text x="872" y="564" fill="#5b6675">…</text>
+  </g>
+  <path d="M796,350 H830" stroke="#b8742a" stroke-width="3" fill="none" marker-end="url(#ao)"/>
+</svg>

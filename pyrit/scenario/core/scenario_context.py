@@ -60,8 +60,6 @@ class ScenarioContext:
             onto separate attacks or display groups.
         stored_run_plan (ScenarioRunPlan | None): The original plan on resume. Builders
             with per-input choices restore them from this plan instead of selecting again.
-        stored_display_group_map (Mapping[str, str]): Recorded atomic-attack labels for legacy
-            runs that predate persisted run plans.
         scenario_result_id (str | None): The ``ScenarioResult`` id of this run: the stored id
             on resume, or the id the new result will be created with on a fresh run.
         is_resume (bool): Whether initialization restores a prior run rather than a newly persisted pending run.
@@ -76,7 +74,6 @@ class ScenarioContext:
     seed_groups: Sequence[AttackSeedGroup] = field(default_factory=tuple)
     seed_groups_by_dataset: Mapping[str, list[AttackSeedGroup]] = field(default_factory=dict)
     stored_run_plan: ScenarioRunPlan | None = None
-    stored_display_group_map: Mapping[str, str] = field(default_factory=dict)
     scenario_result_id: str | None = None
     is_resume: bool = False
     technique_converters: dict[str, list[Converter]] = field(default_factory=dict)

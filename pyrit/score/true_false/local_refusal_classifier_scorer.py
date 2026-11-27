@@ -96,18 +96,26 @@ class _LayaEncoder:
     DEFAULT_MODEL_REVISION: ClassVar[str] = "1c5edc17a7acd8701df6fc341c0d179f1c62c982"
     MAX_LENGTH: ClassVar[int] = 512
 
-    def __init__(self, *, model_id: str | None = None, revision: str | None = None, device: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        model_id: str | None = None,
+        model_path: Path | None = None,
+        revision: str | None = None,
+        device: str | None = None,
+    ) -> None:
         """
         Initialize the encoder without loading model weights.
 
         Args:
-            model_id (str | None): Hugging Face Hub repository, or a local checkpoint directory.
-                Defaults to the Laya English checkpoint.
+            model_id (str | None): Hugging Face Hub repository. Defaults to the Laya English checkpoint.
+            model_path (Path | None): Local checkpoint folder, loaded instead of a Hub checkpoint.
             revision (str | None): Hub revision to pin. Defaults to the revision this scorer was
-                validated against. Ignored for a local directory.
+                validated against.
             device (str | None): Torch device. Defaults to CUDA when available, otherwise CPU.
         """
         self._model_id = model_id or self.DEFAULT_MODEL_ID
+        self._model_path = model_path
         self._revision = self.DEFAULT_MODEL_REVISION if revision is None else revision
         self._requested_device = device
         self._agent: Any | None = None
@@ -163,19 +171,17 @@ class _LayaEncoder:
 
     def _load_model(self) -> Any:
         try:
-            import laya  # type: ignore[ty:unresolved-import]
+            import laya  # type: ignore[ty:import-not-found]
         except (ImportError, ModuleNotFoundError) as exc:
             raise RuntimeError(
                 "LocalRefusalClassifierScorer requires the 'laya' package. Install it with `pip install laya`."
             ) from exc
 
-        model_dir = self._model_id
-        if not Path(model_dir).is_dir():
-            from huggingface_hub import snapshot_download
+        if self._model_path is not None:
+            return laya.load(str(self._model_path), device=self._requested_device)
+        from huggingface_hub import snapshot_download
 
-            model_dir = snapshot_download(
-                self._model_id, revision=self._revision, allow_patterns=list(_CHECKPOINT_FILES)
-            )
+        model_dir = snapshot_download(self._model_id, revision=self._revision, allow_patterns=list(_CHECKPOINT_FILES))
         return laya.load(model_dir, device=self._requested_device)
 
     def _training_features(
@@ -217,7 +223,7 @@ class _LayaEncoder:
 
     def _features_from_sequences(self, sequences: list[tuple[list[int], list[int]]]) -> list[float]:
         import torch
-        from laya.common import QTYPES, collate_items  # type: ignore[ty:unresolved-import]
+        from laya.common import QTYPES, collate_items  # type: ignore[ty:import-not-found]
 
         agent = self._agent
         if agent is None:
@@ -279,7 +285,7 @@ class _LayaEncoder:
         chunk_overlap_tokens: int,
         max_objective_tokens: int,
     ) -> tuple[Iterator[list[tuple[list[int], list[int]]]], bool]:
-        from laya.common import build_sequence  # type: ignore[ty:unresolved-import]
+        from laya.common import build_sequence  # type: ignore[ty:import-not-found]
 
         agent = self._agent
         if agent is None:
@@ -448,6 +454,24 @@ def _predict_probability(*, head: _TrainedHead, features: list[float]) -> float:
     return float(torch.sigmoid(torch.tensor(logit)).item())
 
 
+def _require_hub_repository(model_id: str) -> None:
+    """
+    Refuse a ``model_id`` that isn't a Hugging Face Hub repository name, such as a folder path.
+
+    Raises:
+        ValueError: If ``model_id`` isn't a Hub repository name.
+    """
+    from huggingface_hub.utils import validate_repo_id
+
+    try:
+        validate_repo_id(model_id)
+    except ValueError as error:
+        raise ValueError(
+            f"model_id must be a Hugging Face Hub repository such as '{_LayaEncoder.DEFAULT_MODEL_ID}'. "
+            "Pass a local checkpoint folder as model_path."
+        ) from error
+
+
 class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
     """
     Experimental local refusal classifier with overlapping response token windows.
@@ -477,6 +501,7 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
         abstain_band: tuple[float, float] | None = (0.2, 0.8),
         device: str | None = None,
         model_id: str | None = None,
+        model_path: Path | None = None,
         revision: str | None = None,
         max_input_tokens: int = 512,
         chunk_overlap_tokens: int = 64,
@@ -493,8 +518,10 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
                 abstention; disagreeing chunks still return an undetermined score.
             device (str | None): Torch device for the encoder. Defaults to CUDA when available,
                 otherwise CPU.
-            model_id (str | None): Laya checkpoint repository, or a local directory. Defaults to
+            model_id (str | None): Hugging Face Hub repository of the Laya checkpoint. Defaults to
                 the checkpoint this scorer was validated against.
+            model_path (Path | None): Local folder with a Laya checkpoint, loaded instead of a Hub
+                checkpoint. Can't be combined with ``model_id`` or ``revision``.
             revision (str | None): Hub revision to pin. Defaults to the validated revision.
             max_input_tokens (int): Total tokens per window, including Laya and JSON framing.
             chunk_overlap_tokens (int): Response tokens shared by adjacent windows.
@@ -504,8 +531,13 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
             validator (ScorerPromptValidator | None): Custom message validator.
 
         Raises:
-            ValueError: If the abstain band or token settings are invalid.
+            ValueError: If the abstain band or token settings are invalid, ``model_id`` isn't a Hub
+                repository, or ``model_path`` is combined with ``model_id`` or ``revision``.
         """
+        if model_path is not None and (model_id or revision is not None):
+            raise ValueError("model_path can't be combined with model_id or revision, which choose a Hub checkpoint.")
+        if model_id:
+            _require_hub_repository(model_id)
         if abstain_band is not None:
             low, high = abstain_band
             if not (0.0 <= low < high <= 1.0):
@@ -519,8 +551,11 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
         self._chunk_overlap_tokens = chunk_overlap_tokens
         self._max_objective_tokens = max_objective_tokens
         self._model_id = model_id or _LayaEncoder.DEFAULT_MODEL_ID
+        self._model_path = model_path
         self._revision = _LayaEncoder.DEFAULT_MODEL_REVISION if revision is None else revision
-        self._encoder = _LayaEncoder(model_id=self._model_id, revision=self._revision, device=device)
+        self._encoder = _LayaEncoder(
+            model_id=self._model_id, model_path=model_path, revision=self._revision, device=device
+        )
         self._head: _TrainedHead | None = None
         self._train_lock = asyncio.Lock()
         super().__init__(score_aggregator=aggregator, validator=validator or self._DEFAULT_VALIDATOR)
@@ -567,11 +602,15 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
         Returns:
             ComponentIdentifier: Identifier containing the scorer's configuration.
         """
+        location: dict[str, str] = (
+            {"model_path": str(self._model_path)}
+            if self._model_path is not None
+            else {"model_id": self._model_id, "revision": self._revision}
+        )
         recipe = {
             "version": self._RECIPE_VERSION,
             "datasets": dict(_TRAINING_DATASETS),
-            "model_id": self._model_id,
-            "revision": self._revision,
+            **location,
             "question": _QUESTION,
             "state_order": ["response", "objective"],
             "training_selection": "complete single-window responses only; exclude and log multi-window rows",
@@ -593,12 +632,11 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
         return self._create_identifier(
             params={
                 "abstain_band": list(self._abstain_band) if self._abstain_band else None,
-                "model_id": self._model_id,
-                "revision": self._revision,
+                **location,
                 "recipe": recipe,
                 "recipe_digest": digest,
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
     def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:

@@ -4,33 +4,53 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 
 import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
+import { useRuntime } from '@/hooks/useRuntime'
+import { deferred } from '@/test-utils/deferred'
+import { findRemovalConfirmation, pick } from '@/test-utils/findingDialog'
+import { CONTOSO_FINDING_FIELDS, DEFAULT_FINDING_FIELDS_FIXTURE } from '@/test-utils/findingFieldsFixtures'
+import type { Finding, FindingFields, FindingListItem, FindingValueRow, Operation, OperationDetail } from '@/types'
 import { installRouterTestRequest } from '@/test-utils/routerRequest'
-import type { Finding, FindingListItem, Operation, OperationDetail } from '@/types'
 import OperationDetailPage from './OperationDetailPage'
 
 jest.mock('@/services/api', () => ({
   operationsApi: {
     get: jest.fn(), update: jest.fn(), delete: jest.fn(), listFindings: jest.fn(), createFinding: jest.fn(),
-    updateFinding: jest.fn(), deleteFinding: jest.fn(),
+    updateFinding: jest.fn(), deleteFinding: jest.fn(), replaceFindingPaths: jest.fn(),
     listFindingEvidence: jest.fn(), detachFindingEvidence: jest.fn(),
-    getFindingOptions: jest.fn(), exportFindings: jest.fn(),
+    getFindingFields: jest.fn(), exportFindings: jest.fn(),
   },
   attacksApi: { listAttacks: jest.fn() },
   scenariosApi: { listRuns: jest.fn() },
 }))
+jest.mock('@/hooks/useRuntime', () => ({ ...jest.requireActual('@/hooks/useRuntime'), useRuntime: jest.fn() }))
 
 const SAVED: Operation = { id: 'op-1', name: 'Red team / α%', created_at: '2026-10-06T20:00:00Z' }
 const OPERATION: OperationDetail = { ...SAVED, usage: { findings: 0, attacks: 0, scenario_runs: 0 } }
 const FINDING: FindingListItem = {
   id: 'finding-1', operation_id: 'op-1', title: 'Human assessment',
-  description: '', severity: 'informational', created_at: '2026-10-06T20:00:00Z', evidence_count: 0,
+  severity: 'informational', field_values: {}, created_at: '2026-10-06T20:00:00Z', evidence_count: 0,
+  rows: [], retired: [], parent_finding_id: null, demonstrated: true, paths: [], child_count: 0,
+}
+
+function row(key: string, label: string, value: string, extra: Partial<FindingValueRow> = {}): FindingValueRow {
+  return { key, label, value, multiline: false, ...extra }
+}
+
+/** The label/value pairs of a description list, in the order a screen reader announces them. */
+function describedValues(container: HTMLElement): Array<[string | null, string | null]> {
+  const terms = within(container).getAllByRole('term')
+  const definitions = within(container).getAllByRole('definition')
+  expect(definitions).toHaveLength(terms.length)
+  return terms.map((term, index) => [term.textContent, definitions[index].textContent])
 }
 const EMPTY = { items: [], has_more: false, next_offset: null }
 const NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'missing' } } }
 const conflict = (detail: object) => ({ isAxiosError: true, response: { status: 409, data: { detail } } })
 
-function renderPage(route = '/operations/op-1', onOperationChanged?: () => void): void {
-  render(
+/** Renders the page and returns a function that renders it again, as a context change would. */
+function renderPage(route = '/operations/op-1', onOperationChanged?: () => void): () => void {
+  // A new element each time, so React renders the page again instead of keeping the previous output.
+  const page = () => (
     <FluentProvider theme={webLightTheme}>
       <MemoryRouter initialEntries={[route]}>
         <Routes>
@@ -39,13 +59,16 @@ function renderPage(route = '/operations/op-1', onOperationChanged?: () => void)
             element={<OperationDetailPage onOperationChanged={onOperationChanged} />} />
         </Routes>
       </MemoryRouter>
-    </FluentProvider>,
+    </FluentProvider>
   )
+  const { rerender } = render(page())
+  return () => { rerender(page()) }
 }
 
 beforeEach(() => {
   jest.clearAllMocks()
-  jest.mocked(operationsApi.getFindingOptions).mockResolvedValue({ harm_types: ['Malware', 'Other'] })
+  jest.mocked(useRuntime).mockReturnValue({ ready: true, state: 'ready', generation: 'one' })
+  jest.mocked(operationsApi.getFindingFields).mockResolvedValue(DEFAULT_FINDING_FIELDS_FIXTURE)
   jest.mocked(operationsApi.get).mockResolvedValue(OPERATION)
   jest.mocked(operationsApi.listFindings).mockResolvedValue(EMPTY)
   jest.mocked(operationsApi.createFinding).mockResolvedValue(FINDING)
@@ -235,14 +258,13 @@ it('shows the operation and records a finding within it', async () => {
   const dialog = screen.getByRole('dialog')
   expect(within(dialog).queryByRole('combobox', { name: 'Operation' })).not.toBeInTheDocument()
   await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), FINDING.title)
-  await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Severity' }), 'informational')
+  await pick(user, 'Severity', 'Informational')
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ items: [FINDING], has_more: false, next_offset: null })
   await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
   expect(await screen.findByRole('heading', { level: 2, name: FINDING.title })).toBeInTheDocument()
   expect(screen.getByText('Informational')).toBeInTheDocument()
   expect(operationsApi.createFinding).toHaveBeenCalledWith('op-1', {
-    id: expect.any(String), title: FINDING.title, severity: 'informational', description: '',
-    severity_other: null, harm_type: null, harm_type_other: null,
+    id: expect.any(String), title: FINDING.title, severity: 'informational', field_values: {}, demonstrated: true,
   })
 })
 
@@ -296,14 +318,14 @@ it.each([
   await user.click(await screen.findByRole('button', { name: 'New finding' }))
   let dialog = screen.getByRole('dialog')
   await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Draft title')
-  await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Severity' }), 'critical')
+  await pick(user, 'Severity', 'Critical')
   await user.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'Draft notes')
   await dismiss(user, dialog)
   await waitFor(() => { expect(screen.queryByRole('dialog', { hidden: true })).not.toBeInTheDocument() })
   await user.click(await screen.findByRole('button', { name: 'New finding' }))
   dialog = screen.getByRole('dialog')
   expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue('')
-  expect(within(dialog).getByRole('combobox', { name: 'Severity' })).toHaveValue('moderate')
+  expect(within(dialog).getByRole('combobox', { name: 'Severity' })).toHaveValue('Moderate')
   expect(within(dialog).getByRole('textbox', { name: 'Description' })).toHaveValue('')
 })
 
@@ -338,24 +360,24 @@ it('disables saving a blank title and prevents duplicate submissions', async () 
 it('prefills edit fields and saves only editable values', async () => {
   const user = userEvent.setup()
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
-  const edited = { ...FINDING, title: 'Edited assessment', severity: 'critical' as const, description: 'Notes' }
+  const edited = { ...FINDING, title: 'Edited assessment', severity: 'critical', field_values: { description: 'Notes' } }
   jest.mocked(operationsApi.updateFinding).mockResolvedValue(edited)
   renderPage('/operations/op-1?offset=20')
   await user.click(await screen.findByRole('button', { name: `Edit finding: ${FINDING.title}` }))
   const dialog = screen.getByRole('dialog')
   expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue(FINDING.title)
-  expect(within(dialog).getByRole('combobox', { name: 'Severity' })).toHaveValue(FINDING.severity)
+  expect(within(dialog).getByRole('combobox', { name: 'Severity' })).toHaveValue('Informational')
   await user.clear(within(dialog).getByRole('textbox', { name: 'Title' }))
   await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), edited.title)
-  await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Severity' }), edited.severity)
-  await user.type(within(dialog).getByRole('textbox', { name: 'Description' }), edited.description)
+  await pick(user, 'Severity', 'Critical')
+  await user.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'Notes')
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [edited] })
   await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
   await waitFor(() => { expect(screen.getByRole('heading', { name: edited.title })).toBeInTheDocument() })
   expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
-    title: edited.title, severity: edited.severity, description: edited.description,
-    severity_other: null, harm_type: null, harm_type_other: null,
+    title: edited.title, severity: 'critical', field_values: { description: 'Notes' }, demonstrated: true,
+    parent_finding_id: null, keep_retired_keys: [], remove_retired_keys: [],
   })
 
   expect(operationsApi.createFinding).not.toHaveBeenCalled()
@@ -365,21 +387,23 @@ it('prefills edit fields and saves only editable values', async () => {
 it('displays and preserves both custom classifications when editing a finding', async () => {
   const user = userEvent.setup()
   const classified: FindingListItem = {
-    ...FINDING, severity: 'other', severity_other: 'Team severity', harm_type: 'Other', harm_type_other: 'Team harm',
+    ...FINDING, severity: 'Team severity', field_values: { harm_type: 'Team harm' },
+    rows: [row('harm_type', 'Harm-type', 'Team harm')],
   }
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [classified] })
   jest.mocked(operationsApi.updateFinding).mockResolvedValue(classified)
   renderPage()
   expect(await screen.findByText('Team severity')).toBeInTheDocument()
-  expect(screen.getByText('Harm-type: Team harm')).toBeInTheDocument()
+  const card = screen.getByRole('heading', { level: 2, name: FINDING.title }).closest('li') as HTMLElement
+  expect(describedValues(card)).toEqual([['Harm-type:', 'Team harm']])
   await user.click(screen.getByRole('button', { name: `Edit finding: ${FINDING.title}` }))
-  expect(screen.getByRole('textbox', { name: 'Other severity' })).toHaveValue('Team severity')
-  expect(screen.getByRole('textbox', { name: 'Other harm-type' })).toHaveValue('Team harm')
+  expect(screen.getByRole('textbox', { name: 'Other value for Severity' })).toHaveValue('Team severity')
+  expect(screen.getByRole('textbox', { name: 'Other value for Harm-type' })).toHaveValue('Team harm')
   await user.click(screen.getByRole('button', { name: 'Save finding' }))
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
-    title: FINDING.title, description: '', severity: 'other', severity_other: 'Team severity',
-    harm_type: 'Other', harm_type_other: 'Team harm',
+    title: FINDING.title, severity: 'Team severity', field_values: { harm_type: 'Team harm' }, demonstrated: true,
+    parent_finding_id: null, keep_retired_keys: [], remove_retired_keys: [],
   })
 })
 
@@ -399,17 +423,126 @@ it.each(['Cancel', 'Escape'])('discards edits with %s and restores the edit butt
   expect(within(screen.getByRole('dialog')).getByRole('textbox', { name: 'Title' })).toHaveValue(FINDING.title)
 })
 
-it('retains an edited draft on update failure', async () => {
+it('retains an edited draft on update failure and shows why the backend rejected it', async () => {
   const user = userEvent.setup()
+  const detail = 'Severity \'Critical\' matches the option \'Critical\' (key \'critical\'). Choose that option instead.'
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
-  jest.mocked(operationsApi.updateFinding).mockRejectedValue(new Error('Update failed'))
+  jest.mocked(operationsApi.updateFinding).mockRejectedValue({
+    isAxiosError: true, response: { status: 422, data: { detail } },
+  })
   renderPage()
   await user.click(await screen.findByRole('button', { name: `Edit finding: ${FINDING.title}` }))
   const dialog = screen.getByRole('dialog')
   await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), ' changed')
+  await pick(user, 'Severity', 'Other')
+  await user.type(within(dialog).getByRole('textbox', { name: 'Other value for Severity' }), 'Critical')
   await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
-  expect(await within(dialog).findByText('Update failed')).toBeInTheDocument()
+  expect(await within(dialog).findByText(detail)).toBeInTheDocument()
   expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue(`${FINDING.title} changed`)
+  expect(within(dialog).getByRole('textbox', { name: 'Other value for Severity' })).toHaveValue('Critical')
+  expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
+    title: `${FINDING.title} changed`, severity: 'Critical', field_values: {}, demonstrated: true,
+    parent_finding_id: null, keep_retired_keys: [], remove_retired_keys: [],
+  })
+})
+
+it('shows configured rows and retired values on a finding card', async () => {
+  const user = userEvent.setup()
+  const steps = '1. Ask the Contoso assistant to repeat its instructions.\n2. Ask again in French.'
+  const note = 'Recorded before Contoso configured its own fields.'
+  const contosoFinding: FindingListItem = {
+    ...FINDING, title: 'Contoso assistant repeats its system prompt', severity: 'sev1',
+    field_values: {
+      severity_rationale: 'customer_impact', category: 'model_security', subcategory: 'system_prompt_leak',
+      technique: 'Contoso persona swap', steps, owner: 'Contoso red team',
+      description: note, contoso_ticket: 'CONTOSO-42',
+    },
+    // As the backend labels them under CONTOSO_FINDING_FIELDS.
+    rows: [
+      row('severity_rationale', 'Severity rationale', 'Customer impact'),
+      row('category', 'Category', 'Model security'),
+      row('subcategory', 'Subcategory', 'System prompt leak'),
+      row('technique', 'Technique', 'Contoso persona swap'),
+      row('steps', 'Steps to reproduce', steps, { multiline: true }),
+      row('owner', 'Owner', 'Contoso red team'),
+    ],
+    retired: [['description', note], ['contoso_ticket', 'CONTOSO-42']],
+  }
+  jest.mocked(operationsApi.getFindingFields).mockResolvedValue(CONTOSO_FINDING_FIELDS)
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [contosoFinding] })
+  renderPage()
+
+  const card = (await screen.findByRole('heading', { level: 2, name: contosoFinding.title })).closest('li') as HTMLElement
+  expect(operationsApi.getFindingFields).toHaveBeenCalledWith(OPERATION.id)
+  expect(within(card).getByText('Sev 1')).toBeInTheDocument()
+  const retiredValues: Array<[string, string]> = [['description', note], ['contoso_ticket', 'CONTOSO-42']]
+  expect(describedValues(card)).toEqual([
+    ['Severity rationale:', 'Customer impact'],
+    ['Category:', 'Model security'],
+    ['Subcategory:', 'System prompt leak'],
+    ['Technique:', 'Contoso persona swap'],
+    ['Steps to reproduce', steps],
+    ['Owner:', 'Contoso red team'],
+    ...retiredValues,
+  ])
+
+  const retired = within(card).getByRole('group', { name: 'Retired fields' })
+  expect(describedValues(retired)).toEqual(retiredValues)
+  expect(within(retired).queryByRole('button')).not.toBeInTheDocument()
+
+  await user.click(within(card).getByRole('button', { name: `Edit finding: ${contosoFinding.title}` }))
+  expect(within(screen.getByRole('dialog')).getByRole('combobox', { name: 'Technique' })).toHaveValue('Other')
+})
+
+it('lists the kept and removed retired values by key, and sends none for a new finding', async () => {
+  const user = userEvent.setup()
+  const legacy: FindingListItem = {
+    ...FINDING, field_values: { harm_type: 'Malware', contoso_ticket: 'CONTOSO-42', retired_owner: 'Contoso' },
+    rows: [row('harm_type', 'Harm-type', 'Malware')],
+    retired: [['contoso_ticket', 'CONTOSO-42'], ['retired_owner', 'Contoso']],
+  }
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [legacy] })
+  renderPage()
+  await user.click(await screen.findByRole('button', { name: `Edit finding: ${FINDING.title}` }))
+  await user.click(screen.getByRole('button', { name: 'Remove retired value contoso_ticket' }))
+  await user.click(within(await findRemovalConfirmation()).getByRole('button', { name: 'Remove' }))
+  await user.click(await screen.findByRole('button', { name: 'Save finding' }))
+  await waitFor(() => expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
+    title: FINDING.title, severity: 'informational', field_values: { harm_type: 'Malware' }, demonstrated: true,
+    parent_finding_id: null, keep_retired_keys: ['retired_owner'], remove_retired_keys: ['contoso_ticket'],
+  }))
+
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  await user.click(await screen.findByRole('button', { name: 'New finding' }))
+  await user.type(within(screen.getByRole('dialog')).getByRole('textbox', { name: 'Title' }), 'Fresh')
+  await user.click(screen.getByRole('button', { name: 'Save finding' }))
+  await waitFor(() => expect(operationsApi.createFinding).toHaveBeenCalledWith('op-1', {
+    id: expect.any(String), title: 'Fresh', severity: 'moderate', field_values: {}, demonstrated: true,
+  }))
+})
+
+it('disables New finding until the fields load and offers Retry on failure', async () => {
+  const user = userEvent.setup()
+  const fields = deferred<FindingFields>()
+  jest.mocked(operationsApi.getFindingFields).mockReturnValueOnce(fields.promise)
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
+  renderPage()
+
+  const newFinding = await screen.findByRole('button', { name: 'New finding' })
+  expect(newFinding).toBeDisabled()
+  expect(screen.getByText('Loading findings…')).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { level: 2, name: FINDING.title })).not.toBeInTheDocument()
+
+  await act(async () => { fields.reject(new Error('Fields offline')) })
+  expect(await screen.findByText(/Could not load finding fields: Fields offline/)).toBeInTheDocument()
+  expect(newFinding).toBeDisabled()
+  expect(screen.queryByRole('heading', { level: 2, name: FINDING.title })).not.toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: 'Retry finding fields' }))
+  expect(await screen.findByRole('heading', { level: 2, name: FINDING.title })).toBeInTheDocument()
+  expect(screen.queryByText(/Could not load finding fields/)).not.toBeInTheDocument()
+  expect(newFinding).toBeEnabled()
+  expect(operationsApi.getFindingFields).toHaveBeenCalledTimes(2)
 })
 
 it('requires delete confirmation and refreshes the first page after deleting its last finding', async () => {
@@ -497,7 +630,7 @@ it('opens findings export from the header without changing findings or the dashb
   await waitFor(() => expect(trigger).toHaveFocus())
   expect(screen.getByText('Page 2')).toBeInTheDocument()
   expect(jest.mocked(operationsApi.listFindings).mock.calls.filter(([, params]) => params.limit === 20))
-    .toEqual([['op-1', { limit: 20, offset: 20 }]])
+    .toEqual([['op-1', { limit: 20, offset: 20, top_level: true }]])
   expect(operationsApi.exportFindings).not.toHaveBeenCalled()
   expect(operationsApi.createFinding).not.toHaveBeenCalled()
   expect(operationsApi.updateFinding).not.toHaveBeenCalled()
@@ -524,8 +657,30 @@ it('pages through findings', async () => {
   await screen.findByRole('heading', { level: 2, name: FINDING.title })
   await user.click(screen.getByRole('button', { name: 'Next' }))
   await screen.findByText(/no findings/i)
-  expect(jest.mocked(operationsApi.listFindings).mock.calls.at(-1)).toEqual(['op-1', { limit: 20, offset: 20 }])
+  expect(jest.mocked(operationsApi.listFindings).mock.calls.at(-1)).toEqual(['op-1', { limit: 20, offset: 20, top_level: true }])
   expect(screen.getByText('Page 2')).toBeInTheDocument()
+})
+
+it('loads the shown page again only when a live apply changes the fields', async () => {
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
+  const pageCalls = (): unknown[] =>
+    jest.mocked(operationsApi.listFindings).mock.calls.filter(([, params]) => params.limit === 20)
+  const renderAgain = renderPage('/operations/op-1?offset=20')
+  await screen.findByRole('heading', { level: 2, name: FINDING.title })
+  expect(pageCalls()).toHaveLength(1)
+
+  jest.mocked(operationsApi.getFindingFields).mockResolvedValue({ ...DEFAULT_FINDING_FIELDS_FIXTURE })
+  jest.mocked(useRuntime).mockReturnValue({ ready: true, state: 'ready', generation: 'two' })
+  await act(async () => { renderAgain() })
+  await waitFor(() => expect(operationsApi.getFindingFields).toHaveBeenCalledTimes(2))
+  await act(async () => {})
+  expect(pageCalls()).toHaveLength(1)
+
+  jest.mocked(operationsApi.getFindingFields).mockResolvedValue(CONTOSO_FINDING_FIELDS)
+  jest.mocked(useRuntime).mockReturnValue({ ready: true, state: 'ready', generation: 'three' })
+  await act(async () => { renderAgain() })
+  await waitFor(() => expect(pageCalls()).toHaveLength(2))
+  expect(pageCalls().at(-1)).toEqual(['op-1', { limit: 20, offset: 20, top_level: true }])
 })
 
 describe('history after changing a finding on the first page', () => {
@@ -556,5 +711,213 @@ describe('history after changing a finding on the first page', () => {
 
     await act(async () => { await router.navigate(-1) })
     expect(await screen.findByRole('heading', { level: 1, name: 'Operations list' })).toBeInTheDocument()
+  })
+})
+
+describe('sub-findings and paths', () => {
+  const PARENT: FindingListItem = {
+    ...FINDING, id: 'parent', title: 'Data theft', severity: 'critical', child_count: 3, paths: [
+      { id: 'path-1', name: 'Credential theft', description: '', steps: ['recon', 'creds'], complete: false },
+      { id: 'path-2', name: null, description: '', steps: ['recon', 'pivot'], complete: true },
+    ],
+  }
+  const RECON: FindingListItem = { ...FINDING, id: 'recon', title: 'Recon', parent_finding_id: 'parent' }
+  const CREDS: FindingListItem = {
+    ...FINDING, id: 'creds', title: 'Obtain creds', parent_finding_id: 'parent', demonstrated: false,
+  }
+  const PIVOT: FindingListItem = { ...FINDING, id: 'pivot', title: 'Pivot', parent_finding_id: 'parent' }
+
+  function listTree(topLevel: FindingListItem[] = [PARENT], children: FindingListItem[] = [RECON, CREDS, PIVOT]): void {
+    jest.mocked(operationsApi.listFindings).mockImplementation(async (_, params) => {
+      if (params.top_level) return { ...EMPTY, items: topLevel }
+      if (params.parent_finding_id === 'parent') return { ...EMPTY, items: children }
+      return EMPTY
+    })
+  }
+
+  async function expandParent(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+    await user.click(await screen.findByRole('button', { name: 'Sub-findings (3): Data theft' }))
+    const region = await screen.findByRole('region', { name: 'Sub-findings of Data theft' })
+    await within(region).findByRole('heading', { level: 3, name: RECON.title })
+    return region
+  }
+
+  it('lists top-level findings and expands one into its sub-findings and paths', async () => {
+    const user = userEvent.setup()
+    listTree()
+    renderPage()
+    const toggle = await screen.findByRole('button', { name: 'Sub-findings (3): Data theft' })
+    expect(operationsApi.listFindings).toHaveBeenCalledWith('op-1', { limit: 20, offset: 0, top_level: true })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('heading', { level: 3 })).not.toBeInTheDocument()
+
+    const region = await expandParent(user)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(operationsApi.listFindings).toHaveBeenCalledWith('op-1', { limit: 100, offset: 0, parent_finding_id: 'parent' })
+    const parent = screen.getByRole('heading', { level: 2, name: PARENT.title }).closest('li') as HTMLElement
+    expect(within(parent).getAllByText('1')[0]).toBeInTheDocument()
+    const creds = within(region).getByRole('heading', { level: 3, name: CREDS.title }).closest('li') as HTMLElement
+    expect(within(creds).getByText('Not demonstrated')).toBeInTheDocument()
+    expect(within(creds).getByText('1.2')).toBeInTheDocument()
+    const recon = within(region).getByRole('heading', { level: 3, name: RECON.title }).closest('li') as HTMLElement
+    expect(within(recon).queryByText('Not demonstrated')).not.toBeInTheDocument()
+    expect(within(recon).getByText('1.1')).toBeInTheDocument()
+    const panel = within(region).getByRole('region', { name: 'Paths of Data theft' })
+    expect(within(panel).getByText('Paths (2)')).toBeInTheDocument()
+    const credentialTheft = within(panel).getByRole('list', { name: 'Steps of Credential theft' })
+    expect(within(credentialTheft).getAllByRole('listitem').map(item => item.textContent))
+      .toEqual(['1.1 Recon', '→1.2 Obtain creds(not demonstrated)'])
+    const unnamed = within(panel).getByRole('list', { name: 'Steps of Path 2' })
+    expect(within(unnamed).getAllByRole('listitem').map(item => item.textContent)).toEqual(['1.1 Recon', '→1.3 Pivot'])
+    expect(within(panel).getByText('Partial')).toBeInTheDocument()
+    expect(within(panel).getByText('Complete')).toBeInTheDocument()
+
+    await user.click(toggle)
+    expect(screen.queryByRole('region', { name: 'Sub-findings of Data theft' })).not.toBeInTheDocument()
+  })
+
+  it('adds a not-demonstrated sub-finding under its parent without leaving the page', async () => {
+    const user = userEvent.setup()
+    let added = false
+    jest.mocked(operationsApi.listFindings).mockImplementation(async (_, params) => {
+      if (params.top_level) return { ...EMPTY, items: [{ ...FINDING, child_count: added ? 1 : 0 }] }
+      return { ...EMPTY, items: added ? [{ ...RECON, parent_finding_id: FINDING.id, demonstrated: false }] : [] }
+    })
+    jest.mocked(operationsApi.createFinding).mockImplementation(async (_, request) => {
+      added = true
+      return { ...RECON, ...request, id: 'recon', parent_finding_id: FINDING.id } as FindingListItem
+    })
+    renderPage('/operations/op-1?offset=20')
+    expect(screen.queryByRole('button', { name: /^Sub-findings/ })).not.toBeInTheDocument()
+
+    await user.click(await screen.findByRole('button', { name: `Add sub-finding: ${FINDING.title}` }))
+    const dialog = screen.getByRole('dialog', { name: 'New sub-finding' })
+    expect(within(dialog).getByText(`Sub-finding of “${FINDING.title}”`)).toBeInTheDocument()
+    await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), RECON.title)
+    const demonstrated = within(dialog).getByRole('switch', { name: 'Demonstrated' })
+    expect(demonstrated).toBeChecked()
+    await user.click(demonstrated)
+    await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
+
+    expect(await screen.findByText(`Finding saved: ${RECON.title}`)).toBeInTheDocument()
+    expect(operationsApi.createFinding).toHaveBeenCalledWith('op-1', expect.objectContaining({
+      title: RECON.title, parent_finding_id: FINDING.id, demonstrated: false,
+    }))
+    const toggle = await screen.findByRole('button', { name: `Sub-findings (1): ${FINDING.title}` })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    const recon = (await screen.findByRole('heading', { level: 3, name: RECON.title })).closest('li') as HTMLElement
+    expect(within(recon).getByText('21.1')).toBeInTheDocument()
+    expect(screen.getByText('21')).toBeInTheDocument()
+    expect(screen.getByText('Page 2')).toBeInTheDocument()
+  })
+
+  it('edits a sub-finding in place, keeping its parent', async () => {
+    const user = userEvent.setup()
+    listTree()
+    renderPage()
+    const region = await expandParent(user)
+    await user.click(within(region).getByRole('button', { name: `Edit finding: ${CREDS.title}` }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit finding' })
+    expect(within(dialog).getByText(`Sub-finding of “${PARENT.title}”`)).toBeInTheDocument()
+    const demonstrated = within(dialog).getByRole('switch', { name: 'Demonstrated' })
+    expect(demonstrated).not.toBeChecked()
+    await user.click(demonstrated)
+    await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
+
+    await waitFor(() => expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', CREDS.id, expect.objectContaining({
+      title: CREDS.title, parent_finding_id: 'parent', demonstrated: true,
+    })))
+  })
+
+  it('warns that deleting a parent removes its sub-findings, and shows why a path step cannot be deleted', async () => {
+    const user = userEvent.setup()
+    listTree()
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: `Delete finding: ${PARENT.title}` }))
+    expect(within(screen.getByRole('dialog')).getByText(/cannot be undone/))
+      .toHaveTextContent(`Permanently delete “${PARENT.title}” and all of its sub-findings? This cannot be undone.`)
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    const region = await expandParent(user)
+    const detail = "Finding 'recon' is a step of its parent's paths 'Credential theft', so it cannot be deleted."
+    jest.mocked(operationsApi.deleteFinding).mockRejectedValueOnce({
+      isAxiosError: true, response: { status: 409, data: { detail } },
+    })
+    await user.click(within(region).getByRole('button', { name: `Delete finding: ${RECON.title}` }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText(/cannot be undone/)).not.toHaveTextContent('sub-findings')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete finding' }))
+    expect(await within(dialog).findByText(detail)).toBeInTheDocument()
+    expect(operationsApi.deleteFinding).toHaveBeenCalledWith('op-1', RECON.id)
+  })
+
+  it('reports a sub-finding load failure and retries it', async () => {
+    const user = userEvent.setup()
+    listTree()
+    jest.mocked(operationsApi.listFindings).mockImplementationOnce(async () => ({ ...EMPTY, items: [PARENT] }))
+      .mockRejectedValueOnce(new Error('Sub-findings unavailable'))
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Sub-findings (3): Data theft' }))
+    const region = await screen.findByRole('region', { name: 'Sub-findings of Data theft' })
+    expect(await within(region).findByText(/Could not load sub-findings: Sub-findings unavailable/)).toBeInTheDocument()
+
+    await user.click(within(region).getByRole('button', { name: 'Retry sub-findings' }))
+    expect(await within(region).findByRole('heading', { level: 3, name: RECON.title })).toBeInTheDocument()
+  })
+
+  it('stops loading sub-findings when the server repeats a page offset', async () => {
+    const user = userEvent.setup()
+    jest.mocked(operationsApi.listFindings).mockImplementation(async (_, params) => (
+      params.top_level ? { ...EMPTY, items: [PARENT] } : { items: [RECON], has_more: true, next_offset: 0 }
+    ))
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Sub-findings (3): Data theft' }))
+    const region = await screen.findByRole('region', { name: 'Sub-findings of Data theft' })
+    expect(await within(region).findByText(/did not advance/)).toBeInTheDocument()
+    expect(jest.mocked(operationsApi.listFindings).mock.calls.filter(([, params]) => params.parent_finding_id))
+      .toHaveLength(1)
+  })
+
+  it('edits paths from the direct sub-findings and saves them in order', async () => {
+    const user = userEvent.setup()
+    listTree()
+    jest.mocked(operationsApi.replaceFindingPaths).mockResolvedValue(PARENT)
+    renderPage()
+    const region = await expandParent(user)
+    await user.click(within(region).getByRole('button', { name: `Edit paths: ${PARENT.title}` }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit paths' })
+
+    const credentialTheft = within(dialog).getByRole('group', { name: /Credential theft/ })
+    await user.click(within(credentialTheft).getByRole('button', { name: `Move up: 1.2 ${CREDS.title}` }))
+    expect(within(within(credentialTheft).getByRole('list')).getAllByRole('listitem')[0])
+      .toHaveTextContent(CREDS.title)
+    await user.click(within(credentialTheft).getByRole('button', { name: `Remove step: 1.1 ${RECON.title}` }))
+
+    const unnamed = within(dialog).getByRole('group', { name: /Path 2/ })
+    await user.type(within(unnamed).getByRole('textbox', { name: 'Name' }), 'Lateral movement')
+    expect(within(dialog).getByRole('group', { name: /Lateral movement/ })).toBe(unnamed)
+
+    await user.click(within(dialog).getByRole('button', { name: 'Add path' }))
+    const added = within(dialog).getByRole('group', { name: /Path 3/ })
+    expect(within(added).getByText('Add at least one step.')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Save paths' })).toBeDisabled()
+    const addStep = within(added).getByRole('combobox', { name: 'Add step' })
+    expect(within(addStep).getAllByRole('option').map(option => option.textContent))
+      .toEqual(['Choose a sub-finding…', `1.1 ${RECON.title}`, `1.2 ${CREDS.title}`, `1.3 ${PIVOT.title}`])
+    await user.selectOptions(addStep, `1.3 ${PIVOT.title}`)
+    expect(within(within(added).getByRole('list')).getByText(`1.3 ${PIVOT.title}`)).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Save paths' }))
+
+    expect(await screen.findByText(`Paths saved: ${PARENT.title}`)).toBeInTheDocument()
+    expect(operationsApi.replaceFindingPaths).toHaveBeenCalledWith('op-1', PARENT.id, {
+      paths: [
+        { id: 'path-1', name: 'Credential theft', description: '', steps: [CREDS.id] },
+        { id: 'path-2', name: 'Lateral movement', description: '', steps: [RECON.id, PIVOT.id] },
+        { name: null, description: '', steps: [PIVOT.id] },
+      ],
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })

@@ -1,4 +1,4 @@
-import type { ScenarioProgressCounts, ScenarioProgressResult } from '@/types'
+import type { ScenarioProgressCounts, ScenarioProgressResult, ScenarioRunPlanAtomicGroup } from '@/types'
 import { formatAnalyticsPercent } from '@/utils/attackAnalytics'
 
 const OBJECTIVE_PREVIEW_LENGTH = 96
@@ -31,13 +31,6 @@ export function formatAttackSuccess(outcome: ScenarioProgressResult['outcome']):
 /** The attack's outcome as a word, for places headed "Attack outcome" rather than "Attack success". */
 export function formatAttackOutcome(outcome: ScenarioProgressResult['outcome']): string {
   return outcome.replace(/^\w/, (letter) => letter.toUpperCase())
-}
-
-export function formatScore(score: ScenarioProgressResult['score']): string {
-  if (!score || score.status === 'undetermined') {
-    return 'Undetermined'
-  }
-  return score.score_value ?? 'Unavailable'
 }
 
 export function formatScoreRationale(rationale: string | null | undefined): string {
@@ -76,6 +69,22 @@ export function formatDuration(milliseconds: number): string {
   return `${seconds}s`
 }
 
+export function formatRetries(retries: number): string {
+  if (retries === 0) return 'No retries'
+  return `${retries} ${retries === 1 ? 'retry' : 'retries'}`
+}
+
+/** One line of attempt timing, such as "4m 30s · No retries · Jan 1, 2026, 12:00:05 AM". */
+export function formatAttemptTiming(
+  attempt: Pick<ScenarioProgressResult, 'execution_time_ms' | 'total_retries' | 'timestamp'>,
+): string {
+  return [
+    formatDuration(attempt.execution_time_ms),
+    formatRetries(attempt.total_retries),
+    formatTimestamp(attempt.timestamp),
+  ].join(' · ')
+}
+
 export function objectivePreview(objective: string | null, fallbackId: string): string {
   if (!objective) {
     return `Objective unavailable (${fallbackId})`
@@ -90,4 +99,9 @@ export function objectivePreview(objective: string | null, fallbackId: string): 
     sliceEnd -= 1
   }
   return `${objective.slice(0, sliceEnd)}…`
+}
+
+/** The technique a planned group ran, as results show it: Baseline for a baseline, else its technique name. */
+export function plannedTechniqueLabel(group: Pick<ScenarioRunPlanAtomicGroup, 'kind' | 'technique_name'>): string | null {
+  return group.kind === 'baseline' ? 'Baseline' : group.technique_name ?? null
 }

@@ -190,6 +190,30 @@ class InMemoryTraceClient:
                 coverage=TraceCoverage(complete=not reasons, reasons=tuple(reasons)),
             )
 
+    def find_trace_ids(self, *, keys: Sequence[str], value: str) -> set[str]:
+        """
+        Find the retained traces with a span whose attribute under any of ``keys`` equals ``value``.
+
+        Used to resolve a provider's own identifiers to the trace that recorded them.
+
+        Args:
+            keys (Sequence[str]): The attribute names to check.
+            value (str): The identifier to match exactly.
+
+        Returns:
+            set[str]: The matching trace ids; empty when none match.
+
+        Raises:
+            TraceAcquisitionError: If capture is closed.
+        """
+        with self._lock:
+            self._check_open()
+            return {
+                trace_id
+                for (trace_id, _), span in self._spans.items()
+                if any(span.attributes.get(key) == value for key in keys)
+            }
+
     def close(self) -> None:
         """Stop capture and retrieval without affecting any SDK provider."""
         with self._lock:
@@ -205,10 +229,13 @@ class InMemoryTraceClient:
             bool: Whether there is room.
         """
         while (span_slot and len(self._spans) >= self._max_spans) or len(self._trace_keys) > self._max_spans:
-            victim = next(iter(self._complete), None) or next((t for t in self._trace_keys if t != keep), None)
+            # Only a trace holding spans frees room; a span-less complete trace is left alone.
+            victim = next((t for t in self._complete if self._trace_keys.get(t)), None) or next(
+                (t for t in self._trace_keys if t != keep), None
+            )
             if victim is None:
                 return False
-            for key in self._trace_keys.pop(victim):
+            for key in self._trace_keys.pop(victim, ()):
                 del self._spans[key]
             self._complete.pop(victim, None)
             self._late.discard(victim)

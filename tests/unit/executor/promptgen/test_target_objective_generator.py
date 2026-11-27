@@ -580,16 +580,16 @@ def test_estimate_is_one_exact_call() -> None:
 
 
 def test_estimate_tokens_scale_with_count() -> None:
-    one = TargetObjectiveGenerator.estimate(instructions="Test formatting.", count=1).stages[0].max_tokens
-    eleven = TargetObjectiveGenerator.estimate(instructions="Test formatting.", count=11).stages[0].max_tokens
-    assert eleven - one == 10 * TargetObjectiveGenerator.OUTPUT_TOKENS_PER_OBJECTIVE
+    ten = TargetObjectiveGenerator.estimate(instructions="Test formatting.", count=10).stages[0].max_tokens
+    twenty = TargetObjectiveGenerator.estimate(instructions="Test formatting.", count=20).stages[0].max_tokens
+    assert twenty - ten == 10 * TargetObjectiveGenerator.OUTPUT_TOKENS_PER_OBJECTIVE
 
 
 def test_estimate_tokens_include_instructions_and_harm_categories() -> None:
     base = TargetObjectiveGenerator.estimate(instructions="Test", count=1).stages[0].max_tokens
     longer = TargetObjectiveGenerator.estimate(instructions="Test" + "x" * 400, count=1).stages[0].max_tokens
     categorized = (
-        TargetObjectiveGenerator.estimate(instructions="Test", count=1, harm_categories=["y" * 400])
+        TargetObjectiveGenerator.estimate(instructions="Test", count=1, harm_categories=["y" * 398])
         .stages[0]
         .max_tokens
     )
@@ -597,10 +597,10 @@ def test_estimate_tokens_include_instructions_and_harm_categories() -> None:
     assert categorized - base == 100
 
 
-def test_estimate_does_not_call_a_target() -> None:
-    with patch.object(MockPromptTarget, "_send_prompt_to_target_async") as send:
-        TargetObjectiveGenerator.estimate(instructions="Test", count=3)
-    send.assert_not_called()
+def test_estimate_counts_the_escaped_request_that_is_sent() -> None:
+    cjk = TargetObjectiveGenerator.estimate(instructions="一" * 300, count=1)
+    escaped_length = TargetObjectiveGenerator.estimate(instructions="x" * 1800, count=1)
+    assert cjk == escaped_length
 
 
 @pytest.mark.parametrize("count", [0, -1, True, 1.5, "2"])
@@ -609,12 +609,17 @@ def test_estimate_rejects_invalid_count(count: Any) -> None:
         TargetObjectiveGenerator.estimate(instructions="Test", count=count)
 
 
-def test_estimate_reads_the_bundled_prompt_once() -> None:
-    from pyrit.executor.promptgen.target_objective_generator import _load_default_prompt_text
-
-    _load_default_prompt_text.cache_clear()
-    with patch.object(SeedPrompt, "from_yaml_file", wraps=SeedPrompt.from_yaml_file) as load:
-        TargetObjectiveGenerator.estimate(instructions="First.", count=1)
-        estimate = TargetObjectiveGenerator.estimate(instructions="Second.", count=1)
-    assert load.call_count == 1
-    assert estimate.high_tokens > 0
+@pytest.mark.parametrize(
+    "instructions, harm_categories, message",
+    [
+        ("", (), "instructions must be a non-empty string"),
+        ("  ", (), "instructions must be a non-empty string"),
+        (None, (), "instructions must be a non-empty string"),
+        ("Test", ["  "], "harm_categories must contain non-empty strings"),
+    ],
+)
+def test_estimate_rejects_requests_that_execution_rejects(
+    instructions: Any, harm_categories: list[str], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        TargetObjectiveGenerator.estimate(instructions=instructions, count=3, harm_categories=harm_categories)

@@ -1,16 +1,19 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 
-import { scenariosApi } from '@/services/api'
+import { analyticsApi } from '@/services/api'
 import type { AssertPolicyMetrics } from '@/types'
 
 import { NOT_ASSERT_POLICY_RUN_TYPE, useAssertPolicyMetrics } from './useAssertPolicyMetrics'
 
-jest.mock('@/services/api', () => ({ scenariosApi: { getAssertPolicyMetrics: jest.fn() } }))
+jest.mock('@/services/api', () => ({ analyticsApi: { getAssertPolicyMetrics: jest.fn() } }))
 let runtime = { ready: true, generation: 'one' }
 jest.mock('./useRuntime', () => ({ useRuntime: () => runtime }))
-const getMetrics = jest.mocked(scenariosApi.getAssertPolicyMetrics)
+const getMetrics = jest.mocked(analyticsApi.getAssertPolicyMetrics)
 
-const METRICS = { scenario_result_id: 'run', techniques: {} } as unknown as AssertPolicyMetrics
+const METRICS: AssertPolicyMetrics = {
+  scenario_result_id: 'run', techniques: {}, judgment_mode: null,
+  split_unavailable_reason: 'no_judged_results', total: 0, scored_total: 0,
+}
 
 describe('useAssertPolicyMetrics', () => {
   beforeEach(() => {

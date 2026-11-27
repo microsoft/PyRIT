@@ -37,6 +37,7 @@ from pyrit.prompt_target import (
     RoundRobinTarget,
 )
 from pyrit.registry import TargetRegistry
+from pyrit.registry.instance_registry import refuse_saved_entry
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
@@ -381,7 +382,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         underlying_model_var="OPENAI_IMAGE_UNDERLYING_MODEL2",
     ),
     # ============================================
-    # TTS Targets (OpenAITTSTarget)
+    # Deprecated TTS Targets (OpenAITTSTarget, removed in 1.5.0)
     # ============================================
     TargetConfig(
         registry_name="openai_tts_azure",
@@ -543,7 +544,7 @@ class TargetInitializer(PyRITInitializer):
     - OPENAI_IMAGE_*1 - Azure OpenAI Image
     - OPENAI_IMAGE_*2 - Platform OpenAI Image
 
-    **TTS Targets (OpenAITTSTarget):**
+    **Deprecated TTS Targets (OpenAITTSTarget, removed in 1.5.0):**
     - OPENAI_TTS_*1 - Azure OpenAI TTS
     - OPENAI_TTS_*2 - Platform OpenAI TTS
 
@@ -827,6 +828,8 @@ class TargetInitializer(PyRITInitializer):
             rr_name = generate_rr_name(key)
 
             if rr_name in registry.instances:
+                # Skipping would leave a saved target standing in for this group.
+                refuse_saved_entry(registry.instances.get_entry(rr_name))
                 logger.debug(f"Skipping auto-group {rr_name}: name already exists in registry")
                 continue
 

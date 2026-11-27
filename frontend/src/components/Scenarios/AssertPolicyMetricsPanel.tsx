@@ -38,7 +38,7 @@ interface RateColumn {
   key: string
   label: string
   rate: (technique: AssertTechniqueMetrics) => AssertBinaryRate | null
-  grades?: (technique: AssertTechniqueMetrics) => AssertGradeDistribution | undefined
+  grades?: (technique: AssertTechniqueMetrics) => AssertGradeDistribution[] | undefined
   noVerdict?: (technique: AssertTechniqueMetrics) => number
 }
 
@@ -108,7 +108,7 @@ function MetricsBody({ metrics }: { metrics: AssertPolicyMetrics }) {
         </MessageBar>
       )}
       <div className={styles.tableScroll}>
-        <Table aria-label="ASSERT rates" size="small">
+        <Table className={styles.table} aria-label="ASSERT rates" size="small">
           <TableHeader>
             <TableRow>
               <TableHeaderCell>Technique</TableHeaderCell>
@@ -153,7 +153,7 @@ function exclusionNote(technique: AssertTechniqueMetrics, splitAvailable: boolea
     .map((reason) => `${technique.not_judged[reason]} ${NOT_JUDGED_LABELS[reason]}`)
   const policyNoVerdict = technique.dimension_no_verdict.policy_violation ?? 0
   const splitOnly = [
-    technique.unresolved_policy > 0 ? `${technique.unresolved_policy} without a matching stored policy` : null,
+    technique.unresolved_policy > 0 ? `${technique.unresolved_policy} without a recorded policy` : null,
     splitAvailable && technique.rows_without_node_judgments > 0
       ? `${technique.rows_without_node_judgments} without per-category judgments`
       : null,
@@ -190,7 +190,7 @@ function CategoryTable({ techniques }: { techniques: AssertTechniqueMetrics[] })
   }
   return (
     <div className={styles.tableScroll}>
-      <Table aria-label="Rates by policy category" size="small">
+      <Table className={styles.table} aria-label="Rates by policy category" size="small">
         <TableHeader>
           <TableRow>
             <TableHeaderCell>Category</TableHeaderCell>
@@ -224,20 +224,20 @@ function CategoryTable({ techniques }: { techniques: AssertTechniqueMetrics[] })
 
 interface RateCellProps {
   rate: AssertBinaryRate | null
-  grades?: AssertGradeDistribution
+  grades?: AssertGradeDistribution[] | undefined
   noVerdict?: number
 }
 
 function RateCell({ rate, grades, noVerdict = 0 }: RateCellProps) {
   const styles = useAssertPolicyMetricsPanelStyles()
-  if (!rate || rate.rate === null) return <Text className={styles.hint}>—</Text>
+  if (!rate) return <Text className={styles.hint}>—</Text>
   const excluded = [
     rate.not_applicable_count > 0 ? `${rate.not_applicable_count} n/a` : null,
     noVerdict > 0 ? `${noVerdict} no verdict` : null,
   ].filter((part): part is string => part !== null)
   return (
     <div className={styles.rateCell}>
-      <Text weight="semibold">{formatPercent(rate.rate)}</Text>
+      <Text weight="semibold">{rate.rate === null ? '—' : formatPercent(rate.rate)}</Text>
       <Text size={200} className={styles.hint}>
         {[`${rate.flagged_count} / ${rate.applicable_count}`, ...excluded].join(' · ')}
       </Text>
@@ -246,14 +246,14 @@ function RateCell({ rate, grades, noVerdict = 0 }: RateCellProps) {
           {`90% CI ${formatPercent(rate.ci_lower)}–${formatPercent(rate.ci_upper)}`}
         </Text>
       )}
-      {!rate.sufficient_support && (
+      {rate.rate !== null && !rate.sufficient_support && (
         <Badge appearance="outline" color="warning" size="small">{`n < ${MIN_SUPPORT}`}</Badge>
       )}
-      {grades && (
-        <Text size={200} className={styles.hint}>
-          {`median ${grades.median ?? '—'} · ${Object.entries(grades.counts).map(([grade, count]) => `${grade}: ${count}`).join(', ')}`}
+      {grades?.map((distribution) => (
+        <Text key={JSON.stringify(distribution.scale)} size={200} className={styles.hint}>
+          {`median ${distribution.median ?? '—'} · ${distribution.scale.map((grade) => `${grade}: ${distribution.counts[String(grade)]}`).join(', ')}`}
         </Text>
-      )}
+      ))}
     </div>
   )
 }

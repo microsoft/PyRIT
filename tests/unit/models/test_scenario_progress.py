@@ -60,8 +60,33 @@ def test_run_plan_without_adaptive_choices_round_trips_unchanged() -> None:
     payload = plan.model_dump(mode="json", exclude_none=True)
 
     assert "selected_technique_eval_hashes" not in payload["atomic_groups"][0]
+    assert "is_compound" not in payload["atomic_groups"][0]
     restored = ScenarioRunPlan.model_validate(payload)
     assert restored.model_dump(mode="json", exclude_none=True) == payload
+
+
+@pytest.mark.parametrize("is_compound", [False, True])
+def test_run_plan_preserves_known_compound_capability(is_compound: bool) -> None:
+    group = _group().model_copy(update={"is_compound": is_compound})
+    plan = ScenarioRunPlan(atomic_groups=[group], seed_groups=[_seed()])
+    restored = ScenarioRunPlan.model_validate_json(plan.model_dump_json(exclude_none=True))
+    assert restored.atomic_groups[0].is_compound is is_compound
+
+
+@pytest.mark.parametrize(
+    ("kind", "technique_name", "expected"),
+    [
+        (ScenarioRunPlanGroupKind.BASELINE, None, "baseline"),
+        (ScenarioRunPlanGroupKind.ATTACK, "red_teaming", "red_teaming"),
+        (None, None, "category"),
+    ],
+    ids=["baseline-under-a-category", "technique", "plan-without-technique"],
+)
+def test_technique_label_counts_baselines_as_baseline(
+    kind: ScenarioRunPlanGroupKind | None, technique_name: str | None, expected: str
+) -> None:
+    group = _group().model_copy(update={"kind": kind, "technique_name": technique_name, "display_group": "category"})
+    assert group.technique_label == expected
 
 
 def test_run_plan_rejects_empty_adaptive_choices() -> None:

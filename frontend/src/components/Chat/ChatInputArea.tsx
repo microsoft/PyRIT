@@ -21,7 +21,7 @@ interface StatusBannerProps {
   text: string
   buttonText?: string
   buttonIcon?: React.ReactElement
-  onButtonClick?: () => void
+  onButtonClick?: (() => void) | undefined
   testId: string
   className: string
   textClassName: string
@@ -35,7 +35,8 @@ function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testI
       {icon}
       <Text className={textClassName} size={300}>{text}</Text>
       {onButtonClick && buttonText && (
-        <Button className={buttonClassName} appearance="primary" icon={buttonIcon}
+        <Button className={buttonClassName} appearance="primary"
+          {...(buttonIcon ? { icon: buttonIcon } : {})}
           onClick={onButtonClick} data-testid={buttonTestId}>{buttonText}</Button>
       )}
     </div>
@@ -44,10 +45,10 @@ function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testI
 
 interface TargetResolutionBannerProps {
   status: AttackTargetResolutionStatus
-  activeTarget?: TargetInstance | null
-  onRetry?: () => void
-  onConfigureTarget?: () => void
-  onUseAsTemplate?: () => void
+  activeTarget?: TargetInstance | null | undefined
+  onRetry?: (() => void) | undefined
+  onConfigureTarget?: (() => void) | undefined
+  onUseAsTemplate?: (() => void) | undefined
   styles: ReturnType<typeof usePromptEditorStyles>
 }
 
@@ -113,8 +114,8 @@ export interface ChatInputAreaHandle {
 interface ChatInputAreaProps {
   generationDraft?: RequestGenerationDraft
   onGenerationDraftChange?: (value: RequestGenerationDraft) => void
-  undoLastSend?: UndoLastSendAction
-  repeatDisabledReason?: string
+  undoLastSend?: UndoLastSendAction | undefined
+  repeatDisabledReason?: string | undefined
   onSend: (
     originalValue: string,
     convertedValue: string | undefined,
@@ -131,10 +132,12 @@ interface ChatInputAreaProps {
   operatorLocked?: boolean
   crossTargetLocked?: boolean
   targetResolutionStatus?: AttackTargetResolutionStatus
-  onRetryTargetResolution?: () => void
+  onRetryTargetResolution?: (() => void) | undefined
   onUseAsTemplate?: () => void
-  attackOperator?: string
+  attackOperator?: string | undefined
   onConfigureTarget?: () => void
+  onBrowseSeedPrompts?: () => void
+  showSeedInspiration?: boolean
   onToggleConverterPanel: () => void
   isConverterPanelOpen: boolean
   onInputChange: (value: string) => void
@@ -162,6 +165,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   onSend, conversionRevisionKey = '', disabled = false, fileDropEnabled = true, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
   operatorLocked = false, crossTargetLocked = false,
   targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, onConfigureTarget,
+  onBrowseSeedPrompts, showSeedInspiration = false,
   onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange,
   convertedValue, onClearConversion, onClearAllConversions, onConvertedValueChange,
   converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip,
@@ -296,6 +300,15 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
 
   return <div className={styles.root}>
     <div className={styles.inputContainer}>
+      {showSeedInspiration && onBrowseSeedPrompts && (
+        <div className={styles.seedInspiration} data-testid="seed-inspiration-callout">
+          <Text size={200}>Need inspiration? Browse seed prompts already loaded in memory.</Text>
+          <Button appearance="subtle" className={styles.touchTarget} onClick={onBrowseSeedPrompts}
+            data-testid="browse-seed-prompts-btn">
+            Browse seed prompts
+          </Button>
+        </div>
+      )}
       {isTargetResolutionBlocking(targetResolutionStatus) ? (
         <TargetResolutionBanner status={targetResolutionStatus} activeTarget={activeTarget} onRetry={onRetryTargetResolution}
           onConfigureTarget={onConfigureTarget} onUseAsTemplate={onUseAsTemplate} styles={styles} />
@@ -391,6 +404,10 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
         </div>
         </>
       )}
+      {onBrowseSeedPrompts && <Button appearance="subtle" className={styles.touchTarget}
+        aria-label="Browse seed prompts from composer" onClick={onBrowseSeedPrompts}>
+        Seed prompts
+      </Button>}
     </div>
   </div>
 })

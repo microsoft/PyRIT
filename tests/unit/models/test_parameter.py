@@ -3,8 +3,9 @@
 
 """Unit tests for the unified Parameter model and its coercion methods."""
 
+import json
 from collections.abc import Callable, Collection, Sequence
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any, Literal, Union, get_args
 
@@ -325,6 +326,7 @@ class TestParameterSerialization:
             "sensitive": False,
             "multiline": False,
             "identity_conflicting": False,
+            "copy_locked": False,
         }
 
     def test_excludes_live_only_fields(self) -> None:
@@ -1020,3 +1022,16 @@ class TestForExternalCatalog:
 
         assert parameter.for_external_catalog().required
         assert parameter.coerce_value(["a", "b"]) == ["a", "b"]
+
+
+@pytest.mark.parametrize("component_type", list(ComponentType))
+def test_component_type_formats_as_its_value(component_type: ComponentType) -> None:
+    value = component_type.value
+    assert isinstance(component_type, StrEnum)
+    assert str(component_type) == value
+    assert f"{component_type}" == value
+    assert format(component_type) == value
+    assert component_type == value
+    assert hash(component_type) == hash(value)
+    assert ComponentType(value) is component_type
+    assert json.dumps(component_type) == json.dumps(value)

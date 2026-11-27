@@ -75,47 +75,47 @@ def test_puzzle_type_label_is_prose(puzzle_type, label):
 
 def test_anagram_is_permutation_of_concatenated_letters():
     words = ["abduct", "vault"]
-    result = build_anagram(words, random.Random(1))
+    result = build_anagram(words, rng=random.Random(1))
     assert sorted(result) == sorted("ABDUCTVAULT")
 
 
 def test_anagram_is_reproducible_with_same_seed():
     words = ["abduct", "vault", "system"]
-    assert build_anagram(words, random.Random(42)) == build_anagram(words, random.Random(42))
+    assert build_anagram(words, rng=random.Random(42)) == build_anagram(words, rng=random.Random(42))
 
 
 def test_anagram_retries_when_first_shuffle_is_unchanged():
-    assert build_anagram(["AB"], random.Random(0)) == "BA"
+    assert build_anagram(["AB"], rng=random.Random(0)) == "BA"
 
 
 def test_anagram_returns_only_possible_arrangement():
-    assert build_anagram(["AA"], random.Random(0)) == "AA"
+    assert build_anagram(["AA"], rng=random.Random(0)) == "AA"
 
 
 def test_anagram_uses_fallback_when_shuffles_never_change_source():
-    result = build_anagram(["ABC"], _NeverShuffles())
+    result = build_anagram(["ABC"], rng=_NeverShuffles())
 
     assert result == "BCA"
 
 
 @pytest.mark.parametrize("mark", ["\u0301", pytest.param("\u05c8", id="unicode18")])
 def test_anagram_fallback_keeps_marks_with_their_letters(mark: str) -> None:
-    assert build_anagram([f"q{mark}b"], _NeverShuffles()) == f"BQ{mark}"
+    assert build_anagram([f"q{mark}b"], rng=_NeverShuffles()) == f"BQ{mark}"
 
 
 @pytest.mark.parametrize("mark", ["\u0301", pytest.param("\u05c8", id="unicode18")])
 def test_anagram_single_marked_letter_is_not_split(mark: str) -> None:
-    assert build_anagram([f"q{mark}"], random.Random(0)) == f"Q{mark}"
+    assert build_anagram([f"q{mark}"], rng=random.Random(0)) == f"Q{mark}"
 
 
 def test_anagram_empty_list_raises():
     with pytest.raises(ValueError):
-        build_anagram([], random.Random(0))
+        build_anagram([], rng=random.Random(0))
 
 
 def test_anagram_whitespace_only_word_raises():
     with pytest.raises(ValueError):
-        build_anagram(["abduct", "   "], random.Random(0))
+        build_anagram(["abduct", "   "], rng=random.Random(0))
 
 
 # --- crossword -------------------------------------------------------------
@@ -177,40 +177,40 @@ def test_crossword_empty_raises():
 
 def test_word_search_is_reproducible_with_same_seed():
     words = ["abduct", "vault", "system"]
-    assert build_word_search(words, random.Random(7)) == build_word_search(words, random.Random(7))
+    assert build_word_search(words, rng=random.Random(7)) == build_word_search(words, rng=random.Random(7))
 
 
 def test_word_search_contains_every_word():
     words = ["ABDUCT", "VAULT", "SYSTEM"]
-    grid = _parse_grid(build_word_search(words, random.Random(123)))
+    grid = _parse_grid(build_word_search(words, rng=random.Random(123)))
     for word in words:
         assert _find_word(grid, word), f"{word} not found in grid"
 
 
 def test_word_search_is_square_and_fits_longest_word():
     words = ["extraordinarily", "cat"]
-    grid = _parse_grid(build_word_search(words, random.Random(3)))
+    grid = _parse_grid(build_word_search(words, rng=random.Random(3)))
     size = len(grid)
     assert size >= len("EXTRAORDINARILY")
     assert all(len(row) == size for row in grid)
 
 
 def test_word_search_fills_gaps_with_uppercase_letters():
-    grid_str = build_word_search(["abduct"], random.Random(9))
+    grid_str = build_word_search(["abduct"], rng=random.Random(9))
     letters = grid_str.replace("\n", "").replace(" ", "")
     assert letters.isalpha() and letters.isupper()
 
 
 def test_word_search_empty_raises():
     with pytest.raises(ValueError):
-        build_word_search([], random.Random(0))
+        build_word_search([], rng=random.Random(0))
 
 
 def test_word_search_raises_when_words_never_fit():
     # Growing the grid is bounded, so an rng that never produces a usable placement fails
     # with a clear error instead of looping forever.
     with pytest.raises(ValueError, match="Could not hide"):
-        build_word_search(["abduct", "vault"], _NeverFits())
+        build_word_search(["abduct", "vault"], rng=_NeverFits())
 
 
 # --- letters whose uppercase form is longer ------------------------------------
@@ -220,7 +220,7 @@ def test_word_search_raises_when_words_never_fit():
 
 
 def test_anagram_keeps_letters_whose_uppercase_expands():
-    sequence = build_anagram(["straße", "ﬁle"], random.Random(0))
+    sequence = build_anagram(["straße", "ﬁle"], rng=random.Random(0))
     assert sorted(sequence) == sorted("STRAßEﬁLE")
     assert len(sequence) == len("straße") + len("ﬁle")
 
@@ -231,13 +231,13 @@ def test_crossword_lines_keep_the_length_of_their_words():
 
 
 def test_word_search_hides_the_word_without_expanding_it():
-    grid = _parse_grid(build_word_search(["straße", "tasse"], random.Random(42)))
+    grid = _parse_grid(build_word_search(["straße", "tasse"], rng=random.Random(42)))
     assert _find_word(grid, "STRAßE")
     assert _find_word(grid, "TASSE")
 
 
 def test_anagram_preserves_distinct_case_folded_words() -> None:
-    sequence = build_anagram(["ılık", "ilik"], random.Random(42))
+    sequence = build_anagram(["ılık", "ilik"], rng=random.Random(42))
     assert sorted(sequence) == sorted("ıLıKILIK")
 
 
@@ -246,6 +246,6 @@ def test_crossword_preserves_distinct_case_folded_words() -> None:
 
 
 def test_word_search_preserves_distinct_case_folded_words() -> None:
-    grid = _parse_grid(build_word_search(["ılık", "ilik"], random.Random(42)))
+    grid = _parse_grid(build_word_search(["ılık", "ilik"], rng=random.Random(42)))
     assert _find_word(grid, "ıLıK")
     assert _find_word(grid, "ILIK")

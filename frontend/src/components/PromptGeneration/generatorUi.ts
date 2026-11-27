@@ -29,6 +29,8 @@ export interface PromptGenerationReviewProps {
   readonly descriptor: PromptGeneratorDescriptor | undefined
   /** Reports a generation returned by an action, such as continuing after review. */
   readonly onGenerationChange: (generation: PromptGenerationDetail) => void
+  /** Reloads the generation, such as when an action finds it is no longer awaiting review. */
+  readonly onReload: () => void
 }
 
 export interface PromptGenerationSummaryProps {

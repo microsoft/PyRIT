@@ -11,13 +11,13 @@ listing available datasets and browsing their stored seed examples.
 
 import os
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.models import PromptDataType, ScenarioDatasetSettings, SeedRecord, SeedType
+from pyrit.models import DatasetProviderInfo, Modality, PromptDataType, ScenarioDatasetSettings, SeedRecord, SeedType
 
 
 class DatasetInfo(BaseModel):
@@ -33,6 +33,9 @@ class DatasetInfo(BaseModel):
     )
     loaded: bool = Field(..., description="Whether this dataset currently has seeds in memory")
     provider_available: bool = Field(..., description="Whether a registered provider can load this dataset")
+    provider: DatasetProviderInfo | None = Field(
+        None, description="Default provider metadata, independent of stored seeds"
+    )
     origins: list[str] = Field(default_factory=list, description="Distinct origins of stored seeds, not providers")
     logical_examples: int | None = Field(
         None, description="Number of logical examples represented by stored seed groups"
@@ -40,6 +43,10 @@ class DatasetInfo(BaseModel):
     seed_pieces: int | None = Field(None, description="Number of stored seed/prompt pieces")
     objectives: int | None = Field(None, description="Number of stored objective seeds")
     modalities: list[str] = Field(default_factory=list, description="Distinct stored data types")
+    modality_aliases: dict[str, str] = Field(
+        default_factory=Modality.data_type_aliases,
+        description="Library-defined storage aliases for content-modality facets; raw stored data types are unchanged",
+    )
     harm_categories: list[str] = Field(default_factory=list, description="Distinct stored harm categories")
     has_unlabeled_harm_categories: bool = Field(
         False, description="Whether any stored seed is missing a harm-category label"
@@ -92,7 +99,7 @@ class DatasetUploadManifest(BaseModel):
     delete_seed_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _validate_operations(self) -> "DatasetUploadManifest":
+    def _validate_operations(self) -> Self:
         if self.mode == "create":
             if not self.seeds or self.delete_seed_ids or self.expected_version is not None:
                 raise ValueError("Create requires seeds and forbids deletions and expected_version.")

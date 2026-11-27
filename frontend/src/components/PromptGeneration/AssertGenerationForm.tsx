@@ -38,9 +38,9 @@ import { type PromptGenerationSubmission, usePromptGenerationSubmit } from '@/ho
 import type {
   AssertBehaviorPreset,
   AssertSuitePreset,
+  AssertTaxonomy,
   PromptGenerationBatchItem,
   PromptGenerationCreateRequest,
-  TargetInstance,
 } from '@/types'
 
 import AssertDimensionsEditor from './AssertDimensionsEditor'
@@ -59,28 +59,15 @@ import {
 } from './assertRequestDraft'
 import GenerationCommonFields from './GenerationCommonFields'
 import GenerationFormFooter from './GenerationFormFooter'
-import {
-  preflightProblems,
-  targetSelectionErrors,
-  type TargetRoleFilter,
-} from './generationFormHelpers'
+import { preflightProblems } from './generationFormHelpers'
 import type { PromptGenerationFormProps } from './generatorUi'
 import { datasetNameError, datasetNameFromText } from './promptGenerationPresentation'
 import { usePromptGenerationStyles } from './PromptGeneration.styles'
 
 type AssertFormMode = 'single' | 'suite'
 
-const RESEARCH_ROLE = 'research'
-const GENERATION_ROLE = 'generation'
 const MAX_SUITE_DATASETS = 100
 const MAX_GROUP_LABEL_LENGTH = 200
-const WEB_SEARCH_FILTER_REASON = 'Web search is on, so only targets that support web search are listed. '
-  + 'Leave this empty to research with the generation target, which must then support web search.'
-
-const WEB_SEARCH_FILTER: TargetRoleFilter = {
-  allows: (target: TargetInstance) => target.capabilities?.supports_web_search === true,
-  reason: WEB_SEARCH_FILTER_REASON,
-}
 
 /** Turns a written policy into a behavior taxonomy and seed groups, or a suite of them. */
 export default function AssertGenerationForm(props: PromptGenerationFormProps) {
@@ -99,6 +86,8 @@ interface InitialAssertForm {
   readonly templateName: string
   readonly settings: AssertSettingsDraft
   readonly suite: AssertSuitePreset | undefined
+  /** A reviewed taxonomy from the stored request, reused while the policy is unchanged. */
+  readonly taxonomy: AssertTaxonomy | null
 }
 
 function initialAssertForm(
@@ -116,6 +105,7 @@ function initialAssertForm(
     templateName: template?.name ?? '',
     settings: suite ? { ...settings, context: suite.context } : settings,
     suite,
+    taxonomy: parsed?.taxonomy ?? null,
   }
 }
 
@@ -164,6 +154,7 @@ function AssertGenerationFormContent({
     descriptor, seed.targets, defaultTarget,
   )
   const [pauseForReview, setPauseForReview] = useState(seed.pauseForReview ?? false)
+  const [reuseTaxonomy, setReuseTaxonomy] = useState(true)
   const { submitting, error: submitError, submit } = usePromptGenerationSubmit()
 
   const updateSettings = (changes: Partial<AssertSettingsDraft>): void => {
@@ -181,10 +172,13 @@ function AssertGenerationFormContent({
   const suitePrefix = suiteLabel
   const suiteItemName = (behaviorName: string): string =>
     suiteDatasetNames[behaviorName] ?? suiteDatasetName(suitePrefix, behaviorName)
-  const targetFilters: Record<string, TargetRoleFilter> = settings.webSearch
-    && descriptor.target_roles.some((role) => role.role === RESEARCH_ROLE)
-    ? { [RESEARCH_ROLE]: WEB_SEARCH_FILTER }
-    : {}
+  // The reviewed taxonomy was built for the stored behavior, policy, context, and category count;
+  // changing any of them generates a new one.
+  const policyChanged = behavior.behaviorName.trim() !== initial.behavior.behaviorName.trim()
+    || behavior.behaviorDescription !== initial.behavior.behaviorDescription
+    || settings.context !== initial.settings.context
+    || settings.behaviorCategoryCount !== initial.settings.behaviorCategoryCount
+  const taxonomy = initial.taxonomy && reuseTaxonomy && !policyChanged ? initial.taxonomy : null
 
   const clientErrors: string[] = []
   if (mode === 'single') {
@@ -207,16 +201,11 @@ function AssertGenerationFormContent({
     }
     if (new Set(names).size !== names.length) clientErrors.push('Each behavior in the suite needs a different dataset name.')
   }
-  clientErrors.push(...targetSelectionErrors(descriptor.target_roles, targets, selectedTargets, targetFilters))
-  const generationTarget = targets.find((target) => target.target_registry_name === selectedTargets[GENERATION_ROLE])
-  if (settings.webSearch && !selectedTargets[RESEARCH_ROLE] && generationTarget?.capabilities?.supports_web_search === false) {
-    clientErrors.push('Web search is on: choose a research target that supports web search, or a generation target that does.')
-  }
 
   let submission: PromptGenerationSubmission | null = null
   if (clientErrors.length === 0) {
     if (mode === 'single') {
-      submission = { kind: 'single', datasetName: singleDatasetName, request: { ...buildAssertRequest(settings, behavior) } }
+      submission = { kind: 'single', datasetName: singleDatasetName, request: { ...buildAssertRequest(settings, behavior, taxonomy) } }
     } else {
       const items: PromptGenerationBatchItem[] = suiteBehaviors.map((name) => ({
         dataset_name: suiteItemName(name),
@@ -382,6 +371,22 @@ function AssertGenerationFormContent({
               data-testid="assert-policy-text"
             />
           </Field>
+          {initial.taxonomy && (
+            <Field
+              hint={policyChanged
+                ? 'The policy or its context changed, so a new taxonomy is generated.'
+                : 'Skips researching the behavior and building the taxonomy. '
+                  + 'Changing the policy, context, or suggested categories builds a new one.'}
+            >
+              <Checkbox
+                checked={reuseTaxonomy && !policyChanged}
+                disabled={submitting || policyChanged}
+                onChange={(_, data) => setReuseTaxonomy(data.checked === true)}
+                label="Reuse the reviewed taxonomy"
+                data-testid="assert-reuse-taxonomy"
+              />
+            </Field>
+          )}
           {contextField}
         </section>
       ) : (
@@ -423,12 +428,12 @@ function AssertGenerationFormContent({
           </Field>
           {suiteBehaviors.length > 0 && (
             <div className={styles.tableScroll}>
-              <Table aria-label="Suite datasets">
+              <Table className={styles.suiteTable} aria-label="Suite datasets">
                 <TableHeader>
                   <TableRow>
                     <TableHeaderCell>Behavior</TableHeaderCell>
                     <TableHeaderCell>Dataset name</TableHeaderCell>
-                    <TableHeaderCell aria-label="Remove behavior" />
+                    <TableHeaderCell className={styles.suiteRemoveColumn} aria-label="Remove behavior" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -442,6 +447,7 @@ function AssertGenerationFormContent({
                       </TableCell>
                       <TableCell>
                         <Input
+                          className={styles.wideControl}
                           aria-label={`Dataset name for ${name}`}
                           value={suiteItemName(name)}
                           disabled={submitting}
@@ -501,12 +507,17 @@ function AssertGenerationFormContent({
           onChange={(_, data) => updateSettings({ includeUserPrompt: data.checked === true })}
           label="Include a user prompt in each seed group"
         />
-        <Checkbox
-          checked={settings.includeAdversarialPrompt}
-          disabled={submitting}
-          onChange={(_, data) => updateSettings({ includeAdversarialPrompt: data.checked === true })}
-          label="Include tester instructions (required by the default ASSERT conversation technique)"
-        />
+        <Field hint={{
+          children: 'Each group then runs as a multi-turn conversation with a tester.',
+          className: styles.checkboxHint,
+        }}>
+          <Checkbox
+            checked={settings.includeAdversarialPrompt}
+            disabled={submitting}
+            onChange={(_, data) => updateSettings({ includeAdversarialPrompt: data.checked === true })}
+            label="Include tester instructions"
+          />
+        </Field>
       </section>
 
       <AssertDimensionsEditor settings={settings} onChange={updateSettings} disabled={submitting} />
@@ -592,11 +603,6 @@ function AssertGenerationFormContent({
                 label="Research with web search"
                 data-testid="assert-web-search"
               />
-              {settings.webSearch && (
-                <Text size={200} className={styles.muted}>
-                  Web search runs on the research target, or on the generation target when no research target is chosen.
-                </Text>
-              )}
               <Field label="Target instructions" hint="The system prompt stored with each seed group for the target under test.">
                 <RadioGroup
                   value={settings.instructionMode}
@@ -633,20 +639,21 @@ function AssertGenerationFormContent({
 
       <GenerationCommonFields
         descriptor={descriptor}
-        datasetName={mode === 'single' ? {
-          value: singleDatasetName,
-          onChange: (value: string) => {
-            setDatasetName(value)
-            setDatasetNameTouched(true)
+        {...(mode === 'single' ? {
+          datasetName: {
+            value: singleDatasetName,
+            onChange: (value: string) => {
+              setDatasetName(value)
+              setDatasetNameTouched(true)
+            },
+            error: singleDatasetName ? datasetNameError(singleDatasetName) : null,
           },
-          error: singleDatasetName ? datasetNameError(singleDatasetName) : null,
-        } : undefined}
+        } : {})}
         targets={targets}
         targetsLoading={targetsLoading}
         targetsError={targetsError}
         selectedTargets={selectedTargets}
         onTargetsChange={setSelectedTargets}
-        targetFilters={targetFilters}
         pauseForReview={pauseForReview}
         onPauseForReviewChange={setPauseForReview}
         disabled={submitting}

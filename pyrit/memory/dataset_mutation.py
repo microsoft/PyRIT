@@ -11,7 +11,7 @@ import hashlib
 import json
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, get_args
+from typing import TYPE_CHECKING, Any, assert_never, get_args
 
 from pydantic import TypeAdapter
 from sqlalchemy import inspect, select
@@ -64,6 +64,7 @@ class _SeedProjection:
         "source",
         "metadata",
         "prompt_group_id",
+        "is_general_technique",
     )
     SYSTEM_PROMPTS = (
         "adversarial_chat_system_prompt",
@@ -132,6 +133,13 @@ def seed_replacement(record: SeedRecord) -> dict[str, Any]:
                 sequence=record.sequence if record.sequence is not None else 0,
             )
         else:
+            match record.seed_type:
+                case "objective":
+                    pass
+                case _:
+                    if TYPE_CHECKING:
+                        assert_never(record.seed_type)
+                    # Preserve the historical runtime fallback for values outside the declared literal.
             raw["conditions"] = dumped["conditions"] or []
             association = (record.metadata or {}).get("adversarial_prompts")
             if association is not None:

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.models import AttackSeedGroup, SeedGroupRequirements
 from pyrit.prompt_target import TargetRequirements
+from pyrit.score import ScorerRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -36,10 +37,44 @@ class IncompatibleTechniqueError(ValueError):
 
 @dataclass(frozen=True)
 class TechniqueRequirements:
-    """The objective-target and dataset requirements declared by a technique."""
+    """
+    The objective-target, dataset, and objective-scorer requirements declared by a technique.
+
+    ``objective_scorer`` states algorithm needs only, such as float feedback for ranking.
+    Reusable techniques never declare a scenario-specific evaluation.
+    """
 
     objective_target: TargetRequirements = field(default_factory=TargetRequirements)
     seed_group: SeedGroupRequirements = field(default_factory=SeedGroupRequirements)
+    objective_scorer: ScorerRequirements = field(default_factory=ScorerRequirements)
+
+    def __post_init__(self) -> None:
+        """
+        Reject a scenario-specific evaluation on a reusable technique.
+
+        Raises:
+            TypeError: If ``objective_scorer`` is not ``ScorerRequirements``.
+            ValueError: If it names an evaluation.
+        """
+        if not isinstance(self.objective_scorer, ScorerRequirements):
+            raise TypeError("TechniqueRequirements.objective_scorer must be ScorerRequirements.")
+        if self.objective_scorer.evaluation is not None:
+            raise ValueError(
+                "Technique requirements declare algorithm needs, not an evaluation. "
+                "Put the evaluation on the scenario or the dataset source."
+            )
+
+    def objective_scorer_for(self, *, attack_class: type[AttackStrategy[Any, Any]]) -> ScorerRequirements:
+        """
+        Combine the attack class's scorer needs with the technique's own.
+
+        Args:
+            attack_class (type[AttackStrategy]): The technique's attack class.
+
+        Returns:
+            ScorerRequirements: What any objective scorer for this technique must provide.
+        """
+        return ScorerRequirements.combine(attack_class.OBJECTIVE_SCORER_REQUIREMENTS, self.objective_scorer)
 
     @property
     def adaptation(self) -> str | None:

@@ -386,6 +386,27 @@ async def test_evaluate_dataset_async_excludes_undetermined_responses(mock_objec
     assert metrics.trial_scores.shape == (2, 1)
 
 
+async def test_evaluate_dataset_async_rejects_ragged_human_scores_before_scoring(mock_objective_scorer):
+    responses = [
+        Message(message_pieces=[MessagePiece(role="assistant", original_value=value, original_value_data_type="text")])
+        for value in ["one rater", "two raters"]
+    ]
+    entries = [
+        ObjectiveHumanLabeledEntry([response], human_scores, "Test objective")
+        for response, human_scores in zip(responses, [[True], [True, False]], strict=True)
+    ]
+    dataset = HumanLabeledDataset(
+        name="test_dataset", metrics_type=MetricsType.OBJECTIVE, entries=entries, version="1.0"
+    )
+    evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
+    evaluator._score_responses_grouped_async = AsyncMock()
+
+    with pytest.raises(ValueError, match="inhomogeneous"):
+        await evaluator.evaluate_dataset_async(labeled_dataset=dataset, num_scorer_trials=3)
+
+    evaluator._score_responses_grouped_async.assert_not_called()
+
+
 async def test_evaluate_dataset_async_selects_category_before_filtering_undetermined(mock_harm_scorer):
     responses = [
         Message(message_pieces=[MessagePiece(role="assistant", original_value=value)]) for value in ["unknown", "known"]
@@ -452,6 +473,23 @@ async def test_evaluate_dataset_async_objective_returns_metrics(mock_objective_s
     assert isinstance(metrics, ObjectiveScorerMetrics)
 
 
+@pytest.mark.parametrize("num_scorer_trials", [0, -1])
+async def test_evaluate_dataset_async_rejects_nonpositive_trials_before_any_work_async(
+    *, mock_objective_scorer: MagicMock, num_scorer_trials: int
+) -> None:
+    _, assistant = _objective_conversation()
+    dataset = _objective_dataset([ObjectiveHumanLabeledEntry([assistant], [True], "Objective")])
+    mock_objective_scorer.score_async = AsyncMock(return_value=[Score(score_type="true_false", score_value="true")])
+
+    with pytest.raises(ValueError, match=f"num_scorer_trials must be at least 1, got {num_scorer_trials}"):
+        await ObjectiveScorerEvaluator(mock_objective_scorer).evaluate_dataset_async(
+            labeled_dataset=dataset, num_scorer_trials=num_scorer_trials
+        )
+
+    mock_objective_scorer._memory.add_message_to_memory_async.assert_not_awaited()
+    mock_objective_scorer.score_async.assert_not_awaited()
+
+
 def test_compute_objective_metrics_perfect_agreement(mock_objective_scorer):
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
     # 2 responses, 3 human scores each, all agree (all 1s), model also all 1s
@@ -464,6 +502,15 @@ def test_compute_objective_metrics_perfect_agreement(mock_objective_scorer):
     assert metrics.f1_score == 1.0
     assert metrics.precision == 1.0
     assert metrics.recall == 1.0
+    assert metrics.specificity is None
+    assert metrics.true_positive == 2
+    assert metrics.false_positive == 0
+    assert metrics.true_negative == 0
+    assert metrics.false_negative == 0
+    assert (
+        metrics.true_positive + metrics.false_positive + metrics.true_negative + metrics.false_negative
+        == metrics.num_responses
+    )
 
 
 def test_compute_objective_metrics_partial_agreement(mock_objective_scorer):
@@ -479,7 +526,33 @@ def test_compute_objective_metrics_partial_agreement(mock_objective_scorer):
     assert metrics.accuracy == 0.5
     assert metrics.precision == 0.5
     assert metrics.recall == 1.0
+    assert metrics.specificity == 0.0
     assert metrics.f1_score == pytest.approx(2 * 0.5 * 1.0 / (0.5 + 1.0))
+    assert metrics.true_positive == 1
+    assert metrics.false_positive == 1
+    assert metrics.true_negative == 0
+    assert metrics.false_negative == 0
+
+
+def test_compute_objective_metrics_specificity_and_confusion_counts(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    # 5 responses: gold = [1, 1, 0, 0, 0], model = [1, 0, 0, 0, 1]
+    # TP=1, FN=1, TN=2, FP=1 -> specificity = 2 / 3
+    all_human_scores = np.array([[1, 1, 0, 0, 0]])
+    all_model_scores = np.array([[1, 0, 0, 0, 1]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.true_positive == 1
+    assert metrics.false_negative == 1
+    assert metrics.true_negative == 2
+    assert metrics.false_positive == 1
+    assert (
+        metrics.true_positive + metrics.false_positive + metrics.true_negative + metrics.false_negative
+        == metrics.num_responses
+    )
+    assert metrics.recall == pytest.approx(0.5)
+    assert metrics.specificity == pytest.approx(2 / 3)
 
 
 def test_compute_objective_metrics_reports_constant_guess_baselines(mock_objective_scorer):
@@ -543,6 +616,85 @@ def test_compute_objective_metrics_f1_baseline_is_zero_without_true_labels(mock_
     assert metrics.baseline_f1_score == 0.0
 
 
+def test_compute_objective_metrics_reports_single_trial_accuracy_behind_a_majority_vote(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    # Every response is true. Each trial gets one response wrong, a different one each time, so the
+    # majority vote is right everywhere although any single run is right two times in three.
+    all_human_scores = np.array([[1, 1, 1]])
+    all_model_scores = np.array([[1, 1, 0], [1, 0, 1], [0, 1, 1]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=3
+    )
+    assert metrics.accuracy == 1.0
+    assert metrics.single_trial_accuracy == pytest.approx(2 / 3)
+    assert metrics.num_inconsistent_responses == 3
+    # Cross-checked against the reference `krippendorff` package.
+    assert metrics.krippendorff_alpha_model == pytest.approx(-1 / 3)
+
+
+def test_compute_objective_metrics_counts_only_the_responses_whose_trials_disagree(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    all_human_scores = np.array([[1, 0, 1, 0]])
+    all_model_scores = np.array([[1, 0, 1, 0], [1, 0, 0, 0], [1, 1, 1, 0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=3
+    )
+    assert metrics.accuracy == 1.0
+    assert metrics.single_trial_accuracy == pytest.approx(10 / 12)
+    assert metrics.num_inconsistent_responses == 2
+    # Cross-checked against the reference `krippendorff` package.
+    assert metrics.krippendorff_alpha_model == pytest.approx(7 / 18)
+
+
+def test_compute_objective_metrics_consistent_trials_match_the_majority_vote(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    all_human_scores = np.array([[1, 0, 1, 0]])
+    all_model_scores = np.array([[1, 1, 1, 0], [1, 1, 1, 0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=2
+    )
+    assert metrics.single_trial_accuracy == pytest.approx(metrics.accuracy)
+    assert metrics.num_inconsistent_responses == 0
+    assert metrics.krippendorff_alpha_model == 1.0
+
+
+def test_compute_objective_metrics_trial_consistency_is_none_for_a_single_trial(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    all_human_scores = np.array([[1, 0, 1, 0]])
+    all_model_scores = np.array([[1, 1, 1, 0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.single_trial_accuracy is None
+    assert metrics.num_inconsistent_responses is None
+    assert metrics.krippendorff_alpha_model is None
+
+
+async def test_evaluate_dataset_async_objective_reports_trial_consistency(mock_objective_scorer):
+    def _entry(label: bool) -> ObjectiveHumanLabeledEntry:
+        message = Message(
+            message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")]
+        )
+        return ObjectiveHumanLabeledEntry([message], [label], "Test objective")
+
+    dataset = HumanLabeledDataset(
+        name="test_dataset", metrics_type=MetricsType.OBJECTIVE, entries=[_entry(True), _entry(False)], version="1.0"
+    )
+    evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
+    # Three trials over two responses. The first response is scored true twice and false once.
+    trials = [[True, False], [False, False], [True, False]]
+    evaluator._score_responses_grouped_async = AsyncMock(
+        side_effect=[[[MagicMock(get_value=lambda value=value: value)] for value in trial] for trial in trials]
+    )
+
+    metrics = await evaluator.evaluate_dataset_async(labeled_dataset=dataset, num_scorer_trials=3)
+
+    assert isinstance(metrics, ObjectiveScorerMetrics)
+    assert metrics.accuracy == 1.0
+    assert metrics.single_trial_accuracy == pytest.approx(5 / 6)
+    assert metrics.num_inconsistent_responses == 1
+
+
 def test_compute_harm_metrics_perfect_agreement(mock_harm_scorer):
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
     # 2 responses, 3 human scores each, all agree, model matches exactly
@@ -561,6 +713,113 @@ def test_compute_harm_metrics_perfect_agreement(mock_harm_scorer):
     assert metrics.krippendorff_alpha_combined == 1.0
     assert metrics.krippendorff_alpha_humans == 1.0
     assert metrics.krippendorff_alpha_model == 1.0
+    assert metrics.krippendorff_alpha_gold_model == 1.0
+
+
+def test_compute_harm_metrics_gold_model_alpha_ignores_num_scorer_trials(mock_harm_scorer):
+    """A scorer that ignores the response must not appear more reliable just because it was run more times."""
+    rng = np.random.default_rng(0)
+    levels = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    num_responses = 80
+    human_scores = levels[rng.integers(0, len(levels), num_responses)][None, :]
+    scorer_output = levels[rng.integers(0, len(levels), num_responses)]
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+
+    metrics_by_trials = {}
+    gold_model_alphas = []
+    for trials in (1, 3, 5, 10):
+        metrics = evaluator._compute_metrics(
+            all_human_scores=human_scores,
+            all_model_scores=np.tile(scorer_output, (trials, 1)),
+            num_scorer_trials=trials,
+        )
+        metrics_by_trials[trials] = metrics
+        gold_model_alphas.append(metrics.krippendorff_alpha_gold_model)
+        assert metrics.mean_absolute_error == pytest.approx(0.381, abs=1e-3)
+
+    # The gold-vs-model alpha is two rows (gold, median model), so it is invariant.
+    assert gold_model_alphas == pytest.approx([gold_model_alphas[0]] * len(gold_model_alphas))
+    assert metrics_by_trials[10].krippendorff_alpha_combined > gold_model_alphas[0]
+    assert gold_model_alphas[0] == pytest.approx(0.0857, abs=1e-4)
+
+
+def test_compute_harm_metrics_gold_model_alpha_ignores_float_noise(mock_harm_scorer):
+    """The median of 0.2 and 0.4 is 0.30000000000000004; that must still match gold 0.3."""
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    all_human_scores = np.array([[0.3, 0.3, 0.3, 0.3]])
+    all_model_scores = np.array([[0.2, 0.2, 0.2, 0.2], [0.4, 0.4, 0.4, 0.4]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores,
+        all_model_scores=all_model_scores,
+        num_scorer_trials=2,
+    )
+    assert metrics.mean_absolute_error == 0.0
+    assert metrics.krippendorff_alpha_gold_model == 1.0
+
+
+@pytest.mark.parametrize("repetitions", [1, 2, 5])
+@pytest.mark.parametrize(
+    ("human_scores", "model_scores", "expected_alpha", "expected_mae"),
+    [
+        pytest.param(
+            [[0.25, 0.3, 0.3, 0.3, 0.1, 0.5]],
+            [[0.2, 0.3, 0.3, 0.3, 0.1, 0.5], [0.4, 0.3, 0.3, 0.3, 0.1, 0.5]],
+            0.8713450292397661,
+            0.05 / 6,
+            id="cross-item-model-median-noise",
+        ),
+        pytest.param(
+            [[0.2, 0.9, 0.9, 0.5, 0.3]],
+            [[0.9, 0.9, 0.9, 0.5, 0.3]] * 3,
+            0.3832167832167833,
+            0.14,
+            id="exact-model-values",
+        ),
+        pytest.param(
+            [[0.2, 0.3, 0.3, 0.3, 0.1, 0.5], [0.4, 0.3, 0.3, 0.3, 0.1, 0.5]],
+            [[0.25, 0.3, 0.3, 0.3, 0.1, 0.5]],
+            0.8713450292397661,
+            0.05 / 6,
+            id="cross-item-gold-median-noise",
+        ),
+        pytest.param(
+            [[0.3, 0.3000000001, 0.3, 0.3000000001]],
+            [[0.3000000001, 0.3, 0.3000000001, 0.3]],
+            -0.75,
+            1e-10,
+            id="preserve-fine-score-levels",
+        ),
+    ],
+)
+def test_compute_harm_metrics_gold_model_alpha_normalizes_categories(
+    mock_harm_scorer, human_scores, model_scores, expected_alpha, expected_mae, repetitions
+):
+    """Normalize categories across both rows without reconstructing or coarsening scores."""
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    all_model_scores = np.tile(model_scores, (repetitions, 1))
+    metrics = evaluator._compute_metrics(
+        all_human_scores=np.array(human_scores),
+        all_model_scores=all_model_scores,
+        num_scorer_trials=len(all_model_scores),
+    )
+    assert metrics.krippendorff_alpha_gold_model == pytest.approx(expected_alpha)
+    assert metrics.mean_absolute_error == pytest.approx(expected_mae, abs=1e-16)
+
+
+@pytest.mark.parametrize("start", [0.0, 0.3, np.nextafter(np.nextafter(1.0, 0.0), 0.0)])
+def test_compute_harm_metrics_gold_model_alpha_does_not_chain_adjacent_values(mock_harm_scorer, start):
+    """A one-ULP group must not swallow a third value, including at score boundaries."""
+    middle = np.nextafter(start, 1.0)
+    end = np.nextafter(middle, 1.0)
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    metrics = evaluator._compute_metrics(
+        all_human_scores=np.array([[start, middle, end, start]]),
+        all_model_scores=np.array([[end, middle, start, end]]),
+        num_scorer_trials=1,
+    )
+    # start and middle share a category, but end remains distinct. Chaining
+    # would collapse all three and incorrectly report perfect agreement.
+    assert metrics.krippendorff_alpha_gold_model == pytest.approx(-0.4)
 
 
 def test_compute_harm_metrics_reports_constant_guess_baseline(mock_harm_scorer):
@@ -607,6 +866,29 @@ def test_compute_harm_metrics_constant_scorer_matches_the_baseline(mock_harm_sco
         all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
     )
     assert metrics.mean_absolute_error == pytest.approx(metrics.baseline_mean_absolute_error)
+
+
+def test_compute_harm_metrics_reports_single_trial_error_behind_the_median(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # Each trial is off by 0.5 on a different response, so the median across the trials is exact
+    # although any single run has an error of 0.5 on one response in three.
+    all_human_scores = np.array([[0.5, 0.5, 0.5]])
+    all_model_scores = np.array([[1.0, 0.5, 0.5], [0.5, 1.0, 0.5], [0.5, 0.5, 1.0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=3
+    )
+    assert metrics.mean_absolute_error == 0.0
+    assert metrics.single_trial_mean_absolute_error == pytest.approx(0.5 / 3)
+
+
+def test_compute_harm_metrics_single_trial_error_is_none_for_a_single_trial(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    all_human_scores = np.array([[0.1, 0.2], [0.1, 0.2]])
+    all_model_scores = np.array([[0.2, 0.4]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.single_trial_mean_absolute_error is None
 
 
 def test_compute_harm_metrics_partial_agreement(mock_harm_scorer):
@@ -1143,6 +1425,50 @@ async def test_run_evaluation_deduplicates_csv_paths_async(*, tmp_path: Path, pa
     assert metrics.accuracy == pytest.approx(0.5)
     assert metrics.dataset_name == "a.csv_b.csv"
     assert metrics.dataset_version == "1.0_1.0"
+
+
+@pytest.mark.parametrize("num_scorer_trials", [0, -1])
+@pytest.mark.parametrize(
+    "update_registry_behavior", [RegistryUpdateBehavior.SKIP_IF_EXISTS, RegistryUpdateBehavior.NEVER_UPDATE]
+)
+async def test_run_evaluation_async_rejects_nonpositive_trials_before_loading_files_async(
+    *,
+    mock_objective_scorer: MagicMock,
+    num_scorer_trials: int,
+    update_registry_behavior: RegistryUpdateBehavior,
+) -> None:
+    evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
+    dataset_files = ScorerEvalDatasetFiles(human_labeled_datasets_files=["*.csv"], result_file="unused.jsonl")
+
+    with (
+        patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH") as mock_evals_path,
+        patch.object(evaluator, "_should_skip_evaluation") as mock_skip,
+        patch.object(evaluator, "evaluate_dataset_async", new_callable=AsyncMock) as mock_evaluate,
+        pytest.raises(ValueError, match=f"num_scorer_trials must be at least 1, got {num_scorer_trials}"),
+    ):
+        await evaluator.run_evaluation_async(
+            dataset_files=dataset_files,
+            num_scorer_trials=num_scorer_trials,
+            update_registry_behavior=update_registry_behavior,
+        )
+
+    mock_evals_path.glob.assert_not_called()
+    mock_skip.assert_not_called()
+    mock_evaluate.assert_not_awaited()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_scorer_evaluate_async_rejects_zero_trials_async() -> None:
+    scorer = SubStringScorer(substring="marker")
+    dataset_files = ScorerEvalDatasetFiles(human_labeled_datasets_files=["*.csv"], result_file="unused.jsonl")
+
+    with (
+        patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH") as mock_evals_path,
+        pytest.raises(ValueError, match="num_scorer_trials must be at least 1, got 0"),
+    ):
+        await scorer.evaluate_async(file_mapping=dataset_files, num_scorer_trials=0)
+
+    mock_evals_path.glob.assert_not_called()
 
 
 @pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])

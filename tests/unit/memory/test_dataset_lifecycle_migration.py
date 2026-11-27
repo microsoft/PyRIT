@@ -42,12 +42,12 @@ def test_dataset_lifecycle_migration_and_guarded_downgrade() -> None:
             command.upgrade(config, PREVIOUS)
             before = set(sa.inspect(connection).get_table_names())
             command.upgrade(config, REVISION)
-            command.upgrade(config, "head")
             assert set(sa.inspect(connection).get_table_names()) == before | {
                 "DatasetLifecycleLock",
                 "DatasetLifecycleEntries",
                 "DatasetMediaEntries",
             }
+            command.upgrade(config, "head")
             assert connection.scalar(sa.select(DatasetLifecycleLock.id)) == 1
             command.downgrade(config, PREVIOUS)
             assert set(sa.inspect(connection).get_table_names()) == before
@@ -137,4 +137,5 @@ def test_unicode_migration_preserves_sql_server_collation_and_refuses_lossy_down
     assert "NVARCHAR(MAX)" in ddl
     assert "[DatasetLifecycleEntries]" in ddl and "NVARCHAR(256) COLLATE" in ddl
     assert "collation_name FROM sys.columns" in ddl
-    assert "QUOTENAME(@collation)" in ddl
+    assert "QUOTENAME" not in ddl
+    assert "COLLATE ' + @collation" in ddl

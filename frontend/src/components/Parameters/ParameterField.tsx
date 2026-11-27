@@ -4,6 +4,7 @@ import {
   Select,
   Textarea,
 } from '@fluentui/react-components'
+import type { Ref } from 'react'
 
 import HelpField from '@/components/HelpField'
 import type { Parameter } from '@/types'
@@ -16,6 +17,7 @@ import {
   parseJsonObjectFormValue,
   type ParameterFormValue,
 } from './parameterForm'
+import { fluentRef } from '@/utils/fluentRef'
 
 export interface ParameterFieldProps {
   parameter: Parameter
@@ -33,7 +35,11 @@ export interface ParameterFieldProps {
   /** Prefix for `data-testid` attributes. Defaults to `'param'` (e.g. `param-<name>`). */
   testIdPrefix?: string
   /** Extra guidance appended to the field's hint, e.g. explaining why it's disabled. */
-  extraHint?: string
+  extraHint?: string | undefined
+  /** Associate a server-side validation error with this field's control. */
+  validationMessage?: string | undefined
+  /** Ref for a multiline control when the parent needs to restore focus. */
+  controlRef?: Ref<HTMLTextAreaElement> | undefined
 }
 
 /**
@@ -57,6 +63,8 @@ export default function ParameterField({
   showRequiredError = false,
   testIdPrefix = 'param',
   extraHint,
+  validationMessage: externalValidationMessage,
+  controlRef,
 }: ParameterFieldProps) {
   const styles = useParameterFieldStyles()
   const kind = getParameterControlKind(parameter)
@@ -73,7 +81,6 @@ export default function ParameterField({
   const descriptiveHint = [defaultHint, extraHint]
     .filter((part): part is string => Boolean(part))
     .join(' ')
-
   if (kind === 'structured') {
     const current = isStructuredParameterFormValue(value) ? value : { type: '', values: {} }
     return (
@@ -83,7 +90,8 @@ export default function ParameterField({
           help={help}
           required={parameter.required}
           hint={descriptiveHint || undefined}
-          validationMessage={showRequiredError && !current.type ? 'Required' : undefined}
+          validationMessage={showRequiredError && !current.type ? 'Required' : externalValidationMessage}
+          validationState={showRequiredError && !current.type || externalValidationMessage ? 'error' : 'none'}
         >
           <Select
             className={styles.control}
@@ -124,7 +132,7 @@ export default function ParameterField({
     const parsed = current.trim()
       ? parseJsonObjectFormValue(current, label.replace(/ \*$/, ''))
       : null
-    const validationMessage = parsed && !parsed.ok ? parsed.error : undefined
+    const validationMessage = parsed && !parsed.ok ? parsed.error : externalValidationMessage
     const jsonHint = [descriptiveHint, 'Enter a JSON object.']
       .filter((part): part is string => Boolean(part))
       .join(' ')
@@ -155,7 +163,14 @@ export default function ParameterField({
   if (kind === 'boolean') {
     const current = value === 'true' || value === 'false' ? value : ''
     return (
-      <HelpField label={label} help={help} required={parameter.required} hint={descriptiveHint || undefined}>
+      <HelpField
+        label={label}
+        help={help}
+        required={parameter.required}
+        hint={descriptiveHint || undefined}
+        validationMessage={externalValidationMessage}
+        validationState={externalValidationMessage ? 'error' : 'none'}
+      >
         <Select
           className={styles.control}
           value={current}
@@ -176,7 +191,14 @@ export default function ParameterField({
   if (kind === 'multiselect') {
     const selected = Array.isArray(value) ? value : []
     return (
-      <HelpField label={label} help={help} required={parameter.required} hint={descriptiveHint || undefined}>
+      <HelpField
+        label={label}
+        help={help}
+        required={parameter.required}
+        hint={descriptiveHint || undefined}
+        validationMessage={externalValidationMessage}
+        validationState={externalValidationMessage ? 'error' : 'none'}
+      >
         <div className={styles.checkboxGroup} role="group" aria-labelledby={`${testId}-group-label`}>
           <span id={`${testId}-group-label`} className={styles.srOnly}>
             {label}
@@ -213,7 +235,14 @@ export default function ParameterField({
 
   if (kind === 'select') {
     return (
-      <HelpField label={label} help={help} required={parameter.required} hint={descriptiveHint || undefined}>
+      <HelpField
+        label={label}
+        help={help}
+        required={parameter.required}
+        hint={descriptiveHint || undefined}
+        validationMessage={externalValidationMessage}
+        validationState={externalValidationMessage ? 'error' : 'none'}
+      >
         <Select
           className={styles.control}
           value={stringValue}
@@ -242,8 +271,16 @@ export default function ParameterField({
 
   if (kind === 'multiline') {
     return (
-      <HelpField label={label} help={help} required={parameter.required} hint={hint}>
+      <HelpField
+        label={label}
+        help={help}
+        required={parameter.required}
+        hint={hint}
+        validationMessage={externalValidationMessage}
+        validationState={externalValidationMessage ? 'error' : 'none'}
+      >
         <Textarea
+          ref={fluentRef(controlRef)}
           className={styles.control}
           value={stringValue}
           placeholder={placeholder}
@@ -258,7 +295,14 @@ export default function ParameterField({
 
   return (
     <>
-      <HelpField label={label} help={help} required={parameter.required} hint={hint}>
+      <HelpField
+        label={label}
+        help={help}
+        required={parameter.required}
+        hint={hint}
+        validationMessage={externalValidationMessage}
+        validationState={externalValidationMessage ? 'error' : 'none'}
+      >
         <Input
           className={styles.control}
           value={stringValue}

@@ -15,13 +15,10 @@ import {
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular, DeleteRegular, PlayRegular, SaveRegular } from '@fluentui/react-icons'
 
+import { type GenerationResourceState, usePromptGenerationReview } from '@/hooks/usePromptGenerationReview'
 import { promptGenerationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type {
-  AssertReviewPayload,
-  PromptGenerationEstimate,
-  PromptGenerationReview,
-} from '@/types'
+import type { AssertReviewPayload, PromptGenerationEstimate } from '@/types'
 
 import {
   newCategoryDraft,
@@ -43,53 +40,42 @@ import { stageLabel } from './promptGenerationPresentation'
 import { usePromptGenerationStyles } from './PromptGeneration.styles'
 
 const MIN_LEVELS = 2
-
-interface ReviewSnapshot {
-  readonly key: string
-  readonly review: PromptGenerationReview | null
-  readonly error: string | null
-}
+const CONFLICT_STATUS = 409
 
 /** Loads the paused ASSERT policy so it can be edited before seed groups are written. */
-export default function AssertReviewEditor({ generation, descriptor, onGenerationChange }: PromptGenerationReviewProps) {
+export default function AssertReviewEditor({
+  generation,
+  descriptor,
+  onGenerationChange,
+  onReload,
+}: PromptGenerationReviewProps) {
   const styles = usePromptGenerationStyles()
-  const [reloadCount, setReloadCount] = useState(0)
-  const [snapshot, setSnapshot] = useState<ReviewSnapshot | null>(null)
-  const key = `${generation.id}:${reloadCount}`
-
+  const { review, estimate } = usePromptGenerationReview(generation.id)
+  // A conflict means the review was continued or cancelled elsewhere, so the page re-reads the generation.
+  const reviewConflict = review.errorStatus === CONFLICT_STATUS
   useEffect(() => {
-    const controller = new AbortController()
-    const loadAsync = async (): Promise<void> => {
-      try {
-        const review = await promptGenerationsApi.getReview(generation.id, controller.signal)
-        if (!controller.signal.aborted) setSnapshot({ key, review, error: null })
-      } catch (error: unknown) {
-        if (!controller.signal.aborted) setSnapshot({ key, review: null, error: toApiError(error).detail })
-      }
-    }
-    void loadAsync()
-    return () => { controller.abort() }
-  }, [generation.id, key])
-
-  const current = snapshot?.key === key ? snapshot : null
-  const payload = current?.review ? parseAssertReviewPayload(current.review.payload) : null
+    if (reviewConflict) onReload()
+  }, [reviewConflict, review.attempt, onReload])
+  const loaded = review.loading ? null : review.value
+  const payload = loaded ? parseAssertReviewPayload(loaded.payload) : null
+  const stage = stageLabel(descriptor, loaded?.stage ?? 'dimensions')
 
   return (
     <section className={styles.section} aria-labelledby="assert-review-title" data-testid="assert-review-editor">
       <div className={styles.headerIdentity}>
         <Text id="assert-review-title" as="h2" size={500} weight="semibold">Review the generated policy</Text>
         <Text className={styles.muted}>
-          Generation paused after {stageLabel(descriptor, current?.review?.stage ?? 'dimensions').toLowerCase()}.
+          Generation paused after the &quot;{stage}&quot; stage.
           Edit the taxonomy and dimension levels, then continue to write seed groups.
         </Text>
       </div>
-      {current === null ? (
+      {review.loading ? (
         <Spinner label="Loading review..." />
-      ) : current.error || !current.review ? (
+      ) : review.error || !loaded ? (
         <MessageBar intent="error">
           <MessageBarBody>
-            The review could not be loaded: {current.error}
-            <Button className={styles.touchTarget} icon={<ArrowSyncRegular />} onClick={() => setReloadCount((value) => value + 1)}>
+            The review could not be loaded: {review.error}
+            <Button className={styles.touchTarget} icon={<ArrowSyncRegular />} onClick={review.reload}>
               Retry
             </Button>
           </MessageBarBody>
@@ -100,53 +86,49 @@ export default function AssertReviewEditor({ generation, descriptor, onGeneratio
         </MessageBar>
       ) : (
         <AssertReviewForm
-          key={key}
+          key={review.attempt}
           generationId={generation.id}
           payload={payload}
           descriptor={descriptor}
+          estimate={estimate}
           onGenerationChange={onGenerationChange}
+          onReload={onReload}
         />
       )}
     </section>
   )
 }
-
 interface AssertReviewFormProps {
   readonly generationId: string
   readonly payload: AssertReviewPayload
   readonly descriptor: PromptGenerationReviewProps['descriptor']
+  readonly estimate: GenerationResourceState<PromptGenerationEstimate>
   readonly onGenerationChange: PromptGenerationReviewProps['onGenerationChange']
+  readonly onReload: PromptGenerationReviewProps['onReload']
 }
 
 function AssertReviewForm({
   generationId,
   payload,
   descriptor,
+  estimate,
   onGenerationChange,
+  onReload,
 }: AssertReviewFormProps) {
   const styles = usePromptGenerationStyles()
   const systematization = payload.systematization
   const [draft, setDraft] = useState<AssertReviewDraft>(() => reviewDraftFromPayload(payload))
-  const [saveCount, setSaveCount] = useState(0)
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState<'saving' | 'continuing' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [savedMessage, setSavedMessage] = useState<string | null>(null)
-  const [estimate, setEstimate] = useState<{ saveCount: number; value: PromptGenerationEstimate | null } | null>(null)
 
-  useEffect(() => {
-    const controller = new AbortController()
-    const loadAsync = async (): Promise<void> => {
-      try {
-        const value = await promptGenerationsApi.getEstimate(generationId, controller.signal)
-        if (!controller.signal.aborted) setEstimate({ saveCount, value })
-      } catch {
-        if (!controller.signal.aborted) setEstimate({ saveCount, value: null })
-      }
-    }
-    void loadAsync()
-    return () => { controller.abort() }
-  }, [generationId, saveCount])
+  /** Shows a failed action; a conflict means the generation moved on elsewhere, so the page reloads it. */
+  const reportFailure = (cause: unknown): void => {
+    const apiError = toApiError(cause)
+    setError(apiError.detail)
+    if (apiError.status === CONFLICT_STATUS) onReload()
+  }
 
   const errors = reviewDraftErrors(draft)
   const permissibleCount = draft.categories.filter((category) => category.permissible).length
@@ -175,12 +157,12 @@ function AssertReviewForm({
   const saveAsync = async (): Promise<boolean> => {
     try {
       await promptGenerationsApi.saveReview(generationId, reviewPayloadFromDraft(draft))
-      setSaveCount((value) => value + 1)
+      estimate.reload()
       setDirty(false)
       setSavedMessage('Changes saved.')
       return true
     } catch (cause: unknown) {
-      setError(toApiError(cause).detail)
+      reportFailure(cause)
       return false
     }
   }
@@ -202,7 +184,7 @@ function AssertReviewForm({
     try {
       onGenerationChange(await promptGenerationsApi.continueAfterReview(generationId))
     } catch (cause: unknown) {
-      setError(toApiError(cause).detail)
+      reportFailure(cause)
       setBusy(null)
     }
   }
@@ -435,12 +417,22 @@ function AssertReviewForm({
         </MessageBar>
       )}
 
+      {estimate.error && (
+        <MessageBar intent="warning" data-testid="assert-review-estimate-error">
+          <MessageBarBody>
+            The estimate could not be loaded: {estimate.error}
+            <Button className={styles.touchTarget} icon={<ArrowSyncRegular />} onClick={estimate.reload}>
+              Check again
+            </Button>
+          </MessageBarBody>
+        </MessageBar>
+      )}
       <GenerationEstimateCard
         title="Remaining work"
-        estimate={estimate?.value ?? null}
-        descriptor={descriptor}
-        updating={estimate === null || estimate.saveCount !== saveCount}
-        emptyMessage={estimate === null ? 'Loading the estimate...' : 'No estimate is available.'}
+        estimate={estimate.value}
+        {...(descriptor ? { descriptor } : {})}
+        updating={estimate.loading}
+        emptyMessage={estimate.error ? 'No estimate: it could not be loaded.' : 'Loading the estimate...'}
       />
 
       <div className={styles.actions}>

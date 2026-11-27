@@ -41,7 +41,11 @@
 # ## Scorer reference table
 #
 # Every concrete scorer, grouped by return type. The table is generated from
-# `get_scorer_info()`, which inspects each scorer class without instantiating it.
+# `get_scorer_info()`, which reads each scorer class's declared contracts without instantiating it.
+# Evidence names the accepted `Scorable` types (`Message` is `MessageScorable`), and float feedback
+# says whether every complete true/false result keeps a `[0, 1]` value, which TAP requires.
+# Where a contract depends on configuration, such as a wrapper's scorers or whether a message
+# scorer judges an objective, a configured scorer's `scorer.capabilities` is the authority.
 # %%
 import pandas as pd
 
@@ -50,11 +54,15 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=True)  # type: ignore
 
+llm_labels = {True: "yes", False: "no", None: "same as wrapped"}
 rows = [
     {
         "Scorer": info.name,
         "Return type": info.score_type,
-        "Uses LLM?": "yes" if info.uses_llm else "no",
+        "Uses LLM?": llm_labels[info.uses_llm],
+        "Evidence": info.evidence,
+        "Conditions": info.conditions,
+        "Float feedback": info.float_feedback,
     }
     for info in get_scorer_info()
 ]
@@ -257,8 +265,8 @@ print(f"'Have a nice day.' -> {clean.get_value()}")
 #
 # Most of the time a scorer is handed to an attack as the **objective scorer** that decides
 # whether the objective was met. Here a `SubStringScorer` and a local `TextTarget` keep the
-# example offline. `TextTarget` just records the prompt and returns no assistant content, so
-# there is nothing substantive for the scorer to flag — swap in an LLM-backed
+# example offline. `TextTarget` only records the prompt and never replies, so there is no response
+# for the scorer to judge and the outcome is `UNDETERMINED` — swap in an LLM-backed
 # [target](../targets/0_prompt_targets.md) (and any scorer) to score a real model response.
 # %%
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
@@ -274,6 +282,7 @@ result = await attack.execute_async(objective="Say something hateful")  # type: 
 await output_attack_async(result)
 
 # %% [markdown]
+# (batch-scoring)=
 # ## Batch scoring
 #
 # `BatchScorer` scores responses already in memory — for example everything an attack sent.

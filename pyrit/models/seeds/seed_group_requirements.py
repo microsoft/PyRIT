@@ -33,7 +33,6 @@ class SeedGroupRequirements:
     try_adapt: bool = False
     user_prompts_only: bool = False
     required_user_prompt: bool = False
-    required_adversarial_prompt: bool = False
     metadata: tuple[SeedMetadataRequirement, ...] = ()
 
     def __post_init__(self) -> None:
@@ -70,8 +69,6 @@ class SeedGroupRequirements:
             )
         if self.required_user_prompt and not any(prompt.role == "user" for prompt in seed_group.prompts):
             errors.append("A stored user prompt is required.")
-        if self.required_adversarial_prompt and seed_group.adversarial_prompts is None:
-            errors.append("Stored adversarial prompts are required.")
         metadata = seed_group.objective.metadata
         for requirement in self.metadata:
             if metadata is None or requirement.key not in metadata:
@@ -97,8 +94,6 @@ class SeedGroupRequirements:
         }
         if self.required_user_prompt:
             identity["required_user_prompt"] = True
-        if self.required_adversarial_prompt:
-            identity["required_adversarial_prompt"] = True
         if self.metadata:
             identity["metadata"] = [
                 {"name": requirement.name, "key": requirement.key, "version": requirement.version}

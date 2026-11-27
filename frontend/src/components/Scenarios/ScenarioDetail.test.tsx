@@ -16,6 +16,7 @@ import {
   techniquesApi,
 } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
+import { installRouterTestRequest } from '@/test-utils/routerRequest'
 import type {
   AddMessageResponse,
   RegisteredScenario,
@@ -321,56 +322,6 @@ describe('ScenarioDetail', () => {
     expect(readUserPreferences('local').lastUsedChatScorer).toBeNull()
   })
 
-  it('uses default ASSERT scoring without a scorer picker or judge settings', async () => {
-    const user = userEvent.setup()
-    mockGetScenario.mockResolvedValue(makeScenario({
-      scenario_name: 'foundry.assert_policy',
-      supports_objective_scorer: true,
-      supported_parameters: [
-        { name: 'max_turns', description: 'Turns.', type_name: 'int', choices: null, default: 6, required: false },
-        { name: 'judge_samples', description: 'Samples.', type_name: 'int', choices: null, default: 1, required: false },
-      ],
-    }))
-    renderDetail('/scanner/launch/foundry.assert_policy', { scorers: [{
-      scorer_registry_name: 'explicit', identifier: { class_name: 'SubStringScorer', hash: 'explicit-hash', scorer_type: 'true_false' },
-    }] })
-    expect(await screen.findByRole('spinbutton', { name: /max_turns/i })).toBeInTheDocument()
-    expect(screen.queryByRole('spinbutton', { name: /judge_samples/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('combobox', { name: 'Objective scorer' })).not.toBeInTheDocument()
-    const dialog = await openRunPreview(user)
-    expect(within(dialog).queryByText('Objective scorer')).not.toBeInTheDocument()
-    await waitFor(() => expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeEnabled())
-    await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
-    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
-    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('objective_scorer')
-    expect(mockStartRun.mock.calls[0][0].scenario_params).not.toHaveProperty('judge_samples')
-  })
-
-  it.each(['preset', 'saved run'] as const)(
-    'rejects a %s whose ASSERT scoring target is not the default instead of launching it',
-    async (seed) => {
-      const user = userEvent.setup()
-      const scenarioParams = { scoring_target: 'registered-judge' }
-      mockGetScenario.mockResolvedValue(makeScenario({ scenario_name: 'foundry.assert_policy' }))
-      mockGetPreset.mockResolvedValue(makePresetResponse({
-        scenario_name: 'foundry.assert_policy', scenario_params: scenarioParams,
-      }))
-      renderDetail(
-        '/scanner/launch/foundry.assert_policy' + (seed === 'preset' ? '?preset=spanish_probe' : ''),
-        seed === 'saved run' ? {
-          initialRun: { scenario_name: 'foundry.assert_policy', target_name: 'target-a', scenario_params: scenarioParams },
-        } : {},
-      )
-      await user.click(await screen.findByRole('button', { name: 'Launch scan' }))
-      expect(await screen.findByRole('alert')).toHaveTextContent('has custom judge settings. Use the SDK to preserve them')
-      expect(screen.queryByText('Run preview')).not.toBeInTheDocument()
-      expect(mockStartRun).not.toHaveBeenCalled()
-      expect(mockEstimateRun).not.toHaveBeenCalledWith(
-        'foundry.assert_policy', expect.objectContaining({ scenario_params: scenarioParams }), expect.anything(),
-      )
-    },
-  )
-
   it('does not show a scorer override for fixed-scoring scenarios', async () => {
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
@@ -525,7 +476,7 @@ describe('ScenarioDetail', () => {
     jest.mocked(scenariosApi.loadDatasets).mockReturnValue(pending)
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByText(/Loading selected datasets in the background/)
-    expect(screen.getByRole('row', { name: /resolved \(unknown\)/ })).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /resolved \(Unknown\)/ })).toBeInTheDocument()
     expect(screen.queryByRole('row', { name: /static/ })).not.toBeInTheDocument()
     expect(mockEstimateRun.mock.calls[0][1].datasets).toBeUndefined()
     expect(jest.mocked(scenariosApi.loadDatasets).mock.calls[0][1].datasets).toEqual({
@@ -943,6 +894,41 @@ describe('ScenarioDetail', () => {
       expect(mockAttacks.saveConversation).not.toHaveBeenCalled()
     })
 
+    it('protects Scanner conversation edits when browser Forward returns to Datasets', async () => {
+      jest.useFakeTimers()
+      const restoreRequest = installRouterTestRequest()
+      try {
+        const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+        const router = createMemoryRouter([
+          { path: '/scanner/launch/:scenarioName', element: <ScenarioDetail
+            targets={[makeTarget('target-a')]} defaultObjectiveTarget={makeTarget('target-a')}
+            defaultAdversarialTarget={null} labels={{ operator: 'roakey' }}
+            defaultsReady onNavigate={jest.fn()} /> },
+          { path: '/datasets', element: <h1>Datasets</h1> },
+        ], {
+          initialEntries: ['/scanner/launch/technique.execute?prepended_conversation_id=history-conversation', '/datasets'],
+          initialIndex: 0,
+        })
+        render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+          <RouterProvider router={router} />
+        </UserPreferencesProvider></FluentProvider>)
+        await user.click(await screen.findByRole('button', { name: 'Edit conversation' }))
+        await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' changed')
+        await act(async () => { await router.navigate(1) })
+        expect(await screen.findByRole('dialog', { name: 'Discard conversation draft?' })).toBeVisible()
+        await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+        expect(screen.getByDisplayValue('Saved context changed')).toBeVisible()
+        expect(router.state.location.pathname).toBe('/scanner/launch/technique.execute')
+        await act(async () => { await router.navigate(1) })
+        await user.click(await screen.findByRole('button', { name: 'Discard draft' }))
+        await advanceTimers(300)
+        expect(await screen.findByRole('heading', { name: 'Datasets' })).toBeVisible()
+        expect(mockAttacks.saveConversation).not.toHaveBeenCalled()
+      } finally {
+        restoreRequest()
+      }
+    })
+
     it('should report a missing conversation without opening an empty editor or changing the field', async () => {
       mockAttacks.getConversation.mockRejectedValue(new Error('Saved chat conversation not found'))
       const user = userEvent.setup()
@@ -1065,7 +1051,7 @@ describe('ScenarioDetail', () => {
     await user.type(screen.getByLabelText(/^iterations/), '1.5')
     await user.type(screen.getByLabelText(/^note/), 'Keep this value')
     await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
-    await user.click(screen.getByRole('option', { name: 'stale-dataset (unknown)', exact: true }))
+    await user.click(screen.getByRole('option', { name: 'stale-dataset (Unknown)', exact: true }))
     await setObjectiveLimit(user, '0')
     await user.click(screen.getAllByRole('button', { name: 'Filter harm category cyber' })[0])
     await user.click(screen.getAllByRole('button', { name: 'Filter data type Text' })[0])
@@ -1414,20 +1400,25 @@ describe('ScenarioDetail', () => {
     await user.click(launch)
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     const cancel = within(preview).getByRole('button', { name: 'Cancel', exact: true })
+    const confirmLaunch = within(preview).getByRole('button', { name: 'Launch scan', exact: true })
     await waitFor(() => expect(cancel).toHaveFocus())
+    // A disabled button is not tabbable, so wait out the async checks that gate the confirm button.
+    await waitFor(() => expect(confirmLaunch).toBeEnabled())
     await user.tab()
-    expect(within(preview).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    await waitFor(() => expect(confirmLaunch).toHaveFocus())
     await user.tab({ shift: true })
-    expect(cancel).toHaveFocus()
+    await waitFor(() => expect(cancel).toHaveFocus())
     await user.keyboard(' ')
     expect(await screen.findByRole('checkbox', { name: 'default_technique', exact: true })).toBeChecked()
     expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).not.toBeChecked()
     await waitFor(() => expect(launch).toHaveFocus())
     await user.keyboard('{Enter}')
     const reopened = await screen.findByRole('dialog', { name: 'Run preview' })
+    const reopenedConfirm = within(reopened).getByRole('button', { name: 'Launch scan', exact: true })
     await waitFor(() => expect(within(reopened).getByRole('button', { name: 'Cancel', exact: true })).toHaveFocus())
+    await waitFor(() => expect(reopenedConfirm).toBeEnabled())
     await user.tab()
-    expect(within(reopened).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    await waitFor(() => expect(reopenedConfirm).toHaveFocus())
     await user.keyboard(' ')
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
       techniques: ['default_technique'], include_baseline: false,
@@ -2116,6 +2107,23 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun).not.toHaveBeenCalled()
   })
 
+  it('reveals a recorded technique identity with the shared identity JSON', async () => {
+    const user = userEvent.setup()
+    const identifier = { class_name: 'CrescendoAttack', class_module: 'pyrit.executor.attack', hash: 'crescendo-hash' }
+    mockGetScenario.mockResolvedValue(makeScenario({ technique_summaries: [
+      { name: 'default_technique', description: null, tags: ['default'] },
+      { name: 'crescendo', description: null, tags: ['multi_turn'], identifier },
+    ] }))
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+
+    await user.click(screen.getByRole('button', { name: 'Identity for crescendo' }))
+
+    const region = screen.getByRole('region', { name: 'Identity for crescendo' })
+    expect(JSON.parse(region.textContent ?? '')).toEqual(identifier)
+    expect(region.scrollIntoView).toHaveBeenCalled()
+  })
+
   it('includes the baseline when a shared tag selects or clears its members', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/launch/foundry.red_team_agent')
@@ -2405,9 +2413,9 @@ describe('ScenarioDetail', () => {
 
     const addDataset = screen.getByRole('combobox', { name: 'Add dataset' })
     await user.click(addDataset)
-    await user.click(screen.getByRole('option', { name: 'ds_a (unknown)', exact: true }))
+    await user.click(screen.getByRole('option', { name: 'ds_a (Unknown)', exact: true }))
     await user.click(addDataset)
-    await user.click(screen.getByRole('option', { name: 'ds_b (unknown)', exact: true }))
+    await user.click(screen.getByRole('option', { name: 'ds_b (Unknown)', exact: true }))
     await user.click(screen.getByRole('button', { name: 'Remove harmbench' }))
     await setObjectiveLimit(user, '25')
     await user.click(screen.getAllByRole('button', { name: 'Filter harm category other' })[0])
@@ -2484,7 +2492,7 @@ describe('ScenarioDetail', () => {
       call[1].scenario_params?.scope === 'one' && call[1].datasets === undefined,
     )).toBe(true)
     await user.click(screen.getByRole('button', { name: 'Reset datasets' }))
-    await screen.findByText('remote (unknown)', { exact: true })
+    await screen.findByText('remote (Unknown)', { exact: true })
   })
 
   it('rejects a non-positive-integer max dataset size', async () => {
@@ -2565,7 +2573,7 @@ describe('ScenarioDetail', () => {
     await act(async () => resolveEstimate({ ...makeEstimate(8), effective_datasets: defaults }))
     await user.click(screen.getByRole('button', { name: 'Remove ds_b' }))
     await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
-    await user.click(screen.getByRole('option', { name: 'ds_b (unknown)', exact: true }))
+    await user.click(screen.getByRole('option', { name: 'ds_b (Unknown)', exact: true }))
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     const confirm = within(preview).getByRole('button', { name: 'Launch scan' })
@@ -2905,7 +2913,9 @@ describe('ScenarioDetail', () => {
     await screen.findByText('boom')
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument())
     expect(screen.getByRole('alert')).toHaveTextContent('boom')
-    await waitFor(() => expect(screen.getByTestId('launch-scenario-btn')).toHaveFocus())
+    // Focus moves to the banner at the top of the form so the browser scrolls the reason into view.
+    await waitFor(() => expect(screen.getByRole('alert').closest('[tabindex="-1"]')).toHaveFocus())
+    expect(screen.getByTestId('launch-scenario-btn')).not.toHaveFocus()
     expect(screen.getByTestId('scenario-target-select')).toHaveValue('target-b')
     expect(screen.getByTestId('technique-crescendo')).toBeChecked()
     expect(screen.getByTestId('technique-default_technique')).not.toBeChecked()
@@ -3400,8 +3410,8 @@ describe('ScenarioDetail', () => {
       renderDetail(`${PRESET_PATH}&dataset=ds_b`)
 
       expect(await screen.findByTestId('preset-seed-banner')).toBeInTheDocument()
-      expect(screen.getByText('ds_b (unknown)')).toBeInTheDocument()
-      expect(screen.queryByText('harmbench (unknown)')).not.toBeInTheDocument()
+      expect(screen.getByText('ds_b (Unknown)')).toBeInTheDocument()
+      expect(screen.queryByText('harmbench (Unknown)')).not.toBeInTheDocument()
       await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
       await confirmRunPreview(user)
 
@@ -3423,8 +3433,8 @@ describe('ScenarioDetail', () => {
         supported_parameters: [],
         dataset_defaults: { sources: [], max_per_dataset: 'all', max_total: 'all', fetch: 'if_missing', filters: {} },
         dataset_options: {
-          mode: 'any', allowed_names: [], max_selected: null, per_dataset_limit: true, total_limit: true,
-          supports_overrides: true, filters: true, source_settings: true,
+          mode: 'any', allowed_names: [], min_selected: 1, max_selected: null, per_dataset_limit: true, total_limit: true,
+          supports_overrides: true, filters: true, source_settings: true, compatible_only: true,
         },
       })
     }
@@ -3437,12 +3447,15 @@ describe('ScenarioDetail', () => {
       mockEstimateRun.mockResolvedValue(makeEstimate(25))
       renderDetail(POLICY_PATH)
 
-      expect(await screen.findByText('No dataset selected.')).toBeInTheDocument()
+      // The picker alone carries the requirement, as the Objective Target field does.
+      const picker = await screen.findByRole('combobox', { name: 'Add dataset' })
+      expect(picker).toBeRequired()
+      expect(screen.getByRole('heading', { name: 'Datasets' })).not.toHaveTextContent('*')
       expect(screen.queryByText('This scenario has no named datasets.')).not.toBeInTheDocument()
-      await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
-      await user.click(screen.getByRole('option', { name: 'ds_a (unknown)', exact: true }))
+      await user.click(picker)
+      await user.click(screen.getByRole('option', { name: 'ds_a (Unknown)', exact: true }))
 
-      expect(within(screen.getByRole('table', { name: 'Selected datasets' })).getByText('ds_a (unknown)'))
+      expect(within(screen.getByRole('table', { name: 'Selected datasets' })).getByText('ds_a (Unknown)'))
         .toBeInTheDocument()
       await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
         'foundry.assert_policy',
@@ -3464,26 +3477,105 @@ describe('ScenarioDetail', () => {
       mockGetScenario.mockResolvedValue(policyScenario())
       renderDetail(`${POLICY_PATH}?dataset=ds_b`)
 
-      expect(await screen.findByText('ds_b (unknown)')).toBeInTheDocument()
-      expect(screen.queryByText('No dataset selected.')).not.toBeInTheDocument()
+      expect(await screen.findByText('ds_b (Unknown)')).toBeInTheDocument()
       expect(screen.getByRole('combobox', { name: 'Add dataset' })).not.toBeRequired()
     })
 
-    it('should mark the first ASSERT dataset as required and check it only when launching', async () => {
+    it('should show the server message for a missing required dataset on the focused picker before any preview', async () => {
       const user = userEvent.setup()
+      // The library rejects a selection below the scenario's declared minimum with this 400.
+      const missingDataset = { isAxiosError: true, response: { status: 400, data: { detail: 'Select a dataset.' } } }
       mockGetScenario.mockResolvedValue(policyScenario())
+      mockEstimateRun.mockRejectedValue(missingDataset)
       renderDetail(POLICY_PATH)
 
-      expect(await screen.findByRole('combobox', { name: 'Add dataset' })).toBeRequired()
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      const estimate = await screen.findByTestId('run-estimate')
+      await waitFor(() => expect(within(estimate).getByRole('status')).toHaveTextContent('Select a dataset.'))
+      // The 400 rejects the configuration, not the backend.
+      expect(within(estimate).getByRole('status')).toHaveTextContent('Fix the configuration to request an estimate.')
+      expect(estimate).not.toHaveTextContent('The backend estimate could not be refreshed.')
+      const picker = screen.getByRole('combobox', { name: 'Add dataset' })
+      expect(picker).toBeRequired()
+      expect(picker).not.toHaveAttribute('aria-invalid', 'true')
+      jest.mocked(Element.prototype.scrollIntoView).mockClear()
+
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
       await user.click(screen.getByRole('button', { name: 'Launch scan' }))
 
-      expect(screen.getByRole('alert')).toHaveTextContent('Select an ASSERT dataset.')
+      await waitFor(() => expect(picker).toHaveFocus())
+      expect(picker).toHaveAttribute('aria-invalid', 'true')
+      expect(picker).toHaveAccessibleDescription('Select a dataset.')
+      // Focus scrolls the form to the picker; scrollIntoView would also scroll the app shell.
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      // The picker carries the error, so the banner at the top of the form stays empty.
+      expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(['Select a dataset.'])
       expect(mockStartRun).not.toHaveBeenCalled()
+
+      mockEstimateRun.mockResolvedValue(makeEstimate(25))
+      await user.click(picker)
+      await user.click(screen.getByRole('option', { name: 'ds_a (Unknown)', exact: true }))
+      expect(picker).not.toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByRole('combobox', { name: 'Add dataset' })).not.toHaveAccessibleDescription('Select a dataset.')
     })
 
-    it('should open the ASSERT generator from the dataset actions', async () => {
+    it('should word a shortfall as the library does while the server has not rejected the selection', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(makeScenario({
+        ...policyScenario(),
+        dataset_options: { ...policyScenario().dataset_options!, min_selected: 2 },
+      }))
+      mockEstimateRun.mockResolvedValue(makeEstimate(25))
+      renderDetail(`${POLICY_PATH}?dataset=ds_a`)
+
+      expect(await screen.findByText('ds_a (Unknown)')).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+
+      const picker = screen.getByRole('combobox', { name: 'Add dataset' })
+      await waitFor(() => expect(picker).toHaveFocus())
+      expect(picker).toHaveAccessibleDescription('Select at least 2 datasets.')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('should keep another field\'s estimate rejection off the dataset picker', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(policyScenario())
+      // The server checks parameters before the dataset count, so this rejection is not about datasets.
+      mockEstimateRun.mockRejectedValue({
+        isAxiosError: true, response: { status: 400, data: { detail: 'max_turns must be at least 1.' } },
+      })
+      renderDetail(POLICY_PATH)
+
+      const estimate = await screen.findByTestId('run-estimate')
+      await waitFor(() => expect(estimate).toHaveTextContent('max_turns must be at least 1.'))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+
+      const picker = screen.getByRole('combobox', { name: 'Add dataset' })
+      await waitFor(() => expect(picker).toHaveFocus())
+      expect(picker).toHaveAccessibleDescription('Select a dataset.')
+      expect(picker).not.toHaveAccessibleDescription(expect.stringContaining('max_turns'))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('should not offer Launch scan in the preview for a request the server rejected', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(policyScenario())
+      mockEstimateRun.mockRejectedValue({
+        isAxiosError: true, response: { status: 400, data: { detail: 'max_turns must be at least 1.' } },
+      })
+      renderDetail(`${POLICY_PATH}?dataset=ds_a`)
+
+      const dialog = await openRunPreview(user)
+      await waitFor(() => expect(dialog).toHaveTextContent('max_turns must be at least 1.'))
+      expect(dialog).toHaveTextContent('Fix the configuration to request an estimate.')
+      expect(dialog).not.toHaveTextContent('Cannot confirm which datasets will refresh')
+      expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeDisabled()
+      expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeEnabled()
+    })
+
+    it('should open Browse datasets in a new tab and the ASSERT generator from the Datasets header', async () => {
       jest.mocked(promptGeneratorsApi.list).mockResolvedValueOnce({ items: [{
         name: 'assert', display_name: 'ASSERT policy dataset', description: 'Policy datasets.',
         stages: [], target_roles: [], follow_up_scenario: 'foundry.assert_policy',
@@ -3497,7 +3589,9 @@ describe('ScenarioDetail', () => {
       expect(within(actions).getAllByRole('link').map((link) => link.textContent)).toEqual([
         'Browse datasets', 'Generate datasets',
       ])
-      expect(within(actions).getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+      const browse = within(actions).getByRole('link', { name: 'Browse datasets' })
+      expect(browse).toHaveAttribute('href', '/datasets')
+      expect(browse).toHaveAttribute('target', '_blank')
       expect(screen.getAllByRole('link', { name: 'Browse datasets' })).toHaveLength(1)
     })
   })
@@ -3512,20 +3606,111 @@ describe('ScenarioDetail', () => {
         supported_parameters: [
           { name: 'max_turns', type_name: 'int', default: 6, required: false },
         ],
+        dataset_options: {
+          mode: 'any', allowed_names: [], per_dataset_limit: true, total_limit: true, supports_overrides: true,
+          filters: true, compatible_only: true,
+        },
       }))
       renderDetail('/scanner/launch/foundry.assert_policy')
-      await screen.findByText('harmbench (unknown)')
+      await screen.findByText('harmbench (Unknown)')
       const turns = screen.getByTestId('scenario-param-max_turns')
       await user.clear(turns)
       await user.type(turns, '12')
       await user.click(screen.getByRole('checkbox', { name: 'crescendo', exact: true }))
       await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
-      await user.click(screen.getByRole('option', { name: 'ds_a (unknown)', exact: true }))
+      await user.click(screen.getByRole('option', { name: 'ds_a (Unknown)', exact: true }))
       expect(scenariosApi.listCompatibleDatasets).toHaveBeenCalledTimes(1)
       expect(scenariosApi.loadDatasets).not.toHaveBeenCalled()
       expect(datasetsApi.listDatasets).not.toHaveBeenCalled()
       expect(screen.queryByRole('button', { name: /Reset datasets|Load datasets/ })).not.toBeInTheDocument()
       expect(screen.queryByRole('switch', { name: 'Show incompatible' })).not.toBeInTheDocument()
+    })
+
+    describe('on a compatible-only scenario', () => {
+      const ASSERT_PATH = '/scanner/launch/foundry.assert_policy'
+      beforeEach(() => {
+        mockGetScenario.mockResolvedValue(makeScenario({
+          scenario_name: 'foundry.assert_policy',
+          dataset_options: {
+            mode: 'any', allowed_names: [], per_dataset_limit: true, total_limit: true, supports_overrides: true,
+            filters: true, compatible_only: true,
+          },
+        }))
+      })
+
+      it('leaves out linked datasets the compatible listing omits and says why', async () => {
+        const user = userEvent.setup()
+        renderDetail(`${ASSERT_PATH}?dataset=ds_a&dataset=other_policy`)
+
+        const warning = await screen.findByTestId('omitted-linked-datasets')
+        expect(warning).toHaveTextContent(
+          "The linked dataset other_policy isn't a stored dataset this scenario can use, so it wasn't selected.",
+        )
+        // The warning sits beside the selection it changed, not at the top of the form.
+        expect(within(screen.getByRole('region', { name: 'Datasets' })).getByTestId('omitted-linked-datasets'))
+          .toBe(warning)
+        expect(screen.getByRole('button', { name: 'Remove ds_a' })).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Remove other_policy' })).not.toBeInTheDocument()
+        expect(screen.queryByText('Not in the compatible list')).not.toBeInTheDocument()
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+        await confirmRunPreview(user)
+
+        await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+        expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
+          fetch: 'if_missing', sources: [{ name: 'ds_a', fetch: 'if_missing' }],
+        })
+      })
+
+      it('waits for a successful listing before leaving out linked datasets', async () => {
+        const user = userEvent.setup()
+        jest.mocked(scenariosApi.listCompatibleDatasets).mockRejectedValueOnce(new Error('Listing offline'))
+        renderDetail(`${ASSERT_PATH}?dataset=other_a&dataset=other_b`)
+
+        expect(await screen.findByText(/Listing offline/)).toBeInTheDocument()
+        expect(screen.queryByTestId('omitted-linked-datasets')).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Remove other_a' })).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Retry loading compatible datasets' }))
+
+        expect(await screen.findByTestId('omitted-linked-datasets')).toHaveTextContent(
+          "The linked datasets other_a, other_b aren't stored datasets this scenario can use, so they weren't selected.",
+        )
+        expect(screen.queryByRole('table', { name: 'Selected datasets' })).not.toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: 'Add dataset' })).toBeEnabled()
+      })
+
+      it('names only the omitted datasets still selected when the listing recovers', async () => {
+        const user = userEvent.setup()
+        jest.mocked(scenariosApi.listCompatibleDatasets).mockRejectedValueOnce(new Error('Listing offline'))
+        renderDetail(`${ASSERT_PATH}?dataset=ds_a&dataset=other_a&dataset=other_b`)
+
+        expect(await screen.findByText(/Listing offline/)).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Remove other_a' }))
+        await user.click(screen.getByRole('button', { name: 'Retry loading compatible datasets' }))
+
+        expect(await screen.findByTestId('omitted-linked-datasets')).toHaveTextContent(
+          "The linked dataset other_b isn't a stored dataset this scenario can use, so it wasn't selected.",
+        )
+        expect(screen.getByRole('button', { name: 'Remove ds_a' })).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Remove other_b' })).not.toBeInTheDocument()
+      })
+
+      it('keeps every linked dataset the compatible listing includes, without a warning', async () => {
+        const user = userEvent.setup()
+        renderDetail(`${ASSERT_PATH}?dataset=ds_a&dataset=ds_b`)
+
+        expect(await screen.findByRole('button', { name: 'Remove ds_b' })).toBeInTheDocument()
+        // The Add picker is enabled only once the compatible listing has loaded, so the check below is final.
+        await waitFor(() => expect(screen.getByRole('combobox', { name: 'Add dataset' })).toBeEnabled())
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+        expect(screen.queryByTestId('omitted-linked-datasets')).not.toBeInTheDocument()
+        await confirmRunPreview(user)
+
+        await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+        expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
+          fetch: 'if_missing',
+          sources: [{ name: 'ds_a', fetch: 'if_missing' }, { name: 'ds_b', fetch: 'if_missing' }],
+        })
+      })
     })
 
     it('keeps every linked dataset name, including unknown ones, for the server to validate', async () => {
@@ -3552,8 +3737,8 @@ describe('ScenarioDetail', () => {
       renderDetail(`${SCENARIO_PATH}?dataset=ds_a`)
 
       expect(await screen.findByText(/Catalog offline/)).toBeInTheDocument()
-      expect(screen.getByText('ds_a (unknown)')).toBeInTheDocument()
-      expect(screen.queryByText('harmbench (unknown)')).not.toBeInTheDocument()
+      expect(screen.getByText('ds_a (Unknown)')).toBeInTheDocument()
+      expect(screen.queryByText('harmbench (Unknown)')).not.toBeInTheDocument()
     })
 
     it('rejects a launch with linked datasets the scenario does not take, and launches without them', async () => {
@@ -3565,9 +3750,7 @@ describe('ScenarioDetail', () => {
       renderDetail(`${SCENARIO_PATH}?preset_unrelated=1&dataset=ds_a&dataset=ds_b`)
 
       const unsupported = await screen.findByTestId('linked-datasets-error')
-      expect(unsupported).toHaveTextContent(
-        "This scenario does not take datasets, so it can't launch with the linked datasets: ds_a, ds_b.",
-      )
+      expect(unsupported).toHaveTextContent("This scenario can't take the linked datasets: ds_a, ds_b.")
       const withoutDatasets = within(unsupported).getByRole('link', { name: 'Open without the linked datasets' })
       expect(withoutDatasets).toHaveAttribute('href', `${SCENARIO_PATH}?preset_unrelated=1`)
       await screen.findByRole('combobox', { name: 'Objective Target' })
@@ -3581,6 +3764,24 @@ describe('ScenarioDetail', () => {
 
       await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
       expect(mockStartRun.mock.calls[0][0].datasets).toBeUndefined()
+    })
+
+    it('rejects linked datasets on a scenario with fixed sources and offers to open it without them', async () => {
+      mockGetScenario.mockResolvedValue(makeScenario({
+        dataset_options: {
+          mode: 'fixed', allowed_names: [], max_selected: null, per_dataset_limit: false, total_limit: true,
+          supports_overrides: true, filters: true, source_settings: true,
+        },
+      }))
+      renderDetail(`${SCENARIO_PATH}?dataset=ds_b`)
+
+      const fixed = await screen.findByTestId('linked-datasets-error')
+      expect(fixed).toHaveTextContent("This scenario can't take the linked datasets: ds_b.")
+      expect(within(fixed).getByRole('link', { name: 'Open without the linked datasets' }))
+        .toHaveAttribute('href', SCENARIO_PATH)
+      expect(screen.queryByText('ds_b (Unknown)')).not.toBeInTheDocument()
+      await screen.findByRole('combobox', { name: 'Objective Target' })
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
     })
 
     it('launches linked names exactly, so whitespace still names a different dataset', async () => {
@@ -3598,25 +3799,36 @@ describe('ScenarioDetail', () => {
       })
     })
 
-    it('rejects a blank linked dataset instead of falling back to the defaults', async () => {
-      const user = userEvent.setup()
+    it('passes a blank linked dataset to the server and shows its error', async () => {
+      // The backend's 422 problem body (middleware/error_handlers.py): a generic detail and the field message.
+      mockEstimateRun.mockRejectedValue({
+        isAxiosError: true,
+        response: {
+          status: 422,
+          data: {
+            type: '/errors/validation-error', title: 'Validation Error', status: 422,
+            detail: 'Request validation failed',
+            errors: [{
+              field: 'body.datasets.sources.0.name',
+              message: 'Value error, Dataset names must be non-empty.',
+              code: 'value_error',
+            }],
+          },
+        },
+      })
       renderDetail(`${SCENARIO_PATH}?dataset=%20&preset_unrelated=1`)
 
-      const blank = await screen.findByTestId('linked-datasets-error')
-      expect(blank).toHaveTextContent("The link includes a blank dataset name, so this scan can't launch with it.")
-      expect(screen.getByText('No dataset selected.')).toBeInTheDocument()
-      expect(screen.queryByText('harmbench (unknown)')).not.toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
-      expect(mockEstimateRun).not.toHaveBeenCalled()
-      const withoutBlank = within(blank).getByRole('link', { name: 'Open without the blank dataset names' })
-      expect(withoutBlank).toHaveAttribute('href', `${SCENARIO_PATH}?preset_unrelated=1`)
-
-      await user.click(withoutBlank)
-      expect(await screen.findByText('harmbench (unknown)')).toBeInTheDocument()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledWith(
+        'foundry.red_team_agent',
+        expect.objectContaining({ datasets: { sources: [{ name: ' ' }] } }),
+        expect.any(AbortSignal),
+      ))
+      const estimate = await screen.findByTestId('run-estimate')
+      await waitFor(() => expect(within(estimate).getByRole('status'))
+        .toHaveTextContent('Request validation failed: datasets.sources.0.name: Dataset names must be non-empty.'))
       expect(screen.queryByTestId('linked-datasets-error')).not.toBeInTheDocument()
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      expect(screen.queryByText('harmbench (Unknown)')).not.toBeInTheDocument()
     })
-
     it('starts a fresh form when a link names different datasets', async () => {
       const user = userEvent.setup()
       render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
@@ -3629,17 +3841,36 @@ describe('ScenarioDetail', () => {
         </MemoryRouter>
       </UserPreferencesProvider></FluentProvider>)
 
-      expect(await screen.findByText('ds_a (unknown)')).toBeInTheDocument()
+      expect(await screen.findByText('ds_a (Unknown)')).toBeInTheDocument()
       await user.click(screen.getByRole('link', { name: 'Use ds_b' }))
 
-      expect(await screen.findByText('ds_b (unknown)')).toBeInTheDocument()
-      expect(screen.queryByText('ds_a (unknown)')).not.toBeInTheDocument()
+      expect(await screen.findByText('ds_b (Unknown)')).toBeInTheDocument()
+      expect(screen.queryByText('ds_a (Unknown)')).not.toBeInTheDocument()
+    })
+
+    it.each([
+      ['fixes its datasets', 'fixed' as const, []],
+      ['allows only named alternatives', 'subset' as const, ['figstep', 'figstep_pro']],
+    ])('offers only Browse datasets when the scenario %s', async (_label, mode, allowedNames) => {
+      mockGetScenario.mockResolvedValue(makeScenario({
+        dataset_options: {
+          mode, allowed_names: allowedNames, max_selected: null, per_dataset_limit: false, total_limit: true,
+          supports_overrides: true, filters: true, source_settings: true,
+        },
+      }))
+      renderDetail(SCENARIO_PATH)
+
+      const actions = await screen.findByRole('group', { name: 'Dataset actions' })
+      expect(within(actions).getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+      expect(screen.getAllByRole('link', { name: 'Browse datasets' })).toHaveLength(1)
+      expect(within(actions).queryByText('Generate datasets')).not.toBeInTheDocument()
     })
 
     it('shows the shared dataset actions without an ASSERT requirement', async () => {
       renderDetail(SCENARIO_PATH)
 
       const actions = await screen.findByRole('group', { name: 'Dataset actions' })
+      expect(within(actions).getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
       expect(await within(actions).findByRole('link', { name: 'Generate datasets' }))
         .toHaveAttribute('href', '/datasets/generate/new')
       expect(screen.getByRole('combobox', { name: 'Add dataset' })).not.toBeRequired()

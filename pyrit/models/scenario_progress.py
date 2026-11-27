@@ -15,8 +15,9 @@ from pyrit.models.catalog.scenario import (
     ScenarioOverloadSummary,
     ScenarioProducerCounts,
     ScenarioTargetSummary,
-)  # noqa: TC001
+)
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.results.attack_result import AttackOutcome, AttackResultRole
 from pyrit.models.results.scenario_result import ScenarioRunState
 from pyrit.models.retry_event import RetryEvent
@@ -64,6 +65,24 @@ class ScenarioRunPlanSeedPrompt(BaseModel):
     parameters: list[str] = Field(default_factory=list)
 
 
+class ScenarioRunPlanScorerBinding(BaseModel):
+    """
+    The objective scorer a pool selected for one atomic group.
+
+    Recorded only for runs that use a scorer pool. It is part of the group's id, so a
+    resumed run that would select a different scorer cannot match its saved groups.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Position of the selected candidate in the pool.
+    candidate_index: int = Field(ge=0)
+    #: The selected candidate's evaluation key, if it has one.
+    evaluation: str | None = None
+    #: Content hash of the selected scorer's identifier.
+    scorer_hash: str
+
+
 class ScenarioRunPlanAtomicGroup(BaseModel):
     """A planned atomic-attack group and its ordered units of work."""
 
@@ -78,6 +97,25 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
     #: None for plans persisted before kinds were recorded, so those plans round-trip unchanged.
     kind: ScenarioRunPlanGroupKind | None = None
     selected_technique_eval_hashes: list[str] | None = Field(default=None, min_length=1)
+    #: Unknown for legacy plans; saved attempts and result roles cannot establish topology.
+    is_compound: bool | None = None
+    #: The selected objective scorer for pool runs; absent for single-scorer runs.
+    objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None
+
+    @property
+    def technique_label(self) -> str:
+        """
+        Name the technique this group's results count toward.
+
+        A baseline counts as ``baseline`` whatever its display group. Groups saved without a
+        technique name otherwise count under their display group.
+
+        Returns:
+            str: The technique label.
+        """
+        if self.kind == ScenarioRunPlanGroupKind.BASELINE:
+            return ScenarioRunPlanGroupKind.BASELINE.value
+        return self.technique_name or self.display_group
 
 
 class ScenarioRunPlan(BaseModel):
@@ -87,9 +125,11 @@ class ScenarioRunPlan(BaseModel):
     scenario_registry_name: str | None = None
     atomic_groups: list[ScenarioRunPlanAtomicGroup]
     seed_groups: list[ScenarioRunPlanSeedGroup]
+    #: Absent on plans created before run-owned seed snapshots.
+    stores_seed_groups: Literal[True] | None = None
 
     @model_validator(mode="after")
-    def _validate_normalized_plan(self) -> "ScenarioRunPlan":
+    def _validate_normalized_plan(self) -> Self:
         """
         Reject ambiguous IDs and invalid normalized references.
 
@@ -127,7 +167,6 @@ class ScenarioProgressHeader(BaseModel):
     scenario_result_id: str
     scenario_name: str
     scenario_registry_name: str | None = None
-    is_assert_policy: bool = False
     scenario_version: int
     status: ScenarioRunState
     created_at: datetime
@@ -158,6 +197,7 @@ class ScenarioProgressScore(BaseModel):
     status: ScoreStatus
     score_value: str | None = None
     score_rationale: str | None = None
+    score_category: list[str] = Field(default_factory=list)
 
 
 class ScenarioComponentIdentity(BaseModel):
@@ -265,6 +305,57 @@ class ScenarioExecutionUnit(BaseModel):
     seed_group_id: str
 
 
+class ScenarioObjectiveScorerAttribution(str, Enum):
+    """How a report knows which objective scorer judged a set of execution units."""
+
+    #: The unit's effective result recorded the objective scorer it ran with.
+    RECORDED = "recorded"
+    #: Only the run plan's scorer-pool binding names the scorer.
+    PLANNED = "planned"
+    #: Only the identifier of a single-scorer run names the scorer.
+    RUN = "run"
+    #: The recorded scorer disagrees with the planned binding.
+    CONFLICT = "conflict"
+    #: Saved evidence cannot identify one scorer, including mixed or incomplete child scorer evidence.
+    UNKNOWN = "unknown"
+
+
+class ScenarioObjectiveScorerScope(str, Enum):
+    """Whether a scenario's completed results come from one identified objective scorer."""
+
+    #: One identified scorer judged every completed unit.
+    SINGLE_SCORER = "single_scorer"
+    #: Completed units were judged by more than one scorer, or by an identified and an unidentified one.
+    MIXED_SCORERS = "mixed_scorers"
+    #: Completed units exist, but the scorer that judged them is unknown or conflicting.
+    UNKNOWN_SCORER = "unknown_scorer"
+    #: No unit has completed.
+    NO_RESULTS = "no_results"
+
+
+class ScenarioObjectiveScorerStatistics(BaseModel):
+    """
+    Effective execution-unit statistics for the units one objective scorer judged.
+
+    Success rates are only comparable within one objective scorer: different scorers apply different rubrics.
+    ``attribution`` is the weakest evidence used for any attempted unit in the set.
+    """
+
+    attribution: ScenarioObjectiveScorerAttribution
+    #: Content hash of the scorer's identifier; None for unknown or conflicting attribution.
+    scorer_hash: str | None = None
+    #: The scorer's identifier when a result or the run records it.
+    scorer_identifier: ComponentIdentifier | None = None
+    #: Position of the scorer in the run's scorer pool, for pool runs.
+    candidate_index: int | None = None
+    #: The pool candidate's evaluation key, if it has one.
+    evaluation: str | None = None
+    #: Counts across the units this scorer judged.
+    overall: ScenarioProgressCounts
+    #: Counts keyed by atomic attack name.
+    atomic_attacks: dict[str, ScenarioProgressCounts] = Field(default_factory=dict)
+
+
 class ScenarioExecutionStatistics(BaseModel):
     """
     Effective execution-unit statistics for one scenario run, calculated by ``pyrit.analytics``.
@@ -286,6 +377,10 @@ class ScenarioExecutionStatistics(BaseModel):
     atomic_attack_attempts: dict[str, int] = Field(default_factory=dict)
     #: Attempts excluded from logical-unit counts, but retained in producer counts.
     unattributed_attempts: int = Field(default=0, ge=0)
+    #: Counts per objective scorer, in plan (or first-attempt) order.
+    objective_scorers: list[ScenarioObjectiveScorerStatistics] = Field(default_factory=list)
+    #: Whether one identified scorer judged every completed unit.
+    objective_scorer_scope: ScenarioObjectiveScorerScope = ScenarioObjectiveScorerScope.NO_RESULTS
 
 
 class ScenarioTechniqueProgress(ScenarioProgressCounts):
@@ -367,7 +462,10 @@ class ScenarioActiveConversation(BaseModel):
     """A saved objective conversation and the scan execution that produced it."""
 
     attack_result_id: str
+    #: The conversation the attack is working on, or the recorded objective conversation.
     conversation_id: str
+    #: Every objective conversation the attack has started so far, in first-use order.
+    conversation_ids: list[str] = Field(default_factory=list)
     atomic_attack_name: str
     seed_group_id: str | None = None
     objective: str

@@ -21,12 +21,12 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
 
-from pyrit.analytics import compute_outcome_statistics, count_execution_units, is_assert_policy_run
+from pyrit.analytics import compute_outcome_statistics, count_execution_units
 from pyrit.analytics.outcome_statistics import success_percentage
 from pyrit.analytics.scenario_statistics import (
     ScenarioAttempt,
@@ -34,12 +34,14 @@ from pyrit.analytics.scenario_statistics import (
     resolve_execution_unit,
     select_execution_attack_result_ids,
 )
+from pyrit.auth import caller_principal_context, caller_principal_scope, get_caller_principal
 from pyrit.backend.models import (
     ConversationMessagesResponse,
     PaginationInfo,
     ScenarioRunListResponse,
     filter_sensitive_fields,
 )
+from pyrit.backend.services.live_attack_reader import LiveAttack
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -89,24 +91,43 @@ from pyrit.models import (
     ScenarioQueueEntry,
     ScenarioQueueSnapshot,
     ScenarioResult,
+    ScenarioRunExecutionToken,
     ScenarioRunListItem,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunProgress,
     ScenarioRunState,
     ScenarioTechniqueSummary,
     TargetIdentifier,
     project_behavioral_identity,
 )
-from pyrit.models.catalog import AttackErrorSummary, AttackRetrySummary, RunScenarioRequest, ScenarioRunSummary
+from pyrit.models.catalog import (
+    AttackErrorSummary,
+    AttackRetrySummary,
+    RegistryEntryOrigin,
+    RunScenarioRequest,
+    ScenarioRunSummary,
+)
 from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary
 from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
+from pyrit.registry.instance_registry import (
+    PRIVATE_ENTRY_REFUSAL_KIND,
+    PrivateEntryReplacementError,
+    SavedEntryReplacementError,
+    record_saved_entry_refusals,
+    registration_origin,
+)
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
 from pyrit.scenario.core.dataset_overrides import project_dataset_settings
+from pyrit.setup.initializers import FindingsInitializer
+
+if TYPE_CHECKING:
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +155,7 @@ _RESERVED_INITIAL_METADATA_KEYS = frozenset(
         _LAUNCH_REQUEST_METADATA_KEY,
         _LAUNCH_REFERENCES_METADATA_KEY,
         _LEGACY_LAUNCH_REFERENCES_METADATA_KEY,
+        ScenarioRunExecutionToken.METADATA_KEY,
         SCENARIO_CONVERSATIONS_METADATA_KEY,
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_STARTED_AT_METADATA_KEY,
@@ -193,6 +215,10 @@ class ScenarioRunConflictError(ValueError):
     """A saved run cannot be admitted to the scheduler in its current state."""
 
 
+class SavedEntryLaunchConflictError(ScenarioRunConflictError):
+    """A launch script would replace an entry rebuilt from a saved recipe, or a name a user's private entry uses."""
+
+
 class ScenarioRunNotFoundError(ValueError):
     """The requested saved run is not in the active memory database."""
 
@@ -223,11 +249,14 @@ class _ActiveTask:
     created_at: datetime | None = None
     enqueued_at: datetime | None = None
     started_at: datetime | None = None
+    execution_token: ScenarioRunExecutionToken | None = None
     cancellation_state: ScenarioRunState = ScenarioRunState.CANCELLED
     cancellation_reason: str = _USER_CANCELLATION_REASON
     cancellation_error_type: str = "CancelledError"
     retain_error_on_terminalization: bool = False
     prepare_datasets: bool = False
+    # Captured at admission so a run queued behind another caller's run acts for its own caller.
+    caller_principal: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +264,7 @@ class _ActiveRunSnapshot:
     """Event-loop-owned state copied before database awaits allow live state to change."""
 
     error: str | None = None
+    error_token: ScenarioRunExecutionToken | None = None
     active_group_ids: tuple[str, ...] = ()
     executions: tuple[ActiveAttackExecution, ...] = ()
     queue_position: int | None = None
@@ -280,7 +310,7 @@ class ScenarioRunService:
 
         self._preparations: set[asyncio.Task[_PreparedRun]] = set()
         self._preparation_errors: list[Exception] = []
-        self._terminal_errors: OrderedDict[str, str] = OrderedDict()
+        self._terminal_errors: OrderedDict[str, tuple[str, ScenarioRunExecutionToken | None]] = OrderedDict()
         self._active_scenario_result_id: str | None = None
         self._queued_runs: deque[_ActiveTask] = deque()
         self._handoff_retry_tasks: set[asyncio.Task[None]] = set()
@@ -845,6 +875,7 @@ class ScenarioRunService:
             created_at=persisted.creation_time,
             enqueued_at=datetime.now(UTC),
             prepare_datasets=request.prepare_in_background and not request.scenario_result_id,
+            caller_principal=get_caller_principal(),
         )
         await self._enqueue_run_async(scheduled=scheduled)
 
@@ -852,6 +883,7 @@ class ScenarioRunService:
         response = await self.get_run_from_storage_async(
             scenario_result_id=scenario_result_id,
             active_error=snapshot.error,
+            active_error_token=snapshot.error_token,
             queue_position=snapshot.queue_position,
             active_scenario_result_id=snapshot.active_scenario_result_id,
         )
@@ -1080,6 +1112,7 @@ class ScenarioRunService:
         return await self.get_run_from_storage_async(
             scenario_result_id=scenario_result_id,
             active_error=snapshot.error,
+            active_error_token=snapshot.error_token,
             queue_position=snapshot.queue_position,
             active_scenario_result_id=snapshot.active_scenario_result_id,
         )
@@ -1089,6 +1122,7 @@ class ScenarioRunService:
         *,
         scenario_result_id: str,
         active_error: str | None,
+        active_error_token: ScenarioRunExecutionToken | None = None,
         queue_position: int | None = None,
         active_scenario_result_id: str | None = None,
     ) -> ScenarioRunSummary | None:
@@ -1098,6 +1132,7 @@ class ScenarioRunService:
         Args:
             scenario_result_id: The scenario result ID.
             active_error: Error copied from the active asyncio task, if any.
+            active_error_token: Execution that produced the error, if available.
             queue_position: Current 1-based waiting position, if queued.
             active_scenario_result_id: Currently executing scenario result ID.
 
@@ -1107,6 +1142,7 @@ class ScenarioRunService:
         return await self._build_response_async(
             scenario_result_id=scenario_result_id,
             active_error=active_error,
+            active_error_token=active_error_token,
             queue_position=queue_position,
             active_scenario_result_id=active_scenario_result_id,
         )
@@ -1303,6 +1339,7 @@ class ScenarioRunService:
         result = await self.get_run_from_storage_async(
             scenario_result_id=scenario_result_id,
             active_error=snapshot.error,
+            active_error_token=snapshot.error_token,
             queue_position=snapshot.queue_position,
             active_scenario_result_id=snapshot.active_scenario_result_id,
         )
@@ -1477,12 +1514,15 @@ class ScenarioRunService:
     async def _start_scheduled_run_locked_async(self, *, scheduled: _ActiveTask) -> None:
         """Start one run while the scheduler lock guarantees exclusive ownership."""
         scheduled.started_at = datetime.now(UTC)
+        execution_token = ScenarioRunExecutionToken(token=uuid.uuid4().hex)
+        scheduled.execution_token = execution_token
         await self._memory.update_scenario_run_state_and_metadata_fields_async(
             scenario_result_id=scheduled.scenario_result_id,
             scenario_run_state=ScenarioRunState.IN_PROGRESS,
             metadata_fields={
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
                 SCENARIO_RUN_STARTED_AT_METADATA_KEY: scheduled.started_at.isoformat(),
+                **execution_token.to_metadata(),
             },
         )
         self._launch_scheduled_run_locked(scheduled=scheduled)
@@ -1491,7 +1531,11 @@ class ScenarioRunService:
         """Make a run persisted as IN_PROGRESS the active run and create its execution task."""
         self._active_scenario_result_id = scheduled.scenario_result_id
         self._active_tasks[scheduled.scenario_result_id] = scheduled
-        scheduled.task = asyncio.create_task(self._execute_run_async(scenario_result_id=scheduled.scenario_result_id))
+        # A queued run starts from the previous run's handoff, so give it its own admitted caller.
+        scheduled.task = asyncio.create_task(
+            self._execute_run_async(scenario_result_id=scheduled.scenario_result_id),
+            context=caller_principal_context(scheduled.caller_principal),
+        )
         self._queue_revision += 1
 
     async def _handoff_scheduler_async(self, *, scenario_result_id: str) -> None:
@@ -1543,7 +1587,7 @@ class ScenarioRunService:
         completed = self._active_tasks.pop(scenario_result_id, None)
         if completed is None or completed.error is None:
             return
-        self._terminal_errors[scenario_result_id] = completed.error
+        self._terminal_errors[scenario_result_id] = (completed.error, completed.execution_token)
         self._terminal_errors.move_to_end(scenario_result_id)
         while len(self._terminal_errors) > _MAX_TERMINAL_ERRORS:
             self._terminal_errors.popitem(last=False)
@@ -1592,6 +1636,9 @@ class ScenarioRunService:
                         scenario_run_state=active.cancellation_state,
                         error_message=active.cancellation_reason,
                         error_type=active.cancellation_error_type,
+                        expected_metadata_fields=(
+                            active.execution_token.to_metadata() if active.execution_token is not None else None
+                        ),
                     )
                     if not active.retain_error_on_terminalization:
                         active.error = None
@@ -1661,17 +1708,43 @@ class ScenarioRunService:
         """
         Validate and execute initializers specified in the request.
 
+        Every initializer is built before any runs, so a request naming an unknown or finding-fields
+        initializer is rejected before anything changes.
+
         Args:
             request: The run request containing initializer names and args.
 
         Raises:
-            ValueError: If an initializer name is not found in the registry.
+            ValueError: If an initializer name is not found in the registry, or an initializer sets the
+                deployment's finding fields, which only setup from ``.pyrit_conf`` may do.
+            SavedEntryLaunchConflictError: If an initializer would replace a saved entry.
         """
         if not request.initializers:
             return
 
         initializer_registry = await run_legacy_sync_async(InitializerRegistry.get_registry_singleton)
-        for initializer_name in request.initializers:
+        # Setup code runs as the server, like startup: it sees only shared entries, so it can't build a
+        # shared component on the caller's private target.
+        with caller_principal_scope(None):
+            await self._run_named_initializers_async(request=request, initializer_registry=initializer_registry)
+
+    async def _run_named_initializers_async(
+        self, *, request: RunScenarioRequest, initializer_registry: InitializerRegistry
+    ) -> None:
+        """
+        Build the request's initializers, then execute them in order.
+
+        Args:
+            request: The run request containing initializer names and args.
+            initializer_registry: The registry that builds the initializers.
+
+        Raises:
+            ValueError: If an initializer name is not found in the registry, or an initializer sets the
+                deployment's finding fields.
+            SavedEntryLaunchConflictError: If an initializer would replace a saved entry.
+        """
+        instances: list[tuple[str, PyRITInitializer]] = []
+        for initializer_name in request.initializers or []:
             initializer_params = (request.initializer_args or {}).get(initializer_name)
             try:
                 instance = await run_legacy_sync_async(
@@ -1679,7 +1752,61 @@ class ScenarioRunService:
                 )
             except KeyError as e:
                 raise ValueError(f"Initializer not found: {e}") from None
-            await instance.initialize_async()
+            if isinstance(instance, FindingsInitializer):
+                raise ValueError(
+                    f"Initializer '{initializer_name}' sets the deployment's finding fields, so it can run only "
+                    "from .pyrit_conf, not for one scenario run."
+                )
+            instances.append((initializer_name, instance))
+        for initializer_name, instance in instances:
+            # The registries refuse to replace a saved entry or a user's private entry; the record also
+            # catches a refusal that the script itself caught, which would leave that entry in its place.
+            with record_saved_entry_refusals() as refusals, registration_origin(RegistryEntryOrigin.TEMPORARY):
+                try:
+                    await instance.initialize_async()
+                except SavedEntryReplacementError as error:
+                    refusals.append((error.kind, error.name))
+                except PrivateEntryReplacementError as error:
+                    refusals.append((PRIVATE_ENTRY_REFUSAL_KIND, error.name))
+                except Exception as error:
+                    # A script can wrap the refusal in an error of its own; the clash is still why it stopped.
+                    if refusals:
+                        raise self._saved_entry_conflict(
+                            initializer_name=initializer_name, refusals=refusals
+                        ) from error
+                    raise
+            if refusals:
+                raise self._saved_entry_conflict(initializer_name=initializer_name, refusals=refusals)
+
+    @staticmethod
+    def _saved_entry_conflict(
+        *, initializer_name: str, refusals: list[tuple[str, str]]
+    ) -> SavedEntryLaunchConflictError:
+        """
+        Describe the saved entries, and names private entries use, that a launch script would have replaced.
+
+        Args:
+            initializer_name (str): The launch script's name.
+            refusals (list[tuple[str, str]]): The kind and name of each refused entry; the kind is
+                ``PRIVATE_ENTRY_REFUSAL_KIND`` for a name a user's private entry uses.
+
+        Returns:
+            SavedEntryLaunchConflictError: The error to raise.
+        """
+        unique = list(dict.fromkeys(refusals))
+        saved = [(kind, name) for kind, name in unique if kind != PRIVATE_ENTRY_REFUSAL_KIND]
+        private = [name for kind, name in unique if kind == PRIVATE_ENTRY_REFUSAL_KIND]
+        reasons: list[str] = []
+        if saved:
+            entries = ", ".join(f"{kind.removesuffix('s')} '{name}'" for kind, name in saved)
+            reasons.append(f"The launch script '{initializer_name}' would replace the saved {entries}.")
+        if private:
+            names = ", ".join(f"'{name}'" for name in private)
+            reasons.append(
+                f"The launch script '{initializer_name}' can't register {names} because the names are in use "
+                "by private entries until the server restarts."
+            )
+        return SavedEntryLaunchConflictError(f"{' '.join(reasons)} Leave that script out of the launch.")
 
     async def _initialize_scenario_async(
         self,
@@ -1838,14 +1965,29 @@ class ScenarioRunService:
                 await active.scenario.run_async()
 
         except asyncio.CancelledError:
+            expected_metadata_fields = (
+                active.execution_token.to_metadata() if active.execution_token is not None else None
+            )
             try:
-                await self._memory.try_update_scenario_run_state_async(
+                updated = await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
                     expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
                     scenario_run_state=active.cancellation_state,
                     error_message=active.cancellation_reason,
                     error_type=active.cancellation_error_type,
+                    expected_metadata_fields=expected_metadata_fields,
                 )
+                if not updated and active.cancellation_state != ScenarioRunState.CANCELLED:
+                    # Scenario.run_async may already have stored CANCELLED.
+                    # Match it atomically so a concurrent continuation is not overwritten.
+                    await self._memory.try_update_scenario_run_state_async(
+                        scenario_result_id=scenario_result_id,
+                        expected_states={ScenarioRunState.CANCELLED},
+                        scenario_run_state=active.cancellation_state,
+                        error_message=active.cancellation_reason,
+                        error_type=active.cancellation_error_type,
+                        expected_metadata_fields=expected_metadata_fields,
+                    )
             except Exception as exc:
                 handoff_ready = False
                 active.error = str(exc)
@@ -1861,6 +2003,9 @@ class ScenarioRunService:
             active.cancellation_reason = error_message
             active.cancellation_error_type = type(e).__name__
             active.retain_error_on_terminalization = True
+            expected_metadata_fields = (
+                active.execution_token.to_metadata() if active.execution_token is not None else None
+            )
             try:
                 await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
@@ -1868,6 +2013,7 @@ class ScenarioRunService:
                     scenario_run_state=ScenarioRunState.FAILED,
                     error_message=error_message,
                     error_type=type(e).__name__,
+                    expected_metadata_fields=expected_metadata_fields,
                 )
             except Exception:
                 handoff_ready = False
@@ -1887,6 +2033,7 @@ class ScenarioRunService:
         active_error: str | None,
         queue_position: int | None,
         active_scenario_result_id: str | None,
+        active_error_token: ScenarioRunExecutionToken | None = None,
     ) -> ScenarioRunSummary | None:
         """
         Build a ScenarioRunResponse by querying the database and merging active task state.
@@ -1894,6 +2041,7 @@ class ScenarioRunService:
         Args:
             scenario_result_id: The scenario result ID.
             active_error: Error copied from the active asyncio task, if any.
+            active_error_token: Execution that produced the error, if available.
             queue_position: Current 1-based waiting position, if queued.
             active_scenario_result_id: Currently executing scenario result ID.
 
@@ -1903,6 +2051,10 @@ class ScenarioRunService:
         results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
         if not results:
             return None
+        if active_error_token is not None and any(
+            results[0].metadata.get(key) != value for key, value in active_error_token.to_metadata().items()
+        ):
+            active_error = None
         return await self._build_response_from_db_async(
             scenario_result=results[0],
             active_error=active_error,
@@ -1998,7 +2150,7 @@ class ScenarioRunService:
         objective_achieved_rate = overall_counts.success_percentage or 0
         successful_attacks = overall_counts.succeeded
         techniques_used = (
-            list(dict.fromkeys(group.technique_name or group.display_group for group in plan.atomic_groups))
+            list(dict.fromkeys(group.technique_label for group in plan.atomic_groups))
             if plan is not None
             else scenario_result.get_techniques_used()
         )
@@ -2400,7 +2552,7 @@ class ScenarioRunService:
         if terminal and record.completed_at is not None:
             timestamps.append(record.completed_at)
         techniques = (
-            list(dict.fromkeys(group.technique_name or group.display_group for group in atomic_groups))
+            list(dict.fromkeys(group.technique_label for group in atomic_groups))
             if atomic_groups is not None
             else list(aggregate.atomic_attack_names)
         )
@@ -2645,19 +2797,37 @@ class ScenarioRunService:
         )
         active = self._get_active_task(scenario_result_id=scenario_result_id)
         if active is None:
+            error, error_token = self._terminal_errors.get(scenario_result_id, (None, None))
             return _ActiveRunSnapshot(
-                error=self._terminal_errors.get(scenario_result_id),
+                error=error,
+                error_token=error_token,
                 queue_position=queue_position,
                 active_scenario_result_id=active_scenario_result_id,
             )
         active_group_ids = tuple(sorted(active.scenario.active_atomic_group_ids)) if active.scenario is not None else ()
         return _ActiveRunSnapshot(
             error=active.error,
+            error_token=active.execution_token,
             active_group_ids=active_group_ids,
             executions=active.scenario.active_executions if active.scenario is not None else (),
             queue_position=queue_position,
             active_scenario_result_id=active_scenario_result_id,
         )
+
+    def find_live_attack(self, *, attack_result_id: str) -> LiveAttack | None:
+        """
+        Find an attack that an active scan is still running.
+
+        Returns:
+            LiveAttack | None: The running attack and its scan, or None when no active scan is running it
+                or it has not started an objective conversation yet.
+        """
+        for scenario_result_id in list(self._active_tasks):
+            snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
+            for execution in snapshot.executions:
+                if execution.attack_result_id == attack_result_id:
+                    return LiveAttack.from_execution(scenario_result_id=scenario_result_id, execution=execution)
+        return None
 
     def _load_run_plan(self, *, scenario_result: ScenarioResult) -> ScenarioRunPlan | None:
         """
@@ -2700,7 +2870,8 @@ class ScenarioRunService:
         enriched_groups: list[ScenarioRunPlanAtomicGroup] = []
         for group in atomic_groups:
             technique_name = group.technique_name
-            if technique_name is None:
+            # A baseline runs no technique, even when its display group shares a technique's name.
+            if technique_name is None and group.kind != ScenarioRunPlanGroupKind.BASELINE:
                 technique_name = next(
                     (
                         candidate
@@ -2798,6 +2969,7 @@ class ScenarioRunService:
                 ScenarioActiveConversation(
                     attack_result_id=execution.attack_result_id,
                     conversation_id=conversation_id,
+                    conversation_ids=list(execution.conversation_ids),
                     atomic_attack_name=attribution.parent_collection,
                     seed_group_id=attribution.seed_group_id,
                     objective=execution.objective,
@@ -2857,7 +3029,6 @@ class ScenarioRunService:
             active_group_ids=active_group_ids,
             terminal=terminal,
             objective_scorer_identifier=objective_scorer_identifier,
-            legacy_display_group_map=header_result.display_group_map if is_assert_policy_run(header_result) else None,
         )
         progress = self._build_progress_response(
             header_result=header_result,
@@ -2918,9 +3089,7 @@ class ScenarioRunService:
         scenario_identifier = header_result.scenario_identifier
         target, datasets_used, scenario_parameters = self._safe_run_metadata(scenario_identifier=scenario_identifier)
         if plan is not None:
-            techniques_used = list(
-                dict.fromkeys(group.technique_name or group.display_group for group in plan.atomic_groups)
-            )
+            techniques_used = list(dict.fromkeys(group.technique_label for group in plan.atomic_groups))
         else:
             techniques_used = self._identifier_techniques(scenario_identifier)
         scenario_identity = ScenarioProgressReadModel._build_component_identity(
@@ -2933,7 +3102,6 @@ class ScenarioRunService:
                 scenario_result_id=scenario_result_id,
                 scenario_name=header_result.scenario_name,
                 scenario_registry_name=plan.scenario_registry_name if plan else None,
-                is_assert_policy=is_assert_policy_run(header_result),
                 scenario_version=header_result.scenario_version,
                 status=header_result.scenario_run_state,
                 created_at=header_result.creation_time,
@@ -3150,10 +3318,7 @@ class ScenarioRunService:
             scenario_result_id=scenario_result_id, roots=roots, max_nodes=max_nodes
         )
         aggregate = await self._get_hierarchy_aggregate_async(scenario_result_id=scenario_result_id, plan=plan)
-        summary_plan = plan or self._progress_read_model._synthesize_legacy_plan(
-            deltas=deltas,
-            display_group_map=header_result.display_group_map if is_assert_policy_run(header_result) else None,
-        )
+        summary_plan = plan or self._progress_read_model._synthesize_legacy_plan(deltas=deltas)
         plan_lookup = ScenarioPlanLookup.from_plan(plan=summary_plan)
         results = tuple(
             self._progress_read_model._map_progress_delta(delta=delta, plan_lookup=plan_lookup) for delta in deltas
@@ -3363,6 +3528,19 @@ def peek_scenario_run_service() -> ScenarioRunService | None:
     return _service_instance
 
 
+def find_live_attack(attack_result_id: str) -> LiveAttack | None:
+    """
+    Find a running scan attack in the current service, without constructing one.
+
+    Resolves the service on every call, so the lookup stays valid across service resets.
+
+    Returns:
+        LiveAttack | None: The running attack, or None when no active scan is running it.
+    """
+    service = peek_scenario_run_service()
+    return service.find_live_attack(attack_result_id=attack_result_id) if service is not None else None
+
+
 async def reset_scenario_run_service_async() -> None:
     """Close and discard the drained singleton."""
     global _service_instance
@@ -3391,7 +3569,9 @@ def get_scenario_run_service() -> ScenarioRunService:
 
         max_runs = getattr(app.state, "max_concurrent_scenario_runs", _DEFAULT_MAX_CONCURRENT_RUNS)
     except Exception:
-        pass
+        logger.debug(
+            "Could not read max_concurrent_scenario_runs from the backend app; using the default.", exc_info=True
+        )
 
     _service_instance = ScenarioRunService(max_concurrent_runs=max_runs)
     return _service_instance

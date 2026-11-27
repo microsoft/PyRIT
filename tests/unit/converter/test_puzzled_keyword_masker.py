@@ -564,3 +564,23 @@ def test_get_nlp_waits_for_concurrent_initialization():
         assert first.result(timeout=5) is sentinel
         assert second.result(timeout=5) is sentinel
     assert load_count == 1
+
+
+# --- ranking tests ----------------------------------------------------------
+
+
+def test_rank_candidates_prioritizes_essential_words():
+    prompt = "how to hack the vault quickly"
+    ranked = keyword_masker._rank_candidates(
+        prompt,
+        pos_lookup={},
+        essential_words=["vault"],
+    )
+    assert ranked[0] == "vault"
+
+
+def test_rank_candidates_none_essential_words():
+    prompt = "how to hack the vault quickly"
+    # With no essential words, candidates are still ranked normally.
+    ranked = keyword_masker._rank_candidates(prompt, pos_lookup={}, essential_words=None)
+    assert len(ranked) > 0

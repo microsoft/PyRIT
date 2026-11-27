@@ -47,6 +47,7 @@ from pyrit.registry import (
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
 )
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ENTRY_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -616,7 +617,7 @@ async def test_cancel_recovers_and_cancels_child_admitted_before_response(
             name="weekly",
             request=_launch_request(suite_version=stored.version),
         )
-        await asyncio.wait_for(admitted.wait(), timeout=5)
+        await asyncio.wait_for(admitted.wait(), timeout=TEST_WATCHDOG_SECONDS)
 
         cancelling = await service.cancel_execution_async(execution_id=accepted.suite_execution_id)
 
@@ -642,6 +643,20 @@ async def test_cancel_recovers_and_cancels_child_admitted_before_response(
     ]
     run_service.cancel_run_async.assert_awaited_once_with(scenario_result_id="run-1")
     assert len(calls) == 1
+
+
+def test_execution_status_surfaces_failures_behind_cancellations() -> None:
+    """A failed entry outranks cancelled entries in the aggregate."""
+    entries = [
+        MagicMock(state=ScenarioRunState.FAILED),
+        MagicMock(state=ScenarioRunState.CANCELLED),
+    ]
+    assert ScenarioSuiteExecutionService._execution_status(entries=entries) == ScenarioSuiteExecutionStatus.FAILED
+    # Pure cancellations keep reporting CANCELLED.
+    assert (
+        ScenarioSuiteExecutionService._execution_status(entries=[MagicMock(state=ScenarioRunState.CANCELLED)])
+        == ScenarioSuiteExecutionStatus.CANCELLED
+    )
 
 
 async def test_retention_rejects_active_capacity_and_evicts_terminal_execution(

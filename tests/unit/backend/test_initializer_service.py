@@ -5,11 +5,11 @@
 Tests for backend initializer service and routes.
 """
 
+import logging
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from azure.core.exceptions import AzureError
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
@@ -26,6 +26,7 @@ from pyrit.backend.models.initializers import (
 from pyrit.backend.services import InitializerService, get_initializer_service
 from pyrit.models import Parameter
 from pyrit.registry import InitializerMetadata
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
 
 
 @pytest.fixture
@@ -148,6 +149,18 @@ class TestInitializerServiceListInitializers:
             assert result.items[1].initializer_name == "init_3"
             assert result.pagination.has_more is True
 
+    async def test_list_initializers_rejects_a_cursor_that_names_no_initializer(self) -> None:
+        """A stale cursor must raise, not silently restart at the first page."""
+        metadata_list = [_make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(5)]
+
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
+
+            with pytest.raises(ValueError, match="cursor is not valid for the initializer registry"):
+                await service.list_initializers_async(limit=2, cursor="removed_initializer")
+
     async def test_list_initializers_last_page_has_more_false(self) -> None:
         metadata_list = [_make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(3)]
 
@@ -254,6 +267,30 @@ class TestInitializerRoutes:
             assert item["required_env_vars"] == ["AZURE_OPENAI_ENDPOINT"]
             assert item["supported_parameters"][0]["name"] == "tags"
             assert item["supported_parameters"][0]["default"] == ["default"]
+
+    def test_list_initializers_returns_400_after_the_cursor_initializer_is_removed(self, client: TestClient) -> None:
+        """Removing the initializer a client's cursor names must not replay the first page."""
+        metadata_list = [_make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(3)]
+
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
+
+            with patch("pyrit.backend.routes.initializers.get_initializer_service", return_value=service):
+                first = client.get("/api/initializers?limit=1")
+                cursor = first.json()["pagination"]["next_cursor"]
+                assert cursor == "init_0"
+                assert (
+                    client.get(f"/api/initializers?limit=1&cursor={cursor}").json()["items"][0]["initializer_name"]
+                    == "init_1"
+                )
+
+                service._registry.get_all_registered_class_metadata.return_value = metadata_list[1:]
+                response = client.get(f"/api/initializers?limit=1&cursor={cursor}")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["detail"] == "The cursor is not valid for the initializer registry"
 
     def test_list_initializers_passes_pagination_params(self, client: TestClient) -> None:
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
@@ -470,13 +507,20 @@ class TestCustomInitializerRoutes:
         self,
         client_with_custom_initializers_enabled: TestClient,
         operation: str,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Test Blob failures are returned without exposing Azure SDK details."""
-        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+        """Test that the log names the storage location and the response doesn't."""
+        error = DocumentStorageUnavailableError(
+            label="Custom initializer", source="/srv/initializers", reason="Permission denied"
+        )
+        with (
+            patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service,
+            caplog.at_level(logging.WARNING, logger="pyrit.backend.middleware.error_handlers"),
+        ):
             mock_service = MagicMock()
-            mock_service.list_custom_initializers_async = AsyncMock(side_effect=AzureError("credential details"))
-            mock_service.register_initializer_async = AsyncMock(side_effect=AzureError("credential details"))
-            mock_service.unregister_initializer_async = AsyncMock(side_effect=AzureError("credential details"))
+            mock_service.list_custom_initializers_async = AsyncMock(side_effect=error)
+            mock_service.register_initializer_async = AsyncMock(side_effect=error)
+            mock_service.unregister_initializer_async = AsyncMock(side_effect=error)
             mock_get_service.return_value = mock_service
             if operation == "list":
                 response = client_with_custom_initializers_enabled.get("/api/initializers/custom")
@@ -489,7 +533,29 @@ class TestCustomInitializerRoutes:
                 response = client_with_custom_initializers_enabled.delete("/api/initializers/custom")
 
         assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-        assert response.json()["detail"] == "Custom initializer storage is temporarily unavailable"
+        assert response.json()["detail"] == "Custom initializer storage is unavailable"
+        assert "/srv/initializers" not in response.text
+        assert "Custom initializer storage at /srv/initializers is unavailable: Permission denied" in caplog.text
+
+    def test_deleting_a_script_that_cant_be_read_returns_503_with_the_reason(
+        self, client_with_custom_initializers_enabled: TestClient
+    ) -> None:
+        error = DocumentUnreadableError(
+            label="Custom initializer",
+            source="/srv/initializers",
+            name="custom",
+            file_name="custom.py",
+            reason="Not a regular file",
+        )
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.unregister_initializer_async = AsyncMock(side_effect=error)
+            mock_get_service.return_value = mock_service
+
+            response = client_with_custom_initializers_enabled.delete("/api/initializers/custom")
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json()["detail"] == "Custom initializer 'custom' can't be read: Not a regular file"
 
     def test_post_root_still_registers_runtime_initializer(
         self, client_with_custom_initializers_enabled: TestClient

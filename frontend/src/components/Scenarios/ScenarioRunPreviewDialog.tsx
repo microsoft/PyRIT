@@ -46,7 +46,7 @@ interface ScenarioRunPreviewDialogProps {
   adversarialTarget: string | null
   /** The selected techniques, or null when the scenario takes neither techniques nor a baseline. */
   techniques: { baseline: boolean, names: string[] } | null
-  techniqueOverride?: TechniqueOverride
+  techniqueOverride?: TechniqueOverride | undefined
   datasets: DatasetSelectionPreview | null
   dynamicParameters: Parameter[]
   scenarioParamValues: Record<string, ParameterFormValue>

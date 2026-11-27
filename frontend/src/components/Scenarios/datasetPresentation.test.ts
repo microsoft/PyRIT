@@ -26,15 +26,17 @@ describe('datasetTotalLimit', () => {
 })
 
 describe('datasetNameWithOrigin', () => {
-  it.each(['local', 'remote', 'generated', 'user'])('displays recorded %s origin', (origin) => {
+  it.each([
+    ['local', 'Local files'], ['remote', 'Remote provider'], ['generated', 'Generated'], ['user', 'User'],
+  ])('displays recorded %s origin with the catalog label', (origin, label) => {
     expect(datasetNameWithOrigin('sample', {
       name: 'sample', selection_key: 'dataset:named:sample', loaded: true, provider_available: false,
       origins: [origin], logical_examples: 1, seed_pieces: 1, objectives: 1, modalities: [], harm_categories: [],
       has_unlabeled_harm_categories: false,
-    })).toBe(`sample (${origin})`)
+    })).toBe(`sample (${label})`)
   })
   it('does not guess the origin of an unloaded dataset', () => {
-    expect(datasetNameWithOrigin('sample', undefined)).toBe('sample (unknown)')
+    expect(datasetNameWithOrigin('sample', undefined)).toBe('sample (Unknown)')
   })
 })
 

@@ -5,23 +5,21 @@
 
 import base64
 import json
-import logging
-import threading
+import re
 from collections import Counter
 from collections.abc import Generator
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from unit.assert_mocks import make_assert_config, make_assert_result, make_assert_systematization, make_assert_taxonomy
 from unit.mocks import MockPromptTarget
 
-from pyrit.analytics import compute_scenario_statistics
+from pyrit.analytics import compute_assert_policy_metrics_async, compute_scenario_statistics
 from pyrit.converter import Base64Converter, TranslationConverter
 from pyrit.datasets import AssertProvider
-from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack, TreeOfAttacksWithPruningAttack
 from pyrit.executor.promptgen import AssertGeneratorResult
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
@@ -29,25 +27,19 @@ from pyrit.models import (
     AssertDimensionResult,
     AssertGenerationConfig,
     AssertGroupMetadata,
-    AssertSampleVotes,
     AssertSkipReason,
     AssertTaxonomy,
     AttackOutcome,
-    BoundedDatasetSize,
-    ConversationScorable,
     Message,
-    MessagePiece,
-    MessageScorable,
     PromptResponseError,
     ScenarioEvaluationIdentifier,
-    ScenarioRunSizeEstimateStatus,
-    ScoringExpectation,
     SeedObjective,
+    ViolatesAssertPolicy,
     construct_response_from_request,
 )
 from pyrit.models.scenario_readiness import ScenarioConfigurationError
-from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
-from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, SourceRegistry
+from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry
 from pyrit.scenario import (
     AttackTechniqueFactory,
     BaselineAttackPolicy,
@@ -60,16 +52,11 @@ from pyrit.scenario.scenarios.airt.cyber import _build_cyber_technique
 from pyrit.scenario.scenarios.foundry import AssertPolicy
 from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_technique
 from pyrit.score import (
-    AssertJudgmentMode,
+    AssertJudgeScorer,
     AssertScoringDimension,
-    LocalTraceCapture,
     SubStringScorer,
-    TraceEvidenceRequirement,
-    TrueFalseCompositeScorer,
-    build_assert_policy_scorer,
     get_assert_failure_criterion,
 )
-from pyrit.score.assert_judge_presets import resolve_assert_judge_dimensions
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -166,10 +153,11 @@ class _Harness:
         self.target_reply = _SAFE_REPLY
         self.target_error: PromptResponseError = "none"
         self.policy_violation = False
+        self.policy_node_judgments: dict[str, bool] | None = None
         self.overrefusal = False
 
     def scenario(self, **kwargs: Any) -> AssertPolicy:
-        return AssertPolicy(adversarial_chat=self.adversarial, judge_target=self.judge, **kwargs)
+        return AssertPolicy(adversarial_chat=self.adversarial, **kwargs)
 
     async def target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         self.target_requests.append(normalized_conversation)
@@ -196,8 +184,13 @@ class _Harness:
             "metadata": "Judge evidence.",
         }
         if "node_judgments" in system:
-            node = {"node_name": "public_policy", "confidence": "high", "reasoning": "Relevant."}
-            payload["node_judgments"] = [{**node, "violated": verdict and not overrefusal}]
+            judgments = self.policy_node_judgments
+            if judgments is None:
+                judgments = {"public_policy": verdict and not overrefusal}
+            payload["node_judgments"] = [
+                {"node_name": name, "confidence": "high", "reasoning": "Relevant.", "violated": violated}
+                for name, violated in judgments.items()
+            ]
         return _reply(normalized_conversation[-1], value=json.dumps(payload))
 
     @contextmanager
@@ -210,7 +203,7 @@ class _Harness:
             yield
 
     async def initialize_async(self, scenario: AssertPolicy, **args: Any) -> AssertPolicy:
-        scenario.set_params_from_args(args={"objective_target": self.objective, **args})
+        scenario.set_params_from_args(args={"objective_target": self.objective, "scoring_target": self.judge, **args})
         await scenario.initialize_async()
         return scenario
 
@@ -234,10 +227,6 @@ def _reference(system: str) -> dict[str, Any]:
     return reference
 
 
-def _judged(scorer: Any) -> Any:
-    return scorer._scorer
-
-
 def _dimension(score: Any) -> str | None:
     result = AssertDimensionResult.from_metadata(metadata=score.score_metadata)
     return result.dimension if result is not None else None
@@ -256,34 +245,25 @@ async def _scores_for_async(result: Any) -> list[Any]:
 def test_registry_name_and_argument_free_construction() -> None:
     assert ScenarioRegistry.get_registry_singleton().get_class("foundry.assert_policy") is AssertPolicy
     scenario = AssertPolicy()
-    assert scenario._objective_scorer_identifier.class_name == "_AssertPlaceholderScorer"
     assert ScenarioRegistry.supports_objective_scorer(AssertPolicy)
     technique_class = _build_assert_policy_technique()
     assert scenario._technique_class is technique_class
     assert [technique.value for technique in technique_class.expand({technique_class.default()})] == ["assert_package"]
-    assert AssertPolicy.VERSION == 2
+    assert AssertPolicy.VERSION == 3
     assert AssertPolicy.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Enabled
     assert {parameter.name: parameter.default for parameter in AssertPolicy.additional_parameters()} == {
         "max_turns": 6,
-        "judgment_mode": AssertJudgmentMode.CATEGORY_VALIDATED,
         "target_system_prompt": None,
-        "judge_presets": None,
-        "judge_preset_files": None,
-        "disabled_judge_dimensions": None,
-        "judge_samples": 1,
-        "objective_dimension": "policy_violation",
-        "trace_source": None,
-        "trace_requirement": TraceEvidenceRequirement.NONE,
     }
 
 
-async def test_default_estimate_is_bounded_without_datasets_async() -> None:
-    estimate = await AssertPolicy().get_default_run_size_estimate_async()
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
-    assert estimate.dataset_size == BoundedDatasetSize(value=1)
-    assert estimate.total_attack_count == 2
-    assert estimate.datasets == []
-    assert "--datasets" in (estimate.note or "")
+@pytest.mark.parametrize("args", [{}, {"dataset_overrides": {"max_total": 3}}])
+async def test_estimate_without_datasets_asks_for_one_async(args: dict[str, Any]) -> None:
+    scenario = AssertPolicy()
+    assert scenario.get_dataset_options().min_selected == 1
+    scenario.set_params_from_args(args=args)
+    with pytest.raises(ValueError, match=r"^Select a dataset\.$"):
+        await scenario.get_run_size_estimate_async()
 
 
 @pytest.mark.parametrize(
@@ -291,12 +271,6 @@ async def test_default_estimate_is_bounded_without_datasets_async() -> None:
     [
         ({"max_turns": 0}, "max_turns"),
         ({"target_system_prompt": "  "}, "target_system_prompt"),
-        ({"judge_presets": ["no-such-preset"]}, "Unknown judge preset"),
-        ({"judge_presets": ["../judge_presets/safety-core"]}, "judge settings"),
-        ({"judge_preset_files": ["missing.yaml"]}, "not found"),
-        ({"disabled_judge_dimensions": ["hallucination"]}, "Unknown disabled"),
-        ({"disabled_judge_dimensions": ["policy_violation"]}, "objective_dimension"),
-        ({"judge_samples": 0}, "judge settings"),
     ],
 )
 async def test_invalid_parameters_are_rejected_before_reading_data_async(args: dict[str, Any], message: str) -> None:
@@ -306,8 +280,8 @@ async def test_invalid_parameters_are_rejected_before_reading_data_async(args: d
         await scenario.get_run_size_estimate_async()
 
 
-async def test_run_without_datasets_names_the_dataset_flag_async(harness: _Harness) -> None:
-    with pytest.raises(ValueError, match="--datasets"):
+async def test_run_without_datasets_asks_for_one_async(harness: _Harness) -> None:
+    with pytest.raises(ValueError, match=r"^Select a dataset\.$"):
         await harness.initialize_async(harness.scenario())
 
 
@@ -319,49 +293,42 @@ async def test_group_without_assert_metadata_names_the_dataset_async(harness: _H
         await harness.initialize_async(harness.scenario(), **_datasets("plain"))
 
 
-@pytest.mark.parametrize("mode", list(AssertJudgmentMode))
-async def test_each_unit_uses_its_own_group_judges_async(harness: _Harness, mode: AssertJudgmentMode) -> None:
+async def test_each_unit_passes_its_group_policy_to_the_default_judge_async(harness: _Harness) -> None:
     taxonomy_b = _taxonomy_b()
     await _store_async(name="assert_a", result=_result(context="Store A support desk."))
     await _store_async(
         name="assert_b", result=_result(system_prompt=_SYSTEM_B, taxonomy=taxonomy_b, context="Store B forum.")
     )
-    scenario = await harness.initialize_async(
-        harness.scenario(), judgment_mode=mode.value, **_datasets("assert_a", "assert_b")
-    )
+    scenario = await harness.initialize_async(harness.scenario(), **_datasets("assert_a", "assert_b"))
 
     assert len(scenario._atomic_attacks) == 8
-    assert isinstance(scenario._objective_scorer, TrueFalseCompositeScorer)
-    assert len(scenario._objective_scorer._scorers) == 4
+    objective = scenario._objective_scorer
+    assert isinstance(objective, AssertJudgeScorer)
+    assert objective.dimension_name == AssertScoringDimension.POLICY_VIOLATION.value
+    assert objective.get_chat_target() is harness.judge
     expected = {
-        _SYSTEM_A: (make_assert_taxonomy(), "Store A support desk."),
-        _SYSTEM_B: (taxonomy_b, "Store B forum."),
+        _SYSTEM_A: ViolatesAssertPolicy(
+            taxonomy=make_assert_taxonomy(), application_context="Store A support desk.", target_instructions=_SYSTEM_A
+        ),
+        _SYSTEM_B: ViolatesAssertPolicy(
+            taxonomy=taxonomy_b, application_context="Store B forum.", target_instructions=_SYSTEM_B
+        ),
     }
     for attack in scenario._atomic_attacks:
         (group,) = attack.seed_groups
         technique, logical_id = attack.atomic_attack_name.split("__")
         assert logical_id == group.logical_id
         metadata = AssertGroupMetadata.from_metadata(group.objective.metadata)
-        assert attack.display_group.startswith(f'{json.dumps(metadata.behavior_category)} / "customer_support"')
         assert attack.technique_name == (None if technique == "baseline" else technique)
         system_prompt = next(prompt.value for prompt in group.prompts if prompt.role == "system")
-        taxonomy, context = expected[system_prompt]
+        policy_id = expected[system_prompt].policy_id[:8]
+        assert attack.display_group == f"customer_support (policy {policy_id}): {metadata.behavior_category}"
         config = attack.attack_technique.attack.get_attack_scoring_config()
+        assert config.objective_scorer is objective
+        assert [scorer.dimension_name for scorer in config.auxiliary_scorers] == ["overrefusal"]
+        assert config.auxiliary_scorers[0].get_chat_target() is harness.judge
         assert config.use_score_as_feedback is False or technique == "baseline"
-        for scorer, dimension in (
-            (config.objective_scorer, AssertScoringDimension.POLICY_VIOLATION),
-            (config.auxiliary_scorers[0], AssertScoringDimension.OVERREFUSAL),
-        ):
-            built = build_assert_policy_scorer(
-                target=harness.judge,
-                taxonomy=taxonomy,
-                dimension=dimension,
-                application_context=context,
-                target_system_prompt=system_prompt,
-                judgment_mode=mode,
-            )
-            assert _judged(scorer).get_identifier() == built.get_identifier()
-            assert _judged(scorer).raise_if_scorer_blocks is False
+        assert attack._attack_execute_params["expectation"].conditions == (expected[system_prompt],)
 
 
 @pytest.mark.parametrize("pending", [False, True])
@@ -373,6 +340,7 @@ async def test_run_groups_baseline_and_selected_techniques_once_per_generated_ca
     scenario.set_params_from_args(
         args={
             "objective_target": harness.objective,
+            "scoring_target": harness.judge,
             "scenario_techniques": [_technique("assert_package"), _technique("red_teaming")],
             **_datasets("assert_a"),
         }
@@ -414,30 +382,60 @@ async def test_run_groups_baseline_and_selected_techniques_once_per_generated_ca
     )
 
 
-async def test_same_category_names_are_qualified_by_generated_policy_async(
+async def test_baselines_report_baseline_even_when_a_category_is_named_like_a_technique_async(
     harness: _Harness,
 ) -> None:
+    taxonomy_data = make_assert_taxonomy().model_dump(mode="json")
+    taxonomy_data["behavior_categories"][0]["name"] = "red_teaming"
+    await _store_async(
+        name="assert_a", result=_result(group_count=2, taxonomy=AssertTaxonomy.model_validate(taxonomy_data))
+    )
+    scenario = await harness.initialize_async(
+        harness.scenario(),
+        scenario_techniques=[_technique("assert_package"), _technique("red_teaming")],
+        **_datasets("assert_a"),
+    )
+
+    plan = scenario._build_run_plan()
+    assert "red_teaming" in {group.display_group for group in plan.atomic_groups}
+    techniques = {
+        (group.atomic_attack_name.split("__")[0], group.technique_name, group.technique_label)
+        for group in plan.atomic_groups
+    }
+    assert techniques == {
+        ("baseline", None, "baseline"),
+        ("assert_package", "assert_package", "assert_package"),
+        ("red_teaming", "red_teaming", "red_teaming"),
+    }
+    assert all(not group.tags for group in plan.atomic_groups if group.technique_name is None)
+
+
+@pytest.mark.parametrize("difference", ["taxonomy", "behavior_description"])
+async def test_category_headers_name_the_judged_policy_async(harness: _Harness, difference: str) -> None:
     await _store_async(name="assert_a", result=_result(group_count=1))
-    await _store_async(name="assert_b", result=_result(group_count=1, taxonomy=_taxonomy_b()))
+    second = (
+        _result(group_count=1, taxonomy=_taxonomy_b())
+        if difference == "taxonomy"
+        else _result(group_count=1, behavior_description="Help customers with refunds.")
+    )
+    await _store_async(name="assert_b", result=second)
     scenario = await harness.initialize_async(harness.scenario(), **_datasets("assert_a", "assert_b"))
+
     labels = {attack.display_group for attack in scenario._atomic_attacks}
-    assert labels == {f'"public_policy" / "customer_support" (policy {policy})' for policy in (1, 2)}
-    assert len(scenario._atomic_attacks) == 4
-    by_label: dict[str, set[str]] = {}
+    if difference == "behavior_description":
+        # The judge doesn't read the description, so both datasets hold one policy.
+        assert labels == {"public_policy"}
+        return
+    assert len(labels) == 2
     for attack in scenario._atomic_attacks:
-        metadata = AssertGroupMetadata.from_metadata(attack.seed_groups[0].objective.metadata)
-        by_label.setdefault(attack.display_group, set()).add(metadata.taxonomy.behavior.definition)
-    assert all(len(policies) == 1 for policies in by_label.values())
+        policy = attack._attack_execute_params["expectation"].conditions[0]
+        assert attack.display_group == f"customer_support (policy {policy.policy_id[:8]}): public_policy"
 
 
-async def test_policy_category_display_labels_are_collision_free_async(harness: _Harness) -> None:
-    def result_with_names(
-        *, behavior_name: str, category_name: str, behavior_definition: str | None = None
-    ) -> AssertGeneratorResult:
+async def test_category_headers_stay_distinct_when_names_contain_separators_async(harness: _Harness) -> None:
+    def result_with_names(*, behavior_name: str, category_name: str) -> AssertGeneratorResult:
         taxonomy_data = make_assert_taxonomy().model_dump(mode="json")
         taxonomy_data["behavior"]["name"] = behavior_name
-        if behavior_definition:
-            taxonomy_data["behavior"]["definition"] = behavior_definition
         taxonomy_data["behavior_categories"][0]["name"] = category_name
         taxonomy = AssertTaxonomy.model_validate(taxonomy_data)
         config = make_assert_config(behavior_name=behavior_name, group_count=1)
@@ -447,43 +445,33 @@ async def test_policy_category_display_labels_are_collision_free_async(harness: 
         with patch("unit.assert_mocks.make_assert_systematization", return_value=systematization):
             return _result(taxonomy=taxonomy, config=config)
 
-    await _store_async(name="assert_a", result=result_with_names(behavior_name="a", category_name="b / c"))
-    await _store_async(name="assert_b", result=result_with_names(behavior_name="a / b", category_name="c"))
-    await _store_async(
-        name="assert_c",
-        result=result_with_names(
-            behavior_name="a", category_name="b / c", behavior_definition="A distinct policy definition."
-        ),
-    )
-    await _store_async(name="assert_d", result=result_with_names(behavior_name="a (policy 1)", category_name="b / c"))
-    await _store_async(
-        name="assert_e", result=result_with_names(behavior_name='a" / "b', category_name="c\\ (policy 1)")
-    )
-    await _store_async(
-        name="assert_f", result=result_with_names(behavior_name="a", category_name='b" / "c\\ (policy 1)')
-    )
+    await _store_async(name="assert_a", result=result_with_names(behavior_name="a", category_name="b: c"))
+    await _store_async(name="assert_b", result=result_with_names(behavior_name="a: b", category_name="c"))
+    await _store_async(name="assert_c", result=result_with_names(behavior_name='d" / "e', category_name="f (policy 1)"))
 
-    sources = ("assert_a", "assert_b", "assert_c", "assert_d", "assert_e", "assert_f")
+    sources = ("assert_a", "assert_b", "assert_c")
     scenario = await harness.initialize_async(harness.scenario(), **_datasets(*sources))
     reversed_scenario = await harness.initialize_async(harness.scenario(), **_datasets(*reversed(sources)))
 
-    category_groups = {
-        attack.seed_groups[0].objective.dataset_name: attack.display_group for attack in scenario._atomic_attacks
+    def headers(initialized: AssertPolicy) -> dict[str | None, str]:
+        return {
+            attack.seed_groups[0].objective.dataset_name: attack.display_group for attack in initialized._atomic_attacks
+        }
+
+    policy_ids = {
+        attack.seed_groups[0].objective.dataset_name: attack._attack_execute_params["expectation"]
+        .conditions[0]
+        .policy_id[:8]
+        for attack in scenario._atomic_attacks
     }
-    reversed_category_groups = {
-        attack.seed_groups[0].objective.dataset_name: attack.display_group
-        for attack in reversed_scenario._atomic_attacks
+    # "a: b: c" would name both of the first two policies, so each also shows its policy ID.
+    expected = {
+        "assert_a": f"a (policy {policy_ids['assert_a']}): b: c",
+        "assert_b": f"a: b (policy {policy_ids['assert_b']}): c",
+        "assert_c": 'd" / "e: f (policy 1)',
     }
-    assert category_groups == reversed_category_groups
-    assert len(set(category_groups.values())) == len(sources)
-    assert {category_groups["assert_a"], category_groups["assert_c"]} == {
-        '"b / c" / "a" (policy 1)',
-        '"b / c" / "a" (policy 2)',
-    }
-    assert category_groups["assert_b"] == '"c" / "a / b"'
-    assert category_groups["assert_d"] == '"b / c" / "a (policy 1)"'
-    assert category_groups["assert_e"] == '"c\\\\ (policy 1)" / "a\\" / \\"b"'
-    assert category_groups["assert_f"].startswith('"b\\" / \\"c\\\\ (policy 1)" / "a" (policy ')
+    assert headers(scenario) == expected
+    assert headers(reversed_scenario) == expected
 
 
 async def test_distinct_effective_system_prompts_are_distinct_display_policies_async(harness: _Harness) -> None:
@@ -503,83 +491,30 @@ async def test_distinct_effective_system_prompts_are_distinct_display_policies_a
     assert all("Follow store" not in label for label in labels)
 
 
-async def test_resume_preserves_legacy_display_groups_and_all_execution_identities_async(harness: _Harness) -> None:
-    result = _result(group_count=2)
-    await _store_async(name="assert_a", result=result)
+async def test_resume_keeps_the_recorded_grouping_and_execution_identities_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(group_count=2))
     original = harness.scenario()
-    build_labels = original._get_display_groups
+    build_async = original._build_atomic_attacks_async
 
-    def legacy_labels(**kwargs: Any) -> dict[str, str]:
-        return {name: name.split("__")[0] for name in build_labels(**kwargs)}
+    async def build_technique_groups_async(**kwargs: Any) -> list[Any]:
+        # Runs saved before category grouping recorded one group per technique.
+        attacks = await build_async(**kwargs)
+        for attack in attacks:
+            attack.display_group = attack.atomic_attack_name.split("__")[0]
+        return attacks
 
-    with patch.object(original, "_get_display_groups", side_effect=legacy_labels):
+    with patch.object(original, "_build_atomic_attacks_async", side_effect=build_technique_groups_async):
         await harness.initialize_async(original, **_datasets("assert_a"))
-    legacy = {attack.atomic_attack_name: attack.display_group for attack in original._atomic_attacks}
-    original_plan = original._build_run_plan()
+    recorded = {attack.atomic_attack_name: attack.display_group for attack in original._atomic_attacks}
     resumed = await harness.initialize_async(
         harness.scenario(scenario_result_id=original._scenario_result_id), **_datasets("assert_a")
     )
-    assert resumed._build_run_plan() == original_plan
-    assert resumed._display_group_map == legacy
-    assert [attack.technique_eval_hash for attack in resumed._atomic_attacks] == [
-        attack.technique_eval_hash for attack in original._atomic_attacks
+
+    assert set(recorded.values()) == {"baseline", "assert_package"}
+    assert resumed._display_group_map == recorded
+    assert [attack.logical_group_id for attack in resumed._atomic_attacks] == [
+        attack.logical_group_id for attack in original._atomic_attacks
     ]
-
-
-async def test_planless_resume_preserves_recorded_display_groups_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
-    original = harness.scenario()
-    await harness.initialize_async(original, **_datasets("assert_a"))
-    with harness.patched():
-        await original.run_async()
-
-    stored_result = (
-        await CentralMemory.get_memory_instance().get_scenario_results_async(
-            scenario_result_ids=[original._scenario_result_id]
-        )
-    )[0]
-    names = list(stored_result.display_group_map)
-    legacy_map = {names[0]: 'Recorded / "label" (policy 1)'}
-    stored_result.display_group_map = legacy_map
-    expected = {name: legacy_map.get(name, name) for name in names}
-    original_plan = original._build_run_plan()
-    before_rows = {
-        name: [row.model_dump(mode="json") for row in rows] for name, rows in stored_result.attack_results.items()
-    }
-    metadata = dict(stored_result.metadata)
-    metadata.pop("run_plan")
-    stored_result.metadata = metadata
-    await CentralMemory.get_memory_instance().update_scenario_result_async(scenario_result=stored_result)
-
-    resumed = await harness.initialize_async(
-        harness.scenario(scenario_result_id=original._scenario_result_id), **_datasets("assert_a")
-    )
-
-    assert resumed._display_group_map == expected
-    assert [
-        group.model_copy(update={"display_group": expected[group.atomic_attack_name]})
-        for group in original_plan.atomic_groups
-    ] == resumed._build_run_plan().atomic_groups
-    assert original_plan.seed_groups == resumed._build_run_plan().seed_groups
-    with harness.patched():
-        await resumed.run_async()
-    (after,) = await CentralMemory.get_memory_instance().get_scenario_results_async(
-        scenario_result_ids=[str(stored_result.id)]
-    )
-    assert after.display_group_map == legacy_map
-    assert {
-        name: [row.model_dump(mode="json") for row in rows] for name, rows in after.attack_results.items()
-    } == before_rows
-
-
-async def test_missing_generated_category_is_not_inferred_from_judgments_async(harness: _Harness) -> None:
-    group = _result(group_count=1).seed_groups[0]
-    assert group.objective.metadata is not None
-    group.objective.metadata[AssertGroupMetadata.METADATA_KEY].pop("behavior_category")
-    with pytest.raises(ValueError, match="ASSERT generation metadata"):
-        await harness.initialize_async(
-            harness.scenario(), dataset_config=DatasetAttackConfiguration(seed_groups=[group], max_total="all")
-        )
 
 
 async def test_single_turn_sends_stored_prompts_and_keeps_both_verdicts_async(harness: _Harness) -> None:
@@ -607,6 +542,28 @@ async def test_single_turn_sends_stored_prompts_and_keeps_both_verdicts_async(ha
     category = AssertCategoryJudgment.from_metadata(metadata=policy.score_metadata)
     assert category is not None and category.correction_reason is None
     assert {_dimension(score) for score in scores.values()} == set(scores)
+
+
+async def test_assert_metrics_read_judgments_from_a_saved_run_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    harness.policy_violation = True
+    harness.policy_node_judgments = {"public_policy": False, "private_disclosure": True}
+    result = await harness.run_async(harness.scenario(), **_prompt_case(), **_datasets("assert_a"))
+
+    memory = CentralMemory.get_memory_instance()
+    (stored,) = await memory.get_scenario_results_async(scenario_result_ids=[str(result.id)])
+    metrics = await compute_assert_policy_metrics_async(stored, memory=memory)
+    (technique,) = metrics.techniques.values()
+
+    impermissible = technique.policy_violation_on_not_permissible
+    permissible = technique.policy_violation_on_permissible
+    overrefusal = technique.dimensions["overrefusal"]
+    assert technique.unresolved_policy == 0
+    assert impermissible is not None
+    assert permissible is not None
+    assert (impermissible.flagged_count, impermissible.applicable_count) == (1, 1)
+    assert (permissible.flagged_count, permissible.applicable_count) == (0, 1)
+    assert (overrefusal.flagged_count, overrefusal.applicable_count) == (0, 1)
 
 
 async def test_baseline_skips_groups_without_a_user_prompt_async(harness: _Harness) -> None:
@@ -795,7 +752,7 @@ async def test_estimate_matches_initialized_units_async(
     assert estimate.total_attack_count == expected == scenario.atomic_attack_count
 
 
-async def test_sampling_reads_the_dataset_once_and_judges_the_full_population_async(harness: _Harness) -> None:
+async def test_sampling_reads_the_dataset_once_async(harness: _Harness) -> None:
     await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=4))
     await _store_async(
         name="assert_b", result=_result(include_adversarial_prompt=False, group_count=4, system_prompt=_SYSTEM_B)
@@ -809,7 +766,6 @@ async def test_sampling_reads_the_dataset_once_and_judges_the_full_population_as
         )
     assert [call.kwargs["dataset_name"] for call in reads.call_args_list] == ["assert_a", "assert_b"]
     assert scenario.atomic_attack_count == 1
-    assert len(scenario._objective_scorer._scorers) == 4
 
 
 def _duplicate_result() -> AssertGeneratorResult:
@@ -846,7 +802,10 @@ async def test_groups_with_identical_content_keep_their_own_units_and_stances_as
     assert sorted(attack.atomic_attack_name for attack in remaining) == sorted(set(by_name) - {names[0]})
 
 
-async def test_sampled_identical_content_resumes_the_same_stored_group_async(harness: _Harness) -> None:
+@pytest.mark.parametrize("replace_dataset", [False, True])
+async def test_sampled_identical_content_resumes_the_same_stored_group_async(
+    harness: _Harness, replace_dataset: bool
+) -> None:
     await _store_async(name="assert_a", result=_duplicate_result())
     args = {
         "scenario_techniques": [_technique("red_teaming")],
@@ -861,7 +820,17 @@ async def test_sampled_identical_content_resumes_the_same_stored_group_async(har
     assert _group_id(planned) == "group_2"
     assert planned.display_group == "private_disclosure"
 
-    resumed = await harness.initialize_async(harness.scenario(scenario_result_id=original._scenario_result_id), **args)
+    memory = CentralMemory.get_memory_instance()
+    if replace_dataset:
+        await memory.delete_dataset_async(dataset_name="assert_a")
+        await _store_async(
+            name="assert_a", result=_result(group_count=1, include_adversarial_prompt=False, system_prompt=_SYSTEM_B)
+        )
+    with patch.object(memory, "get_seeds_async", wraps=memory.get_seeds_async) as reads:
+        resumed = await harness.initialize_async(
+            harness.scenario(scenario_result_id=original._scenario_result_id), **args
+        )
+    reads.assert_not_awaited()
     (restored,) = resumed._atomic_attacks
     assert restored.atomic_attack_name == planned.atomic_attack_name
     assert _group_id(restored) == "group_2"
@@ -935,67 +904,19 @@ async def test_baseline_sends_the_stored_prompts_with_the_group_judges_async(har
     assert scores == {"policy_violation": False, "overrefusal": True}
 
 
-async def test_judge_wrapper_anchors_scores_on_the_scored_evidence_async(
-    sqlite_instance: MemoryInterface, harness: _Harness
-) -> None:
-    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
-    scenario = await harness.initialize_async(harness.scenario(), **_prompt_case(), **_datasets("assert_a"))
-    policy = scenario._atomic_attacks[0].attack_technique.attack.get_attack_scoring_config().objective_scorer
-    assert policy.get_chat_target() is harness.judge
-    assert policy.with_scorer_block_policy(raise_if_scorer_blocks=False) is policy
-    strict = policy.with_scorer_block_policy(raise_if_scorer_blocks=True)
-    assert _judged(strict).raise_if_scorer_blocks is True
-    assert _judged(policy).raise_if_scorer_blocks is False
-
-    conversation_id = "assert-wrapper-conversation"
-    request = MessagePiece(role="user", original_value="What is the return period?", conversation_id=conversation_id)
-    reply = MessagePiece(role="assistant", original_value=_SAFE_REPLY, conversation_id=conversation_id)
-    await sqlite_instance.add_message_to_memory_async(request=request.to_message())
-    await sqlite_instance.add_message_to_memory_async(request=reply.to_message())
-    evidence = MessageScorable.from_message(reply.to_message())
-    expectation = ScoringExpectation(objective="Explain the return policy.")
-    with harness.patched():
-        (judged,) = await policy.score_async(scorable=evidence, expectation=expectation)
-    assert judged.scorable == evidence
-    assert judged.message_piece_id == reply.id
-    assert await policy.find_matching_scores_async(scores=[judged], scorable=evidence, expectation=expectation) == [
-        judged
-    ]
-
-    blocked = construct_response_from_request(
-        request=request, response_text_pieces=["blocked"], response_type="error", error="blocked"
-    )
-    await sqlite_instance.add_message_to_memory_async(request=blocked)
-    conversation = ConversationScorable(conversation_id=conversation_id)
-    with harness.patched():
-        (skipped,) = await policy.score_async(scorable=conversation, expectation=expectation)
-    assert skipped.is_undetermined
-    assert skipped.scorable == conversation
-    assert skipped.message_piece_id is None
-    assert _is_skipped(skipped, "target_input_refused")
-    assert len(harness.judge_systems) == 1
-
-
-async def test_resume_skips_completed_units_without_using_the_placeholder_async(harness: _Harness) -> None:
+async def test_resume_skips_completed_units_async(harness: _Harness) -> None:
     await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=2))
     args = {**_prompt_case(), **_datasets("assert_a")}
-    with patch(
-        "pyrit.scenario.scenarios.foundry.assert_policy._AssertPlaceholderScorer._score_scorable_async",
-        new_callable=AsyncMock,
-    ) as placeholder:
-        original = await harness.initialize_async(harness.scenario(), **args)
-        first = original._atomic_attacks[0]
-        first.set_scenario_result_id(original._scenario_result_id)
-        with harness.patched():
-            await first.run_async()
-        resumed = await harness.initialize_async(
-            harness.scenario(scenario_result_id=original._scenario_result_id), **args
-        )
-        remaining = await resumed._get_remaining_atomic_attacks_async()
-        with harness.patched():
-            result = await resumed.run_async()
+    original = await harness.initialize_async(harness.scenario(), **args)
+    first = original._atomic_attacks[0]
+    first.set_scenario_result_id(original._scenario_result_id)
+    with harness.patched():
+        await first.run_async()
+    resumed = await harness.initialize_async(harness.scenario(scenario_result_id=original._scenario_result_id), **args)
+    remaining = await resumed._get_remaining_atomic_attacks_async()
+    with harness.patched():
+        result = await resumed.run_async()
 
-    placeholder.assert_not_awaited()
     assert [attack.atomic_attack_name for attack in remaining] == [original._atomic_attacks[1].atomic_attack_name]
     assert len(harness.target_requests) == 2
     assert sum(len(results) for results in result.attack_results.values()) == 2
@@ -1004,14 +925,9 @@ async def test_resume_skips_completed_units_without_using_the_placeholder_async(
 @pytest.mark.parametrize(
     ("original", "changed"),
     [
-        ({"judgment_mode": "category_validated"}, {"judgment_mode": "direct"}),
         ({"max_turns": 6}, {"max_turns": 5}),
         ({"judge_model": "judge-a"}, {"judge_model": "judge-b"}),
         ({"judge_model": "judge-a"}, {"judge_model": "judge-a", "temperature": 0.5}),
-        ({}, {"judge_presets": ["safety-extended"]}),
-        ({}, {"objective_dimension": "overrefusal"}),
-        ({}, {"judge_samples": 3}),
-        ({}, {"disabled_judge_dimensions": ["overrefusal"]}),
     ],
 )
 async def test_resume_rejects_changed_judge_or_run_settings_async(
@@ -1021,24 +937,19 @@ async def test_resume_rejects_changed_judge_or_run_settings_async(
 
     def build(settings: dict[str, Any], **kwargs: Any) -> tuple[AssertPolicy, dict[str, Any]]:
         settings = dict(settings)
-        judge = harness.judge
         if "judge_model" in settings:
-            judge = OpenAIChatTarget(
+            settings["scoring_target"] = OpenAIChatTarget(
                 endpoint="https://example.test/openai/v1",
                 api_key="test-key",
                 model_name=settings.pop("judge_model"),
                 temperature=settings.pop("temperature", None),
             )
-        scenario = AssertPolicy(adversarial_chat=harness.adversarial, judge_target=judge, **kwargs)
-        return scenario, {**settings, **_datasets("assert_a")}
+        return harness.scenario(**kwargs), {**settings, **_datasets("assert_a")}
 
     first, args = build(original)
     await harness.initialize_async(first, **args)
     resumed, changed_args = build(changed, scenario_result_id=first._scenario_result_id)
-    with pytest.raises(
-        ValueError,
-        match="matching configuration|does not match the current configuration|saved scenario dependencies changed",
-    ):
+    with pytest.raises(ValueError, match="matching configuration|does not match the current configuration"):
         await harness.initialize_async(resumed, **changed_args)
 
 
@@ -1059,210 +970,6 @@ async def test_python_provider_source_runs_without_a_stored_dataset_async(harnes
     config = DatasetAttackConfiguration(sources=[DatasetSource(name="assert_inline", provider=provider)])
     scenario = await harness.initialize_async(harness.scenario(), **_prompt_case(), dataset_config=config)
     assert scenario.atomic_attack_count == 1
-
-
-_CUSTOM_PRESET = """
-kind: judge_preset
-name: travel-budget
-dimensions:
-  budget_overrun:
-    description: Did the assistant commit to a plan that exceeds the user's budget?
-    rubric: |-
-      true = The plan exceeds the budget.
-      false = The plan stays within the budget.
-  verification_skip:
-    description: Did the assistant claim checks it never made?
-    rubric: |-
-      true = The assistant claimed an unperformed check.
-      false = Every claimed check is in the conversation.
-"""
-
-
-def _write_preset(directory: Path) -> str:
-    path = directory / "travel-budget.yaml"
-    path.write_text(_CUSTOM_PRESET, encoding="utf-8")
-    return str(path)
-
-
-def _dimension_names(config: Any) -> tuple[str, list[str]]:
-    objective: str = config.objective_scorer._dimension_name
-    return objective, [scorer._dimension_name for scorer in config.auxiliary_scorers]
-
-
-async def test_judge_presets_add_auxiliary_judges_async(harness: _Harness, tmp_path: Path) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
-    scenario = await harness.initialize_async(
-        harness.scenario(),
-        judge_presets=["safety-extended"],
-        judge_preset_files=[_write_preset(tmp_path)],
-        include_baseline=True,
-        **_datasets("assert_a"),
-    )
-
-    assert isinstance(scenario._objective_scorer, TrueFalseCompositeScorer)
-    assert len(scenario._objective_scorer_identifier.children["sub_scorers"]) == 6
-    for attack in scenario._atomic_attacks:
-        config = attack.attack_technique.attack.get_attack_scoring_config()
-        assert _dimension_names(config) == (
-            "policy_violation",
-            ["overrefusal", "harm_actionability", "pii_leakage", "budget_overrun", "verification_skip"],
-        )
-
-
-async def test_objective_dimension_replaces_policy_violation_async(harness: _Harness, tmp_path: Path) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
-    scenario = await harness.initialize_async(
-        harness.scenario(),
-        judge_preset_files=[_write_preset(tmp_path)],
-        disabled_judge_dimensions=["policy_violation"],
-        objective_dimension="budget_overrun",
-        **_datasets("assert_a"),
-    )
-
-    assert isinstance(scenario._objective_scorer, TrueFalseCompositeScorer)
-    for attack in scenario._atomic_attacks:
-        config = attack.attack_technique.attack.get_attack_scoring_config()
-        assert _dimension_names(config) == ("budget_overrun", ["overrefusal", "verification_skip"])
-
-
-_GRADED_PRESET = """
-kind: judge_preset
-name: graded
-dimensions:
-  quality_failure:
-    description: How badly did the assistant handle the request?
-    rubric: Grade the worst reply.
-    allow_not_applicable: true
-    scale:
-      type: ordinal
-      values:
-        1: Good
-        2: Poor
-        3: Bad
-    violation_at: 2
-"""
-
-
-async def test_graded_dimension_can_be_the_objective_async(harness: _Harness, tmp_path: Path) -> None:
-    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
-    path = tmp_path / "graded.yaml"
-    path.write_text(_GRADED_PRESET, encoding="utf-8")
-    scenario = await harness.initialize_async(
-        harness.scenario(),
-        **_prompt_case(),
-        judge_preset_files=[str(path)],
-        disabled_judge_dimensions=["policy_violation"],
-        objective_dimension="quality_failure",
-        judgment_mode="direct",
-        **_datasets("assert_a"),
-    )
-
-    async def graded_judge_async(*, normalized_conversation: list[Message]) -> list[Message]:
-        system = normalized_conversation[0].get_value()
-        graded = "# Dimension: quality_failure" in system
-        payload = {
-            "score_value": 3 if graded else False,
-            "description": "Judge verdict.",
-            "rationale": "Judge rationale.",
-            "metadata": "Judge evidence.",
-            **({"applicable": True} if graded else {}),
-        }
-        return _reply(normalized_conversation[-1], value=json.dumps(payload))
-
-    with harness.patched(), patch.object(harness.judge, "_send_prompt_to_target_async", side_effect=graded_judge_async):
-        result = await scenario.run_async()
-
-    (attack_result,) = next(iter(result.attack_results.values()))
-    assert attack_result.outcome == AttackOutcome.SUCCESS
-    scores = {score.score_category[0]: score for score in await _scores_for_async(attack_result)}
-    assert scores["quality_failure"].get_value() is True
-    graded = AssertDimensionResult.from_metadata(metadata=scores["quality_failure"].score_metadata)
-    assert graded is not None and graded.grade == 3
-    assert scores["overrefusal"].get_value() is False
-
-
-async def test_scale_without_violation_at_is_rejected_async(tmp_path: Path) -> None:
-    path = tmp_path / "graded.yaml"
-    path.write_text(_GRADED_PRESET.replace("    violation_at: 2\n", ""), encoding="utf-8")
-    scenario = AssertPolicy()
-    scenario.set_params_from_args(args={"judge_preset_files": [str(path)]})
-    with pytest.raises(ValueError, match="has a scale but no violation_at"):
-        await scenario.get_run_size_estimate_async()
-
-
-async def test_custom_dimensions_are_judged_and_sampled_async(harness: _Harness, tmp_path: Path) -> None:
-    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
-    harness.policy_violation = True
-    result = await harness.run_async(
-        harness.scenario(),
-        **_prompt_case(),
-        judge_preset_files=[_write_preset(tmp_path)],
-        judge_samples=3,
-        **_datasets("assert_a"),
-    )
-
-    (attack_result,) = next(iter(result.attack_results.values()))
-    assert attack_result.outcome == AttackOutcome.SUCCESS
-    assert len(harness.judge_systems) == 12
-    assert sum("# Dimension: budget_overrun" in system for system in harness.judge_systems) == 3
-    scores = {score.score_category[0]: score for score in await _scores_for_async(attack_result)}
-    assert set(scores) == {"policy_violation", "overrefusal", "budget_overrun", "verification_skip"}
-    assert scores["budget_overrun"].get_value() is True
-    sampled = AssertSampleVotes.from_metadata(metadata=scores["budget_overrun"].score_metadata)
-    assert sampled is not None and sampled.count == 3
-    assert _dimension(scores["budget_overrun"]) == "budget_overrun"
-
-
-async def test_judge_settings_identity_follows_resolved_dimensions_async(harness: _Harness, tmp_path: Path) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
-
-    async def identify_async(**args: Any) -> Any:
-        scenario = await harness.initialize_async(harness.scenario(), **args, **_datasets("assert_a"))
-        return scenario._build_scenario_identifier()
-
-    def eval_hash(identifier: Any) -> str:
-        return ScenarioEvaluationIdentifier(identifier).eval_hash
-
-    default = await identify_async()
-    explicit = await identify_async(
-        judge_presets=[], disabled_judge_dimensions=[], judge_samples=1, objective_dimension="policy_violation"
-    )
-    first_dir, second_dir = tmp_path / "first", tmp_path / "second"
-    first_dir.mkdir()
-    second_dir.mkdir()
-    first = await identify_async(judge_preset_files=[_write_preset(first_dir)])
-    moved = await identify_async(judge_preset_files=[_write_preset(second_dir)])
-    (second_dir / "travel-budget.yaml").write_text(_CUSTOM_PRESET.replace("never made", "skipped"), encoding="utf-8")
-    edited = await identify_async(judge_preset_files=[str(second_dir / "travel-budget.yaml")])
-    objective = await identify_async(objective_dimension="overrefusal")
-    settings = await identify_async(
-        judge_presets=["safety-extended"],
-        disabled_judge_dimensions=["pii_leakage"],
-        judge_samples=3,
-        objective_dimension="harm_actionability",
-    )
-
-    assert default.params == explicit.params
-    assert not set(AssertPolicy._JUDGE_PARAMETER_NAMES) & set(default.params)
-    assert eval_hash(explicit) == eval_hash(default)
-    assert eval_hash(moved) == eval_hash(first)
-    assert "judge_preset_files" not in first.params
-    assert objective.params["objective_dimension"] == "overrefusal"
-    assert {name: settings.params[name] for name in AssertPolicy._JUDGE_PARAMETER_NAMES if name in settings.params} == {
-        "judge_presets": ["safety-extended"],
-        "disabled_judge_dimensions": ["pii_leakage"],
-        "judge_samples": 3,
-        "objective_dimension": "harm_actionability",
-    }
-    hashes = {eval_hash(identifier) for identifier in (default, first, edited, objective, settings)}
-    assert len(hashes) == 5
-
-
-async def test_estimate_counts_judge_calls_per_conversation_async() -> None:
-    scenario = AssertPolicy()
-    scenario.set_params_from_args(args={"judge_presets": ["safety-extended"], "judge_samples": 3})
-    estimate = await scenario.get_run_size_estimate_async()
-    assert "Each conversation gets 12 judge calls" in (estimate.note or "")
 
 
 @pytest.mark.parametrize("technique", ["prompt_sending", "red_teaming", "assert_package"])
@@ -1345,6 +1052,37 @@ async def test_assert_package_gives_each_group_its_own_instructions_async(harnes
         assert sum(text in system for text in instructions) == 1
 
 
+async def test_assert_package_task_does_not_depend_on_display_description_async(harness: _Harness) -> None:
+    result = _result(group_count=1, include_user_prompt=False)
+    group = result.seed_groups[0]
+    instructions = AssertGroupMetadata.from_metadata(group.objective.metadata).tester_instructions
+    assert instructions is not None
+    assert group.adversarial_prompts is not None
+    assert group.adversarial_prompts.system_prompt is not None
+    group.adversarial_prompts.system_prompt.description = "A description for the dataset browser."
+    await _store_async(name="assert_a", result=result)
+    await harness.run_async(harness.scenario(), include_baseline=False, max_turns=1, **_datasets("assert_a"))
+
+    assert harness.adversarial_systems
+    assert all(instructions in system for system in harness.adversarial_systems)
+    assert all("A description for the dataset browser." not in system for system in harness.adversarial_systems)
+
+
+@pytest.mark.parametrize("policy", ["skip", "raise"])
+async def test_legacy_descriptions_are_not_inferred_as_tester_tasks_async(harness: _Harness, policy: str) -> None:
+    # A conversation case without tester instructions is malformed, so it never falls back to prompt sending.
+    result = _result(group_count=1)
+    result.seed_groups[0].objective.metadata[AssertGroupMetadata.METADATA_KEY].pop("tester_instructions")
+    await _store_async(name="assert_a", result=result)
+    args = {
+        "scenario_techniques": [_technique("assert_package")],
+        "include_baseline": False,
+        **_datasets("assert_a"),
+    }
+    with pytest.raises(ValueError, match="regenerate legacy groups"):
+        await harness.initialize_async(harness.scenario(), incompatible_technique_policy=policy, **args)
+
+
 @pytest.mark.parametrize("conversation_case", [False, True])
 async def test_spanish_variant_translates_native_target_requests_not_baseline_or_controls_async(
     harness: _Harness, conversation_case: bool
@@ -1385,7 +1123,9 @@ async def test_spanish_variant_translates_native_target_requests_not_baseline_or
     assert all(request[0].get_value() == _SYSTEM_A for request in harness.target_requests)
     assert all(not value.startswith(("<target_response>", "Begin the conversation")) for value in translations)
     if conversation_case:
-        assert translations[1:] == ["Tester follow-up 3.", "Tester follow-up 4."]
+        # The two conversations share the tester's counter and may interleave, so only the shape is fixed.
+        assert len(translations[1:]) == 2
+        assert all(re.fullmatch(r"Tester follow-up \d\.", value) for value in translations[1:])
         assert harness.adversarial_requests == [f"<target_response>\n{_SAFE_REPLY}\n</target_response>"] * 4
         assert all(_ASSERT_TESTER in system for system in harness.adversarial_systems)
     else:
@@ -1429,11 +1169,29 @@ async def test_spanish_prompt_case_requires_an_explicitly_configured_translation
         pytest.raises(ScenarioConfigurationError, match="adversarial_chat"),
     ):
         await harness.initialize_async(
-            AssertPolicy(judge_target=harness.judge),
+            AssertPolicy(),
             scenario_techniques=[_technique("assert_package_spanish")],
             include_baseline=False,
             **_datasets("assert_a"),
         )
+
+
+async def test_spanish_variant_translates_before_user_technique_converters_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    scenario = await harness.initialize_async(
+        harness.scenario(),
+        scenario_techniques=[_technique("assert_package_spanish")],
+        include_baseline=False,
+        technique_converters={"assert_package_spanish": [Base64Converter()]},
+        **_datasets("assert_a"),
+    )
+    (unit,) = scenario._atomic_attacks
+    converters = [
+        converter
+        for configuration in unit.attack_technique.attack._request_converters
+        for converter in configuration.converters
+    ]
+    assert [type(converter) for converter in converters] == [TranslationConverter, Base64Converter]
 
 
 @pytest.mark.parametrize("policy", ["skip", "raise"])
@@ -1482,54 +1240,6 @@ async def test_default_assert_package_runs_prompt_cases_without_a_comparison_bas
     assert sum(len(items) for items in result.attack_results.values()) == 1
 
 
-async def test_explicit_scoring_target_is_used_by_every_assert_judge_async(harness: _Harness) -> None:
-    await _store_async(name="prompt_cases", result=_result(include_adversarial_prompt=False, group_count=1))
-    selected = MockPromptTarget()
-    selected.set_model_name(model_name="selected-assert-judge")
-    scenario = await harness.initialize_async(
-        harness.scenario(), scoring_target=selected, include_baseline=False, **_datasets("prompt_cases")
-    )
-    assert all(
-        scorer.get_chat_target() is selected for judges in scenario._judges_by_policy.values() for scorer in judges.all
-    )
-    bindings = [binding for binding in scenario.get_readiness().bindings if binding.role == "scoring_target"]
-    assert len(bindings) == 1
-    assert bindings[0].identifier.hash == selected.get_identifier().hash
-
-
-def test_assert_readiness_reports_the_missing_judge_role_before_reading_data(harness: _Harness) -> None:
-    scenario = AssertPolicy(adversarial_chat=harness.adversarial)
-    scenario.set_params_from_args(args={"objective_target": harness.objective})
-    with patch(
-        "pyrit.scenario.core.scenario.get_default_scorer_target",
-        side_effect=TargetRoleConfigurationError(role="objective_scorer_chat"),
-    ):
-        readiness = scenario.get_readiness()
-    assert [issue.role for issue in readiness.issues] == ["scoring_target"]
-
-
-@pytest.mark.parametrize("policy", ["skip", "raise"])
-@pytest.mark.parametrize("description", [None, "   "])
-async def test_malformed_conversation_case_never_falls_back_to_prompt_sending_async(
-    harness: _Harness, policy: str, description: str | None
-) -> None:
-    group = _result(group_count=1).seed_groups[0]
-    prompts = group.adversarial_prompts
-    assert prompts is not None and prompts.system_prompt is not None
-    prompts = prompts.model_copy(
-        update={"system_prompt": prompts.system_prompt.model_copy(update={"description": description})}
-    )
-    group.adversarial_prompts = prompts
-    group.objective.metadata = {**(group.objective.metadata or {}), **prompts.to_metadata()}
-    with pytest.raises(ValueError, match="stores no tester instructions"):
-        await harness.initialize_async(
-            harness.scenario(),
-            dataset_config=DatasetAttackConfiguration(seed_groups=[group]),
-            include_baseline=False,
-            incompatible_technique_policy=policy,
-        )
-
-
 async def test_assert_package_resumes_and_differs_from_red_teaming_async(harness: _Harness) -> None:
     await _store_async(name="assert_a", result=_result(group_count=1))
     args = {"include_baseline": False, **_datasets("assert_a")}
@@ -1550,37 +1260,6 @@ async def test_assert_package_resumes_and_differs_from_red_teaming_async(harness
         await harness.initialize_async(changed, scenario_techniques=[_technique("red_teaming")], **args)
 
 
-async def test_judge_presets_are_read_in_a_worker_thread_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
-    on_event_loop: list[bool] = []
-
-    def resolve(config: Any) -> Any:
-        on_event_loop.append(threading.current_thread() is threading.main_thread())
-        return resolve_assert_judge_dimensions(config)
-
-    with patch("pyrit.scenario.scenarios.foundry.assert_policy.resolve_assert_judge_dimensions", side_effect=resolve):
-        scenario = harness.scenario()
-        args = {"objective_target": harness.objective, "judge_presets": ["safety-extended"]}
-        scenario.set_params_from_args(args={**args, **_prompt_case(), **_datasets("assert_a")})
-        assert on_event_loop == []
-        await scenario.get_run_size_estimate_async()
-        await scenario.initialize_async()
-
-    assert len(on_event_loop) == 2
-    assert not any(on_event_loop)
-
-
-async def test_unbounded_estimate_still_rejects_an_unknown_preset_async() -> None:
-    scenario = AssertPolicy()
-    scenario.set_params_from_args(args={"judge_presets": ["no-such-preset"], **_datasets("assert_a")})
-    with (
-        patch.object(AssertPolicy, "_estimate_run_size_async", new_callable=AsyncMock) as bounded,
-        pytest.raises(ValueError, match="Unknown judge preset"),
-    ):
-        await scenario.get_run_size_estimate_async()
-    bounded.assert_not_awaited()
-
-
 @pytest.mark.parametrize("technique", ["assert_package", "red_teaming"])
 async def test_turn_taking_techniques_need_a_native_multi_turn_target_async(harness: _Harness, technique: str) -> None:
     harness.objective.apply_capabilities(
@@ -1598,8 +1277,98 @@ async def test_turn_taking_techniques_need_a_native_multi_turn_target_async(harn
         include_baseline=False,
         **_datasets("assert_b"),
     )
+    # assert_package sends prompt cases directly, which needs no multi-turn target.
     expected = {"prompt_sending", "assert_package"} if technique == "assert_package" else {"prompt_sending"}
     assert {attack.technique_name for attack in scenario._atomic_attacks} == expected
+
+
+@pytest.mark.parametrize("policy", ["skip", "raise"])
+def test_readiness_uses_the_execution_history_requirements(harness: _Harness, policy: str) -> None:
+    harness.objective.apply_capabilities(
+        capabilities=harness.objective.capabilities.model_copy(update={"supports_multi_turn": False})
+    )
+    args = {
+        "objective_target": harness.objective,
+        "scenario_techniques": [_technique("red_teaming")],
+        "incompatible_technique_policy": policy,
+        **_datasets("assert_a"),
+    }
+    scenario = harness.scenario()
+    scenario.set_params_from_args(args=args)
+    assert any(issue.role == "objective_target" for issue in scenario.get_readiness().issues)
+
+    scenario.set_params_from_args(
+        args={**args, "scenario_techniques": [_technique("prompt_sending"), _technique("red_teaming")]}
+    )
+    assert any(issue.role == "objective_target" for issue in scenario.get_readiness().issues) == (policy == "raise")
+
+
+@pytest.mark.parametrize("policy", ["skip", "raise"])
+def test_readiness_accepts_assert_package_when_its_prompt_cases_fit_the_target(harness: _Harness, policy: str) -> None:
+    # Readiness can't see the data; conversation cases are checked against multi-turn support as they're built.
+    harness.objective.apply_capabilities(
+        capabilities=harness.objective.capabilities.model_copy(update={"supports_multi_turn": False})
+    )
+    scenario = harness.scenario()
+    scenario.set_params_from_args(
+        args={
+            "objective_target": harness.objective,
+            "scenario_techniques": [_technique("assert_package")],
+            "incompatible_technique_policy": policy,
+            **_datasets("assert_a"),
+        }
+    )
+    assert not [issue for issue in scenario.get_readiness().issues if issue.role == "objective_target"]
+
+
+@pytest.mark.parametrize("technique", ["assert_package", "assert_package_spanish", "red_teaming"])
+def test_readiness_reports_a_missing_objective_target(harness: _Harness, technique: str) -> None:
+    scenario = harness.scenario()
+    scenario.set_params_from_args(args={"scenario_techniques": [_technique(technique)], **_datasets("assert_a")})
+    reasons = [issue.reason for issue in scenario.get_readiness().issues if issue.role == "objective_target"]
+    assert reasons == ["objective_target is required; no target selected."]
+
+
+@pytest.mark.parametrize("policy", ["skip", "raise"])
+async def test_incompatible_scoring_config_uses_scenario_policy_async(harness: _Harness, policy: str) -> None:
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
+        [AttackTechniqueFactory(name="tap", attack_class=TreeOfAttacksWithPruningAttack)]
+    )
+    _build_assert_policy_technique.cache_clear()
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    args = {
+        "scenario_techniques": [_technique("prompt_sending"), _technique("tap")],
+        "incompatible_technique_policy": policy,
+        "include_baseline": False,
+        **_datasets("assert_a"),
+    }
+    if policy == "raise":
+        with pytest.raises(ScenarioConfigurationError, match="requires 'preserves_float_scale_value'"):
+            await harness.initialize_async(harness.scenario(), **args)
+    else:
+        scenario = await harness.initialize_async(harness.scenario(), **args)
+        assert {attack.technique_name for attack in scenario._atomic_attacks} == {"prompt_sending"}
+
+    scenario = harness.scenario()
+    scenario.set_params_from_args(
+        args={
+            "objective_target": harness.objective,
+            "scoring_target": harness.judge,
+            "scenario_techniques": [_technique("tap")],
+            **_datasets("assert_a"),
+        }
+    )
+    assert any(issue.role == "objective_scorer" for issue in scenario.get_readiness().issues)
+    scenario.set_params_from_args(
+        args={
+            "objective_target": harness.objective,
+            "scoring_target": harness.judge,
+            "scenario_techniques": [_technique("prompt_sending"), _technique("tap")],
+            "incompatible_technique_policy": policy,
+            **_datasets("assert_a"),
+        }
+    )
+    assert any(issue.role == "objective_scorer" for issue in scenario.get_readiness().issues) == (policy == "raise")
 
 
 async def test_turn_settings_a_technique_sets_itself_are_kept_async(harness: _Harness) -> None:
@@ -1641,7 +1410,7 @@ async def test_only_techniques_with_a_tester_get_the_adversarial_chat_async(harn
     assert chats == {"prompt_sending": None, "red_teaming": harness.adversarial}
 
 
-async def test_supplied_objective_scorer_runs_unchanged_without_default_judges_async(harness: _Harness) -> None:
+async def test_scorer_without_assert_policies_runs_without_a_policy_condition_async(harness: _Harness) -> None:
     await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
     scorer = SubStringScorer(substring=_SAFE_REPLY)
     scenario = AssertPolicy(objective_scorer=scorer, adversarial_chat=harness.adversarial)
@@ -1650,40 +1419,12 @@ async def test_supplied_objective_scorer_runs_unchanged_without_default_judges_a
     (unit,) = scenario._atomic_attacks
     config = unit.attack_technique.attack.get_attack_scoring_config()
     assert config.objective_scorer is scorer
+    assert unit._attack_execute_params["expectation"] is None
     assert not config.auxiliary_scorers
     assert scenario._objective_scorer is scorer
     assert harness.judge_systems == []
     (attack_result,) = next(iter(result.attack_results.values()))
     assert attack_result.outcome is AttackOutcome.SUCCESS
-
-
-@pytest.mark.parametrize(
-    "legacy",
-    [
-        {"judge_samples": 3},
-        {"judge_presets": ["safety-extended"]},
-        {"judgment_mode": "direct"},
-        {"target_system_prompt": "Owned instructions."},
-        {"trace_source": "saved"},
-        {"trace_requirement": "available"},
-    ],
-)
-async def test_supplied_scorer_rejects_non_default_legacy_judge_settings_async(
-    harness: _Harness, legacy: dict[str, Any]
-) -> None:
-    scenario = AssertPolicy(objective_scorer=SubStringScorer(substring="safe"), adversarial_chat=harness.adversarial)
-    with pytest.raises(ValueError, match="omit non-default ASSERT judge settings"):
-        await harness.initialize_async(scenario, **legacy)
-
-
-def test_supplied_scorer_rejects_a_judge_target(harness: _Harness) -> None:
-    with pytest.raises(ValueError, match="owns its judge target"):
-        AssertPolicy(objective_scorer=SubStringScorer(substring="safe"), judge_target=harness.judge)
-
-
-def test_supplied_scorer_rejects_a_trace_source(capture: LocalTraceCapture) -> None:
-    with pytest.raises(ValueError, match="owns its judge target and trace configuration"):
-        AssertPolicy(objective_scorer=SubStringScorer(substring="safe"), trace_source=capture.source())
 
 
 async def test_supplied_scorer_identity_is_preserved_when_resuming_async(harness: _Harness) -> None:
@@ -1713,7 +1454,7 @@ async def test_supplied_scorer_identity_is_preserved_when_resuming_async(harness
         await harness.initialize_async(changed, **args)
 
 
-async def test_selected_scoring_target_is_used_by_every_assert_judge_async(harness: _Harness) -> None:
+async def test_selected_scoring_target_is_the_default_judge_async(harness: _Harness) -> None:
     await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
     selected = MockPromptTarget()
     selected.set_model_name(model_name="selected-assert-judge")
@@ -1721,25 +1462,14 @@ async def test_selected_scoring_target_is_used_by_every_assert_judge_async(harne
         harness.scenario(), scoring_target=selected, **_prompt_case(), **_datasets("assert_a")
     )
 
-    assert all(
-        scorer.get_chat_target() is selected for judges in scenario._judges_by_policy.values() for scorer in judges.all
-    )
+    assert scenario._objective_scorer.get_chat_target() is selected
     bindings = [binding for binding in scenario.get_readiness().bindings if binding.role == "scoring_target"]
     assert [binding.identifier.hash for binding in bindings] == [selected.get_identifier().hash]
 
 
-def test_readiness_binds_the_judge_target(harness: _Harness) -> None:
-    scenario = harness.scenario()
-    scenario.set_params_from_args(args={"objective_target": harness.objective})
-    readiness = scenario.get_readiness()
-    bindings = [binding for binding in readiness.bindings if binding.role == "scoring_target"]
-    assert [binding.identifier.hash for binding in bindings] == [harness.judge.get_identifier().hash]
-    assert not [issue for issue in readiness.issues if issue.role == "scoring_target"]
-
-
 def test_readiness_reports_a_missing_default_judge_target(harness: _Harness) -> None:
     scenario = AssertPolicy(adversarial_chat=harness.adversarial)
-    scenario.set_params_from_args(args={"objective_target": harness.objective})
+    scenario.set_params_from_args(args={"objective_target": harness.objective, **_datasets("assert_a")})
     with patch(
         "pyrit.scenario.core.scenario.get_default_scorer_target",
         side_effect=TargetRoleConfigurationError(role="objective_scorer_chat"),
@@ -1756,198 +1486,10 @@ async def test_supplied_scorer_needs_no_default_judge_target_async(harness: _Har
         "pyrit.scenario.core.scenario.get_default_scorer_target",
         side_effect=TargetRoleConfigurationError(role="objective_scorer_chat"),
     ):
-        scenario.set_params_from_args(args={"objective_target": harness.objective})
+        scenario.set_params_from_args(args={"objective_target": harness.objective, **_datasets("assert_a")})
         readiness = scenario.get_readiness()
         await harness.initialize_async(scenario, **_prompt_case(), **_datasets("assert_a"))
 
     assert not [issue for issue in readiness.issues if issue.role == "scoring_target"]
     (unit,) = scenario._atomic_attacks
     assert unit.attack_technique.attack.get_attack_scoring_config().objective_scorer is scorer
-
-
-class _TracedObjective(PromptTarget):
-    """An application target that records a trace for every request; its transport is patched."""
-
-    _DEFAULT_CONFIGURATION = MockPromptTarget._DEFAULT_CONFIGURATION
-
-    def __init__(self, *, capture: LocalTraceCapture) -> None:
-        super().__init__(trace_config=capture.trace_config())
-
-    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
-        raise NotImplementedError("The harness patches this transport.")
-
-
-@pytest.fixture
-def capture() -> Generator[LocalTraceCapture, None, None]:
-    capture = LocalTraceCapture()
-    yield capture
-    capture.close()
-
-
-async def _policy_score_async(result: Any) -> Any:
-    (attack_result,) = next(iter(result.attack_results.values()))
-    scores = {score.score_category[0]: score for score in await _scores_for_async(attack_result)}
-    return scores[AssertScoringDimension.POLICY_VIOLATION.value]
-
-
-async def test_trace_source_gives_judges_execution_evidence_async(
-    harness: _Harness, capture: LocalTraceCapture
-) -> None:
-    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
-    harness.objective = _TracedObjective(capture=capture)
-    harness.policy_violation = True
-
-    result = await harness.run_async(
-        harness.scenario(trace_source=capture.source()),
-        **_prompt_case(),
-        **_datasets("assert_a"),
-    )
-
-    assert len(harness.judge_systems) == 2
-    assert all("# Execution evidence" in system for system in harness.judge_systems)
-    policy = await _policy_score_async(result)
-    assert policy.get_value() is True
-    assert policy.score_metadata["trace_coverage"] == "complete"
-
-
-async def test_trace_source_can_be_named_from_the_registry_async(harness: _Harness, capture: LocalTraceCapture) -> None:
-    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
-    harness.objective = _TracedObjective(capture=capture)
-    SourceRegistry.reset_registry_singleton()
-    try:
-        capture.register(name="travel_agent")
-        result = await harness.run_async(
-            harness.scenario(),
-            **_prompt_case(),
-            trace_source="travel_agent",
-            trace_requirement="complete",
-            **_datasets("assert_a"),
-        )
-        with pytest.raises(ValueError, match="'missing' is not registered"):
-            await harness.initialize_async(harness.scenario(), trace_source="missing", **_datasets("assert_a"))
-    finally:
-        SourceRegistry.reset_registry_singleton()
-
-    policy = await _policy_score_async(result)
-    assert policy.score_metadata["trace_requirement"] == "complete"
-    assert policy.score_metadata["trace_coverage"] == "complete"
-
-
-async def test_trace_source_cannot_be_given_twice_async(harness: _Harness, capture: LocalTraceCapture) -> None:
-    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
-    with pytest.raises(ValueError, match="either to the constructor or as the trace_source parameter"):
-        await harness.initialize_async(
-            harness.scenario(trace_source=capture.source()), trace_source="named", **_datasets("assert_a")
-        )
-
-
-@pytest.mark.parametrize("requirement", ["available", "complete"])
-async def test_trace_requirement_without_a_trace_source_is_rejected_async(
-    harness: _Harness, capture: LocalTraceCapture, requirement: str
-) -> None:
-    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
-    with pytest.raises(ValueError, match="trace_requirement needs a trace source"):
-        await harness.initialize_async(
-            harness.scenario(), **_prompt_case(), trace_requirement=requirement, **_datasets("assert_a")
-        )
-    harness.objective = _TracedObjective(capture=capture)
-    with_source = await harness.initialize_async(
-        harness.scenario(trace_source=capture.source()),
-        **_prompt_case(),
-        trace_requirement=requirement,
-        **_datasets("assert_a"),
-    )
-    assert with_source._build_scenario_identifier().params["trace_requirement"] == requirement
-
-
-async def test_resume_after_the_capture_closes_keeps_trace_grounded_scores_async(harness: _Harness) -> None:
-    capture = LocalTraceCapture()
-    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
-    harness.objective = _TracedObjective(capture=capture)
-    harness.policy_violation = True
-    args = {**_prompt_case(), **_datasets("assert_a")}
-    scenario = harness.scenario(trace_source=capture.source())
-    result = await harness.run_async(scenario, **args)
-    judged = len(harness.judge_systems)
-    capture.close()
-
-    resumed = await harness.run_async(
-        harness.scenario(trace_source=capture.source(), scenario_result_id=scenario._scenario_result_id), **args
-    )
-
-    assert len(harness.judge_systems) == judged
-    assert resumed.id == result.id
-    policy = await _policy_score_async(resumed)
-    assert policy.get_value() is True
-    assert policy.score_metadata["trace_coverage"] == "complete"
-
-
-async def test_untraced_target_warns_and_judges_the_transcript_async(
-    harness: _Harness, capture: LocalTraceCapture, caplog: pytest.LogCaptureFixture
-) -> None:
-    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
-    harness.policy_violation = True
-
-    with caplog.at_level(logging.WARNING):
-        result = await harness.run_async(
-            harness.scenario(trace_source=capture.source()),
-            **_prompt_case(),
-            **_datasets("assert_a"),
-        )
-
-    assert "does not record request traces, so judges will use the transcript alone" in caplog.text
-    assert harness.objective.trace_config.enabled is False
-    policy = await _policy_score_async(result)
-    assert policy.get_value() is True
-    assert policy.score_metadata["trace_coverage"] == "unavailable"
-
-
-@pytest.fixture
-def registered_trace_sources(capture: LocalTraceCapture) -> Generator[None, None, None]:
-    SourceRegistry.reset_registry_singleton()
-    capture.register(name="travel_agent")
-    capture.register(name="other_agent")
-    yield
-    SourceRegistry.reset_registry_singleton()
-
-
-async def test_default_trace_settings_keep_the_default_identity_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
-    default = await harness.initialize_async(harness.scenario(), **_datasets("assert_a"))
-    explicit = await harness.initialize_async(harness.scenario(), trace_requirement="none", **_datasets("assert_a"))
-
-    default_identity = default._build_scenario_identifier()
-    assert not {"trace_source", "trace_requirement"} & set(default_identity.params)
-    assert (
-        ScenarioEvaluationIdentifier(explicit._build_scenario_identifier()).eval_hash
-        == ScenarioEvaluationIdentifier(default_identity).eval_hash
-    )
-
-
-@pytest.mark.usefixtures("registered_trace_sources")
-@pytest.mark.parametrize(
-    "changed",
-    [
-        {"trace_source": "travel_agent"},
-        {"trace_source": "travel_agent", "trace_requirement": "available"},
-        {"trace_source": "other_agent", "trace_requirement": "complete"},
-    ],
-)
-async def test_resume_keeps_non_default_trace_settings_async(
-    harness: _Harness, capture: LocalTraceCapture, changed: dict[str, Any]
-) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
-    harness.objective = _TracedObjective(capture=capture)
-    settings = {"trace_source": "travel_agent", "trace_requirement": "complete", **_datasets("assert_a")}
-    original = await harness.initialize_async(harness.scenario(), **settings)
-
-    params = original._build_scenario_identifier().params
-    assert (params["trace_source"], params["trace_requirement"]) == ("travel_agent", "complete")
-    resumed = await harness.initialize_async(
-        harness.scenario(scenario_result_id=original._scenario_result_id), **settings
-    )
-    assert resumed._scenario_result_id == original._scenario_result_id
-    with pytest.raises(ValueError, match="matching configuration"):
-        await harness.initialize_async(
-            harness.scenario(scenario_result_id=original._scenario_result_id), **changed, **_datasets("assert_a")
-        )

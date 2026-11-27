@@ -99,9 +99,22 @@ export function datasetChoices(
   return [...names].filter((name) => options.mode === 'any' || options.allowed_names.includes(name)).sort()
 }
 
+const ORIGIN_LABELS: Readonly<Record<string, string>> = {
+  generated: 'Generated',
+  local: 'Local files',
+  remote: 'Remote provider',
+  user: 'User',
+  unknown: 'Unknown',
+}
+
+/** The display name of a seed origin, shared by the dataset catalog and the scanner. */
+export function datasetOriginLabel(origin: string): string {
+  return ORIGIN_LABELS[origin] ?? origin
+}
+
 export function datasetNameWithOrigin(name: string, dataset: DatasetInfo | undefined): string {
   const origins = [...new Set(dataset?.origins ?? [])]
-  return `${name} (${origins.length > 0 ? origins.join(', ') : 'unknown'})`
+  return `${name} (${(origins.length > 0 ? origins : ['unknown']).map(datasetOriginLabel).join(', ')})`
 }
 
 export function datasetFacts(datasets: DatasetInfo[], names: string[]) {
