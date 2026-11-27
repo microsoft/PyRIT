@@ -17,5 +17,6 @@ export const useTechniqueEditorStyles = makeStyles({
   select: { width: '100%', minWidth: 0, '& select': { width: '100%', minWidth: 0 } },
   section: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
   prompt: { minHeight: '7rem' },
+  promptControls: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: tokens.spacingHorizontalS },
   action: { ...mobileTouchTargetHeight },
 })

@@ -776,6 +776,16 @@ export interface TechniqueConfiguration {
   read_only: Record<string, string>
   supports_prepended_conversation: boolean
   supports_prompt?: boolean
+  prompt_templates?: Partial<Record<EditableAdversarialPromptField, TechniquePromptTemplate>>
+  system_prompt_prefix?: string | null
+}
+
+export type EditableAdversarialPromptField = 'adversarial_system_prompt' | 'adversarial_seed_prompt' | 'adversarial_prompt_template'
+
+export interface TechniquePromptTemplate {
+  value: string
+  /** Variables execution supplies to this prompt slot. */
+  parameters: string[]
 }
 
 export interface TechniqueEditResponse {

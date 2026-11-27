@@ -1,7 +1,7 @@
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
 
 import {
-  Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
+  Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
   Input, MessageBar, MessageBarBody, Select, Spinner, Text, Textarea,
 } from '@fluentui/react-components'
 
@@ -21,6 +21,7 @@ import type {
   CreateTechniqueRequest, Parameter, RegistryReferenceOption, TechniqueTypeEntry,
   TechniqueConfiguration, TechniqueChanges, TechniqueEditResponse, SimulationChanges,
   ConverterInstance, ConverterSelection,
+  EditableAdversarialPromptField,
 } from '@/types'
 
 import { useTechniqueEditorStyles } from './TechniqueEditor.styles'
@@ -28,6 +29,11 @@ import { fluentRef } from '@/utils/fluentRef'
 
 const SCALAR_TYPES = new Set(['str', 'int', 'float', 'bool', 'list[str]', 'list[int]', 'list[float]', 'list[bool]'])
 const VALIDATION_DELAY_MS = 300
+const PROMPT_LABELS: Record<EditableAdversarialPromptField, string> = {
+  adversarial_system_prompt: 'Adversarial system prompt',
+  adversarial_seed_prompt: 'Adversarial seed prompt',
+  adversarial_prompt_template: 'Adversarial per-turn prompt',
+}
 
 function canConfigure(parameter: Parameter, allowStructured = true): boolean {
   if (parameter.reference_type) return false
@@ -66,6 +72,24 @@ function referenceValue(value: ParameterFormValue | undefined): string | string[
   return typeof value === 'string' || Array.isArray(value) ? value : ''
 }
 
+function promptValue(configuration: TechniqueConfiguration | undefined, field: EditableAdversarialPromptField): string {
+  return configuration?.prompt_templates?.[field]?.value ?? configuration?.settings[field] ?? ''
+}
+
+function isPromptField(field: string): field is EditableAdversarialPromptField {
+  return Object.prototype.hasOwnProperty.call(PROMPT_LABELS, field)
+}
+
+/** Server errors the API attributes to an edited prompt, keyed by that prompt. */
+function serverPromptErrors(err: unknown): Partial<Record<EditableAdversarialPromptField, string>> {
+  const result: Partial<Record<EditableAdversarialPromptField, string>> = {}
+  for (const { field, message } of toApiError(err).fieldErrors) {
+    const name = field.startsWith('changes.') ? field.slice('changes.'.length) : ''
+    if (isPromptField(name)) result[name] = message
+  }
+  return result
+}
+
 interface TechniqueEditorProps {
   onClose?: () => void
   onCreated?: () => void
@@ -98,9 +122,9 @@ export default function TechniqueEditor({
   const [requestConverters, setRequestConverters] = useState<ConverterSelection[]>(configuration?.settings.request_converters ?? [])
   const [responseConverters, setResponseConverters] = useState<ConverterSelection[]>(configuration?.settings.response_converters ?? [])
   const [adversarialTarget, setAdversarialTarget] = useState(configuration?.settings.adversarial_chat ?? '')
-  const [systemPrompt, setSystemPrompt] = useState(configuration?.settings.adversarial_system_prompt ?? '')
-  const [seedPrompt, setSeedPrompt] = useState(configuration?.settings.adversarial_seed_prompt ?? '')
-  const [turnPrompt, setTurnPrompt] = useState(configuration?.settings.adversarial_prompt_template ?? '')
+  const [systemPrompt, setSystemPrompt] = useState(promptValue(configuration, 'adversarial_system_prompt'))
+  const [seedPrompt, setSeedPrompt] = useState(promptValue(configuration, 'adversarial_seed_prompt'))
+  const [turnPrompt, setTurnPrompt] = useState(promptValue(configuration, 'adversarial_prompt_template'))
   const [simulation, setSimulation] = useState<SimulationChanges>(configuration?.settings.simulation ?? {})
   const [numTurns, setNumTurns] = useState(String(configuration?.settings.simulation?.num_turns ?? ''))
   const [loading, setLoading] = useState(true)
@@ -109,11 +133,18 @@ export default function TechniqueEditor({
   const [retry, setRetry] = useState(0)
   const active = useRef(true)
   const errorRef = useRef<HTMLDivElement>(null)
-  const [submitError, setSubmitError] = useState(false)
   const [revision, setRevision] = useState(0)
   const [validating, setValidating] = useState(false)
+  const [apiPromptErrors, setApiPromptErrors] = useState<Partial<Record<EditableAdversarialPromptField, string>>>({})
+  const promptInputs = useRef<Partial<Record<EditableAdversarialPromptField, HTMLTextAreaElement | null>>>({})
+  const [focusRequest, setFocusRequest] = useState<{ field?: EditableAdversarialPromptField } | null>(null)
 
   function update<Value>(setter: Dispatch<SetStateAction<Value>>, value: Value): void {
+    if (Object.keys(apiPromptErrors).length) {
+      // A server prompt rejection describes the previous draft.
+      setApiPromptErrors({})
+      setError(null)
+    }
     if (autoApply) {
       onPending?.()
       setValidating(true)
@@ -161,12 +192,24 @@ export default function TechniqueEditor({
   }, [retry, original])
 
   useEffect(() => {
-    if (submitError && error) errorRef.current?.focus()
-  }, [error, submitError])
+    if (!focusRequest) return
+    if (focusRequest.field) promptInputs.current[focusRequest.field]?.focus()
+    else errorRef.current?.focus()
+  }, [focusRequest])
 
   const selected = types.find((entry) => entry.attack_type === selectedType)
   const parameters = original ? original.parameters : guiParameters(getAttackParameters(selected))
   const editable = (field: string): boolean => !original || original.editable_fields.includes(field)
+  const promptDrafts = [
+    ['adversarial_system_prompt', systemPrompt], ['adversarial_seed_prompt', seedPrompt],
+    ['adversarial_prompt_template', turnPrompt],
+  ] as const
+  const promptErrors: Partial<Record<EditableAdversarialPromptField, string>> = {}
+  for (const [key, next] of promptDrafts) {
+    if (original && editable(key) && next !== promptValue(original, key) && !next.trim()) promptErrors[key] = (
+      `${PROMPT_LABELS[key]} must contain non-empty text. Use Reset to default to restore the selected technique's prompt.`
+    )
+  }
 
   const editChanges = (): TechniqueChanges => {
     if (!original) throw new Error('A source technique is required for editing.')
@@ -190,11 +233,16 @@ export default function TechniqueEditor({
     ] as const) {
       if (editable(key) && JSON.stringify(next) !== JSON.stringify(original.settings[key] ?? [])) changes[key] = next
     }
-    for (const [key, next] of [
-      ['adversarial_chat', adversarialTarget], ['adversarial_system_prompt', systemPrompt],
-      ['adversarial_seed_prompt', seedPrompt], ['adversarial_prompt_template', turnPrompt],
-    ] as const) {
-      if (editable(key) && next !== (original.settings[key] ?? '')) changes[key] = next || null
+    if (editable('adversarial_chat') && adversarialTarget !== (original.settings.adversarial_chat ?? '')) {
+      changes.adversarial_chat = adversarialTarget || null
+    }
+    for (const [key, next] of promptDrafts) {
+      if (!editable(key) || next === promptValue(original, key)) continue
+      const promptError = promptErrors[key]
+      if (promptError) throw new Error(promptError)
+      // A reloaded null clear displays the built-in prompt; keep the clear until that text changes.
+      changes[key] = initial?.settings[key] === null && original.settings[key] != null
+        && next === promptValue(initial, key) ? null : next
     }
     if (original.settings.simulation) {
       const turns = Number(numTurns)
@@ -234,7 +282,9 @@ export default function TechniqueEditor({
       }).then((response) => {
         if (!ignore) onApplied?.(response)
       }).catch((err: unknown) => {
-        if (!ignore) setError(toApiError(err).detail)
+        if (ignore) return
+        setError(toApiError(err).detail)
+        setApiPromptErrors(serverPromptErrors(err))
       }).finally(() => {
         if (!ignore) setValidating(false)
       })
@@ -243,7 +293,10 @@ export default function TechniqueEditor({
   }, [autoApply, original, revision, changesJson, editError, onApplied])
 
   const submit = async (): Promise<void> => {
-    const fail = (message: string): void => { setError(message); setSubmitError(true) }
+    const fail = (message: string, field?: EditableAdversarialPromptField): void => {
+      setError(message)
+      setFocusRequest({ field })
+    }
     const parsedTags = tags.split(',').map((tag) => tag.trim()).filter(Boolean)
     if (!selected) { fail('Select an attack type.'); return }
     const result = buildParametersFromForm(parameters, values)
@@ -264,7 +317,7 @@ export default function TechniqueEditor({
     }
     setSubmitting(true)
     setError(null)
-    setSubmitError(false)
+    setApiPromptErrors({})
     try {
       if (original) {
         if (editError || changes === undefined) throw new Error(editError ?? 'Technique settings are invalid.')
@@ -277,14 +330,22 @@ export default function TechniqueEditor({
         if (active.current) onCreated?.()
       }
     } catch (err) {
-      if (active.current) fail(toApiError(err).detail)
+      if (active.current) {
+        const detail = toApiError(err).detail
+        const rejected = serverPromptErrors(err)
+        setApiPromptErrors(rejected)
+        fail(detail, (Object.keys(rejected) as EditableAdversarialPromptField[]).find((key) => rejected[key] === detail))
+      }
     } finally {
       if (active.current) setSubmitting(false)
     }
   }
 
   const inputsDisabled = disabled || submitting
-  const displayedError = autoApply && revision > 0 ? editError ?? error : error
+  const shownError = autoApply && revision > 0 ? editError ?? error : error
+  const fieldErrors = { ...apiPromptErrors, ...promptErrors }
+  // Prompt text errors are shown on their own field.
+  const displayedError = shownError && !Object.values(fieldErrors).includes(shownError) ? shownError : null
   const content = (
             // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- only keeps Enter in a field from submitting the form
             <div className={styles.form} onKeyDown={(event) => {
@@ -374,25 +435,41 @@ export default function TechniqueEditor({
                         help={HELP_DEFINITIONS.adversarialTarget}
                         onChange={(next) => { if (typeof next === 'string') update(setAdversarialTarget, next) }} />}
                       {selected?.supports_adversarial && <>
-                      {editable('adversarial_system_prompt') && <HelpField label="Adversarial system prompt"
-                        help="Instructions that guide the attack-writing model. These are not the objective target's system instructions.">
-                        <Textarea value={systemPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setSystemPrompt, data.value)} />
-                      </HelpField>}
-                      {editable('adversarial_seed_prompt') && <HelpField label="Adversarial seed prompt"
-                        help="The starting message for the attack-writing model, used to prepare its first attack prompt.">
-                        <Textarea value={seedPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setSeedPrompt, data.value)} />
-                      </HelpField>}
-                      {editable('adversarial_prompt_template') && <HelpField label="Adversarial per-turn prompt"
-                        help="Instructions used to request the next attack prompt on each turn. The attack supplies the current conversation context.">
-                        <Textarea value={turnPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setTurnPrompt, data.value)} />
-                      </HelpField>}
+                      {([
+                        ['adversarial_system_prompt', systemPrompt, setSystemPrompt,
+                          "Instructions that guide the attacker model. These are not the objective target's system instructions."],
+                        ['adversarial_seed_prompt', seedPrompt, setSeedPrompt,
+                          'The starting message for the attacker model, used to prepare its first attack prompt.'],
+                        ['adversarial_prompt_template', turnPrompt, setTurnPrompt,
+                          'Instructions used to request the next attack prompt on each turn. The attack supplies the current conversation context.'],
+                      ] as const).map(([field, value, setter, help]) => {
+                        if (!editable(field)) return null
+                        const label = PROMPT_LABELS[field]
+                        const template = original?.prompt_templates?.[field]
+                        const customized = value !== promptValue(original, field)
+                        return <HelpField key={field} label={label} help={help}
+                          validationState={fieldErrors[field] ? 'error' : undefined} validationMessage={fieldErrors[field]}>
+                          {template && <div className={styles.promptControls}>
+                            <Badge appearance="tint" color={customized ? 'brand' : 'informative'}>{customized ? 'Customized' : 'Default'}</Badge>
+                            <Button className={styles.action} size="small" appearance="subtle" disabled={inputsDisabled || !customized}
+                              aria-label={`Reset ${label.toLowerCase()} to default`}
+                              onClick={() => update(setter, promptValue(original, field))}>Reset to default</Button>
+                          </div>}
+                          <Textarea className={styles.prompt} resize="vertical" value={value}
+                            ref={(element) => { promptInputs.current[field] = element }}
+                            disabled={inputsDisabled} onChange={(_, data) => update(setter, data.value)} />
+                          {template && template.parameters.length > 0 && <Text size={200}>
+                            Template variables: {template.parameters.map((parameter) => `{{ ${parameter} }}`).join(', ')}
+                          </Text>}
+                        </HelpField>
+                      })}
                       </>}
                     </>
                   )}
                 </>
               )}
               {autoApply && validating && !editError && <Spinner size="tiny" label="Validating technique settings..." />}
-              {autoApply && !validating && revision > 0 && !displayedError && <Text role="status">Technique settings applied to this run.</Text>}
+              {autoApply && !validating && revision > 0 && !shownError && <Text role="status">Technique settings applied to this run.</Text>}
             </div>
   )
 

@@ -36,10 +36,12 @@ from pyrit.executor.attack import (
     AttackParameters,
     AttackScoringConfig,
     AttackStrategy,
+    CrescendoAttack,
     PrependedConversationConfig,
     PromptSendingAttack,
     RedTeamingAttack,
     SimulatedConversationResult,
+    TreeOfAttacksWithPruningAttack,
 )
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
@@ -273,6 +275,8 @@ def test_snapshot_and_patch_preserve_existing_presence_and_null_serialization(
         "read_only",
         "supports_prepended_conversation",
         "supports_prompt",
+        "prompt_templates",
+        "system_prompt_prefix",
     }
     assert payload["settings"] == {
         "description": "Write a movie script.",
@@ -332,6 +336,378 @@ def test_red_team_snapshot_retains_explicit_null_prompts_without_simulation(
         TechniqueEditService.resolve(TechniqueEditService.validate(specification).override).get_configuration_identity()
         == source.get_configuration_identity()
     )
+
+
+@pytest.mark.parametrize("attack_class", [CrescendoAttack, RedTeamingAttack])
+def test_effective_prompt_defaults_match_execution_without_materializing_settings(
+    edit_catalog: AttackTechniqueRegistry, attack_class: type[AttackStrategy]
+) -> None:
+    from pyrit.executor.attack.component import _AdversarialConversationManager
+
+    source = AttackTechniqueFactory(name="defaults", attack_class=attack_class)
+    edit_catalog.register_from_factories([source])
+    identity = source.get_configuration_identity()
+    revision = edit_catalog.catalog_revision
+    with patch.object(source, "create", side_effect=AssertionError("Must not construct an attack")):
+        configuration = TechniqueEditService.configuration(source.name)
+    target = MockPromptTarget()
+    requirements = attack_class.get_adversarial_prompt_requirements()
+    resolved = _AdversarialConversationManager.resolve_config(
+        config=source._build_adversarial_config(create_time_target=target),
+        default_system_prompt_path=requirements.default_system_prompt_path,
+        system_prompt_required_parameters=list(requirements.system_prompt_parameters),
+        resolve_user_messages=requirements.accepts_user_messages,
+    )
+    assert configuration.prompt_templates["adversarial_system_prompt"].value == resolved.system_prompt.value
+    assert configuration.settings.adversarial_system_prompt is None
+    if requirements.accepts_user_messages:
+        assert configuration.prompt_templates["adversarial_seed_prompt"].value == resolved.first_message.value
+        assert (
+            configuration.prompt_templates["adversarial_prompt_template"].value == resolved.next_message_template.value
+        )
+    else:
+        assert set(configuration.prompt_templates) == {"adversarial_system_prompt"}
+        assert "adversarial_seed_prompt" not in configuration.editable_fields
+        assert "adversarial_prompt_template" not in configuration.editable_fields
+    admitted = TechniqueEditService.validate(
+        TechniqueOverride(source_name=source.name, source_identity=configuration.source_identity)
+    )
+    copied = TechniqueEditService.resolve(admitted.override)
+    assert copied.get_configuration_identity() == identity
+    assert copied.get_effective_settings().adversarial_system_prompt is None
+    assert admitted.override.changes.model_dump() == {}
+    assert source.get_configuration_identity() == identity
+    assert edit_catalog.catalog_revision == revision
+
+
+def test_inherited_prompt_edit_preserves_metadata_prefix_and_replay(edit_catalog: AttackTechniqueRegistry) -> None:
+    source = AttackTechniqueFactory(
+        name="crescendo", attack_class=CrescendoAttack
+    ).with_adversarial_system_prompt_prefix("Use concise questions.")
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    original = source.get_adversarial_prompt_templates()["adversarial_system_prompt"]
+    text = original.value + "\nKeep the dialogue focused."
+    assert configuration.system_prompt_prefix == "Use concise questions."
+    assert configuration.prompt_templates["adversarial_system_prompt"].value == original.value
+    assert not original.value.startswith("Use concise questions.")
+    admitted = TechniqueEditService.validate(
+        TechniqueOverride(
+            source_name=source.name,
+            source_identity=configuration.source_identity,
+            changes=TechniqueChanges(adversarial_system_prompt=text),
+        )
+    )
+    replay = TechniqueOverride.model_validate_json(admitted.override.model_dump_json())
+    edited = TechniqueEditService.resolve(replay)
+    prompt = edited.get_effective_settings().adversarial_system_prompt
+    assert isinstance(prompt, SeedPrompt)
+    assert prompt.value == text
+    assert prompt.parameters == original.parameters
+    assert prompt.response_json_schema == original.response_json_schema
+    assert prompt.response_json_schema is not None
+    assert prompt.metadata == original.metadata
+    assert prompt.is_jinja_template == original.is_jinja_template
+    combined = edited.get_adversarial_prompt_templates(include_prefix=True)["adversarial_system_prompt"].value
+    assert combined == f"Use concise questions.\n\n{text}"
+    assert source.get_effective_settings().adversarial_system_prompt is None
+    assert admitted.configuration.prompt_templates["adversarial_system_prompt"].value == text
+
+
+def test_explicit_persona_templates_remain_the_selected_technique_defaults(
+    edit_catalog: AttackTechniqueRegistry,
+) -> None:
+    source = AttackTechniqueFactory(
+        name="goat",
+        attack_class=RedTeamingAttack,
+        adversarial_system_prompt=SeedPrompt.from_yaml_file(EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "goat.yaml"),
+        adversarial_seed_prompt=SeedPrompt.from_yaml_file(
+            EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "goat_initial_prompt.yaml"
+        ),
+        adversarial_prompt_template=SeedPrompt.from_yaml_file(
+            EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "goat_follow_up_prompt.yaml"
+        ),
+    )
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    for field, prompt in source.get_adversarial_prompt_templates().items():
+        assert configuration.prompt_templates[field].value == prompt.value
+
+
+@pytest.mark.parametrize("text", ["Bad {{ unknown_variable }}", "Bad {{ objective", ""])
+def test_invalid_inherited_template_edits_are_rejected(edit_catalog: AttackTechniqueRegistry, text: str) -> None:
+    source = AttackTechniqueFactory(name="crescendo", attack_class=CrescendoAttack)
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    with pytest.raises(ValueError):
+        TechniqueEditService.validate(
+            TechniqueOverride(
+                source_name=source.name,
+                source_identity=configuration.source_identity,
+                changes=TechniqueChanges(adversarial_system_prompt=text),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "field", ["adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"]
+)
+@pytest.mark.parametrize("is_jinja_template", [False, True])
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [
+        ("Bad {{ unknown_variable }}", "unsupported template variables"),
+        ("Bad {{ objective", "Invalid prompt template"),
+    ],
+)
+def test_invalid_python_created_template_edits_are_rejected(
+    edit_catalog: AttackTechniqueRegistry, field: str, is_jinja_template: bool, text: str, error: str
+) -> None:
+    prompt = SeedPrompt(value="Use {{ objective }}", parameters=["objective"], is_jinja_template=is_jinja_template)
+    source = AttackTechniqueFactory(
+        name="python_prompt",
+        attack_class=RedTeamingAttack,
+        adversarial_system_prompt=prompt,
+        adversarial_seed_prompt=prompt,
+        adversarial_prompt_template=prompt,
+    )
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    with pytest.raises(ValueError, match=error):
+        TechniqueEditService.validate(
+            TechniqueOverride(
+                source_name=source.name,
+                source_identity=configuration.source_identity,
+                changes=TechniqueChanges.model_validate({field: text}),
+            )
+        )
+    assert prompt.value == "Use {{ objective }}"
+    assert source.get_editable_settings()[field] == prompt.value
+
+
+@pytest.mark.parametrize(
+    ("attack_class", "persona", "variable"),
+    [
+        (RedTeamingAttack, None, "max_turns"),
+        (TreeOfAttacksWithPruningAttack, "Start with {{ desired_prefix }}.", "conversation_context"),
+        (CrescendoAttack, "Reach {{ objective }} in {{ max_turns }} turns.", "conversation_context"),
+    ],
+)
+def test_system_prompt_edits_accept_every_variable_execution_supplies(
+    edit_catalog: AttackTechniqueRegistry, attack_class: type[AttackStrategy], persona: str | None, variable: str
+) -> None:
+    source = AttackTechniqueFactory(name="supplied", attack_class=attack_class, adversarial_system_prompt=persona)
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    template = configuration.prompt_templates["adversarial_system_prompt"]
+    assert variable in template.parameters
+    text = f"{template.value}\nAlso use {{{{ {variable} }}}}."
+    admitted = TechniqueEditService.validate(
+        TechniqueOverride(
+            source_name=source.name,
+            source_identity=configuration.source_identity,
+            changes=TechniqueChanges(adversarial_system_prompt=text),
+        )
+    )
+    assert admitted.configuration.prompt_templates["adversarial_system_prompt"].value == text
+
+
+def test_edits_reject_declared_variables_execution_never_supplies(edit_catalog: AttackTechniqueRegistry) -> None:
+    prompt = SeedPrompt(value="Use {{ objective }}", parameters=["objective", "unbound"], is_jinja_template=True)
+    source = AttackTechniqueFactory(name="declared", attack_class=RedTeamingAttack, adversarial_system_prompt=prompt)
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    assert "unbound" not in configuration.prompt_templates["adversarial_system_prompt"].parameters
+    with pytest.raises(ValueError, match="unsupported template variables: unbound"):
+        TechniqueEditService.validate(
+            TechniqueOverride(
+                source_name=source.name,
+                source_identity=configuration.source_identity,
+                changes=TechniqueChanges(adversarial_system_prompt="Use {{ objective }} and {{ unbound }}"),
+            )
+        )
+
+
+@pytest.mark.parametrize("attack_class", [CrescendoAttack, TreeOfAttacksWithPruningAttack])
+@pytest.mark.parametrize("field", ["adversarial_seed_prompt", "adversarial_prompt_template"])
+def test_unconsumed_prompt_slots_are_read_only(
+    edit_catalog: AttackTechniqueRegistry, attack_class: type[AttackStrategy], field: str
+) -> None:
+    source = AttackTechniqueFactory(name="unconsumed", attack_class=attack_class)
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    assert field not in source.get_editable_settings()
+    assert configuration.read_only[field] == "Not consumed by this attack."
+    with pytest.raises(ValueError, match=f"Technique settings are read-only: {field}"):
+        TechniqueEditService.validate(
+            TechniqueOverride(
+                source_name=source.name,
+                source_identity=configuration.source_identity,
+                changes=TechniqueChanges.model_validate({field: "Ignored {{ unknown_variable }}"}),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "field", ["adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"]
+)
+def test_python_created_template_edits_preserve_metadata_and_construction_flag(
+    edit_catalog: AttackTechniqueRegistry, field: str
+) -> None:
+    prompt = SeedPrompt(value="Use {{ objective }}", parameters=["objective"], metadata={"origin": "python"})
+    source = AttackTechniqueFactory(
+        name="python_prompt",
+        attack_class=RedTeamingAttack,
+        adversarial_system_prompt=prompt,
+        adversarial_seed_prompt=prompt,
+        adversarial_prompt_template=prompt,
+    )
+    edit_catalog.register_from_factories([source])
+    text = "New instructions for {{ objective }}."
+    configuration = TechniqueEditService.configuration(source.name)
+    admitted = TechniqueEditService.validate(
+        TechniqueOverride(
+            source_name=source.name,
+            source_identity=configuration.source_identity,
+            changes=TechniqueChanges.model_validate({field: text}),
+        )
+    )
+    copied = TechniqueEditService.resolve(TechniqueOverride.model_validate_json(admitted.override.model_dump_json()))
+    edited = copied.get_adversarial_prompt_templates()[field]
+    assert edited.render_template_value(objective="Goal") == "New instructions for Goal."
+    assert edited.is_jinja_template is False
+    assert edited.parameters == prompt.parameters
+    assert edited.metadata == prompt.metadata
+    assert prompt.value == "Use {{ objective }}"
+
+
+def test_opaque_system_prompt_remains_read_only(edit_catalog: AttackTechniqueRegistry) -> None:
+    source = AttackTechniqueFactory(
+        name="opaque",
+        attack_class=CrescendoAttack,
+        adversarial_system_prompt=SeedPrompt(
+            value="existing-image.png", data_type="image_path", parameters=["objective", "max_turns"]
+        ),
+    )
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    assert "adversarial_system_prompt" not in configuration.prompt_templates
+    assert "adversarial_system_prompt" not in configuration.editable_fields
+    assert configuration.read_only["adversarial_system_prompt"] == "Opaque prompt; retained unchanged."
+
+
+def test_empty_source_strings_follow_runtime_fallback_rules(edit_catalog: AttackTechniqueRegistry) -> None:
+    source = AttackTechniqueFactory(
+        name="empty_prompts",
+        attack_class=RedTeamingAttack,
+        adversarial_system_prompt="",
+        adversarial_seed_prompt="",
+        adversarial_prompt_template="",
+    )
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    inherited = AttackTechniqueFactory(
+        name="inherited", attack_class=RedTeamingAttack
+    ).get_adversarial_prompt_templates()
+    for field in ("adversarial_system_prompt", "adversarial_seed_prompt"):
+        assert configuration.prompt_templates[field].value == inherited[field].value
+        assert getattr(configuration.settings, field) == ""
+    assert configuration.prompt_templates["adversarial_prompt_template"].value == ""
+
+
+def test_empty_source_prompt_edit_keeps_inherited_metadata(edit_catalog: AttackTechniqueRegistry) -> None:
+    source = AttackTechniqueFactory(name="empty_prompt", attack_class=CrescendoAttack, adversarial_system_prompt="")
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    inherited = AttackTechniqueFactory(
+        name="inherited", attack_class=CrescendoAttack
+    ).get_adversarial_prompt_templates()["adversarial_system_prompt"]
+    text = configuration.prompt_templates["adversarial_system_prompt"].value + "\nKeep the dialogue focused."
+    admitted = TechniqueEditService.validate(
+        TechniqueOverride(
+            source_name=source.name,
+            source_identity=configuration.source_identity,
+            changes=TechniqueChanges(adversarial_system_prompt=text),
+        )
+    )
+    copied = TechniqueEditService.resolve(TechniqueOverride.model_validate_json(admitted.override.model_dump_json()))
+    prompt = copied.get_effective_settings().adversarial_system_prompt
+    assert isinstance(prompt, SeedPrompt)
+    assert prompt.value == text
+    assert prompt.response_json_schema == inherited.response_json_schema
+    assert prompt.response_json_schema is not None
+    assert prompt.parameters == inherited.parameters
+
+
+@pytest.mark.parametrize(
+    ("field", "text"),
+    [
+        ("adversarial_seed_prompt", "Try another approach to {{ objective }}."),
+        ("adversarial_prompt_template", "Objective: {{ objective }}\nFeedback: {{ feedback_text }}"),
+    ],
+)
+def test_user_template_edits_replay_without_freezing_other_defaults(
+    edit_catalog: AttackTechniqueRegistry, field: str, text: str
+) -> None:
+    source = AttackTechniqueFactory(name="red_teaming", attack_class=RedTeamingAttack)
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    admitted = TechniqueEditService.validate(
+        TechniqueOverride(
+            source_name=source.name,
+            source_identity=configuration.source_identity,
+            changes=TechniqueChanges.model_validate({field: text}),
+        )
+    )
+    copied = TechniqueEditService.resolve(TechniqueOverride.model_validate_json(admitted.override.model_dump_json()))
+    assert copied.get_adversarial_prompt_templates()[field].render_template_value(
+        objective="Goal", feedback_text="Continue"
+    ) == text.replace("{{ objective }}", "Goal").replace("{{ feedback_text }}", "Continue")
+    assert copied.get_effective_settings().adversarial_system_prompt is None
+    assert source.get_editable_settings()[field] is None
+    assert admitted.override.changes.model_dump() == {field: text}
+
+
+@pytest.mark.parametrize(
+    ("attack_class", "field", "text"),
+    [
+        (RedTeamingAttack, "adversarial_prompt_template", "Retry {{ objective }}: {{ feedback_text }}"),
+        (RedTeamingAttack, "adversarial_prompt_template", None),
+        (CrescendoAttack, "adversarial_system_prompt", None),
+    ],
+)
+def test_prompt_edits_allow_runtime_variables_and_reset_to_builtins(
+    edit_catalog: AttackTechniqueRegistry, attack_class: type[AttackStrategy], field: str, text: str | None
+) -> None:
+    prompt = SeedPrompt(
+        value="Use {{ objective }}",
+        parameters=["objective", "max_turns"] if attack_class is CrescendoAttack else ["objective"],
+    )
+    source = AttackTechniqueFactory(
+        name="custom_prompt",
+        attack_class=attack_class,
+        **{field: prompt},
+    )
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    admitted = TechniqueEditService.validate(
+        TechniqueOverride(
+            source_name=source.name,
+            source_identity=configuration.source_identity,
+            changes=TechniqueChanges.model_validate({field: text}),
+        )
+    )
+    copied = TechniqueEditService.resolve(TechniqueOverride.model_validate_json(admitted.override.model_dump_json()))
+    effective = copied.get_adversarial_prompt_templates()[field]
+    if text is None:
+        inherited = AttackTechniqueFactory(name="inherited", attack_class=attack_class)
+        assert effective.value == inherited.get_adversarial_prompt_templates()[field].value
+        assert getattr(copied.get_effective_settings(), field) is None
+    else:
+        assert effective.render_template_value(objective="Goal", feedback_text="Continue") == "Retry Goal: Continue"
+        assert effective.parameters == prompt.parameters
+    assert source.get_adversarial_prompt_templates()[field].value == prompt.value
+    assert admitted.override.changes.model_dump() == {field: text}
 
 
 def test_effective_projection_noop_and_original_immutability(edit_catalog: AttackTechniqueRegistry) -> None:
@@ -958,6 +1334,47 @@ def test_edit_routes_and_invalid_selection(
             techniques=["plain"],
             technique_override=TechniqueOverride.model_validate(response.json()["override"]),
         )
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        (
+            "Bad {{ unknown_variable }}",
+            "adversarial_system_prompt has unsupported template variables: unknown_variable",
+        ),
+        ("Bad {{ objective", "Invalid prompt template"),
+        (" ", "adversarial_system_prompt must contain non-empty text"),
+    ],
+)
+def test_edit_route_names_the_rejected_prompt_field(
+    edit_catalog: AttackTechniqueRegistry, compatibility_headers: dict[str, str], text: str, message: str
+) -> None:
+    source = AttackTechniqueFactory(name="crescendo", attack_class=CrescendoAttack)
+    edit_catalog.register_from_factories([source])
+    client = TestClient(app, headers=compatibility_headers)
+    response = client.post(
+        "/api/techniques/crescendo/edit",
+        json={
+            "source_name": source.name,
+            "source_identity": source.get_configuration_identity(),
+            "changes": {"adversarial_system_prompt": text},
+        },
+    )
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert message in body["detail"]
+    assert body["errors"] == [{"field": "changes.adversarial_system_prompt", "message": body["detail"]}]
+
+
+def test_edit_route_keeps_request_wide_errors_unattributed(
+    edit_catalog: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    spec = _specification(changes=TechniqueChanges(description="Edited")).model_dump(mode="json", exclude_unset=True)
+    response = client.post("/api/techniques/role_play_movie_script/edit", json={**spec, "source_identity": "stale"})
+    assert response.status_code == 400, response.text
+    assert "errors" not in response.json()
 
 
 def test_edit_route_limits_description_and_dependency_identities(

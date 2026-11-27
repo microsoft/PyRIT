@@ -96,6 +96,68 @@ class AdversarialPromptRequirements:
     default_system_prompt_path: str | Path
     system_prompt_parameters: tuple[str, ...]
     accepts_user_messages: bool = False
+    # Every variable execution renders into the system prompt, beyond the required parameters.
+    system_prompt_variables: tuple[str, ...] = ("objective", "max_turns")
+
+    def get_template_variables(self) -> dict[str, frozenset[str]]:
+        """
+        Get the variables execution supplies to each consumed prompt slot.
+
+        Returns:
+            dict[str, frozenset[str]]: Supplied variable names keyed by prompt slot.
+        """
+        variables = {"system_prompt": frozenset(self.system_prompt_variables) | set(self.system_prompt_parameters)}
+        if self.accepts_user_messages:
+            variables["first_message"] = frozenset({"objective"})
+            variables["feedback_template"] = frozenset({"objective", "feedback_text"})
+        return variables
+
+    def resolve_templates(
+        self,
+        *,
+        system_prompt: str | SeedPrompt | None,
+        first_message: str | SeedPrompt | None = None,
+        feedback_template: str | SeedPrompt | None = None,
+        system_prompt_prefix: str | SeedPrompt | None = None,
+        error_message: str | None = None,
+    ) -> dict[str, SeedPrompt]:
+        """
+        Resolve consumed templates without constructing an attack or a target.
+
+        Returns:
+            dict[str, SeedPrompt]: Effective templates for the consumed prompt slots.
+
+        Raises:
+            ValueError: If a template, parameter contract, or response schema is invalid.
+        """
+        prompts = {
+            "system_prompt": self.resolve_system_prompt(
+                system_prompt=system_prompt,
+                system_prompt_prefix=system_prompt_prefix,
+                error_message=error_message,
+            )
+        }
+        if self.accepts_user_messages:
+            for name, value, default, label in (
+                ("first_message", first_message, DEFAULT_ADVERSARIAL_FIRST_MESSAGE, "First message"),
+                (
+                    "feedback_template",
+                    feedback_template,
+                    DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
+                    "Adversarial prompt template",
+                ),
+            ):
+                if value is None:
+                    value = default
+                if isinstance(value, str):
+                    value = SeedPrompt(value=value, data_type="text", is_jinja_template=True)
+                if not isinstance(value, SeedPrompt):
+                    raise ValueError(f"{label} must be a string or SeedPrompt object.")
+                prompts[name] = value
+        resolve_adversarial_json_schema(
+            system_prompt=prompts["system_prompt"], first_message=prompts.get("first_message")
+        )
+        return prompts
 
     def resolve_system_prompt(
         self,

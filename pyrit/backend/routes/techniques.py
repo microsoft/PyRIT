@@ -5,9 +5,10 @@
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 
-from pyrit.backend.models import ProblemDetail
+from pyrit.backend.models import FieldError, ProblemDetail
 from pyrit.backend.models.common import CursorStr, IdentifierStr
 from pyrit.backend.models.techniques import (
     CreateTechniqueRequest,
@@ -20,6 +21,7 @@ from pyrit.backend.models.techniques import (
 from pyrit.backend.services.technique_edit_service import TechniqueEditService
 from pyrit.backend.services.technique_service import get_technique_service
 from pyrit.models.technique_edit import TechniqueOverride
+from pyrit.registry.components.attack_technique_registry import TechniquePromptError
 
 router = APIRouter(prefix="/techniques", tags=["techniques"])
 
@@ -78,18 +80,31 @@ async def technique_configuration_async(name: IdentifierStr) -> TechniqueConfigu
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/{name}/edit", response_model=TechniqueEditResponse)
-async def validate_technique_edit_async(name: IdentifierStr, request: TechniqueOverride) -> TechniqueEditResponse:
+@router.post("/{name}/edit", response_model=TechniqueEditResponse, responses={400: {"model": ProblemDetail}})
+async def validate_technique_edit_async(
+    name: IdentifierStr, request: TechniqueOverride, http_request: Request
+) -> TechniqueEditResponse | JSONResponse:
     """
     Validate a private edit; no factory is registered.
 
     Returns:
-        TechniqueEditResponse: A validated run-local specification.
+        TechniqueEditResponse | JSONResponse: A validated run-local specification, or a problem naming the
+            rejected prompt field.
     """
     if name != request.source_name:
         raise HTTPException(status_code=400, detail="Source technique name does not match the edit")
     try:
         return await asyncio.to_thread(TechniqueEditService.validate, request)
+    except TechniquePromptError as exc:
+        problem = ProblemDetail(
+            type="/errors/bad-request",
+            title="Bad Request",
+            status=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+            instance=str(http_request.url.path),
+            errors=[FieldError(field=f"changes.{exc.field}", message=str(exc))],
+        )
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=problem.model_dump(exclude_none=True))
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

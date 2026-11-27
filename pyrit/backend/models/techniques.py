@@ -51,6 +51,14 @@ class TechniqueTypeResponse(BaseModel):
     items: list[TechniqueTypeEntry]
 
 
+class TechniquePromptTemplate(BaseModel):
+    """Effective template display, separate from the source settings and edit patch."""
+
+    value: str
+    # Variables execution supplies to this prompt slot, which an edited prompt may use.
+    parameters: list[str] = Field(default_factory=list)
+
+
 class TechniqueConfiguration(BaseModel):
     """Typed effective settings for an editor; opaque values remain on the source factory."""
 
@@ -64,6 +72,8 @@ class TechniqueConfiguration(BaseModel):
     read_only: dict[str, str]
     supports_prepended_conversation: bool = False
     supports_prompt: bool = False
+    prompt_templates: dict[str, TechniquePromptTemplate] = Field(default_factory=dict)
+    system_prompt_prefix: str | None = None
 
 
 class TechniqueEditResponse(BaseModel):

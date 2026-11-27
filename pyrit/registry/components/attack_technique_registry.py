@@ -145,6 +145,21 @@ class TechniqueAdmissionError(ValueError):
     """A technique can't be registered for a reason of its own, such as a name a scenario can't use."""
 
 
+class TechniquePromptError(ValueError):
+    """An edited adversarial prompt can't be admitted; ``field`` names the rejected prompt."""
+
+    def __init__(self, message: str, *, field: str) -> None:
+        """
+        Initialize the error with the rejected prompt field.
+
+        Args:
+            message (str): The user-facing rejection reason.
+            field (str): The editable prompt field that was rejected.
+        """
+        super().__init__(message)
+        self.field = field
+
+
 class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"]):
     """Factory storage with an atomic runtime-admission path."""
 
@@ -424,6 +439,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             AttackTechniqueFactory: A validated copy retaining unedited and opaque source settings.
 
         Raises:
+            TechniquePromptError: If an edited adversarial prompt is blank, invalid, or uses unsupported variables.
             ValueError: If a supplied field is read-only, invalid, or no longer registered.
         """
         from pyrit.registry.resolution import resolve_constructor_args, resolve_reference_value
@@ -447,6 +463,15 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         )
         for name in supplied - {"simulation", "request_converters", "response_converters"}:
             value = getattr(changes, name)
+            if (
+                name.startswith("adversarial_")
+                and name != "adversarial_chat"
+                and isinstance(value, str)
+                and not value.strip()
+            ):
+                raise TechniquePromptError(
+                    f"{name} must contain non-empty text; use null to clear the override", field=name
+                )
             if name == "adversarial_chat" and value is not None:
                 value = resolve_reference_value(
                     component_type=ComponentType.TARGET, value=value, owner="Technique", name=name
@@ -456,6 +481,19 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             {name: getattr(changes, name) for name in supplied & {"request_converters", "response_converters"}}
         )
         factory = source.with_settings(settings=settings, simulation=changes.simulation, converter_changes=converters)
+        if supplied & {"adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"}:
+            variables = source.get_adversarial_prompt_variables()
+            for name, prompt in factory.get_adversarial_prompt_templates(include_prefix=True).items():
+                if name not in supplied or getattr(changes, name) is None:
+                    continue
+                try:
+                    used = set(prompt.get_template_parameter_names())
+                except ValueError as error:
+                    raise TechniquePromptError(f"{name}: {error}", field=name) from error
+                if unknown := used - variables[name]:
+                    raise TechniquePromptError(
+                        f"{name} has unsupported template variables: {', '.join(sorted(unknown))}", field=name
+                    )
         return self._with_replay_converter_roles(factory) if changes.request_converters else factory
 
     @staticmethod

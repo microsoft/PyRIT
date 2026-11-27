@@ -151,6 +151,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
         default_system_prompt_path=DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH,
         system_prompt_parameters=("objective", "max_turns"),
+        system_prompt_variables=("objective", "max_turns", "conversation_context"),
     )
 
     @apply_defaults

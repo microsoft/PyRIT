@@ -734,6 +734,8 @@ IDs remain available through the single-node and saved-conversation APIs.
 | `GET /api/techniques` | A page of active registered technique factories |
 | `GET /api/techniques/types` | Attack-class parameters and supported converter/adversarial controls |
 | `GET /api/techniques/{name}` | Safe settings for one factory; 404 if not registered |
+| `GET /api/techniques/{name}/configuration` | Source settings and effective prompt templates for run-local editing |
+| `POST /api/techniques/{name}/edit` | Validate a source-pinned run-local override without registering a factory |
 | `POST /api/techniques` | Validate and register a basic runtime technique; 201 on success |
 
 The list accepts `limit` (default 50, range 1-200) and `cursor` (the last returned
@@ -764,6 +766,16 @@ constructors; the factory retains omitted arguments and explicit `None` values.
 
 The basic GUI supports scalar inputs and one level of declared structured settings.
 It hides nested structured settings that the shared resolver cannot construct.
+
+The run-local editor shows effective adversarial prompts and edits only consumed slots.
+Changes apply to the current run, not registered techniques or packaged defaults.
+**Reset to default** restores the selected technique's original prompt, including any
+persona; unchanged prompts add no override. Blank edits are invalid, and edited prompts
+may use only the template variables the attack supplies. API `null` clears a supplied
+override rather than restoring the selected technique's original prompt. Fixed
+system-prompt prefixes still apply at execution and are not editable. A rejected
+prompt edit returns `400` with `errors[].field` naming the prompt, for example
+`changes.adversarial_system_prompt`.
 
 Additions are runtime-only and available in compatible scenarios. Restart or
 reinitialize PyRIT to remove them. Existing scenario snapshots and runs do not
