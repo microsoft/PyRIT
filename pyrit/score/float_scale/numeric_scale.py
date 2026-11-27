@@ -66,7 +66,7 @@ class NumericRubric(NumericRange):
     examples: str | None = None
 
     @classmethod
-    def from_yaml(cls, path: Path | str) -> "NumericRubric":
+    def from_yaml(cls, path: Path | str) -> Self:
         """
         Load a scale and its template parameters from a YAML file.
 

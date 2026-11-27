@@ -112,7 +112,7 @@ export function fileToBase64(file: Blob): Promise<string> {
       const base64 = result.split(',')[1] || ''
       resolve(base64)
     }
-    reader.onerror = () => reject(reader.error)
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file as data URL'))
     reader.readAsDataURL(file)
   })
 }

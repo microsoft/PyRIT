@@ -83,7 +83,7 @@ class LikertScale(BaseModel):
         path: Path | str,
         *,
         evaluation_files: LikertScaleEvalFiles | None = None,
-    ) -> "LikertScale":
+    ) -> Self:
         """
         Load a Likert scale from a YAML file.
 

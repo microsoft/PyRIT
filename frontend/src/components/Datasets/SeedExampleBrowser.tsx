@@ -360,15 +360,15 @@ export function SeedExampleBrowserView({
       }
 
       if (destination === 'new_attack') {
-        navigate('/attack/chat')
+        void navigate('/attack/chat')
       } else if (
         destination === 'current_conversation' &&
         effectiveAttackId &&
         effectiveConversationId
       ) {
-        navigate(attackConversationRoutePath(effectiveAttackId, effectiveConversationId))
+        void navigate(attackConversationRoutePath(effectiveAttackId, effectiveConversationId))
       } else if (destination === 'new_conversation' && effectiveAttackId && targetConversationId) {
-        navigate(attackConversationRoutePath(effectiveAttackId, targetConversationId))
+        void navigate(attackConversationRoutePath(effectiveAttackId, targetConversationId))
       }
     },
     [detailState.detail, draftHandoff, effectiveAttackId, effectiveConversationId, navigate, runtime.ready],
@@ -381,7 +381,7 @@ export function SeedExampleBrowserView({
         setPendingDirtyDestination(destination)
         return
       }
-      executeImport(destination, false)
+      void executeImport(destination, false)
     },
     [executeImport, isDestinationDirty],
   )
@@ -644,7 +644,7 @@ export function SeedExampleBrowserView({
           const dest = pendingDirtyDestination
           setPendingDirtyDestination(null)
           if (dest) {
-            executeImport(dest, true)
+            void executeImport(dest, true)
           }
         }}
         onCancel={() => {

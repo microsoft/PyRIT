@@ -715,10 +715,7 @@ class Scenario(ABC):
             TrueFalseScorer: ``scorer`` unchanged when it already matches the policy or
             cannot express it, otherwise an independent scorer carrying the policy.
         """
-        return cast(
-            "TrueFalseScorer",
-            scorer.with_scorer_block_policy(raise_if_scorer_blocks=self.RAISE_IF_DEFAULT_SCORER_BLOCKS),
-        )
+        return scorer.with_scorer_block_policy(raise_if_scorer_blocks=self.RAISE_IF_DEFAULT_SCORER_BLOCKS)
 
     def set_params_from_args(self, *, args: dict[str, Any]) -> None:
         """

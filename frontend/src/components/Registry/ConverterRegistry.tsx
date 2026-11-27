@@ -184,7 +184,7 @@ export default function ConverterRegistry() {
   useEffect(() => {
     mounted.current = true
     let active = true
-    Promise.resolve().then(() => {
+    void Promise.resolve().then(() => {
       if (active) void loadConverters()
     })
     return () => { active = false; mounted.current = false; listEpoch.current = {} }

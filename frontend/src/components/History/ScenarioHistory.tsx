@@ -202,7 +202,7 @@ export default function ScenarioHistory({
   useEffect(() => {
     let cancelled = false
     optionsPending.current = true
-    Promise.allSettled([
+    void Promise.allSettled([
       fetchAllPages((cursor) => scenariosApi.listCatalog(100, cursor)),
       labelsApi.getLabels('scenarios'),
       operationsApi.list(),
