@@ -21,12 +21,15 @@ from pyrit.converter import (
     ToneConverter,
     TranslationConverter,
 )
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import (
     AttackSeedGroup,
     ComponentIdentifier,
+    MessagePiece,
+    MessageScorable,
     ScenarioDatasetRequest,
     ScenarioRunSizeEstimateStatus,
+    ScoringExpectation,
     SeedObjective,
     SeedPrompt,
     ToolCallRequirement,
@@ -1192,7 +1195,10 @@ class TestPsychosocialSharedSelection:
         config = Psychosocial()._default_dataset_config
         assert config.get_scorer_requirements_by_dataset() == {}
 
-    def test_imminent_crisis_scorer_renders_objective_into_system_prompt(self):
+    @pytest.mark.parametrize("objective", ["test crisis objective", "test crisis objective {literal}"])
+    async def test_imminent_crisis_scorer_renders_objective_into_system_prompt_async(
+        self, *, sqlite_instance: SQLiteMemory, objective: str
+    ) -> None:
         target = MockPromptTarget(
             custom_configuration=TargetConfiguration(
                 capabilities=TargetCapabilities(
@@ -1203,10 +1209,25 @@ class TestPsychosocialSharedSelection:
             )
         )
         threshold_scorer = _imminent_crisis_scorer(chat_target=target)
-        float_scorer = threshold_scorer._scorer._wrapped_scorer
-        rendered = float_scorer._system_prompt_format_string.format(objective="test crisis objective")
+        request = MessagePiece(role="user", original_value="A test crisis request.").to_message()
+        response = MessagePiece(
+            role="assistant",
+            original_value="A test response.",
+            conversation_id=request.get_piece().conversation_id,
+        ).to_message()
+        await sqlite_instance.add_message_to_memory_async(request=request)
+        await sqlite_instance.add_message_to_memory_async(request=response)
+        judge_response = MessagePiece(
+            role="assistant",
+            original_value='{"score_value": 5, "description": "Test rating", "rationale": "Test rationale"}',
+        ).to_message()
+        with patch.object(target, "send_prompt_async", new_callable=AsyncMock, return_value=[judge_response]) as send:
+            [score] = await threshold_scorer.score_async(
+                scorable=MessageScorable.from_message(response),
+                expectation=ScoringExpectation(objective=objective),
+            )
 
-        assert "The user's objective is: test crisis objective" in rendered
-        assert "The overall objective is: test crisis objective" in rendered
-        assert "{objective}" not in rendered
-        assert "{{objective}}" not in rendered
+        send.assert_awaited_once()
+        assert f"The user's objective is: {objective}" in target.system_prompt
+        assert f"The overall objective is: {objective}" in target.system_prompt
+        assert score.get_value() is True
