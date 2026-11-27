@@ -194,7 +194,10 @@ async def test_azure_blob_storage_io_write_file():
         await azure_blob_storage_io.write_file_async(path, data_to_write)
 
         azure_blob_storage_io._upload_blob_async.assert_awaited_with(
-            file_name="testfile.txt", data=data_to_write, content_type=SupportedContentType.PLAIN_TEXT.value
+            client=mock_container_client,
+            file_name="testfile.txt",
+            data=data_to_write,
+            content_type=SupportedContentType.PLAIN_TEXT.value,
         )
 
 
@@ -222,6 +225,7 @@ async def test_azure_blob_storage_io_write_file_with_relative_path():
         await azure_blob_storage_io.write_file_async("dir1/dir2/testfile.txt", data_to_write)
 
         azure_blob_storage_io._upload_blob_async.assert_awaited_with(
+            client=mock_container_client,
             file_name="dir1/dir2/testfile.txt",
             data=data_to_write,
             content_type=SupportedContentType.PLAIN_TEXT.value,
@@ -447,11 +451,32 @@ def test_resolve_blob_name_with_path_object(azure_blob_storage_io):
     assert result == "dir1/dir2/file.txt"
 
 
-async def test_upload_blob_raises_when_client_async_none():
-    obj = AzureBlobStorageIO.__new__(AzureBlobStorageIO)
-    obj._client_async = None
-    with pytest.raises(RuntimeError, match="Azure container client not initialized"):
-        await obj._upload_blob_async(file_name="test.txt", data=b"data", content_type="text/plain")
+@pytest.mark.parametrize(
+    ("operation", "preprocessing"),
+    [("read", "resolve"), ("write", "resolve"), ("write", "mime")],
+)
+async def test_blob_storage_preprocessing_failure_does_not_acquire_client_async(
+    operation: str, preprocessing: str
+) -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container", sas_token="token")
+    preprocessing_patch = (
+        patch("pyrit.memory.storage.storage.get_mime_type", side_effect=ValueError("preprocessing failed"))
+        if preprocessing == "mime"
+        else patch.object(storage, "_resolve_blob_name", side_effect=ValueError("preprocessing failed"))
+    )
+    with (
+        patch.object(storage, "_create_container_client_async", new_callable=AsyncMock) as create,
+        preprocessing_patch,
+        pytest.raises(ValueError, match="preprocessing failed"),
+    ):
+        if operation == "read":
+            await storage.read_file_async("file.txt")
+        else:
+            await storage.write_file_async("file.txt", b"data")
+
+    create.assert_not_awaited()
+    assert storage._client_async is None
+    assert storage._client_users == 0
 
 
 async def test_read_file_lazy_initializes_client(azure_blob_storage_io):

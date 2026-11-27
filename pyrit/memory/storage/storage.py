@@ -307,17 +307,17 @@ class AzureBlobStorageIO(StorageIO):
             if credential:
                 await credential.close()
 
-    async def _upload_blob_async(self, file_name: str, data: bytes, content_type: str) -> None:
+    async def _upload_blob_async(
+        self, *, client: AsyncContainerClient, file_name: str, data: bytes, content_type: str
+    ) -> None:
         """
         (Async) Handles uploading blob to given storage container.
 
         Args:
+            client (AsyncContainerClient): The client acquired by the current operation.
             file_name (str): File name to assign to uploaded blob.
             data (bytes): Byte representation of content to upload to container.
             content_type (str): Content type to upload.
-
-        Raises:
-            RuntimeError: If the Azure container client is not initialized.
         """
         from azure.core.exceptions import ClientAuthenticationError
         from azure.storage.blob import ContentSettings
@@ -326,9 +326,7 @@ class AzureBlobStorageIO(StorageIO):
         logger.info(msg="\nUploading to Azure Storage as blob:\n\t" + file_name)
 
         try:
-            if self._client_async is None:
-                raise RuntimeError("Azure container client not initialized")
-            await self._client_async.upload_blob(
+            await client.upload_blob(
                 name=file_name,
                 data=data,
                 content_settings=content_settings,
@@ -456,10 +454,8 @@ class AzureBlobStorageIO(StorageIO):
             ``file_content = await read_file_async("dir1/dir2/1726627689003831.png")``
 
         """
-        client = await self._acquire_client_async()
-
         blob_name = self._resolve_blob_name(path)
-
+        client = await self._acquire_client_async()
         try:
             blob_client = client.get_blob_client(blob=blob_name)
 
@@ -484,11 +480,11 @@ class AzureBlobStorageIO(StorageIO):
             path (Path | str): Full blob URL or relative blob path.
             data (bytes): The data to write.
         """
-        await self._acquire_client_async()
         blob_name = self._resolve_blob_name(path)
         content_type = get_mime_type(blob_name) or self._blob_content_type
+        client = await self._acquire_client_async()
         try:
-            await self._upload_blob_async(file_name=blob_name, data=data, content_type=content_type)
+            await self._upload_blob_async(client=client, file_name=blob_name, data=data, content_type=content_type)
         except Exception as exc:
             logger.exception(f"Failed to write file at {blob_name}: {exc}")
             raise
