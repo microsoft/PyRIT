@@ -7,11 +7,15 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
-from typing import Any
+from typing import Any, ClassVar
 
-from pyrit.models import Message, PromptDataType, ProviderTraceReference
+from pyrit.models import Message, PromptDataType, ProviderTraceReference, ToolDefinition
 from pyrit.models.messages.chat_message import FunctionCall
-from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES, parse_function_call
+from pyrit.prompt_target.common.tool_call_history import (
+    TOOL_CALL_INPUT_MODALITIES,
+    parse_function_call,
+    parse_function_tool_declarations,
+)
 from pyrit.prompt_target.common.tool_loop import (
     InvalidToolCallsError,
     PendingToolCall,
@@ -21,6 +25,7 @@ from pyrit.prompt_target.common.tool_loop import (
     run_tool_loop_async,
 )
 from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider, _ScopedToolProvider, collect_tools_async
+from pyrit.prompt_target.common.utils import nested_tools
 
 
 class _ChatCompletionsToolLoopMixin(ABC):
@@ -32,6 +37,7 @@ class _ChatCompletionsToolLoopMixin(ABC):
     _max_tool_rounds: int
     _suppress_tools: bool
     _extra_body_parameters: dict[str, Any] | None
+    RUNS_TOOLS_LOCALLY: ClassVar[bool] = True
 
     def _init_tools(
         self,
@@ -67,6 +73,44 @@ class _ChatCompletionsToolLoopMixin(ABC):
         self._max_tool_rounds = max_tool_rounds
         self._suppress_tools = False
 
+    def _configures_function_tools(self) -> bool:
+        """
+        Whether the request advertises function tools, without contacting any tool provider.
+
+        Returns:
+            bool: True for configured tools, a tool provider, or a function tool declared in
+                ``extra_body_parameters["tools"]``. Tools a nested ``extra_body`` declares replace these.
+        """
+        replacing = nested_tools(self._extra_body_parameters)
+        if replacing is not None:
+            return any(tool.get("type") == "function" for tool in replacing)
+        declared = (self._extra_body_parameters or {}).get("tools") or []
+        return bool(
+            self._direct_tools or self._tool_providers or any(tool.get("type") == "function" for tool in declared)
+        )
+
+    async def get_tool_definitions_async(self) -> list[ToolDefinition]:
+        """
+        Report the function tools advertised to the endpoint.
+
+        Includes function declarations in ``extra_body_parameters["tools"]`` and the configured tools,
+        discovering provider tools first. Function tools a nested ``extra_body`` declares replace these,
+        since the request applies it last. No tool executes.
+
+        Returns:
+            list[ToolDefinition]: The advertised function tools.
+        """
+        replacing = nested_tools(self._extra_body_parameters)
+        if replacing is not None:
+            return parse_function_tool_declarations(replacing)
+        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools") or [])
+        async with AsyncExitStack() as stack:
+            for provider in self._tool_providers:
+                if isinstance(provider, _ScopedToolProvider):
+                    await stack.enter_async_context(provider.execution_scope_async())
+            tools = await collect_tools_async(tools=self._direct_tools, providers=self._tool_providers)
+        return [*declared, *(tool.to_definition() for tool in tools)]
+
     def _tool_identifier_params(self) -> dict[str, Any]:
         """
         Return the identifier params for the tool settings, all None for a target without tools.
@@ -85,7 +129,7 @@ class _ChatCompletionsToolLoopMixin(ABC):
         """
         Accept tool-call history when tools run locally, since the target's own tool loop produces it.
 
-        Advertised capabilities are unchanged, so callers can still tell whether the model is known to call tools.
+        Advertised input modalities are unchanged, so callers can still tell whether the model is known to call tools.
 
         Returns:
             frozenset[frozenset[PromptDataType]]: Tool-call combinations, or none without configured tools.

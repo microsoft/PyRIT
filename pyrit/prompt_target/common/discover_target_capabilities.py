@@ -42,7 +42,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Awaitable, Callable, Generator, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Generator, Iterable
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -63,6 +63,7 @@ from pyrit.prompt_target.common.target_capabilities import (
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
+from pyrit.prompt_target.common.utils import without_tool_settings
 
 logger = logging.getLogger(__name__)
 
@@ -246,15 +247,7 @@ def _disable_probe_tools(*, target: PromptTarget) -> Generator[None, None, None]
         if isinstance(target, (OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget)):
             original_body = target._extra_body_parameters
             stack.callback(setattr, target, "_extra_body_parameters", original_body)
-            tool_settings = {"tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"}
-            target._extra_body_parameters = {
-                key: value for key, value in (original_body or {}).items() if key not in tool_settings
-            }
-            extra_body = target._extra_body_parameters.get("extra_body")
-            if isinstance(extra_body, Mapping):
-                target._extra_body_parameters["extra_body"] = {
-                    key: value for key, value in extra_body.items() if key not in tool_settings
-                }
+            target._extra_body_parameters = without_tool_settings(original_body)
             stack.callback(setattr, target, "_execute_tools", target._execute_tools)
             stack.callback(setattr, target, "_suppress_tools", target._suppress_tools)
             target._execute_tools = False

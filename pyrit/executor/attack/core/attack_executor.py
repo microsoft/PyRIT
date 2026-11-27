@@ -339,6 +339,7 @@ class AttackExecutor:
                     seed_group=sg,
                     adversarial_chat=adversarial_chat,
                     objective_scorer=objective_scorer,
+                    objective_target=attack.get_objective_target(),
                     **combined_overrides,
                 )
 

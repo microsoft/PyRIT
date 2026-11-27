@@ -49,6 +49,18 @@ class SimulatedTargetSystemPromptPaths(enum.Enum):
     """Enum for predefined simulated target system prompt paths."""
 
     COMPLIANT = Path(EXECUTOR_SIMULATED_TARGET_PATH, "compliant.yaml").resolve()
+    COMPLIANT_TOOL_USE = Path(EXECUTOR_SIMULATED_TARGET_PATH, "compliant_tool_use.yaml").resolve()
+
+
+class SimulatedConversationMode(str, enum.Enum):
+    """How a simulated conversation is generated."""
+
+    #: The adversarial chat and a stand-in target hold a real conversation, turn by turn.
+    TURN_BY_TURN = "turn_by_turn"
+    #: The adversarial chat writes the whole history in one pass, revising it until it passes
+    #: validation. Requires ``use_target_tools``: the history is a tool-call loop written against
+    #: the objective target's tools.
+    ONE_SHOT = "one_shot"
 
 
 class NextMessageSystemPromptPaths(enum.Enum):
@@ -253,7 +265,12 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
     changing what is stored.
 
     Attributes:
-        num_turns: Number of conversation turns to generate.
+        num_turns: Number of conversation turns to generate. In ``ONE_SHOT`` mode, a turn is one
+            tool call and its result, and the history must hold exactly ``num_turns`` tool calls.
+        mode: How the conversation is generated. Defaults to ``TURN_BY_TURN``.
+        use_target_tools: Whether the conversation uses the objective target's function tools. In
+            ``TURN_BY_TURN`` mode the stand-in target gets those tools, with results written by the
+            adversarial chat; in ``ONE_SHOT`` mode the adversarial chat writes calls to them.
         adversarial_chat_system_prompt: System-prompt SeedPrompt for the adversarial chat. Use
             ``with_layered_prefix`` to prepend static guidance ahead of it.
         simulated_target_system_prompt: System-prompt SeedPrompt for the simulated target.
@@ -282,6 +299,8 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
 
     num_turns: int = 3
     sequence: int = 0
+    mode: SimulatedConversationMode = SimulatedConversationMode.TURN_BY_TURN
+    use_target_tools: bool = False
     # A prompt supplied directly is trusted as-is. The declared-parameter contract for the
     # simulated target and next message is enforced where a template is loaded from a file,
     # by load_simulated_target_prompt and load_next_message_prompt.
@@ -357,6 +376,13 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
             raise ValueError("num_turns must be a positive integer")
         if self.sequence < 0:
             raise ValueError("sequence must be a non-negative integer")
+        if self.mode is SimulatedConversationMode.ONE_SHOT:
+            if not self.use_target_tools:
+                raise ValueError(
+                    "One-shot simulated conversations write tool-call histories; set use_target_tools=True"
+                )
+            if self.next_message_system_prompt is not None:
+                raise ValueError("One-shot simulated conversations do not generate a next message")
         if not self.pyrit_version:
             self.pyrit_version = importlib.metadata.version("pyrit")
         self.value = self._compute_value()
@@ -370,14 +396,22 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
             dict[str, Any]: The configuration, with each prompt reduced to its behavioral fields.
 
         """
-        return {
+        config: dict[str, Any] = {
             "num_turns": self.num_turns,
             "sequence": self.sequence,
             "adversarial_chat_system_prompt": _prompt_identity(self.adversarial_chat_system_prompt),
-            "simulated_target_system_prompt": _prompt_identity(self.simulated_target_system_prompt),
             "next_message_system_prompt": _prompt_identity(self.next_message_system_prompt),
             "pyrit_version": self.pyrit_version,
         }
+        # One-shot histories have no stand-in, so its prompt is not part of their identity.
+        if self.mode is SimulatedConversationMode.TURN_BY_TURN:
+            config["simulated_target_system_prompt"] = _prompt_identity(self.simulated_target_system_prompt)
+        # Added only when set, so configurations that predate them keep their identity.
+        if self.mode is not SimulatedConversationMode.TURN_BY_TURN:
+            config["mode"] = self.mode.value
+        if self.use_target_tools:
+            config["use_target_tools"] = True
+        return config
 
     def _compute_value(self) -> str:
         """
@@ -540,9 +574,11 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
         """
         The range of sequence numbers this simulated conversation will occupy.
 
-        Each turn generates 2 messages (user + assistant), so num_turns generates
-        num_turns * 2 messages. If next_message_system_prompt is set, an additional
-        user message is added at the end.
+        Each turn is expected to generate 2 messages (user + assistant, or a tool call and its result
+        in ``ONE_SHOT`` mode), so this reserves num_turns * 2 slots, plus one for a generated next
+        message. A conversation with tool calls can be longer (an opening user message in
+        ``ONE_SHOT`` mode, or several calls per turn); prompts that follow it are moved back when
+        attack parameters are built.
 
         Returns:
             A range object representing the sequence numbers.
@@ -564,7 +600,8 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
         # persisted record has none. Omit the fragment rather than print a placeholder.
         prompt_name = self.adversarial_chat_system_prompt.name
         adversarial = f", adversarial_prompt={prompt_name}" if prompt_name else ""
+        tools = ", use_target_tools=True" if self.use_target_tools else ""
         return (
-            f"<SeedSimulatedConversation(num_turns={self.num_turns}, sequence={self.sequence}, "
-            f"next_message={has_next_msg}{adversarial})>"
+            f"<SeedSimulatedConversation(mode={self.mode.value}, num_turns={self.num_turns}, "
+            f"sequence={self.sequence}, next_message={has_next_msg}{tools}{adversarial})>"
         )

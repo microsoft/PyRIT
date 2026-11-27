@@ -33,6 +33,18 @@ class AttackPreparationFailureKind(str, enum.Enum):
     #: alignment rather than a deployment filter, so it is recorded separately.
     ADVERSARIAL_CHAT_REFUSED = "adversarial_chat_refused"
 
+    #: The adversarial chat kept producing output that could not be used, such as a simulated
+    #: history that never passed validation, so nothing could be prepared.
+    ADVERSARIAL_CHAT_INVALID_OUTPUT = "adversarial_chat_invalid_output"
+
+    #: The technique writes calls to the objective target's function tools, but the target
+    #: reports none, so there is nothing to prime it with.
+    OBJECTIVE_TARGET_HAS_NO_TOOLS = "objective_target_has_no_tools"
+
+    #: The simulated target's turn ended in an error, such as a tool loop that stopped early, so
+    #: the simulated conversation could not be used as history.
+    SIMULATED_TARGET_ERROR = "simulated_target_error"
+
     @property
     def default_reason(self) -> str:
         """
@@ -68,6 +80,15 @@ _DEFAULT_REASONS: dict[AttackPreparationFailureKind, str] = {
     ),
     AttackPreparationFailureKind.ADVERSARIAL_CHAT_REFUSED: (
         "Adversarial chat refused to generate an attacker turn before the attack could run."
+    ),
+    AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT: (
+        "Adversarial chat did not produce usable preparation content before the attack could run."
+    ),
+    AttackPreparationFailureKind.OBJECTIVE_TARGET_HAS_NO_TOOLS: (
+        "The objective target reports no function tools, so no tool-call history could be prepared for it."
+    ),
+    AttackPreparationFailureKind.SIMULATED_TARGET_ERROR: (
+        "The simulated target's turn ended in an error, so the simulated conversation could not be prepended."
     ),
 }
 

@@ -2148,6 +2148,8 @@ class SeedEntry(Base):
                     prompt_group_id=self.prompt_group_id,
                     num_turns=config.get("num_turns", 3),
                     sequence=config.get("sequence", 0),
+                    mode=config.get("mode", "turn_by_turn"),
+                    use_target_tools=config.get("use_target_tools", False),
                     pyrit_version=config.get("pyrit_version"),
                     is_general_technique=self.is_general_technique,
                     **prompt_config,

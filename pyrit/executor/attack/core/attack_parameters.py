@@ -8,12 +8,20 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pyrit.exceptions import AdversarialChatResponseBlockedException
-from pyrit.models import AttackSeedGroup, ConversationReference, Message, ScoringExpectation, SeedGroup
+from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure, AttackPreparationFailureKind
+from pyrit.models import (
+    AttackSeedGroup,
+    ConversationReference,
+    Message,
+    ScoringExpectation,
+    SeedGroup,
+    SimulatedConversationMode,
+)
 
 if TYPE_CHECKING:
     import uuid
 
-    from pyrit.models import SeedUnion
+    from pyrit.models import SeedUnion, ToolDefinition
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
@@ -97,6 +105,7 @@ class AttackParameters:
         seed_group: AttackSeedGroup,
         adversarial_chat: PromptTarget | None = None,
         objective_scorer: TrueFalseScorer | None = None,
+        objective_target: PromptTarget | None = None,
         **overrides: Any,
     ) -> AttackParamsT:
         """
@@ -105,27 +114,40 @@ class AttackParameters:
         Extracts standard fields from the seed group and applies any overrides.
         If the seed_group has a simulated conversation config,
         generates the simulated conversation using the provided adversarial_chat and scorer.
+        A simulated conversation that uses the objective target's tools is generated against
+        the tools the objective_target reports.
 
         Args:
             seed_group: The seed attack group to extract parameters from.
             adversarial_chat: The adversarial chat target for generating simulated conversations.
                 Required if seed_group has a simulated conversation config.
             objective_scorer: The scorer for evaluating simulated conversations.
-                Required if seed_group has a simulated conversation config.
+                Required if seed_group has a turn-by-turn simulated conversation config.
+            objective_target: The target the attack sends to, whose tools a simulated conversation
+                uses. Required if the seed group's simulated conversation uses target tools.
             **overrides: Field overrides to apply. Must be valid fields for this params type.
 
         Returns:
             An instance of this AttackParameters type.
 
         Raises:
-            AdversarialChatResponseBlockedException: If simulated-conversation preparation was
-                blocked and this parameter type cannot represent a completed preparation failure.
+            AdversarialChatResponseBlockedException: If the adversarial chat was blocked or refused
+                while preparing a simulated conversation, and this parameter type cannot represent a
+                preparation failure.
             TypeError: If ``seed_group`` is not a ``AttackSeedGroup``.
-            ValueError: If overrides contain invalid fields, or if seed_group has simulated
-                conversation but adversarial_chat/scorer not provided.
+            ValueError: If overrides contain invalid fields, if seed_group has a simulated
+                conversation but a required dependency is not provided, or if the simulated
+                conversation cannot be generated as configured, such as a one-shot tool parameter
+                schema that is invalid or has a reference that cannot be resolved offline, or a
+                ``RoundRobinTarget`` objective target whose targets advertise different tools. Also
+                raised when preparing the simulated conversation failed for another reason, which the
+                message names, and this parameter type cannot represent a preparation failure.
         """
         # Import here to avoid circular imports
-        from pyrit.executor.attack.multi_turn.simulated_conversation import generate_simulated_conversation_async
+        from pyrit.executor.attack.multi_turn.simulated_conversation import (
+            SimulatedConversationResult,
+            generate_simulated_conversation_async,
+        )
 
         if not isinstance(seed_group, AttackSeedGroup):
             raise TypeError(
@@ -176,29 +198,74 @@ class AttackParameters:
 
             if adversarial_chat is None:
                 raise ValueError("adversarial_chat is required when seed_group has a simulated conversation config")
-            if objective_scorer is None:
+            if (
+                objective_scorer is None
+                and simulated_conversation_config.mode is SimulatedConversationMode.TURN_BY_TURN
+            ):
                 raise ValueError("objective_scorer is required when seed_group has a simulated conversation config")
 
-            simulated_result = await generate_simulated_conversation_async(
-                objective=seed_group.objective.value,
-                adversarial_chat=adversarial_chat,
-                objective_scorer=objective_scorer,
-                num_turns=simulated_conversation_config.num_turns,
-                starting_sequence=simulated_conversation_config.sequence,
-                adversarial_chat_system_prompt=simulated_conversation_config.adversarial_chat_system_prompt,
-                simulated_target_system_prompt=simulated_conversation_config.simulated_target_system_prompt,
-                next_message_system_prompt=simulated_conversation_config.next_message_system_prompt,
-            )
+            tools: list[ToolDefinition] | None = None
+            no_tools_reason = ""
+            if simulated_conversation_config.use_target_tools:
+                if objective_target is None:
+                    raise ValueError("objective_target is required when a simulated conversation uses target tools")
+                reported_tools = await objective_target.get_tool_definitions_async()
+                tools = reported_tools or []
+                if not tools:
+                    detail = "reports no function tools" if reported_tools is not None else "cannot report its tools"
+                    no_tools_reason = f"{type(objective_target).__name__} {detail}."
+
+            if tools == []:
+                kind = AttackPreparationFailureKind.OBJECTIVE_TARGET_HAS_NO_TOOLS
+                simulated_result = SimulatedConversationResult(
+                    seed_prompts=[],
+                    related_conversations=frozenset(),
+                    preparation_failure=AttackPreparationFailure(
+                        kind=kind, reason=f"{kind.default_reason} {no_tools_reason}"
+                    ),
+                )
+            else:
+                simulated_result = await generate_simulated_conversation_async(
+                    objective=seed_group.objective.value,
+                    adversarial_chat=adversarial_chat,
+                    objective_scorer=objective_scorer,
+                    num_turns=simulated_conversation_config.num_turns,
+                    mode=simulated_conversation_config.mode,
+                    tools=tools,
+                    starting_sequence=simulated_conversation_config.sequence,
+                    adversarial_chat_system_prompt=simulated_conversation_config.adversarial_chat_system_prompt,
+                    simulated_target_system_prompt=simulated_conversation_config.simulated_target_system_prompt,
+                    next_message_system_prompt=simulated_conversation_config.next_message_system_prompt,
+                )
             simulated_prompts = simulated_result.seed_prompts
             if "source_conversations" in valid_fields:
                 params["source_conversations"] = frozenset(simulated_result.related_conversations)
-            if simulated_result.preparation_failure is not None:
+            failure = simulated_result.preparation_failure
+            if failure is not None:
                 if "preparation_failure" not in valid_fields:
-                    raise AdversarialChatResponseBlockedException(message=simulated_result.preparation_failure.reason)
-                params["preparation_failure"] = simulated_result.preparation_failure
+                    if failure.kind in (
+                        AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+                        AttackPreparationFailureKind.ADVERSARIAL_CHAT_REFUSED,
+                    ):
+                        raise AdversarialChatResponseBlockedException(message=failure.reason)
+                    raise ValueError(
+                        f"Simulated conversation preparation failed ({failure.kind.value}): {failure.reason}"
+                    )
+                params["preparation_failure"] = failure
+
+            # A conversation with tool calls can run past its reserved range; later static prompts
+            # move back so they still follow it.
+            reserved_end = simulated_conversation_config.sequence_range.stop
+            overflow = max((prompt.sequence + 1 for prompt in simulated_prompts), default=reserved_end) - reserved_end
+            static_prompts = [
+                prompt.model_copy(update={"sequence": prompt.sequence + overflow})
+                if overflow > 0 and prompt.sequence >= reserved_end
+                else prompt
+                for prompt in seed_group.prompts
+            ]
 
             # Merge simulated prompts with existing static prompts from the seed_group
-            all_prompts: list[SeedUnion] = [*seed_group.prompts, *simulated_prompts]
+            all_prompts: list[SeedUnion] = [*static_prompts, *simulated_prompts]
 
             # Create a temporary prompts-only SeedGroup for extraction
             # This group contains only prompts (no objective, no simulated config)
@@ -303,10 +370,22 @@ class AttackParameters:
         original_method = _classmethod_descriptor.__func__
 
         async def from_seed_group_wrapper_async(
-            c: Any, /, *, seed_group: Any, adversarial_chat: Any = None, objective_scorer: Any = None, **ov: Any
+            c: Any,
+            /,
+            *,
+            seed_group: Any,
+            adversarial_chat: Any = None,
+            objective_scorer: Any = None,
+            objective_target: Any = None,
+            **ov: Any,
         ) -> Any:
             return await original_method(
-                c, seed_group=seed_group, adversarial_chat=adversarial_chat, objective_scorer=objective_scorer, **ov
+                c,
+                seed_group=seed_group,
+                adversarial_chat=adversarial_chat,
+                objective_scorer=objective_scorer,
+                objective_target=objective_target,
+                **ov,
             )
 
         new_cls.from_seed_group_async = classmethod(from_seed_group_wrapper_async)  # type: ignore[ty:missing-attribute]

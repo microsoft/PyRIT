@@ -355,6 +355,7 @@ if TYPE_CHECKING:
         SeedRecord,
         SeedSimulatedConversation,
         SeedUnion,
+        SimulatedConversationMode,
         SimulatedTargetSystemPromptPaths,
         build_objective_decomposition_tree,
         group_seeds_into_attack_groups,
@@ -416,6 +417,7 @@ if TYPE_CHECKING:
     from pyrit.models.target.provider_trace_reference import ProviderTraceReference
     from pyrit.models.target.reasoning_content_metadata import ReasoningContentMetadata
     from pyrit.models.target.request_trace_context import RequestTraceContext
+    from pyrit.models.target.tool_definition import ToolDefinition
     from pyrit.models.target.tool_execution_metadata import (
         ToolCaptureCoverage,
         ToolCaptureGap,
@@ -505,6 +507,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ProviderTraceReference": "pyrit.models.target.provider_trace_reference",
     "ReasoningContentMetadata": "pyrit.models.target.reasoning_content_metadata",
     "RequestTraceContext": "pyrit.models.target.request_trace_context",
+    "ToolDefinition": "pyrit.models.target.tool_definition",
     "ToolCaptureCoverage": "pyrit.models.target.tool_execution_metadata",
     "ToolCaptureGap": "pyrit.models.target.tool_execution_metadata",
     "ToolExecutionMetadata": "pyrit.models.target.tool_execution_metadata",
@@ -772,6 +775,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SeedSimulatedConversation": "pyrit.models.seeds",
     "SeedType": "pyrit.models.literals",
     "SeedUnion": "pyrit.models.seeds",
+    "SimulatedConversationMode": "pyrit.models.seeds",
     "SimulatedTargetSystemPromptPaths": "pyrit.models.seeds",
     "load_next_message_prompt": "pyrit.models.seeds",
     "load_simulated_target_prompt": "pyrit.models.seeds",

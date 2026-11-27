@@ -39,13 +39,18 @@ from pyrit.models import (
     PromptResponseError,
     ToolCaptureCoverage,
     ToolCaptureGap,
+    ToolDefinition,
     WebSearchConfig,
     WebSearchMode,
 )
 from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.tool_call_history import parse_function_call, parse_function_call_output
+from pyrit.prompt_target.common.tool_call_history import (
+    parse_function_call,
+    parse_function_call_output,
+    parse_function_tool_declarations,
+)
 from pyrit.prompt_target.common.tool_loop import (
     PendingToolCall,
     ToolDispatchResult,
@@ -62,6 +67,7 @@ from pyrit.prompt_target.common.tool_provider import (
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
+    nested_tools,
     validate_temperature,
     validate_top_p,
 )
@@ -141,6 +147,7 @@ class OpenAIResponseTarget(OpenAITarget):
     """
 
     _SUPPORTS_TOOL_CALL_HISTORY = True
+    RUNS_TOOLS_LOCALLY = True
     _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset({CapabilityName.TEMPERATURE})
     _WEB_SEARCH_TOOL_TYPES = frozenset({"web_search", "web_search_preview"})
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
@@ -282,6 +289,13 @@ class OpenAIResponseTarget(OpenAITarget):
         self._fail_on_missing_function: bool = fail_on_missing_function
         self._execute_tools = execute_tools
         self._suppress_tools = False
+        # Set even over a custom configuration, since recreate_instance gives a copy its source's configuration.
+        function_tools = self._configures_function_tools()
+        if function_tools != self.capabilities.supports_function_tools:
+            self.apply_capabilities(
+                capabilities=self.capabilities.model_copy(update={"supports_function_tools": function_tools})
+            )
+            self._refresh_generation_capabilities()
 
         # Extract the grammar 'tool' if one is present
         # See
@@ -329,6 +343,42 @@ class OpenAIResponseTarget(OpenAITarget):
             tool.get("type") in self._WEB_SEARCH_TOOL_TYPES for tool in tools
         ):
             raise ValueError("Required web search needs a configured tool and supports_web_search=True.")
+
+    def _configures_function_tools(self) -> bool:
+        """
+        Whether the request advertises function tools, without contacting any tool provider.
+
+        Returns:
+            bool: True for configured tools, a tool provider, or a function tool declared in
+                ``extra_body_parameters["tools"]``. Tools a nested ``extra_body`` declares replace these.
+        """
+        replacing = nested_tools(self._extra_body_parameters)
+        if replacing is not None:
+            return any(tool.get("type") == "function" for tool in replacing)
+        declared = (self._extra_body_parameters or {}).get("tools") or []
+        return bool(
+            self._direct_tools or self._tool_providers or any(tool.get("type") == "function" for tool in declared)
+        )
+
+    async def get_tool_definitions_async(self) -> list[ToolDefinition]:
+        """
+        Report the function tools advertised to the endpoint.
+
+        Includes function declarations in ``extra_body_parameters`` and the configured tools,
+        discovering provider tools first. Function tools a nested ``extra_body`` declares replace these,
+        since the request applies it last. Legacy ``custom_functions`` are dispatch callbacks, not
+        advertised tools, so they appear only through their declarations. Provider-hosted tools such
+        as web search are not function tools and are omitted. No tool executes.
+
+        Returns:
+            list[ToolDefinition]: The advertised function tools.
+        """
+        replacing = nested_tools(self._extra_body_parameters)
+        if replacing is not None:
+            return parse_function_tool_declarations(replacing)
+        await self._initialize_tools_async()
+        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools") or [])
+        return [*declared, *(tool.to_definition() for tool in self._tools)]
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

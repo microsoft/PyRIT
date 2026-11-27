@@ -4,23 +4,54 @@
 """Opt-in techniques for testing tool-using agents."""
 
 import asyncio
+import logging
 
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry
+from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, TargetRegistry
 from pyrit.registry.instance_registry import refuse_saved_entry
 from pyrit.scenario import AttackTechniqueFactory
 from pyrit.setup.pyrit_initializer import PyRITInitializer
+
+logger = logging.getLogger(__name__)
 
 
 class ToolsInitializer(PyRITInitializer):
     """Register task-specific tool-use techniques with example call configuration."""
 
     async def initialize_async(self) -> None:
-        """Register tool-use techniques using the configured adversarial chat."""
+        """
+        Register tool-use techniques using the configured adversarial chat.
+
+        ``tool_priming_simulated`` is registered only when the adversarial chat runs tool calls, since
+        a stand-in for the target is copied from it.
+        """
         registry = AttackTechniqueRegistry.get_registry_singleton()
         # Returning early would leave a saved technique standing in for this one.
         refuse_saved_entry(registry.instances.get_entry("role_play_tool_calls"))
+        refuse_saved_entry(registry.instances.get_entry("tool_priming_simulated"))
+        adversarial_chat = TargetRegistry.get_registry_singleton().instances.get("adversarial_chat")
+        runs_tools = adversarial_chat is not None and adversarial_chat.RUNS_TOOLS_LOCALLY
+        if not runs_tools:
+            logger.warning(
+                "Skipping tool_priming_simulated: no adversarial_chat that runs tool calls locally is registered."
+            )
+        if "tool_priming_simulated" not in registry.instances and runs_tools:
+            registry.register_from_factories(
+                [
+                    AttackTechniqueFactory.with_simulated_conversation(
+                        name="tool_priming_simulated",
+                        description=(
+                            "Primes a tool-using target with a conversation in which a stand-in for it calls its "
+                            "real tools, with results written by the adversarial chat to make the objective look "
+                            "approved."
+                        ),
+                        use_target_tools=True,
+                        num_turns=3,
+                        technique_tags=["single_turn", "tools"],
+                    )
+                ]
+            )
         if "role_play_tool_calls" in registry.instances:
             return
         refuse_saved_entry(ConverterRegistry.get_registry_singleton().instances.get_entry("role_play_tool_calls"))

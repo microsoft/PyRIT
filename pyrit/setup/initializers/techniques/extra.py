@@ -27,7 +27,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     SkeletonKeyAttack,
 )
-from pyrit.models import AttackTechniqueSeedGroup, SeedGroupRequirements, SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, SeedGroupRequirements, SeedPrompt, SimulatedConversationMode
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.scenario import AttackTechniqueFactory, TechniqueRequirements
@@ -80,6 +80,17 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             description="Builds a multi-step context that asks the target to operate without its usual safety rules.",
             technique_tags=["single_turn"],
             requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True)),
+        ),
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="tool_priming_one_shot",
+            description=(
+                "Primes a tool-using target with a fabricated history of its own tool calls and results, "
+                "written in one pass against the target's real tools, that make the objective look approved."
+            ),
+            mode=SimulatedConversationMode.ONE_SHOT,
+            use_target_tools=True,
+            num_turns=6,
+            technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory(
             name="best_of_n",

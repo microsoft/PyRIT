@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.seed_simulated_conversation import (
         NextMessageSystemPromptPaths,
         SeedSimulatedConversation,
+        SimulatedConversationMode,
         SimulatedTargetSystemPromptPaths,
         load_next_message_prompt,
         load_simulated_target_prompt,
@@ -79,6 +80,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SeedRecord": "pyrit.models.seeds.seed_record",
     "SeedSimulatedConversation": "pyrit.models.seeds.seed_simulated_conversation",
     "SeedUnion": "pyrit.models.seeds.seed_group",
+    "SimulatedConversationMode": "pyrit.models.seeds.seed_simulated_conversation",
     "SimulatedTargetSystemPromptPaths": "pyrit.models.seeds.seed_simulated_conversation",
 }
 

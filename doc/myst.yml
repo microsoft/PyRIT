@@ -209,6 +209,7 @@ project:
             - file: code/scenarios/2_custom_scenario_parameters.ipynb
             - file: code/scenarios/3_adaptive_scenarios.ipynb
             - file: code/scenarios/4_scenario_suites.ipynb
+            - file: code/scenarios/5_tool_call_priming.ipynb
         - file: code/registry/0_registry.md
           children:
             - file: code/registry/1_class_registry.ipynb

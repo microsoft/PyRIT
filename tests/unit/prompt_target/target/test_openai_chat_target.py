@@ -2441,7 +2441,8 @@ class TestOpenAIChatToolLoop:
 
         assert reply.get_value() == "Second."
         assert executions == ["SF"]
-        assert target.capabilities == _tool_target(model_name="my-gpt4o-deployment").capabilities
+        plain = _tool_target(model_name="my-gpt4o-deployment").capabilities
+        assert target.capabilities == plain.model_copy(update={"supports_function_tools": True})
 
     async def test_retried_completion_does_not_rerun_tools_async(
         self, weather_tool: tuple[FunctionTool, list[str]]

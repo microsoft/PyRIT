@@ -28,6 +28,7 @@ from pyrit.models import (
     RequestTraceContext,
     TargetIdentifier,
     ToolCaptureCoverage,
+    ToolDefinition,
     WebSearchConfig,
     WebSearchMode,
 )
@@ -116,6 +117,9 @@ class PromptTarget(Identifiable):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
     _DEFAULT_TRACE_ENABLED: ClassVar[bool] = False
     _SUPPORTS_TOOL_CALL_HISTORY: ClassVar[bool] = False
+    #: Whether this target runs its configured tools' calls itself and returns their results, so it can
+    #: stand in for a tool-using target in a simulated conversation.
+    RUNS_TOOLS_LOCALLY: ClassVar[bool] = False
     _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset()
     # Adapters that only deliver content (e.g. to a stream or a blob) and never reply set this to
     # False. ``supports_responses`` is then False under every configuration, including saved ones.
@@ -328,6 +332,17 @@ class PromptTarget(Identifiable):
 
         if self._verbose:
             logging.basicConfig(level=logging.INFO)
+
+    async def get_tool_definitions_async(self) -> list[ToolDefinition] | None:
+        """
+        Report the function tools this target advertises to its model.
+
+        Targets that advertise function tools override this. Reporting a tool never executes it.
+
+        Returns:
+            list[ToolDefinition] | None: The advertised tools, or None when this target cannot report them.
+        """
+        return None
 
     def validate_history(self, messages: Sequence[Message]) -> None:
         """

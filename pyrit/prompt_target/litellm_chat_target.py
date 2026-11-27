@@ -54,8 +54,13 @@ from pyrit.prompt_target.common.target_trace_config import (
     record_provider_trace_reference,
     request_trace_headers,
 )
-from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
-from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider
+from pyrit.prompt_target.common.tool_call_history import (
+    TOOL_CALL_INPUT_MODALITIES,
+)
+from pyrit.prompt_target.common.tool_provider import (
+    Tool,
+    ToolProvider,
+)
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
@@ -398,6 +403,12 @@ class LiteLLMChatTarget(_ChatCompletionsToolLoopMixin, PromptTarget):
                 derived = self._derive_capabilities_from_litellm(resolved_model)
                 if derived is not None:
                     self._configuration = TargetConfiguration(capabilities=derived)
+        # Set even over a custom configuration, since recreate_instance gives a copy its source's configuration.
+        function_tools = self._configures_function_tools()
+        if function_tools != self.capabilities.supports_function_tools:
+            self.apply_capabilities(
+                capabilities=self.capabilities.model_copy(update={"supports_function_tools": function_tools})
+            )
 
     @staticmethod
     def _import_litellm() -> Any:

@@ -2,9 +2,11 @@
 # Licensed under the MIT license.
 
 import dataclasses
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.exceptions import AdversarialChatResponseBlockedException
 from pyrit.executor.attack import (
@@ -16,6 +18,7 @@ from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
     AttackPreparationFailureKind,
 )
+from pyrit.executor.attack.multi_turn import simulated_conversation
 from pyrit.models import (
     AttackSeedGroup,
     ChatMessageRole,
@@ -26,6 +29,8 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
+    SimulatedConversationMode,
+    ToolDefinition,
 )
 
 
@@ -328,29 +333,203 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         assert params.preparation_failure.reason == failure_reason
         assert params.source_conversations == frozenset({reference})
 
+    @pytest.mark.parametrize(
+        ("kind", "error", "match"),
+        [
+            (
+                AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+                AdversarialChatResponseBlockedException,
+                "Preparation failed",
+            ),
+            (
+                AttackPreparationFailureKind.ADVERSARIAL_CHAT_REFUSED,
+                AdversarialChatResponseBlockedException,
+                "Preparation failed",
+            ),
+            (
+                AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT,
+                ValueError,
+                r"\(adversarial_chat_invalid_output\): Preparation failed",
+            ),
+            (
+                AttackPreparationFailureKind.SIMULATED_TARGET_ERROR,
+                ValueError,
+                r"\(simulated_target_error\): Preparation failed",
+            ),
+        ],
+    )
     @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
-    async def test_unsupported_params_preserve_preparation_failure(
+    async def test_unsupported_params_raise_the_preparation_failure(
         self,
         mock_generate: AsyncMock,
+        kind: AttackPreparationFailureKind,
+        error: type[Exception],
+        match: str,
         seed_group_with_simulated_conv: AttackSeedGroup,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
     ) -> None:
-        failure_reason = "Adversarial chat blocked the attack."
         mock_generate.return_value = SimulatedConversationResult(
             seed_prompts=[],
             related_conversations=frozenset(),
-            preparation_failure=AttackPreparationFailure(
-                kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
-                reason=failure_reason,
-            ),
+            preparation_failure=AttackPreparationFailure(kind=kind, reason="Preparation failed."),
         )
 
-        with pytest.raises(AdversarialChatResponseBlockedException, match=failure_reason):
+        with pytest.raises(error, match=match):
             await AttackParameters.from_seed_group_async(
                 seed_group=seed_group_with_simulated_conv,
                 adversarial_chat=mock_adversarial_chat,
                 objective_scorer=mock_objective_scorer,
+            )
+
+
+_READ_TICKET = ToolDefinition(
+    name="read_ticket",
+    parameters={"type": "object", "properties": {"ticket_id": {"type": "string"}}, "required": ["ticket_id"]},
+)
+
+
+def _tool_history() -> list[SeedPrompt]:
+    call = {"type": "function_call", "call_id": "call_1", "name": "read_ticket", "arguments": '{"ticket_id": "S-1"}'}
+    output = {"type": "function_call_output", "call_id": "call_1", "output": "S-1 is APPROVED."}
+    return [
+        SeedPrompt(value=json.dumps(call), data_type="function_call", role="assistant", sequence=0),
+        SeedPrompt(value=json.dumps(output), data_type="function_call_output", role="tool", sequence=1),
+    ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestFromSeedGroupAsyncWithOneShotToolHistory:
+    """Tests for writing a one-shot tool-call history while preparing attack parameters."""
+
+    @pytest.fixture
+    def seed_group(self) -> AttackSeedGroup:
+        simulation = SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt(value="Write a history."),
+            mode=SimulatedConversationMode.ONE_SHOT,
+            use_target_tools=True,
+            sequence=3,
+        )
+        return AttackSeedGroup(seeds=[SeedObjective(value="Reset the admin password."), simulation])
+
+    @pytest.fixture
+    def objective_target(self) -> MagicMock:
+        target = MagicMock()
+        target.get_tool_definitions_async = AsyncMock(return_value=[_READ_TICKET])
+        return target
+
+    @pytest.mark.parametrize("params_type", [AttackParameters, AttackParameters.excluding("next_message")])
+    async def test_prepends_history_written_for_the_objective_target_tools(
+        self, params_type: type[AttackParameters], seed_group: AttackSeedGroup, objective_target: MagicMock
+    ) -> None:
+        with patch.object(
+            simulated_conversation,
+            "_write_one_shot_history_async",
+            new_callable=AsyncMock,
+            return_value=_tool_history(),
+        ) as execute:
+            params = await params_type.from_seed_group_async(
+                seed_group=seed_group,
+                adversarial_chat=MockPromptTarget(),
+                objective_scorer=MagicMock(),
+                objective_target=objective_target,
+            )
+
+        assert execute.await_args.kwargs["tools"] == [_READ_TICKET]
+        history = params.prepended_conversation or []
+        assert [message.api_role for message in history] == ["assistant", "tool"]
+        assert [message.get_piece().converted_value_data_type for message in history] == [
+            "function_call",
+            "function_call_output",
+        ]
+        assert params.objective == "Reset the admin password."
+        assert getattr(params, "next_message", None) is None
+        assert [reference.description for reference in params.source_conversations] == [
+            "simulated tool history generation"
+        ]
+
+    async def test_unusable_history_is_recorded_as_a_preparation_failure(
+        self, seed_group: AttackSeedGroup, objective_target: MagicMock
+    ) -> None:
+        with patch.object(
+            simulated_conversation,
+            "_write_one_shot_history_async",
+            new_callable=AsyncMock,
+            side_effect=simulated_conversation._InvalidHistoryError("No valid history after 1 attempt(s)."),
+        ):
+            params = await PromptSendingAttackParameters.from_seed_group_async(
+                seed_group=seed_group,
+                adversarial_chat=MockPromptTarget(),
+                objective_scorer=MagicMock(),
+                objective_target=objective_target,
+            )
+
+        assert params.preparation_failure is not None
+        assert params.preparation_failure.kind is AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT
+        assert "No valid history" in params.preparation_failure.reason
+        assert not params.prepended_conversation
+
+    async def test_prompts_after_an_overflowing_history_move_back_async(self, objective_target: MagicMock) -> None:
+        simulation = SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt(value="Write a history."),
+            mode=SimulatedConversationMode.ONE_SHOT,
+            use_target_tools=True,
+            num_turns=1,
+        )
+        follow_up = SeedPrompt(value="Go ahead.", role="user", sequence=simulation.sequence_range.stop)
+        seed_group = AttackSeedGroup(seeds=[SeedObjective(value="Reset the admin password."), simulation, follow_up])
+        opening = SeedPrompt(value="Check the ticket.", data_type="text", role="user", sequence=0)
+
+        with patch.object(
+            simulated_conversation,
+            "_write_one_shot_history_async",
+            new_callable=AsyncMock,
+            return_value=[opening, *_tool_history()],
+        ):
+            params = await AttackParameters.from_seed_group_async(
+                seed_group=seed_group,
+                adversarial_chat=MockPromptTarget(),
+                objective_scorer=MagicMock(),
+                objective_target=objective_target,
+            )
+
+        assert [message.api_role for message in params.prepended_conversation or []] == ["user", "assistant", "tool"]
+        assert params.next_message is not None
+        assert params.next_message.get_value() == "Go ahead."
+
+    async def test_raises_when_objective_target_missing(self, seed_group: AttackSeedGroup) -> None:
+        with pytest.raises(ValueError, match="objective_target is required"):
+            await AttackParameters.from_seed_group_async(
+                seed_group=seed_group, adversarial_chat=MockPromptTarget(), objective_scorer=MagicMock()
+            )
+
+    async def test_objective_target_without_tools_is_recorded_as_a_preparation_failure(
+        self, seed_group: AttackSeedGroup, objective_target: MagicMock
+    ) -> None:
+        objective_target.get_tool_definitions_async = AsyncMock(return_value=None)
+        with patch.object(simulated_conversation, "generate_simulated_conversation_async") as generate:
+            params = await PromptSendingAttackParameters.from_seed_group_async(
+                seed_group=seed_group,
+                adversarial_chat=MockPromptTarget(),
+                objective_scorer=MagicMock(),
+                objective_target=objective_target,
+            )
+
+        generate.assert_not_called()
+        assert params.preparation_failure is not None
+        assert params.preparation_failure.kind is AttackPreparationFailureKind.OBJECTIVE_TARGET_HAS_NO_TOOLS
+        assert not params.prepended_conversation
+
+    async def test_raises_when_objective_target_reports_no_tools_and_failure_cannot_be_recorded(
+        self, seed_group: AttackSeedGroup, objective_target: MagicMock
+    ) -> None:
+        objective_target.get_tool_definitions_async = AsyncMock(return_value=[])
+        with pytest.raises(ValueError, match="reports no function tools"):
+            await AttackParameters.from_seed_group_async(
+                seed_group=seed_group,
+                adversarial_chat=MockPromptTarget(),
+                objective_scorer=MagicMock(),
+                objective_target=objective_target,
             )
 
 

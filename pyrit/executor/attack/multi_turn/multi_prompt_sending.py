@@ -59,6 +59,7 @@ class MultiPromptSendingAttackParameters(AttackParameters):
         *,
         adversarial_chat: PromptTarget | None = None,
         objective_scorer: TrueFalseScorer | None = None,
+        objective_target: PromptTarget | None = None,
         **overrides: Any,
     ) -> MultiPromptSendingAttackParameters:
         """
@@ -68,6 +69,7 @@ class MultiPromptSendingAttackParameters(AttackParameters):
             seed_group: The seed group to extract parameters from.
             adversarial_chat: Not used by this attack type.
             objective_scorer: Not used by this attack type.
+            objective_target: Not used by this attack type.
             **overrides: Field overrides to apply.
 
         Returns:

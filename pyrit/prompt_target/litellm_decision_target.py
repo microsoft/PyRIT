@@ -42,6 +42,7 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
     """
 
     _SUPPORTS_TOOL_CALL_HISTORY = False
+    RUNS_TOOLS_LOCALLY = False
     _DEFAULT_CONFIGURATION = TargetConfiguration(capabilities=TargetCapabilities())
 
     def __init__(
