@@ -63,6 +63,12 @@ def test_invalid_accent_raises_on_construction():
         assert valid_accent in message
 
 
+@pytest.mark.parametrize("accent", [["acute"], {"accent": "acute"}, 1, None])
+def test_non_string_accent_raises_on_construction(accent):
+    with pytest.raises(ValueError, match="not recognized"):
+        DiacriticConverter(accent=accent)
+
+
 @pytest.mark.parametrize(
     ("accent", "expected"),
     [

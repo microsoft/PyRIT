@@ -47,7 +47,7 @@ class DiacriticConverter(Converter):
         if not target_chars:
             raise ValueError("target_chars cannot be empty.")
 
-        if accent not in _SUPPORTED_ACCENTS:
+        if not isinstance(accent, str) or accent not in _SUPPORTED_ACCENTS:
             raise ValueError(f"Accent '{accent}' not recognized. Choose from {list(_SUPPORTED_ACCENTS.keys())}.")
 
         self._target_chars = set(target_chars)
