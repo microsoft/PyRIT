@@ -72,6 +72,33 @@ to disable authentication discovery.
 a Graph token with permissions beyond `User.Read`, and the CLI sends that token to the backend.
 Prefer automatic device-code authentication.
 
+### Using an AI Agent
+
+AI agents such as GitHub Copilot can run and review scans through the backend's MCP endpoint,
+`/api/mcp`. Its tools are a selected set of the backend's REST operations: listing targets,
+scenarios, techniques, datasets, and scorers; starting and following scenario runs; and
+reading attack results, conversations, and analytics. With the backend running (see
+[Getting Started](../gui/0_gui.md#getting-started)), connect GitHub Copilot CLI:
+
+```bash
+copilot mcp add --transport http pyrit http://localhost:8000/api/mcp
+```
+
+Clients that read the portable `mcpServers` format, such as GitHub Copilot in VS Code, take the
+same entry, for example in a workspace `.mcp.json` file:
+
+```json
+{"mcpServers": {"pyrit": {"type": "http", "url": "http://localhost:8000/api/mcp", "tools": ["*"]}}}
+```
+
+Then ask, for example, "Which PyRIT targets are registered?" or "Summarize my latest scenario
+run." Each tool call is a request with the agent's credentials, so it gets the same validation
+and authentication as any other client. With Entra authentication, GitHub Copilot CLI asks you to
+sign in through your browser the first time you start an interactive `copilot` session; `copilot -p`
+can't open a browser, so sign in that way first. MCP clients that can't sign in on their own can
+send a Microsoft Graph access token instead, for example with
+`--header "Authorization: Bearer <token>"`.
+
 ## Built-in Scenarios
 
 PyRIT ships with scenarios organized into the following families:

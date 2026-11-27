@@ -310,6 +310,14 @@ def test_compatible_requests_still_require_authentication(
     assert response.headers["x-request-id"]
 
 
+def test_mcp_requires_authentication_but_no_marker(guarded_client: TestClient, graph_user: AuthenticatedUser) -> None:
+    assert guarded_client.post("/api/mcp", json={}).status_code == 401
+    with patch.object(EntraAuthMiddleware, "_authenticate_with_graph_async", return_value=graph_user):
+        response = guarded_client.post("/api/mcp", json={}, headers={"Authorization": "Bearer token"})
+    # The endpoint itself answers: it only serves inside the application lifespan, which this client skips.
+    assert response.status_code == 503
+
+
 @pytest.mark.parametrize("marker", [None, "invalid", "0.14.0+g" + "b" * 40])
 def test_version_is_neutral_but_authenticated(
     guarded_client: TestClient,
