@@ -196,6 +196,15 @@ async def prepare_configurations_async(
     _warn_if_fetch_never(fetch)
     _check_shared_names(configurations)
     plans = [(config, *await config._plan_preparation_async(fetch=fetch)) for config in configurations]
+    # Planning rejects a missing dataset without a provider, so an unplanned ALWAYS dataset is a stored copy kept.
+    kept = [
+        name
+        for _, policies, providers in plans
+        for name, policy in policies.items()
+        if policy is DatasetFetchPolicy.ALWAYS and name not in providers
+    ]
+    if kept:
+        logger.warning("Datasets %s have no provider to refresh from; keeping their stored copies.", kept)
     writers = {(id(config._memory), name): config._memory for config, _, providers in plans for name in providers}
     async with AsyncExitStack() as held:
         # One acquisition order keeps preparations that share datasets from waiting on each other.
@@ -776,7 +785,8 @@ class DatasetConfiguration:
         Check all sources and resolve a provider for each dataset preparation would write, without fetching.
 
         Under ``ALWAYS``, a stored dataset with no configured or registered provider keeps its stored copy:
-        it's left out of the plan and a warning names it. A missing dataset without a provider still fails.
+        it's left out of the plan, and preparation logs a warning naming it. A missing dataset without a
+        provider still fails.
 
         Returns:
             tuple[dict[str, DatasetFetchPolicy], dict[str, SeedDatasetProvider]]: Every source's
@@ -822,10 +832,6 @@ class DatasetConfiguration:
         unavailable = [name for name in to_fetch if name not in providers and name not in stored_names]
         if unavailable:
             raise DatasetConstraintError(f"Datasets {unavailable} are missing and have no provider. Import them first.")
-        # Only ALWAYS plans a stored dataset, so these are refreshes with nothing to refresh from.
-        kept = [name for name in to_fetch if name not in providers]
-        if kept:
-            logger.warning("Datasets %s have no provider to refresh from; keeping their stored copies.", kept)
         return policies, {name: providers[name] for name in to_fetch if name in providers}
 
     async def _fetch_planned_async(

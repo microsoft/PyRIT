@@ -84,4 +84,3 @@ describe('datasetCanRefresh', () => {
     expect(datasetCanRefresh(undefined, SETTINGS.sources[1])).toBe(true)
   })
 })
-

@@ -358,7 +358,7 @@ test('dataset loading sends one load per missing dataset and only the scan-level
   await expect(section.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveText('Up to 5 of 200')
   await expect(section.getByRole('radio')).toHaveCount(2)
   await expect(section.getByRole('radio', { name: 'Cached', exact: true })).toBeChecked()
-  await expect(section.getByText('Uses stored datasets and loads missing ones now.', { exact: true })).toBeVisible()
+  await expect(section.getByText('Uses stored datasets and loads missing ones.', { exact: true })).toBeVisible()
   await regenerate.check()
   await expect(regenerate).toBeChecked()
   await expect(section.getByText('Downloads a fresh copy when the scan starts.', { exact: true })).toBeVisible()

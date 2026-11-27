@@ -800,7 +800,8 @@ async def test_refresh_keeps_stored_copy_of_source_without_provider_async(
         "a-2",
     ]
     assert {seed.id: seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="b")} == kept
-    assert "Datasets ['b'] have no provider to refresh from; keeping their stored copies." in caplog.text
+    # The launch check stays quiet; only preparation reports the kept copy.
+    assert caplog.text.count("Datasets ['b'] have no provider to refresh from; keeping their stored copies.") == 1
 
 
 async def test_refresh_still_rejects_missing_source_without_provider_async(*, memory: MagicMock) -> None:

@@ -151,11 +151,14 @@ export default function ScenarioDatasetTable({
     && selected.some((source) => canRefresh(source.name))
   const loadingChoice = datasetLoadingChoice(request)
   const loadingSelected = selected.some((source) => loadingNames.includes(source.name))
-  // One message per distinct failure, so each Retry re-arms only the datasets that failed together.
+  // One message per distinct failure, so each Retry re-arms only the datasets that failed together. A dataset
+  // stored since its load failed, such as by a later load of the whole selection, no longer needs a Retry.
   const failedLoads = new Map<string, string[]>()
   for (const source of selected) {
     const error = loadErrors[source.name]
-    if (error !== undefined) failedLoads.set(error, [...(failedLoads.get(error) ?? []), source.name])
+    if (error !== undefined && !datasets.find((item) => item.name === source.name)?.loaded) {
+      failedLoads.set(error, [...(failedLoads.get(error) ?? []), source.name])
+    }
   }
   const picker = <Combobox ref={fluentRef(pickerRef)} aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
     placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]}
@@ -311,7 +314,7 @@ export default function ScenarioDatasetTable({
             </RadioGroup>
             <Text id={`${loadingId}-hint`} size={200} className={styles.loadingHint}>
               {loadingChoice === 'always' ? 'Downloads a fresh copy when the scan starts.'
-                : 'Uses stored datasets and loads missing ones now.'}
+                : 'Uses stored datasets and loads missing ones.'}
             </Text>
           </div>
         </div>

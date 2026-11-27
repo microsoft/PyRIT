@@ -392,7 +392,7 @@ describe('ScenarioDatasetTable', () => {
     const storedRow = screen.getByRole('row', { name: /stored \(Local files\)/ })
     const remoteRow = screen.getByRole('row', { name: /remote \(Unknown\)/ })
     expect(within(storedRow).queryByText('Uses stored copy')).not.toBeInTheDocument()
-    expect(screen.getByText('Uses stored datasets and loads missing ones now.')).toBeInTheDocument()
+    expect(screen.getByText('Uses stored datasets and loads missing ones.')).toBeInTheDocument()
     await user.click(screen.getByRole('radio', { name: 'Regenerate' }))
     expect(within(storedRow).getByText('Uses stored copy')).toBeInTheDocument()
     expect(within(remoteRow).queryByText('Uses stored copy')).not.toBeInTheDocument()
@@ -464,6 +464,14 @@ describe('ScenarioDatasetTable', () => {
     expect(screen.queryByRole('button', { name: /Load datasets/ })).not.toBeInTheDocument()
   })
 
+  it('drops a failed load once another load has stored that dataset', () => {
+    render(<Harness datasets={[STORED, { ...REMOTE, loaded: true }]}
+      initialRequest={{ sources: [{ name: 'stored' }, { name: 'remote' }] }}
+      loadErrors={{ remote: 'Provider offline.' }} />)
+    expect(screen.queryByText('Provider offline.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Retry loading/ })).not.toBeInTheDocument()
+  })
+
   it('keeps the import-first message for a missing dataset with no provider', () => {
     render(<Harness initialRequest={{ sources: [{ name: 'stored' }, { name: 'manual' }] }} />)
     expect(screen.getByText('Import the missing datasets into PyRIT first.')).toBeInTheDocument()
@@ -515,7 +523,7 @@ describe('ScenarioDatasetTable', () => {
     const user = userEvent.setup()
     render(<Harness initialRequest={{ sources: [{ name: 'remote' }] }} />)
     const group = screen.getByRole('radiogroup', { name: 'Dataset loading' })
-    expect(group).toHaveAccessibleDescription('Uses stored datasets and loads missing ones now.')
+    expect(group).toHaveAccessibleDescription('Uses stored datasets and loads missing ones.')
     await user.click(within(group).getByRole('radio', { name: 'Cached' }))
     await user.keyboard('{ArrowRight}')
     expect(within(group).getByRole('radio', { name: 'Regenerate' })).toBeChecked()
