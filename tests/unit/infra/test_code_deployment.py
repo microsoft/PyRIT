@@ -202,12 +202,16 @@ class TestLocalDockerBuild(unittest.TestCase):
             0
         ]
         run = run.replace("/opt/venv/bin/python", "python").replace("/app/", "./app/")
-        # Run the real export offline; record what each pip invocation would install and which pins it sees.
+        # Run the real locked export offline; record what each pip invocation would install and which pins it sees.
         stubs = """
 python() { :; }
 cd() { :; }
 uv() {
-    if [ "$1" = export ]; then command uv "$@"; return; fi
+    if [ "$1" = export ]; then
+        case " $* " in *" --locked "*) command uv "$@"; return ;; esac
+        echo "export must use --locked" >&2
+        return 1
+    fi
     printf 'install:%s\\n' "$*"
     for file in "${UV_CONSTRAINT:-}" "${UV_BUILD_CONSTRAINT:-}"; do
         if [ -n "$file" ]; then
@@ -228,7 +232,7 @@ uv() {
             for name in ("pyproject.toml", "uv.lock"):
                 shutil.copyfile(REPO_ROOT / name, root / name)
 
-            def build(source: str, flag: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+            def build(*, source: str, flag: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
                 result = subprocess.run(
                     [BASH, "--noprofile", "--norc", "-s"],
                     input=stubs + run + "\n",
@@ -256,7 +260,7 @@ uv() {
                 ("local", "invalid", "must be true or false"),
             ):
                 with self.subTest(source=source, flag=flag):
-                    result, installs = build(source, flag)
+                    result, installs = build(source=source, flag=flag)
                     if expected not in ("pinned", "unpinned"):
                         assert result.returncode != 0 and expected in result.stderr
                         assert not installs
@@ -275,7 +279,7 @@ uv() {
                 stale = project.replace("dependencies = [\n", 'dependencies = [\n    "six>=1.0",\n', 1)
                 assert stale != project
                 (root / "pyproject.toml").write_text(stale, encoding="utf-8")
-                result, installs = build("local", "true")
+                result, installs = build(source="local", flag="true")
                 assert result.returncode != 0, result.stdout
                 assert not installs
                 assert (root / "uv.lock").read_bytes() == lock
