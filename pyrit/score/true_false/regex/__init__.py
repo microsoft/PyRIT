@@ -6,7 +6,8 @@
 Regex-based true/false scorers for detecting credential leaks, OWASP LLM02
 insecure-output payloads (XSS, SQL injection, shell commands, path traversal,
 SSRF, SSTI, XXE, open redirect, LDAP injection, and raw or escaped ANSI escape
-sequences), prompt injection, markdown injection, and CBRN/illicit-substance keywords.
+sequences), prompt injection, markdown injection, CBRN/illicit-substance keywords,
+and snowballed-hallucination answers.
 """
 
 from typing import TYPE_CHECKING
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.regex.path_traversal_output_scorer import PathTraversalOutputScorer
     from pyrit.score.true_false.regex.regex_scorer import RegexScorer
     from pyrit.score.true_false.regex.shell_command_output_scorer import ShellCommandOutputScorer
+    from pyrit.score.true_false.regex.snowball_scorer import SnowballAffirmationScorer, SnowballNegationScorer
     from pyrit.score.true_false.regex.sql_injection_output_scorer import SQLInjectionOutputScorer
     from pyrit.score.true_false.regex.ssrf_output_scorer import SSRFOutputScorer
     from pyrit.score.true_false.regex.ssti_output_scorer import SSTIOutputScorer
@@ -57,6 +59,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PathTraversalOutputScorer": "pyrit.score.true_false.regex.path_traversal_output_scorer",
     "RegexScorer": "pyrit.score.true_false.regex.regex_scorer",
     "ShellCommandOutputScorer": "pyrit.score.true_false.regex.shell_command_output_scorer",
+    "SnowballAffirmationScorer": "pyrit.score.true_false.regex.snowball_scorer",
+    "SnowballNegationScorer": "pyrit.score.true_false.regex.snowball_scorer",
     "SQLInjectionOutputScorer": "pyrit.score.true_false.regex.sql_injection_output_scorer",
     "SSRFOutputScorer": "pyrit.score.true_false.regex.ssrf_output_scorer",
     "SSTIOutputScorer": "pyrit.score.true_false.regex.ssti_output_scorer",

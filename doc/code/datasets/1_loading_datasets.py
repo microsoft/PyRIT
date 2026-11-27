@@ -88,6 +88,8 @@
 # leak-replay cloze passages that are downloaded at run time rather than bundled
 # (`garak_leak_replay_literature`, `garak_leak_replay_potter`, `garak_leak_replay_nyt`,
 # `garak_leak_replay_guardian`) [@chang2023speak],
+# snowballed-hallucination questions (`garak_snowball_graph_connectivity`,
+# `garak_snowball_primes`, `garak_snowball_senators`) [@zhang2023snowball],
 # an audio jailbreak set
 # (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
 

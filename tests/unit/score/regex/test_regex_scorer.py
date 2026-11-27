@@ -26,6 +26,8 @@ from pyrit.score import (
     PathTraversalOutputScorer,
     RegexScorer,
     ShellCommandOutputScorer,
+    SnowballAffirmationScorer,
+    SnowballNegationScorer,
     SQLInjectionOutputScorer,
     SSRFOutputScorer,
     SSTIOutputScorer,
@@ -55,6 +57,11 @@ _CONFIGURABLE_SCORERS = (
     XXEOutputScorer,
 )
 
+_HALLUCINATION_SCORERS = (
+    SnowballAffirmationScorer,
+    SnowballNegationScorer,
+)
+
 _FIXED_SCORERS = (
     AnthraxKeywordScorer,
     FentanylKeywordScorer,
@@ -68,6 +75,7 @@ _DEFAULT_SCORER_CASES = (
     (FentanylKeywordScorer, ["fentanyl"]),
     (MethKeywordScorer, ["meth"]),
     (NerveAgentKeywordScorer, ["nerve_agent"]),
+    *((scorer_class, ["hallucination"]) for scorer_class in _HALLUCINATION_SCORERS),
 )
 _DEFAULT_SCORERS = tuple(scorer_class for scorer_class, _categories in _DEFAULT_SCORER_CASES)
 
@@ -140,7 +148,7 @@ def test_regex_scorer_rejects_empty_patterns():
         RegexScorer(patterns={})
 
 
-@pytest.mark.parametrize("scorer_class", _CONFIGURABLE_SCORERS)
+@pytest.mark.parametrize("scorer_class", (*_CONFIGURABLE_SCORERS, *_HALLUCINATION_SCORERS))
 def test_configurable_subclass_constructor_contract(scorer_class: type[RegexScorer]) -> None:
     parameters = inspect.signature(scorer_class).parameters
 
@@ -169,7 +177,7 @@ def test_subclass_declarative_defaults_preserve_patterns_and_categories(
     assert isinstance(scorer, RegexScorer)
 
 
-@pytest.mark.parametrize("scorer_class", _CONFIGURABLE_SCORERS)
+@pytest.mark.parametrize("scorer_class", (*_CONFIGURABLE_SCORERS, *_HALLUCINATION_SCORERS))
 def test_configurable_subclass_custom_patterns_override_defaults(scorer_class: type[RegexScorer]) -> None:
     custom_patterns = {"second": "two", "first": "one"}
     scorer = _scorer_factory(scorer_class)(
