@@ -68,7 +68,7 @@ class DatasetUploadLimits:
     prompts: int = 10_000
 
     @classmethod
-    def from_environment(cls) -> "DatasetUploadLimits":
+    def from_environment(cls) -> Self:
         """
         Read explicit limits without silently accepting invalid configuration.
 

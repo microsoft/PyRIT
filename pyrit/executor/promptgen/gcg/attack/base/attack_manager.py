@@ -12,7 +12,7 @@ import time
 from copy import copy, deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Self, cast, runtime_checkable
 from uuid import uuid4
 
 import numpy as np
@@ -126,7 +126,7 @@ class RngBundle:
     derived_seeds: dict[int, int]
 
     @classmethod
-    def from_seed(cls, *, base_seed: int, workers: list[ModelWorker]) -> RngBundle:
+    def from_seed(cls, *, base_seed: int, workers: list[ModelWorker]) -> Self:
         """
         Create deterministic local RNGs for one GCG run.
 
@@ -2393,7 +2393,7 @@ class ModelWorker:
                     results.put(ModelWorker._execute_task(model=model, task=task))
             tasks.task_done()
 
-    def start(self) -> ModelWorker:
+    def start(self) -> Self:
         """
         Start the model worker process.
 
@@ -2405,7 +2405,7 @@ class ModelWorker:
         logger.info(f"Started worker {self.process.pid} for model {self.model.name_or_path}")
         return self
 
-    def stop(self) -> ModelWorker:
+    def stop(self) -> Self:
         """
         Stop the model worker process and release cached CUDA memory.
 
@@ -2424,7 +2424,7 @@ class ModelWorker:
         operation: ModelWorkerOperation | Callable[..., Any],
         *args: Any,
         **kwargs: Any,
-    ) -> ModelWorker:
+    ) -> Self:
         """
         Queue an operation for execution by this worker.
 

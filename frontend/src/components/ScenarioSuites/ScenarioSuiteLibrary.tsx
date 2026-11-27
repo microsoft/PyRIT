@@ -167,7 +167,7 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
-            onClick={() => navigate(NEW_SUITE_ROUTE)}
+            onClick={() => { void navigate(NEW_SUITE_ROUTE) }}
             data-testid="new-suite-btn"
           >
             New suite
@@ -283,7 +283,7 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
                           className={styles.touchTarget}
                           appearance="subtle"
                           icon={<EditRegular />}
-                          onClick={() => navigate(suiteEditorRoutePath(item.suite.name))}
+                          onClick={() => { void navigate(suiteEditorRoutePath(item.suite.name)) }}
                           data-testid={`edit-suite-${item.suite.name}`}
                         >
                           {editable ? 'Edit' : 'View'}

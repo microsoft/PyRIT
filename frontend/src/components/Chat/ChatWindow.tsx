@@ -1179,7 +1179,7 @@ export default function ChatWindow({
       setIsPanelOpen(false)
     }
     if (convId === activeConversationId && attackResultId) {
-      loadConversation(attackResultId, convId)
+      void loadConversation(attackResultId, convId)
     }
   }, [attackResultId, activeConversationId, getViewedConversationId, isNarrowScreen, onSelectConversation, loadConversation, requestForcedLoad])
 
@@ -1963,16 +1963,16 @@ export default function ChatWindow({
           <MenuPopover>
             <MenuList>
               <MenuItem
-                onClick={() => exportAs('markdown')}
+                onClick={() => { void exportAs('markdown') }}
                 disabled={isExporting}
                 data-testid="export-markdown-item"
               >
                 Export as Markdown (.md)
               </MenuItem>
-              <MenuItem onClick={() => exportAs('json')} disabled={isExporting} data-testid="export-json-item">
+              <MenuItem onClick={() => { void exportAs('json') }} disabled={isExporting} data-testid="export-json-item">
                 Export as JSON (.json)
               </MenuItem>
-              <MenuItem onClick={() => exportAs('html')} disabled={isExporting} data-testid="export-html-item">
+              <MenuItem onClick={() => { void exportAs('html') }} disabled={isExporting} data-testid="export-html-item">
                 Export as HTML (.html)
               </MenuItem>
             </MenuList>
@@ -2136,7 +2136,7 @@ export default function ChatWindow({
           sameAttackDisabledReason={sameAttackDisabledReason}
           newAttackDisabledReason={newAttackDisabledReason}
           onSaved={handleEditorSaved}
-          onSave={handleSaveEditor}
+          onSave={(destination) => { void handleSaveEditor(destination) }}
           onExit={handleExitEditor}
           onDiscard={(navigatingAway) => {
             if (navigatingAway) {
@@ -2232,7 +2232,7 @@ export default function ChatWindow({
               key={view.progress.send_id}
               progress={view.progress}
               needsRefresh={view.needsRefresh}
-              onSelectConversation={handlePanelSelectConversation}
+              onSelectConversation={(convId: string) => { void handlePanelSelectConversation(convId) }}
               onDismiss={() => { dismissRepeatSend(view.progress.send_id) }}
               onRefresh={() => { refreshRepeatSend(view.progress.send_id) }}
             />
@@ -2340,9 +2340,9 @@ export default function ChatWindow({
           pollIntervalMs={inProgress ? LIVE_ATTACK_POLL_INTERVAL_MS : undefined}
           readConversations={readConversations}
           activeConversationId={activeConversationId}
-          onSelectConversation={handlePanelSelectConversation}
-          onNewConversation={handleNewConversation}
-          onChangeMainConversation={handleChangeMainConversation}
+          onSelectConversation={(convId: string) => { void handlePanelSelectConversation(convId) }}
+          onNewConversation={() => { void handleNewConversation() }}
+          onChangeMainConversation={(convId: string) => { void handleChangeMainConversation(convId) }}
           onClose={() => setIsPanelOpen(false)}
           lockedReason={
             executionReadOnly ? 'Automated results are read-only. Choose Continue manually.'

@@ -155,7 +155,6 @@ pyrit.memory.sqlite_memory:SQLiteMemory._register_analytics_lower.<locals>.regis
 pyrit.memory.storage.serializers:DataTypeSerializer.save_b64_image_async
 pyrit.memory.storage.serializers:DataTypeSerializer.save_data_async
 pyrit.memory.storage.serializers:DataTypeSerializer.save_formatted_audio_async
-pyrit.memory.storage.storage:AzureBlobStorageIO._upload_blob_async
 pyrit.memory.storage.storage:AzureBlobStorageIO.write_file_async
 pyrit.memory.storage.storage:DiskStorageIO.write_file_async
 pyrit.memory.storage.storage:StorageIO.write_file_async
@@ -189,7 +188,6 @@ pyrit.prompt_target.http_target.http_target:HTTPTarget._infer_full_url_from_host
 pyrit.prompt_target.http_target.http_target:HTTPTarget.with_client
 pyrit.prompt_target.http_target.http_target_callback_functions:_fetch_key
 pyrit.prompt_target.http_target.http_target_callback_functions:get_http_target_regex_matching_callback_function
-pyrit.prompt_target.http_target.httpx_api_target:HTTPXAPITarget._merge_base_and_url
 pyrit.prompt_target.openai.openai_chat_target:OpenAIChatTarget._construct_message_from_response_async
 pyrit.prompt_target.openai.openai_completion_target:OpenAICompletionTarget._construct_message_from_response_async
 pyrit.prompt_target.openai.openai_image_target:OpenAIImageTarget._construct_message_from_response_async
