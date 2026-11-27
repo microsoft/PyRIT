@@ -61,7 +61,7 @@ export function IdentityJson({ id, name, identity, className }: IdentityJsonProp
 
 interface IdentityDisclosureProps {
   readonly name: string
-  readonly identity?: object | null
+  readonly identity?: object | null | undefined
 }
 
 /** A component name with a trailing chevron that expands its identity JSON in place; plain text without one. */

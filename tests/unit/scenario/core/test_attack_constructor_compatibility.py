@@ -124,6 +124,16 @@ class TestScorerPolicy:
         with pytest.raises(ValueError, match="error detail"):
             helper._apply_scorer_policy("error detail")
 
+    def test_apply_scorer_policy_accepts_plain_string_values(self):
+        helper = _ConstructorCompatibilityHelper(attack_class=_StubAttack, scorer_override_policy="raise")
+        with pytest.raises(ValueError, match="error detail"):
+            helper._apply_scorer_policy("error detail")
+
+    def test_apply_scorer_policy_unknown_value_keeps_silent_fallback(self, caplog):
+        helper = _ConstructorCompatibilityHelper(attack_class=_StubAttack, scorer_override_policy="future")
+        helper._apply_scorer_policy("unknown policy detail")
+        assert "unknown policy detail" not in caplog.text
+
 
 class TestUnwrapOptional:
     """Tests for _ConstructorCompatibilityHelper._unwrap_optional static method."""

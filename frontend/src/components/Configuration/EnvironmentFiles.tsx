@@ -17,7 +17,7 @@ import DotenvEditor from './DotenvEditor'
 interface StatusMessage {
   intent: 'success' | 'error'
   text: string
-  conflictFileId?: string
+  conflictFileId?: string | undefined
 }
 
 interface EnvironmentFilesProps {

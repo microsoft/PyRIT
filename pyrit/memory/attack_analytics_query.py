@@ -22,7 +22,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, assert_never
 
 from sqlalchemy import (
     JSON,
@@ -828,6 +828,13 @@ class AttackAnalyticsQueryCompiler:
                 value,
             )
             return _Source(value=value, label=label)
+        match name:
+            case AttackAnalyticsDimensionName.MODEL:
+                pass
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(name)
+                # Preserve the historical runtime fallback for values outside the declared enum: use the model source.
         value = func.coalesce(
             self.target.c.model_name,
             self.target.c.underlying_model_name,
