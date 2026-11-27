@@ -20,6 +20,7 @@ from sqlalchemy import inspect
 
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+from test_support.async_fixture_errors import pytest_fixture_setup  # noqa: F401
 
 # Limit retries for deterministic testing
 os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "3"
