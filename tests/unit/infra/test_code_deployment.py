@@ -196,6 +196,7 @@ class TestLocalDockerBuild(unittest.TestCase):
 
     def test_lockfile_build_constrains_only_requested_installs(self) -> None:
         assert BASH is not None
+        bash = BASH
         dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
         assert "ARG PYRIT_USE_LOCKFILE=false" in dockerfile.splitlines()
         run = dockerfile.split("RUN --mount=type=bind,source=uv.lock,target=/app/uv.lock \\\n", 1)[1].split("\n\n", 1)[
@@ -234,7 +235,7 @@ uv() {
 
             def build(*, source: str, flag: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
                 result = subprocess.run(
-                    [BASH, "--noprofile", "--norc", "-s"],
+                    [bash, "--noprofile", "--norc", "-s"],
                     input=stubs + run + "\n",
                     cwd=root,
                     env=environment
