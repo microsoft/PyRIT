@@ -538,8 +538,8 @@ class TestFetchSingleSplit:
             cache=cache,
             token="hf-token",
             data_files={"SD_TYPO": "data/Fraud/SD_TYPO.parquet"},
-            # Explicit features restore Image decoding: datasets does not apply
-            # the README features when data_files is overridden.
+            # datasets >=5.1 needs the explicit features (image decoding);
+            # datasets <5.1 needs verification off (four declared splits).
             features=Features({"id": Value("string"), "question": Value("string"), "image": Image()}),
             verification_mode="no_checks",
         )

@@ -85,10 +85,9 @@ _CATEGORY_TO_GITHUB_SCENARIO: dict[str, str] = {
 }
 
 # Features of every split of every MM-SafetyBench config, as declared by the
-# README ``dataset_info`` metadata. Passed explicitly because ``datasets``
-# does not apply the README features when ``data_files`` is overridden, and
-# the parquet footers carry no feature metadata — without this the ``image``
-# column would stay a raw struct instead of decoding to a PIL image.
+# README ``dataset_info`` metadata (the parquet footers carry no feature
+# metadata). See ``_fetch_single_split_async`` for when these must be passed
+# explicitly.
 _MM_SAFETYBENCH_FEATURES = Features({"id": Value("string"), "question": Value("string"), "image": Image()})
 
 
@@ -132,7 +131,7 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
 
     Only the parquet files backing the selected categories and variant are
     downloaded (~250 MB for the default all-categories ``SD_TYPOGRAPHY`` load,
-    ~15 MB per single category) and cached locally. Subsequent calls are fast.
+    7-25 MB per single category) and cached locally. Subsequent calls are fast.
 
     Reference: https://isxinliu.github.io/Project/MM-SafetyBench/
     Paper: [@liu2024mmsafetybench]
@@ -330,9 +329,9 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         Fetch one split of one config, downloading only the parquet file that backs it.
 
         ``load_dataset(repo, config, split=...)`` downloads every split of the
-        config (for this dataset, all three image variants plus ``Text_only``,
-        ~30 MB per category when ~15 MB is needed), because ``split`` only
-        selects what gets prepared. Overriding ``data_files`` with the split's
+        config — for this dataset, all three image variants plus ``Text_only``,
+        about twice the bytes the default ``SD_TYPO`` load needs — because
+        ``split`` only selects what gets prepared. Overriding ``data_files`` with the split's
         parquet file (the layout the dataset README ``configs`` block declares)
         narrows the download to exactly that file, while keeping the shared
         helper's caching semantics: warm-cache calls reuse the prepared data.
@@ -358,9 +357,12 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
             cache=cache,
             token=self.token,
             data_files={split: f"data/{category_value}/{split}.parquet"},
+            # datasets <5.1 keeps the README dataset_info (four declared
+            # splits) when data_files is set, so split verification must be
+            # off; datasets >=5.1 drops it when data_files is set, so features
+            # must be explicit or the image column stays raw bytes. Both
+            # overrides are needed to cover the supported range (>=4.8.0).
             features=_MM_SAFETYBENCH_FEATURES,
-            # The config's README metadata declares four splits and we
-            # deliberately prepare only one, so split verification must be off.
             verification_mode="no_checks",
         )
 
