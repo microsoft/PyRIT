@@ -32,9 +32,7 @@ def match_text(*, matcher: TextMatcher, text: str) -> bool:
         # never be a prefix of the stripped candidate otherwise.
         expected = matcher.value.strip() if matcher.ignore_whitespace else matcher.value
         return (
-            candidate.startswith(expected)
-            if matcher.case_sensitive
-            else candidate.lower().startswith(expected.lower())
+            candidate.startswith(expected) if matcher.case_sensitive else candidate.lower().startswith(expected.lower())
         )
     if isinstance(matcher, Equals):
         expected = matcher.value.strip() if matcher.ignore_whitespace else matcher.value
