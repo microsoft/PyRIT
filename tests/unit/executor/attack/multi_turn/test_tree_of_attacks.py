@@ -3135,16 +3135,16 @@ _SCENARIOS = [
         id="all_fail_all_depths",
     ),
     pytest.param(
-        # Scenario: every branch is off-topic, no branch crashed → still a failure
+        # Scenario: every branch is off-topic, nothing reached the target → undetermined
         2,
         4,
         2,
         0.7,
         {1: [_B(off_topic=True), _B(off_topic=True)]},
-        AttackOutcome.FAILURE,
+        AttackOutcome.UNDETERMINED,
         0.0,
         1,
-        id="all_off_topic_is_failure",
+        id="all_off_topic_is_undetermined",
     ),
     pytest.param(
         # Scenario: depth 1 is scored, every depth 2 branch crashes → failure keeps the depth 1 score

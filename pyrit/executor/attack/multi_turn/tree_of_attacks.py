@@ -2502,8 +2502,9 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Create the result for an attack that did not achieve its objective.
 
         Returns an `ERROR` result when no response was ever scored and at least one branch
-        failed to execute, an `UNDETERMINED` result when the best score carries no verdict,
-        and a `FAILURE` result otherwise. The outcome reason includes the best score
+        failed to execute, an `UNDETERMINED` result when nothing was scored because every
+        branch went off-topic or when the best score carries no verdict, and a `FAILURE`
+        result otherwise. The outcome reason includes the best score
         achieved for diagnostic purposes. Delegates to `_create_attack_result_async` for
         common result construction logic.
 
@@ -2536,7 +2537,15 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             result.error_type = error_kind if separator else None
             return result
 
-        if best_score is not None and attack_outcome_from_score(best_score) is AttackOutcome.UNDETERMINED:
+        if best_score is None:
+            # Every branch was pruned as off-topic, so nothing reached the objective target.
+            return await self._create_attack_result_async(
+                context=context,
+                outcome=AttackOutcome.UNDETERMINED,
+                outcome_reason="Every branch was pruned as off-topic, so nothing reached the objective target",
+            )
+
+        if attack_outcome_from_score(best_score) is AttackOutcome.UNDETERMINED:
             return await self._create_attack_result_async(
                 context=context,
                 outcome=AttackOutcome.UNDETERMINED,
