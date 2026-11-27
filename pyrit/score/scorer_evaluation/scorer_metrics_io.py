@@ -166,8 +166,11 @@ def _load_metrics_from_file(
         identity_dict = {k: v for k, v in entry.items() if k not in ("metrics", "eval_hash")}
 
         try:
-            # Reconstruct ComponentIdentifier from the stored dict
+            # Reconstruct ComponentIdentifier from the stored dict and attach persisted eval_hash
             scorer_identifier = ComponentIdentifier.model_validate(identity_dict)
+            eval_hash = entry.get("eval_hash")
+            if isinstance(eval_hash, str) and eval_hash:
+                scorer_identifier = scorer_identifier.with_eval_hash(eval_hash)
 
             # Create the metrics object
             metrics = metrics_class(**metrics_dict)
