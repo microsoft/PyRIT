@@ -312,3 +312,23 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ---------------------------------------------------------
+
+NeMo Guardrails content safety prompt - Apache-2.0
+https://github.com/NVIDIA-NeMo/Guardrails
+
+Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+PyRIT includes the ``content_safety_check_output`` prompt that NeMo Guardrails
+sends to NVIDIA's content safety guard models, from
+examples/configs/content_safety_multilingual/prompts.yml at revision
+200cd26fa771b4205c2339a1a13a1d7e2623e756, in
+pyrit/datasets/score/nemotron_safety_guard/. The two template placeholders are
+renamed; the text is otherwise unchanged.
+
+The prompt is licensed under the Apache License, Version 2.0.
+A copy of the license is provided in LICENSES/Apache-2.0.txt.
+
+Reference: Joshi et al., "CultureGuard: Towards Culturally-Aware Dataset and
+Guard Model for Multilingual Safety Applications", arXiv:2508.01710.
+
+---------------------------------------------------------
