@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import Field, model_validator
 from tinytag import TinyTag
@@ -105,7 +105,7 @@ class SeedPrompt(Seed[PromptDataType | None]):
         return data
 
     @model_validator(mode="after")
-    def _render_and_infer_data_type(self) -> SeedPrompt:
+    def _render_and_infer_data_type(self) -> Self:
         """
         Render template placeholders and infer data_type after initialization.
 

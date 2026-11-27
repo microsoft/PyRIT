@@ -6,7 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, cast, get_args, get_origin
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, TypeAdapter, model_validator
 
@@ -83,7 +83,7 @@ class Condition(BaseModel):
         _CONDITION_TYPES[discriminator] = cls
 
     @model_validator(mode="after")
-    def _reject_base_condition(self) -> Condition:
+    def _reject_base_condition(self) -> Self:
         """
         Reject the untyped registry root as a concrete condition.
 
@@ -218,7 +218,7 @@ class ToolsCalled(Condition):
     exhaustive: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
 
     @model_validator(mode="after")
-    def _validate_tools(self) -> ToolsCalled:
+    def _validate_tools(self) -> Self:
         """
         Require distinct exact names, and at least one unless the match is exhaustive.
 
@@ -254,7 +254,7 @@ class ToolsCalledInOrder(Condition):
     tools: tuple[ToolCallRequirement, ...]
 
     @model_validator(mode="after")
-    def _validate_tools(self) -> ToolsCalledInOrder:
+    def _validate_tools(self) -> Self:
         """
         Require at least two distinct exact names.
 
@@ -309,7 +309,7 @@ class DisclosesSecret(Condition):
     known_context: tuple[str, ...] = ()
 
     @model_validator(mode="after")
-    def _validate_secret(self) -> DisclosesSecret:
+    def _validate_secret(self) -> Self:
         """
         Require a secret without whitespace.
 
@@ -409,7 +409,7 @@ class ProgramBehaves(Condition):
     cases: tuple[ProgramCase, ...]
 
     @model_validator(mode="after")
-    def _validate_cases(self) -> ProgramBehaves:
+    def _validate_cases(self) -> Self:
         """
         Require at least one case.
 
