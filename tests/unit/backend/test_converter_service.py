@@ -1335,9 +1335,15 @@ class TestPersistDataUriParams:
     @pytest.mark.parametrize(
         "data_uri",
         [
+            "data:text/plain;base64",
+            "data:text/plain;base64,",
             "data:text/plain;charset=utf-8,hello",
             "data:text/plain;base64;extra,SGVsbG8=",
             "data:text/plain;;base64,SGVsbG8=",
+            "data:text/plain;garbage;base64,SGVsbG8=",
+            "data:text/plain;base64;base64,SGVsbG8=",
+            "data:text/plain;=utf-8;base64,SGVsbG8=",
+            "data:text/plain;charset=;base64,SGVsbG8=",
             "data:base64,SGVsbG8=",
         ],
     )

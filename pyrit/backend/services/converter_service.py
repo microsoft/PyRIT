@@ -731,7 +731,10 @@ class ConverterService:
         media_type, *parameters = header[len("data:") :].split(";")
         if (
             not parameters
-            or any(not param.strip() for param in parameters)
+            or any(
+                "=" not in param or not param.partition("=")[0].strip() or not param.partition("=")[2].strip()
+                for param in parameters[:-1]
+            )
             or parameters[-1].strip().lower() != "base64"
         ):
             raise ValueError(f"Path parameter '{parameter_name}' must be a base64 data URI")
