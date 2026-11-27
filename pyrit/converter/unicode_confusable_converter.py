@@ -3,7 +3,7 @@
 
 import logging
 import re
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from confusable_homoglyphs.confusables import is_confusable
 from confusables import confusable_characters
@@ -63,7 +63,7 @@ class UnicodeConfusableConverter(Converter):
                 f"Invalid source package: {source_package}. Please choose 'confusable_homoglyphs', "
                 "'confusables', or 'cyrillic_homoglyph'"
             )
-        self._source_package = source_package
+        self._source_package: Literal["confusable_homoglyphs", "confusables", "cyrillic_homoglyph"] = source_package
         self._deterministic = deterministic
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -103,6 +103,8 @@ class UnicodeConfusableConverter(Converter):
         elif self._source_package == "confusable_homoglyphs":
             converted_prompt = self._generate_perturbed_prompts(prompt)
         else:
+            if TYPE_CHECKING and self._source_package != "confusables":  # pragma: no cover
+                assert_never(self._source_package)
             converted_prompt = "".join(self._confusable(c) for c in prompt)
 
         return ConverterResult(output_text=converted_prompt, output_type="text")

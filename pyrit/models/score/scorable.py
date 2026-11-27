@@ -65,7 +65,7 @@ class MessageScorable(Scorable):
     message_piece_ids: tuple[uuid.UUID, ...]
 
     @model_validator(mode="after")
-    def _validate_message_piece_ids(self) -> MessageScorable:
+    def _validate_message_piece_ids(self) -> Self:
         """
         Reject id tuples that cannot name evidence.
 
@@ -174,7 +174,7 @@ class TraceScorable(Scorable):
     trace_ids: tuple[TraceId, ...]
 
     @model_validator(mode="after")
-    def _validate_scope(self) -> TraceScorable:
+    def _validate_scope(self) -> Self:
         """
         Require a nonempty trace scope with no repeated identifiers.
 
@@ -226,7 +226,7 @@ class ProgramExecutionScorable(Scorable):
     invocations: tuple[_ProgramInvocation, ...]
 
     @model_validator(mode="after")
-    def _validate_execution(self) -> ProgramExecutionScorable:
+    def _validate_execution(self) -> Self:
         """
         Require text code and at least one invocation.
 
