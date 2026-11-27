@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
+import logging
 import uuid
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -44,6 +46,8 @@ if TYPE_CHECKING:
 
     from pyrit.models import Observation, ScorableUnion
     from pyrit.score.observation.execution import _ObservationEvidence
+
+logger = logging.getLogger(__name__)
 
 _DATA_PATH = SCORER_SEED_PROMPT_PATH / "cyberseceval"
 _DEFAULT_EXPANSION_PROMPT_PATH = _DATA_PATH / "cyberseceval_mitre_expansion.yaml"
@@ -303,7 +307,8 @@ class CyberSecEvalMitreScorer(MessageTrueFalseScorer):
 
         The exchange goes through the prompt normalizer, so it is stored in memory like the judge's. Only the reply's
         text is the analysis: a reasoning piece before it is left out. An empty analysis means the call failed, so it
-        is retried in a new conversation, as an empty judge answer is, and then raised.
+        is retried in a new conversation, as an empty judge answer is, and then raised. Each attempt's conversation is
+        released afterwards, so a stateful target does not keep a session open per attempt.
 
         Returns:
             str: The expansion model's analysis.
@@ -320,16 +325,25 @@ class CyberSecEvalMitreScorer(MessageTrueFalseScorer):
         @pyrit_json_retry
         async def _attempt_async() -> str:
             conversation_id = str(uuid.uuid4())
-            reply = await PromptNormalizer().send_prompt_async(
-                message=Message(
-                    message_pieces=[
-                        MessagePiece(role="user", original_value=request.value, conversation_id=conversation_id)
-                    ]
-                ),
-                target=self._expansion_target,
-                conversation_id=conversation_id,
-            )
-            return _read_expansion(reply=reply, scored_prompt_id=scored_prompt_id)
+            cancellation: asyncio.CancelledError | None = None
+            try:
+                reply = await PromptNormalizer().send_prompt_async(
+                    message=Message(
+                        message_pieces=[
+                            MessagePiece(role="user", original_value=request.value, conversation_id=conversation_id)
+                        ]
+                    ),
+                    target=self._expansion_target,
+                    conversation_id=conversation_id,
+                )
+                return _read_expansion(reply=reply, scored_prompt_id=scored_prompt_id)
+            except asyncio.CancelledError as error:
+                cancellation = error
+                raise
+            finally:
+                await _release_expansion_conversation_async(
+                    target=self._expansion_target, conversation_id=conversation_id, cancellation=cancellation
+                )
 
         return await _attempt_async()
 
@@ -365,6 +379,32 @@ class CyberSecEvalMitreScorer(MessageTrueFalseScorer):
                 score_type="true_false",
             )
         ]
+
+
+async def _release_expansion_conversation_async(
+    *, target: PromptTarget, conversation_id: str, cancellation: asyncio.CancelledError | None
+) -> None:
+    """
+    Release one expansion conversation without replacing the attempt's outcome, as the judge's fresh sessions are.
+
+    A cleanup failure is logged, unless the attempt or the task was cancelled, in which case the cancellation is raised.
+
+    Raises:
+        asyncio.CancelledError: If the attempt or the task was cancelled.
+    """
+    try:
+        await target.reset_conversation_async(conversation_id=conversation_id)
+    except asyncio.CancelledError as cleanup_error:
+        if cancellation is not None:
+            raise cancellation from cleanup_error
+        raise
+    except (Exception, BaseExceptionGroup) as cleanup_error:
+        if cancellation is not None:
+            raise cancellation from cleanup_error
+        current_task = asyncio.current_task()
+        if current_task is not None and current_task.cancelling():
+            raise asyncio.CancelledError from cleanup_error
+        logger.warning("Could not release CyberSecEval expansion session %s.", conversation_id, exc_info=cleanup_error)
 
 
 def _read_expansion(*, reply: Message | None, scored_prompt_id: str) -> str:

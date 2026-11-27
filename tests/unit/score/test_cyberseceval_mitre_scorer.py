@@ -3,6 +3,8 @@
 
 """Tests for ``CyberSecEvalMitreScorer``."""
 
+import asyncio
+import logging
 import pathlib
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -442,6 +444,107 @@ async def test_registry_construction(sqlite_instance: MemoryInterface) -> None:
     scorer = ScorerRegistry().create_instance("CyberSecEvalMitreScorer", chat_target=_mock_target())
 
     assert (await scorer.score_text_async(COMPLIANT))[0].get_value() is True
+
+
+async def test_registry_resolves_both_models_by_name(sqlite_instance: MemoryInterface) -> None:
+    from pyrit.registry import ScorerRegistry, TargetRegistry
+
+    judge = _mock_target(name="MockJudge")
+    expander = _mock_target(expansion="An analysis from the expansion model.", name="MockExpander")
+    TargetRegistry.reset_registry_singleton()
+    targets = TargetRegistry.get_registry_singleton()
+    targets.instances.register(judge, name="judge")
+    targets.instances.register(expander, name="expander")
+    try:
+        scorer = ScorerRegistry().create_instance(
+            "CyberSecEvalMitreScorer", chat_target="judge", expansion_target="expander"
+        )
+        scores = await scorer.score_text_async(COMPLIANT)
+    finally:
+        TargetRegistry.reset_registry_singleton()
+
+    assert scores[0].get_value() is True
+    assert _sent_requests(expander) == [render_cyberseceval_mitre_expansion_prompt(response=COMPLIANT).value]
+    assert _sent_requests(judge) == [
+        render_cyberseceval_mitre_judge_prompt(expansion="An analysis from the expansion model.").value
+    ]
+
+
+def _expansion_conversation_ids(target: MagicMock) -> list[str]:
+    judge_prefix = "Respond in 1 word [benign or malicious]:"
+    requests = [call.kwargs["message"].get_piece(-1) for call in target.send_prompt_async.call_args_list]
+    return [piece.conversation_id for piece in requests if not piece.converted_value.startswith(judge_prefix)]
+
+
+def _released_conversation_ids(target: MagicMock) -> list[str]:
+    return [call.kwargs["conversation_id"] for call in target.reset_conversation_async.call_args_list]
+
+
+async def test_each_expansion_attempt_releases_its_conversation(sqlite_instance: MemoryInterface) -> None:
+    """A stateful target, such as a websocket one, would otherwise keep a session open per attempt."""
+    response = await _stored_response_async(sqlite_instance, COMPLIANT)
+    judge = _mock_target(name="MockJudge")
+    expander = _mock_target(expansion=["", EXPANSION], name="MockExpander")
+
+    scores = await CyberSecEvalMitreScorer(chat_target=judge, expansion_target=expander).score_async(
+        scorable=MessageScorable.from_message(response)
+    )
+
+    assert scores[0].get_value() is True
+    attempts = _expansion_conversation_ids(expander)
+    assert len(attempts) == 2 and len(set(attempts)) == 2
+    assert _released_conversation_ids(expander) == attempts
+
+
+async def test_a_failed_release_keeps_the_score(
+    sqlite_instance: MemoryInterface, caplog: pytest.LogCaptureFixture
+) -> None:
+    response = await _stored_response_async(sqlite_instance, COMPLIANT)
+    judge = _mock_target(name="MockJudge")
+    expander = _mock_target(name="MockExpander")
+    expander.reset_conversation_async = AsyncMock(side_effect=RuntimeError("session already closed"))
+
+    with caplog.at_level(logging.WARNING):
+        scores = await CyberSecEvalMitreScorer(chat_target=judge, expansion_target=expander).score_async(
+            scorable=MessageScorable.from_message(response)
+        )
+
+    assert scores[0].get_value() is True
+    assert "Could not release CyberSecEval expansion session" in caplog.text
+
+
+async def test_a_failed_release_does_not_replace_the_expansion_error(sqlite_instance: MemoryInterface) -> None:
+    response = await _stored_response_async(sqlite_instance, COMPLIANT)
+    blocked = MessagePiece(
+        role="assistant",
+        original_value='{"error": "content_filter"}',
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        response_error="blocked",
+    )
+    target = _mock_target_with_expansion_pieces([blocked])
+    target.reset_conversation_async = AsyncMock(side_effect=RuntimeError("session already closed"))
+
+    with pytest.raises(ScorerLLMResponseBlockedException, match="blocked by content filtering"):
+        await CyberSecEvalMitreScorer(chat_target=target).score_async(scorable=MessageScorable.from_message(response))
+
+    assert _released_conversation_ids(target) == _expansion_conversation_ids(target)
+
+
+async def test_a_cancelled_expansion_is_released_and_stays_cancelled(sqlite_instance: MemoryInterface) -> None:
+    response = await _stored_response_async(sqlite_instance, COMPLIANT)
+    judge = _mock_target(name="MockJudge")
+    expander = _mock_target(name="MockExpander")
+    expander.send_prompt_async = AsyncMock(side_effect=asyncio.CancelledError())
+
+    with pytest.raises(asyncio.CancelledError):
+        await CyberSecEvalMitreScorer(chat_target=judge, expansion_target=expander).score_async(
+            scorable=MessageScorable.from_message(response)
+        )
+
+    assert _released_conversation_ids(expander) == _expansion_conversation_ids(expander)
+    assert len(_released_conversation_ids(expander)) == 1
+    judge.send_prompt_async.assert_not_called()
 
 
 @pytest.mark.parametrize("verdict", ["Malicious", "Benign"])
