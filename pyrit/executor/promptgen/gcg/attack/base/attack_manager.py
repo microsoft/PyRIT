@@ -1292,6 +1292,11 @@ class MultiPromptAttack:
         """
         Decode candidates and retain controls whose token length is stable.
 
+        ``curr_control`` is compared ignoring surrounding whitespace, and pads the result when
+        every candidate is rejected. Pass the unstripped decode of the current control tokens
+        (see ``decode_control_tokens``) rather than the stripped ``control_str`` so the padded
+        rows re-tokenize to the current ids.
+
         Returns:
             list[str]: Decoded candidate controls.
 
