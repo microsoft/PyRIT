@@ -202,7 +202,7 @@ class TestLocalDockerBuild(unittest.TestCase):
             0
         ]
         run = run.replace("/opt/venv/bin/python", "python").replace("/app/", "./app/")
-        # Use the real offline export; record what each pip invocation would install and which pins it sees.
+        # Run the real export offline; record what each pip invocation would install and which pins it sees.
         stubs = """
 python() { :; }
 cd() { :; }
@@ -217,11 +217,37 @@ uv() {
     done
 }
 """
-        environment = {key: value for key, value in os.environ.items() if not key.startswith("UV_")}
+        # Ignore user and system uv settings so only the copied project and lock decide the export.
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("UV_")} | {
+            "UV_NO_CONFIG": "1",
+            "UV_OFFLINE": "1",
+            "UV_PYTHON": sys.executable,
+        }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for name in ("pyproject.toml", "uv.lock"):
                 shutil.copyfile(REPO_ROOT / name, root / name)
+
+            def build(source: str, flag: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+                result = subprocess.run(
+                    [BASH, "--noprofile", "--norc", "-s"],
+                    input=stubs + run + "\n",
+                    cwd=root,
+                    env=environment
+                    | {
+                        "PYRIT_USE_LOCKFILE": flag,
+                        "PYRIT_SOURCE": source,
+                        "PYRIT_VERSION": "1.0",
+                        "GIT_COMMIT": "a" * 40,
+                        "GIT_MODIFIED": "false",
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=TEST_WATCHDOG_SECONDS,
+                )
+                return result, [line for line in result.stdout.splitlines() if line.startswith("install:")]
+
             for source, flag, expected in (
                 ("local", "false", "unpinned"),
                 ("pypi", "false", "unpinned"),
@@ -230,27 +256,7 @@ uv() {
                 ("local", "invalid", "must be true or false"),
             ):
                 with self.subTest(source=source, flag=flag):
-                    result = subprocess.run(
-                        [BASH, "--noprofile", "--norc", "-s"],
-                        input=stubs + run + "\n",
-                        cwd=root,
-                        env=environment
-                        | {
-                            "UV_OFFLINE": "1",
-                            "UV_PYTHON": sys.executable,
-                            "PYRIT_USE_LOCKFILE": flag,
-                            "PYRIT_SOURCE": source,
-                            "PYRIT_VERSION": "1.0",
-                            "PYRIT_EXTRAS": "speech",
-                            "GIT_COMMIT": "a" * 40,
-                            "GIT_MODIFIED": "false",
-                        },
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        timeout=TEST_WATCHDOG_SECONDS,
-                    )
-                    installs = [line for line in result.stdout.splitlines() if line.startswith("install:")]
+                    result, installs = build(source, flag)
                     if expected not in ("pinned", "unpinned"):
                         assert result.returncode != 0 and expected in result.stderr
                         assert not installs
@@ -262,6 +268,17 @@ uv() {
                     )
                     assert installs[1] == "install:pip install --python python ipykernel jupyter"
                     assert result.stdout.splitlines().count("constrained") == (4 if expected == "pinned" else 0)
+
+            with self.subTest(lock="stale"):
+                lock = (root / "uv.lock").read_bytes()
+                project = (root / "pyproject.toml").read_text(encoding="utf-8")
+                stale = project.replace("dependencies = [\n", 'dependencies = [\n    "six>=1.0",\n', 1)
+                assert stale != project
+                (root / "pyproject.toml").write_text(stale, encoding="utf-8")
+                result, installs = build("local", "true")
+                assert result.returncode != 0, result.stdout
+                assert not installs
+                assert (root / "uv.lock").read_bytes() == lock
 
     def test_only_dirty_local_builds_use_development_preparation(self) -> None:
         assert BASH is not None

@@ -126,6 +126,7 @@ jobs:
           build-args: |
             BASE_IMAGE=pyrit-devcontainer:latest
             PYRIT_SOURCE=local
+            PYRIT_USE_LOCKFILE=true
             GIT_COMMIT=${{ steps.provenance.outputs.commit }}
             GIT_MODIFIED=false
 

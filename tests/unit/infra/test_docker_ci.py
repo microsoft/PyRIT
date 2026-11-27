@@ -355,6 +355,7 @@ def test_builds_stay_local_and_only_identical_devcontainers_share_cache(workflow
         assert production["context"] == "."
         assert production["file"] == "docker/Dockerfile"
         assert f"PYRIT_SOURCE={source}" in production["build-args"]
+        assert ("PYRIT_USE_LOCKFILE=true" in production["build-args"].splitlines()) == (source == "local")
         assert "BASE_IMAGE=pyrit-devcontainer:latest" in production["build-args"]
         assert "cache-to" not in production
     assert bases[0] == bases[1]

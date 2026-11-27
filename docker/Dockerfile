@@ -66,7 +66,7 @@ RUN --mount=type=bind,source=uv.lock,target=/app/uv.lock \
         fi; \
         constraints=$(mktemp); \
         trap 'rm -f "$constraints"' EXIT; \
-        uv export --locked --offline --all-groups --all-extras --no-emit-project --no-hashes > "$constraints"; \
+        uv export --locked --all-groups --all-extras --no-emit-project --no-hashes > "$constraints"; \
         export UV_CONSTRAINT="$constraints" UV_BUILD_CONSTRAINT="$constraints"; \
     elif [ "$PYRIT_USE_LOCKFILE" != "false" ]; then \
         echo "PYRIT_USE_LOCKFILE must be true or false" >&2; exit 1; \
