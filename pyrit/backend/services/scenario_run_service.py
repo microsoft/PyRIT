@@ -2279,11 +2279,13 @@ class ScenarioRunService:
         """
         Read whether one history row's run has not finished preparing its datasets.
 
+        The history projection reads a stored JSON null, and any scalar on SQL Server, as none.
+
         Returns:
             bool: True if the run recorded pending preparation; False if it recorded none.
 
         Raises:
-            ValueError: If the stored state is malformed or its projected text is not JSON.
+            ValueError: If the projected state is malformed or its text is not JSON.
         """
         stored = record.dataset_preparation
         if stored is None:
