@@ -266,19 +266,29 @@ class RoundRobinTarget(PromptTarget):
 
     async def get_tool_definitions_async(self) -> list[ToolDefinition] | None:
         """
-        Report the function tools the inner targets advertise when they all advertise the same ones.
+        Report the function tools the inner targets advertise, which must be the same for all of them.
 
-        A request can reach any inner target, so there is no single set to report when they differ.
+        A request can reach any inner target, so each must advertise the same tools, in any order.
 
         Returns:
-            list[ToolDefinition] | None: The shared tools, or None when the inner targets cannot report
-                their tools or advertise different ones.
+            list[ToolDefinition] | None: The shared tools, or None when an inner target cannot report
+                its tools.
+
+        Raises:
+            ValueError: If the inner targets advertise different tools or tool definitions.
         """
         reported = [await target.get_tool_definitions_async() for target in self._targets]
-        if any(tools != reported[0] for tools in reported[1:]):
-            logger.warning("RoundRobinTarget cannot report its function tools: its targets advertise different ones.")
+        known = [tools for tools in reported if tools is not None]
+        if len(known) < len(reported):
             return None
-        return reported[0]
+        by_name = [{tool.name: tool for tool in tools} for tools in known]
+        if any(tools != by_name[0] for tools in by_name[1:]):
+            advertised = "; ".join(f"target {index}: {sorted(tools)}" for index, tools in enumerate(by_name))
+            raise ValueError(
+                "RoundRobinTarget's targets must advertise the same function tools, since a request can reach "
+                f"any of them, but they advertise different tools or tool definitions. Tools by target: {advertised}"
+            )
+        return known[0]
 
     def _next_target(self) -> PromptTarget:
         """

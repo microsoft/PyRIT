@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import asyncio
-import logging
 from contextlib import ExitStack
 from functools import partial
 from unittest.mock import AsyncMock, patch
@@ -243,36 +242,62 @@ def test_aggregate_capabilities_rejects_missing_results_and_disjoint_inputs() ->
         )
 
 
-def _chat_target_declaring(name: str) -> OpenAIChatTarget:
-    declaration = {"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
+def _chat_target_declaring(*names: str, parameters: dict[str, object] | None = None) -> OpenAIChatTarget:
+    declarations = [
+        {"type": "function", "function": {"name": name, "parameters": parameters or {"type": "object"}}}
+        for name in names
+    ]
     return OpenAIChatTarget(
         model_name="gpt-4",
         endpoint="https://mock.azure.com",
         api_key="mock-key",
-        extra_body_parameters={"tools": [declaration]},
+        extra_body_parameters={"tools": declarations},
     )
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_get_tool_definitions_reports_the_tools_every_target_advertises() -> None:
-    target = RoundRobinTarget(targets=[_chat_target_declaring("read_ticket"), _chat_target_declaring("read_ticket")])
+@pytest.mark.parametrize(
+    "second", [("read_ticket", "send_email"), ("send_email", "read_ticket")], ids=["same-order", "reordered"]
+)
+async def test_get_tool_definitions_reports_the_tools_every_target_advertises(second: tuple[str, ...]) -> None:
+    target = RoundRobinTarget(
+        targets=[_chat_target_declaring("read_ticket", "send_email"), _chat_target_declaring(*second)]
+    )
 
     definitions = await target.get_tool_definitions_async()
 
     assert definitions is not None
-    assert [definition.name for definition in definitions] == ["read_ticket"]
+    assert [definition.name for definition in definitions] == ["read_ticket", "send_email"]
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_get_tool_definitions_reports_none_when_targets_advertise_different_tools(
-    caplog: pytest.LogCaptureFixture,
+@pytest.mark.parametrize(
+    ("names", "parameters"),
+    [
+        pytest.param(("send_email",), None, id="different-tools"),
+        pytest.param(
+            ("read_ticket",), {"type": "object", "properties": {"id": {"type": "string"}}}, id="different-definitions"
+        ),
+    ],
+)
+async def test_get_tool_definitions_raises_when_targets_advertise_different_tools(
+    names: tuple[str, ...], parameters: dict[str, object] | None
 ) -> None:
-    target = RoundRobinTarget(targets=[_chat_target_declaring("read_ticket"), _chat_target_declaring("send_email")])
+    target = RoundRobinTarget(
+        targets=[_chat_target_declaring("read_ticket"), _chat_target_declaring(*names, parameters=parameters)]
+    )
 
-    with caplog.at_level(logging.WARNING, logger="pyrit.prompt_target.round_robin_target"):
-        assert await target.get_tool_definitions_async() is None
+    with pytest.raises(ValueError, match="must advertise the same function tools") as error:
+        await target.get_tool_definitions_async()
 
-    assert "advertise different ones" in caplog.text
+    assert f"Tools by target: target 0: ['read_ticket']; target 1: {list(names)}" in str(error.value)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_get_tool_definitions_reports_none_when_targets_cannot_report_their_tools() -> None:
+    target = RoundRobinTarget(targets=[MockPromptTarget(), MockPromptTarget()])
+
+    assert await target.get_tool_definitions_async() is None
 
 
 @pytest.mark.usefixtures("patch_central_database")
