@@ -639,7 +639,7 @@ class ScorerEvaluator(abc.ABC):
             raise ValueError("Give exactly one of objectives and expectations.")
         if expectations is None:
             expectations = [ScoringExpectation(objective=objective) for objective in cast("list[str]", objectives)]
-        results = await batch_task_async(
+        return await batch_task_async(
             task_func=self.scorer.score_async,
             task_arguments=["scorable", "expectation"],
             prompt_target=self.scorer.get_chat_target(),
