@@ -66,8 +66,10 @@ if TYPE_CHECKING:
     from pyrit.converter.fullwidth_converter import FullwidthConverter
     from pyrit.converter.grid_composite_converter import GridCompositeConverter
     from pyrit.converter.gronsfeld_converter import GronsfeldConverter
+    from pyrit.converter.image_blur_converter import ImageBlurConverter
     from pyrit.converter.image_color_saturation_converter import ImageColorSaturationConverter
     from pyrit.converter.image_compression_converter import ImageCompressionConverter
+    from pyrit.converter.image_noise_converter import ImageNoiseConverter
     from pyrit.converter.image_overlay_converter import ImageOverlayConverter
     from pyrit.converter.image_prompt_style_converter import ImagePromptStyleConverter
     from pyrit.converter.image_resizing_converter import ImageResizingConverter
@@ -91,6 +93,7 @@ if TYPE_CHECKING:
     from pyrit.converter.noise_converter import NoiseConverter
     from pyrit.converter.pdf_converter import PDFConverter
     from pyrit.converter.persuasion_converter import PersuasionConverter
+    from pyrit.converter.pigpen_converter import PigpenConverter
     from pyrit.converter.pinyin_converter import PinyinConverter
     from pyrit.converter.policy_puppetry_converter import PolicyPuppetryConverter, PolicyPuppetryTemplate
     from pyrit.converter.porta_converter import PortaConverter
@@ -202,8 +205,10 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FullwidthConverter": "pyrit.converter.fullwidth_converter",
     "GridCompositeConverter": "pyrit.converter.grid_composite_converter",
     "GronsfeldConverter": "pyrit.converter.gronsfeld_converter",
+    "ImageBlurConverter": "pyrit.converter.image_blur_converter",
     "ImageColorSaturationConverter": "pyrit.converter.image_color_saturation_converter",
     "ImageCompressionConverter": "pyrit.converter.image_compression_converter",
+    "ImageNoiseConverter": "pyrit.converter.image_noise_converter",
     "ImageOverlayConverter": "pyrit.converter.image_overlay_converter",
     "ImagePromptStyleConverter": "pyrit.converter.image_prompt_style_converter",
     "ImageResizingConverter": "pyrit.converter.image_resizing_converter",
@@ -227,6 +232,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "NoiseConverter": "pyrit.converter.noise_converter",
     "PDFConverter": "pyrit.converter.pdf_converter",
     "PersuasionConverter": "pyrit.converter.persuasion_converter",
+    "PigpenConverter": "pyrit.converter.pigpen_converter",
     "PinyinConverter": "pyrit.converter.pinyin_converter",
     "PolicyPuppetryConverter": "pyrit.converter.policy_puppetry_converter",
     "PolicyPuppetryTemplate": "pyrit.converter.policy_puppetry_converter",

@@ -76,7 +76,7 @@ class Message(BaseModel, Generic[_MessagePieceT]):
             if message_piece.role != role:
                 raise ValueError("Inconsistent roles within the same message entry.")
 
-    def validate(self) -> None:  # type: ignore[ty:invalid-method-override]
+    def validate(self) -> None:  # type: ignore[ty:incompatible-method-override]
         """
         Validate that all message pieces are internally consistent.
 
