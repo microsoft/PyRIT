@@ -503,6 +503,42 @@ describe('Configuration', () => {
     expect(await screen.findByTestId('configured-initializer-row-0')).toBeInTheDocument()
   })
 
+  it('should let PyRIT be reinitialized after environment edits are discarded by leaving the tab', async () => {
+    const user = userEvent.setup()
+    renderPage('/config?tab=environment')
+
+    const warning = 'Save or explicitly discard unsaved edits before reinitializing.'
+    const editor = await screen.findByLabelText('Environment file contents')
+    await user.clear(editor)
+    await user.type(editor, 'API_KEY=unsaved\n')
+    expect(screen.getByText(warning)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Initializers' }))
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
+    expect(await screen.findByTestId('configured-initializer-row-0')).toBeInTheDocument()
+
+    // The edits were discarded on purpose, and the editor that held them is closed.
+    await waitFor(() => expect(screen.queryByText(warning)).not.toBeInTheDocument())
+  })
+
+  it('should refresh the configuration again after environment edits are discarded by leaving the tab', async () => {
+    const user = userEvent.setup()
+    renderPage('/config?tab=environment')
+
+    const editor = await screen.findByLabelText('Environment file contents')
+    await user.clear(editor)
+    await user.type(editor, 'API_KEY=unsaved\n')
+    await user.click(screen.getByRole('tab', { name: 'Initializers' }))
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
+    expect(await screen.findByTestId('configured-initializer-row-0')).toBeInTheDocument()
+
+    await user.click(await screen.findByRole('tab', { name: 'PyRIT Configuration' }))
+    expect(await screen.findByLabelText('Configuration YAML')).toBeInTheDocument()
+    const reads = mockedConfigurationApi.getContent.mock.calls.length
+    await advanceAutoRefresh()
+    expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(reads + 1)
+  })
+
   it('should guard application navigation and browser history', async () => {
     const user = userEvent.setup()
     renderPage('/config', ['/'])
