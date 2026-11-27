@@ -9,21 +9,25 @@ import asyncio
 import logging
 from collections import Counter
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
+from pyrit.converter import TranslationConverter
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
 from pyrit.models import (
     AssertGroupMetadata,
     AttackSeedGroup,
     BoundedDatasetSize,
     Parameter,
+    ScenarioDatasetOptions,
     ScenarioRunPlanGroupKind,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateStatus,
     ScoringExpectation,
+    SeedGroupRequirements,
+    SeedMetadataRequirement,
     SeedPrompt,
     ViolatesAssertPolicy,
 )
@@ -31,17 +35,23 @@ from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, Scenario
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName
 from pyrit.registry import AttackTechniqueRegistry
-from pyrit.scenario.core import DatasetConstraintError, resolve_technique_factories
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+    get_default_adversarial_target,
+    resolve_technique_factories,
+    resolve_technique_factories_for_techniques,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSourceKind
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.technique_requirements import (
     IncompatibleTechniqueError,
     IncompatibleTechniquePolicy,
     TechniqueRequirements,
     check_target_compatibility,
+    describe_target_incompatibility,
     filter_seed_groups,
 )
 from pyrit.score import AssertJudgeScorer, AssertScoringDimension, Scorer, TrueFalseScorer
@@ -50,7 +60,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from pyrit.models import ScenarioDatasetSizeEstimate
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -59,9 +68,11 @@ logger = logging.getLogger(__name__)
 
 
 _ASSERT_PACKAGE = "assert_package"
+_ASSERT_PACKAGE_SPANISH = "assert_package_spanish"
+_ASSERT_PACKAGES = (_ASSERT_PACKAGE, _ASSERT_PACKAGE_SPANISH)
 
 
-def _build_assert_package_factory() -> AttackTechniqueFactory:
+def _build_assert_package_factory(name: str = _ASSERT_PACKAGE) -> AttackTechniqueFactory:
     """
     Build the scenario-local ``assert_package`` technique: red teaming with ASSERT's own tester.
 
@@ -71,13 +82,20 @@ def _build_assert_package_factory() -> AttackTechniqueFactory:
         AttackTechniqueFactory: The technique factory.
     """
     return AttackTechniqueFactory(
-        name=_ASSERT_PACKAGE,
+        name=name,
         attack_class=RedTeamingAttack,
         description=(
-            "Red teaming whose tester uses ASSERT's own tester system prompt with each group's stored tester "
-            "instructions, like an ASSERT scenario case. Groups without tester instructions are skipped."
+            "Run ASSERT cases: send stored prompt cases directly, or use ASSERT's tester system prompt "
+            "with a conversation case's stored tester instructions."
+            + (
+                " Translate target-bound user requests to Spanish using the configured adversarial chat; "
+                "leave comparison baseline and policy instructions unchanged."
+                if name == _ASSERT_PACKAGE_SPANISH
+                else ""
+            )
         ),
         technique_tags=["multi_turn"],
+        supports_additional_request_converters=True,
     )
 
 
@@ -86,15 +104,14 @@ def _build_assert_policy_technique() -> type[ScenarioTechnique]:
     """
     Build the technique class from every registered attack technique plus ``assert_package``.
 
-    ``assert_package`` is the default: it follows each group's stored tester instructions with
-    ASSERT's tester prompt, like an ASSERT scenario case. The baseline sends each group's stored
-    prompts, like an ASSERT prompt case.
+    ``assert_package`` is the default: it sends prompt cases directly and follows conversation
+    cases' stored instructions with ASSERT's tester. The optional baseline sends stored prompts.
 
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
     factories = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()
-    factories[_ASSERT_PACKAGE] = _build_assert_package_factory()
+    factories.update({name: _build_assert_package_factory(name) for name in _ASSERT_PACKAGES})
     return AttackTechniqueRegistry.build_technique_class_from_factories(
         class_name="AssertPolicyTechnique",
         factories=list(factories.values()),
@@ -107,15 +124,25 @@ class AssertPolicy(Scenario):
     Run stored ASSERT seed groups against a target and judge each conversation against its policy.
 
     The baseline sends each group's stored system and user prompts once, like an ASSERT prompt
-    case. The default technique, ``assert_package``, is ASSERT's scenario case: a red-teaming
-    tester that follows the group's stored tester instructions for ``max_turns`` turns with
-    ASSERT's own tester system prompt. Any registered technique can run too; ``red_teaming`` uses
-    the same attack with the group's stored PyRIT tester prompt.
+    case. The default technique, ``assert_package``, sends prompt cases directly. Conversation
+    cases use a red-teaming tester that follows the group's stored tester instructions for
+    ``max_turns`` turns with ASSERT's own tester system prompt. Compatible registered techniques can run too;
+    ``red_teaming`` uses the same attack with the group's stored PyRIT tester prompt.
 
     Each conversation is judged against its group's stored policy. By default, a judge on the
     scoring target decides success by policy violation and also records overrefusal. Choose
     another objective scorer to judge other dimensions or execution traces. Blocked or errored
-    target replies stay undetermined. Results are grouped by technique.
+    target replies stay undetermined. Results are grouped by each case's generated category, across
+    baseline and selected techniques, qualified by behavior name when several policies are selected.
+
+    ``assert_package_spanish`` translates target-bound user requests with the configured adversarial
+    chat, including later conversation turns, before that technique's ``technique_converters``. It
+    leaves stored policy context, tester instructions, the judges and the optional comparison
+    baseline unchanged.
+
+    Every selected group must carry valid ASSERT generation metadata and be a valid prompt or
+    conversation case, whatever its provenance and even under the ``skip`` policy; only groups a
+    selected technique can't deliver are skipped.
     """
 
     #: Version 3 passes each group's policy to the scorers as a condition.
@@ -126,6 +153,8 @@ class AssertPolicy(Scenario):
     TESTER_FIRST_MESSAGE: ClassVar[str] = "Begin the conversation now with the user's first message only."
     TESTER_FEEDBACK_TEMPLATE: ClassVar[str] = "<target_response>\n{{ feedback_text }}\n</target_response>"
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
+    #: There are no default ASSERT datasets, so a run needs at least one stored dataset selected.
+    DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions(min_selected=1)
 
     @apply_defaults
     def __init__(
@@ -188,13 +217,7 @@ class AssertPolicy(Scenario):
             if (reason := self._get_scoring_incompatibility(factory, scorer=scorer))
         }
         usable = any(
-            name not in incompatible
-            and (
-                self._objective_target is None
-                or not self._get_target_requirements(factory).check_target(
-                    target=self._objective_target, attack_class=factory.attack_class
-                )
-            )
+            name not in incompatible and not self._get_technique_target_errors(factory)
             for name, factory in selected.items()
         )
         if incompatible and (self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE or not usable):
@@ -246,12 +269,6 @@ class AssertPolicy(Scenario):
         if prompt is not None and not prompt.strip():
             raise ValueError("target_system_prompt must not be blank.")
 
-    def _has_no_datasets(self) -> bool:
-        return self._dataset_config.source_kind is DatasetSourceKind.MEMORY and not self._dataset_config.dataset_names
-
-    def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
-        return BoundedDatasetSize(value=1) if self._has_no_datasets() else super()._get_run_size_budget()
-
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
         components = [
@@ -264,9 +281,6 @@ class AssertPolicy(Scenario):
             "At most one unit per selected group for each technique; groups a technique can't use are skipped. "
             f"Techniques that take a turn count make up to {self.params['max_turns']} target turns."
         )
-        if self._has_no_datasets():
-            datasets = []
-            note = "No ASSERT dataset is selected; pass stored dataset names with --datasets. " + note
         return ScenarioRunSizeEstimate(
             status=ScenarioRunSizeEstimateStatus.Approximate,
             total_attack_count=sum(component.count for component in components),
@@ -275,30 +289,78 @@ class AssertPolicy(Scenario):
             note=note,
         )
 
-    async def _resolve_seed_groups_by_dataset_async(
-        self, *, apply_sampling: bool = True
-    ) -> dict[str, list[AttackSeedGroup]]:
+    def get_dataset_requirements(self) -> SeedGroupRequirements:
         """
-        Read the selected groups once, validate them, then sample that same population.
+        Declare the policy context required by every ASSERT judge, regardless of provenance.
 
         Returns:
-            dict[str, list[AttackSeedGroup]]: Selected groups keyed by dataset.
+            SeedGroupRequirements: The scenario-wide ASSERT schema check.
+        """
+        return SeedGroupRequirements(
+            metadata=(
+                SeedMetadataRequirement(
+                    name="assert_generation",
+                    key=AssertGroupMetadata.METADATA_KEY,
+                    description="ASSERT generation metadata and policy taxonomy",
+                    validator=AssertGroupMetadata.from_metadata,
+                ),
+            )
+        )
+
+    def get_baseline_dataset_requirements(self) -> SeedGroupRequirements:
+        """
+        Declare the stored user prompt required by ASSERT's prompt-case baseline.
+
+        Returns:
+            SeedGroupRequirements: The prompt-case baseline's input requirements.
+        """
+        return SeedGroupRequirements(required_user_prompt=True)
+
+    def _get_dataset_technique_factories(self) -> dict[str, AttackTechniqueFactory]:
+        return resolve_technique_factories_for_techniques(
+            scenario_techniques=self._scenario_techniques,
+            extra_factories={name: _build_assert_package_factory(name) for name in _ASSERT_PACKAGES},
+        )
+
+    def _get_technique_target_errors(self, factory: AttackTechniqueFactory) -> list[str]:
+        """
+        Check an ASSERT package against the target as its prompt cases, which it sends directly.
+
+        Each conversation case is checked against the package's full requirements per group.
+
+        Returns:
+            list[str]: Unmet target requirements; empty without an objective target.
+        """
+        if factory.name in _ASSERT_PACKAGES:
+            factory = self._get_prompt_case_factory(factory)
+        return super()._get_technique_target_errors(factory)
+
+    def _validate_dataset_technique_group(
+        self, *, factory: AttackTechniqueFactory, seed_group: AttackSeedGroup
+    ) -> None:
+        if factory.name in _ASSERT_PACKAGES:
+            self._validate_assert_package_group(factory=factory, group=seed_group, target=self._objective_target)
+        else:
+            super()._validate_dataset_technique_group(factory=factory, seed_group=seed_group)
+
+    def _validate_dataset_population(self, population: dict[str, list[AttackSeedGroup]]) -> None:
+        super()._validate_dataset_population(population)
+        self._validate_assert_cases(population)
+
+    def _validate_dataset_assessment_population(self, population: dict[str, list[AttackSeedGroup]]) -> None:
+        """
+        Check the selection as a whole, after each group passed ``_validate_dataset_population``.
 
         Raises:
-            ValueError: If no dataset is selected, a group lacks ASSERT metadata or conflicts with
-                ``target_system_prompt``, or a stored objective seed appears more than once.
-            DatasetConstraintError: If the selected datasets contain no groups.
+            DatasetConstraintError: If the selected datasets contain no seed groups.
+            ValueError: If a group conflicts with ``target_system_prompt``, or a stored objective
+                seed appears more than once.
         """
-        if self._has_no_datasets():
-            raise ValueError(
-                "foundry.assert_policy needs stored ASSERT seed groups. Pass their dataset names with "
-                "--datasets (or the deprecated --dataset-names), or supply dataset_config in Python. "
-                "Generate groups with AssertGenerator and store them with AssertProvider."
-            )
-        selection = await self._dataset_config._resolve_attack_groups_async()
-        population = selection.select(apply_sampling=False)
         if not any(population.values()):
             raise DatasetConstraintError("The selected ASSERT datasets contain no seed groups.")
+        for dataset_name, dataset_groups in population.items():
+            for group in dataset_groups:
+                self._validate_target_system_prompt(group=group, dataset_name=dataset_name)
         groups = [group for dataset_groups in population.values() for group in dataset_groups]
         repeated_seeds = [seed_id for seed_id, count in Counter(g.objective.id for g in groups).items() if count > 1]
         if repeated_seeds:
@@ -306,21 +368,61 @@ class AssertPolicy(Scenario):
                 f"The selected ASSERT seed groups include objective seed {repeated_seeds[0]} more than once. "
                 "Select each stored group once."
             )
-        for dataset_name, dataset_groups in population.items():
-            for group in dataset_groups:
-                self._validate_group(group=group, dataset_name=dataset_name)
-        counts = Counter(group.logical_id for group in groups)
-        self._repeated_ids = {logical_id for logical_id, count in counts.items() if count > 1}
-        return selection.select(apply_sampling=True) if apply_sampling else population
 
-    def _validate_group(self, *, group: AttackSeedGroup, dataset_name: str) -> None:
+    def _validate_assert_cases(self, population: dict[str, list[AttackSeedGroup]]) -> None:
+        for name, groups in population.items():
+            for group in groups:
+                try:
+                    self._validate_assert_case(group)
+                except IncompatibleTechniqueError as error:
+                    raise DatasetConstraintError(
+                        f"Dataset '{name}' contains an invalid ASSERT case: {error}"
+                    ) from error
+
+    @classmethod
+    def _validate_assert_case(cls, group: AttackSeedGroup) -> None:
+        if group.adversarial_prompts is not None:
+            cls._require_tester_instructions(group)
+            return
+        errors = SeedGroupRequirements(required_user_prompt=True).check(seed_group=group)
+        if errors:
+            raise IncompatibleTechniqueError("An ASSERT prompt case requires a stored user prompt.")
+
+    def _validate_assert_package_group(
+        self, *, factory: AttackTechniqueFactory, group: AttackSeedGroup, target: PromptTarget | None
+    ) -> None:
+        self._validate_assert_case(group)
+        if target is not None:
+            delivery = self._get_assert_case_factory(factory=factory, group=group)
+            errors = self._get_target_requirements(delivery).check_target(
+                target=target, attack_class=delivery.attack_class
+            )
+            if errors:
+                raise IncompatibleTechniqueError(
+                    describe_target_incompatibility(technique_name=factory.name, errors=errors)
+                )
+
+    @classmethod
+    def _get_assert_case_factory(
+        cls, *, factory: AttackTechniqueFactory, group: AttackSeedGroup
+    ) -> AttackTechniqueFactory:
+        if group.adversarial_prompts is not None:
+            return factory
+        return cls._get_prompt_case_factory(factory)
+
+    @staticmethod
+    def _get_prompt_case_factory(factory: AttackTechniqueFactory) -> AttackTechniqueFactory:
+        return AttackTechniqueFactory(
+            name=factory.name, attack_class=PromptSendingAttack, supports_additional_request_converters=True
+        )
+
+    def _validate_target_system_prompt(self, *, group: AttackSeedGroup, dataset_name: str) -> None:
         """
-        Require ASSERT metadata, and no stored system prompt when ``target_system_prompt`` is set.
+        Require no stored system prompt when ``target_system_prompt`` is set.
 
         Raises:
-            ValueError: If the group lacks ASSERT metadata or conflicts with ``target_system_prompt``.
+            ValueError: If the group conflicts with ``target_system_prompt``.
         """
-        self._read_metadata(group=group, dataset_name=dataset_name)
         if self.params.get("target_system_prompt") is not None and self._get_stored_system_prompt(group):
             raise ValueError(
                 f"target_system_prompt is only for target-owned instructions, but a group in dataset "
@@ -339,24 +441,21 @@ class AssertPolicy(Scenario):
         """
         if ViolatesAssertPolicy not in self._objective_scorer.get_condition_types():
             return None
+        return ScoringExpectation(conditions=(self._get_policy(group),))
+
+    def _get_policy(self, group: AttackSeedGroup) -> ViolatesAssertPolicy:
+        """
+        Build the policy that the group's conversations are judged against.
+
+        Returns:
+            ViolatesAssertPolicy: The group's taxonomy, application context, and judged instructions.
+        """
         metadata = AssertGroupMetadata.from_metadata(group.objective.metadata)
-        policy = ViolatesAssertPolicy(
+        return ViolatesAssertPolicy(
             taxonomy=metadata.taxonomy,
             application_context=metadata.config.context,
             target_instructions=self._get_judged_system_prompt(group),
         )
-        return ScoringExpectation(conditions=(policy,))
-
-    @staticmethod
-    def _read_metadata(*, group: AttackSeedGroup, dataset_name: str) -> AssertGroupMetadata:
-        try:
-            return AssertGroupMetadata.from_metadata(group.objective.metadata)
-        except ValueError as error:
-            raise ValueError(
-                f"Dataset '{dataset_name}' contains a seed group without valid ASSERT generation metadata "
-                f"('{group.objective.value[:80]}'). foundry.assert_policy only runs groups generated with "
-                f"AssertGenerator and stored with AssertProvider. Details: {error}"
-            ) from error
 
     @staticmethod
     def _get_stored_system_prompt(group: AttackSeedGroup) -> str | None:
@@ -364,7 +463,8 @@ class AssertPolicy(Scenario):
 
     def _get_judged_system_prompt(self, group: AttackSeedGroup) -> str | None:
         stored = self._get_stored_system_prompt(group)
-        shared: str | None = self.params.get("target_system_prompt")
+        # Parameter resolution coerces this declared parameter to str or None.
+        shared = cast("str | None", self.params.get("target_system_prompt"))
         return stored if stored is not None else shared
 
     @staticmethod
@@ -403,11 +503,17 @@ class AssertPolicy(Scenario):
         return (AssertJudgeScorer(chat_target=target, dimension=AssertScoringDimension.OVERREFUSAL),)
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        counts = Counter(group.logical_id for group in context.seed_groups)
+        self._repeated_ids = {logical_id for logical_id, count in counts.items() if count > 1}
         self._auxiliary_scorers = self._get_auxiliary_scorers()
-        attacks = self._build_baselines(context=context) if context.include_baseline else []
-        local = {_ASSERT_PACKAGE: _build_assert_package_factory()}
+        display_groups = self._get_display_groups(seed_groups=context.seed_groups)
+        attacks = (
+            self._build_baselines(context=context, display_groups=display_groups) if context.include_baseline else []
+        )
+        local = {name: _build_assert_package_factory(name) for name in _ASSERT_PACKAGES}
         for name, factory in resolve_technique_factories(context=context, extra_factories=local).items():
-            if not check_target_compatibility(
+            # ASSERT's packages choose their attack per case, so their target is checked per group.
+            if name not in _ASSERT_PACKAGES and not check_target_compatibility(
                 target=context.objective_target,
                 attack_class=factory.attack_class,
                 requirements=self._get_target_requirements(factory),
@@ -430,19 +536,70 @@ class AssertPolicy(Scenario):
                     technique_name=name,
                     dataset_name=dataset_name,
                     policy=context.incompatible_technique_policy,
-                    validate_group=(
-                        self._require_tester_instructions
-                        if name == _ASSERT_PACKAGE
-                        else factory.validate_group_adversarial_prompts
+                    validate_group=lambda group, factory=factory: (
+                        self._validate_assert_package_group(
+                            factory=factory, group=group, target=context.objective_target
+                        )
+                        if factory.name in _ASSERT_PACKAGES
+                        else self._validate_dataset_technique_group(factory=factory, seed_group=group)
                     ),
                 )
                 for group in sorted(selected, key=self._get_generation_order):
                     attacks.append(
                         await asyncio.to_thread(
-                            self._build_unit, context=context, technique_name=name, factory=factory, group=group
+                            self._build_unit,
+                            context=context,
+                            technique_name=name,
+                            factory=factory,
+                            group=group,
+                            display_group=display_groups[str(group.objective.id)],
                         )
                     )
         return attacks
+
+    def _get_display_groups(self, *, seed_groups: Sequence[AttackSeedGroup]) -> dict[str, str]:
+        """
+        Group each case's baseline and technique results under its generated category.
+
+        With several judged policies, the behavior name qualifies each category, as in the ASSERT
+        metrics. A policy whose behavior name another policy shares, or whose label would still match
+        another policy's, also shows the start of its policy ID.
+
+        Returns:
+            dict[str, str]: The display group of each objective seed ID.
+        """
+        behaviors: dict[str, str] = {}
+        cases: dict[str, tuple[str, str]] = {}
+        for group in seed_groups:
+            policy = self._get_policy(group)
+            policy_id = policy.policy_id
+            behaviors[policy_id] = policy.taxonomy.behavior.name
+            category = AssertGroupMetadata.from_metadata(group.objective.metadata).behavior_category
+            cases[str(group.objective.id)] = (policy_id, category)
+        if len(behaviors) == 1:
+            return {seed_id: category for seed_id, (_, category) in cases.items()}
+
+        shared = Counter(behaviors.values())
+        labels = {
+            (policy_id, category): self._get_category_label(
+                behavior=behaviors[policy_id],
+                category=category,
+                policy_id=policy_id if shared[behaviors[policy_id]] > 1 else None,
+            )
+            for policy_id, category in set(cases.values())
+        }
+        repeated = Counter(labels.values())
+        for (policy_id, category), label in labels.items():
+            if repeated[label] > 1:
+                labels[policy_id, category] = self._get_category_label(
+                    behavior=behaviors[policy_id], category=category, policy_id=policy_id
+                )
+        return {seed_id: labels[case] for seed_id, case in cases.items()}
+
+    @staticmethod
+    def _get_category_label(*, behavior: str, category: str, policy_id: str | None) -> str:
+        policy = f"{behavior} (policy {policy_id[:8]})" if policy_id else behavior
+        return f"{policy}: {category}"
 
     @staticmethod
     def _get_target_requirements(factory: AttackTechniqueFactory) -> TechniqueRequirements:
@@ -501,8 +658,20 @@ class AssertPolicy(Scenario):
         technique_name: str,
         factory: AttackTechniqueFactory,
         group: AttackSeedGroup,
+        display_group: str,
     ) -> AtomicAttack:
-        extra = context.technique_converters.get(technique_name)
+        prompt_case = technique_name in _ASSERT_PACKAGES and group.adversarial_prompts is None
+        if technique_name in _ASSERT_PACKAGES:
+            factory = self._get_assert_case_factory(factory=factory, group=group)
+        extra = list(context.technique_converters.get(technique_name) or [])
+        if technique_name == _ASSERT_PACKAGE_SPANISH:
+            # Translate the natural-language request first, like a technique's own converters, then apply the user's.
+            extra.insert(
+                0,
+                TranslationConverter(
+                    converter_target=self._adversarial_chat or get_default_adversarial_target(), language="Spanish"
+                ),
+            )
         adversarial_chat = (
             self._adversarial_chat if factory.uses_adversarial and factory.adversarial_chat is None else None
         )
@@ -516,7 +685,7 @@ class AssertPolicy(Scenario):
             "adversarial_chat": adversarial_chat,
             "extra_request_converters": ConverterConfiguration.from_converters(converters=extra) if extra else None,
         }
-        if technique_name == _ASSERT_PACKAGE:
+        if technique_name in _ASSERT_PACKAGES and not prompt_case:
             attack_technique = factory.create(**create_kwargs, **self._get_tester_prompts(group))
             # ASSERT's tester replaces the group's stored tester prompt; record the group's prompt on the
             # technique so the stored group still runs and resumes as-is.
@@ -529,7 +698,7 @@ class AssertPolicy(Scenario):
             attack_technique = factory.create(**create_kwargs, seed_group=group)
         return AtomicAttack(
             atomic_attack_name=self._get_unit_name(prefix=technique_name, group=group),
-            display_group=technique_name,
+            display_group=display_group,
             technique_name=technique_name,
             attack_technique=attack_technique,
             seed_groups=[group],
@@ -575,19 +744,28 @@ class AssertPolicy(Scenario):
     def _get_tester_instructions(group: AttackSeedGroup) -> str | None:
         return AssertGroupMetadata.from_metadata(group.objective.metadata).tester_instructions
 
-    def _build_baselines(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+    def _build_baselines(self, *, context: ScenarioContext, display_groups: dict[str, str]) -> list[AtomicAttack]:
         """
         Send each group's stored system and user prompts once, judged against that group's policy.
 
-        This is ASSERT's prompt case. Groups without a stored user prompt are skipped.
+        This is ASSERT's prompt case. Groups without a stored user prompt are skipped under either
+        incompatible technique policy: the baseline is an optional comparison, so the RAISE policy doesn't
+        apply to it.
 
         Returns:
             list[AtomicAttack]: One baseline unit per group with a stored user prompt.
         """
-        groups = sorted(context.seed_groups, key=self._get_generation_order)
-        prompted = [group for group in groups if any(prompt.role == "user" for prompt in group.prompts)]
-        if len(prompted) < len(groups):
-            logger.warning("Baseline: skipping %d group(s) without a stored user prompt.", len(groups) - len(prompted))
+        prompted = sorted(
+            filter_seed_groups(
+                seed_groups=context.seed_groups,
+                requirements=self.get_baseline_dataset_requirements(),
+                seed_technique=None,
+                technique_name="baseline",
+                dataset_name="selected datasets",
+                policy=IncompatibleTechniquePolicy.SKIP,
+            ),
+            key=self._get_generation_order,
+        )
         baselines = []
         for group in prompted:
             attack = PromptSendingAttack(
@@ -599,7 +777,7 @@ class AssertPolicy(Scenario):
             baselines.append(
                 AtomicAttack(
                     atomic_attack_name=self._get_unit_name(prefix="baseline", group=group),
-                    display_group="baseline",
+                    display_group=display_groups[str(group.objective.id)],
                     # Keep the stored group so baseline and technique results share its logical ID and resume.
                     # The prompt case doesn't use the group's tester prompts; this records that on the technique.
                     attack_technique=AttackTechnique(attack=attack, adversarial_prompts=group.adversarial_prompts),

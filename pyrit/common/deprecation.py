@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import warnings
 from typing import TYPE_CHECKING, Any
 
@@ -27,20 +28,35 @@ def print_deprecation_message(
     """
     # Get the qualified name for old item
     if callable(old_item) or isinstance(old_item, type):
-        old_name = f"{old_item.__module__}.{old_item.__qualname__}"  # type: ignore[ty:unresolved-attribute]
+        old_name = f"{old_item.__module__}.{old_item.__qualname__}"  # type: ignore[ty:missing-attribute]
     else:
         old_name = old_item
 
     # Get the qualified name for new item
     if callable(new_item) or isinstance(new_item, type):
-        new_name = f"{new_item.__module__}.{new_item.__qualname__}"  # type: ignore[ty:unresolved-attribute]
+        new_name = f"{new_item.__module__}.{new_item.__qualname__}"  # type: ignore[ty:missing-attribute]
     else:
         new_name = new_item
+
+    # Preserve stacklevel=3 attribution while treating constructor capture wrappers as transparent.
+    stacklevel = 3
+    frame = inspect.currentframe()
+    try:
+        if frame is not None:
+            stacklevel = 1
+            remaining_frames = 2
+            while frame is not None and remaining_frames:
+                frame = frame.f_back
+                stacklevel += 1
+                if frame is not None and frame.f_globals.get("__name__") != "pyrit.common.constructor_capture":
+                    remaining_frames -= 1
+    finally:
+        del frame
 
     warnings.warn(
         f"{old_name} is deprecated and will be removed in {removed_in}. Use {new_name} instead.",
         DeprecationWarning,
-        stacklevel=3,
+        stacklevel=stacklevel,
     )
 
 

@@ -168,6 +168,34 @@ class TestKrippendorffAlpha:
         assert result > 0.8
 
 
+class TestKrippendorffAlphaFiniteMissingSentinel:
+    """Regression tests for NaN handling when a finite missing sentinel is configured."""
+
+    @pytest.mark.parametrize(
+        "nan_encoded",
+        [
+            np.array([[1, 2], [np.nan, 2]]),
+            np.array([[1, 2, 3], [np.nan, 2, 3], [1, np.nan, 3]]),
+            np.array([[1, np.nan, 3, 4], [1, 2, 3, np.nan], [np.nan, 2, 3, 4]]),
+            np.array([[1, 2, np.nan, 4], [1, np.nan, 3, 4], [1, 2, 3, 4]]),
+        ],
+    )
+    def test_nan_and_finite_sentinel_encodings_agree(self, nan_encoded):
+        """NaN and a finite sentinel marking the same missing cells yield the same alpha."""
+        missing = 0.0
+        sentinel_encoded = np.where(np.isnan(nan_encoded), missing, nan_encoded)
+
+        alpha_nan = krippendorff_alpha(nan_encoded, missing=missing)
+        alpha_sentinel = krippendorff_alpha(sentinel_encoded, missing=missing)
+
+        assert np.isclose(alpha_nan, alpha_sentinel, equal_nan=True)
+
+    def test_nan_cells_are_ignored_with_finite_sentinel(self):
+        """NaN cells are ignored even when a finite missing sentinel is configured."""
+        data = np.array([[1, 2], [np.nan, 2]])
+        assert krippendorff_alpha(data, missing=0.0) == 1.0
+
+
 class TestValidateAndPrepareData:
     """Test the data validation and preparation helper function."""
 

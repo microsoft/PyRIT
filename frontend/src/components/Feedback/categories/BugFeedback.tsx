@@ -23,7 +23,7 @@ export function BugFeedback({ values, onChange, primaryTooShort }: BugFeedbackPr
       <Field
         label="Describe the bug"
         required
-        validationMessage={primaryTooShort ? tooShortMessage : undefined}
+        validationMessage={primaryTooShort ? tooShortMessage : null}
         validationState={primaryTooShort ? 'warning' : 'none'}
       >
         <Textarea

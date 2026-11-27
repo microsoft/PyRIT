@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import abc
-from typing import Any, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, assert_never
 
 from pydantic import BaseModel
 
@@ -128,5 +128,7 @@ async def apply_system_message_behavior_async(
         return await GenericSystemSquashNormalizer().normalize_async(messages)
     if behavior == "ignore":
         return [msg for msg in messages if msg.api_role != "system"]
-    # This should never happen due to Literal type, but handle it gracefully
+    if TYPE_CHECKING:
+        assert_never(behavior)
+    # Keep the runtime fallback for callers that bypass the Literal type.
     raise ValueError(f"Unknown system message behavior: {behavior}")

@@ -42,7 +42,7 @@ def _create(client: TestClient, path: str, title: str, **fields: object) -> Any:
 
 
 def _editable(finding: dict[str, Any], **changes: object) -> dict[str, Any]:
-    keys = ("title", "description", "severity", "severity_other", "harm_type", "harm_type_other")
+    keys = ("title", "severity", "field_values")
     return {key: finding[key] for key in (*keys, "parent_finding_id", "demonstrated")} | changes
 
 
