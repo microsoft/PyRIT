@@ -11,16 +11,16 @@ import { useConverterCardStyles } from './ConverterCard.styles'
 
 interface ConverterCardProps {
   name: string
-  converter?: ConverterInstance
+  converter?: ConverterInstance | undefined
   temporary?: boolean
   disabled?: boolean
   context?: string
   testId?: string
   dragTestId?: string
   onRemove: () => void
-  onSettings?: () => void
+  onSettings?: (() => void) | undefined
   onReset?: () => void
-  onSave?: () => void
+  onSave?: (() => void) | undefined
   onMove: (delta: number) => void
   onDragStart?: DragEventHandler<HTMLDivElement>
   onDragEnd?: DragEventHandler<HTMLDivElement>

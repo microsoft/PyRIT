@@ -165,9 +165,9 @@ export function draftAttachment(piece: ConversationDraftPiece): MessageAttachmen
 }
 
 export function draftMessageToInput(message: ConversationDraftMessage): {
-  text: string; attachments: MessageAttachment[]; textMetadata?: Record<string, unknown>
+  text: string; attachments: MessageAttachment[]; textMetadata?: Record<string, unknown> | undefined
 } {
-  const pieces = message.pieces.map((piece: ConversationDraftPiece) => piece.converted_value === undefined ? piece : {
+  const pieces: ConversationDraftPiece[] = message.pieces.map((piece: ConversationDraftPiece): ConversationDraftPiece => piece.converted_value === undefined ? piece : {
     ...piece,
     original_value: piece.converted_value,
     data_type: piece.converted_value_data_type ?? piece.data_type,
@@ -252,7 +252,12 @@ export function draftMessageToComposer(
       applied[id] = conversion
     }
   }
-  return { text, attachments, textMetadata, converters: { ...snapshot, workingInputs, stageResults, errors, applied } }
+  return {
+    text,
+    attachments,
+    ...(textMetadata !== undefined ? { textMetadata } : {}),
+    converters: { ...snapshot, workingInputs, stageResults, errors, applied },
+  }
 }
 
 export function attachmentDraft(attachment: MessageAttachment): ConversationDraftPiece {

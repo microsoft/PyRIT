@@ -13,7 +13,7 @@ from typing import cast
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
-from pyrit.backend.middleware.auth import AuthenticatedUser, has_admin_access
+from pyrit.backend.middleware.auth import has_admin_access
 from pyrit.backend.models import (
     CreateTargetRequest,
     ProblemDetail,
@@ -27,17 +27,19 @@ from pyrit.backend.models.targets import (
     TargetTypeResponse,
     UnregisteredTarget,
 )
+from pyrit.backend.routes.common import (
+    NOT_SAVEABLE_PROBLEM_TYPE,
+    not_saveable_response,
+    saved_entry_owner_from_request,
+)
 from pyrit.backend.services import get_target_service
 from pyrit.backend.services.target_service import CredentialUpdateConflictError
-from pyrit.models.catalog import SavedEntryOwner, TargetInstance
+from pyrit.models.catalog import TargetInstance
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
 from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.registry.instance_registry import RegistryNameTakenError
 
 router = APIRouter(prefix="/targets", tags=["targets"])
-
-# Problem type for a target that can't be saved as asked but can still be created without saving it.
-NOT_SAVEABLE_PROBLEM_TYPE = "/errors/not-saveable"
 
 
 @router.post(
@@ -90,22 +92,6 @@ def _target_upload_directory(request: Request) -> str | None:
     """
     # RuntimeLifecycle sets this from the validated server config, always as str | None.
     return cast("str | None", getattr(request.app.state, "target_upload_directory", None))
-
-
-def _saved_entry_owner(request: Request) -> SavedEntryOwner | None:
-    """
-    Return the signed-in user to record on a saved target.
-
-    Args:
-        request: The incoming FastAPI request.
-
-    Returns:
-        SavedEntryOwner | None: The user's object ID and name, or None when sign-in is off.
-    """
-    user = getattr(request.state, "user", None)
-    if not isinstance(user, AuthenticatedUser):
-        return None
-    return SavedEntryOwner(oid=user.oid, name=user.name or user.email)
 
 
 @router.get(
@@ -239,19 +225,11 @@ async def create_target(
             request=body,
             upload_directory=_target_upload_directory(request),
             is_admin=has_admin_access(request),
-            owner=_saved_entry_owner(request) if body.persist else None,
+            owner=saved_entry_owner_from_request(request) if body.persist else None,
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
     except NotSaveableError as e:
-        problem = NotSaveableProblemDetail(
-            type=NOT_SAVEABLE_PROBLEM_TYPE,
-            title="Can't be saved",
-            status=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-            not_saveable_reason=e.cause,
-            instance=str(request.url.path),
-        )
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=problem.model_dump(exclude_none=True))
+        return not_saveable_response(error=e, request=request)
     except (SavedEntryConflictError, RegistryNameTakenError) as e:
         # RegistryNameTakenError is a ValueError, and a taken name is a 409 whether or not the target is saved.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
