@@ -17,8 +17,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 from uuid import uuid4
 
+import jsonschema_specifications
 import referencing
 import referencing.exceptions
+import referencing.jsonschema
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from jsonschema.validators import validator_for
@@ -674,7 +676,8 @@ def _build_argument_validators(*, tools: Sequence[ToolDefinition]) -> dict[str, 
         dict[str, Validator]: A validator per tool name.
 
     Raises:
-        ValueError: If a tool's parameter schema is invalid, since its calls could not be checked.
+        ValueError: If a tool's parameter schema is invalid or has a reference that cannot be
+            resolved offline, since its calls could not be checked.
     """
     validators: dict[str, Validator] = {}
     for tool in tools:
@@ -683,8 +686,49 @@ def _build_argument_validators(*, tools: Sequence[ToolDefinition]) -> dict[str, 
             validator_class.check_schema(tool.parameters)
         except SchemaError as error:
             raise ValueError(f"Tool '{tool.name}' has an invalid parameter schema: {error.message}") from error
+        _check_schema_references(tool=tool, validator_class=validator_class)
         validators[tool.name] = validator_class(tool.parameters, registry=_OFFLINE_SCHEMA_REGISTRY)
     return validators
+
+
+def _check_schema_references(*, tool: ToolDefinition, validator_class: type[Validator]) -> None:
+    """
+    Resolve every reference in a tool's parameter schema as its validator would, before any send.
+
+    References are followed, so the references they lead to are resolved too. An unresolvable
+    reference then fails up front instead of only when a written call's arguments reach it.
+
+    Raises:
+        ValueError: If a reference cannot be resolved offline.
+    """
+    # The draft the schema declares, defaulting to 2020-12 like its validator.
+    specification = referencing.jsonschema.DRAFT202012.detect(tool.parameters)
+    root = specification.create_resource(tool.parameters)
+    # Validators also resolve the JSON Schema meta-schemas that jsonschema bundles.
+    registry = jsonschema_specifications.REGISTRY.combine(_OFFLINE_SCHEMA_REGISTRY)
+    pending = [(root, registry.resolver_with_root(root))]
+    visited: set[int] = set()
+    while pending:
+        resource, resolver = pending.pop()
+        if id(resource.contents) in visited:
+            continue
+        visited.add(id(resource.contents))
+        pending.extend((subresource, resolver.in_subresource(subresource)) for subresource in resource.subresources())
+        if isinstance(resource.contents, bool):
+            continue
+        for keyword in ("$ref", "$dynamicRef"):
+            reference = resource.contents.get(keyword)
+            if keyword not in validator_class.VALIDATORS or not isinstance(reference, str):
+                continue
+            try:
+                resolved = resolver.lookup(reference)
+            except referencing.exceptions.Unresolvable as error:
+                raise ValueError(
+                    f"Tool '{tool.name}' has a schema reference that cannot be resolved offline, so its "
+                    f"arguments cannot be checked: {reference}"
+                ) from error
+            target = referencing.Resource.from_contents(resolved.contents, default_specification=specification)
+            pending.append((target, resolved.resolver))
 
 
 def _read_one_shot_history(
@@ -699,7 +743,6 @@ def _read_one_shot_history(
     Raises:
         InvalidJsonException: If the response is not a single JSON object, so the shared JSON retry
             resends the request instead of spending an attempt.
-        ValueError: If a tool's schema has a reference that cannot be resolved offline.
     """
     _raise_for_adversarial_error(response)
     texts = [piece.converted_value for piece in response.message_pieces if piece.converted_value_data_type == "text"]
@@ -773,13 +816,7 @@ def _check_arguments(*, call: _AuthoredCall, validators: dict[str, Validator]) -
     if not isinstance(arguments, dict):
         return [f"arguments for '{call.name}' must be a JSON object."]
     validator = validators[call.name]
-    try:
-        errors = sorted(validator.iter_errors(arguments), key=lambda error: (error.json_path, error.message))
-    except referencing.exceptions.Unresolvable as error:
-        raise ValueError(
-            f"Tool '{call.name}' has a schema reference that cannot be resolved offline, so its arguments "
-            f"cannot be checked: {error.ref}"
-        ) from error
+    errors = sorted(validator.iter_errors(arguments), key=lambda error: (error.json_path, error.message))
     return [f"arguments for '{call.name}' at {error.json_path}: {error.message}." for error in errors]
 
 

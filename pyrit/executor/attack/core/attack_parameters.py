@@ -136,9 +136,11 @@ class AttackParameters:
                 preparation failure.
             TypeError: If ``seed_group`` is not a ``AttackSeedGroup``.
             ValueError: If overrides contain invalid fields, if seed_group has a simulated
-                conversation but a required dependency is not provided, or if preparing its simulated
-                conversation failed for another reason, which the message names, and this parameter
-                type cannot represent a preparation failure.
+                conversation but a required dependency is not provided, or if the simulated
+                conversation cannot be generated as configured, such as a one-shot tool parameter
+                schema that is invalid or has a reference that cannot be resolved offline. Also raised
+                when preparing the simulated conversation failed for another reason, which the message
+                names, and this parameter type cannot represent a preparation failure.
         """
         # Import here to avoid circular imports
         from pyrit.executor.attack.multi_turn.simulated_conversation import (

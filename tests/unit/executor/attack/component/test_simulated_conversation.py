@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, get_mock_prompt_normalizer
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -1860,20 +1861,66 @@ class TestOneShotToolHistory:
         assert result.preparation_failure is not None
         assert result.preparation_failure.kind is AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED
 
-    async def test_unresolvable_schema_reference_fails_without_retrieving_it_async(self) -> None:
-        tool = ToolDefinition(
-            name="lookup_ticket",
-            parameters={
-                "type": "object",
-                "properties": {"ticket_id": {"type": "string"}, "note": {"$ref": "https://example.invalid/note.json"}},
-            },
-        )
-        call = {**_CALL, "arguments": {"ticket_id": 5, "note": 0}}
+    @pytest.mark.parametrize(
+        "parameters",
+        [
+            pytest.param(
+                {
+                    "type": "object",
+                    "properties": {
+                        "ticket_id": {"type": "string"},
+                        "note": {"$ref": "https://example.invalid/note.json"},
+                    },
+                },
+                id="remote-reference-on-an-optional-argument",
+            ),
+            pytest.param(
+                {"type": "object", "properties": {"ticket_id": {"$ref": "#/$defs/Missing"}}},
+                id="missing-definition",
+            ),
+            pytest.param(
+                {
+                    "type": "object",
+                    "properties": {"ticket": {"$ref": "#/components/schemas/Ticket"}},
+                    "components": {"schemas": {"Ticket": {"$ref": "https://example.invalid/ticket.json"}}},
+                },
+                id="reached-through-a-reference",
+            ),
+        ],
+    )
+    async def test_unresolvable_schema_reference_fails_before_any_send_async(
+        self, parameters: dict[str, object]
+    ) -> None:
+        tool = ToolDefinition(name="lookup_ticket", parameters=parameters)
 
         with patch("urllib.request.urlopen") as urlopen, pytest.raises(ValueError, match="cannot be resolved offline"):
-            await _generate_one_shot_async(responses=[_history_response([call, _OUTPUT])], tools=[tool], num_turns=1)
+            await _generate_one_shot_async(responses=[], tools=[tool], num_turns=1)
 
         urlopen.assert_not_called()
+
+    @pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
+    @pytest.mark.parametrize(
+        ("properties", "arguments"),
+        [
+            pytest.param({"child": {"$ref": "#"}}, {"child": {"child": {}}}, id="recursive"),
+            pytest.param(
+                {"schema": {"$ref": "https://json-schema.org/draft/2020-12/schema"}},
+                {"schema": {"type": "string"}},
+                id="json-schema-meta-schema",
+            ),
+        ],
+    )
+    async def test_schema_references_that_resolve_offline_are_accepted_async(
+        self, properties: dict[str, object], arguments: dict[str, object]
+    ) -> None:
+        tool = ToolDefinition(name="lookup_ticket", parameters={"type": "object", "properties": properties})
+
+        result, send = await _generate_one_shot_async(
+            responses=[_history_response([{**_CALL, "arguments": arguments}, _OUTPUT])], tools=[tool], num_turns=1
+        )
+
+        assert send.await_count == 1
+        assert result.preparation_failure is None
 
     async def test_invalid_tool_schema_fails_before_any_send_async(self) -> None:
         tool = ToolDefinition(
