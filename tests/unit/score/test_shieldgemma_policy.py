@@ -3,6 +3,8 @@
 
 """Tests for ``ShieldGemmaGuideline`` and ``ShieldGemmaPolicy``."""
 
+from typing import assert_type
+
 import pytest
 
 from pyrit.score import ShieldGemmaGuideline, ShieldGemmaMessageRole, ShieldGemmaPolicy
@@ -108,3 +110,18 @@ def test_policy_from_yaml_rejects_non_mapping(tmp_path) -> None:
 
     with pytest.raises(ValueError):
         ShieldGemmaPolicy.from_yaml(path)
+
+
+def test_default_returns_subclass() -> None:
+    """Self-typed from_yaml/default return the subclass they are called on (PyRIT #4504).
+
+    default() delegates to cls.from_yaml, so this covers both factories.
+    """
+
+    class _SubPolicy(ShieldGemmaPolicy):
+        pass
+
+    policy = _SubPolicy.default()
+    assert_type(policy, _SubPolicy)
+    assert isinstance(policy, _SubPolicy)
+    assert policy.guideline_names[0] == "No Dangerous Content"
