@@ -317,7 +317,10 @@ for (const view of VIEWPORTS) {
       })
       expect(configuration.status()).toBe(200)
       const savedConfiguration: RunScenarioRequest = await configuration.json()
-      expect(savedConfiguration).toMatchObject({ ...request })
+      const { prepare_in_background: prepareInBackground, ...durableRequest } = request
+      expect(prepareInBackground).toBe(true)
+      expect(savedConfiguration.prepare_in_background).toBe(false)
+      expect(savedConfiguration).toMatchObject(durableRequest)
       const progressResponse = await page.request.get(`/api/scenarios/runs/${runId}/progress`, {
         headers: compatibilityHeaders(),
       })
