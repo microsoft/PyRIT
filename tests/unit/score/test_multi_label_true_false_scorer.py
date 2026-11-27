@@ -3,7 +3,7 @@
 
 import json
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, assert_type
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -553,3 +553,22 @@ async def test_attack_outcome_uses_the_selected_label_instead_of_the_first_verdi
         result = await attack.execute_async(objective="test objective")
     assert result.outcome == AttackOutcome.FAILURE
     assert len(source.calls) == 1
+
+
+def test_selector_with_scorer_block_policy_returns_subclass(patch_central_database):
+    """Self-typed with_scorer_block_policy preserves the subclass (PyRIT #4504)."""
+
+    class _SubSelector(TrueFalseScoreSelector):
+        pass
+
+    source = SyntheticMultiLabelScorer()
+    selector = _SubSelector(scorer=source, label=LABELS[0])
+
+    scoped = selector.with_scorer_block_policy(raise_if_scorer_blocks=False)
+    assert_type(scoped, _SubSelector)
+    assert isinstance(scoped, _SubSelector)
+    assert scoped is not selector
+    assert scoped._scorer.raise_if_scorer_blocks is False
+    assert source.raise_if_scorer_blocks is True
+
+    assert selector.with_scorer_block_policy(raise_if_scorer_blocks=True) is selector

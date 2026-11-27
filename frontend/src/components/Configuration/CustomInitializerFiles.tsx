@@ -185,7 +185,7 @@ export default function CustomInitializerFiles() {
                 appearance="secondary"
                 className={styles.noticeDismiss}
                 disabled={refreshing || registering || deletingName !== null}
-                onClick={handleRetryRefresh}
+                onClick={() => { void handleRetryRefresh() }}
               >
                 Retry refresh
               </Button>

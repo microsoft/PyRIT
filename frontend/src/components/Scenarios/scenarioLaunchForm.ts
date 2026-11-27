@@ -95,7 +95,7 @@ interface InitialFormInput {
   /** Techniques already resolved from the preset; falls back to the scenario defaults. */
   seededTechniques?: string[]
   /** A saved run to start from. Its values win over the preset's. Seeds initial state only. */
-  initialRun?: RunScenarioRequest
+  initialRun?: RunScenarioRequest | undefined
   /**
    * Dataset names a link preselected. When given, they replace the sources from the saved run or
    * preset; that request's other dataset settings, such as limits, still apply.
