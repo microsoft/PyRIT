@@ -396,18 +396,18 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
       )}
       {onBrowseSeedPrompts && (
         <div className={styles.seedPromptActions}>
+          <svg className={styles.clippy} width="36" height="48" viewBox="0 0 28 36"
+            aria-hidden="true" focusable="false">
+            <path d="M20 15V9a7 7 0 0 0-14 0v17a5 5 0 0 0 10 0V13a3 3 0 0 0-6 0v12"
+              fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            <ellipse cx="10" cy="11" rx="3" ry="3.5" className={styles.clippyEye} />
+            <ellipse cx="17" cy="11" rx="3" ry="3.5" className={styles.clippyEye} />
+            <circle cx="10.5" cy="11.5" r="1" fill="currentColor" />
+            <circle cx="17.5" cy="11.5" r="1" fill="currentColor" />
+          </svg>
           <Button appearance="subtle" size="small" className={styles.seedInspiration}
-            onClick={onBrowseSeedPrompts} data-testid="browse-seed-prompts-btn"
-            icon={<svg className={styles.seedMascot} width="24" height="32" viewBox="0 0 28 36"
-              aria-hidden="true" focusable="false">
-              <path d="M20 15V9a7 7 0 0 0-14 0v17a5 5 0 0 0 10 0V13a3 3 0 0 0-6 0v12"
-                fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-              <ellipse cx="10" cy="11" rx="3" ry="3.5" className={styles.seedMascotEye} />
-              <ellipse cx="17" cy="11" rx="3" ry="3.5" className={styles.seedMascotEye} />
-              <circle cx="10.5" cy="11.5" r="1" fill="currentColor" />
-              <circle cx="17.5" cy="11.5" r="1" fill="currentColor" />
-            </svg>}>
-            Need inspiration? Browse seed prompts
+            onClick={onBrowseSeedPrompts} data-testid="browse-seed-prompts-btn">
+            <span>Need inspiration? <span className={styles.seedPromptLink}>Browse seed prompts</span></span>
           </Button>
         </div>
       )}

@@ -43,7 +43,7 @@ to new work; changes do not alter saved results.
 
 Select **Attacks** in the sidebar to open Chat (`/attack/chat`), the manual conversation
 workspace. Select a target and write the messages yourself. You can attach media, transform content with converters,
-and branch or edit conversations to try another approach. The small paperclip helper below the composer offers
+and branch or edit conversations to try another approach. The Clippy helper below the composer offers
 **Need inspiration? Browse seed prompts** to open examples already loaded in memory. It stays available after each turn and
 when sending is disabled, including for a saved conversation. Browsing does not download providers, create an attack, or send a prompt.
 When you open a dataset from Chat, **Return to Chat** takes you back to the originating draft or saved conversation,

@@ -30,6 +30,7 @@ export const usePromptEditorStyles = makeStyles({
     position: 'relative',
   },
   seedInspiration: {
+    flexShrink: 1,
     minWidth: 0,
     maxWidth: '100%',
     whiteSpace: 'normal',
@@ -38,19 +39,28 @@ export const usePromptEditorStyles = makeStyles({
     color: tokens.colorNeutralForeground2,
     ...mobileTouchTarget,
   },
+  seedPromptLink: {
+    color: tokens.colorBrandForegroundLink,
+    textDecorationLine: 'underline',
+    textUnderlineOffset: '0.15em',
+    ':hover': {
+      color: tokens.colorBrandForegroundLinkHover,
+    },
+    ':active': {
+      color: tokens.colorBrandForegroundLinkPressed,
+    },
+  },
   seedPromptActions: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    flexWrap: 'wrap',
     columnGap: tokens.spacingHorizontalS,
-    rowGap: tokens.spacingVerticalXXS,
   },
-  seedMascot: {
+  clippy: {
     flexShrink: 0,
     color: tokens.colorBrandForegroundLink,
   },
-  seedMascotEye: {
+  clippyEye: {
     fill: tokens.colorNeutralBackground1,
     stroke: 'currentColor',
     strokeWidth: '1.5',

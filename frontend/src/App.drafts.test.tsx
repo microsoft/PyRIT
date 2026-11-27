@@ -2,7 +2,7 @@ import { StrictMode, type ReactNode } from 'react'
 
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
-import { createMemoryRouter, MemoryRouter } from 'react-router'
+import { createMemoryRouter, MemoryRouter, type InitialEntry } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 
 import { attacksApi, convertersApi, datasetsApi, runtimeApi, targetsApi } from '@/services/api'
@@ -315,7 +315,7 @@ function savedMessages(request: SaveConversationRequest): BackendMessage[] {
   }))
 }
 
-function renderChat(path = '/attack/chat', strict = false): ReturnType<typeof render> {
+function renderChat(path: InitialEntry = '/attack/chat', strict = false): ReturnType<typeof render> {
   const router = createMemoryRouter([{ path: '*', element: <App /> }], { initialEntries: [path] })
   const app = <RouterProvider router={router} />
   return render(strict ? <StrictMode>{app}</StrictMode> : app)
@@ -1373,11 +1373,15 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith(url)
   })
 
-  it.each([
+  it.each<[InitialEntry, string]>([
     ['/datasets/detail?selection_key=example-dataset', 'Example dataset'],
     ['/datasets/detail?selection_key=missing', 'Dataset not found'],
     ['/datasets/detail', 'Dataset not found'],
-  ])('should open the catalog from directly entered dataset detail %s', async (path: string, heading: string) => {
+    [{
+      pathname: '/datasets/detail', search: '?selection_key=example-dataset',
+      state: { catalogPath: 'https://evil.example/datasets' },
+    }, 'Example dataset'],
+  ])('should open the catalog from directly entered dataset detail %s', async (path: InitialEntry, heading: string) => {
     const user = userEvent.setup()
     renderChat(path)
     await screen.findByRole('heading', { name: heading })
