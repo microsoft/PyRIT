@@ -56,7 +56,7 @@ export interface MapMediaUrlInput {
   readonly dataType: string
   readonly value: string
   /** Display URL from the backend. A non-URL here means the file is missing. */
-  readonly valueUrl?: string | null
+  readonly valueUrl?: string | null | undefined
 }
 
 // Same inline allowlist as pyrit/backend/routes/media.py. SVG and HTML stay out.

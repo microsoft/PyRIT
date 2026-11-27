@@ -10,7 +10,7 @@ import types
 from abc import ABC, abstractmethod
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin
 
@@ -39,7 +39,7 @@ _SCALAR_NAME_TO_TYPE: dict[str, type | types.UnionType] = {
 }
 
 
-class ComponentType(str, Enum):
+class ComponentType(StrEnum):
     """
     The component family a registry reference resolves to.
 
@@ -554,7 +554,7 @@ class Parameter(BaseModel):
             except ValidationError as exc:
                 raise ValueError(f"Parameter '{self.name}' expects {self.type_name}: {exc}") from exc
 
-    def validate(self) -> None:  # type: ignore[ty:invalid-method-override]
+    def validate(self) -> None:  # type: ignore[ty:incompatible-method-override]
         """
         Reject a declaration with an unsupported ``param_type``.
 
@@ -927,7 +927,8 @@ def _render_type_name(param_type: Any) -> str:
         members = [member for member in args if member is not None]
         if not members:
             return "None"
-        name: str = type(members[0]).__name__
+        member: object = members[0]
+        name = type(member).__name__
         return f"{name} | None" if None in args else name
     if get_origin(param_type) is list:
         type_args = get_args(param_type)

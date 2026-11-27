@@ -39,8 +39,7 @@ def validate_log_level(*, log_level: str) -> int:
     level_upper = log_level.upper()
     if level_upper not in valid_levels:
         raise ValueError(f"Invalid log level: {log_level}. Must be one of: {', '.join(valid_levels)}")
-    level_value: int = getattr(logging, level_upper)
-    return level_value
+    return logging.getLevelNamesMapping()[level_upper]
 
 
 def validate_log_level_argparse(value: Any) -> int:

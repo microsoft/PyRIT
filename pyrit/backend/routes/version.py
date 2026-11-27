@@ -4,13 +4,12 @@
 """API routes for version information."""
 
 import asyncio
-import json
 import logging
 from pathlib import Path
-from typing import NotRequired, TypedDict
+from typing import cast
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 import pyrit
 from pyrit.memory import CentralMemory
@@ -20,13 +19,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/version", tags=["version"])
 
 
-class BuildInfo(TypedDict):
-    """Optional Docker build-info keys; commit may also be explicitly null."""
+class BuildInfo(BaseModel):
+    """Docker build-info file; every key may be absent and extra keys are ignored."""
 
-    source: NotRequired[str]
-    commit: NotRequired[str | None]
-    modified: NotRequired[bool]
-    display: NotRequired[str]
+    model_config = ConfigDict(strict=True)
+
+    source: str | None = None
+    commit: str | None = None
+    modified: bool | None = None
+    display: str | None = None
 
 
 def _load_build_info(build_info_path: Path) -> BuildInfo:
@@ -37,11 +38,13 @@ def _load_build_info(build_info_path: Path) -> BuildInfo:
         build_info_path: Path to the build metadata JSON file.
 
     Returns:
-        BuildInfo: Parsed build metadata; every key may be absent.
+        BuildInfo: Parsed build metadata; absent keys are None.
+
+    Raises:
+        pydantic.ValidationError: If the file is not a JSON object or a known key has the wrong type.
     """
     with open(build_info_path) as file:
-        info: BuildInfo = json.load(file)
-        return info
+        return BuildInfo.model_validate_json(file.read())
 
 
 class VersionResponse(BaseModel):
@@ -80,10 +83,10 @@ async def get_version_async(request: Request) -> VersionResponse:
     if await asyncio.to_thread(build_info_path.exists):
         try:
             build_info = await asyncio.to_thread(_load_build_info, build_info_path)
-            source = build_info.get("source")
-            commit = build_info.get("commit")
-            modified = build_info.get("modified")
-            display = build_info.get("display", version)
+            source = build_info.source
+            commit = build_info.commit
+            modified = build_info.modified
+            display = build_info.display or version
         except Exception as e:
             logger.warning(f"Failed to load build info: {e}")
 
@@ -99,9 +102,10 @@ async def get_version_async(request: Request) -> VersionResponse:
     except Exception as e:
         logger.debug(f"Could not detect database info: {e}")
 
-    # Read default labels from app state (set by pyrit_backend CLI)
-    default_labels: dict[str, str] | None = getattr(request.app.state, "default_labels", None) or None
-    default_operation: str | None = getattr(request.app.state, "default_operation", None)
+    # Read default labels from app state. RuntimeLifecycle publishes both from the validated
+    # server config, as dict[str, str] and str | None, and they are unset before startup.
+    default_labels = cast("dict[str, str] | None", getattr(request.app.state, "default_labels", None)) or None
+    default_operation = cast("str | None", getattr(request.app.state, "default_operation", None))
 
     return VersionResponse(
         version=version,

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -65,7 +65,7 @@ class LlamaGuardPolicy(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_unique_category_codes(self) -> LlamaGuardPolicy:
+    def _validate_unique_category_codes(self) -> Self:
         category_codes = self.category_codes
         if len(set(category_codes)) != len(category_codes):
             raise ValueError("LlamaGuard policy category codes must be unique.")

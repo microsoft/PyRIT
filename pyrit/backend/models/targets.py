@@ -8,6 +8,8 @@ The canonical target instance type (``TargetInstance``) lives in
 ``pyrit.models.catalog.target`` and should be imported from there directly.
 """
 
+from typing import Self
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.backend.models.common import (
@@ -147,7 +149,7 @@ class CreateTargetRequest(TargetParametersRequest, RegistrationRequest):
     )
 
     @model_validator(mode="after")
-    def _validate_source(self) -> "CreateTargetRequest":
+    def _validate_source(self) -> Self:
         if self.source is None:
             return self
         if self.register_instance:
@@ -159,7 +161,7 @@ class CreateTargetRequest(TargetParametersRequest, RegistrationRequest):
         return self
 
     @model_validator(mode="after")
-    def _validate_persist(self) -> "CreateTargetRequest":
+    def _validate_persist(self) -> Self:
         if not self.persist:
             return self
         if not self.register_instance:
@@ -230,7 +232,7 @@ class UpdateTargetCredentialsRequest(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _require_a_credential(self) -> "UpdateTargetCredentialsRequest":
+    def _require_a_credential(self) -> Self:
         if self.api_key is None and not self.headers:
             raise ValueError("Set api_key, headers, or both")
         return self
