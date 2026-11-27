@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     from pyrit.converter.image_blur_converter import ImageBlurConverter
     from pyrit.converter.image_color_saturation_converter import ImageColorSaturationConverter
     from pyrit.converter.image_compression_converter import ImageCompressionConverter
+    from pyrit.converter.image_crop_converter import ImageCropConverter
     from pyrit.converter.image_noise_converter import ImageNoiseConverter
     from pyrit.converter.image_overlay_converter import ImageOverlayConverter
     from pyrit.converter.image_prompt_style_converter import ImagePromptStyleConverter
@@ -203,6 +204,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ImageBlurConverter": "pyrit.converter.image_blur_converter",
     "ImageColorSaturationConverter": "pyrit.converter.image_color_saturation_converter",
     "ImageCompressionConverter": "pyrit.converter.image_compression_converter",
+    "ImageCropConverter": "pyrit.converter.image_crop_converter",
     "ImageNoiseConverter": "pyrit.converter.image_noise_converter",
     "ImageOverlayConverter": "pyrit.converter.image_overlay_converter",
     "ImagePromptStyleConverter": "pyrit.converter.image_prompt_style_converter",

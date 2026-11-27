@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -246,6 +246,23 @@ print(f"Rotated image saved to: {rotate_result.output_text}")
 
 rotate_img = Image.open(rotate_result.output_text)
 display(rotate_img)
+
+# %% [markdown]
+# ### ImageCropConverter
+#
+# The `ImageCropConverter` crops an image to a rectangular region given as fractions of the width and height. The defaults (`left=0.1`, `top=0.1`, `right=0.9`, `bottom=0.9`) keep the central 80% in each dimension.
+
+# %%
+from pyrit.converter import ImageCropConverter
+
+# Crop the image to its central region
+crop_converter = ImageCropConverter(left=0.1, top=0.1, right=0.9, bottom=0.9)
+crop_result = await crop_converter.convert_async(prompt=image_location)  # type: ignore
+
+print(f"Cropped image saved to: {crop_result.output_text}")
+
+crop_img = Image.open(crop_result.output_text)
+display(crop_img)
 
 # %% [markdown]
 # ### ImageNoiseConverter
