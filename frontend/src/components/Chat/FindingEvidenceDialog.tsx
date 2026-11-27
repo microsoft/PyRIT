@@ -76,9 +76,10 @@ export default function FindingEvidenceDialog({
   // Evidence can come from any attack; the user picks whose findings to link, defaulting to the attack's own Operation.
   const operation = chosen?.key === viewKey ? chosen.operation
     : defaultLookup?.key === viewKey ? defaultLookup.operation : null
+  const activeOperationId = creating ? creationSource?.operation.id : operation?.id
   // `open` stays true while the embedded finding dialog replaces the picker, so this covers both.
   const { fields, error: fieldsError, retry: retryFields, fieldsRevision } = useFindingFields(
-    operation?.id, open && operation !== null,
+    activeOperationId, open && activeOperationId !== undefined,
   )
   const requestKey = JSON.stringify([attackResultId, operation?.id, title, offset, listRevision, fieldsRevision])
   // A selection only applies to the attack and operation it was made for.

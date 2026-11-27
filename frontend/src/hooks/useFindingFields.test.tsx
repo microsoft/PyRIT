@@ -118,12 +118,67 @@ describe('useFindingFields', () => {
     rerender({ operationId: 'second' })
 
     expect(mockGetFindingFields.mock.calls).toEqual([['first'], ['second']])
+    await waitFor(() => expect(result.current.fields).toBe(CONTOSO_FINDING_FIELDS))
+  })
+
+  it('clears fields and error when operationId changes until the new operation loads', async () => {
+    const secondLoad = deferred<FindingFields>()
+    mockGetFindingFields.mockResolvedValueOnce(CONTOSO_FINDING_FIELDS).mockReturnValueOnce(secondLoad.promise)
+
+    const { result, rerender } = renderHook(({ operationId }: { operationId: string }) => useFindingFields(operationId), {
+      initialProps: { operationId: 'first' },
+    })
+    await waitFor(() => expect(result.current.fields).toBe(CONTOSO_FINDING_FIELDS))
+    const initialRevision = result.current.fieldsRevision
+
+    rerender({ operationId: 'second' })
+    expect(result.current.fields).toBeNull()
+    expect(result.current.error).toBe('')
+
+    await act(async () => { secondLoad.reject(new Error('Second operation failed.')) })
+    expect(result.current.fields).toBeNull()
+    expect(result.current.error).toBe('Second operation failed.')
+
+    const thirdLoad = deferred<FindingFields>()
+    mockGetFindingFields.mockReturnValueOnce(thirdLoad.promise)
+    rerender({ operationId: 'third' })
+    expect(result.current.fields).toBeNull()
+    expect(result.current.error).toBe('')
+
+    await act(async () => { thirdLoad.resolve(DEFAULT_FINDING_FIELDS_FIXTURE) })
+    expect(result.current.fields).toBe(DEFAULT_FINDING_FIELDS_FIXTURE)
+    expect(result.current.fieldsRevision).toBe(initialRevision)
+  })
+
+  it('does not bump fieldsRevision when switching away and back before the other operation settles', async () => {
+    const secondLoad = deferred<FindingFields>()
+    const firstReload = deferred<FindingFields>()
+    mockGetFindingFields
+      .mockResolvedValueOnce(CONTOSO_FINDING_FIELDS)
+      .mockReturnValueOnce(secondLoad.promise)
+      .mockReturnValueOnce(firstReload.promise)
+
+    const { result, rerender } = renderHook(({ operationId }: { operationId: string }) => useFindingFields(operationId), {
+      initialProps: { operationId: 'first' },
+    })
+    await waitFor(() => expect(result.current.fields).toBe(CONTOSO_FINDING_FIELDS))
+    const initialRevision = result.current.fieldsRevision
+
+    rerender({ operationId: 'second' })
+    expect(result.current.fields).toBeNull()
+
+    rerender({ operationId: 'first' })
+    expect(result.current.fields).toBeNull()
+    await act(async () => { firstReload.resolve(DEFAULT_FINDING_FIELDS_FIXTURE) })
+    expect(result.current.fields).toBe(DEFAULT_FINDING_FIELDS_FIXTURE)
+    expect(result.current.fieldsRevision).toBe(initialRevision)
   })
 
   it('loads only while enabled, again each time it is enabled, and clears an earlier failure', async () => {
+    const secondAttempt = deferred<FindingFields>()
     mockGetFindingFields
       .mockRejectedValueOnce(new Error('The Contoso backend is unavailable.'))
-      .mockResolvedValueOnce(CONTOSO_FINDING_FIELDS)
+      .mockReturnValueOnce(secondAttempt.promise)
 
     const { result, rerender } = renderHook(
       ({ enabled }: { enabled: boolean }) => useFindingFields(undefined, enabled),
@@ -138,8 +193,10 @@ describe('useFindingFields', () => {
     rerender({ enabled: false })
     expect(mockGetFindingFields).toHaveBeenCalledTimes(1)
     rerender({ enabled: true })
-    await waitFor(() => expect(result.current.fields).toBe(CONTOSO_FINDING_FIELDS))
     expect(result.current.error).toBe('')
     expect(mockGetFindingFields).toHaveBeenCalledTimes(2)
+    await act(async () => { secondAttempt.resolve(CONTOSO_FINDING_FIELDS) })
+    expect(result.current.fields).toBe(CONTOSO_FINDING_FIELDS)
+    expect(result.current.error).toBe('')
   })
 })
