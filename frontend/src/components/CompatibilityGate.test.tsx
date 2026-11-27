@@ -134,8 +134,9 @@ it.each([{}, { compatibility_id: null }, { compatibility_id: '1.2.0+gabc' }, { c
   'blocks startup without mounting business UI for %p', async (version) => {
     adapter.mockImplementation(async (config: InternalAxiosRequestConfig) => response(config, version))
     render(application())
-    const notice = await screen.findByRole('alertdialog')
+    const notice = await screen.findByRole('alertdialog', { name: 'PyRIT compatibility blocked' })
     expect(notice).toHaveAttribute('open')
+    expect(notice).toHaveTextContent('Deploy the frontend and backend from the same version')
     expect(fireEvent(notice, new Event('cancel', { cancelable: true }))).toBe(false)
     expect(notice).toHaveAttribute('open')
     expect(screen.queryByRole('textbox', { hidden: true })).not.toBeInTheDocument()
@@ -171,6 +172,20 @@ it('blocks startup after authentication still fails following refresh', async ()
   await screen.findByRole('alertdialog')
   expect(adapter.mock.calls.map(([config]) => config.url)).toEqual(['/version', '/version'])
   expect(screen.queryByRole('textbox', { hidden: true })).not.toBeInTheDocument()
+})
+
+it('reports a timed-out version check as backend unavailable without mismatch guidance', async () => {
+  adapter.mockImplementation(async (config: InternalAxiosRequestConfig) => {
+    throw new AxiosError('timeout of 30000ms exceeded', AxiosError.ECONNABORTED, config)
+  })
+  render(application())
+  const notice = await screen.findByRole('alertdialog', { name: 'PyRIT backend unavailable' })
+  expect(notice).toHaveTextContent('This does not indicate a version mismatch')
+  expect(notice).not.toHaveTextContent('Deploy the frontend and backend')
+  expect(screen.getByRole('button', { name: 'Reload page' })).toBeVisible()
+  expect(screen.queryByRole('textbox', { hidden: true })).not.toBeInTheDocument()
+  await expect(authApi.getAccess()).rejects.toThrow('compatibility')
+  expect(adapter).toHaveBeenCalledTimes(1)
 })
 
 it('retains admitted UI when the first business request is incompatible', async () => {

@@ -6,7 +6,7 @@ import uuid
 from collections.abc import AsyncGenerator, MutableSequence, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import inspect, or_, select, text
@@ -1020,6 +1020,67 @@ def test_provide_token_raises_when_auth_token_none():
     assert captured_fn is not None
     with pytest.raises(RuntimeError, match="Azure auth token is not initialized"):
         captured_fn(None, None, ["some_connection_string"], {})
+
+
+def _construct_memory_with_query_timeout(*, query_timeout_seconds: int | None, env_value: str) -> AzureSQLMemory:
+    with (
+        patch.object(Singleton, "_instances", {}),
+        patch.object(AzureSQLMemory, "_create_engine"),
+        patch.object(AzureSQLMemory, "_enable_azure_authorization"),
+        patch.dict(os.environ, {AzureSQLMemory.AZURE_SQL_DB_QUERY_TIMEOUT_SECONDS: env_value}),
+    ):
+        return cast(
+            "AzureSQLMemory",
+            AzureSQLMemory(
+                connection_string="Server=tcp:dev.database.windows.net;",
+                results_container_url="https://test.blob.core.windows.net/test",
+                results_sas_token="valid_sas_token",
+                query_timeout_seconds=query_timeout_seconds,
+                _defer_initialization=True,
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("query_timeout_seconds", "env_value", "expected"),
+    [(None, "", 300), (None, "45", 45), (10, "45", 10), (0, "45", 0)],
+)
+def test_query_timeout_resolves_argument_then_environment_then_default(
+    *, query_timeout_seconds: int | None, env_value: str, expected: int
+) -> None:
+    memory = _construct_memory_with_query_timeout(query_timeout_seconds=query_timeout_seconds, env_value=env_value)
+    assert memory._query_timeout_seconds == expected
+
+
+@pytest.mark.parametrize(("query_timeout_seconds", "env_value"), [(-1, ""), (None, "-5"), (None, "1.5"), (None, "x")])
+def test_query_timeout_rejects_invalid_value(*, query_timeout_seconds: int | None, env_value: str) -> None:
+    with pytest.raises(ValueError, match="non-negative integer"):
+        _construct_memory_with_query_timeout(query_timeout_seconds=query_timeout_seconds, env_value=env_value)
+
+
+async def test_async_connections_apply_query_timeout(uninitialized_memory_interface: AzureSQLMemory) -> None:
+    """The driver must cancel long statements server-side, since cancelling the awaiting task does not."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    memory = uninitialized_memory_interface
+    memory._connection_string = "mssql+pyodbc://@server.database.windows.net/db?driver=ODBC+Driver+18+for+SQL+Server"
+    memory._verbose = False
+    memory._async_auth = {}
+    memory._query_timeout_seconds = 42
+    connection = MagicMock()
+    with (
+        patch("aioodbc.connect", new=AsyncMock(return_value=connection)),
+        patch("pyrit.memory.azure_sql_memory.AsyncAzureAuth") as auth_class,
+        patch("pyrit.memory.azure_sql_memory.create_async_engine", wraps=create_async_engine) as create_engine_spy,
+    ):
+        auth_class.return_value.get_access_token_async = AsyncMock(return_value=MagicMock(token="token"))
+        engine = memory._create_async_engine()
+        try:
+            assert await create_engine_spy.call_args.kwargs["async_creator"]() is connection
+        finally:
+            await engine.dispose()
+
+    assert connection._conn.timeout == 42
 
 
 async def test_reset_database_raises_when_engine_none_async() -> None:

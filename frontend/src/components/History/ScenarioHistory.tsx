@@ -138,6 +138,7 @@ export default function ScenarioHistory({
   const [runs, setRuns] = useState<ScenarioRunListItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const pending = useRef(false)
+  const lastReadFailed = useRef(false)
   const optionsPending = useRef(false)
   const [optionsError, setOptionsError] = useState<string | null>(null)
   const [scenarioOptions, setScenarioOptions] = useState<string[]>([])
@@ -263,6 +264,8 @@ export default function ScenarioHistory({
       reference_id: filters.referenceId || undefined,
     }).then((response) => {
       if (cancelled) return
+      pending.current = false
+      lastReadFailed.current = false
       setRuns(response.items)
       setNow(Date.now())
       setHasMore(response.pagination.has_more)
@@ -271,6 +274,8 @@ export default function ScenarioHistory({
       setError(null)
     }).catch((requestError: unknown) => {
       if (cancelled) return
+      pending.current = false
+      lastReadFailed.current = true
       if (!quiet) {
         setRuns([])
         setHasMore(false)
@@ -278,8 +283,6 @@ export default function ScenarioHistory({
       }
       setSettledRequestId(requestId)
       setError(toApiError(requestError).detail)
-    }).finally(() => {
-      if (!cancelled) pending.current = false
     })
     return () => {
       cancelled = true
@@ -296,13 +299,19 @@ export default function ScenarioHistory({
     validReference,
   ])
 
+  // History reads can be slow, so a queue change never starts a second read: it waits for the
+  // read in flight (this effect runs again once it settles). After a failed read, the
+  // auto-refresh backoff decides when to read again.
   useEffect(() => {
     if (queueRevision === undefined) return
-    const previousRevision = lastQueueRevisionRef.current
+    if (lastQueueRevisionRef.current === null) {
+      lastQueueRevisionRef.current = queueRevision
+      return
+    }
+    if (lastQueueRevisionRef.current === queueRevision || pending.current) return
     lastQueueRevisionRef.current = queueRevision
-    if (previousRevision === null || previousRevision === queueRevision) return
-    reloadCurrentPage()
-  }, [queueRevision, reloadCurrentPage])
+    if (!lastReadFailed.current) reloadCurrentPage()
+  }, [queueRevision, settledRequestId, reloadCurrentPage])
 
   const setFilter = <K extends keyof ScenarioHistoryFilters>(
     key: K,
@@ -326,7 +335,7 @@ export default function ScenarioHistory({
       if (!optionsPending.current) setOptionsRevision((revision: number) => revision + 1)
       reloadCurrentPage()
     }
-  }, validReference && !displayLoading)
+  }, validReference && !displayLoading, error !== null)
 
   return (
     <div className={styles.root}>

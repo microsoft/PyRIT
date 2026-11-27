@@ -374,9 +374,12 @@ export const healthApi = {
   },
 }
 
+// The version check reads no database, so a slow answer means the backend is unavailable.
+const VERSION_CHECK_TIMEOUT_MS = 30_000
+
 export const versionApi = {
   getVersion: async () => {
-    const response = await apiClient.get('/version')
+    const response = await apiClient.get('/version', { timeout: VERSION_CHECK_TIMEOUT_MS })
     return response.data
   },
 }

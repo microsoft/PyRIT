@@ -745,6 +745,38 @@ describe('ScenarioHistory', () => {
     expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
   })
 
+  it('backs off automatic refreshes while history reads keep failing', async () => {
+    mockedScenariosApi.listRuns.mockRejectedValue(new Error('history unavailable'))
+    renderHistory()
+    expect(await screen.findByText('history unavailable')).toBeInTheDocument()
+
+    await advanceAutoRefresh()
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2))
+    await advanceAutoRefresh()
+    expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+    await advanceAutoRefresh()
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(3))
+  })
+
+  it('leaves the next read to the backoff when the queue changes after a failed read', async () => {
+    mockedScenariosApi.listRuns.mockRejectedValue(new Error('history unavailable'))
+    const history = renderHistory()
+    expect(await screen.findByText('history unavailable')).toBeInTheDocument()
+
+    mockUseScenarioQueue.mockReturnValue({
+      snapshot: { revision: 1, snapshot_at: '2026-01-01T00:01:00Z', active: null, queued: [] },
+      loading: false, stale: false, error: null, retry: mockQueueRetry,
+    })
+    history.rerender(
+      <FluentProvider theme={webLightTheme}>
+        <main>
+          <ScenarioHistory {...defaultProps} />
+        </main>
+      </FluentProvider>,
+    )
+    expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(1)
+  })
+
   it('distinguishes unfiltered and filtered empty states', async () => {
     const user = userEvent.setup()
     const onNavigate = jest.fn()
@@ -1014,7 +1046,7 @@ describe('ScenarioHistory', () => {
       await expectFirstPageOfA()
     })
 
-    it('keeps navigation loading when a queue update reloads the pending page', async () => {
+    it('waits for the pending page before reloading it for a queue update', async () => {
       const user = userEvent.setup()
       mockListRuns()
       const history = render(renderWithFilters(FILTERS_A))
@@ -1031,18 +1063,18 @@ describe('ScenarioHistory', () => {
         loading: false, stale: false, error: null, retry: mockQueueRetry,
       })
       history.rerender(renderWithFilters(FILTERS_A))
-      await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(3))
-      expect(mockedScenariosApi.listRuns).toHaveBeenLastCalledWith(
-        expect.objectContaining({ cursor: 'a-page-2' }),
-      )
+      expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
       expect(screen.getByText('Loading scanner history...')).toBeInTheDocument()
       expect(screen.queryByTestId('scenario-history-row-run-1')).not.toBeInTheDocument()
-      expect(screen.queryByText('Page 2')).not.toBeInTheDocument()
 
       await act(async () => {
         nextPage.resolve({ items: [RUN], pagination: { limit: 25, has_more: false } })
       })
-      expect(screen.getByText('Loading scanner history...')).toBeInTheDocument()
+      await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(3))
+      expect(mockedScenariosApi.listRuns).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: 'a-page-2' }),
+      )
+      expect(screen.getByText('Page 2')).toBeInTheDocument()
       await act(async () => {
         reloadedPage.resolve({ items: [PAGE_TWO_RUN], pagination: { limit: 25, has_more: false } })
       })

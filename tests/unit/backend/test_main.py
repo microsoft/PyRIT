@@ -29,6 +29,7 @@ from uvicorn.lifespan.on import LifespanOn
 from pyrit.backend.authentication_policy import AuthenticationConfigurationError
 from pyrit.backend.main import SPAStaticFiles, app, lifespan, setup_frontend
 from pyrit.backend.models import CreateConverterRequest
+from pyrit.backend.routes.version import BuildInfo
 from pyrit.backend.services import ConverterService, ScenarioRunService, get_converter_service
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.message_send_service import get_message_send_service
@@ -218,8 +219,15 @@ class TestLifespan:
             assert threading.get_ident() != event_loop_thread_id
             return compatibility_id
 
+        build_info = BuildInfo(source="git", commit="abc123")
+
+        def read_build_info() -> BuildInfo:
+            assert threading.get_ident() != event_loop_thread_id
+            return build_info
+
         with (
             patch("pyrit._compatibility.get_compatibility_id", side_effect=read_stamp) as stamp_reader,
+            patch("pyrit.backend.routes.version.read_build_info", side_effect=read_build_info) as build_info_reader,
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()) as init_mock,
             patch("pyrit.backend.main.setup_frontend"),
@@ -228,8 +236,10 @@ class TestLifespan:
                 pass
 
             stamp_reader.assert_called_once()
+            build_info_reader.assert_called_once()
             init_mock.assert_awaited_once_with(raise_on_initializer_error=True)
             assert app.state.compatibility_id == compatibility_id
+            assert app.state.build_info == build_info
             assert app.state.default_labels == {}
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
             assert app.state.allow_custom_initializers is False

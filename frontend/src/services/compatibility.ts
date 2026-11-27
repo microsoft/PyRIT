@@ -7,6 +7,11 @@ export const COMPATIBILITY_HEADER = 'PyRIT-Compatibility-ID'
 export type CompatibilitySnapshot =
   | { status: 'checking' | 'ready' }
   | { status: 'blocked'; reason: string; expected?: string; actual?: string }
+  | { status: 'unavailable'; reason: string }
+
+const BACKEND_UNAVAILABLE_REASON =
+  'The backend did not answer the authenticated version check. It may be overloaded, restarting, or unreachable, '
+  + 'or your sign-in may have expired.'
 
 export class CompatibilityStore {
   private snapshot: CompatibilitySnapshot = { status: 'checking' }
@@ -28,7 +33,7 @@ export class CompatibilityStore {
   }
 
   block(reason: string, expected?: unknown, actual?: unknown): void {
-    if (this.snapshot.status === 'blocked') return
+    if (this.snapshot.status === 'blocked' || this.snapshot.status === 'unavailable') return
     this.publish({
       status: 'blocked',
       reason,
@@ -67,7 +72,10 @@ export class CompatibilityStore {
         this.publish({ status: 'ready' })
       }
     } catch {
-      this.block('The authenticated backend version check failed. Check your connection and sign-in before reloading.')
+      // A failed or timed-out check says nothing about build identity, so it must not suggest a mismatch.
+      if (this.snapshot.status === 'checking') {
+        this.publish({ status: 'unavailable', reason: BACKEND_UNAVAILABLE_REASON })
+      }
     }
   }
 }

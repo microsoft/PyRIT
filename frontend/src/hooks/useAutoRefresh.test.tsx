@@ -5,16 +5,67 @@ import { AUTO_REFRESH_INTERVAL_MS, useAutoRefresh } from './useAutoRefresh'
 interface RefreshViewProps {
   readonly refresh: () => void | Promise<void>
   readonly enabled?: boolean
+  readonly failing?: boolean
 }
 
-function RefreshView({ refresh, enabled = true }: RefreshViewProps) {
-  useAutoRefresh(refresh, enabled)
+function RefreshView({ refresh, enabled = true, failing = false }: RefreshViewProps) {
+  useAutoRefresh(refresh, enabled, failing)
   return <input aria-label="Draft" defaultValue="Keep this" />
+}
+
+async function advanceIntervals(count: number): Promise<void> {
+  await act(async () => { await jest.advanceTimersByTimeAsync(AUTO_REFRESH_INTERVAL_MS * count) })
 }
 
 describe('useAutoRefresh', () => {
   beforeEach(() => { jest.useFakeTimers() })
   afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks() })
+
+  it('should double the wait after each failed read and resume the normal interval after a success', async () => {
+    const refresh = jest.fn()
+    const rendered = render(<RefreshView refresh={refresh} failing />)
+    await advanceIntervals(1)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    await advanceIntervals(1)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    await advanceIntervals(1)
+    expect(refresh).toHaveBeenCalledTimes(2)
+    await advanceIntervals(3)
+    expect(refresh).toHaveBeenCalledTimes(2)
+    await advanceIntervals(1)
+    expect(refresh).toHaveBeenCalledTimes(3)
+    rendered.rerender(<RefreshView refresh={refresh} />)
+    await advanceIntervals(2)
+    expect(refresh).toHaveBeenCalledTimes(5)
+  })
+
+  it('should cap the failure backoff at sixteen intervals', async () => {
+    const refresh = jest.fn()
+    render(<RefreshView refresh={refresh} failing />)
+    // Retries after 1, 2, 4, 8, 16, then 16 and 16 more intervals.
+    await advanceIntervals(62)
+    expect(refresh).toHaveBeenCalledTimes(6)
+    await advanceIntervals(1)
+    expect(refresh).toHaveBeenCalledTimes(7)
+  })
+
+  it('should wait the backoff when a failing view becomes visible again', async () => {
+    const refresh = jest.fn()
+    const visibility = jest.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    render(<RefreshView refresh={refresh} failing />)
+    await advanceIntervals(1)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    visibility.mockReturnValue('hidden')
+    await advanceIntervals(1)
+    visibility.mockReturnValue('visible')
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(refresh).toHaveBeenCalledTimes(1)
+    visibility.mockReturnValue('hidden')
+    await advanceIntervals(1)
+    visibility.mockReturnValue('visible')
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(refresh).toHaveBeenCalledTimes(2)
+  })
 
   it('should wait a full minute and keep the view mounted', async () => {
     const refresh = jest.fn()

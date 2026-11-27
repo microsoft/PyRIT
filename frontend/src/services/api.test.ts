@@ -641,7 +641,7 @@ describe("api service", () => {
 
       const result = await versionApi.getVersion();
 
-      expect(apiClient.get).toHaveBeenCalledWith("/version");
+      expect(apiClient.get).toHaveBeenCalledWith("/version", { timeout: 30_000 });
       expect(result).toEqual({ version: "0.10.1" });
     });
   });
