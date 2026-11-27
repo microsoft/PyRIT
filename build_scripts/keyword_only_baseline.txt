@@ -155,7 +155,6 @@ pyrit.memory.sqlite_memory:SQLiteMemory._register_analytics_lower.<locals>.regis
 pyrit.memory.storage.serializers:DataTypeSerializer.save_b64_image_async
 pyrit.memory.storage.serializers:DataTypeSerializer.save_data_async
 pyrit.memory.storage.serializers:DataTypeSerializer.save_formatted_audio_async
-pyrit.memory.storage.storage:AzureBlobStorageIO._upload_blob_async
 pyrit.memory.storage.storage:AzureBlobStorageIO.write_file_async
 pyrit.memory.storage.storage:DiskStorageIO.write_file_async
 pyrit.memory.storage.storage:StorageIO.write_file_async
