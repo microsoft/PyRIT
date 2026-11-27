@@ -73,6 +73,22 @@ def test_run_plan_preserves_known_compound_capability(is_compound: bool) -> None
     assert restored.atomic_groups[0].is_compound is is_compound
 
 
+@pytest.mark.parametrize(
+    ("kind", "technique_name", "expected"),
+    [
+        (ScenarioRunPlanGroupKind.BASELINE, None, "baseline"),
+        (ScenarioRunPlanGroupKind.ATTACK, "red_teaming", "red_teaming"),
+        (None, None, "category"),
+    ],
+    ids=["baseline-under-a-category", "technique", "plan-without-technique"],
+)
+def test_technique_label_counts_baselines_as_baseline(
+    kind: ScenarioRunPlanGroupKind | None, technique_name: str | None, expected: str
+) -> None:
+    group = _group().model_copy(update={"kind": kind, "technique_name": technique_name, "display_group": "category"})
+    assert group.technique_label == expected
+
+
 def test_run_plan_rejects_empty_adaptive_choices() -> None:
     payload = _group().model_dump()
     payload["selected_technique_eval_hashes"] = []

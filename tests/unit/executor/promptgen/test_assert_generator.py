@@ -23,6 +23,8 @@ from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.promptgen import AssertGenerator, AssertGeneratorContext
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
+    AssertGenerationCheckpoint,
+    AssertGenerationStage,
     AssertGroupMetadata,
     JsonResponseConfig,
     Message,
@@ -676,3 +678,8 @@ class TestAssertGenerator:
         )
         with pytest.raises(ValueError, match="supports_editable_history"):
             AssertGenerator(target=target)
+
+    def test_estimate_policy_stage_rejects_seed_groups(self) -> None:
+        checkpoint = AssertGenerationCheckpoint(config=make_assert_config())
+        with pytest.raises(ValueError, match="estimated separately"):
+            AssertGenerator._estimate_policy_stage(checkpoint=checkpoint, stage=AssertGenerationStage.SEED_GROUPS)

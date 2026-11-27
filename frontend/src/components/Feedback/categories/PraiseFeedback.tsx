@@ -22,7 +22,7 @@ export function PraiseFeedback({
     <Field
       label="What do you love?"
       required
-      validationMessage={primaryTooShort ? tooShortMessage : undefined}
+      validationMessage={primaryTooShort ? tooShortMessage : null}
       validationState={primaryTooShort ? 'warning' : 'none'}
     >
       <Textarea

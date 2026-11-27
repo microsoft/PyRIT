@@ -39,7 +39,7 @@ describe('assertRequestDraft', () => {
       context: '',
       group_count: 25,
       include_user_prompt: true,
-      include_adversarial_prompt: false,
+      include_adversarial_prompt: true,
       behavior_category_count: 25,
       dimensions: [],
       dimension_level_count: 3,
@@ -80,6 +80,7 @@ describe('assertRequestDraft', () => {
       ...defaultAssertSettings(),
       groupCount: '0',
       includeUserPrompt: false,
+      includeAdversarialPrompt: false,
       behaviorCategoryCount: 'many',
       dimensionLevelCount: '1',
       samplingMethod: 'stratified',
@@ -191,5 +192,11 @@ describe('assertRequestDraft', () => {
     expect(names[0]).toMatch(/^l+_private_order_disclosure$/)
     expect(names[1]).toMatch(/^l+_private_order_status$/)
     for (const name of names) expect(name).toHaveLength(128)
+  })
+
+  it('recommends tester inputs for new datasets without changing saved SDK requests', () => {
+    expect(defaultAssertSettings().includeAdversarialPrompt).toBe(true)
+    expect(assertDraftFromRequest({}).settings.includeAdversarialPrompt).toBe(false)
+    expect(assertDraftFromRequest({ include_adversarial_prompt: false }).settings.includeAdversarialPrompt).toBe(false)
   })
 })
