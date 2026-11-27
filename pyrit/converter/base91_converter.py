@@ -41,12 +41,13 @@ class Base91Converter(Converter):
         """
         Encode raw bytes to a basE91 string using Joachim Henke's algorithm.
 
-        Bits are accumulated little-endian in an integer bit buffer. Whenever at
-        least 13 bits are buffered, the low 13 bits are inspected: if their value
-        exceeds 88 they are emitted as a two-character group, otherwise 14 bits
-        are consumed instead (this keeps every value below 8192 representable in
-        two base-91 digits). Each emitted value ``v`` becomes
-        ``ALPHABET[v % 91] + ALPHABET[v // 91]``.
+        Bits are accumulated little-endian in an integer bit buffer. Once more than
+        13 bits are buffered (i.e. at least 14), the low 13 bits are inspected: if
+        their value exceeds 88 they are emitted as a two-character group and 13 bits
+        are consumed; otherwise the low 14 bits are emitted and 14 bits are consumed.
+        Taking 14 bits only when the low 13 bits are 88 or less bounds the emitted
+        value at ``91 * 91 - 1 = 8280``, so it always fits two base-91 digits. Each
+        emitted value ``v`` becomes ``ALPHABET[v % 91] + ALPHABET[v // 91]``.
 
         Args:
             data: The bytes to encode.

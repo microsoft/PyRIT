@@ -23,7 +23,8 @@ async def test_base91_converter_hello_world():
 
 
 async def test_base91_converter_single_char():
-    # A single byte flushes with one output char (0x61 = 'a' -> value 97, 97 % 91 = 6 -> 'G'; 97 // 91 = 1 -> 'B').
+    # A single byte leaves 8 bits in the buffer, which flush as two characters
+    # (0x61 = 'a' -> value 97, 97 % 91 = 6 -> 'G'; 97 // 91 = 1 -> 'B').
     converter = Base91Converter()
     result = await converter.convert_async(prompt="a", input_type="text")
     assert result.output_text == "GB"
