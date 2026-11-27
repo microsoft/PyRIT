@@ -30,6 +30,31 @@ async def test_base91_converter_single_char():
     assert result.output_text == "GB"
 
 
+@pytest.mark.parametrize(
+    "plaintext, expected",
+    [
+        # 14-bit branch: the low 13 bits are <= 88, so 14 bits are consumed. "X " buffers
+        # 0x2058 -> low 13 bits = 88 (not > 88), emits value 8280 ('""') and flushes 'A'.
+        ("X ", '""A'),
+        # Another 14-bit-branch vector with a distinct emitted value, to pin the threshold/mask.
+        ("Y ", "~AB"),
+        # Trailing-bit flush: one byte leaves 8 bits, and the `num_bits > 7` flush emits
+        # two characters ('%A'); this never enters the main >13-bit loop.
+        ("A", "%A"),
+    ],
+)
+async def test_base91_converter_branch_boundary_vectors(plaintext, expected):
+    """Pin the 14-bit branch and the trailing-bit flush with reference vectors.
+
+    The broad round-trip vectors do not discriminate mutants of the ``num_bits > 13`` threshold,
+    the ``value > 88`` test, or the 13/14-bit mask, so these reference vectors (verified against
+    Joachim Henke's basE91) exercise those paths directly.
+    """
+    converter = Base91Converter()
+    result = await converter.convert_async(prompt=plaintext, input_type="text")
+    assert result.output_text == expected
+
+
 async def test_base91_converter_empty():
     converter = Base91Converter()
     result = await converter.convert_async(prompt="", input_type="text")
