@@ -1,13 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import re
 import string
 
 import regex
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
+
+_WORD_START_PATTERN = r"[\p{L}\p{N}_]"
+_WORD_PATTERN = r"[\p{L}\p{N}_][\p{L}\p{N}\p{M}\p{Join_Control}_]*"
 
 
 class InsertPunctuationConverter(Converter):
@@ -130,10 +132,11 @@ class InsertPunctuationConverter(Converter):
             str: The modified prompt with inserted punctuation from helper method.
         """
         # Words list contains single spaces, single word without punctuations, single punctuations.
-        # Combining marks (accents, vowel signs) are not \w but belong to the word they follow.
-        words = regex.findall(r"\w[\w\p{M}]*|[^\w\s]|\s", prompt)
+        # A word starts with a letter, number, or underscore. Combining marks (accents, vowel signs)
+        # and zero-width joiners belong to the word they follow, so they are never split off.
+        words = regex.findall(rf"{_WORD_PATTERN}|\s|.", prompt, flags=regex.DOTALL)
         # Maintains indices for actual "words", i.e. letters and numbers not divided by punctuations
-        word_indices = [i for i in range(len(words)) if not re.match(r"\W", words[i])]
+        word_indices = [i for i in range(len(words)) if regex.match(_WORD_START_PATTERN, words[i])]
         # Calculate the number of insertions
         num_insertions = max(
             1, round(len(word_indices) * self._word_swap_ratio)
