@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -54,7 +54,7 @@ class _ProgramExecutionEvent(BaseModel):
     duration_ms: int = Field(ge=0)
 
     @model_validator(mode="after")
-    def _validate_exit_state(self) -> _ProgramExecutionEvent:
+    def _validate_exit_state(self) -> Self:
         """
         Keep the exit state consistent with how the run ended.
 

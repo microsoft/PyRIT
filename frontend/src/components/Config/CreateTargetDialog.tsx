@@ -883,7 +883,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
             <form
               className={styles.form}
               data-testid="create-target-form"
-              onSubmit={(e) => { e.preventDefault(); handleSubmit() }}
+              onSubmit={(e) => { e.preventDefault(); void handleSubmit() }}
             >
               {error && !httpRequestError && (
                 <div ref={errorMessageRef} role="alert" tabIndex={-1}>
@@ -1395,7 +1395,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
             </Button>
             <Button
               appearance="primary"
-              onClick={handleSubmit}
+              onClick={() => { void handleSubmit() }}
               disabled={
                 submitting ||
                 !targetType ||

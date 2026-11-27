@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, assert_never, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self, TypeVar, assert_never, overload
 
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.logger import logger
@@ -148,7 +148,7 @@ class _ObjectiveTargetConversationLifecycle:
         self._logger = logger
         self._conversation_ids: set[str] = set()
 
-    async def __aenter__(self) -> _ObjectiveTargetConversationLifecycle:
+    async def __aenter__(self) -> Self:
         """
         Start tracking target invocations.
 

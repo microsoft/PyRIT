@@ -53,10 +53,10 @@ export function useScenarioRunAttackDetails({
     open: (attempt: ScenarioRunAttempt, opener: HTMLElement | null): void => {
       trigger.current = opener
       setHierarchySelection('result_role' in attempt ? attempt : null)
-      navigate(scenarioRunAttackRoutePath(scenarioResultId, attempt.attack_result_id), { state: location.state })
+      void navigate(scenarioRunAttackRoutePath(scenarioResultId, attempt.attack_result_id), { state: location.state })
     },
     close: (): void => {
-      navigate(scenarioRunRoutePath(scenarioResultId), { replace: true, state: location.state })
+      void navigate(scenarioRunRoutePath(scenarioResultId), { replace: true, state: location.state })
       requestAnimationFrame(() => {
         const focusTarget = trigger.current?.isConnected ? trigger.current : fallbackFocus()
         focusTarget?.focus()

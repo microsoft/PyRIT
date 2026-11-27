@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -13,6 +13,7 @@ from pyrit.common.yaml_helper import safe_load_yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Self
 
 
 class LlamaGuardCategory(BaseModel):
@@ -65,14 +66,14 @@ class LlamaGuardPolicy(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_unique_category_codes(self) -> LlamaGuardPolicy:
+    def _validate_unique_category_codes(self) -> Self:
         category_codes = self.category_codes
         if len(set(category_codes)) != len(category_codes):
             raise ValueError("LlamaGuard policy category codes must be unique.")
         return self
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> LlamaGuardPolicy:
+    def from_yaml(cls, path: str | Path) -> Self:
         """
         Load a LlamaGuard policy from YAML.
 
