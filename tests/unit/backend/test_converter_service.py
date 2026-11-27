@@ -1307,6 +1307,57 @@ class TestPersistDataUriParams:
 
         assert list(service._upload_path.iterdir()) == []
 
+    @pytest.mark.parametrize(
+        ("data_uri", "expected_bytes", "expected_suffix"),
+        [
+            ("data:text/plain;charset=utf-8;base64,SGVsbG8=", b"Hello", ".txt"),
+            ("data:image/png;name=test.png;base64,iVBORw0KGgo=", b"\x89PNG\r\n\x1a\n", ".png"),
+            ("DATA:text/plain;BASE64,SGVsbG8=", b"Hello", ".txt"),
+            ("data:;base64,SGVsbG8=", b"Hello", ".bin"),
+        ],
+    )
+    async def test_persist_data_uri_accepts_media_type_parameters_and_case_insensitive_scheme(
+        self,
+        data_uri: str,
+        expected_bytes: bytes,
+        expected_suffix: str,
+        upload_service: ConverterService,
+    ) -> None:
+        service = upload_service
+        params = {"existing_pdf": data_uri}
+
+        result, owned_paths = await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
+
+        assert result["existing_pdf"].suffix == expected_suffix
+        assert result["existing_pdf"].read_bytes() == expected_bytes
+        assert owned_paths == [result["existing_pdf"]]
+
+    @pytest.mark.parametrize(
+        "data_uri",
+        [
+            "data:text/plain;base64",
+            "data:text/plain;base64,",
+            "data:text/plain;charset=utf-8,hello",
+            "data:text/plain;base64;extra,SGVsbG8=",
+            "data:text/plain;;base64,SGVsbG8=",
+            "data:text/plain;garbage;base64,SGVsbG8=",
+            "data:text/plain;base64;base64,SGVsbG8=",
+            "data:text/plain;=utf-8;base64,SGVsbG8=",
+            "data:text/plain;charset=;base64,SGVsbG8=",
+            "data:base64,SGVsbG8=",
+        ],
+    )
+    async def test_persist_data_uri_rejects_malformed_parameters(
+        self, data_uri: str, upload_service: ConverterService
+    ) -> None:
+        service = upload_service
+        params = {"existing_pdf": data_uri}
+
+        with pytest.raises(ValueError, match="must be a base64 data URI"):
+            await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
+
+        assert list(service._upload_path.iterdir()) == []
+
     async def test_create_converter_cleans_upload_when_creation_fails(self, upload_service: ConverterService) -> None:
         service = upload_service
         params = {
