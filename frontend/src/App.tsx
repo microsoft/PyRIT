@@ -37,6 +37,14 @@ import ScenarioSuiteEditor from './components/ScenarioSuites/ScenarioSuiteEditor
 import ScenarioSuiteExecutionPage from './components/ScenarioSuites/ScenarioSuiteExecutionPage'
 import DatasetCatalog from './components/Datasets/DatasetCatalog'
 import DatasetSelection from './components/Datasets/DatasetSelection'
+import NewPromptGenerationPage from './components/PromptGeneration/NewPromptGenerationPage'
+import PromptGenerationPage from './components/PromptGeneration/PromptGenerationPage'
+import PromptGenerationsPage from './components/PromptGeneration/PromptGenerationsPage'
+import {
+  NEW_PROMPT_GENERATION_PATH,
+  PROMPT_GENERATION_ROUTE,
+  PROMPT_GENERATIONS_PATH,
+} from './components/PromptGeneration/promptGenerationRoutes'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -188,7 +196,7 @@ interface LoadedAttack {
   /** The scan run that produced this attack. */
   scenarioResultId?: string | null
   /** Verified SDK provenance for interrupted evidence that has no saved attack result. */
-  recordedConversations?: ScenarioActiveConversation[]
+  recordedConversations?: ScenarioActiveConversation[] | undefined
   manualContinuation?: ManualContinuation | null
   lastResponseMessagePieceId: string | null
   status: AttackLoadStatus
@@ -684,14 +692,14 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
         routeConversationId === readyAttack.mainConversationId ||
         readyAttack.knownConversationIds.includes(routeConversationId)
       if (!isKnown && !findingEvidenceId) {
-        navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true, state: location.state })
+        void navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true, state: location.state })
       }
     }
   }, [readyAttack, routeConversationId, routeAttackKey, navigate, scenarioResultId, findingEvidenceId, location.state])
 
   const handleNavigate = useCallback((view: ViewName) => {
     if (view === 'analytics') {
-      navigate(VIEW_PATHS.analytics + lastAnalyticsLocation.current)
+      void navigate(VIEW_PATHS.analytics + lastAnalyticsLocation.current)
       return
     }
     if (view === 'datasets') {
@@ -703,7 +711,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       } else if (isChatPath(location.pathname)) {
         const previousState = lastDatasetsLocation.current.state
         const inheritedState = previousState !== null && typeof previousState === 'object' ? previousState : {}
-        navigate(lastDatasetsLocation.current.path || VIEW_PATHS.datasets, {
+        void navigate(lastDatasetsLocation.current.path || VIEW_PATHS.datasets, {
           state: {
             ...inheritedState,
             chatOrigin: {
@@ -716,12 +724,12 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
         })
       } else if (lastDatasetsLocation.current.path) {
         const state = lastDatasetsLocation.current.state
-        navigate(lastDatasetsLocation.current.path, {
+        void navigate(lastDatasetsLocation.current.path, {
           state: isDatasetsPath(location.pathname) ? state
             : state !== null && typeof state === 'object' ? { ...state, chatOrigin: undefined } : state,
         })
       } else {
-        navigate(VIEW_PATHS.datasets)
+        void navigate(VIEW_PATHS.datasets)
       }
       return
     }
@@ -729,23 +737,23 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       if (matchPath(VIEW_PATHS.chat, location.pathname) || routeAttackId !== null) return
       const targetDraft = draftHandoff.getPreservedDraft()
       if (targetDraft?.originatingPath) {
-        navigate(targetDraft.originatingPath, { state: targetDraft.originatingState })
+        void navigate(targetDraft.originatingPath, { state: targetDraft.originatingState })
         return
       }
       if (lastChatLocation.current.path) {
-        navigate(lastChatLocation.current.path, { state: lastChatLocation.current.state })
+        void navigate(lastChatLocation.current.path, { state: lastChatLocation.current.state })
         return
       }
-      navigate(VIEW_PATHS.chat)
+      void navigate(VIEW_PATHS.chat)
       return
     }
-    navigate(VIEW_PATHS[view])
+    void navigate(VIEW_PATHS[view])
   }, [navigate, draftHandoff, location.pathname, location.search, location.hash, location.state, routeAttackId, activeConversationId])
 
   const handleNewAttack = useCallback(() => {
     const id = generateClientId()
     pendingNewAttack.current = { id, fromKey: location.key }
-    navigate(VIEW_PATHS.chat, { state: { newAttackRequestId: id } })
+    void navigate(VIEW_PATHS.chat, { state: { newAttackRequestId: id } })
   }, [location.key, navigate])
 
   useLayoutEffect(() => {
@@ -781,7 +789,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           endpoint: targetEndpoint(createdTarget),
           model_name: targetModelName(createdTarget),
           identifier_hash: targetIdentifierHash(createdTarget),
-          binding: createdTarget.binding,
+          ...(createdTarget.binding !== undefined ? { binding: createdTarget.binding } : {}),
         }
       : null
     skipNextLoadForAttackId.current = arId
@@ -798,7 +806,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       operator: null,
       target,
       targetUnbound: createdTarget === null,
-      createdTarget: createdTarget ?? undefined,
+      ...(createdTarget ? { createdTarget } : {}),
       knownConversationIds: [convId],
       relatedConversationCount: 0,
       objective: objective ?? '',
@@ -812,7 +820,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     // push when branching from an existing attack so Back returns to the source.
     // Keep sends blocked until the new route exposes the created attack's identity.
     startCreatedAttackTransition(() => {
-      navigate(attackConversationRoutePath(arId, convId), { replace: routeAttackId === null })
+      void navigate(attackConversationRoutePath(arId, convId), { replace: routeAttackId === null })
     })
   }, [activeTarget, generation, routeAttackId, navigate, startCreatedAttackTransition])
 
@@ -856,15 +864,15 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
         ? { ...current, knownConversationIds: [...current.knownConversationIds, convId] }
         : current
     ))
-    navigate(attackConversationRoutePath(routeAttackId, convId, scenarioResultId), { state: location.state })
+    void navigate(attackConversationRoutePath(routeAttackId, convId, scenarioResultId), { state: location.state })
   }, [routeAttackId, navigate, scenarioResultId, location.state])
 
   const handleOpenAttack = useCallback((openAttackResultId: string) => {
-    navigate(attackRoutePath(openAttackResultId))
+    void navigate(attackRoutePath(openAttackResultId))
   }, [navigate])
 
   const handleOpenScenarioRun = useCallback((scenarioResultId: string) => {
-    navigate(scenarioRunRoutePath(scenarioResultId), {
+    void navigate(scenarioRunRoutePath(scenarioResultId), {
       state: {
         fromScenarioHistory: true,
         scenarioHistorySearch: location.search,
@@ -899,9 +907,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       variant={isAttackError ? 'error' : isEvidenceConversationMissing ? 'evidence-missing' : 'not-found'}
       findingEvidenceId={findingEvidenceId}
       onStartNew={handleNewAttack}
-      onBackToHistory={() => navigate(HISTORY_ATTACKS_PATH + lastHistorySearch.current)}
+      onBackToHistory={() => { void navigate(HISTORY_ATTACKS_PATH + lastHistorySearch.current) }}
       onViewAttack={isEvidenceConversationMissing && routeAttackId ? () => {
-        navigate(attackRoutePath(routeAttackId, scenarioResultId), { state: location.state })
+        void navigate(attackRoutePath(routeAttackId, scenarioResultId), { state: location.state })
       } : undefined}
     />
   ) : (
@@ -965,7 +973,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       scenarioResultId={readyAttack ? scenarioResultId : null}
       onReturnToScan={() => {
         if (scenarioResultId) {
-          navigate(scenarioRunRoutePath(scenarioResultId), {
+          void navigate(scenarioRunRoutePath(scenarioResultId), {
             state: location.state ?? {
               fromScenarioHistory: true, scenarioHistorySearch: lastScenarioHistorySearch.current,
             },
@@ -1015,7 +1023,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 onTabChange={(tab: 'chat' | 'launch' | 'history') => {
                   if (tab === 'chat') handleNavigate('chat')
                   else if (tab === 'launch') handleNavigate('scenarios')
-                  else navigate(currentView === 'chat'
+                  else void navigate(currentView === 'chat'
                     ? HISTORY_ATTACKS_PATH + lastHistorySearch.current
                     : HISTORY_SCANNER_PATH + lastScenarioHistorySearch.current)
                 }}
@@ -1064,8 +1072,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                     onNavigate={handleNavigate}
                     onNewAttack={handleNewAttack}
                     onOpenAttack={handleOpenAttack}
-                    onOpenAttackHistory={() => navigate(HISTORY_ATTACKS_PATH + lastHistorySearch.current)}
-                    onOpenScannerHistory={() => navigate(HISTORY_SCANNER_PATH + lastScenarioHistorySearch.current)}
+                    onOpenAttackHistory={() => { void navigate(HISTORY_ATTACKS_PATH + lastHistorySearch.current) }}
+                    onOpenScannerHistory={() => { void navigate(HISTORY_SCANNER_PATH + lastScenarioHistorySearch.current) }}
                   />
                 }
               />
@@ -1127,6 +1135,19 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route path="/scanner/history/suites/executions/:executionId" element={<ScenarioSuiteExecutionPage />} />
               <Route path={DATASETS_PATH} element={<DatasetCatalog />} />
               <Route path={DATASET_DETAIL_PATH} element={<DatasetSelection />} />
+              <Route path={PROMPT_GENERATIONS_PATH} element={<PromptGenerationsPage />} />
+              <Route
+                path={NEW_PROMPT_GENERATION_PATH}
+                element={
+                  <NewPromptGenerationPage
+                    targets={registry.targets}
+                    targetsLoading={registry.loading}
+                    targetsError={registry.error}
+                    defaultTarget={targetDefaults.adversarialTarget}
+                  />
+                }
+              />
+              <Route path={PROMPT_GENERATION_ROUTE} element={<PromptGenerationPage />} />
               <Route path="/scanner/presets" element={<Navigate to="/registry/scenario-presets" replace />} />
               <Route path="/scanner/presets/new" element={<Navigate to="/registry/scenario-presets/new" replace />} />
               <Route path="/scanner/presets/:presetName/edit" element={<LegacyPresetEditorRedirect />} />

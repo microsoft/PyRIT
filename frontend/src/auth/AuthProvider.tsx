@@ -112,7 +112,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
     }
 
-    initMsal()
+    void initMsal()
   }, [])
 
   if (error) {

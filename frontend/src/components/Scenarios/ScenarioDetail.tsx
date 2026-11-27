@@ -76,8 +76,8 @@ import { datasetTotalLimit, scenarioDatasetDefaults, scenarioDatasetOptions } fr
 import { formatCarriedParameterPreview } from './scenarioLaunchPresentation'
 import { normalizeScenarioMarkdown } from './scenarioMarkdown'
 import { carriedPresetScenarioParams, seedPresetTechniques, untouchedPresetScenarioParams } from './scenarioPresetSeed'
+import { BASELINE_TECHNIQUE } from './scenarioConfigForm'
 import {
-  BASELINE_TECHNIQUE,
   exceedsTechniqueLimit,
   initialScenarioLaunchForm,
   reduceScenarioLaunchForm,
@@ -91,6 +91,7 @@ import {
   buildEstimateRequest,
   buildRunRequest,
   CONVERSATION_PARAMETER_NAMES,
+  acceptsAnyNamedDataset,
   MAX_MAX_CONCURRENCY,
   MAX_MAX_RETRIES,
   MIN_MAX_CONCURRENCY,
@@ -99,12 +100,15 @@ import {
   type ScenarioLaunchInput,
   scenarioDynamicParameters,
   linkedDatasetProblem,
+  omittedLinkedDatasetsMessage,
   minimumSelectionMessage,
   requiresDatasetSelection,
   supportsParameter,
+  usesCompatibleDatasetPicker,
 } from './scenarioLaunchRequest'
 import ScenarioDatasetTable from './ScenarioDatasetTable'
 import DatasetActions from './DatasetActions'
+import { fluentRef } from '@/utils/fluentRef'
 
 function targetOptionLabel(target: TargetInstance): string {
   const modelName = targetModelName(target)
@@ -130,9 +134,9 @@ interface ScorerPickerData {
 
 interface ScenarioDetailProps extends ScorerPickerData {
   /** A saved run to start from, or undefined for a fresh form. */
-  initialRun?: RunScenarioRequest
+  initialRun?: RunScenarioRequest | undefined
   /** The scan the saved run came from, for the back link. */
-  sourceRunId?: string
+  sourceRunId?: string | undefined
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
@@ -339,8 +343,8 @@ function ScenarioDetailContent({
 }
 
 interface ScenarioLaunchFormProps extends ScorerPickerData {
-  initialRun?: RunScenarioRequest
-  sourceRunId?: string
+  initialRun?: RunScenarioRequest | undefined
+  sourceRunId?: string | undefined
   scenario: RegisteredScenario
   /** Seeds the initial form state only; edits are never written back to the preset. */
   preset?: ScenarioPresetResponse | null
@@ -421,6 +425,7 @@ function ScenarioLaunchForm({
   const supportsBaseline = supportsParameter(scenario, 'include_baseline')
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
   const datasetRequired = requiresDatasetSelection(scenario)
+  const compatibleDatasetsOnly = usesCompatibleDatasetPicker(scenario)
   const declaredDatasetOptions = scenarioDatasetOptions(scenario)
   // Linked names replace the sources, so only a scenario whose sources can be chosen takes them.
   const takesLinkedDatasets = supportsDatasets && declaredDatasetOptions.supports_overrides
@@ -467,7 +472,7 @@ function ScenarioLaunchForm({
       preset,
       seededTechniques: techniqueSeed.techniques,
       initialRun,
-      datasetNames: takesLinkedDatasets && linkedDatasetNames.length > 0 ? linkedDatasetNames : undefined,
+      ...(takesLinkedDatasets && linkedDatasetNames.length > 0 ? { datasetNames: linkedDatasetNames } : {}),
     }),
   )
   const {
@@ -598,7 +603,28 @@ function ScenarioLaunchForm({
       : JSON.stringify({ scenarioName: scenario.scenario_name, request: estimateRequest, generation: runtime.generation }),
     [estimateRequest, scenario.scenario_name, runtime.generation],
   )
-  const datasetMetadata = useScenarioDatasets()
+  const datasetMetadata = useScenarioDatasets(scenario.scenario_name,
+    supportsDatasets || scenarioDatasetDefaults(scenario).sources.length > 0)
+  // A compatible-only listing names every stored dataset this scenario can use, so a linked name it omits
+  // can't run. Once the first listing succeeds, leave those names out and say why, rather than keep a row
+  // that only fails at launch. While the listing has failed, the Add picker is disabled but rows can
+  // still be removed or limited; this filters the current selection, so those edits are kept and a row
+  // already removed isn't named. Adjusted during render (React's "adjust state when props change" pattern)
+  // rather than in an effect.
+  const [omittedLinkedNames, setOmittedLinkedNames] = useState<string[] | null>(null)
+  const compatibleListingReady = runtime.ready && compatibleDatasetsOnly && takesLinkedDatasets
+    && !datasetMetadata.loading && datasetMetadata.error === null
+  if (omittedLinkedNames === null && compatibleListingReady && linkedNames.length > 0) {
+    const omitted = linkedNames.filter((name) => (datasetEdits.sources ?? []).some((source) => source.name === name)
+      && !datasetMetadata.items.some((item) => item.name === name))
+    setOmittedLinkedNames(omitted)
+    if (omitted.length > 0) {
+      setDatasetEdits({
+        ...datasetEdits,
+        sources: (datasetEdits.sources ?? []).filter((source) => !omitted.includes(source.name)),
+      })
+    }
+  }
   const runEstimate = useScenarioRunEstimate({
     scenarioName: scenario.scenario_name,
     request: estimateRequest,
@@ -628,11 +654,11 @@ function ScenarioLaunchForm({
   const reloadDatasetMetadata = datasetMetadata.reload
   const previousDatasetSelection = useRef(datasetSelectionKey)
   useEffect(() => {
-    if (previousDatasetSelection.current !== datasetSelectionKey) {
+    if (!compatibleDatasetsOnly && previousDatasetSelection.current !== datasetSelectionKey) {
       previousDatasetSelection.current = datasetSelectionKey
       reloadDatasetMetadata()
     }
-  }, [datasetSelectionKey, reloadDatasetMetadata])
+  }, [datasetSelectionKey, reloadDatasetMetadata, compatibleDatasetsOnly])
   const confirmedDatasetSettings = currentDatasetEstimate?.status === 'resolved'
     ? currentDatasetEstimate.datasetSettings : undefined
   const checkingRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0 && currentDatasetEstimate === null
@@ -690,8 +716,8 @@ function ScenarioLaunchForm({
     onLaunched: (summary: ScenarioRunSummary) => {
       // The launched request is the one this render built, so it is still current here.
       if (requestResult.ok) rememberScanTargets(targets, requestResult.request)
-      datasetMetadata.reload()
-      navigate(scenarioRunRoutePath(summary.scenario_result_id), {
+      if (!compatibleDatasetsOnly) datasetMetadata.reload()
+      void navigate(scenarioRunRoutePath(summary.scenario_result_id), {
         state: { scenarioName: scenario.scenario_name },
       })
     },
@@ -912,7 +938,7 @@ function ScenarioLaunchForm({
               </MessageBar>
             )}
             {apiError && (
-              <MessageBar intent="error" ref={apiErrorRef} tabIndex={-1}>
+              <MessageBar intent="error" ref={fluentRef(apiErrorRef)} tabIndex={-1}>
                 <MessageBarBody role="alert">{apiError}</MessageBarBody>
               </MessageBar>
             )}
@@ -1037,8 +1063,17 @@ function ScenarioLaunchForm({
                     Seed examples used by this scan. Limits and filters control which examples are selected.
                   </ContextualHelpLabel>
                 </Text>
-                <DatasetActions />
+                <DatasetActions
+                  scenarioName={scenario.scenario_name}
+                  canGenerate={acceptsAnyNamedDataset(scenario, datasetOptions)}
+                />
               </div>
+              {/* Shown beside the selection it changed, like the listing's loading, error and empty states. */}
+              {omittedLinkedNames !== null && omittedLinkedNames.length > 0 && (
+                <MessageBar intent="warning" data-testid="omitted-linked-datasets">
+                  <MessageBarBody>{omittedLinkedDatasetsMessage(omittedLinkedNames)}</MessageBarBody>
+                </MessageBar>
+              )}
               <ScenarioDatasetTable
                 request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
@@ -1049,7 +1084,12 @@ function ScenarioLaunchForm({
                   && confirmedDatasetSettings !== undefined
                   && !confirmedDatasetSettings.sources.some((source) => source.fetch === 'always'
                     && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
-                onLoad={() => { if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest) }}
+                {...(compatibleDatasetsOnly ? {} : {
+                  onLoad: () => {
+                    if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest)
+                  },
+                })}
+                compatibleOnly={compatibleDatasetsOnly}
                 required={datasetRequired} selectionError={datasetSelectionError} pickerRef={datasetPickerRef}
                 onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
               />
@@ -1115,7 +1155,7 @@ function ScenarioLaunchForm({
 
             <section className={styles.launchSection} aria-label="Launch scan">
               <Button
-                ref={launchButtonRef}
+                ref={fluentRef(launchButtonRef)}
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"

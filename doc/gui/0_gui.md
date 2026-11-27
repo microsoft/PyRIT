@@ -132,7 +132,9 @@ datasets already selected, add one `dataset` parameter per name, for example
 `/scanner/launch/foundry.red_team_agent?dataset=harmbench&dataset=my_dataset`. The
 names replace the default or preset datasets; other dataset settings, such as
 limits and filters, stay. A scenario that can't take the linked datasets won't
-launch with them and offers a link to open it without them.
+launch with them and offers a link to open it without them. A scenario that lists
+only compatible datasets, such as `foundry.assert_policy`, leaves out linked names
+it can't use and says so in the Datasets section.
 
 Use the chevron on the right of a technique to inspect its identity JSON.
 This does not change the checkbox selection on the left.
@@ -296,6 +298,39 @@ Load data through PyRIT; the visible catalog checks for changes each minute. See
 
 ![Datasets page with stored dataset summaries](images/datasets.png)
 
+### Generate datasets
+
+**Generate datasets** creates a new dataset with one of PyRIT's
+[prompt generators](../code/executor/7_promptgen.ipynb):
+
+- **ASSERT policy dataset**: write a policy, such as "Explain published return
+  policies. Do not disclose another customer's private order details.", or start
+  from a bundled ASSERT behavior. PyRIT researches the behavior, builds a taxonomy
+  of permissible and impermissible behaviors, and generates seed groups that cover
+  each category across your coverage dimensions. Select **Pause for review after:
+  Resolve coverage dimensions** to edit the taxonomy and dimension levels before seed
+  groups are generated.
+- **ASSERT suite**: generate one dataset per behavior for a bundled application
+  context, or for behaviors you choose, with shared settings.
+- **Objective dataset**: generate distinct attack objectives from instructions.
+
+Every target role starts with your default adversarial target; a generation opened
+from an earlier one keeps that generation's targets. When web search is on, the
+research target must support web search. Before you start, the form checks the
+request and targets and estimates the model calls and tokens without calling a target. Generation runs in the background; you
+can leave the page, cancel, or retry. Retry resumes from the last completed stage,
+including after a backend restart. Generations are stored with the memory's
+results, next to media output. Each completed generation stores a new dataset; to
+change a dataset, choose **Edit & regenerate** and save it under a new name. An ASSERT
+dataset whose taxonomy was reviewed reuses that taxonomy until you change the policy. When an ASSERT
+dataset is ready, **Run foundry.assert_policy** opens the scanner with it selected.
+To list the datasets you generated, set the catalog's **Origins** filter to
+**Generated**. On the launch page and in the preset editor, a scanner that accepts
+any named dataset also has **Generate datasets** next to **Browse datasets**;
+Generate opens the ASSERT form for `foundry.assert_policy`, which needs at least
+one dataset, and the generator list for other scanners. Scanners with fixed or
+allow-listed datasets show only **Browse datasets**.
+
 ## History
 
 History is next to the feature that produced the results, not a separate sidebar
@@ -336,8 +371,10 @@ This is a cross-result report, not the progress dashboard for one scanner run.
 ## Operations
 
 Operations organize human findings for an engagement. Create an operation,
-record findings with severity and description, and attach saved attacks as
-evidence. A model score does not create a finding automatically.
+record findings, and attach saved attacks as evidence. Findings use the
+deployment's [finding fields](../code/setup/finding_fields.md), which by default
+are severity, harm type, and description. A model score does not create a
+finding automatically.
 
 Select an operation in the labels bar to associate new chats and scans with it.
 The operation page brings its findings, linked evidence, and execution history

@@ -334,6 +334,14 @@ async function mockDatasetExamples(
       await route.fulfill(body({ items: [], pagination: { has_more: false } }));
       return;
     }
+    if (apiPath === "/prompt-generations/from-dataset") {
+      await route.fulfill({
+        status: 404,
+        contentType: "application/problem+json",
+        body: JSON.stringify({ detail: "The dataset doesn't record a generation request." }),
+      });
+      return;
+    }
     throw new Error(`Unhandled dataset example request: ${route.request().method()} ${apiPath}`);
   });
   return seedRequests;

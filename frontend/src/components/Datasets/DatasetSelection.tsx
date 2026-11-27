@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { MessageBar, MessageBarBody, Spinner, Text } from '@fluentui/react-components'
 import { Link, useLocation, useSearchParams } from 'react-router'
 
+import RegenerateDatasetLink from '@/components/PromptGeneration/RegenerateDatasetLink'
 import { useLoadedDatasets } from '@/hooks/useLoadedDatasets'
 import { chatOriginFromNavigationState, selectionKeyFromSearchParams } from '@/utils/routeParams'
 
@@ -62,6 +63,9 @@ export default function DatasetSelection() {
           <div className={styles.summary}>
             <DatasetCard dataset={dataset} linked={false} />
           </div>
+          {dataset.loaded && (
+            <RegenerateDatasetLink key={dataset.selection_key} selectionKey={dataset.selection_key} />
+          )}
           {dataset.loaded ? <div className={styles.browser}>
             <SeedExampleBrowserView
               dataset={dataset}

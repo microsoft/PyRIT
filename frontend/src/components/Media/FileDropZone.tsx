@@ -12,7 +12,7 @@ interface FileDropZoneProps {
   children: ReactNode
   onFiles: (files: File[]) => void
   disabled?: boolean
-  disabledReason?: string
+  disabledReason?: string | undefined
   enabled?: boolean
   className?: string
   label?: string

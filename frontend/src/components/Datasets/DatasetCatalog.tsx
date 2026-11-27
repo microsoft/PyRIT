@@ -11,9 +11,10 @@ import {
   MessageBar,
   MessageBarBody,
 } from '@fluentui/react-components'
-import { SearchRegular } from '@fluentui/react-icons'
+import { SearchRegular, SparkleRegular } from '@fluentui/react-icons'
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
 
+import { newPromptGenerationRoutePath } from '@/components/PromptGeneration/promptGenerationRoutes'
 import { datasetOriginLabel } from '@/components/Scenarios/datasetPresentation'
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
 import { useLoadedDatasets } from '@/hooks/useLoadedDatasets'
@@ -116,11 +117,20 @@ export default function DatasetCatalog() {
         <div className={styles.headerText}>
           <Text id={titleId} as="h1" size={600} weight="semibold">Datasets</Text>
           {chatOrigin && <Button appearance="subtle" className={styles.touchTarget}
-            onClick={() => navigate(chatOrigin.path, { state: chatOrigin.state })}>Return to Chat</Button>}
+            onClick={() => { void navigate(chatOrigin.path, { state: chatOrigin.state }) }}>Return to Chat</Button>}
           <Text size={300} className={styles.subtitle}>
             Browse stored datasets and built-in providers. Search, filters, and sort stay in the address bar.
           </Text>
         </div>
+        <Button
+          className={styles.touchTarget}
+          appearance="primary"
+          icon={<SparkleRegular />}
+          onClick={() => { void navigate(newPromptGenerationRoutePath()) }}
+          data-testid="generate-dataset-btn"
+        >
+          Generate datasets
+        </Button>
       </div>
 
       <Text size={200}>

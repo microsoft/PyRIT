@@ -21,7 +21,7 @@ interface StatusBannerProps {
   text: string
   buttonText?: string
   buttonIcon?: React.ReactElement
-  onButtonClick?: () => void
+  onButtonClick?: (() => void) | undefined
   testId: string
   className: string
   textClassName: string
@@ -35,7 +35,8 @@ function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testI
       {icon}
       <Text className={textClassName} size={300}>{text}</Text>
       {onButtonClick && buttonText && (
-        <Button className={buttonClassName} appearance="primary" icon={buttonIcon}
+        <Button className={buttonClassName} appearance="primary"
+          {...(buttonIcon ? { icon: buttonIcon } : {})}
           onClick={onButtonClick} data-testid={buttonTestId}>{buttonText}</Button>
       )}
     </div>
@@ -44,10 +45,10 @@ function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testI
 
 interface TargetResolutionBannerProps {
   status: AttackTargetResolutionStatus
-  activeTarget?: TargetInstance | null
-  onRetry?: () => void
-  onConfigureTarget?: () => void
-  onUseAsTemplate?: () => void
+  activeTarget?: TargetInstance | null | undefined
+  onRetry?: (() => void) | undefined
+  onConfigureTarget?: (() => void) | undefined
+  onUseAsTemplate?: (() => void) | undefined
   styles: ReturnType<typeof usePromptEditorStyles>
 }
 
@@ -113,8 +114,8 @@ export interface ChatInputAreaHandle {
 interface ChatInputAreaProps {
   generationDraft?: RequestGenerationDraft
   onGenerationDraftChange?: (value: RequestGenerationDraft) => void
-  undoLastSend?: UndoLastSendAction
-  repeatDisabledReason?: string
+  undoLastSend?: UndoLastSendAction | undefined
+  repeatDisabledReason?: string | undefined
   onSend: (
     originalValue: string,
     convertedValue: string | undefined,
@@ -131,9 +132,9 @@ interface ChatInputAreaProps {
   operatorLocked?: boolean
   crossTargetLocked?: boolean
   targetResolutionStatus?: AttackTargetResolutionStatus
-  onRetryTargetResolution?: () => void
+  onRetryTargetResolution?: (() => void) | undefined
   onUseAsTemplate?: () => void
-  attackOperator?: string
+  attackOperator?: string | undefined
   onConfigureTarget?: () => void
   onBrowseSeedPrompts?: () => void
   onToggleConverterPanel: () => void

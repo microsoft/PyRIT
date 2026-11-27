@@ -313,6 +313,16 @@ class TestFactoryInit:
 
         assert not factory.can_append_request_converter(converter_type=TranslationConverter)
 
+    def test_can_append_request_converter_rejects_baked_value_that_is_not_a_converter_config(self):
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=PromptSendingAttack,
+            attack_kwargs={"attack_converter_config": {"request_converters": []}},
+        )
+
+        with pytest.raises(TypeError, match="attack_converter_config must be an AttackConverterConfig"):
+            factory.can_append_request_converter(converter_type=TranslationConverter)
+
     def test_request_converter_composition_requires_supported_constructor(self):
         class _NoConverterAttack(_StubAttack):
             def __init__(self, *, objective_target, attack_scoring_config=None):

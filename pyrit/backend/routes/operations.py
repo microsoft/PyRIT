@@ -17,6 +17,7 @@ from pyrit.backend.models.operations import (
     FindingListResponse,
     FindingOptionsResponse,
     FindingPathsUpdateRequest,
+    FindingResponse,
     FindingUpdateRequest,
     OperationCreateRequest,
     OperationDetail,
@@ -32,9 +33,11 @@ from pyrit.backend.services.operation_service import (
     OperationNotFoundError,
     OperationService,
 )
+from pyrit.common import print_deprecation_message
 from pyrit.memory.memory_interface import OperationInUseError
-from pyrit.models import Finding, Operation
+from pyrit.models import Finding, FindingFields, FindingValuesError, Operation
 from pyrit.models.harm_category import HarmCategory
+from pyrit.setup.finding_fields import get_active_finding_fields
 
 T = TypeVar("T")
 
@@ -69,15 +72,45 @@ async def list_operations_async() -> OperationListResponse:
     return OperationListResponse(items=await OperationService().list_async())
 
 
-@router.get("/finding-options", response_model=FindingOptionsResponse)
+@router.get("/finding-fields", response_model=FindingFields)
+async def get_finding_fields_async() -> FindingFields:
+    """
+    Read the finding fields this deployment uses. To show or edit an operation's findings, read that operation's
+    finding fields instead.
+
+    Returns:
+        FindingFields: The severity slot and the fields shown after it.
+    """
+    return get_active_finding_fields()
+
+
+# TODO(PyRIT 1.5): Remove this route.
+@router.get("/finding-options", response_model=FindingOptionsResponse, deprecated=True)
 async def get_finding_options_async() -> FindingOptionsResponse:
     """
-    List the harm categories a finding can use.
+    List the harm categories a finding could use in PyRIT 1.2. Read an operation's finding fields instead.
 
     Returns:
         FindingOptionsResponse: Selectable categories, including Other.
     """
+    print_deprecation_message(
+        old_item="GET /operations/finding-options",
+        new_item="GET /operations/{operation_id}/finding-fields",
+        removed_in="1.5.0",
+    )
     return FindingOptionsResponse(harm_types=list(HarmCategory))
+
+
+@router.get("/{operation_id}/finding-fields", response_model=FindingFields)
+async def get_operation_finding_fields_async(operation_id: UUID) -> FindingFields:
+    """
+    Read the finding fields that label and check an operation's findings.
+
+    Returns:
+        FindingFields: The severity slot and the fields shown after it.
+    """
+    await _require_operation_async(OperationService().get_async(operation_id))
+    return get_active_finding_fields()
 
 
 @router.get("/{operation_id}", response_model=OperationDetail)
@@ -130,19 +163,19 @@ async def delete_operation_async(operation_id: UUID) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/{operation_id}/findings", response_model=Finding, status_code=status.HTTP_201_CREATED)
+@router.post("/{operation_id}/findings", response_model=FindingResponse, status_code=status.HTTP_201_CREATED)
 async def create_operation_finding_async(*, operation_id: UUID, request: FindingCreateRequest) -> Finding:
     """
     Record a finding in an operation, optionally under a parent and with a saved attack result as evidence.
 
-    Retrying with the same ID and content returns the saved finding.
+    Retrying with the same ID and content returns the saved finding, as long as it still fits the active finding fields.
 
     Returns:
         Finding: The saved finding.
 
     Raises:
-        HTTPException: 404 when the parent is not in the operation, and 409 when the ID already belongs to a
-            different finding.
+        HTTPException: 404 when the parent is not in the operation, 409 when the ID already belongs to a different
+            finding, and 422 when the values do not fit the active finding fields.
     """
     try:
         return await _require_operation_async(
@@ -150,6 +183,8 @@ async def create_operation_finding_async(*, operation_id: UUID, request: Finding
         )
     except FindingConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except FindingValuesError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
 
 @router.get("/{operation_id}/findings", response_model=FindingListResponse)
@@ -222,13 +257,16 @@ async def export_operation_findings_async(*, operation_id: UUID, request: Findin
     )
 
 
-@router.put("/{operation_id}/findings/{finding_id}", response_model=Finding)
+@router.put("/{operation_id}/findings/{finding_id}", response_model=FindingResponse)
 async def update_operation_finding_async(
     *, operation_id: UUID, finding_id: UUID, request: FindingUpdateRequest
 ) -> Finding:
     """
-    Replace the editable fields of a finding in its operation, including its parent.
+    Replace a finding's current field values in its operation, including its parent.
 
+    A current field left out is cleared. Values of fields that are no longer configured are kept and can't
+    change; list them in ``remove_retired_keys`` to delete them. A value listed in ``keep_retired_keys`` is kept
+    even if its field is configured again. Values that haven't changed may use options that no longer exist.
     A finding moves with its sub-findings. Its paths are unchanged.
 
     Returns:
@@ -236,12 +274,14 @@ async def update_operation_finding_async(
 
     Raises:
         HTTPException: 409 when the finding would move while its parent's paths use it, or under itself or one of
-            its sub-findings.
+            its sub-findings, and 422 when the values do not fit the active finding fields.
     """
     try:
         return await _require_operation_async(
             OperationService().update_finding_async(operation_id=operation_id, finding_id=finding_id, request=request)
         )
+    except FindingValuesError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     except FindingConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 

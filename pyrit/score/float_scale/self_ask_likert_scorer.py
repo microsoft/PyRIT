@@ -33,6 +33,7 @@ from pyrit.score.system_prompt import _render_system_prompt_template
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
+    from typing import Self
 
     from pyrit.score.observation.execution import _ObservationEvidence
 
@@ -348,7 +349,7 @@ class SelfAskLikertScorer(MessageFloatScaleScorer):
         system_prompt_template: SeedPrompt | str | None = None,
         response_handler: ResponseHandler | None = None,
         validator: ScorerPromptValidator | None = None,
-    ) -> SelfAskLikertScorer:
+    ) -> Self:
         """
         Build a scorer whose system prompt, category and min/max are driven by a Likert scale.
 
