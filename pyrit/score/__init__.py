@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.strongreject_parser import parse_strongreject_response
     from pyrit.score.float_scale.strongreject_scorer import StrongRejectScorer, render_strongreject_prompt
     from pyrit.score.float_scale.system_prompt_extraction_scorer import SystemPromptExtractionScorer
+    from pyrit.score.float_scale.token_amplification_scorer import TokenAmplificationScorer
     from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.message_scorer import MessageScorer
@@ -410,6 +411,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "StrongRejectScorer": "pyrit.score.float_scale.strongreject_scorer",
     "SubStringScorer": "pyrit.score.true_false.substring_scorer",
     "SystemPromptExtractionScorer": "pyrit.score.float_scale.system_prompt_extraction_scorer",
+    "TokenAmplificationScorer": "pyrit.score.float_scale.token_amplification_scorer",
     "TrueFalseCompositeScorer": "pyrit.score.true_false.true_false_composite_scorer",
     "TrueFalseFallbackScorer": "pyrit.score.true_false.true_false_fallback_scorer",
     "TrueFalseInverterScorer": "pyrit.score.true_false.true_false_inverter_scorer",
