@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         AnswerMatches,
         Condition,
         ContentWritten,
+        DisclosesSecret,
         DivergesFromRepetition,
         MatchesObjective,
         OutputMatches,
@@ -71,6 +72,7 @@ if TYPE_CHECKING:
         UnvalidatedScore,
     )
     from pyrit.models.score.scorer_capabilities import ScorerCapabilities, ScorerCapabilityName
+    from pyrit.models.score.strongreject_answers import InvalidStrongRejectAnswersError, StrongRejectAnswers
     from pyrit.models.score.surface import SurfaceBaseline, SurfaceCoverage, SurfaceEntry, SurfaceMatch
     from pyrit.models.score.text_matcher import Contains, Equals, Regex, StartsWith, TextMatcher
     from pyrit.models.score.trace import (
@@ -106,10 +108,13 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ContentEntryScorable": "pyrit.models.score.scorable",
     "ContentScorable": "pyrit.models.score.scorable",
     "ContentWritten": "pyrit.models.score.condition",
+    "DisclosesSecret": "pyrit.models.score.condition",
     "DivergesFromRepetition": "pyrit.models.score.condition",
     "ExecutionStep": "pyrit.models.score.trace",
     "FloatFeedback": "pyrit.models.score.float_feedback",
     "InvalidFloatFeedbackError": "pyrit.models.score.float_feedback",
+    "InvalidStrongRejectAnswersError": "pyrit.models.score.strongreject_answers",
+    "StrongRejectAnswers": "pyrit.models.score.strongreject_answers",
     "ExecutionStepKind": "pyrit.models.score.trace",
     "ExecutionTraceObservationPayload": "pyrit.models.score.observation",
     "ScorerTargetResponsePayload": "pyrit.models.score.observation",

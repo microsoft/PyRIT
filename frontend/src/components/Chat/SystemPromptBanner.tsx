@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { Button, Caption1, Text, mergeClasses } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
 import { useSystemPromptBannerStyles } from './SystemPromptBanner.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 interface SystemPromptBannerProps {
   content: string
@@ -43,7 +44,7 @@ export default function SystemPromptBanner({ content }: SystemPromptBannerProps)
         <Caption1 className={styles.label}>System Prompt</Caption1>
       )}
       <Text
-        ref={contentRef}
+        ref={fluentRef(contentRef)}
         className={mergeClasses(styles.content, expanded ? styles.contentExpanded : styles.contentCollapsed)}
         data-testid="system-prompt-banner-content"
       >

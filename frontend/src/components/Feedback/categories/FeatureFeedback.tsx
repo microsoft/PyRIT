@@ -35,7 +35,7 @@ export function FeatureFeedback({
       <Field
         label="Describe the solution you'd like"
         required
-        validationMessage={primaryTooShort ? tooShortMessage : undefined}
+        validationMessage={primaryTooShort ? tooShortMessage : null}
         validationState={primaryTooShort ? 'warning' : 'none'}
       >
         <Textarea
