@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import uuid
 from string import Formatter
 from typing import TYPE_CHECKING, cast
@@ -16,6 +17,7 @@ from pyrit.exceptions import (
     InvalidJsonException,
     ScorerLLMResponseBlockedException,
     pyrit_json_retry,
+    remove_markdown_json,
 )
 from pyrit.models import (
     Acquisition,
@@ -52,6 +54,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_MAX_DECODED_VERDICT_LENGTH = 2048
+_MAX_DECODED_CHARACTERS = 1_000_000
+_MAX_DECODE_ATTEMPTS = 20_000
+_MAX_UNESCAPE_DEPTH = 2
+_JSON_SIMPLE_ESCAPES = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+_JSON_ESCAPE = re.compile(r'\\(?:u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|["\\/bfnrt])')
+
 
 def _format_string_references_message_piece(template: str | None) -> bool:
     """
@@ -69,6 +78,113 @@ def _format_string_references_message_piece(template: str | None) -> bool:
                 return True
         if format_spec and _format_string_references_message_piece(format_spec):
             return True
+    return False
+
+
+def _decode_json_escape(match: re.Match[str]) -> str:
+    """
+    Decode one JSON string escape sequence.
+
+    Returns:
+        str: The character or surrogate pair the escape stands for.
+    """
+    escape = match.group(0)
+    simple = _JSON_SIMPLE_ESCAPES.get(escape[1])
+    if simple is not None:
+        return simple
+    code_point = int(escape[2:6], 16)
+    if len(escape) == 12:
+        code_point = 0x10000 + ((code_point - 0xD800) << 10) + (int(escape[8:12], 16) - 0xDC00)
+    return chr(code_point)
+
+
+def _judgment_repeats_scored_text(*, response_text: str, scored_text: str) -> bool:
+    """
+    Check whether the JSON verdict read from a judge reply was copied from the scored text.
+
+    The scored text is the target's output, so a JSON object it contains is not the judge's own
+    verdict. When the judge quotes such an object and its own verdict does not decode, the quoted
+    object is the only JSON in the reply and would otherwise be read as the verdict. The scored
+    text is searched as written and with JSON string escapes undone up to ``_MAX_UNESCAPE_DEPTH``
+    times, so an object carried inside a JSON string is found as well. The verdict counts as
+    copied when it appears in one of these texts ignoring whitespace, or when one of them holds
+    a JSON object equal to it, with the same keys and value types in any order. The second
+    search stops after ``_MAX_DECODED_CHARACTERS`` decoded characters or
+    ``_MAX_DECODE_ATTEMPTS`` attempts per text, and is skipped for verdicts longer than
+    ``_MAX_DECODED_VERDICT_LENGTH`` characters.
+
+    A copied verdict is rejected and the judge is asked again. If the judge returns a copied
+    verdict on every attempt, scoring fails and no score is stored, rather than storing an object
+    taken from the target's output.
+
+    Returns:
+        bool: True when the verdict is found in ``scored_text``.
+    """
+    verdict_text = remove_markdown_json(response_text)
+    try:
+        verdict = json.loads(verdict_text)
+    except (ValueError, RecursionError):
+        return False
+    if not isinstance(verdict, dict):
+        return False
+    texts = [scored_text]
+    for _ in range(_MAX_UNESCAPE_DEPTH):
+        unescaped = _JSON_ESCAPE.sub(_decode_json_escape, texts[-1])
+        if unescaped == texts[-1]:
+            break
+        texts.append(unescaped)
+    compact_verdict = "".join(verdict_text.split())
+    if any(compact_verdict in "".join(text.split()) for text in texts):
+        return True
+    if len(verdict_text) > _MAX_DECODED_VERDICT_LENGTH:
+        return False
+    canonical = json.dumps(verdict, sort_keys=True)
+    max_object_length = 6 * len(verdict_text) + 256
+    return any(
+        _contains_equal_object(text=text, canonical=canonical, max_object_length=max_object_length) for text in texts
+    )
+
+
+def _contains_equal_object(*, text: str, canonical: str, max_object_length: int) -> bool:
+    """
+    Search ``text`` for a JSON object whose canonical form is ``canonical``.
+
+    Each JSON object found in ``text`` is decoded once, from a slice of at most
+    ``max_object_length`` characters, and the objects nested in it are compared.
+
+    Returns:
+        bool: True when an equal object is found within the decoding budget.
+    """
+    decoder = json.JSONDecoder()
+    characters = 0
+    attempts = 0
+    start = text.find("{")
+    while start != -1:
+        attempts += 1
+        if attempts > _MAX_DECODE_ATTEMPTS or characters > _MAX_DECODED_CHARACTERS:
+            return False
+        window = text[start : start + max_object_length]
+        try:
+            value, end = decoder.raw_decode(window)
+        except json.JSONDecodeError as error:
+            characters += error.pos + 1
+            start = text.find("{", start + 1)
+            continue
+        except (ValueError, RecursionError):
+            characters += len(window)
+            start = text.find("{", start + 1)
+            continue
+        characters += end
+        nodes = [value]
+        while nodes:
+            node = nodes.pop()
+            if isinstance(node, dict):
+                if json.dumps(node, sort_keys=True) == canonical:
+                    return True
+                nodes.extend(node.values())
+            elif isinstance(node, list):
+                nodes.extend(node)
+        start = text.find("{", start + end)
     return False
 
 
@@ -126,8 +242,9 @@ async def _run_llm_scoring_async(
             an empty text piece, which fails JSON parsing and is therefore retried and, if still
             empty, ultimately raised as ``InvalidJsonException``.
         InvalidJsonException: If the response is not valid JSON, is missing required keys, or
-            fails the handler's value validation. This also covers an empty text reply (normalized
-            to ``""``), which is retried before being surfaced here.
+            fails the handler's value validation, or if its verdict was copied from the scored
+            content. This also covers an empty text reply (normalized to ``""``), which is retried
+            before being surfaced here.
         TypeError: If the active scorable cannot be persisted on an observation.
         RuntimeError: If the transport returns no terminal response.
         Exception: For other unexpected errors during scoring.
@@ -236,6 +353,26 @@ async def _run_llm_scoring_async(
                 message=(
                     "The scorer's LLM response contained no text to parse while scoring "
                     f"prompt ID: {request.scored_prompt_id}."
+                )
+            )
+
+        scored_piece = request.scored_message_piece
+        if (
+            response_handler.json_response_config.enabled
+            and scored_piece is not None
+            and scored_piece.converted_value_data_type == "text"
+            and _judgment_repeats_scored_text(
+                response_text=text_piece.converted_value, scored_text=scored_piece.converted_value
+            )
+        ):
+            logger.warning(
+                "The judge's verdict for scored prompt %s was copied from the scored content.",
+                request.scored_prompt_id,
+            )
+            raise InvalidJsonException(
+                message=(
+                    "Invalid JSON response, the verdict was copied from the scored content: "
+                    f"{text_piece.converted_value}"
                 )
             )
 
