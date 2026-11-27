@@ -379,7 +379,7 @@ async def test_get_tools_async_discovers_all_pages() -> None:
     assert session.list_tools.call_args_list[1].kwargs["params"].cursor == "page-2"
 
 
-async def test_get_tools_async_maps_mcp_names_to_valid_tool_names() -> None:
+async def test_get_tools_maps_mcp_names_to_valid_tool_names_async() -> None:
     tool_names_by_mcp_name = {
         "get_note": "get_note",
         "a" * 64: "a" * 64,
@@ -395,7 +395,7 @@ async def test_get_tools_async_maps_mcp_names_to_valid_tool_names() -> None:
     assert [tool.name for tool in tools] == list(tool_names_by_mcp_name.values())
 
 
-async def test_get_tools_async_rejects_mcp_names_that_map_to_one_tool_name() -> None:
+async def test_get_tools_rejects_mcp_names_that_map_to_one_tool_name_async() -> None:
     provider = _http_provider()
     provider._tools = [
         Tool(name="notes_search", input_schema={"type": "object"}),
@@ -631,7 +631,7 @@ async def test_openai_response_target_uses_mcp_tools(patch_central_database) -> 
     assert output.invoked is True
 
 
-async def test_openai_response_target_calls_mapped_mcp_tool_by_mcp_name(patch_central_database) -> None:
+async def test_openai_response_target_calls_mapped_mcp_tool_by_mcp_name_async(patch_central_database: None) -> None:
     provider = _http_provider()
     provider._tools = [
         Tool(name="get_note", input_schema={"type": "object"}),
@@ -641,10 +641,10 @@ async def test_openai_response_target_calls_mapped_mcp_tool_by_mcp_name(patch_ce
     session.call_tool = AsyncMock(return_value=CallToolResult(content=[]))
 
     @asynccontextmanager
-    async def create_session():
+    async def create_session_async() -> AsyncGenerator[MagicMock, None]:
         yield session
 
-    provider._create_session_async = create_session  # type: ignore[method-assign]
+    provider._create_session_async = create_session_async  # type: ignore[method-assign]
     target = OpenAIResponseTarget(
         model_name="gpt-4",
         endpoint="https://mock.azure.com",

@@ -86,6 +86,15 @@ await output_attack_async(result)
 # and stops the notes server within each target send, including on failure.
 # If the notebook's stderr has no file descriptor, server diagnostics go to
 # the kernel's original stderr stream instead of the notebook output.
+#
+# MCP allows tool names that function tools reject, such as `notes.search` or
+# names longer than 64 characters. The provider advertises such a tool with `_`
+# in place of each character outside `[A-Za-z0-9_-]`, shortens a name that is
+# still too long with a hash, and calls the server with the original MCP name.
+# Stored conversations therefore record the advertised name (`notes_search`),
+# so `MessageToolCallScorer` conditions use it, while spans the MCP server emits
+# carry the name it received (`notes.search`), which `OtelToolCallScorer`
+# conditions use.
 
 # %%
 import os
