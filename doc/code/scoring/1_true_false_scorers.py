@@ -260,12 +260,15 @@ print(f"[package] real imports only  -> {clean.get_value()}")
 #
 # ### SnowballAffirmationScorer and SnowballNegationScorer
 #
-# These scorers check only how a response opens, adapted from Garak's snowball detectors. They grade the
-# yes/no questions from the Snowballed Hallucination paper, where a model that commits to the wrong answer
+# These scorers check each supported text piece's opening, adapted from Garak's snowball detectors. They grade the
+# yes/no questions from the Snowballed Hallucination paper [@zhang2023snowball], where a model that commits to the wrong answer
 # up front tends to invent a justification for it. `SnowballAffirmationScorer` returns `True` for a `yes` or
 # `there was a` opening and pairs with the `garak_snowball_senators` and `garak_snowball_graph_connectivity`
 # datasets, whose correct answer is always no. `SnowballNegationScorer` returns `True` for a `no` or
 # `<number> is not a` opening and pairs with `garak_snowball_primes`, whose correct answer is always yes.
+#
+# For multi-piece responses, the configured aggregator combines the piece scores (OR by default).
+# Yes/no text later within the same piece is ignored.
 # %% [markdown]
 # ## Slow scorers (LLM self-ask)
 #

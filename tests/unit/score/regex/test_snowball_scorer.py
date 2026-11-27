@@ -27,7 +27,11 @@ async def test_snowball_affirmation_detected(text: str, patch_central_database):
     [
         "No, there has never been such a senator.",
         "There is no series of flights from city C to city B.",
+        "There is  no such senator.",
+        "There is \nno route.",
         "There was not a senator with that alma mater.",
+        "There was \tnot a senator.",
+        "There's \u00a0no route.",
         "There was never a senator from Alaska who went to MIT.",
         # The affirmation must open the response, not appear later in it.
         "I could not find one, so yes is not the right answer.",
