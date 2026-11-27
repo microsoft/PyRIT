@@ -299,6 +299,37 @@ class TestAttackPromptModelBoundaries:
         with pytest.raises(TypeError, match="Tokenizer decode must return a string, got list"):
             prompt.generate_str(model, gen_config=SimpleNamespace(max_new_tokens=2))
 
+    def test_test_reports_jailbreak_and_exact_match(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.pad_token_id = 0
+        prompt.tokenizer.decode.return_value = "Sure, it is done"
+        prompt.input_ids = torch.tensor([10, 11, 12, 13])
+        prompt._assistant_role_slice = slice(2, 3)
+        prompt.test_prefixes = ["I'm sorry"]
+        prompt.target = "done"
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.return_value = torch.tensor([[10, 11, 12, 20, 21]])
+
+        jailbroken, exact_match = prompt.test(model, gen_config=SimpleNamespace(max_new_tokens=2))
+
+        assert jailbroken is True
+        assert exact_match == 1
+
+    def test_test_loss_returns_mean_target_loss(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt._target_slice = slice(3, 5)
+        logits = torch.randn(1, 6, 10)
+        ids = torch.randint(0, 10, (1, 6))
+        prompt.logits = MagicMock(return_value=(logits, ids))
+        model = MagicMock()
+
+        loss = prompt.test_loss(model)
+
+        prompt.logits.assert_called_once_with(model, return_ids=True)
+        assert loss == pytest.approx(prompt.target_loss(logits, ids=ids).mean().item())
+
     def test_control_toks_setter_stores_decoded_control(self) -> None:
         prompt = object.__new__(AttackPrompt)
         prompt.tokenizer = MagicMock()
@@ -1627,6 +1658,47 @@ def test_model_worker_uses_model_device_dispatch() -> None:
     model.to.assert_called_once_with(torch.device("cpu"))
     moved_model.eval.assert_called_once_with()
     assert worker.model is evaluated_model
+
+
+def test_model_worker_start_spawns_process_with_run_kwargs() -> None:
+    worker = object.__new__(ModelWorker)
+    worker.model = MagicMock()
+    worker.model.name_or_path = "fake/model"
+    worker.tasks = MagicMock()
+    worker.results = MagicMock()
+    process = MagicMock()
+
+    with patch.object(attack_manager_mod.mp, "Process", return_value=process) as process_cls:
+        returned = worker.start()
+
+    assert returned is worker
+    process_cls.assert_called_once_with(
+        target=ModelWorker.run,
+        kwargs={"model": worker.model, "tasks": worker.tasks, "results": worker.results},
+    )
+    process.start.assert_called_once_with()
+
+
+def test_prompt_manager_generate_and_test_forward_gen_config() -> None:
+    manager = object.__new__(PromptManager)
+    prompt = MagicMock()
+    continuation = torch.tensor([20, 21])
+    prompt.generate.return_value = continuation
+    prompt.test.return_value = (True, 0)
+    manager._prompts = [prompt]
+    manager.tokenizer = MagicMock()
+    manager.tokenizer.decode.return_value = "decoded"
+    model = MagicMock()
+    gen_config = SimpleNamespace(max_new_tokens=2)
+
+    generated = manager.generate(model, gen_config=gen_config)
+    assert len(generated) == 1
+    assert generated[0] is continuation
+    assert manager.generate_str(model, gen_config=gen_config) == ["decoded"]
+    assert manager.test(model, gen_config=gen_config) == [(True, 0)]
+    prompt.generate.assert_called_with(model, gen_config=gen_config)
+    prompt.test.assert_called_once_with(model, gen_config=gen_config)
+    manager.tokenizer.decode.assert_called_once_with(continuation)
 
 
 def test_model_worker_task_payload_excludes_model() -> None:

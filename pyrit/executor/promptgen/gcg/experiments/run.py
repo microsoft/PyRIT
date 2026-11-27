@@ -115,6 +115,6 @@ async def _main_async(*, config_path: str, data_path: str, output_dir: str | Non
     )
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - AzureML job entry point
     args = _parse_arguments()
     asyncio.run(_main_async(config_path=args.config, data_path=args.data, output_dir=args.output_dir))
