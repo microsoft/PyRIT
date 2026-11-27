@@ -15,6 +15,7 @@ from pyrit.converter import (
     ColumnarTranspositionConverter,
     PigpenConverter,
     SearchReplaceConverter,
+    TapCodeConverter,
 )
 from pyrit.executor.attack import (
     AttackConverterConfig,
@@ -518,6 +519,56 @@ class TestEncodingAtomicNameUniqueness:
             result = await row_converters[0].convert_async(prompt="cat")
             # c, a, t written independently from the key: └ ┘ ▷
             assert result.output_text == "└┘▷"
+
+    async def test_tap_code_technique_builds_registered_row(
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
+    ):
+        """Selecting TapCode must register a row that applies TapCodeConverter.
+
+        This exercises the registered ``tap_code`` row end to end, so a deleted or misnamed row in
+        ``_converter_variants()`` is caught: such a regression leaves the enum intact while the
+        technique builds no attacks.
+        """
+        from unittest.mock import patch
+
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_attack_seed_groups},
+        ):
+            scenario = Encoding(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                    "scenario_techniques": [EncodingTechnique.TapCode],
+                }
+            )
+            await scenario.initialize_async()
+
+            attacks = scenario._get_converter_attacks(
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+            )
+
+            assert attacks, "tap_code technique built no attacks"
+            assert all(aa.display_group == "tap_code" for aa in attacks)
+            names = {aa.atomic_attack_name for aa in attacks}
+            assert "tap_code_raw" in names, "missing raw variant"
+            assert any(n != "tap_code_raw" for n in names), "missing decode variant"
+
+            # The registered row applies TapCodeConverter and encodes to tap sequences.
+            raw = next(aa for aa in attacks if aa.atomic_attack_name == "tap_code_raw")
+            row_converters = [
+                conv
+                for config in raw.attack_technique.attack.get_request_converters()
+                for conv in config.converters
+                if isinstance(conv, TapCodeConverter)
+            ]
+            assert row_converters, "tap_code row applies no TapCodeConverter"
+            result = await row_converters[0].convert_async(prompt="cat")
+            # c=(1,3), a=(1,1), t=(4,4), letters separated by a double space.
+            assert result.output_text == ". ...  . .  .... ...."
 
     async def test_memory_labels_propagate_to_atomic_attacks(
         self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups
