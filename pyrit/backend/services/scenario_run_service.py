@@ -2193,9 +2193,7 @@ class ScenarioRunService:
             scenario_registry_name=plan.scenario_registry_name if plan else None,
             scenario_version=scenario_result.scenario_version,
             status=status,
-            dataset_preparation_pending=self._dataset_preparation_pending(
-                metadata=scenario_result.metadata, scenario_result_id=scenario_result_id
-            ),
+            dataset_preparation_pending=ScenarioDatasetPreparation.is_pending(metadata=scenario_result.metadata),
             created_at=scenario_result.creation_time,
             started_at=self._load_started_at(scenario_result=scenario_result),
             updated_at=updated_at,
@@ -2277,42 +2275,22 @@ class ScenarioRunService:
             return None
 
     @staticmethod
-    def _dataset_preparation_pending(*, metadata: dict[str, Any], scenario_result_id: str) -> bool:
-        """
-        Read whether a run has not finished preparing its datasets, for display.
-
-        Returns:
-            bool: True if the run recorded pending preparation; False if it recorded none
-                or its stored state is malformed. Resume still rejects a malformed state.
-        """
-        try:
-            return ScenarioDatasetPreparation.is_pending(metadata=metadata)
-        except ValueError:
-            logger.warning(
-                "Scenario run %s has malformed dataset-preparation metadata; treating it as prepared.",
-                scenario_result_id,
-            )
-            return False
-
-    @classmethod
-    def _history_dataset_preparation_pending(cls, *, record: ScenarioHistoryRunRecord) -> bool:
+    def _history_dataset_preparation_pending(*, record: ScenarioHistoryRunRecord) -> bool:
         """
         Read whether one history row's run has not finished preparing its datasets.
 
         Returns:
-            bool: True if the run recorded pending preparation; False if it recorded none
-                or its stored state is malformed.
+            bool: True if the run recorded pending preparation; False if it recorded none.
+
+        Raises:
+            ValueError: If the stored state is malformed or its projected text is not JSON.
         """
         stored = record.dataset_preparation
         if stored is None:
             return False
         if isinstance(stored, str):
-            with contextlib.suppress(json.JSONDecodeError):
-                stored = json.loads(stored)
-        return cls._dataset_preparation_pending(
-            metadata={ScenarioDatasetPreparation.METADATA_KEY: stored},
-            scenario_result_id=record.scenario_result_id,
-        )
+            stored = json.loads(stored)
+        return ScenarioDatasetPreparation.is_pending(metadata={ScenarioDatasetPreparation.METADATA_KEY: stored})
 
     async def _recount_with_sdk_statistics_async(
         self,
@@ -3030,9 +3008,7 @@ class ScenarioRunService:
         if header_result is None:
             return None
 
-        preparing = self._dataset_preparation_pending(
-            metadata=header_result.metadata, scenario_result_id=scenario_result_id
-        )
+        preparing = ScenarioDatasetPreparation.is_pending(metadata=header_result.metadata)
         try:
             plan = self._load_run_plan(scenario_result=header_result)
         except (ValidationError, ValueError):
