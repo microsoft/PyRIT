@@ -30,15 +30,40 @@ export const usePromptEditorStyles = makeStyles({
     position: 'relative',
   },
   seedInspiration: {
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: '100%',
+    whiteSpace: 'normal',
+    textAlign: 'left',
+    fontWeight: tokens.fontWeightRegular,
+    color: tokens.colorNeutralForeground2,
+    ...mobileTouchTarget,
+  },
+  seedPromptLink: {
+    color: tokens.colorBrandForegroundLink,
+    textDecorationLine: 'underline',
+    textUnderlineOffset: '0.15em',
+    ':hover': {
+      color: tokens.colorBrandForegroundLinkHover,
+    },
+    ':active': {
+      color: tokens.colorBrandForegroundLinkPressed,
+    },
+  },
+  seedPromptActions: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: tokens.spacingHorizontalM,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: tokens.colorNeutralBackground3,
+    justifyContent: 'center',
+    columnGap: tokens.spacingHorizontalS,
+  },
+  clippy: {
+    flexShrink: 0,
+    color: tokens.colorBrandForegroundLink,
+  },
+  clippyEye: {
+    fill: tokens.colorNeutralBackground1,
+    stroke: 'currentColor',
+    strokeWidth: '1.5',
   },
   disabledComposerOverlay: {
     position: 'absolute',

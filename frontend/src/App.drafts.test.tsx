@@ -2,7 +2,7 @@ import { StrictMode, type ReactNode } from 'react'
 
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
-import { createMemoryRouter, MemoryRouter } from 'react-router'
+import { createMemoryRouter, MemoryRouter, type InitialEntry } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 
 import { attacksApi, convertersApi, datasetsApi, runtimeApi, targetsApi } from '@/services/api'
@@ -315,7 +315,7 @@ function savedMessages(request: SaveConversationRequest): BackendMessage[] {
   }))
 }
 
-function renderChat(path = '/attack/chat', strict = false): ReturnType<typeof render> {
+function renderChat(path: InitialEntry = '/attack/chat', strict = false): ReturnType<typeof render> {
   const router = createMemoryRouter([{ path: '*', element: <App /> }], { initialEntries: [path] })
   const app = <RouterProvider router={router} />
   return render(strict ? <StrictMode>{app}</StrictMode> : app)
@@ -1373,6 +1373,69 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith(url)
   })
 
+  it.each<[InitialEntry, string]>([
+    ['/datasets/detail?selection_key=example-dataset', 'Example dataset'],
+    ['/datasets/detail?selection_key=missing', 'Dataset not found'],
+    ['/datasets/detail', 'Dataset not found'],
+    [{
+      pathname: '/datasets/detail', search: '?selection_key=example-dataset',
+      state: { catalogPath: 'https://evil.example/datasets' },
+    }, 'Example dataset'],
+  ])('should open the catalog from directly entered dataset detail %s', async (path: InitialEntry, heading: string) => {
+    const user = userEvent.setup()
+    renderChat(path)
+    await screen.findByRole('heading', { name: heading })
+    expect(screen.queryByRole('link', { name: 'Back to datasets' })).not.toBeInTheDocument()
+
+    await visitDatasets(user)
+
+    expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/datasets$/)
+    expect(screen.getByRole('link', { name: 'Example dataset' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Return to Chat' })).not.toBeInTheDocument()
+  })
+
+  it('should preserve catalog filters and the Chat draft when Datasets returns from detail', async () => {
+    const user = userEvent.setup()
+    renderChat()
+    await user.type(await screen.findByPlaceholderText('Type prompt here'), 'Keep my browsing draft')
+    await user.click(screen.getByRole('button', { name: 'Need inspiration? Browse seed prompts' }))
+    await user.type(await screen.findByRole('textbox', { name: 'Search datasets' }), 'Example')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Dataset view' }), 'available')
+    await user.click(screen.getByRole('link', { name: 'Example dataset', exact: true }))
+    await screen.findByRole('heading', { name: 'Example dataset' })
+
+    await visitDatasets(user)
+
+    expect(screen.getByRole('textbox', { name: 'Search datasets' })).toHaveValue('Example')
+    expect(screen.getByRole('combobox', { name: 'Dataset view' })).toHaveValue('available')
+    await user.click(screen.getByRole('button', { name: 'Return to Chat', exact: true }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Keep my browsing draft'))
+  })
+
+  it('should restore dataset detail and paging when entering from another workspace', async () => {
+    const user = userEvent.setup()
+    render(<MemoryRouter initialEntries={[{
+      pathname: '/datasets/detail', search: '?selection_key=example-dataset&cursor=page-2',
+      state: {
+        catalogPath: '/datasets?q=example&sort=name', seedCursors: [null], cursorGeneration: '',
+        chatOrigin: { path: '/attack/chat', attackId: null, conversationId: null },
+      },
+    }]}><App /></MemoryRouter>)
+    await screen.findByRole('heading', { name: 'Example dataset' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Previous page' })).toBeEnabled())
+    expect(screen.getByRole('link', { name: 'Return to Chat' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Home', exact: true }))
+    await screen.findByRole('heading', { name: 'Home' })
+
+    await user.click(screen.getByRole('button', { name: 'Datasets', exact: true }))
+
+    await screen.findByRole('heading', { name: 'Example dataset' })
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeEnabled()
+    expect(screen.queryByRole('link', { name: 'Return to Chat' })).not.toBeInTheDocument()
+    await visitDatasets(user)
+    expect(screen.getByRole('textbox', { name: 'Search datasets' })).toHaveValue('example')
+  })
+
   it('should retain dataset return state and cursor history across the round trip', async () => {
     const user = userEvent.setup()
     render(<MemoryRouter initialEntries={[{
@@ -1384,7 +1447,7 @@ describe('App draft handoff with the real chat and composer', () => {
     await returnToChat(user)
     await user.click(screen.getByRole('button', { name: 'Datasets', exact: true }))
     await screen.findByRole('heading', { name: 'Example dataset' })
-    expect(screen.getByRole('link', { name: 'Back to datasets' })).toHaveAttribute('href', '/datasets?q=example&sort=name')
+    expect(screen.queryByRole('link', { name: 'Back to datasets' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Previous page' })).toBeEnabled()
   })
 

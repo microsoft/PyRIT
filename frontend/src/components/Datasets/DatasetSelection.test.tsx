@@ -255,7 +255,7 @@ describe('DatasetSelection', () => {
     renderSelection('/datasets/detail')
 
     expect(await screen.findByRole('heading', { name: 'Dataset not found' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Back to datasets' })).toHaveAttribute('href', '/datasets')
+    expect(screen.queryByRole('link', { name: 'Back to datasets' })).not.toBeInTheDocument()
     expect(seedCalls()).toEqual([])
   })
 
@@ -272,22 +272,11 @@ describe('DatasetSelection', () => {
     expect(screen.queryByText('Catalog unavailable')).not.toBeInTheDocument()
   })
 
-  it('returns to the catalog from the back link', async () => {
-    const user = userEvent.setup()
+  it('does not show a redundant catalog back link on dataset detail', async () => {
     renderSelection(datasetDetailPath(LOADED.selection_key))
     await screen.findByRole('heading', { level: 1, name: 'harmbench' })
 
-    expect(screen.getByRole('link', { name: 'Back to datasets' })).toHaveAttribute('href', '/datasets')
-    await user.click(screen.getByRole('link', { name: 'Back to datasets' }))
-    expect(await screen.findByText('Catalog')).toBeInTheDocument()
-  })
-
-  it('ignores a return path that is not the datasets catalog', async () => {
-    renderSelection(datasetDetailPath(LOADED.selection_key), {
-      catalogPath: 'https://evil.example/datasets?q=policy',
-    })
-
-    expect(await screen.findByRole('link', { name: 'Back to datasets' })).toHaveAttribute('href', '/datasets')
+    expect(screen.queryByRole('link', { name: 'Back to datasets' })).not.toBeInTheDocument()
   })
 
   it('offers a return to the originating chat and carries its route state', async () => {

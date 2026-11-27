@@ -236,8 +236,10 @@ The visible example page and open detail also check for stored changes each minu
 using the same filters and page cursor. Transient background errors keep the
 previously loaded content visible with an error message until a check succeeds.
 Deleted examples and invalid page cursors still show their explicit recovery state.
-**Back to datasets** returns to the catalog search, facets, and sort you came
-from. A direct link without that return state goes to `/datasets`.
+From dataset detail, the sidebar's **Datasets** action returns to the catalog search,
+facets, and sort you came from, or `/datasets` for a direct link. Entering Datasets from
+another workspace restores the last dataset view and its paging. When entered from Chat,
+**Return to Chat** returns to the originating draft or saved conversation.
 On narrow screens, scroll the example table horizontally to read its columns.
 Expanded details stack each label above its stored value.
 

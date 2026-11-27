@@ -223,7 +223,7 @@ describe('DatasetCatalog', () => {
     await screen.findByRole('heading', { level: 1, name: 'harmbench' })
     // Runtime binding writes navigation state on mount, before any interaction.
     await waitFor(() => expect(screen.getByRole('link', { name: 'Return to Chat' })).toBeInTheDocument())
-    await user.click(screen.getByRole('link', { name: 'Back to datasets' }))
+    await user.click(screen.getByRole('button', { name: 'History back' }))
     expect(screen.getByRole('textbox', { name: 'Search datasets' })).toHaveValue('harmbench')
     await user.click(screen.getByRole('button', { name: 'Return to Chat' }))
     expect(currentUrl().pathname).toBe('/attack/chat')
@@ -266,8 +266,8 @@ describe('DatasetCatalog', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Dataset view' }), 'available')
     await user.click(await screen.findByRole('link', { name: 'unloaded' }))
     expect(await screen.findByText("This provider's dataset has not been loaded into memory.")).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Back to datasets' })).toHaveAttribute('href', '/datasets?view=available')
-    await user.click(screen.getByRole('link', { name: 'Back to datasets' }))
+    expect(screen.queryByRole('link', { name: 'Back to datasets' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'History back' }))
     expect(await screen.findByRole('link', { name: 'unloaded' })).toBeInTheDocument()
     expect(currentUrl().searchParams.get('view')).toBe('available')
     expect(mockGet.mock.calls.filter((call) => String(call[0]).startsWith('/datasets/seeds'))).toHaveLength(0)
@@ -291,7 +291,14 @@ describe('DatasetCatalog', () => {
     await user.click(await screen.findByRole('link', { name: 'harmbench' }))
     await user.click(await screen.findByRole('button', { name: 'Next page' }))
     expect(await screen.findByText('Page 2')).toBeVisible()
-    await user.click(screen.getByRole('link', { name: 'Back to datasets' }))
+    await user.click(screen.getByRole('button', { name: 'History back' }))
+    expect(await screen.findByText('Page 1')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'History forward' }))
+    expect(await screen.findByText('Page 2')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'History back' }))
+    expect(await screen.findByText('Page 1')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'History back' }))
     await user.click(await screen.findByRole('link', { name: '(unnamed)' }))
     expect(await screen.findByText('Page 1')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled()
@@ -300,13 +307,6 @@ describe('DatasetCatalog', () => {
       call[0] === '/datasets/seeds' && call[1]?.params?.selection_key === UNNAMED.selection_key)
     expect(otherDatasetCalls.length).toBeGreaterThan(0)
     for (const call of otherDatasetCalls) expect(call[1]?.params?.cursor).toBeUndefined()
-    await user.click(screen.getByRole('button', { name: 'History back' }))
-    await screen.findByRole('heading', { name: 'Datasets' })
-    await user.click(screen.getByRole('button', { name: 'History back' }))
-    expect(await screen.findByText('Page 2')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Previous page' })).toBeEnabled()
-    await user.click(screen.getByRole('button', { name: 'Previous page' }))
-    expect(await screen.findByText('Page 1')).toBeVisible()
   })
 
   it('opens the generator chooser from the catalog header', async () => {
@@ -512,7 +512,7 @@ describe('DatasetCatalog', () => {
     expect(currentUrl().search).toBe('')
   })
 
-  it('keeps catalog filters when the back link returns from a card', async () => {
+  it('keeps catalog filters when browser history returns from a card', async () => {
     const user = userEvent.setup()
     mockCatalog([
       makeDataset({
@@ -525,12 +525,9 @@ describe('DatasetCatalog', () => {
 
     await user.click(await screen.findByRole('link', { name: 'policy bench' }))
     expect(await screen.findByRole('heading', { level: 1, name: 'policy bench' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Back to datasets' })).toHaveAttribute(
-      'href',
-      '/datasets?q=policy&modality=text&sort=logical_examples_desc',
-    )
+    expect(screen.queryByRole('link', { name: 'Back to datasets' })).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('link', { name: 'Back to datasets' }))
+    await user.click(screen.getByRole('button', { name: 'History back' }))
 
     expect(await screen.findByRole('link', { name: 'policy bench' })).toBeInTheDocument()
     expect(currentUrl().pathname).toBe('/datasets')

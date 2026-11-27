@@ -108,7 +108,8 @@ test.describe("dataset examples against the real backend @seeded", () => {
           .screenshot({ path: testInfo.outputPath("provider-metadata.png") });
         await page.screenshot({ path: testInfo.outputPath("provider-description.png"), fullPage: true });
 
-        await page.getByRole("link", { name: "Back to datasets", exact: true }).click();
+        await expect(page.getByRole("link", { name: "Back to datasets", exact: true })).toHaveCount(0);
+        await page.goBack();
         await expect(page.getByRole("link", { name: provider.name, exact: true })).toBeVisible();
         await expect(page).toHaveURL((url: URL) => url.searchParams.get("view") === "available"
           && url.searchParams.get("q") === provider.name);
@@ -128,7 +129,7 @@ test.describe("dataset examples against the real backend @seeded", () => {
       if (outgoing.method() === "POST") postRequests.push(new URL(outgoing.url()).pathname);
     });
     await page.goto("/attack/chat");
-    await page.getByRole("button", { name: "Browse seed prompts", exact: true }).click();
+    await page.getByRole("button", { name: "Need inspiration? Browse seed prompts", exact: true }).click();
     await expect(page).toHaveURL(/\/datasets$/);
     await page.getByRole("link", { name: "jailbreak_templates", exact: true }).click();
     await page.getByRole("link", { name: "Return to Chat" }).click();
@@ -146,7 +147,7 @@ test.describe("dataset examples against the real backend @seeded", () => {
     await page.goto(path);
     await expect(page.getByTestId("target-resolution-legacy-banner")).toBeVisible();
     const origin = page.url();
-    await page.getByRole("button", { name: "Browse seed prompts from composer" }).click();
+    await page.getByRole("button", { name: "Need inspiration? Browse seed prompts" }).click();
     await page.getByRole("link", { name: "jailbreak_templates", exact: true }).click();
     await page.getByRole("link", { name: "Return to Chat" }).click();
     await expect(page).toHaveURL(origin);
@@ -155,6 +156,35 @@ test.describe("dataset examples against the real backend @seeded", () => {
   });
 
   for (const width of [390, 1280]) {
+    test(`keeps the helper as the sole browse action after sending at ${width}px @seeded`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/attack/chat');
+      await page.getByRole('combobox', { name: 'Objective target', exact: true }).selectOption('browser_offline');
+      const helper = page.getByRole('button', { name: 'Need inspiration? Browse seed prompts', exact: true });
+      await expect(helper).toBeVisible();
+      await expect(page.getByText('Seed prompts', { exact: true })).toHaveCount(0);
+      await page.getByPlaceholder('Type prompt here').fill('A persistent helper should remain after this turn.');
+      await page.getByRole('button', { name: 'Send message', exact: true }).click();
+      await expect(page.getByText('Offline browser response.', { exact: true }).first()).toBeVisible();
+      await helper.click();
+      await expect(page.getByRole('heading', { name: 'Datasets', exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'Return to Chat', exact: true }).click();
+      await expect(helper).toBeVisible();
+      await expect(page.getByText('Offline browser response.', { exact: true }).first()).toBeVisible();
+    });
+
+    test(`opens the catalog from bookmarked dataset detail at ${width}px @seeded`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      for (const key of ['dataset:named:jailbreak_templates', 'missing']) {
+        await page.goto(`/datasets/detail?selection_key=${encodeURIComponent(key)}`);
+        await expect(page.getByRole('heading', { name: key === 'missing' ? 'Dataset not found' : 'jailbreak_templates', exact: true })).toBeVisible();
+        await expect(page.getByRole('link', { name: 'Back to datasets', exact: true })).toHaveCount(0);
+        await page.getByRole('button', { name: 'Datasets', exact: true }).click();
+        await expect(page).toHaveURL(/\/datasets$/);
+        await expect(page.getByRole('link', { name: 'jailbreak_templates', exact: true })).toBeVisible();
+      }
+    });
+
     test(`keeps a nonempty draft and target on a keyboard round trip at ${width}px @seeded`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       const mutations: string[] = [];
@@ -165,7 +195,8 @@ test.describe("dataset examples against the real backend @seeded", () => {
       const target = page.getByRole('combobox', { name: 'Objective target', exact: true });
       await target.selectOption('browser_offline');
       await page.getByPlaceholder('Type prompt here').fill('Keep my nonempty browser draft.');
-      const browse = page.getByRole('button', { name: 'Browse seed prompts from composer' });
+      await expect(page.getByRole('button', { name: 'Need inspiration? Browse seed prompts', exact: true })).toBeVisible();
+      const browse = page.getByRole('button', { name: 'Need inspiration? Browse seed prompts' });
       await browse.focus();
       await page.keyboard.press('Enter');
       await page.getByRole('textbox', { name: 'Search datasets' }).fill('jailbreak');
@@ -175,7 +206,7 @@ test.describe("dataset examples against the real backend @seeded", () => {
       await expect(page.getByPlaceholder('Type prompt here')).toHaveValue('Keep my nonempty browser draft.');
       await expect(page.getByPlaceholder('Type prompt here')).toBeFocused();
       await expect(target).toHaveValue('browser_offline');
-      await page.getByRole('button', { name: 'Browse seed prompts from composer' }).click();
+      await page.getByRole('button', { name: 'Need inspiration? Browse seed prompts' }).click();
       await expect(page.getByRole('textbox', { name: 'Search datasets' })).toHaveValue('jailbreak');
       expect(mutations).toEqual([]);
     });
@@ -220,7 +251,8 @@ test.describe("dataset examples against the real backend @seeded", () => {
         expect(before.ok()).toBe(true);
         sourceMessages = await before.json();
         await page.goto(`/attack/chat/${source.attack_result_id}/conversations/${source.conversation_id}`);
-        await page.getByRole('button', { name: 'Browse seed prompts from composer' }).click();
+        await expect(page.getByText('Preserve existing saved history.', { exact: true })).toBeVisible();
+        await page.getByRole('button', { name: 'Need inspiration? Browse seed prompts' }).click();
       } else {
         await page.goto('/datasets');
         await expect(page.getByRole('button', { name: 'Return to Chat' })).toHaveCount(0);
