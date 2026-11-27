@@ -34,6 +34,7 @@ from pyrit.memory.memory_models import (
     ConverterIdentifierEntry,
     EmbeddingMessageWithSimilarity,
     ScenarioIdentifierEntry,
+    ScenarioPlanSeedGroupEntry,
     ScenarioResultEntry,
     ScoreEntry,
     ScorerIdentifierEntry,
@@ -47,11 +48,13 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
     ConverterIdentifier,
+    Equals,
     MessagePiece,
     ScenarioIdentifier,
     ScenarioResult,
@@ -63,6 +66,7 @@ from pyrit.models import (
     SeedRecord,
     SeedSimulatedConversation,
     TargetIdentifier,
+    ToolsCalled,
 )
 from unit.mocks import make_scenario_result
 
@@ -497,6 +501,34 @@ class TestScoreEntry:
         assert entry.score_type == "float_scale"
         assert entry.scored_expectation == {"schema_version": 1, "objective": "test objective", "conditions": []}
 
+    def test_score_stored_with_an_argument_name_that_is_not_a_path_still_loads(self):
+        """A requirement saved before argument names became paths can hold any nonempty name."""
+        stored = {
+            "schema_version": 1,
+            "objective": "test objective",
+            "conditions": [
+                {
+                    "condition_type": "tools_called",
+                    "tools": [
+                        {
+                            "name": "send_email",
+                            "arguments": [{"name": "a..b", "matcher": Equals(value="x").model_dump(mode="json")}],
+                        }
+                    ],
+                }
+            ],
+        }
+        entry = ScoreEntry(entry=_make_score())
+        entry.scored_expectation = stored
+
+        recovered = entry.get_score()
+
+        assert recovered.scored_expectation is not None
+        condition = recovered.scored_expectation.conditions[0]
+        assert isinstance(condition, ToolsCalled)
+        assert condition.tools[0].arguments[0].name == "a..b"
+        assert ScoreEntry(entry=recovered).scored_expectation == stored
+
     def test_roundtrip_get_score(self):
         score = _make_score()
         entry = ScoreEntry(entry=score)
@@ -530,6 +562,30 @@ def test_embedding_data_entry_str():
 # ---------------------------------------------------------------------------
 # SeedEntry
 # ---------------------------------------------------------------------------
+
+
+def _stored_tools_called(*, argument_name: str) -> dict[str, Any]:
+    """A stored tools_called condition whose one argument requirement has the given name."""
+    return {
+        "condition_type": "tools_called",
+        "tools": [
+            {
+                "name": "send_email",
+                "arguments": [{"name": argument_name, "matcher": Equals(value="x").model_dump(mode="json")}],
+            }
+        ],
+    }
+
+
+def test_planned_seed_group_stored_with_an_argument_name_that_is_not_a_path_still_loads() -> None:
+    group = AttackSeedGroup(seeds=[SeedObjective(value="objective text"), SeedPrompt(value="context")])
+    entry = ScenarioPlanSeedGroupEntry(scenario_result_id=uuid.uuid4(), dataset_name="ds", position=0, seed_group=group)
+    objective = next(seed for seed in entry.seed_group["seeds"] if seed["seed_type"] == "objective")
+    objective["conditions"] = [_stored_tools_called(argument_name="a..b")]
+
+    recovered = entry.get_seed_group()
+
+    assert recovered.objective.conditions[0].tools[0].arguments[0].name == "a..b"
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -570,6 +626,27 @@ class TestSeedEntry:
         recovered = entry.get_seed()
         assert isinstance(recovered, SeedObjective)
         assert recovered.value == "objective text"
+
+    def test_objective_stored_with_an_argument_name_that_is_not_a_path_still_loads(self):
+        """Conditions saved before argument names became paths can hold any nonempty name."""
+        entry = SeedEntry(entry=SeedObjective(value="objective text", dataset_name="ds", added_by="tester"))
+        entry.conditions = [_stored_tools_called(argument_name="a..b")]
+
+        recovered = entry.get_seed()
+        record = entry.get_seed_record()
+
+        for conditions in (recovered.conditions, record.conditions):
+            assert conditions is not None
+            assert isinstance(conditions[0], ToolsCalled)
+            assert conditions[0].tools[0].arguments[0].name == "a..b"
+        assert SeedEntry(entry=recovered).conditions == entry.conditions
+
+    def test_objective_without_conditions_keeps_none_in_its_record(self):
+        entry = SeedEntry(entry=SeedObjective(value="objective text", dataset_name="ds", added_by="tester"))
+        assert entry.conditions is None
+
+        assert entry.get_seed().conditions == ()
+        assert entry.get_seed_record().conditions is None
 
     def test_seed_prompt_preserves_parameters(self):
         seed = _make_seed_prompt(parameters=["param1", "param2"])

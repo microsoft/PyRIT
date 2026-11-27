@@ -229,7 +229,7 @@ class MessageToolCallScorer(TrueFalseScorer):
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
-            params={"matching_version": 2, "message_scope_version": 1, "capture_coverage_version": 1}
+            params={"matching_version": 3, "message_scope_version": 1, "capture_coverage_version": 1}
         )
 
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:

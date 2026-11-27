@@ -364,6 +364,31 @@ async def test_a_tool_that_never_ran_is_reported_as_not_executed_async(sqlite_in
     assert "required arguments" not in score.score_rationale
 
 
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ({"recipient": {"email": "a@example.com"}}, ScoreStatus.COMPLETE),
+        ({"recipient": {"email": "b@example.com"}}, ScoreStatus.UNDETERMINED),
+        ({"recipient": "a@example.com"}, ScoreStatus.UNDETERMINED),
+        ({"recipient.email": "a@example.com"}, ScoreStatus.COMPLETE),
+        ({"recipient.email": "b@example.com", "recipient": {"email": "a@example.com"}}, ScoreStatus.UNDETERMINED),
+    ],
+)
+async def test_a_dotted_argument_name_reads_the_nested_stored_argument_async(
+    sqlite_instance: SQLiteMemory, arguments: dict, expected: ScoreStatus
+) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_send_email(_responses_call, "call_1", arguments))
+    await conversation.output_async("call_1")
+    reply = await conversation.reply_async()
+
+    score = await _score_arguments(reply, **{"recipient.email": "a@example.com"})
+
+    assert score.status == expected
+    assert score.score_value == ("true" if expected is ScoreStatus.COMPLETE else None)
+    assert "send_email(recipient.email)" in score.score_rationale
+
+
 async def test_one_matching_execution_among_several_is_enough_async(sqlite_instance: SQLiteMemory) -> None:
     conversation = await _Conversation.create_async(memory=sqlite_instance)
     await conversation.call_async(_send_email(_responses_call, "call_1", {"to": "b@example.com"}))
@@ -659,6 +684,11 @@ async def test_exhaustive_ignores_unnamed_calls_that_did_not_run_async(sqlite_in
     score = await _score_exhaustive_async(reply)
 
     assert score.status == ScoreStatus.UNDETERMINED
+
+
+def test_identifier_names_the_dotted_path_matching_version() -> None:
+    # Bumped when argument names became dotted paths, so scores matched under the old meaning are not reused.
+    assert MessageToolCallScorer().get_identifier().params["matching_version"] == 3
 
 
 # ---------------------------------------------------------------------------

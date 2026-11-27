@@ -108,3 +108,56 @@ def test_requirement_description_names_constrained_arguments() -> None:
         describe_tool_requirement(_requirement(to=Equals(value="x"), body=Contains(value="y")))
         == "send_email(to, body)"
     )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ({"recipient": {"email": "a@example.com", "name": "A"}}, True),
+        ({"recipient": {"email": "b@example.com"}}, False),
+        ({"recipient": {"name": "A"}}, False),
+        ({"recipient": "a@example.com"}, False),
+        ({"recipient": [{"email": "a@example.com"}]}, False),
+        ({"recipient": None}, False),
+        ({"recipient.email": "a@example.com"}, True),
+        ({"recipient.email": "b@example.com", "recipient": {"email": "a@example.com"}}, False),
+        ({}, False),
+    ],
+)
+def test_a_dotted_name_reads_a_nested_field(arguments: dict[str, JsonValue], expected: bool) -> None:
+    requirement = _requirement(**{"recipient.email": Equals(value="a@example.com")})
+
+    assert match_tool_arguments(requirement=requirement, arguments=arguments) is expected
+
+
+@pytest.mark.parametrize("name", ["attachments.0.name", "attachments.0", "attachments.name"])
+def test_a_path_does_not_index_arrays(name: str) -> None:
+    requirement = _requirement(**{name: Equals(value="report.pdf")})
+
+    assert match_tool_arguments(requirement=requirement, arguments={"attachments": [{"name": "report.pdf"}]}) is False
+
+
+def test_a_nested_object_compares_as_compact_json() -> None:
+    requirement = _requirement(recipient=Equals(value='{"email":"a@example.com","name":"A"}', case_sensitive=True))
+
+    assert (
+        match_tool_arguments(requirement=requirement, arguments={"recipient": {"name": "A", "email": "a@example.com"}})
+        is True
+    )
+
+
+def _stored_requirement(name: str) -> ToolCallRequirement:
+    """Build a requirement as it loads from storage, where older names need not be paths."""
+    return ToolCallRequirement.model_validate(
+        {"name": "send_email", "arguments": [{"name": name, "matcher": Equals(value="x").model_dump(mode="json")}]},
+        context={"require_scoring_expectation_schema_version": True},
+    )
+
+
+@pytest.mark.parametrize("name", ["a..b", ".email", "recipient."])
+def test_a_stored_name_that_is_not_a_path_matches_as_one_literal_key(name: str) -> None:
+    requirement = _stored_requirement(name)
+
+    assert match_tool_arguments(requirement=requirement, arguments={name: "x"}) is True
+    assert match_tool_arguments(requirement=requirement, arguments={name: "y"}) is False
+    assert match_tool_arguments(requirement=requirement, arguments={"a": {"": {"b": "x"}}}) is False
