@@ -177,6 +177,89 @@ class TestScorerMetricsSerialization:
             metrics.to_json()
 
 
+class TestObjectiveAccuracyInterval:
+    """Tests for the Wilson interval that ObjectiveScorerMetrics reports for the accuracy."""
+
+    @staticmethod
+    def _metrics(*, num_responses: int, accuracy: float, **kwargs) -> ObjectiveScorerMetrics:
+        return ObjectiveScorerMetrics(
+            num_responses=num_responses,
+            num_human_raters=1,
+            accuracy=accuracy,
+            accuracy_standard_error=float(np.sqrt(accuracy * (1 - accuracy) / num_responses)),
+            f1_score=0.0,
+            precision=0.0,
+            recall=0.0,
+            **kwargs,
+        )
+
+    # Expected bounds are from scipy.stats.binomtest(k, n).proportion_ci(method="wilson").
+    @pytest.mark.parametrize(
+        ("num_correct", "num_responses", "expected_lower", "expected_upper"),
+        [
+            (105, 105, 0.9647059230708901, 1.0),
+            (0, 20, 0.0, 0.16112515805281935),
+            (92, 100, 0.8500189229905127, 0.9589065385156194),
+        ],
+    )
+    def test_matches_the_wilson_score_interval(self, num_correct, num_responses, expected_lower, expected_upper):
+        metrics = self._metrics(num_responses=num_responses, accuracy=num_correct / num_responses)
+        assert metrics.accuracy_ci_lower == pytest.approx(expected_lower)
+        assert metrics.accuracy_ci_upper == pytest.approx(expected_upper)
+
+    def test_has_width_where_the_standard_error_is_zero(self):
+        metrics = self._metrics(num_responses=105, accuracy=1.0)
+        assert metrics.accuracy_standard_error == 0.0
+        assert metrics.accuracy_ci_lower < metrics.accuracy_ci_upper
+
+    def test_keeps_bounds_that_are_given(self):
+        metrics = self._metrics(num_responses=100, accuracy=0.92, accuracy_ci_lower=0.1, accuracy_ci_upper=0.2)
+        assert (metrics.accuracy_ci_lower, metrics.accuracy_ci_upper) == (0.1, 0.2)
+
+    def test_is_none_without_responses(self):
+        metrics = ObjectiveScorerMetrics(
+            num_responses=0,
+            num_human_raters=1,
+            accuracy=0.0,
+            accuracy_standard_error=0.0,
+            f1_score=0.0,
+            precision=0.0,
+            recall=0.0,
+        )
+        assert metrics.accuracy_ci_lower is None
+        assert metrics.accuracy_ci_upper is None
+
+    def test_is_none_when_the_accuracy_is_undefined(self):
+        metrics = self._metrics(num_responses=10, accuracy=float("nan"))
+        assert metrics.accuracy_ci_lower is None
+        assert metrics.accuracy_ci_upper is None
+
+    def test_is_none_after_a_json_round_trip_of_an_undefined_accuracy(self, tmp_path):
+        path = tmp_path / "metrics.json"
+        path.write_text(self._metrics(num_responses=10, accuracy=float("nan")).to_json())
+        loaded = ObjectiveScorerMetrics.from_json_file(path)
+        assert loaded.accuracy is None
+        assert loaded.accuracy_ci_lower is None
+        assert loaded.accuracy_ci_upper is None
+
+    def test_round_trips_through_json(self, tmp_path):
+        path = tmp_path / "metrics.json"
+        path.write_text(self._metrics(num_responses=100, accuracy=0.92).to_json())
+        loaded = ObjectiveScorerMetrics.from_json_file(path)
+        assert loaded.accuracy_ci_lower == pytest.approx(0.8500189229905127)
+        assert loaded.accuracy_ci_upper == pytest.approx(0.9589065385156194)
+
+    def test_is_filled_in_for_a_file_recorded_before_the_interval_existed(self, tmp_path):
+        data = json.loads(self._metrics(num_responses=105, accuracy=1.0).to_json())
+        del data["accuracy_ci_lower"]
+        del data["accuracy_ci_upper"]
+        path = tmp_path / "metrics.json"
+        path.write_text(json.dumps(data))
+        loaded = ObjectiveScorerMetrics.from_json_file(path)
+        assert loaded.accuracy_ci_lower == pytest.approx(0.9647059230708901)
+        assert loaded.accuracy_ci_upper == 1.0
+
+
 class TestScorerMetricsWithIdentity:
     """Tests for ScorerMetricsWithIdentity dataclass."""
 

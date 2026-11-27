@@ -6,11 +6,12 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar, cast
 
 import numpy as np
 
 from pyrit.common import verify_and_resolve_path
+from pyrit.models.analytics import compute_wilson_ci
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -292,7 +293,16 @@ class ObjectiveScorerMetrics(ScorerMetrics):
         accuracy (float): The accuracy of the model scores when using the majority vote of
             human scores as the gold label. With several scoring trials, the model score for a
             response is the majority vote of its trials; see `single_trial_accuracy`.
-        accuracy_standard_error (float): The standard error of the accuracy estimate.
+        accuracy_standard_error (float): The Wald standard error of the accuracy estimate,
+            ``sqrt(accuracy * (1 - accuracy) / num_responses)``. It is 0.0 when the accuracy is 0.0 or
+            1.0, so it understates the uncertainty for a small evaluation set or an accuracy near
+            either end; use `accuracy_ci_lower` and `accuracy_ci_upper` for an interval.
+        accuracy_ci_lower (float | None, optional): Lower bound of the 95% Wilson score interval for
+            the accuracy. Unlike the Wald interval it stays inside [0, 1] and does not shrink to a
+            point when the accuracy is 0.0 or 1.0. Computed from `accuracy` and `num_responses` when not
+            given, so results recorded before this field existed also have it. None when
+            `num_responses` is 0 or the accuracy is not a finite number.
+        accuracy_ci_upper (float | None, optional): Upper bound of the same interval.
         f1_score (float): The F1 score of the model scores, an indicator of performance of the
             LLM scorer in its alignment with human scores.
         precision (float): The precision of the model scores, an indicator of the model's accuracy
@@ -356,6 +366,25 @@ class ObjectiveScorerMetrics(ScorerMetrics):
     single_trial_accuracy: float | None = field(default=None, kw_only=True)
     num_inconsistent_responses: int | None = field(default=None, kw_only=True)
     krippendorff_alpha_model: float | None = field(default=None, kw_only=True)
+    accuracy_ci_lower: float | None = field(default=None, kw_only=True)
+    accuracy_ci_upper: float | None = field(default=None, kw_only=True)
+
+    def __post_init__(self) -> None:
+        """Fill in the Wilson interval for the accuracy when it was not given."""
+        # An undefined (NaN) accuracy is written to JSON as null, so it is None after a round trip.
+        accuracy = cast("float | None", self.accuracy)
+        if (
+            self.accuracy_ci_lower is None
+            and self.accuracy_ci_upper is None
+            and self.num_responses
+            and accuracy is not None
+            and math.isfinite(accuracy)
+        ):
+            # accuracy is the share of correct responses, so this recovers their count exactly.
+            num_correct = round(accuracy * self.num_responses)
+            self.accuracy_ci_lower, self.accuracy_ci_upper = compute_wilson_ci(
+                successes=num_correct, total=self.num_responses
+            )
 
 
 @dataclass
