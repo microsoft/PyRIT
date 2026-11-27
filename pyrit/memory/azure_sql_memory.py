@@ -544,22 +544,30 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         value_expression = f"LOWER(JSON_VALUE(value, :{sp_param}))" if array_element_path else "LOWER(value)"
 
-        conditions = []
         bindparams_dict: dict[str, str] = {pp_param: property_path}
         if array_element_path:
             bindparams_dict[sp_param] = array_element_path
-
+        mv_params = []
         for index, match_value in enumerate(array_to_match):
             mv_param = f"mv_{uid}_{index}"
-            conditions.append(
+            mv_params.append(mv_param)
+            bindparams_dict[mv_param] = match_value.lower()
+
+        if match_mode == "any":
+            # Shred the row's JSON array once and match every value with one IN list. One EXISTS per
+            # value re-parses the JSON for each value, which made long id lists (e.g. score anchors
+            # for a whole conversation) scan the table once per id.
+            in_list = ", ".join(f":{mv_param}" for mv_param in mv_params)
+            combined = f"""EXISTS(SELECT 1 FROM OPENJSON(JSON_QUERY("{table_name}".{column_name},
+                    :{pp_param}))
+                    WHERE {value_expression} IN ({in_list}))"""
+        else:
+            combined = " AND ".join(
                 f"""EXISTS(SELECT 1 FROM OPENJSON(JSON_QUERY("{table_name}".{column_name},
                     :{pp_param}))
                     WHERE {value_expression} = :{mv_param})"""
+                for mv_param in mv_params
             )
-            bindparams_dict[mv_param] = match_value.lower()
-
-        joiner = " OR " if match_mode == "any" else " AND "
-        combined = joiner.join(conditions)
         return text(f"""ISJSON("{table_name}".{column_name}) = 1 AND ({combined})""").bindparams(**bindparams_dict)
 
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
