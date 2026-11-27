@@ -451,3 +451,45 @@ async def test_xss_scorer_adds_to_memory():
         await scorer.score_text_async(text="nothing here")
 
         memory.add_scores_to_memory_async.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        # An opener left unclosed before a later tag on the same line.
+        ("Script Tag External Src", "<script <script src=//evil.example/x.js>"),
+        ("Iframe Srcdoc", '<iframe <iframe srcdoc="<b>x</b>">'),
+        # A <script> inside a later, unfinished <svg ...> tag still follows the first <svg> tag.
+        ("SVG Script", "<svg><svg <script>alert(1)</script>"),
+        ("SVG Script", "<svg><svg><svg x><script>alert(1)</script>"),
+        ("SVG Script", "<svg <svg><script>alert(1)</script>"),
+        # A "<" that does not start the same tag stays inside the tag body.
+        ("Script Tag External Src", '<script data-x="<scr" src=//evil.example/x.js>'),
+        ("Iframe Srcdoc", '<iframe title="a<b" srcdoc="<b>x</b>">'),
+    ],
+)
+def test_xss_tag_patterns_match_after_repeated_openers(
+    *, name: str, text: str, patch_central_database: MagicMock
+) -> None:
+    assert XSSOutputScorer()._compiled[name].search(text)
+
+
+@pytest.mark.parametrize(
+    ("name", "fragment"),
+    [
+        ("Script Tag External Src", "<script"),
+        ("Iframe Srcdoc", "<iframe"),
+        ("SVG Script", "<svg>"),
+        ("SVG Script", "<svg "),
+        ("SVG Script", "<svg <svg>"),
+    ],
+)
+def test_xss_tag_pattern_near_miss_is_linear(*, name: str, fragment: str, patch_central_database: MagicMock) -> None:
+    # Each opener used to rescan the rest of the reply, so 20,000 of them took seconds.
+    text = fragment * 20_000
+    pattern = XSSOutputScorer()._compiled[name]
+    start = perf_counter()
+    matched = pattern.search(text)
+    elapsed = perf_counter() - start
+    assert matched is None
+    assert elapsed < 0.5, f"{name} near miss took {elapsed:.3f}s"
