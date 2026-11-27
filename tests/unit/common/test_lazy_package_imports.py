@@ -18,6 +18,7 @@ _PACKAGE_ROOT = _REPOSITORY_ROOT / "pyrit"
 # The inventory test rejects both unlisted eager packages and stale exceptions.
 _EAGER_PACKAGE_EXCEPTIONS = frozenset(
     {
+        "pyrit.executor.promptgen.flrt",
         "pyrit.executor.promptgen.gcg",
     }
 )
