@@ -142,7 +142,8 @@
 # ```
 #
 # Scanner and shell share `--datasets name[:N|:all]`, `--max-per-dataset`, `--max-total`,
-# and `--dataset-fetch never|if_missing|always`. Source limits apply before the combined total.
+# and `--dataset-fetch if_missing|always` (`never` is deprecated). Source limits apply before the
+# combined total.
 # Omitted, empty, or `default` keeps the scenario setting; `all` removes only its own cap.
 # `list-scenarios` displays allowed sources and defaults. Ingredient/compound scenarios
 # restrict controls to preserve their shaping. `--dataset-filters` works with either form.
@@ -158,10 +159,10 @@
 # the filtered or sampled objectives. Before any dataset write, fetched and retained sources
 # pass the configuration's filters, grouping, and validators without sampling. A fetch,
 # grouping, or validation failure keeps every selected dataset unchanged.
-# Replacement can remove manual edits and prevent older runs from resuming. A memory-only
-# dataset cannot refresh without a provider. Storage commits are per dataset: a later write
-# failure does not undo an earlier successful write. Explicit "Load datasets" in the GUI
-# remains missing-only and is disabled while a missing source is set to refresh on launch.
+# Replacement can remove manual edits and prevent older runs from resuming. A stored dataset
+# without a provider keeps its stored copy. Storage commits are per dataset: a later write
+# failure does not undo an earlier successful write. The GUI loads missing datasets
+# automatically and never refreshes them before launch.
 #
 # Custom initialization scripts are loaded by the backend at startup: list them in the
 # `initialization_scripts` section of the config the server loads (paths are relative to your

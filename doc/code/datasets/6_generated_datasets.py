@@ -82,7 +82,7 @@ from pyrit.scenario import DatasetAttackConfiguration, DatasetFetchPolicy, Datas
 from pyrit.scenario.airt import RapidResponse, RapidResponseTechnique
 from pyrit.score import SelfAskTrueFalseScorer
 
-dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name=dataset_name)], fetch=DatasetFetchPolicy.NEVER)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name=dataset_name)])
 scenario = RapidResponse(objective_scorer=SelfAskTrueFalseScorer(chat_target=OpenAIChatTarget()))
 scenario.set_params_from_args(
     args={
@@ -150,8 +150,8 @@ print(f"Stored {len(automatic_seeds)} objectives through scenario preparation.")
 # Existing rows and manual edits win, even if you change the provider's instructions.
 # Use a new dataset name to generate and keep another batch.
 #
-# `NEVER` also uses stored data, but fails if the dataset is missing, even when a provider
-# is attached. Use `ALWAYS` below only when replacement is intended.
+# The default `IF_MISSING` already uses stored data; the older `NEVER` policy is deprecated.
+# Use `ALWAYS` below only when replacement is intended.
 #
 # The next scenario initializes from the same configuration. It does not run the attacks
 # again. Seed IDs stay unchanged because preparation did not replace or append data.
@@ -169,8 +169,8 @@ print(f"Reused {len(reused_seeds)} stored objectives without generation.")
 #
 # `ALWAYS` calls the configured provider with caching disabled when a new scenario
 # initializes. It generates a fresh batch and atomically replaces all stored seeds
-# for that dataset. It also works with registered providers, but a memory-only
-# dataset without a provider cannot refresh.
+# for that dataset. It also works with registered providers. A stored dataset without
+# a provider keeps its stored copy, and a warning names it.
 #
 # Before any dataset write, fetched and retained sources pass the configuration's filters,
 # grouping, and validators without sampling. A fetch, grouping, or validation failure keeps
