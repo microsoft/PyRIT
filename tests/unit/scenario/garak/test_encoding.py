@@ -6,16 +6,33 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.converter import (
+    AsciiSmugglerConverter,
     AskToDecodeConverter,
     Base64Converter,
     ColumnarTranspositionConverter,
     RegionalIndicatorConverter,
     SearchReplaceConverter,
 )
-from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolicy, SeedObjective, SeedPrompt
+from pyrit.executor.attack import (
+    AttackConverterConfig,
+    AttackExecutor,
+    AttackScoringConfig,
+    PromptSendingAttack,
+)
+from pyrit.models import (
+    AttackOutcome,
+    AttackSeedGroup,
+    ComponentIdentifier,
+    DatasetFetchPolicy,
+    Message,
+    MessagePiece,
+    SeedObjective,
+    SeedPrompt,
+)
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import (
     CompoundDatasetAttackConfiguration,
@@ -259,13 +276,14 @@ class TestEncodingTechniqueDefault:
         }
         all_names = {t.value for t in EncodingTechnique.get_all_techniques()}
         assert default_names < all_names
-        assert len(all_names) == 21
+        assert len(all_names) == 22
         # The niche/lossy schemes stay ALL-only.
         assert all_names - default_names == {
             "braille",
             "ecoji",
             "zalgo",
             "ascii_smuggler",
+            "disemvowel",
             "ubbi_dubbi",
             "bifid",
             "columnar_transposition",
@@ -351,6 +369,55 @@ class TestEncodingAtomicNameUniqueness:
             )
             # The trimmed variants must not appear.
             assert not any("standard" in n or "b2a" in n for n in names)
+
+    async def test_disemvowel_technique_builds_registered_row(
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
+    ):
+        """Selecting Disemvowel must register a row whose converter strips vowels.
+
+        This exercises the registered ``disemvowel`` row end to end (not a hand-built converter), so a
+        deleted or misnamed row in ``_converter_variants()`` is caught: such a regression leaves the
+        enum intact while the technique builds no attacks.
+        """
+        from unittest.mock import patch
+
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_attack_seed_groups},
+        ):
+            scenario = Encoding(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                    "scenario_techniques": [EncodingTechnique.Disemvowel],
+                }
+            )
+            await scenario.initialize_async()
+
+            attacks = scenario._get_converter_attacks(
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+            )
+
+            assert attacks, "disemvowel technique built no attacks"
+            assert all(aa.display_group == "disemvowel" for aa in attacks)
+            names = {aa.atomic_attack_name for aa in attacks}
+            assert "disemvowel_raw" in names, "missing raw variant"
+            assert any(n != "disemvowel_raw" for n in names), "missing decode variant"
+
+            # The registered row's converter actually strips vowels.
+            raw = next(aa for aa in attacks if aa.atomic_attack_name == "disemvowel_raw")
+            row_converters = [
+                conv
+                for config in raw.attack_technique.attack.get_request_converters()
+                for conv in config.converters
+                if isinstance(conv, SearchReplaceConverter)
+            ]
+            assert row_converters, "disemvowel row applies no SearchReplaceConverter"
+            result = await row_converters[0].convert_async(prompt="Hello World")
+            assert result.output_text == "Hll Wrld"
 
     async def test_ubbi_dubbi_technique_builds_registered_row(
         self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
@@ -889,3 +956,88 @@ class TestEncodingBaselineUniformity:
         baseline_objs = set(scenario._atomic_attacks[0].objectives)
         for attack in scenario._atomic_attacks[1:]:
             assert set(attack.objectives) == baseline_objs
+
+
+class _ReplyTarget(MockPromptTarget):
+    """Replies with a fixed decoded text, or with the AsciiSmugglerConverter decoding of the request."""
+
+    def __init__(self, *, reply: str | None = None) -> None:
+        super().__init__()
+        self._reply = reply
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        request = normalized_conversation[-1].message_pieces[0]
+        decoded = self._reply
+        if decoded is None:
+            decoded = AsciiSmugglerConverter(action="decode").decode_message(message=request.converted_value)
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value=f"Decoded: {decoded}",
+                conversation_id=request.conversation_id,
+            ).to_message()
+        ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestEncodingAsciiSmugglerDecodedText:
+    """Tests that only the ascii_smuggler variant accepts its ASCII-normalized payload."""
+
+    _VALUE = "it\u2019s a caf\u00e9 \u2013 ok"
+    _ASCII_VALUE = "it's a cafe - ok"
+
+    def _seed_groups(self, value: str = _VALUE) -> list[AttackSeedGroup]:
+        config = EncodingDatasetConfiguration(sources=[DatasetSource(name="garak_slur_terms_en")])
+        return config._build_attack_groups([SeedPrompt(value=value, data_type="text")])
+
+    async def _outcome(self, *, converter, target: PromptTarget) -> AttackOutcome:
+        seed_groups = Encoding._seed_groups_for_converters(converters=[converter], seed_groups=self._seed_groups())
+        attack = PromptSendingAttack(
+            objective_target=target,
+            attack_converter_config=AttackConverterConfig(
+                request_converters=ConverterConfiguration.from_converters(converters=[converter])
+            ),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=DecodingScorer()),
+        )
+        results = await AttackExecutor().execute_attack_from_seed_groups_async(attack=attack, seed_groups=seed_groups)
+        return results[0].outcome
+
+    @pytest.mark.parametrize(
+        ("value", "expected_metadata"),
+        [
+            ("plain ascii", {}),
+            (_VALUE, {"decoded_text": _ASCII_VALUE}),
+            ("\u4f60\u597d", {}),
+        ],
+    )
+    def test_ascii_smuggler_variant_records_ascii_smuggled_text_on_copies(self, value, expected_metadata):
+        shared_groups = self._seed_groups(value)
+
+        [group] = Encoding._seed_groups_for_converters(converters=[AsciiSmugglerConverter()], seed_groups=shared_groups)
+
+        assert group.seeds[1].value == value
+        assert group.seeds[1].metadata == expected_metadata
+        assert group.logical_id == shared_groups[0].logical_id
+        assert shared_groups[0].seeds[1].metadata == {}
+
+    def test_other_variants_keep_shared_groups_without_decoded_text(self):
+        shared_groups = self._seed_groups()
+
+        seed_groups = Encoding._seed_groups_for_converters(converters=[Base64Converter()], seed_groups=shared_groups)
+
+        assert seed_groups == shared_groups
+        assert "decoded_text" not in seed_groups[0].seeds[1].metadata
+
+    async def test_ascii_smuggler_decoded_reply_scores_true_with_default_scorer(self):
+        # AsciiSmugglerConverter smuggles "it's a cafe - ok"; a target that decodes it correctly must not be
+        # scored as a failure because the seed's original value still has the curly quote, accent and en dash.
+        outcome = await self._outcome(converter=AsciiSmugglerConverter(), target=_ReplyTarget())
+
+        assert outcome == AttackOutcome.SUCCESS
+
+    async def test_base64_reply_with_ascii_folded_text_is_not_a_success(self):
+        # Base64 carries the exact original text, so a reply that drops the accent, curly quote and en dash did
+        # not decode it and must not be accepted because of the ascii_smuggler variant's normalization.
+        outcome = await self._outcome(converter=Base64Converter(), target=_ReplyTarget(reply=self._ASCII_VALUE))
+
+        assert outcome != AttackOutcome.SUCCESS

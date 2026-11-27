@@ -47,15 +47,16 @@ import { toApiError } from '@/services/errors'
 
 import { useObjectiveHeaderStyles } from './ObjectiveHeader.styles'
 import ChatScorerPicker from './ChatScorerPicker'
+import { fluentRef } from '@/utils/fluentRef'
 
 const OBJECTIVE_HELP = 'The behavior you are testing for. An objective gives the scorer a goal; it is not automatically sent as a user message.'
 
 interface ObjectiveHeaderProps {
   objective: string
   draftMode?: boolean
-  outcome?: AttackOutcome
-  automatedScore?: BackendScore | null
-  humanScore?: BackendScore | null
+  outcome?: AttackOutcome | undefined
+  automatedScore?: BackendScore | null | undefined
+  humanScore?: BackendScore | null | undefined
   canUpdateOutcome?: boolean
   canRemoveHumanScore?: boolean
   onUpdateHumanScore?: (value: boolean, rationale: string) => Promise<void>
@@ -72,11 +73,11 @@ interface ObjectiveHeaderProps {
   scoringFailure?: ScoringFailure | null
   scorers?: ScorerInstance[]
   scorersLoading?: boolean
-  scorersError?: string | null
+  scorersError?: string | null | undefined
   canUpdateScorer?: boolean
   onUpdateScorer?: (reference: RegisteredComponentReference | null) => Promise<void>
   canApplyScorer?: boolean
-  onApplyScorer?: () => Promise<void>
+  onApplyScorer?: (() => Promise<void>) | undefined
   /** True while the selected scorer is applied to this conversation's latest response. */
   applyingScorer?: boolean
   applyStatus?: ApplyScorerStatus | null
@@ -141,7 +142,11 @@ export default function ObjectiveHeader({
   const configurePositioning = useCallback<PositioningConfigurationFn>(({ options }) => ({
     ...options,
     // Keep the editor on screen when its anchor leaves a narrow viewport.
-    unstable_disableTether: isNarrow ? 'all' : options.unstable_disableTether,
+    ...(isNarrow
+      ? { unstable_disableTether: 'all' }
+      : options.unstable_disableTether !== undefined
+        ? { unstable_disableTether: options.unstable_disableTether }
+        : {}),
   }), [isNarrow])
   const [resultOpen, setResultOpen] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -292,7 +297,7 @@ export default function ObjectiveHeader({
       >
         <PopoverTrigger disableButtonEnhancement>
           <Button
-            ref={outcomeButtonRef}
+            ref={fluentRef(outcomeButtonRef)}
             appearance="transparent"
             size="small"
             className={styles.outcomeButton}

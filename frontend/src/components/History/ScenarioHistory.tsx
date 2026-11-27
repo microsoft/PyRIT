@@ -99,7 +99,7 @@ function MultiFilter({
       placeholder={placeholder}
       multiselect
       selectedOptions={selected}
-      value={selected.length === 0 ? '' : selected.length === 1 ? selected[0] : `${selected[0]} (+${selected.length - 1})`}
+      value={selected.length === 0 ? '' : selected.length === 1 ? (selected[0] ?? '') : `${selected[0] ?? ''} (+${selected.length - 1})`}
       onOptionSelect={(_event, data) => onSelect(data.selectedOptions)}
       data-testid={testId}
     >
@@ -404,7 +404,7 @@ export default function ScenarioHistory({
               submitId(idDraft.value)
             }}
           >
-            <Field validationState={idError ? 'error' : 'none'} validationMessage={idError || undefined}>
+            <Field validationState={idError ? 'error' : 'none'} validationMessage={idError || null}>
               <Tooltip content="Search by conversation, attack, finding, or scenario ID." relationship="description">
                 <Input
                   className={styles.lookupInput}
@@ -415,7 +415,7 @@ export default function ScenarioHistory({
                     <Button className={styles.touchTarget} appearance="transparent" size="small"
                       icon={<DismissRegular />} aria-label="Clear ID search"
                       onClick={() => { submitId('') }} />
-                  ) : undefined}
+                  ) : null}
                   value={idDraft.value}
                   onChange={(_, data) => {
                     setIdDraft((current) => ({ ...current, value: data.value, error: '' }))

@@ -28,7 +28,7 @@ import {
   uniqueTechniqueOptions,
   type ScenarioConfigFormState,
 } from '@/components/Scenarios/scenarioConfigForm'
-import { acceptsAnyNamedDataset } from '@/components/Scenarios/scenarioLaunchRequest'
+import { acceptsAnyNamedDataset, usesCompatibleDatasetPicker } from '@/components/Scenarios/scenarioLaunchRequest'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -201,7 +201,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   }, [])
 
   const scenarioIsCurrent = scenario !== null && scenario.scenario_name === selectedScenarioName
-  const datasetMetadata = useScenarioDatasets()
+  const datasetMetadata = useScenarioDatasets(selectedScenarioName, scenarioIsCurrent)
   const datasetBaseline = useMemo(
     () => (scenario
       ? {
@@ -519,6 +519,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                     disabled={saving}
                     loading={datasetMetadata.loading}
                     metadataError={datasetMetadata.error}
+                    compatibleOnly={usesCompatibleDatasetPicker(scenario)}
                     onReload={datasetMetadata.reload}
                     onChange={(datasets) => updateConfig({ datasets })}
                     onValidationChange={setDatasetError}

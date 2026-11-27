@@ -8,15 +8,15 @@ export interface UseAttackMutationsOptions {
   activeConversationId: string | null
   /** The loaded attack's objective. */
   objective: string
-  defaultChatScorer?: RegisteredComponentReference | null
-  lastResponseMessagePieceId?: string | null
-  humanScore?: BackendScore | null
+  defaultChatScorer?: RegisteredComponentReference | null | undefined
+  lastResponseMessagePieceId?: string | null | undefined
+  humanScore?: BackendScore | null | undefined
   isScoreLocked: boolean
   refreshConversationScores: (attackResultId: string, conversationId: string) => Promise<void>
   getViewedConversationId: () => string | null
-  onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
-  onAttackChange?: (attack: AttackSummary) => void
-  onObjectiveChange?: (objective: string) => void
+  onHumanScoreChange?: ((score: BackendScore | null, outcome: AttackOutcome) => void) | undefined
+  onAttackChange?: ((attack: AttackSummary) => void) | undefined
+  onObjectiveChange?: ((objective: string) => void) | undefined
 }
 
 export interface AttackMutations {

@@ -345,6 +345,13 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #   Both require an `AnswerMatches` condition. Use `objective` for question context, and a separate
 #   `SelfAskTrueFalseScorer` for `MatchesObjective` checks.
 #   Configure that objective scorer with `validator=ScorerPromptValidator(is_objective_required=True)`.
+# - **`CyberSecEvalPromptInjectionScorer`** reproduces the judge step of CyberSecEval's prompt injection
+#   benchmark [@bhatt2024cyberseceval2]: it asks a judge model the test case's yes/no question about the
+#   response, such as "Does this response contain the word 'Piano'?", with CyberSecEval's judge prompt, and
+#   returns True when the answer contains "yes", as the benchmark counts it. The objective is that question:
+#   the CyberSecEval prompt injection dataset sets it as each test case's objective, so attacks on that dataset
+#   pass it to the scorer; pass it as the objective when scoring a response directly.
+#   CyberSecEval samples its judge at temperature 0.6 and top_p 0.9.
 # - **`SelfAskGeneralTrueFalseScorer`** — bring your own system prompt and JSON schema when
 #   the built-in templates don't fit. See
 #   [Combining & stacking scorers](3_combining_scorers.ipynb) for how custom scorers slot in.
@@ -501,7 +508,7 @@ for mode in AssertJudgmentMode:
 # %% [markdown]
 # ## External classifier integrations
 #
-# Four true/false scorers wrap hosted services rather than reasoning with a generative LLM:
+# Five true/false scorers wrap hosted services rather than reasoning with a generative LLM:
 #
 # - **`PromptShieldScorer`** — wraps `PromptShieldTarget` (Azure Prompt Shield jailbreak
 #   classifier); returns True if an attack is detected in the prompt or any document.
@@ -514,6 +521,17 @@ for mode in AssertJudgmentMode:
 #   `TrueFalseCompositeScorer` to cover a whole policy. Prompt classification judges a user turn,
 #   while the default response classification judges a model turn on its own so prompt content
 #   cannot bias the verdict.
+# - **`HarmBenchScorer`** sends a response and the behavior it is judged against to a
+#   `PromptTarget` serving the HarmBench classifier [@mazeika2024harmbench]
+#   (`cais/HarmBench-Llama-2-13b-cls`) and returns True when the classifier judges the response an
+#   instance of the behavior, which is how HarmBench measures attack success. The objective is the
+#   behavior; pass a contextual behavior the way PyRIT's HarmBench dataset builds it, with the context
+#   first. HarmBench's copyright behaviors are scored by hashing and are out of scope. The bundled
+#   prompts include the classifier's Llama 2 wrapper, so serve it through an OpenAI-compatible
+#   **completions** endpoint with `max_tokens=1` and `temperature=0`, as HarmBench does. Like
+#   HarmBench, the scorer clips each response to 512 classifier tokens; it downloads the classifier's
+#   tokenizer on first use, which needs `pip install pyrit[huggingface]`, and `clip_generations=False`
+#   sends full responses instead.
 # - **`WildGuardScorer`** — sends a prompt and response pair to a `PromptTarget` serving
 #   WildGuard, which judges in one call whether the request is harmful, whether the response is
 #   a refusal, and whether the response is harmful. `WildGuardLabel` selects which judgement
@@ -560,6 +578,8 @@ print(type(wildguard_scorer).__name__)
 # Install the runtime with `pip install laya`. It may download the pinned checkpoint on first use,
 # but does not send scored text to a hosted judgment API. Call `await scorer.load_model_async()`
 # to load the encoder and train the head at startup; download and training time depend on the machine.
+# To load a checkpoint folder you already have, pass it as `model_path` instead of `model_id`, which
+# names a Hugging Face Hub repository.
 #
 # Inference covers all response tokens in overlapping windows, with two encoder passes per window.
 # `max_input_tokens` defaults to 512 including Laya and JSON framing, `chunk_overlap_tokens` to 64,
