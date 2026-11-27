@@ -44,7 +44,7 @@ class CostAmplificationTechnique(ScenarioTechnique):
 
     Non-Aggregate Values:
     - FollowUpExpansion: This multi-turn attack uses `RedTeamingAttack` with a polite, on-topic user
-        persona. After the target's first answer, the adversarial chat keeps asking for more
+        persona. After the target's first full answer, the adversarial chat keeps asking for more
         detail, more clarification, and every point expanded, so that each reply is longer than the last.
 
     Aggregate Values:
@@ -59,7 +59,7 @@ class CostAmplificationTechnique(ScenarioTechnique):
 class CostAmplification(Scenario):
     """
     Cost amplification scenario tests whether a polite, on-topic user can keep pushing an endpoint's
-    reply size past a normal answer with no ceiling (OWASP LLM10, unbounded consumption). It needs a
+    reply size past a full answer with no ceiling (OWASP LLM10, unbounded consumption). It needs a
     target that records token usage; without it every result is undetermined.
     """
 

@@ -35,7 +35,7 @@ from pyrit.score import FloatScaleThresholdScorer, SubStringScorer, TokenAmplifi
 from tests.unit.mocks import MockPromptTarget
 
 DATASET_PATH = pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "airt" / "cost_amplification.prompt"
-FIRST_MESSAGE = "How does DNS resolve a domain name?"
+FIRST_MESSAGE = "Explain fully, step by step, how DNS resolves a domain name."
 FOLLOW_UP = "Thank you. Please expand every point and keep the full answer."
 
 
