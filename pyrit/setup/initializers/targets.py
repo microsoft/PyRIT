@@ -382,7 +382,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         underlying_model_var="OPENAI_IMAGE_UNDERLYING_MODEL2",
     ),
     # ============================================
-    # TTS Targets (OpenAITTSTarget)
+    # Deprecated TTS Targets (OpenAITTSTarget, removed in 1.5.0)
     # ============================================
     TargetConfig(
         registry_name="openai_tts_azure",
@@ -544,7 +544,7 @@ class TargetInitializer(PyRITInitializer):
     - OPENAI_IMAGE_*1 - Azure OpenAI Image
     - OPENAI_IMAGE_*2 - Platform OpenAI Image
 
-    **TTS Targets (OpenAITTSTarget):**
+    **Deprecated TTS Targets (OpenAITTSTarget, removed in 1.5.0):**
     - OPENAI_TTS_*1 - Azure OpenAI TTS
     - OPENAI_TTS_*2 - Platform OpenAI TTS
 

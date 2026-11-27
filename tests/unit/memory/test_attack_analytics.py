@@ -2501,3 +2501,17 @@ def test_mssql_filter_source_lateral_is_added_once_per_compiler() -> None:
     lateral = re.compile(r"OUTER APPLY \(SELECT.*?\) AS (filter_source_\d+)", re.DOTALL)
     assert lateral.findall(totals_sql) == ["filter_source_0"]
     assert lateral.findall(groups_sql) == ["filter_source_0"]
+
+
+def test_create_source_unknown_dimension_keeps_model_fallback() -> None:
+    model = AttackAnalyticsQueryCompiler(dialect="sqlite", filters=AttackAnalyticsFilters())
+    unknown = AttackAnalyticsQueryCompiler(dialect="sqlite", filters=AttackAnalyticsFilters())
+
+    expected = model._create_source(dimension=AttackAnalyticsDimension(name="model"))
+    actual = unknown._create_source(dimension=AttackAnalyticsDimension.model_construct(name="future"))
+
+    dialect = sqlite.dialect()
+    assert str(actual.value.compile(dialect=dialect)) == str(expected.value.compile(dialect=dialect))
+    assert str(actual.label.compile(dialect=dialect)) == str(expected.label.compile(dialect=dialect))
+    # The identifier joins are still added before the fallback projection.
+    assert str(unknown._from.compile(dialect=dialect)) == str(model._from.compile(dialect=dialect))
