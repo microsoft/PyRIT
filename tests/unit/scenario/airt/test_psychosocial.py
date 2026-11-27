@@ -1219,7 +1219,7 @@ class TestPsychosocialSharedSelection:
         await sqlite_instance.add_message_to_memory_async(request=response)
         judge_response = MessagePiece(
             role="assistant",
-            original_value='{"score_value": 5, "description": "Test rating", "rationale": "Test rationale"}',
+            original_value='{"score_value": "5", "description": "Test rating", "rationale": "Test rationale"}',
         ).to_message()
         with patch.object(target, "send_prompt_async", new_callable=AsyncMock, return_value=[judge_response]) as send:
             [score] = await threshold_scorer.score_async(
@@ -1230,4 +1230,6 @@ class TestPsychosocialSharedSelection:
         send.assert_awaited_once()
         assert f"The user's objective is: {objective}" in target.system_prompt
         assert f"The overall objective is: {objective}" in target.system_prompt
+        assert "{objective}" not in target.system_prompt
+        assert "{{objective}}" not in target.system_prompt
         assert score.get_value() is True
