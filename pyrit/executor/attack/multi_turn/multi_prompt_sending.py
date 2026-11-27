@@ -64,6 +64,8 @@ class MultiPromptSendingAttackParameters(AttackParameters):
         """
         Create parameters from a SeedGroup, extracting user messages.
 
+        Turns before the first user turn become the prepended conversation; the user turns are sent in order.
+
         Args:
             seed_group: The seed group to extract parameters from.
             adversarial_chat: Not used by this attack type.
@@ -74,19 +76,33 @@ class MultiPromptSendingAttackParameters(AttackParameters):
             MultiPromptSendingAttackParameters instance.
 
         Raises:
-            ValueError: If seed_group has no objective, no user messages, or if overrides contain invalid fields.
+            ValueError: If seed_group has no objective or no user messages, if a non-user turn follows the
+                first user turn, or if overrides contain invalid fields.
         """
         # Extract objective (required)
         if seed_group.objective is None:
             raise ValueError("SeedGroup must have an objective")
 
         # Extract messages from seed group (required)
-        user_messages = seed_group.user_messages
-        if not user_messages:
+        messages = seed_group.user_messages
+        first_user_index = next((i for i, message in enumerate(messages) if message.api_role == "user"), None)
+        if first_user_index is None:
             raise ValueError(
                 "SeedGroup must have user_messages for MultiPromptSendingAttack. "
                 "This attack requires multi-turn message sequences."
             )
+
+        # Turns before the first user turn, such as a system prompt, are history. Every turn from
+        # the first user turn on is sent and answered live, so a scripted reply there can't be honored.
+        prepended_conversation = messages[:first_user_index] or None
+        user_messages = messages[first_user_index:]
+        for message in user_messages:
+            if message.api_role != "user":
+                raise ValueError(
+                    f"MultiPromptSendingAttack sends every turn after the first user turn as a live request, "
+                    f"so the {message.api_role} turn at sequence {message.get_piece().sequence} can't be sent. "
+                    "Move it before the first user turn to use it as history."
+                )
 
         # Validate overrides only contain valid fields
         valid_fields = {"objective", "user_messages", "memory_labels", "operation_id", "expectation"}
@@ -102,6 +118,7 @@ class MultiPromptSendingAttackParameters(AttackParameters):
             memory_labels=overrides.get("memory_labels", {}),
             operation_id=overrides.get("operation_id"),
             user_messages=user_messages,
+            prepended_conversation=prepended_conversation,
             expectation=AttackParameters._resolve_seed_expectation(seed_group=seed_group, overrides=overrides),
             targeted_harm_categories=list(seed_group.harm_categories),
         )
