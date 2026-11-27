@@ -1300,6 +1300,7 @@ class TestResponseScoring:
             objective=basic_context.objective,
         )
 
+        assert isinstance(attack._refusal_scorer, SelfAskRefusalScorer)
         with patch.object(
             attack._refusal_scorer._judge, "judge_async", new_callable=AsyncMock, return_value=non_refusal
         ) as mock_judge:
