@@ -16,6 +16,7 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 pytest.importorskip("a2a")
 
@@ -188,14 +189,14 @@ async def a2a_test_server(
                     if counts["polls"] == 1:
                         return Response("Poll rate limited", status_code=429)
                     executor.release_task.set()
-                    await asyncio.wait_for(executor.task_finished.wait(), timeout=5)
+                    await asyncio.wait_for(executor.task_finished.wait(), timeout=TEST_WATCHDOG_SECONDS)
             return await call_next(request)
 
         app.add_middleware(BaseHTTPMiddleware, dispatch=rate_limit_poll_async)
         server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="off", ws="none"))
         serving = asyncio.create_task(server.serve(sockets=[sock]))
         try:
-            async with asyncio.timeout(10):
+            async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
                 while not server.started:
                     if serving.done():
                         await serving
@@ -209,7 +210,7 @@ async def a2a_test_server(
         finally:
             executor.release_task.set()
             server.should_exit = True
-            await asyncio.wait_for(serving, timeout=10)
+            await asyncio.wait_for(serving, timeout=TEST_WATCHDOG_SECONDS)
             await handler.aclose()
 
 

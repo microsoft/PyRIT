@@ -8,7 +8,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -242,7 +242,7 @@ class ScorerTargetResponsePayload(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_message_piece_digest_count(self) -> ScorerTargetResponsePayload:
+    def _validate_message_piece_digest_count(self) -> Self:
         """
         Require one digest for each referenced response piece.
 
@@ -284,7 +284,7 @@ class ConversationObservationPayload(BaseModel):
     message_piece_digests: tuple[str, ...]
 
     @model_validator(mode="after")
-    def _validate_references(self) -> ConversationObservationPayload:
+    def _validate_references(self) -> Self:
         """
         Validate snapshot references.
 
@@ -357,7 +357,7 @@ class ToolEventsObservationPayload(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_scope_and_events(self) -> ToolEventsObservationPayload:
+    def _validate_scope_and_events(self) -> Self:
         """
         Keep event identities and completeness within the declared scope.
 
@@ -411,7 +411,7 @@ class ExecutionTraceObservationPayload(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_steps(self) -> ExecutionTraceObservationPayload:
+    def _validate_steps(self) -> Self:
         """
         Keep steps unique, ordered by index, and in scope.
 
@@ -467,7 +467,7 @@ class SurfaceObservationPayload(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_entries(self) -> SurfaceObservationPayload:
+    def _validate_entries(self) -> Self:
         """
         Keep entries unique and, for an exact locator, limited to that one location.
 
@@ -522,7 +522,7 @@ class ProgramExecutionObservationPayload(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_events(self) -> ProgramExecutionObservationPayload:
+    def _validate_events(self) -> Self:
         """
         Keep one event per invocation, in invocation order.
 
@@ -565,7 +565,7 @@ class Observation(BaseModel):
     metadata: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _validate_conversation_snapshot(self) -> Observation:
+    def _validate_conversation_snapshot(self) -> Self:
         """
         Validate conversation acquisition and scope.
 
@@ -582,7 +582,7 @@ class Observation(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _validate_target_response(self) -> Observation:
+    def _validate_target_response(self) -> Self:
         """
         Check target response acquisition, anchor compatibility, and embedded evidence.
 
@@ -610,7 +610,7 @@ class Observation(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _validate_tool_acquisition(self) -> Observation:
+    def _validate_tool_acquisition(self) -> Self:
         """
         Require acquisition status to agree with the retained tool snapshot.
 
@@ -631,7 +631,7 @@ class Observation(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _validate_execution_trace_acquisition(self) -> Observation:
+    def _validate_execution_trace_acquisition(self) -> Self:
         """
         Require acquisition status to agree with the retained execution snapshot.
 
@@ -652,7 +652,7 @@ class Observation(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _validate_surface_acquisition(self) -> Observation:
+    def _validate_surface_acquisition(self) -> Self:
         """
         Require acquisition status to agree with the retained surface snapshot.
 
@@ -673,7 +673,7 @@ class Observation(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _validate_program_acquisition(self) -> Observation:
+    def _validate_program_acquisition(self) -> Self:
         """
         Require acquisition status to agree with the execution events.
 

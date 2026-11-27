@@ -7,7 +7,7 @@ import type { TechniqueConfiguration, TechniqueEditResponse, TechniqueOverride }
 interface TechniqueResource {
   key: string
   original?: TechniqueConfiguration
-  applied?: TechniqueEditResponse
+  applied?: TechniqueEditResponse | undefined
   pending?: boolean
   revision?: number
   error?: string

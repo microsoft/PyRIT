@@ -98,7 +98,7 @@ class MessagePiece(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def _set_original_prompt_id_default(self) -> MessagePiece:
+    def _set_original_prompt_id_default(self) -> Self:
         """
         Enforce invariant: ``original_prompt_id == id`` for non-duplicate pieces.
 

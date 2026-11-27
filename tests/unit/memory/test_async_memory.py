@@ -25,6 +25,7 @@ from unit.async_utils import (
     TEST_WATCHDOG_SECONDS,
     drain_tasks_async,
     get_defined_tasks,
+    wait_for_event_async,
     wait_for_worker_ready_async,
 )
 
@@ -302,7 +303,7 @@ async def test_azure_auth_wait_is_async_and_credential_is_closed() -> None:
         auth = AsyncAzureAuth("scope")
         task = asyncio.create_task(auth.get_access_token_async())
         try:
-            await asyncio.wait_for(started.wait(), timeout=5)
+            await wait_for_event_async(event=started, tasks=[task])
             await asyncio.sleep(0)
             assert not task.done()
         finally:
