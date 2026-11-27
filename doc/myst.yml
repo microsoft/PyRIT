@@ -181,6 +181,7 @@ project:
             - file: code/scoring/6_file_write_scorer.ipynb
             - file: code/scoring/7_program_execution_scorer.ipynb
             - file: code/scoring/8_trace_evidence_scoring.ipynb
+            - file: code/scoring/9_choosing_a_threshold.ipynb
             - file: code/scoring/multi_label_true_false.md
             - file: code/scoring/scorer_stability.md
         - file: code/memory/0_memory.md
