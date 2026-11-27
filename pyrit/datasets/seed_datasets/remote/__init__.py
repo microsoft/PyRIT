@@ -128,6 +128,7 @@ if TYPE_CHECKING:
     from pyrit.datasets.seed_datasets.remote.moral_integrity_corpus_dataset import _MICDataset
     from pyrit.datasets.seed_datasets.remote.mossbench_dataset import MossBenchOversensitivityType, _MossBenchDataset
     from pyrit.datasets.seed_datasets.remote.msts_dataset import _MSTSDataset
+    from pyrit.datasets.seed_datasets.remote.multijail_dataset import MultiJailLanguage, _MultiJailDataset
     from pyrit.datasets.seed_datasets.remote.multilingual_vulnerability_dataset import _MultilingualVulnerabilityDataset
     from pyrit.datasets.seed_datasets.remote.odin_dataset import (
         ODINSecurityBoundary,
@@ -216,6 +217,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "MMSafetyBenchCategory": "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset",
     "MMSafetyBenchVariant": "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset",
     "MossBenchOversensitivityType": "pyrit.datasets.seed_datasets.remote.mossbench_dataset",
+    "MultiJailLanguage": "pyrit.datasets.seed_datasets.remote.multijail_dataset",
     "ODINSecurityBoundary": "pyrit.datasets.seed_datasets.remote.odin_dataset",
     "ODINSeverity": "pyrit.datasets.seed_datasets.remote.odin_dataset",
     "ODINTaxonomyCategory": "pyrit.datasets.seed_datasets.remote.odin_dataset",
@@ -297,6 +299,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "_MMSafetyBenchDataset": "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset",
     "_MossBenchDataset": "pyrit.datasets.seed_datasets.remote.mossbench_dataset",
     "_MSTSDataset": "pyrit.datasets.seed_datasets.remote.msts_dataset",
+    "_MultiJailDataset": "pyrit.datasets.seed_datasets.remote.multijail_dataset",
     "_MultilingualVulnerabilityDataset": "pyrit.datasets.seed_datasets.remote.multilingual_vulnerability_dataset",
     "_ODINDataset": "pyrit.datasets.seed_datasets.remote.odin_dataset",
     "_ORBench80KDataset": "pyrit.datasets.seed_datasets.remote.or_bench_dataset",
