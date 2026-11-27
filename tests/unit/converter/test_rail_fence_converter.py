@@ -7,8 +7,9 @@ from pyrit.converter import ConverterResult, RailFenceConverter
 
 
 async def test_rail_fence_converter_known_vector():
-    # Canonical Wikipedia Rail Fence example: 3 rails.
-    converter = RailFenceConverter(rails=3)
+    # Canonical Wikipedia Rail Fence example. The default is 3 rails, so this also proves the default.
+    converter = RailFenceConverter()
+    assert converter.rails == 3
     result = await converter.convert_async(prompt="WEAREDISCOVEREDFLEEATONCE", input_type="text")
     assert isinstance(result, ConverterResult)
     assert result.output_text == "WECRLTEERDSOEEFEAOCAIVDEN"
@@ -20,13 +21,6 @@ async def test_rail_fence_converter_two_rails():
     converter = RailFenceConverter(rails=2)
     result = await converter.convert_async(prompt="WEAREDISCOVERED", input_type="text")
     assert result.output_text == "WAEICVRDERDSOEE"
-
-
-async def test_rail_fence_converter_default_rails_is_three():
-    converter = RailFenceConverter()
-    assert converter.rails == 3
-    result = await converter.convert_async(prompt="WEAREDISCOVEREDFLEEATONCE", input_type="text")
-    assert result.output_text == "WECRLTEERDSOEEFEAOCAIVDEN"
 
 
 async def test_rail_fence_converter_preserves_all_characters():
@@ -53,14 +47,16 @@ async def test_rail_fence_converter_empty():
     assert result.output_type == "text"
 
 
-def test_rail_fence_converter_invalid_rails_too_few():
+@pytest.mark.parametrize("rails", [1, 0, 2.5])
+def test_rail_fence_converter_invalid_rails(rails):
+    # Too few rails (1, 0) and non-integers (2.5) are all rejected in the constructor.
     with pytest.raises(ValueError, match="rail fence rails value invalid"):
-        RailFenceConverter(rails=1)
+        RailFenceConverter(rails=rails)
 
 
-def test_rail_fence_converter_invalid_rails_zero():
-    with pytest.raises(ValueError, match="rail fence rails value invalid"):
-        RailFenceConverter(rails=0)
+async def test_rail_fence_converter_decode_prompt_description_includes_rail_count():
+    converter = RailFenceConverter(rails=4)
+    assert "4 rails" in converter.decode_prompt_description
 
 
 def test_rail_fence_converter_identifier_includes_rails():

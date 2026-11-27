@@ -43,11 +43,33 @@ class RailFenceConverter(Converter):
                 than or equal to 2. Defaults to 3.
 
         Raises:
-            ValueError: If ``rails`` is less than 2.
+            ValueError: If ``rails`` is not an integer greater than or equal to 2.
         """
-        if rails < 2:
-            raise ValueError("rail fence rails value invalid, must be an integer greater than or equal to 2.")
+        # Reject non-integers (and bool) up front: a REST/GUI request can pass a float such as
+        # 2.5, which would slip past ``rails < 2`` and then raise a TypeError from range() on
+        # every later conversion.
+        if not isinstance(rails, int) or isinstance(rails, bool) or rails < 2:
+            raise ValueError(
+                f"rail fence rails value invalid, must be an integer greater than or equal to 2. Got {rails!r}."
+            )
         self.rails = rails
+
+    @property
+    def decode_prompt_description(self) -> str:
+        """
+        A human-readable description of this cipher, including its rail count, for decode prompts.
+
+        The rail count is the key of a Rail Fence cipher, so a scenario that asks a model to decode
+        the output must disclose it and the zigzag read order; otherwise a failure to decode reflects
+        the missing key rather than the behavior under test.
+
+        Returns:
+            str: A phrase naming the cipher, its rail count, and the zigzag read order.
+        """
+        return (
+            f"rail fence cipher ({self.rails} rails, written in a zigzag down and up across the rails "
+            "starting on the top rail, then read out rail by rail from the top)"
+        )
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
