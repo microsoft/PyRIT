@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from pyrit.converter.azure_speech_audio_to_text_converter import AzureSpeechAudioToTextConverter
     from pyrit.converter.azure_speech_text_to_audio_converter import AzureSpeechTextToAudioConverter
     from pyrit.converter.base64_converter import Base64Converter
+    from pyrit.converter.base91_converter import Base91Converter
     from pyrit.converter.base2048_converter import Base2048Converter
     from pyrit.converter.bidi_converter import BidiConverter
     from pyrit.converter.bifid_converter import BifidConverter
@@ -173,6 +174,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AzureSpeechTextToAudioConverter": "pyrit.converter.azure_speech_text_to_audio_converter",
     "Base2048Converter": "pyrit.converter.base2048_converter",
     "Base64Converter": "pyrit.converter.base64_converter",
+    "Base91Converter": "pyrit.converter.base91_converter",
     "BidiConverter": "pyrit.converter.bidi_converter",
     "BifidConverter": "pyrit.converter.bifid_converter",
     "DigitBijectionConverter": "pyrit.converter.bijection_converter",

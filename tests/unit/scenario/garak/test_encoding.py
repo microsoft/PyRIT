@@ -12,6 +12,7 @@ from pyrit.converter import (
     AsciiSmugglerConverter,
     AskToDecodeConverter,
     Base64Converter,
+    Base91Converter,
     ColumnarTranspositionConverter,
     PigpenConverter,
     SearchReplaceConverter,
@@ -276,7 +277,7 @@ class TestEncodingTechniqueDefault:
         }
         all_names = {t.value for t in EncodingTechnique.get_all_techniques()}
         assert default_names < all_names
-        assert len(all_names) == 22
+        assert len(all_names) == 23
         # The niche/lossy schemes stay ALL-only.
         assert all_names - default_names == {
             "braille",
@@ -288,6 +289,7 @@ class TestEncodingTechniqueDefault:
             "ubbi_dubbi",
             "bifid",
             "columnar_transposition",
+            "base91",
         }
 
     def test_get_aggregate_tags_includes_default(self):
@@ -467,6 +469,56 @@ class TestEncodingAtomicNameUniqueness:
             assert row_converters, "ubbi_dubbi row applies no SearchReplaceConverter"
             result = await row_converters[0].convert_async(prompt="speak")
             assert result.output_text == "spubeak"
+
+    async def test_base91_technique_builds_registered_row(
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
+    ):
+        """Selecting Base91 must register a row whose raw attack uses a ``Base91Converter``.
+
+        This exercises the registered ``base91`` row end to end (not a hand-built converter), so a
+        deleted or misnamed row in ``_converter_variants()`` is caught: such a regression leaves the
+        enum intact while the technique builds no attacks. The sibling converter PRs in this series
+        edit the same list, so a row can be lost during a rebase.
+        """
+        from unittest.mock import patch
+
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_attack_seed_groups},
+        ):
+            scenario = Encoding(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                    "scenario_techniques": [EncodingTechnique.Base91],
+                }
+            )
+            await scenario.initialize_async()
+
+            attacks = scenario._get_converter_attacks(
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+            )
+
+            assert attacks, "base91 technique built no attacks"
+            assert all(aa.display_group == "base91" for aa in attacks)
+            names = {aa.atomic_attack_name for aa in attacks}
+            assert "base91_raw" in names, "missing raw variant"
+            assert any(n != "base91_raw" for n in names), "missing decode variant"
+
+            # The registered raw row applies a Base91Converter.
+            raw = next(aa for aa in attacks if aa.atomic_attack_name == "base91_raw")
+            row_converters = [
+                conv
+                for config in raw.attack_technique.attack.get_request_converters()
+                for conv in config.converters
+                if isinstance(conv, Base91Converter)
+            ]
+            assert row_converters, "base91 row applies no Base91Converter"
+            result = await row_converters[0].convert_async(prompt="Hello World!")
+            assert result.output_text == ">OwJh>Io0Tv!8PE"
 
     async def test_pigpen_technique_builds_registered_row(
         self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config

@@ -1,0 +1,100 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+import pytest
+
+from pyrit.converter import Base91Converter, ConverterResult
+
+
+async def test_base91_converter_known_vector():
+    # Reference basE91 vector (Joachim Henke's basE91): "test" -> "fPNKd".
+    converter = Base91Converter()
+    result = await converter.convert_async(prompt="test", input_type="text")
+    assert isinstance(result, ConverterResult)
+    assert result.output_text == "fPNKd"
+    assert result.output_type == "text"
+
+
+async def test_base91_converter_hello_world():
+    # Reference basE91 vector: "Hello World!" -> ">OwJh>Io0Tv!8PE".
+    converter = Base91Converter()
+    result = await converter.convert_async(prompt="Hello World!", input_type="text")
+    assert result.output_text == ">OwJh>Io0Tv!8PE"
+
+
+async def test_base91_converter_single_char():
+    # A single byte leaves 8 bits in the buffer, which flush as two characters
+    # (0x61 = 'a' -> value 97, 97 % 91 = 6 -> 'G'; 97 // 91 = 1 -> 'B').
+    converter = Base91Converter()
+    result = await converter.convert_async(prompt="a", input_type="text")
+    assert result.output_text == "GB"
+
+
+@pytest.mark.parametrize(
+    "plaintext, expected",
+    [
+        # 14-bit branch: the low 13 bits are <= 88, so 14 bits are consumed. "X " buffers
+        # 0x2058 -> low 13 bits = 88 (not > 88), emits value 8280 ('""') and flushes 'A'.
+        ("X ", '""A'),
+        # Another 14-bit-branch vector with a distinct emitted value, to pin the threshold/mask.
+        ("Y ", "~AB"),
+        # Trailing-bit flush: one byte leaves 8 bits, and the `num_bits > 7` flush emits
+        # two characters ('%A'); this never enters the main >13-bit loop.
+        ("A", "%A"),
+    ],
+)
+async def test_base91_converter_branch_boundary_vectors(plaintext, expected):
+    """Pin the 14-bit branch and the trailing-bit flush with reference vectors.
+
+    The broad round-trip vectors do not discriminate mutants of the ``num_bits > 13`` threshold,
+    the ``value > 88`` test, or the 13/14-bit mask, so these reference vectors (verified against
+    Joachim Henke's basE91) exercise those paths directly.
+    """
+    converter = Base91Converter()
+    result = await converter.convert_async(prompt=plaintext, input_type="text")
+    assert result.output_text == expected
+
+
+async def test_base91_converter_empty():
+    converter = Base91Converter()
+    result = await converter.convert_async(prompt="", input_type="text")
+    assert isinstance(result, ConverterResult)
+    assert result.output_text == ""
+    assert result.output_type == "text"
+
+
+async def test_base91_converter_uses_only_alphabet():
+    converter = Base91Converter()
+    result = await converter.convert_async(prompt="The quick brown fox jumps over 13 lazy dogs!", input_type="text")
+    assert all(ch in Base91Converter.ALPHABET for ch in result.output_text)
+
+
+async def test_base91_converter_alphabet_is_91_unique_chars():
+    assert len(Base91Converter.ALPHABET) == 91
+    assert len(set(Base91Converter.ALPHABET)) == 91
+
+
+async def test_base91_converter_unicode_input():
+    # Multi-byte UTF-8 input encodes without error and stays within the alphabet.
+    converter = Base91Converter()
+    result = await converter.convert_async(prompt="café ☕", input_type="text")
+    assert result.output_text != ""
+    assert all(ch in Base91Converter.ALPHABET for ch in result.output_text)
+
+
+async def test_base91_converter_input_not_supported():
+    converter = Base91Converter()
+    with pytest.raises(ValueError):
+        await converter.convert_async(prompt="hello", input_type="image_path")
+
+
+def test_base91_converter_input_supported():
+    converter = Base91Converter()
+    assert converter.input_supported("text") is True
+    assert converter.input_supported("image_path") is False
+
+
+def test_base91_converter_output_supported():
+    converter = Base91Converter()
+    assert converter.output_supported("text") is True
+    assert converter.output_supported("image_path") is False
