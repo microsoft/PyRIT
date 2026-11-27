@@ -47,6 +47,7 @@ from pyrit.backend.models.configuration import (
     UpdateEnvironmentFileRequest,
 )
 from pyrit.backend.models.message_sends import MessageSendRequest
+from pyrit.backend.models.operations import FindingCreateRequest, FindingUpdateRequest
 from pyrit.backend.models.scores import ManualScoreRequest
 from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.models.component_spec import TargetBinding
@@ -596,11 +597,46 @@ def test_update_attack_request_expected_objective_is_not_length_limited() -> Non
     assert len(request.expected_objective or "") == MAX_TEXT_LENGTH + 1
 
 
+@pytest.mark.parametrize("model", [FindingCreateRequest, FindingUpdateRequest])
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"title": "t" * (MAX_TEXT_LENGTH + 1)},
+        {"severity": "s" * (MAX_TEXT_LENGTH + 1)},
+        {"field_values": {"k" * (MAX_IDENTIFIER_LENGTH + 1): "value"}},
+        {"field_values": {"key": "v" * (MAX_TEXT_LENGTH + 1)}},
+        {"field_values": {f"key{i}": "value" for i in range(MAX_ITEMS + 1)}},
+    ],
+)
+def test_finding_requests_reject_values_over_limits(model: type[BaseModel], overrides: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate({"title": "Finding", "severity": "moderate", **overrides})
+
+
+@pytest.mark.parametrize("field", ["keep_retired_keys", "remove_retired_keys"])
+@pytest.mark.parametrize("keys", [["k" * (MAX_IDENTIFIER_LENGTH + 1)], [f"key{i}" for i in range(MAX_ITEMS + 1)]])
+def test_finding_update_request_rejects_retired_keys_over_limits(field: str, keys: list[str]) -> None:
+    with pytest.raises(ValidationError):
+        FindingUpdateRequest.model_validate({"title": "Finding", "severity": "moderate", field: keys})
+
+
+def test_finding_update_request_accepts_values_at_limits() -> None:
+    keys = [f"{i:0{MAX_IDENTIFIER_LENGTH}d}" for i in range(MAX_ITEMS)]
+    request = FindingUpdateRequest(
+        title="t" * MAX_TEXT_LENGTH,
+        severity="s" * MAX_TEXT_LENGTH,
+        field_values={key: "v" * MAX_TEXT_LENGTH if key == keys[0] else "v" for key in keys},
+        remove_retired_keys=keys,
+    )
+
+    assert len(request.field_values) == MAX_ITEMS
+    assert len(request.remove_retired_keys) == MAX_ITEMS
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
         {"target_conversation_id": "c" * (MAX_IDENTIFIER_LENGTH + 1)},
-        {"converter_ids": ["converter"] * (MAX_ITEMS + 1)},
         {"request_converter_configurations": [{"converter_ids": ["converter"]}] * (MAX_ITEMS + 1)},
         {"pieces": [{"original_value": "text", "mime_type": "m" * (MAX_IDENTIFIER_LENGTH + 1)}]},
         {"start_token": "s" * (MAX_IDENTIFIER_LENGTH + 1)},

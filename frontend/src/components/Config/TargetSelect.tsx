@@ -4,7 +4,7 @@ import { Select, type SelectOnChangeData } from '@fluentui/react-components'
 
 import HelpField from '@/components/HelpField'
 import type { TargetInstance } from '@/types'
-import { targetModelName } from '@/utils/targetIdentity'
+import { targetOptionLabel } from '@/utils/targetIdentity'
 
 import { useTargetSelectStyles } from './TargetSelect.styles'
 
@@ -42,14 +42,11 @@ export default function TargetSelect({
         }}
       >
         <option value="">{placeholder}</option>
-        {targets.map((target: TargetInstance) => {
-          const model = targetModelName(target)
-          return (
-            <option key={target.target_registry_name} value={target.target_registry_name}>
-              {model ? `${target.target_registry_name} (${model})` : target.target_registry_name}
-            </option>
-          )
-        })}
+        {targets.map((target: TargetInstance) => (
+          <option key={target.target_registry_name} value={target.target_registry_name}>
+            {targetOptionLabel(target)}
+          </option>
+        ))}
       </Select>
     </HelpField>
   )

@@ -36,7 +36,7 @@ export interface ApiError {
   /** Human-readable error message extracted from the response or synthesized. */
   detail: string
   /** RFC 7807 `type` URI, if the backend included one. */
-  type?: string
+  type?: string | undefined
   /** Per-field validation errors from the RFC 7807 `errors` array; empty when the body has none. */
   fieldErrors: FieldError[]
   /** True when no HTTP response was received (DNS failure, CORS block, etc.). */
@@ -137,6 +137,20 @@ export function toApiError(err: unknown): ApiError {
     isTimeout: false,
     raw: err,
   }
+}
+
+/** Pydantic's prefixes on validator messages and request body fields, which say nothing to the user. */
+const VALUE_ERROR_PREFIX = /^Value error, /
+const BODY_FIELD_PREFIX = /^body\./
+
+/**
+ * The error's detail followed by its distinct field messages, each with its field, so a 422's
+ * generic "Request validation failed" says what failed and where.
+ */
+export function apiErrorMessage(error: ApiError): string {
+  const messages = [...new Set(error.fieldErrors.map((item) =>
+    `${item.field.replace(BODY_FIELD_PREFIX, '')}: ${item.message.replace(VALUE_ERROR_PREFIX, '')}`))]
+  return messages.length > 0 ? `${error.detail}: ${messages.join('; ')}` : error.detail
 }
 
 /** Problem type the backend gives a target it refused to save, which can still be created without saving it. */

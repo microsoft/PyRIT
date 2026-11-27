@@ -17,7 +17,7 @@ interface ChatTargetPickerProps {
   error: string | null
   disabled: boolean
   onSelect: (target: TargetInstance | null) => void
-  disabledReason?: (target: TargetInstance) => string | undefined
+  disabledReason?: ((target: TargetInstance) => string | undefined) | undefined
 }
 
 export default function ChatTargetPicker({

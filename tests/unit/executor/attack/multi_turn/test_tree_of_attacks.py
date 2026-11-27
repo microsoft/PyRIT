@@ -2961,10 +2961,12 @@ def test_tap_scoring_config_threshold_raises_for_a_scorer_without_a_threshold():
         _ = scoring_config.threshold
 
 
-def test_tap_attack_result_tree_visualization_getter_returns_value():
+@pytest.mark.parametrize("has_root", [False, True])
+def test_tap_attack_result_tree_visualization_getter_returns_value(has_root):
     """Test that TAPAttackResult.tree_visualization returns the stored tree."""
     tree = Tree()
-    tree.create_node("root", "root")
+    if has_root:
+        tree.create_node("root", "root")
     result = TAPAttackResult(
         conversation_id="conv1",
         objective="test",
@@ -2980,6 +2982,14 @@ def test_tap_attack_result_tree_visualization_getter_returns_none_when_missing()
         objective="test",
     )
     assert result.tree_visualization is None
+
+
+@pytest.mark.parametrize("value", [0, "invalid"])
+def test_tap_attack_result_tree_visualization_rejects_invalid_metadata(value):
+    result = TAPAttackResult(conversation_id="conv1", objective="test", metadata={"tree_visualization": value})
+
+    with pytest.raises(TypeError, match="tree_visualization must be a Tree or None"):
+        _ = result.tree_visualization
 
 
 # ---------------------------------------------------------------------------

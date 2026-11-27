@@ -37,6 +37,14 @@ import ScenarioSuiteEditor from './components/ScenarioSuites/ScenarioSuiteEditor
 import ScenarioSuiteExecutionPage from './components/ScenarioSuites/ScenarioSuiteExecutionPage'
 import DatasetCatalog from './components/Datasets/DatasetCatalog'
 import DatasetSelection from './components/Datasets/DatasetSelection'
+import NewPromptGenerationPage from './components/PromptGeneration/NewPromptGenerationPage'
+import PromptGenerationPage from './components/PromptGeneration/PromptGenerationPage'
+import PromptGenerationsPage from './components/PromptGeneration/PromptGenerationsPage'
+import {
+  NEW_PROMPT_GENERATION_PATH,
+  PROMPT_GENERATION_ROUTE,
+  PROMPT_GENERATIONS_PATH,
+} from './components/PromptGeneration/promptGenerationRoutes'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -186,7 +194,7 @@ interface LoadedAttack {
   /** The scan run that produced this attack. */
   scenarioResultId?: string | null
   /** Verified SDK provenance for interrupted evidence that has no saved attack result. */
-  recordedConversations?: ScenarioActiveConversation[]
+  recordedConversations?: ScenarioActiveConversation[] | undefined
   manualContinuation?: ManualContinuation | null
   lastResponseMessagePieceId: string | null
   status: AttackLoadStatus
@@ -774,7 +782,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           endpoint: targetEndpoint(createdTarget),
           model_name: targetModelName(createdTarget),
           identifier_hash: targetIdentifierHash(createdTarget),
-          binding: createdTarget.binding,
+          ...(createdTarget.binding !== undefined ? { binding: createdTarget.binding } : {}),
         }
       : null
     skipNextLoadForAttackId.current = arId
@@ -791,7 +799,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       operator: null,
       target,
       targetUnbound: createdTarget === null,
-      createdTarget: createdTarget ?? undefined,
+      ...(createdTarget ? { createdTarget } : {}),
       knownConversationIds: [convId],
       relatedConversationCount: 0,
       objective: objective ?? '',
@@ -1120,6 +1128,19 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route path="/scanner/history/suites/executions/:executionId" element={<ScenarioSuiteExecutionPage />} />
               <Route path={DATASETS_PATH} element={<DatasetCatalog />} />
               <Route path={DATASET_DETAIL_PATH} element={<DatasetSelection />} />
+              <Route path={PROMPT_GENERATIONS_PATH} element={<PromptGenerationsPage />} />
+              <Route
+                path={NEW_PROMPT_GENERATION_PATH}
+                element={
+                  <NewPromptGenerationPage
+                    targets={registry.targets}
+                    targetsLoading={registry.loading}
+                    targetsError={registry.error}
+                    defaultTarget={targetDefaults.adversarialTarget}
+                  />
+                }
+              />
+              <Route path={PROMPT_GENERATION_ROUTE} element={<PromptGenerationPage />} />
               <Route path="/scanner/presets" element={<Navigate to="/registry/scenario-presets" replace />} />
               <Route path="/scanner/presets/new" element={<Navigate to="/registry/scenario-presets/new" replace />} />
               <Route path="/scanner/presets/:presetName/edit" element={<LegacyPresetEditorRedirect />} />
