@@ -514,3 +514,26 @@ converter = ImagePromptStyleConverter(
 )
 result = await converter.convert_async(prompt="make a raccoon in a pirate ship")
 print("Image Filter Conversion:", result.output_text)  # type: ignore
+
+# %% [markdown]
+# ### 1.5 Custom LLM converter with `LLMGenericTextConverter`
+#
+# Use `LLMGenericTextConverter` for a one-off LLM rewrite when no built-in converter fits. Give it a target and a `system_prompt_template` and it becomes a custom converter without writing a class. The incoming prompt is available to the template as `objective`, and extra keyword arguments are passed to the template as parameters. Like the other LLM-based converters here, this cell needs a configured target to run.
+#
+# If the LLM output needs parsing (for example, extracting JSON), subclass `LLMGenericTextConverter` and override `_process_response` instead.
+
+# %%
+from pyrit.converter import LLMGenericTextConverter
+
+system_prompt = SeedPrompt(
+    value="Rewrite the text in {{ style }} style. Text: {{ objective }}",
+    parameters=["objective", "style"],
+    data_type="text",
+)
+custom_converter = LLMGenericTextConverter(
+    converter_target=attack_llm,
+    system_prompt_template=system_prompt,
+    style="pirate",
+)
+result = await custom_converter.convert_async(prompt=prompt)
+print("Custom LLM rewrite:", result.output_text)  # type: ignore
