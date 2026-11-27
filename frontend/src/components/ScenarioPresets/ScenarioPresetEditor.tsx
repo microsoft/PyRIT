@@ -14,8 +14,9 @@ import {
   Text,
   Textarea,
 } from '@fluentui/react-components'
-import { useNavigate, useParams } from 'react-router'
+import { useBeforeUnload, useBlocker, useNavigate, useParams } from 'react-router'
 
+import ConfirmDialog from '@/components/ConfirmDialog'
 import ParameterField from '@/components/Parameters/ParameterField'
 import type { ParameterFormValue } from '@/components/Parameters/parameterForm'
 import DatasetActions from '@/components/Scenarios/DatasetActions'
@@ -43,6 +44,7 @@ import { routerPathParamValue } from '@/utils/routeParams'
 
 import ScannerVisibilityLabel from './ScannerVisibilityLabel'
 import { useScenarioPresetEditorStyles } from './ScenarioPresetEditor.styles'
+import { presetDraftSignature, type PresetDraft } from './presetDraftSignature'
 import { PRESETS_ROUTE } from './presetRoutes'
 import {
   buildPresetScenarioConfig,
@@ -80,6 +82,14 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   const styles = useScenarioPresetEditorStyles()
   const navigate = useNavigate()
   const decodedName = presetName === undefined ? '' : routerPathParamValue(presetName)
+  const allowNavigation = useRef(false)
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   const [status, setStatus] = useState<LoadStatus>('loading')
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -103,6 +113,13 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   const [saving, setSaving] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [savedDraft, setSavedDraft] = useState<PresetDraft>({
+    name: mode === 'edit' ? decodedName : '',
+    description: '',
+    showInScanner: true,
+    scenarioName: '',
+    config: null,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -130,6 +147,17 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
         setShowInScanner(response.preset.show_in_scanner !== false)
         setSelectedScenarioName(response.preset.scenario_name)
         setScenarioLoading(true)
+        // The stored fields are the baseline for the leave guard as soon as
+        // they are on screen. The configuration joins the baseline once it has
+        // loaded; until then neither side holds one, so an untouched editor
+        // stays clean while a typed edit is already protected.
+        setSavedDraft({
+          name: response.preset.name,
+          description: response.preset.description ?? '',
+          showInScanner: response.preset.show_in_scanner !== false,
+          scenarioName: response.preset.scenario_name,
+          config: null,
+        })
         setStatus('ready')
 
         // The list endpoint omits run-size estimates, so the preset's scenario is
@@ -140,9 +168,11 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
         try {
           const full = await scenariosApi.getScenario(response.preset.scenario_name)
           if (cancelled) return
+          const hydrated = presetToConfigState(full, response.preset)
           setScenario(full)
-          setConfig(presetToConfigState(full, response.preset))
+          setConfig(hydrated)
           setResolvedScenarioRequestSequence(scenarioRequestSequence.current)
+          setSavedDraft((previous) => ({ ...previous, config: hydrated }))
         } catch (scenarioErr) {
           if (cancelled) return
           setScenarioUnavailable(toApiError(scenarioErr).detail)
@@ -166,6 +196,26 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
       scenarioRequestSequence.current += 1
     }
   }, [decodedName, mode])
+
+  const readOnly = loaded !== null && loaded.version === null
+  const currentDraft: PresetDraft = {
+    name, description, showInScanner, scenarioName: selectedScenarioName, config,
+  }
+  const hasUnsavedChanges = status === 'ready'
+    && !readOnly
+    && presetDraftSignature(currentDraft) !== presetDraftSignature(savedDraft)
+  const shouldBlockNavigation = useCallback(
+    (): boolean => hasUnsavedChanges && !allowNavigation.current,
+    [hasUnsavedChanges],
+  )
+  const blocker = useBlocker(shouldBlockNavigation)
+
+  useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
+    if (hasUnsavedChanges && !allowNavigation.current) {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+  }, [hasUnsavedChanges]))
 
   const handleScenarioChange = useCallback(async (nextScenarioName: string): Promise<void> => {
     const requestSequence = scenarioRequestSequence.current + 1
@@ -324,7 +374,12 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
       } else {
         await scenarioPresetsApi.update(loaded.preset.name, preset, loaded.version)
       }
-      navigate(PRESETS_ROUTE)
+      allowNavigation.current = true
+      // A router navigate keeps working after unmount, so a save that finishes
+      // once the operator has left must not pull them to the library.
+      if (mounted.current) {
+        navigate(PRESETS_ROUTE)
+      }
     } catch (err) {
       setSaveError(toApiError(err).detail)
       setSaving(false)
@@ -359,6 +414,18 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   }
 
   const editing = loaded !== null
+
+  const discardAndLeave = (): void => {
+    if (blocker.state === 'blocked') {
+      blocker.proceed()
+    }
+  }
+
+  const keepEditing = (): void => {
+    if (blocker.state === 'blocked') {
+      blocker.reset()
+    }
+  }
 
   return (
     <section
@@ -554,6 +621,19 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
           </Button>
         </div>
       </form>
+
+      <ConfirmDialog
+        open={blocker.state === 'blocked'}
+        title={saving ? 'Leave while saving?' : 'Discard unsaved changes?'}
+        confirmLabel={saving ? 'Leave' : 'Discard changes'}
+        cancelLabel={saving ? 'Stay' : 'Keep editing'}
+        onConfirm={discardAndLeave}
+        onCancel={keepEditing}
+      >
+        {saving
+          ? 'The save continues after you leave. If it fails, you will not see the error.'
+          : 'Your unsaved preset changes will be lost if you continue.'}
+      </ConfirmDialog>
     </section>
   )
 }
