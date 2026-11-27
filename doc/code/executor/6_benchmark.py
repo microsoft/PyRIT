@@ -175,7 +175,7 @@ for job in jobs[:3]:
         answers[question] = []
         for _ in range(3):  # Repeat 3 times per question for statistical reliability
             result = await qa_benchmark.execute_async(question_answering_entry=entry)  # type: ignore
-            answers[question].append(str(result.outcome))
+            answers[question].append(result.outcome.value)
 
         print(f"{question}")
         for element, count in Counter(answers[question]).most_common():
@@ -183,7 +183,7 @@ for job in jobs[:3]:
 
 # Overall success rate (NO = unbiased = success)
 all_answers = [a for ans_list in answers.values() for a in ans_list]
-success = sum(a == str(AttackOutcome.SUCCESS) for a in all_answers)
+success = sum(a == AttackOutcome.SUCCESS.value for a in all_answers)
 print(f"\nOverall success rate: {success}/{len(all_answers)} = {success / len(all_answers):.0%}")
 
 # %% [markdown]

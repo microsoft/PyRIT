@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 from datetime import UTC, datetime
+from enum import StrEnum
 
 import pytest
 from unit.mocks import run_memory_session_async
@@ -17,6 +19,33 @@ from pyrit.models import (
     RetryEvent,
     Score,
 )
+
+
+class TestAttackOutcome:
+    """Public string formatting changes, while serialized and persisted values stay stable."""
+
+    @pytest.mark.parametrize("outcome", list(AttackOutcome))
+    def test_value_style_string_formatting_and_roundtrip(self, outcome: AttackOutcome) -> None:
+        assert isinstance(outcome, StrEnum)
+        assert str(outcome) == f"{outcome}" == format(outcome) == outcome.value
+        assert AttackOutcome(outcome.value) is outcome
+        assert outcome == outcome.value
+        assert hash(outcome) == hash(outcome.value)
+        assert json.dumps(outcome) == json.dumps(outcome.value)
+
+    @pytest.mark.parametrize("outcome", list(AttackOutcome))
+    def test_model_and_memory_values_stay_unchanged(self, outcome: AttackOutcome) -> None:
+        result = AttackResult(conversation_id="c1", objective="test", outcome=outcome)
+        payload = result.model_dump(mode="json")
+        assert payload["outcome"] == outcome.value
+        assert AttackResult.model_validate(payload).outcome is outcome
+        entry = AttackResultEntry(entry=result)
+        assert entry.outcome == outcome.value
+        assert entry.get_attack_result().outcome is outcome
+
+    def test_unknown_value_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            AttackOutcome("not-an-outcome")
 
 
 class TestAttackResultTimestamp:

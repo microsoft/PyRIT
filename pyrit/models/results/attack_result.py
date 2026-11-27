@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
@@ -80,7 +80,7 @@ def normalize_legacy_attack_attribution(
     return remaining, resolved["operator"], resolved["operation"]
 
 
-class AttackOutcome(str, Enum):
+class AttackOutcome(StrEnum):
     """
     Enum representing the possible outcomes of an attack.
 
