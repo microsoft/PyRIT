@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
@@ -122,7 +122,7 @@ class StoredRecipe(BaseModel):
     version: str = Field(..., description="Opaque version of the document this recipe was read from")
 
     @model_validator(mode="after")
-    def _validate_recipe_kind(self) -> StoredRecipe:
+    def _validate_recipe_kind(self) -> Self:
         """
         Reject a recipe filed under a registry it doesn't fit.
 

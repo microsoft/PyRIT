@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import uuid  # noqa: TC003  (runtime Pydantic annotation)
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import model_validator
 
@@ -59,7 +59,7 @@ class SeedObjective(Seed[Literal["text"]]):
         return DecompositionNode(id=self.id, parent_id=self.parent_objective_id, paths=self.paths)
 
     @model_validator(mode="after")
-    def _validate_and_render(self) -> SeedObjective:
+    def _validate_and_render(self) -> Self:
         """
         Post-initialization to render the template to replace existing values.
 

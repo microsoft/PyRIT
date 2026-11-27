@@ -31,6 +31,7 @@ from pyrit.models.catalog import (
     ScenarioRunSummary,
     TargetInstance,
 )
+from unit.async_utils import wait_for_event_async
 from unit.mocks import make_scenario_result
 
 COMPATIBILITY_ID = "0.14.0+g" + "a" * 40
@@ -239,7 +240,7 @@ async def test_cancelling_entry_awaits_resource_cleanup(transport_client):
 
     with patch.object(client, "_configure_authentication_async", side_effect=configure):
         task = asyncio.create_task(client.__aenter__())
-        await asyncio.wait_for(waiting.wait(), timeout=5)
+        await wait_for_event_async(event=waiting, tasks=[task])
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task

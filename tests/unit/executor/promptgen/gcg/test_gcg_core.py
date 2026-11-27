@@ -209,6 +209,124 @@ class TestGetFilteredCands:
         assert len(result) == 3
 
 
+class TestAttackPromptModelBoundaries:
+    """Tests for what AttackPrompt accepts back from its tokenizer and model."""
+
+    def test_decoded_properties_return_tokenizer_text(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.decode.side_effect = lambda ids: " " + "-".join(str(token) for token in ids.tolist()) + " "
+        prompt.input_ids = torch.tensor([10, 11, 12, 13, 14, 15])
+        prompt._goal_slice = slice(0, 2)
+        prompt._control_slice = slice(2, 4)
+        prompt._assistant_role_slice = slice(4, 5)
+        prompt._target_slice = slice(5, 6)
+
+        assert prompt.goal_str == "10-11"
+        assert prompt.control_str == "12-13"
+        assert prompt.assistant_str == "14"
+        assert prompt.target_str == "15"
+        assert prompt.prompt == " 10-11-12-13 "
+        assert prompt.input_str == " 10-11-12-13-14-15 "
+        assert prompt.eval_str == " 10-11-12-13-14 "
+
+    def test_decoded_property_raises_when_tokenizer_returns_non_string(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.decode.return_value = ["batched", "output"]
+        prompt.input_ids = torch.tensor([10, 11, 12])
+        prompt._control_slice = slice(1, 3)
+
+        with pytest.raises(TypeError, match="Tokenizer decode must return a string, got list"):
+            _ = prompt.control_str
+
+    def test_generate_returns_continuation_after_assistant_role(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.pad_token_id = 0
+        prompt.input_ids = torch.tensor([10, 11, 12, 13])
+        prompt._assistant_role_slice = slice(2, 3)
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.return_value = torch.tensor([[10, 11, 12, 20, 21]])
+        gen_config = SimpleNamespace(max_new_tokens=2)
+
+        continuation = prompt.generate(model, gen_config=gen_config)
+
+        assert torch.equal(continuation, torch.tensor([20, 21]))
+        generate_args, generate_kwargs = model.generate.call_args
+        assert torch.equal(generate_args[0], torch.tensor([[10, 11, 12]]))
+        assert generate_kwargs["generation_config"] is gen_config
+        assert generate_kwargs["pad_token_id"] == 0
+
+    def test_generate_raises_when_model_returns_non_tensor(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.pad_token_id = 0
+        prompt.input_ids = torch.tensor([10, 11, 12, 13])
+        prompt._assistant_role_slice = slice(2, 3)
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.return_value = [[10, 11, 12, 20, 21]]
+
+        with pytest.raises(TypeError, match="Model generate must return token id tensors, got list"):
+            prompt.generate(model, gen_config=SimpleNamespace(max_new_tokens=2))
+
+    def test_generate_str_decodes_the_continuation(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.pad_token_id = 0
+        prompt.tokenizer.decode.side_effect = lambda ids: "-".join(str(token) for token in ids.tolist())
+        prompt.input_ids = torch.tensor([10, 11, 12, 13])
+        prompt._assistant_role_slice = slice(2, 3)
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.return_value = torch.tensor([[10, 11, 12, 20, 21]])
+
+        assert prompt.generate_str(model, gen_config=SimpleNamespace(max_new_tokens=2)) == "20-21"
+
+    def test_generate_str_raises_when_tokenizer_returns_non_string(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.pad_token_id = 0
+        prompt.tokenizer.decode.return_value = ["batched", "output"]
+        prompt.input_ids = torch.tensor([10, 11, 12, 13])
+        prompt._assistant_role_slice = slice(2, 3)
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.return_value = torch.tensor([[10, 11, 12, 20, 21]])
+
+        with pytest.raises(TypeError, match="Tokenizer decode must return a string, got list"):
+            prompt.generate_str(model, gen_config=SimpleNamespace(max_new_tokens=2))
+
+    def test_control_toks_setter_stores_decoded_control(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.decode.return_value = "new control"
+        prompt.control = "old control"
+
+        with patch.object(prompt, "_update_ids") as update_ids:
+            prompt.control_toks = torch.tensor([7, 8])
+
+        assert prompt.control == "new control"
+        update_ids.assert_called_once_with()
+
+    def test_control_toks_setter_raises_and_keeps_control_when_tokenizer_returns_non_string(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.decode.return_value = ["batched", "output"]
+        prompt.control = "old control"
+
+        with (
+            patch.object(prompt, "_update_ids") as update_ids,
+            pytest.raises(TypeError, match="Tokenizer decode must return a string, got list"),
+        ):
+            prompt.control_toks = torch.tensor([7, 8])
+
+        assert prompt.control == "old control"
+        update_ids.assert_not_called()
+
+
 class TestTargetAndControlLoss:
     """Tests for AttackPrompt.target_loss and control_loss."""
 
@@ -1574,7 +1692,10 @@ def test_multi_prompt_test_dispatches_without_model_payload() -> None:
 
     result = attack.test(workers=[worker], prompts=[prompt], include_loss=True)
 
-    assert result == ([[True]], [[1]], [[0.25]])
+    assert result == ([[1]], [[1]], [[0.25]])
+    # NumPy stacks each (jailbroken, exact_match) pair into one integer array.
+    assert type(result[0][0][0]) is int
+    assert type(result[1][0][0]) is int
     assert worker.call_args_list == [
         call(prompt, ModelWorkerOperation.TEST),
         call(prompt, ModelWorkerOperation.TEST_LOSS),

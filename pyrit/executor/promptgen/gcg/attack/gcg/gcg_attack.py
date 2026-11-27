@@ -146,6 +146,11 @@ class GCGPromptManager(PromptManager):
 class GCGMultiPromptAttack(MultiPromptAttack):
     """GCG-specific multi-prompt attack that implements the GCG optimization step."""
 
+    # Class-level defaults keep the resolvers below working on instances that skipped ``__init__``.
+    _sampling: SamplingStrategy | None = None
+    _loss: LossFunction | None = None
+    _candidate_filter: CandidateFilter | None = None
+
     def __init__(
         self,
         *,
@@ -183,21 +188,18 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         self._use_prefix_cache = use_prefix_cache
 
     def _resolve_sampling(self) -> SamplingStrategy:
-        sampling: SamplingStrategy | None = getattr(self, "_sampling", None)
-        if sampling is not None:
-            return sampling
+        if self._sampling is not None:
+            return self._sampling
         return StandardGCGSampling()
 
     def _resolve_loss(self, *, target_weight: float, control_weight: float) -> LossFunction:
-        loss = getattr(self, "_loss", None)
-        if loss is not None:
-            return loss
+        if self._loss is not None:
+            return self._loss
         return CrossEntropyLoss(target_weight=target_weight, control_weight=control_weight)
 
     def _resolve_candidate_filter(self, *, filter_cand: bool) -> CandidateFilter:
-        candidate_filter = getattr(self, "_candidate_filter", None)
-        if candidate_filter is not None:
-            return candidate_filter
+        if self._candidate_filter is not None:
+            return self._candidate_filter
         return LengthPreservingFilter(enabled=filter_cand)
 
     def _sample_control_candidates(

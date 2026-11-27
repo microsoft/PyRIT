@@ -6,7 +6,7 @@ from __future__ import annotations
 import enum
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -73,7 +73,7 @@ class ContentClassifier(BaseModel):
     no_category_found: str
 
     @model_validator(mode="after")
-    def _validate_fallback_category(self) -> ContentClassifier:
+    def _validate_fallback_category(self) -> Self:
         category_names = [category.name for category in self.categories]
         if len(set(category_names)) != len(category_names):
             raise ValueError("Content classifier category names must be unique.")
