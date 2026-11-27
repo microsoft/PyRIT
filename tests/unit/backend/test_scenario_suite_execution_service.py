@@ -47,6 +47,7 @@ from pyrit.registry import (
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
 )
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ENTRY_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -616,7 +617,7 @@ async def test_cancel_recovers_and_cancels_child_admitted_before_response(
             name="weekly",
             request=_launch_request(suite_version=stored.version),
         )
-        await asyncio.wait_for(admitted.wait(), timeout=5)
+        await asyncio.wait_for(admitted.wait(), timeout=TEST_WATCHDOG_SECONDS)
 
         cancelling = await service.cancel_execution_async(execution_id=accepted.suite_execution_id)
 

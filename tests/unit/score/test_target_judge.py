@@ -26,6 +26,7 @@ from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.score import (
     ContentClassifier,
     ContentClassifierCategory,
+    CyberSecEvalPromptInjectionScorer,
     FloatScaleScorer,
     HarmBenchScorer,
     InsecureCodeScorer,
@@ -303,6 +304,7 @@ def test_legacy_constructor_rejects_invalid_target(legacy_scorer_type: type[Scor
         (WildGuardScorer, {}),
         (HarmBenchScorer, {}),
         (StrongRejectScorer, {}),
+        (CyberSecEvalPromptInjectionScorer, {}),
         (NemotronSafetyGuardScorer, {}),
         (InsecureCodeScorer, {"system_prompt": "Judge the code.", "harm_categories": ["test"]}),
         (
