@@ -611,6 +611,30 @@ class ScorerEvaluator(abc.ABC):
         metrics.average_score_time_seconds = trials.average_score_time_seconds
         return metrics
 
+    async def _store_missing_messages_async(self, messages: list[Message]) -> None:
+        """
+        Store each message that memory does not already hold.
+
+        Scores reference their message in memory, so every dataset message is stored before
+        scoring. A dataset object can be evaluated more than once, and entries can share a
+        message, so messages already stored are skipped rather than inserted again.
+
+        Args:
+            messages (list[Message]): The dataset's conversation messages, in order.
+        """
+        memory = self.scorer._memory
+        # Memory never stores pieces marked not_in_memory, so they cannot show that a message is stored.
+        piece_ids = [
+            str(piece.id) for message in messages for piece in message.message_pieces if not piece.not_in_memory
+        ]
+        stored = {str(piece.id) for piece in await memory.get_message_pieces_async(prompt_ids=piece_ids)}
+        for message in messages:
+            message_ids = {str(piece.id) for piece in message.message_pieces if not piece.not_in_memory}
+            if message_ids <= stored:
+                continue
+            await memory.add_message_to_memory_async(request=message)
+            stored |= message_ids
+
     async def _score_responses_grouped_async(
         self,
         *,
@@ -842,16 +866,14 @@ class HarmScorerEvaluator(ScorerEvaluator):
 
         labeled_dataset.validate()
 
+        conversation_messages: list[Message] = []
         assistant_responses: list[Message] = []
         human_scores_list: list[list[float]] = []
 
         for entry in labeled_dataset.entries:
             harm_entry = cast("HarmHumanLabeledEntry", entry)
-            assistant_messages: list[Message] = []
-            for message in harm_entry.conversation:
-                (await self.scorer._memory.add_message_to_memory_async(request=message))
-                if message.api_role == "assistant":
-                    assistant_messages.append(message)
+            conversation_messages.extend(harm_entry.conversation)
+            assistant_messages = [message for message in harm_entry.conversation if message.api_role == "assistant"]
             if len(assistant_messages) != 1:
                 raise ValueError(
                     "Each HarmHumanLabeledEntry must contain exactly one assistant message, "
@@ -860,6 +882,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
             assistant_responses.append(assistant_messages[0])
             human_scores_list.append(harm_entry.human_scores)
 
+        await self._store_missing_messages_async(conversation_messages)
         return assistant_responses, human_scores_list, None
 
     def _compute_metrics(
@@ -1033,17 +1056,17 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
 
         labeled_dataset.validate()
 
+        conversation_messages: list[Message] = []
         assistant_responses: list[Message] = []
         human_scores_list: list[list[float]] = []
         objectives: list[str] = []
 
         for entry in labeled_dataset.entries:
             objective_entry = cast("ObjectiveHumanLabeledEntry", entry)
-            assistant_messages: list[Message] = []
-            for message in objective_entry.conversation:
-                await self.scorer._memory.add_message_to_memory_async(request=message)
-                if message.api_role == "assistant":
-                    assistant_messages.append(message)
+            conversation_messages.extend(objective_entry.conversation)
+            assistant_messages = [
+                message for message in objective_entry.conversation if message.api_role == "assistant"
+            ]
             if len(assistant_messages) != 1:
                 raise ValueError(
                     "Each ObjectiveHumanLabeledEntry must contain exactly one assistant message, "
@@ -1053,6 +1076,7 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
             human_scores_list.append([float(score) for score in objective_entry.human_scores])
             objectives.append(objective_entry.objective)
 
+        await self._store_missing_messages_async(conversation_messages)
         return assistant_responses, human_scores_list, objectives
 
     def _compute_metrics(
