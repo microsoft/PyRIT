@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     )
     from pyrit.backend.models.common import (
         SENSITIVE_FIELD_PATTERNS,
+        DatasetExampleSelectionProblemDetail,
         FieldError,
         PaginationInfo,
         ProblemDetail,
@@ -116,6 +117,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TargetResponseStatus": "pyrit.backend.models.attacks",
     "UpdateAttackRequest": "pyrit.backend.models.attacks",
     "SENSITIVE_FIELD_PATTERNS": "pyrit.backend.models.common",
+    "DatasetExampleSelectionProblemDetail": "pyrit.backend.models.common",
     "FieldError": "pyrit.backend.models.common",
     "filter_sensitive_fields": "pyrit.backend.models.common",
     "PaginationInfo": "pyrit.backend.models.common",

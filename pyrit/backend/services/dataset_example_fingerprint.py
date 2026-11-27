@@ -46,6 +46,12 @@ def dataset_example_fingerprint(*, selection_key: str, example_id: UUID, members
     media references, conditions, and provenance. ``value_url`` is not part of ``SeedRecord``
     and is not hashed.
 
+    The complete ``SeedRecord`` is hashed deliberately: a schema change to ``SeedRecord``
+    (such as a new field) changes every digest, so selections made before an upgrade
+    return stale until the client browses again. Selections fail safe rather than run on
+    content whose stored shape the client never saw. ``v`` versions intentional changes
+    to this document format itself.
+
     Returns:
         str: Lowercase SHA-256 hex digest, 64 characters.
     """

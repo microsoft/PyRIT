@@ -13,10 +13,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from pyrit.backend.middleware.request_size import RequestTooLargeError, request_too_large_response
-from pyrit.backend.models import FieldError, ProblemDetail
+from pyrit.backend.models import DatasetExampleSelectionProblemDetail, FieldError, ProblemDetail
 from pyrit.common.azure_storage import redact_urls
 from pyrit.exceptions.analytics_exception import AnalyticsException
 from pyrit.exceptions.dataset_exception import DatasetAPIException
+from pyrit.models import DatasetExampleSelectionError
 from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,39 @@ def register_error_handlers(app: FastAPI) -> None:
             media_type="application/problem+json",
             content=problem.model_dump(exclude_none=True),
             headers={"Location": f"/api/datasets/deletions/{exc.cleanup_id}"} if exc.cleanup_id else None,
+        )
+
+    @app.exception_handler(DatasetExampleSelectionError)
+    async def dataset_example_selection_handler_async(
+        request: Request,
+        exc: DatasetExampleSelectionError,
+    ) -> JSONResponse:  # pyrit-keyword-only-exempt Starlette exception handler (request, exc)
+        """
+        Return exact-selection failures with their stable code as structured data.
+
+        Registered for the specific class, so it wins over the ``ValueError`` handler by MRO.
+        A changed stored example (``stale``) is 409; every other code is 400. ``detail`` keeps
+        the ``<code>: ...`` message, and ``code``, ``selection_key``, and ``example_id`` carry
+        the same information as fields clients can branch on without parsing it.
+
+        Returns:
+            JSONResponse: An RFC 7807 problem with the selection error's code and reference.
+        """
+        status_code = status.HTTP_409_CONFLICT if exc.code == "stale" else status.HTTP_400_BAD_REQUEST
+        problem = DatasetExampleSelectionProblemDetail(
+            type="/errors/dataset-example-selection",
+            title="Dataset example selection failed",
+            status=status_code,
+            detail=str(exc),
+            instance=str(request.url.path),
+            code=exc.code,
+            selection_key=exc.selection_key,
+            example_id=exc.example_id,
+        )
+        return JSONResponse(
+            status_code=status_code,
+            media_type="application/problem+json",
+            content=problem.model_dump(mode="json", exclude_none=True),
         )
 
     @app.exception_handler(AnalyticsException)

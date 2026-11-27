@@ -3,6 +3,7 @@
 
 """HTTP coverage for exact example estimate and launch preparation."""
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -140,7 +141,13 @@ async def test_estimate_and_launch_use_six_examples_until_one_changes(
         await session.commit()
     stale = await client.post(f"/api/scenarios/catalog/{SCENARIO_NAME}/estimate", json=body)
     assert stale.status_code == 409
-    assert stale.json()["detail"].startswith("stale:")
+    problem = stale.json()
+    assert problem["detail"].startswith("stale:")
+    assert problem["type"] == "/errors/dataset-example-selection"
+    assert problem["status"] == 409
+    assert problem["code"] == "stale"
+    assert problem["selection_key"] == NAMED
+    assert problem["example_id"] == str(seeds[0].id)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -181,10 +188,12 @@ async def test_launch_returns_unsupported_instead_of_a_server_error(
     assert estimate.status_code == 200
     assert estimate.json()["dataset_size"] == {"kind": "bounded", "value": 1}
     assert launch.status_code == 400
-    detail = launch.json()["detail"]
-    assert detail.startswith("unsupported:")
-    assert str(group) in detail
-    assert secret not in detail
+    problem = launch.json()
+    assert problem["detail"].startswith("unsupported:")
+    assert problem["code"] == "unsupported"
+    assert problem["selection_key"] == NAMED
+    assert problem["example_id"] == str(group)
+    assert secret not in json.dumps(problem)
     assert _RouteScenario.prepared_counts == []
 
 

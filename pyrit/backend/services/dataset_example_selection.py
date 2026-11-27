@@ -42,18 +42,13 @@ def selection_conflicts_with_datasets(datasets: ScenarioDatasetRequest | None) -
     """
     Return whether named-dataset fields would change an exact population.
 
+    Any field that departs from its default conflicts, so a field added to
+    ``ScenarioDatasetRequest`` later cannot silently combine with an exact selection.
+
     Returns:
-        bool: True when sources, filters, limits, or fetch are set.
+        bool: True when sources, filters, limits, fetch, or a future field are set.
     """
-    if datasets is None:
-        return False
-    return bool(
-        datasets.sources
-        or datasets.filters
-        or datasets.max_per_dataset != "default"
-        or datasets.max_total != "default"
-        or datasets.fetch is not None
-    )
+    return datasets is not None and datasets != ScenarioDatasetRequest()
 
 
 def scenario_accepts_dataset_config(scenario_class: type[Scenario]) -> bool:

@@ -221,7 +221,10 @@ Unsupported scenarios, group shapes, or techniques that would drop selected cont
 return 400. `foundry.assert_policy` currently rejects REST exact selections because
 its tester and baseline policies can skip selected groups; use named datasets instead.
 Changed content or membership returns 409 from preview, estimate, and launch;
-oversized lists return 422. Resume keeps the saved selection and rejects a different
+oversized lists return 422. Selection errors are RFC 7807 problems that carry the
+stable `code` (`invalid_key`, `duplicate`, `missing`, `stale`, `conflicting_mode`,
+or `unsupported`) and, when one reference is at fault, its `selection_key` and
+`example_id` as fields, so clients branch on `code` instead of parsing `detail`. Resume keeps the saved selection and rejects a different
 one, then runs the seed groups stored with the run without reading the selected
 examples again, so editing or deleting a selected row after launch doesn't stop it.
 Omit `example_selection` to retain named-dataset behavior.
