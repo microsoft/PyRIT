@@ -161,11 +161,18 @@ def test_metadata_conditions_guard_literal_key_lengths(
         {"payload": "[]"},
         {"payload": "", "count": 7, "enabled": "true"},
         {'branch"."leaf': "{}", r"\u0061": "[]"},
+        {"truncated": True, "kept": False, "count": 2, "note": "2"},
     ],
 )
 def test_metadata_conditions_only_match_scalar_json_types(
     *, uninitialized_memory_interface: AzureSQLMemory, metadata: dict[str, str | int]
 ) -> None:
+    """Each filter value gates the comparison on its own JSON kind.
+
+    A string, int, or bool filter only matches the JSON kind it describes, so
+    the SQL Server comparison answers exactly what the SQLite json_each
+    comparison answers, including the boolean flag mark_as_truncated writes.
+    """
     conditions = [
         *uninitialized_memory_interface._get_message_pieces_prompt_metadata_conditions(prompt_metadata=metadata),
         uninitialized_memory_interface._get_seed_metadata_conditions(metadata=metadata),
@@ -174,15 +181,19 @@ def test_metadata_conditions_only_match_scalar_json_types(
     for condition in conditions:
         compiled = condition.compile(dialect=mssql.dialect(paramstyle="qmark"))
         sql = str(compiled)
+        expected_positiontup = []
         for index, (key, value) in enumerate(metadata.items()):
-            assert f"[metadata_{index}].[type] IN (1, 2, 3)" in sql
+            expected_gate = {str: 1, int: 2, bool: 4}[type(value)]
+            assert f"[metadata_{index}].[type] = {expected_gate}" in sql
             assert compiled.params[f"md_key_{index}"] == key
-            assert compiled.params[f"md_value_{index}"] == str(value)
-        assert compiled.positiontup == [
-            param
-            for index in range(len(metadata))
-            for param in (f"md_key_{index}", f"md_key_{index}", f"md_value_{index}")
-        ]
+            if isinstance(value, bool):
+                assert f"[metadata_{index}].[value] = {'true' if value else 'false'}" in sql
+                expected_positiontup.extend((f"md_key_{index}", f"md_key_{index}"))
+            else:
+                assert f"[metadata_{index}].[value] = ?" in sql
+                assert compiled.params[f"md_value_{index}"] == str(value)
+                expected_positiontup.extend((f"md_key_{index}", f"md_key_{index}", f"md_value_{index}"))
+        assert compiled.positiontup == expected_positiontup
 
 
 @pytest.mark.parametrize("value", ["{}", "[]"])
@@ -208,7 +219,7 @@ def test_remove_seeds_metadata_only_matches_scalar_json_types(
     assert removed == 1
     condition = query.filter.call_args_list[-1 if remove_groups else 0].args[0]
     compiled = condition.compile(dialect=mssql.dialect())
-    assert "[metadata_0].[type] IN (1, 2, 3)" in str(compiled)
+    assert "[metadata_0].[type] = 1" in str(compiled)
     assert compiled.params["md_key_0"] == "payload"
     assert compiled.params["md_value_0"] == value
     session.commit.assert_called_once()
@@ -658,6 +669,27 @@ def test_get_conversation_stats_uses_one_latest_row_apply(
     assert sql.upper().count("SELECT TOP 1") == 1
     assert "OUTER APPLY" in sql.upper()
     assert "p2.converted_value_data_type AS last_data_type" in sql
+
+
+def test_prompt_metadata_conditions_gate_on_the_filter_value_type(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """Metadata filters compare per JSON kind on SQL Server, like SQLite's json_each.
+
+    A boolean filter must match the JSON text form (lower case true), an int
+    filter must match only JSON numbers, and a string filter only JSON
+    strings, so both backends answer the same rows for the same filter.
+    """
+    conditions = uninitialized_memory_interface._get_metadata_conditions(
+        prompt_metadata={"truncated": True, "attempt": 2, "attempt_str": "2"}
+    )
+    compiled = str(conditions[0].compile(dialect=mssql.dialect())).upper()
+
+    assert "[METADATA_0].[TYPE] = 4" in compiled
+    assert "[METADATA_0].[VALUE] = TRUE" in compiled
+    assert "[METADATA_1].[TYPE] = 2" in compiled
+    assert "[METADATA_2].[TYPE] = 1" in compiled
+    assert "[TYPE] IN (1, 2, 3)" not in compiled
 
 
 def test_latest_per_conversation_tiebreak_orders_uuids_canonically(
@@ -1432,6 +1464,7 @@ def test_metadata_conditions_match_literal_keys_in_all_wrappers(
     *, uninitialized_memory_interface: AzureSQLMemory, key: str, value: str | int
 ) -> None:
     metadata = {key: value, "selected": 1}
+    expected_gates = [1 if isinstance(entry_value, str) else 2 for entry_value in metadata.values()]
     direct = uninitialized_memory_interface._get_metadata_conditions(prompt_metadata=metadata)[0]
     seed = uninitialized_memory_interface._get_seed_metadata_conditions(metadata=metadata)
     message = uninitialized_memory_interface._get_message_pieces_prompt_metadata_conditions(prompt_metadata=metadata)[0]
@@ -1444,7 +1477,7 @@ def test_metadata_conditions_match_literal_keys_in_all_wrappers(
         for index in range(2):
             assert f"[metadata_{index}].[key] = ?" in sql
             assert f"DATALENGTH([metadata_{index}].[key]) = DATALENGTH(CAST(? AS NVARCHAR(MAX)))" in sql
-            assert f"[metadata_{index}].[type] IN (1, 2, 3)" in sql
+            assert f"[metadata_{index}].[type] = {expected_gates[index]}" in sql
             assert f"[metadata_{index}].[value] = ?" in sql
         assert compiled.params == {
             "md_key_0": key,
