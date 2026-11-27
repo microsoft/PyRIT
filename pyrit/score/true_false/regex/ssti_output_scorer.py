@@ -24,6 +24,9 @@ class SSTIOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     Returns True if any pattern matches.
     """
 
+    # A template body stops at the next opener of its own pattern. No marker starts with an opener character, so
+    # the last opener before a marker matches whenever an earlier one does, and a body that ran past later openers
+    # would rescan the same text from each of them.
     _DEFAULT_PATTERNS: dict[str, str] | None = {
         # Canonical arithmetic eval probe in Jinja/Twig {{ }}, JSP/Freemarker ${ }, Ruby #{ }, ERB/EJS <%= %>.
         "Arithmetic Eval Probe": (
@@ -33,13 +36,14 @@ class SSTIOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         # Python object-traversal gadget chain (sandbox escape) inside a template expression or statement block.
         "Python Gadget Chain": (
             r"(?:"
-            r"\$\{[^}]*?"
-            r"|(?:\{\{[-+]?|\{%[-+]?)(?:(?!(?:[-+]?%\}|[-+]?\}\}))[\s\S])*?"
+            r"\$\{(?:(?!\$\{)[^}])*?"
+            r"|(?:\{\{[-+]?|\{%[-+]?)(?:(?!(?:[-+]?%\}|[-+]?\}\}|\{\{|\{%))[\s\S])*?"
             r")__(?:class|mro|subclasses|globals|init|builtins|import)__"
         ),
         # FreeMarker execution gadgets via Execute / ObjectConstructor / Jython utility instantiation.
         "FreeMarker Gadget": (
-            r"(?i)(?:<#|\[#|\[=|\$\{)[^>\]}]*?freemarker\.template\.utility\.(?:Execute|ObjectConstructor|JythonRuntime)"
+            r"(?i)(?:<#|\[#|\[=|\$\{)(?:(?!<#|\[#|\[=|\$\{)[^>\]}])*?"
+            r"freemarker\.template\.utility\.(?:Execute|ObjectConstructor|JythonRuntime)"
         ),
         # Velocity reflection gadgets via ClassLoader, Runtime execution, or ProcessBuilder.
         "Velocity Gadget": (
@@ -54,12 +58,12 @@ class SSTIOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         ),
         # Twig code execution via PHP execution filters (system, exec, passthru) or environment callback abuse.
         "Twig Execution Filter": (
-            r"(?i)(?:\{\{[-+]?|\{%[-+]?)(?:(?![-+]?(?:\}\}|%\}))[\s\S])*?"
+            r"(?i)(?:\{\{[-+]?|\{%[-+]?)(?:(?![-+]?(?:\}\}|%\})|\{\{|\{%)[\s\S])*?"
             r"(?:\|\s*(?:filter|map|reduce)\s*\(\s*['\"](?:system|passthru|exec|shell_exec|popen)['\"]|_self\.env)"
         ),
         # SpEL execution types and System calls that disclose data or load native code.
         "SpEL / Java Type Expression": (
-            r"(?i)(?:\$\{|\*\{|__\$\{)[^}]*?T\s*\(\s*(?:"
+            r"(?i)(?:\$\{|\*\{|__\$\{)(?:(?!\$\{|\*\{)[^}])*?T\s*\(\s*(?:"
             r"(?:(?:java\.lang\.)?(?:Runtime|ProcessBuilder)|javax\.script\.(?:ScriptEngineManager|ScriptEngine))\s*\)"
             r"|(?:java\.lang\.)?System\s*\)\s*\.\s*(?:getenv|getProperty|getProperties|load|loadLibrary)\s*\("
             r")"
