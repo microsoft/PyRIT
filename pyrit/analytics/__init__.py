@@ -12,6 +12,11 @@ if TYPE_CHECKING:
     from pyrit.analytics.assert_policy_metrics import NotAssertPolicyRunError, compute_assert_policy_metrics_async
     from pyrit.analytics.attack_result_analytics import AttackResultAnalytics
     from pyrit.analytics.conversation_analytics import ConversationAnalytics
+    from pyrit.analytics.outcome_repeatability import (
+        OutcomeRepeatability,
+        OutcomeRepeatabilityCounts,
+        compute_outcome_repeatability,
+    )
     from pyrit.analytics.outcome_statistics import combine_outcome_statistics, compute_outcome_statistics
     from pyrit.analytics.paired_outcome_statistics import (
         PairedOutcomeChildConversation,
@@ -45,6 +50,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "combine_outcome_statistics": "pyrit.analytics.outcome_statistics",
     "compute_assert_policy_metrics_async": "pyrit.analytics.assert_policy_metrics",
     "NotAssertPolicyRunError": "pyrit.analytics.assert_policy_metrics",
+    "compute_outcome_repeatability": "pyrit.analytics.outcome_repeatability",
     "compute_outcome_statistics": "pyrit.analytics.outcome_statistics",
     "compute_paired_outcome_statistics": "pyrit.analytics.paired_outcome_statistics",
     "get_paired_outcome_details": "pyrit.analytics.paired_outcome_statistics",
@@ -53,6 +59,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "compute_technique_stats_async": "pyrit.analytics.technique_analysis",
     "count_execution_units": "pyrit.analytics.scenario_statistics",
     "ConversationAnalytics": "pyrit.analytics.conversation_analytics",
+    "OutcomeRepeatability": "pyrit.analytics.outcome_repeatability",
+    "OutcomeRepeatabilityCounts": "pyrit.analytics.outcome_repeatability",
     "PairedOutcomeStatistics": "pyrit.analytics.paired_outcome_statistics",
     "PairedOutcomeChildConversation": "pyrit.analytics.paired_outcome_statistics",
     "PairedOutcomeDetail": "pyrit.analytics.paired_outcome_statistics",
