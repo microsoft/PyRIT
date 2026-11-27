@@ -20,11 +20,13 @@ from pyrit.converter import (
     Converter,
     EcojiConverter,
     LeetspeakConverter,
+    MirrorConverter,
     MorseConverter,
     NatoConverter,
     PigpenConverter,
     ROT13Converter,
     SearchReplaceConverter,
+    UpsideDownConverter,
     ZalgoConverter,
 )
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
@@ -52,6 +54,70 @@ from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import DecodingScorer, TrueFalseScorer
+
+# Latin letters -> Elder Futhark runes. Glyphs from the Unicode Runic block
+# (https://www.unicode.org/charts/PDF/U16A0.pdf); transliteration popularized by community
+# symbol-script tooling (elder-plinius's P4RS3LT0NGV3). Kept as a Leetspeak substitution table
+# rather than a dedicated converter (reuse and compose before adding).
+_RUNIC_SUBSTITUTIONS: dict[str, list[str]] = {
+    "a": ["ᚨ"],
+    "b": ["ᛒ"],
+    "c": ["ᚲ"],
+    "d": ["ᛞ"],
+    "e": ["ᛖ"],
+    "f": ["ᚠ"],
+    "g": ["ᚷ"],
+    "h": ["ᚺ"],
+    "i": ["ᛁ"],
+    "j": ["ᛃ"],
+    "k": ["ᚲ"],
+    "l": ["ᛚ"],
+    "m": ["ᛗ"],
+    "n": ["ᚾ"],
+    "o": ["ᛟ"],
+    "p": ["ᛈ"],
+    "q": ["ᚲ"],
+    "r": ["ᚱ"],
+    "s": ["ᛊ"],
+    "t": ["ᛏ"],
+    "u": ["ᚢ"],
+    "v": ["ᚹ"],
+    "w": ["ᚹ"],
+    "x": ["ᛉ"],
+    "y": ["ᛁ"],
+    "z": ["ᛉ"],
+}
+
+
+# Latin letters -> Ogham characters. Glyphs from the Unicode Ogham block
+# (https://www.unicode.org/charts/PDF/U1680.pdf); transliteration popularized by community
+# symbol-script tooling (elder-plinius's P4RS3LT0NGV3). Kept as a Leetspeak substitution table
+# rather than a dedicated converter (reuse and compose before adding).
+_OGHAM_SUBSTITUTIONS: dict[str, list[str]] = {
+    "a": ["ᚐ"],
+    "b": ["ᚁ"],
+    "c": ["ᚉ"],
+    "d": ["ᚇ"],
+    "e": ["ᚓ"],
+    "f": ["ᚃ"],
+    "g": ["ᚌ"],
+    "h": ["ᚆ"],
+    "i": ["ᚔ"],
+    "k": ["ᚉ"],
+    "l": ["ᚂ"],
+    "m": ["ᚋ"],
+    "n": ["ᚅ"],
+    "o": ["ᚑ"],
+    "p": ["ᚚ"],
+    "q": ["ᚊ"],
+    "r": ["ᚏ"],
+    "s": ["ᚄ"],
+    "t": ["ᚈ"],
+    "u": ["ᚒ"],
+    "v": ["ᚃ"],
+    "x": ["ᚙ"],
+    "z": ["ᚎ"],
+}
 
 
 class EncodingDatasetConfiguration(DatasetAttackConfiguration):
@@ -134,6 +200,10 @@ class EncodingTechnique(ScenarioTechnique):
     Pigpen = ("pigpen", set[str]())
     Disemvowel = ("disemvowel", set[str]())
     UbbiDubbi = ("ubbi_dubbi", set[str]())
+    Runic = ("runic", set[str]())
+    Ogham = ("ogham", set[str]())
+    Mirror = ("mirror", set[str]())
+    UpsideDown = ("upside_down", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -329,6 +399,10 @@ class Encoding(Scenario):
             # "ubbi_dubbi": a language game that prefixes each vowel run with "ub", popularized by
             # the PBS children's show Zoom (1972). https://en.wikipedia.org/wiki/Ubbi_dubbi
             ([SearchReplaceConverter(pattern=r"([aeiouAEIOU]+)", replace=r"ub\1")], "ubbi_dubbi", "ubbi_dubbi"),
+            ([LeetspeakConverter(custom_substitutions=_RUNIC_SUBSTITUTIONS)], "runic", "runic"),
+            ([LeetspeakConverter(custom_substitutions=_OGHAM_SUBSTITUTIONS)], "ogham", "ogham"),
+            ([MirrorConverter()], "mirror", "mirror"),
+            ([UpsideDownConverter()], "upside_down", "upside_down"),
         ]
 
     # These are the same as Garak encoding attacks
