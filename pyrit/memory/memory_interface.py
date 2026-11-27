@@ -39,7 +39,6 @@ from sqlalchemy import (
     not_,
     or_,
     select,
-    type_coerce,
     union_all,
     update,
 )
@@ -58,7 +57,7 @@ from sqlalchemy.sql.operators import asc_op, desc_op
 
 from pyrit.analytics import compute_outcome_statistics
 from pyrit.analytics.outcome_statistics import success_percentage
-from pyrit.analytics.scenario_statistics import combine_execution_counts
+from pyrit.analytics.scenario_statistics import ScenarioPlanLookup, combine_execution_counts, parse_scenario_run_plan
 from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.pagination import DecodedKeysetCursor
@@ -73,6 +72,7 @@ from pyrit.memory._finding_decomposition import (
     validate_move_async,
     validate_path_steps_async,
 )
+from pyrit.memory._scenario_history_aggregation import ScenarioHistoryAttempt, aggregate_scenario_history_attempts
 from pyrit.memory._seed_decomposition import (
     DecompositionIdentity,
     DecompositionUnit,
@@ -145,7 +145,6 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
-    AttackResultRole,
     AttackResultSelection,
     AttackSeedGroup,
     AttackTechniqueIdentifier,
@@ -469,12 +468,12 @@ class ScenarioHistoryRunRecord:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ScenarioHistoryAggregate:
     """
-    Attempt metrics for one scenario run, aggregated by the database.
+    Attempt metrics for one scenario run.
 
     Counters are computed over logical work units — every persisted attempt is first
     resolved to the planned unit it belongs to, so retried and errored attempts never
-    inflate unit counts. The metrics query produces one aggregate per history row;
-    a separate projection returns only distinct technique names, never one row per unit.
+    inflate unit counts. Attempt rows are read once per history page and resolved against
+    each run's plan in Python; a separate projection returns only distinct technique names.
     """
 
     scenario_result_id: str
@@ -3611,21 +3610,6 @@ class MemoryInterface(abc.ABC):
         """Return the scenario attempt ID's canonical string ordering."""
         return attempt_id
 
-    def _get_scenario_role_match_condition(self, *, role_expression: Any, role: AttackResultRole) -> Any:
-        """
-        Return a backend-specific condition that strictly matches an AttackResultRole.
-
-        Subclasses override this when backend comparison semantics (such as SQL Server's string
-        padding or case-insensitive default collation) require exact scalar matching.
-
-        Returns:
-            A backend-specific condition matching the specified AttackResultRole.
-        """
-        return and_(
-            role_expression == role.value,
-            func.length(role_expression) == len(role.value),
-        )
-
     def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any, Any]:
         """
         Return backend-specific JSON expressions for scenario attempt unit attribution.
@@ -3639,24 +3623,6 @@ class MemoryInterface(abc.ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} must implement _get_scenario_attempt_unit_expressions "
-            "to support Scenario history queries."
-        )
-
-    def _get_scenario_plan_unit_subqueries(self, *, scenario_result_ids: Sequence[uuid.UUID]) -> tuple[Any, Any]:
-        """
-        Return backend-specific run-plan expansions used to resolve attempts to planned units.
-
-        The first subquery yields one row per planned ``(atomic group, seed group)`` pair with
-        columns ``scenario_result_id``, ``group_ordinal``, ``atomic_group_id``,
-        ``atomic_attack_name``, ``technique_eval_hash`` and ``seed_group_id``. The second yields
-        one row per planned seed group with columns ``scenario_result_id``, ``seed_group_id`` and
-        ``objective_sha256``.
-
-        Raises:
-            NotImplementedError: If the memory backend does not support Scenario history queries.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement _get_scenario_plan_unit_subqueries "
             "to support Scenario history queries."
         )
 
@@ -8753,12 +8719,12 @@ class MemoryInterface(abc.ABC):
         sort_by: Literal["created_at", "activity"] = "created_at",
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
         """
-        Return one descending scenario-history page and its database-side attempt metrics.
+        Return one descending scenario-history page and its attempt metrics.
 
         Only selected ScenarioResult columns and the linked AttackResult columns
         required for aggregate counts are read. Full ORM result objects and their
         relationships are never hydrated, and attempt metrics are reduced to one
-        aggregate row per history row inside the database.
+        aggregate per history row.
 
         Returns:
             tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
@@ -8831,21 +8797,24 @@ class MemoryInterface(abc.ABC):
             if scenario_result_id in aggregates
         ]
         with closing(self._get_session()) as session:
-            aggregate_rows = (
-                session.execute(
-                    self._build_scenario_history_aggregate_statement(entry_ids=entry_ids, plan_entry_ids=plan_entry_ids)
-                )
+            attempts = [
+                ScenarioHistoryAttempt.from_row(row)
+                for row in session.execute(self._build_scenario_history_attempt_statement(entry_ids=entry_ids))
                 .mappings()
                 .all()
-            )
-            group_rows = (
-                session.execute(
-                    self._build_scenario_history_group_aggregate_statement(
-                        entry_ids=entry_ids, plan_entry_ids=plan_entry_ids
+            ]
+            plan_metadata: dict[uuid.UUID, Any] = (
+                dict(
+                    session.execute(
+                        select(ScenarioResultEntry.id, ScenarioResultEntry.scenario_metadata).where(
+                            ScenarioResultEntry.id.in_(plan_entry_ids)
+                        )
                     )
+                    .tuples()
+                    .all()
                 )
-                .mappings()
-                .all()
+                if plan_entry_ids
+                else {}
             )
             name_rows = session.execute(
                 select(AttackResultEntry.attribution_parent_id, self._get_scenario_attempt_unit_expressions()[0])
@@ -8866,50 +8835,56 @@ class MemoryInterface(abc.ABC):
                 ).all()
             }
 
+        plan_lookups = {
+            str(entry_id): ScenarioPlanLookup.from_plan(
+                plan=parse_scenario_run_plan(metadata=plan_metadata.get(entry_id), scenario_result_id=str(entry_id))
+            )
+            for entry_id in plan_entry_ids
+        }
+        run_counters, group_counters = aggregate_scenario_history_attempts(attempts=attempts, plan_lookups=plan_lookups)
+
         groups_by_run: dict[str, dict[str, ScenarioProgressCounts]] = {}
-        for grow in group_rows:
-            if grow["scenario_result_id"] is None or not grow["unit_group_id"]:
+        for (run_id, raw_gid), group in group_counters.items():
+            if not raw_gid:
                 continue
-            run_id = str(grow["scenario_result_id"])
-            raw_gid = str(grow["unit_group_id"])
             canonical_gid = raw_gid
             if "\x1f" in raw_gid:
                 name, _, eval_hash = raw_gid.partition("\x1f")
                 canonical_gid = config_hash({"atomic_attack_name": name, "technique_eval_hash": eval_hash})
             g_outcomes = compute_outcome_statistics(
                 {
-                    AttackOutcome.SUCCESS: grow["outcome_successes"] or 0,
-                    AttackOutcome.FAILURE: grow["outcome_failures"] or 0,
-                    AttackOutcome.ERROR: grow["outcome_errors"] or 0,
-                    AttackOutcome.UNDETERMINED: grow["outcome_undetermined"] or 0,
+                    AttackOutcome.SUCCESS: group.outcome_successes,
+                    AttackOutcome.FAILURE: group.outcome_failures,
+                    AttackOutcome.ERROR: group.outcome_errors,
+                    AttackOutcome.UNDETERMINED: group.outcome_undetermined,
                 }
             )
             g_producer_counts = ScenarioProducerCounts(
                 target_facing=ScenarioProducerCategoryCounts(
-                    attempts=grow["target_facing_attempts"] or 0,
-                    errors=grow["target_facing_error_attempts"] or 0,
-                    retries=grow["target_facing_retries"] or 0,
+                    attempts=group.target_facing_attempts,
+                    errors=group.target_facing_error_attempts,
+                    retries=group.target_facing_retries,
                 ),
                 orchestration=ScenarioProducerCategoryCounts(
-                    attempts=grow["orchestration_attempts"] or 0,
-                    errors=grow["orchestration_error_attempts"] or 0,
-                    retries=grow["orchestration_retries"] or 0,
+                    attempts=group.orchestration_attempts,
+                    errors=group.orchestration_error_attempts,
+                    retries=group.orchestration_retries,
                 ),
                 unknown=ScenarioProducerCategoryCounts(
-                    attempts=grow["unknown_role_attempts"] or 0,
-                    errors=grow["unknown_role_error_attempts"] or 0,
-                    retries=grow["unknown_role_retries"] or 0,
+                    attempts=group.unknown_role_attempts,
+                    errors=group.unknown_role_error_attempts,
+                    retries=group.unknown_role_retries,
                 ),
             )
-            g_completed = grow["completed_units"] or 0
-            g_succeeded = grow["successful_units"] or 0
             counts = ScenarioProgressCounts(
-                completed=g_completed,
+                completed=group.completed_units,
                 planned=None,
-                succeeded=g_succeeded,
-                success_percentage=success_percentage(succeeded=g_succeeded, completed=g_completed),
-                errors=grow["error_attempts"] or 0,
-                retries=grow["total_retries"] or 0,
+                succeeded=group.successful_units,
+                success_percentage=success_percentage(
+                    succeeded=group.successful_units, completed=group.completed_units
+                ),
+                errors=group.error_attempts,
+                retries=group.total_retries,
                 producer_counts=g_producer_counts,
                 outcomes=g_outcomes,
             )
@@ -8926,51 +8901,43 @@ class MemoryInterface(abc.ABC):
             if scenario_result_id is None or not atomic_attack_name:
                 continue
             names_by_run.setdefault(str(scenario_result_id), []).append(atomic_attack_name)
-        for row in aggregate_rows:
-            if row["scenario_result_id"] is None:
-                continue
-            run_id = str(row["scenario_result_id"])
+        for run_id, run in run_counters.items():
             aggregates[run_id] = ScenarioHistoryAggregate(
                 scenario_result_id=run_id,
-                unit_count=row["unit_count"] or 0,
-                completed_units=row["completed_units"] or 0,
-                successful_units=row["successful_units"] or 0,
-                error_attempts=row["error_attempts"] or 0,
-                total_retries=row["total_retries"] or 0,
-                latest_attempt_timestamp=row["latest_attempt_timestamp"],
+                unit_count=run.unit_count,
+                completed_units=run.completed_units,
+                successful_units=run.successful_units,
+                error_attempts=run.error_attempts,
+                total_retries=run.total_retries,
+                latest_attempt_timestamp=run.latest_attempt_timestamp,
                 atomic_attack_names=tuple(sorted(names_by_run.get(run_id, ()))),
                 needs_sdk_statistics=run_id in sdk_run_ids,
-                target_facing_attempts=row["target_facing_attempts"] or 0,
-                target_facing_error_attempts=row["target_facing_error_attempts"] or 0,
-                target_facing_retries=row["target_facing_retries"] or 0,
-                orchestration_attempts=row["orchestration_attempts"] or 0,
-                orchestration_error_attempts=row["orchestration_error_attempts"] or 0,
-                orchestration_retries=row["orchestration_retries"] or 0,
-                unknown_role_attempts=row["unknown_role_attempts"] or 0,
-                unknown_role_error_attempts=row["unknown_role_error_attempts"] or 0,
-                unknown_role_retries=row["unknown_role_retries"] or 0,
-                outcome_successes=row["outcome_successes"] or 0,
-                outcome_failures=row["outcome_failures"] or 0,
-                outcome_errors=row["outcome_errors"] or 0,
-                outcome_undetermined=row["outcome_undetermined"] or 0,
-                raw_total_errors=row["raw_total_errors"] or 0,
-                raw_total_retries=row["raw_total_retries"] or 0,
-                raw_retrying_attacks_count=row["raw_retrying_attacks_count"] or 0,
+                target_facing_attempts=run.target_facing_attempts,
+                target_facing_error_attempts=run.target_facing_error_attempts,
+                target_facing_retries=run.target_facing_retries,
+                orchestration_attempts=run.orchestration_attempts,
+                orchestration_error_attempts=run.orchestration_error_attempts,
+                orchestration_retries=run.orchestration_retries,
+                unknown_role_attempts=run.unknown_role_attempts,
+                unknown_role_error_attempts=run.unknown_role_error_attempts,
+                unknown_role_retries=run.unknown_role_retries,
+                outcome_successes=run.outcome_successes,
+                outcome_failures=run.outcome_failures,
+                outcome_errors=run.outcome_errors,
+                outcome_undetermined=run.outcome_undetermined,
+                raw_total_errors=run.raw_total_errors,
+                raw_total_retries=run.raw_total_retries,
+                raw_retrying_attacks_count=run.raw_retrying_attacks_count,
                 group_counts=groups_by_run.get(run_id, {}),
             )
         return aggregates
 
-    def _build_scenario_history_ranked_units(
-        self,
-        *,
-        entry_ids: Sequence[uuid.UUID],
-        plan_entry_ids: Sequence[uuid.UUID],
-    ) -> tuple[Any, Any, Any, Any, Any, Any]:
+    def _build_scenario_history_attempt_statement(self, *, entry_ids: Sequence[uuid.UUID]) -> Any:
         """
-        Build the intermediate ranked-units subquery and role match conditions for scenario history.
+        Build the statement that reads the attempt columns scenario-history counters need.
 
         Returns:
-            tuple: (ranked, counted, completed, is_target_facing, is_orchestration, is_unknown)
+            Any: A statement selecting one row per attempt linked to the requested runs.
         """
         atomic_name, technique_hash, attributed_seed_group_id, identifier_seed_key = (
             self._get_scenario_attempt_unit_expressions()
@@ -8996,7 +8963,7 @@ class MemoryInterface(abc.ABC):
             .group_by(parents.c.id)
             .subquery("history_child_links")
         )
-        attempts = (
+        return (
             select(
                 AttackResultEntry.id.label("attempt_id"),
                 AttackResultEntry.attribution_parent_id.label("scenario_result_id"),
@@ -9035,403 +9002,7 @@ class MemoryInterface(abc.ABC):
                 AttackResultEntry.__table__.outerjoin(child_links, AttackResultEntry.id == child_links.c.parent_id)
             )
             .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
-            .subquery("history_attempts")
         )
-        units = self._build_scenario_history_unit_statement(attempts=attempts, plan_entry_ids=plan_entry_ids).subquery(
-            "history_units"
-        )
-
-        unit_partition = (units.c.scenario_result_id, units.c.unit_group_id, units.c.unit_seed_id)
-        units = select(
-            units,
-            func.max(case((self._get_scenario_execution_attempt_condition(attempts=units), 1), else_=0))
-            .over(partition_by=unit_partition)
-            .label("has_execution_attempts"),
-        ).subquery("history_classified_units")
-        unit_partition = (units.c.scenario_result_id, units.c.unit_group_id, units.c.unit_seed_id)
-        is_execution = self._get_scenario_execution_attempt_condition(attempts=units)
-        independent_error = and_(units.c.outcome == AttackOutcome.ERROR.value, units.c.duplicates_child_error == 0)
-        pressure_attempt = case((or_(units.c.has_execution_attempts == 0, is_execution, independent_error), 1), else_=0)
-        is_completion = case((units.c.attempt_index.is_(None), 1), else_=0)
-        is_error = units.c.outcome == AttackOutcome.ERROR.value
-        unit_retries = (
-            func.sum(pressure_attempt * units.c.total_retries).over(partition_by=unit_partition)
-            + func.sum(pressure_attempt).over(partition_by=unit_partition)
-            - 1
-        )
-        raw_unit_retries = (
-            func.sum(units.c.total_retries).over(partition_by=unit_partition)
-            + func.count().over(partition_by=unit_partition)
-            - 1
-        )
-        ranked = select(
-            units.c.scenario_result_id,
-            units.c.unit_group_id,
-            units.c.timestamp,
-            units.c.outcome.label("latest_outcome"),
-            units.c.outcome.label("attempt_outcome"),
-            units.c.has_retries.label("has_retries"),
-            func.max(units.c.is_planned).over(partition_by=unit_partition).label("is_planned"),
-            unit_retries.label("unit_retries"),
-            raw_unit_retries.label("raw_unit_retries"),
-            func.sum(case((is_error, pressure_attempt), else_=0))
-            .over(partition_by=unit_partition)
-            .label("unit_errors"),
-            is_completion.label("is_completion"),
-            units.c.result_role.label("result_role"),
-            units.c.total_retries.label("attempt_retries"),
-            func.max(units.c.has_retries).over(partition_by=unit_partition).label("unit_has_retries"),
-            func.row_number()
-            .over(
-                partition_by=unit_partition,
-                order_by=(
-                    is_completion.desc(),
-                    units.c.timestamp.desc(),
-                    self._get_scenario_attempt_id_order_expression(attempt_id=units.c.attempt_id).desc(),
-                ),
-            )
-            .label("unit_rank"),
-        ).subquery("history_ranked_units")
-        counted = and_(ranked.c.unit_rank == 1, ranked.c.is_planned == 1)
-        completed = and_(counted, ranked.c.is_completion == 1)
-        is_target_facing = self._get_scenario_role_match_condition(
-            role_expression=ranked.c.result_role, role=AttackResultRole.TARGET_FACING
-        )
-        is_orchestration = self._get_scenario_role_match_condition(
-            role_expression=ranked.c.result_role, role=AttackResultRole.ORCHESTRATION
-        )
-        is_unknown = or_(
-            ranked.c.result_role.is_(None),
-            and_(not_(is_target_facing), not_(is_orchestration)),
-        )
-        return ranked, counted, completed, is_target_facing, is_orchestration, is_unknown
-
-    def _build_scenario_history_aggregate_statement(
-        self,
-        *,
-        entry_ids: Sequence[uuid.UUID],
-        plan_entry_ids: Sequence[uuid.UUID],
-    ) -> Any:
-        """
-        Build the statement that reduces linked attempts to one metrics row per run.
-
-        Returns:
-            Any: A statement selecting one aggregate row per scenario run with attempts.
-        """
-        ranked, counted, completed, is_target_facing, is_orchestration, is_unknown = (
-            self._build_scenario_history_ranked_units(entry_ids=entry_ids, plan_entry_ids=plan_entry_ids)
-        )
-        return (
-            select(
-                ranked.c.scenario_result_id,
-                func.max(ranked.c.timestamp).label("latest_attempt_timestamp"),
-                func.sum(case((counted, 1), else_=0)).label("unit_count"),
-                func.sum(case((completed, 1), else_=0)).label("completed_units"),
-                func.sum(
-                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
-                ).label("successful_units"),
-                func.sum(case((counted, ranked.c.unit_errors), else_=0)).label("error_attempts"),
-                func.sum(case((and_(counted, ranked.c.unit_retries > 0), ranked.c.unit_retries), else_=0)).label(
-                    "total_retries"
-                ),
-                func.sum(
-                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
-                ).label("outcome_successes"),
-                func.sum(
-                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.FAILURE.value), 1), else_=0)
-                ).label("outcome_failures"),
-                func.sum(
-                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1), else_=0)
-                ).label("outcome_errors"),
-                func.sum(
-                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.UNDETERMINED.value), 1), else_=0)
-                ).label("outcome_undetermined"),
-                func.sum(case((ranked.c.attempt_outcome == AttackOutcome.ERROR.value, 1), else_=0)).label(
-                    "raw_total_errors"
-                ),
-                func.sum(
-                    case(
-                        (and_(ranked.c.unit_rank == 1, ranked.c.raw_unit_retries > 0), ranked.c.raw_unit_retries),
-                        else_=0,
-                    )
-                ).label("raw_total_retries"),
-                func.sum(case((ranked.c.has_retries == 1, 1), else_=0)).label("raw_retrying_attacks_count"),
-                func.sum(case((is_target_facing, 1), else_=0)).label("target_facing_attempts"),
-                func.sum(
-                    case(
-                        (and_(is_target_facing, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1),
-                        else_=0,
-                    )
-                ).label("target_facing_error_attempts"),
-                func.sum(case((is_target_facing, ranked.c.attempt_retries), else_=0)).label("target_facing_retries"),
-                func.sum(case((is_orchestration, 1), else_=0)).label("orchestration_attempts"),
-                func.sum(
-                    case(
-                        (and_(is_orchestration, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1),
-                        else_=0,
-                    )
-                ).label("orchestration_error_attempts"),
-                func.sum(case((is_orchestration, ranked.c.attempt_retries), else_=0)).label("orchestration_retries"),
-                func.sum(case((is_unknown, 1), else_=0)).label("unknown_role_attempts"),
-                func.sum(
-                    case(
-                        (and_(is_unknown, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1),
-                        else_=0,
-                    )
-                ).label("unknown_role_error_attempts"),
-                func.sum(case((is_unknown, ranked.c.attempt_retries), else_=0)).label("unknown_role_retries"),
-            )
-            .group_by(ranked.c.scenario_result_id)
-            .order_by(ranked.c.scenario_result_id)
-        )
-
-    def _build_scenario_history_group_aggregate_statement(
-        self,
-        *,
-        entry_ids: Sequence[uuid.UUID],
-        plan_entry_ids: Sequence[uuid.UUID],
-    ) -> Any:
-        """
-        Build the statement that reduces linked attempts to metrics rows per group.
-
-        Returns:
-            Any: A statement selecting aggregate rows grouped by scenario run and atomic group.
-        """
-        ranked, counted, completed, is_target_facing, is_orchestration, is_unknown = (
-            self._build_scenario_history_ranked_units(entry_ids=entry_ids, plan_entry_ids=plan_entry_ids)
-        )
-        return (
-            select(
-                ranked.c.scenario_result_id,
-                ranked.c.unit_group_id,
-                func.sum(case((completed, 1), else_=0)).label("completed_units"),
-                func.sum(
-                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
-                ).label("successful_units"),
-                func.sum(case((counted, ranked.c.unit_errors), else_=0)).label("error_attempts"),
-                func.sum(case((and_(counted, ranked.c.unit_retries > 0), ranked.c.unit_retries), else_=0)).label(
-                    "total_retries"
-                ),
-                func.sum(
-                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
-                ).label("outcome_successes"),
-                func.sum(
-                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.FAILURE.value), 1), else_=0)
-                ).label("outcome_failures"),
-                func.sum(
-                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1), else_=0)
-                ).label("outcome_errors"),
-                func.sum(
-                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.UNDETERMINED.value), 1), else_=0)
-                ).label("outcome_undetermined"),
-                func.sum(case((is_target_facing, 1), else_=0)).label("target_facing_attempts"),
-                func.sum(
-                    case(
-                        (and_(is_target_facing, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1),
-                        else_=0,
-                    )
-                ).label("target_facing_error_attempts"),
-                func.sum(case((is_target_facing, ranked.c.attempt_retries), else_=0)).label("target_facing_retries"),
-                func.sum(case((is_orchestration, 1), else_=0)).label("orchestration_attempts"),
-                func.sum(
-                    case(
-                        (and_(is_orchestration, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1),
-                        else_=0,
-                    )
-                ).label("orchestration_error_attempts"),
-                func.sum(case((is_orchestration, ranked.c.attempt_retries), else_=0)).label("orchestration_retries"),
-                func.sum(case((is_unknown, 1), else_=0)).label("unknown_role_attempts"),
-                func.sum(
-                    case(
-                        (and_(is_unknown, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1),
-                        else_=0,
-                    )
-                ).label("unknown_role_error_attempts"),
-                func.sum(case((is_unknown, ranked.c.attempt_retries), else_=0)).label("unknown_role_retries"),
-            )
-            .group_by(ranked.c.scenario_result_id, ranked.c.unit_group_id)
-            .order_by(ranked.c.scenario_result_id, ranked.c.unit_group_id)
-        )
-
-    def _get_scenario_execution_attempt_condition(self, *, attempts: Any) -> Any:
-        """
-        Return the SQL form of ``select_execution_attempts``'s envelope test, negated.
-
-        An orchestration role marks an envelope. An unrecognized role marks one only with
-        child links, as for envelopes persisted before roles were recorded.
-
-        Args:
-            attempts (Any): A subquery with ``result_role`` and ``has_child_links`` columns.
-
-        Returns:
-            Any: A condition that is true for attempts that are not orchestration envelopes.
-        """
-        is_envelope = case(
-            (
-                self._get_scenario_role_match_condition(
-                    role_expression=attempts.c.result_role, role=AttackResultRole.ORCHESTRATION
-                ),
-                1,
-            ),
-            (
-                self._get_scenario_role_match_condition(
-                    role_expression=attempts.c.result_role, role=AttackResultRole.TARGET_FACING
-                ),
-                0,
-            ),
-            else_=attempts.c.has_child_links,
-        )
-        return is_envelope == 0
-
-    def _build_scenario_history_unit_statement(self, *, attempts: Any, plan_entry_ids: Sequence[uuid.UUID]) -> Any:
-        """
-        Resolve every persisted attempt to the logical work unit whose counters it feeds.
-
-        Returns:
-            Any: A statement selecting one row per attempt with its resolved unit identity.
-        """
-        # Without a matching planned group, a unit is its atomic attack name plus technique configuration,
-        # the same identity pyrit.analytics.scenario_statistics uses, so configurations sharing a name stay apart.
-        unplanned_group_id = (
-            type_coerce(attempts.c.atomic_attack_name, Unicode)
-            .concat(literal("\x1f", Unicode))
-            .concat(type_coerce(attempts.c.technique_eval_hash, Unicode))
-        )
-        if not plan_entry_ids:
-            return select(
-                attempts.c.scenario_result_id,
-                attempts.c.attempt_id,
-                attempts.c.outcome,
-                attempts.c.timestamp,
-                attempts.c.total_retries,
-                attempts.c.has_retries,
-                attempts.c.result_role,
-                attempts.c.attempt_index,
-                attempts.c.has_child_links,
-                attempts.c.duplicates_child_error,
-                unplanned_group_id.label("unit_group_id"),
-                attempts.c.seed_group_id.label("unit_seed_id"),
-                literal(1).label("is_planned"),
-            )
-
-        planned_units, plan_seeds = self._get_scenario_plan_unit_subqueries(scenario_result_ids=plan_entry_ids)
-        # How many planned groups share each atomic attack name, so name-only matches can require a unique group.
-        groups_per_name = (
-            select(
-                planned_units.c.scenario_result_id,
-                planned_units.c.atomic_attack_name,
-                func.count(func.distinct(planned_units.c.atomic_group_id)).label("group_count"),
-            )
-            .group_by(planned_units.c.scenario_result_id, planned_units.c.atomic_attack_name)
-            .subquery("history_planned_groups_per_name")
-        )
-        planned = (
-            select(
-                planned_units.c.scenario_result_id,
-                planned_units.c.group_ordinal,
-                planned_units.c.atomic_group_id,
-                planned_units.c.atomic_attack_name,
-                planned_units.c.technique_eval_hash,
-                planned_units.c.seed_group_id,
-                plan_seeds.c.objective_sha256,
-                groups_per_name.c.group_count,
-                func.count()
-                .over(
-                    partition_by=(
-                        planned_units.c.scenario_result_id,
-                        planned_units.c.atomic_group_id,
-                        plan_seeds.c.objective_sha256,
-                    )
-                )
-                .label("objective_match_count"),
-            )
-            .select_from(
-                planned_units.outerjoin(
-                    plan_seeds,
-                    and_(
-                        plan_seeds.c.scenario_result_id == planned_units.c.scenario_result_id,
-                        plan_seeds.c.seed_group_id == planned_units.c.seed_group_id,
-                    ),
-                ).join(
-                    groups_per_name,
-                    and_(
-                        groups_per_name.c.scenario_result_id == planned_units.c.scenario_result_id,
-                        groups_per_name.c.atomic_attack_name == planned_units.c.atomic_attack_name,
-                    ),
-                )
-            )
-            .subquery("history_planned_units")
-        )
-        # Without explicit seed attribution, an objective must identify exactly one planned seed group.
-        seed_matches_exactly = planned.c.seed_group_id == attempts.c.attributed_seed_group_id
-        match_condition = and_(
-            planned.c.scenario_result_id == attempts.c.scenario_result_id,
-            planned.c.atomic_attack_name == attempts.c.atomic_attack_name,
-            # Same rule as ScenarioPlanLookup.resolve_group: without a technique hash, the name must be unambiguous.
-            or_(
-                and_(attempts.c.technique_eval_hash == "", planned.c.group_count == 1),
-                planned.c.technique_eval_hash == attempts.c.technique_eval_hash,
-            ),
-            or_(
-                seed_matches_exactly,
-                and_(
-                    attempts.c.attributed_seed_group_id.is_(None),
-                    planned.c.objective_sha256 == attempts.c.objective_sha256,
-                    planned.c.objective_match_count == 1,
-                ),
-            ),
-        )
-        matched = (
-            select(
-                attempts.c.scenario_result_id,
-                attempts.c.attempt_id,
-                attempts.c.outcome,
-                attempts.c.timestamp,
-                attempts.c.total_retries,
-                attempts.c.has_retries,
-                attempts.c.result_role,
-                attempts.c.attempt_index,
-                attempts.c.has_child_links,
-                attempts.c.duplicates_child_error,
-                attempts.c.atomic_attack_name,
-                unplanned_group_id.label("unplanned_group_id"),
-                attempts.c.seed_group_id,
-                planned.c.atomic_group_id,
-                planned.c.seed_group_id.label("planned_seed_group_id"),
-                func.row_number()
-                .over(
-                    partition_by=attempts.c.attempt_id,
-                    order_by=(
-                        case((seed_matches_exactly, 0), else_=1),
-                        planned.c.group_ordinal,
-                        planned.c.seed_group_id,
-                    ),
-                )
-                .label("match_rank"),
-            )
-            .select_from(attempts.outerjoin(planned, match_condition))
-            .subquery("history_matched_attempts")
-        )
-        return select(
-            matched.c.scenario_result_id,
-            matched.c.attempt_id,
-            matched.c.outcome,
-            matched.c.timestamp,
-            matched.c.total_retries,
-            matched.c.has_retries,
-            matched.c.result_role,
-            matched.c.attempt_index,
-            matched.c.has_child_links,
-            matched.c.duplicates_child_error,
-            func.coalesce(matched.c.atomic_group_id, matched.c.unplanned_group_id).label("unit_group_id"),
-            func.coalesce(matched.c.planned_seed_group_id, matched.c.seed_group_id).label("unit_seed_id"),
-            # Runs outside the plan-resolution set keep their raw identity and stay counted.
-            case(
-                (matched.c.scenario_result_id.notin_(plan_entry_ids), 1),
-                (matched.c.planned_seed_group_id.is_(None), 0),
-                else_=1,
-            ).label("is_planned"),
-        ).where(matched.c.match_rank == 1)
 
     @staticmethod
     def _parse_scenario_started_at(*, raw_value: Any) -> datetime | None:
@@ -13693,12 +13264,12 @@ class MemoryInterface(abc.ABC):
         sort_by: Literal["created_at", "activity"] = "created_at",
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
         """
-        Return one descending scenario-history page and its database-side attempt metrics.
+        Return one descending scenario-history page and its attempt metrics.
 
         Only selected ScenarioResult columns and the linked AttackResult columns
         required for aggregate counts are read. Full ORM result objects and their
         relationships are never hydrated, and attempt metrics are reduced to one
-        aggregate row per history row inside the database.
+        aggregate per history row.
 
         Returns:
             tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:

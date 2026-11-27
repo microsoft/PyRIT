@@ -1024,7 +1024,7 @@ async def test_same_name_producers_survive_unmatched_configuration(
 
 async def test_malformed_roles_fall_back_to_unknown_in_producer_accounting(sqlite_instance) -> None:
     # Verify that malformed role values (trailing spaces or uppercase) fall back to UNKNOWN
-    # in both SDK statistics and backend SQL aggregation.
+    # in both SDK statistics and backend history aggregation.
     plan = _plan(
         _group(name="attack", eval_hash="eval", seed_ids=["seed_1"]),
         seeds=[_seed("seed_1", "Objective 1")],
@@ -1063,7 +1063,7 @@ async def test_malformed_roles_fall_back_to_unknown_in_producer_accounting(sqlit
     assert sdk.overall.producer_counts.target_facing.attempts == 1
     assert sdk.overall.producer_counts.unknown.attempts == 2
 
-    # Verify backend SQL aggregation also treats both as unknown
+    # Verify backend history aggregation also treats both as unknown
     aggregates = await sqlite_instance.get_scenario_history_aggregates_async(scenario_result_ids=[scenario_result_id])
     agg = aggregates[scenario_result_id]
     assert agg.target_facing_attempts == 1

@@ -23,7 +23,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from pydantic import ValidationError
 
@@ -193,14 +193,28 @@ def load_scenario_run_plan(scenario_result: ScenarioResult) -> ScenarioRunPlan |
     Returns:
         ScenarioRunPlan | None: The saved plan, or None for results persisted without one.
     """
-    raw_plan = (scenario_result.metadata or {}).get(SCENARIO_RUN_PLAN_METADATA_KEY)
+    return parse_scenario_run_plan(metadata=scenario_result.metadata, scenario_result_id=str(scenario_result.id))
+
+
+def parse_scenario_run_plan(*, metadata: Mapping[str, Any] | None, scenario_result_id: str) -> ScenarioRunPlan | None:
+    """
+    Parse the run plan saved in scenario result metadata.
+
+    Args:
+        metadata (Mapping[str, Any] | None): The persisted scenario result metadata.
+        scenario_result_id (str): The scenario result ID, used to report an invalid plan.
+
+    Returns:
+        ScenarioRunPlan | None: The saved plan, or None when it is missing or invalid.
+    """
+    raw_plan = (metadata or {}).get(SCENARIO_RUN_PLAN_METADATA_KEY)
     if raw_plan is None:
         return None
     try:
         return ScenarioRunPlan.model_validate(raw_plan)
     except (ValidationError, ValueError):
         logger.warning(
-            "Scenario result %s has an invalid saved run plan; counting it as a legacy run.", scenario_result.id
+            "Scenario result %s has an invalid saved run plan; counting it as a legacy run.", scenario_result_id
         )
         return None
 
@@ -221,7 +235,7 @@ def resolve_execution_unit(
     The atomic group is the planned group matching the atomic attack name and technique configuration,
     or a hash of both for attempts the plan does not describe. The seed group comes from, in order: the
     persisted attribution, an objective match in the planned group, the atomic identifier's seeds, and
-    finally a hash of the objective (legacy rows). The SQL history query follows the same order.
+    finally a hash of the objective (legacy rows). Scenario-history aggregation follows the same order.
 
     Returns:
         ScenarioExecutionUnit: The resolved execution unit.
