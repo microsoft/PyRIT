@@ -50,8 +50,11 @@ def _validate_and_prepare_data(
     if missing is None:
         missing = np.nan
 
-    # Identify valid (non-missing) values
-    valid_mask = ~np.isnan(data) if np.isnan(missing) else data != missing
+    # Identify valid (non-missing) values. NaN is always missing, even when a
+    # finite sentinel is configured; the sentinel is excluded only when set.
+    valid_mask = ~np.isnan(data)
+    if not np.isnan(missing):
+        valid_mask &= data != missing
 
     # Get sorted unique categories
     valid_ratings = data[valid_mask]

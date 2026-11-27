@@ -23,7 +23,7 @@ export interface MediaPreviewProps {
    * Return that URL so this preview can use it in the same update.
    * Chat leaves this unset, so a retry only remounts the current src.
    */
-  readonly onRetry?: () => Promise<string | void> | string | void
+  readonly onRetry?: (() => Promise<string | void> | string | void) | undefined
 }
 
 function isAbortError(err: unknown): boolean {
@@ -224,7 +224,7 @@ export default function MediaPreview({
         {!loaded && !error && <Spinner size="small" className={spinnerClassName ?? styles.spinner} />}
         {error
           ? (recovery
-            ? <RecoveryActions type={type} src={activeSrc} onRetry={retry} refreshFailed={refreshFailed} />
+            ? <RecoveryActions type={type} src={activeSrc} onRetry={() => { void retry() }} refreshFailed={refreshFailed} />
             : <Text size={200} italic data-testid="image-error">{failureMessage(type, false)}</Text>)
           : <img
               key={attempt}
@@ -245,7 +245,7 @@ export default function MediaPreview({
       <>
         {hideButton}
         {recovery
-          ? <RecoveryActions type={type} src={activeSrc} onRetry={retry} refreshFailed={refreshFailed} />
+          ? <RecoveryActions type={type} src={activeSrc} onRetry={() => { void retry() }} refreshFailed={refreshFailed} />
           : <Text size={200} italic data-testid={`${type}-error`}>{failureMessage(type, false)}</Text>}
       </>
     )

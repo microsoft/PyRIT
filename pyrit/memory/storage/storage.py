@@ -541,7 +541,7 @@ class AzureBlobStorageIO(StorageIO):
         finally:
             await self._release_client_async()
 
-    async def create_directory_if_not_exists_async(self, directory_path: Path | str) -> None:  # type: ignore[ty:invalid-method-override]
+    async def create_directory_if_not_exists_async(self, directory_path: Path | str) -> None:  # type: ignore[ty:lost-keyword-for-regular-parameter]
         """
         Log a no-op directory creation for Azure Blob Storage.
 

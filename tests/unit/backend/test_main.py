@@ -37,6 +37,7 @@ from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.backend.services.staged_media import staged_media_store
 from pyrit.memory import AzureSQLMemory, SQLiteMemory
 from pyrit.setup import ConfigurationLoader
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +52,7 @@ async def test_health_responds_while_database_operation_is_pending(sqlite_instan
 
     def wait_in_database() -> int:
         started.set()
-        if not release.wait(timeout=60):
+        if not release.wait(timeout=TEST_WATCHDOG_SECONDS):
             raise RuntimeError("Database wait was not released")
         return 1
 
@@ -64,9 +65,9 @@ async def test_health_responds_while_database_operation_is_pending(sqlite_instan
         )
         query = asyncio.create_task(session.execute(text("SELECT wait_in_database()")))
         try:
-            assert await asyncio.to_thread(started.wait, 30)
+            assert await asyncio.to_thread(started.wait, TEST_WATCHDOG_SECONDS)
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await asyncio.wait_for(client.get("/api/health"), timeout=30)
+                response = await asyncio.wait_for(client.get("/api/health"), timeout=TEST_WATCHDOG_SECONDS)
             assert response.status_code == 200
             assert response.json()["status"] == "healthy"
             assert not query.done()

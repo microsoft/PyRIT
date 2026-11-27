@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from typing_extensions import override
 
@@ -76,6 +76,8 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
             for category in range(1, 10):
                 self.sources.append(f"{base_url}/med_harm_llama3/category_{category}.txt")
         else:
+            if TYPE_CHECKING:
+                assert_never(subset_name)
             raise ValueError(
                 f"Invalid subset_name: {subset_name}. Expected one of: 'train', 'test', 'generated', 'all'."
             )

@@ -160,7 +160,7 @@ class ApproximateTextMatching(TextMatching):
             text (str): The text to search in.
 
         Returns:
-            bool: True if n-gram overlap score exceeds threshold, False otherwise.
+            bool: True if the n-gram overlap score is at least the threshold, False otherwise.
         """
         if not target.strip():
             return False

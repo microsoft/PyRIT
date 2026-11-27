@@ -66,6 +66,7 @@ import {
   type TargetFilters,
 } from './targetFilters'
 import TargetFiltersBar from './TargetFiltersBar'
+import TargetOriginBadge from './TargetOriginBadge'
 import { useTargetTableStyles } from './TargetTable.styles'
 import TargetSelect from './TargetSelect'
 
@@ -97,7 +98,10 @@ function formatParams(params?: Record<string, unknown> | null): string {
 }
 
 const COLUMN_TOOLTIPS = {
-  registryName: 'Unique name used to identify this configured target',
+  registryName:
+    'Unique name used to identify this target. Saved targets come back after the backend restarts or is '
+    + 'reinitialized, targets from configuration come back because the server registers them again, and '
+    + 'Temporary targets are gone.',
   type: 'Target class implementation',
   model: 'Configured model name. A dotted underline indicates the deployment alias differs from the underlying model — hover the value to see it.',
   endpoint: 'API endpoint URL the target sends requests to',
@@ -112,7 +116,7 @@ const FunctionCallOutputIcon = forwardRef<HTMLSpanElement, React.HTMLAttributes<
     const styles = useTargetTableStyles()
     return (
       <span ref={ref} className={styles.compositeIcon} {...rest}>
-        <MathFormulaRegular className={className} />
+        <MathFormulaRegular {...(className ? { className } : {})} />
         <ArrowHookUpLeftRegular className={styles.compositeBadge} />
       </span>
     )
@@ -636,8 +640,9 @@ export default function TargetTable({
                 }
                 nameCellClassName={styles.registryNameCell}
                 nameContent={
-                  isDefaultAdversarial(target) && (
+                  (target.origin || isDefaultAdversarial(target)) && (
                     <div className={styles.defaultIndicators}>
+                      {target.origin && <TargetOriginBadge origin={target.origin} />}
                       {isDefaultAdversarial(target) && (
                         <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
                           Adversarial

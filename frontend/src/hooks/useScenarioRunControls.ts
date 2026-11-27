@@ -15,7 +15,7 @@ interface UseScenarioRunControlsOptions {
   readonly retry: () => void
   readonly refreshQueue: () => void
   /** The run's own error, which the page already shows with the run. */
-  readonly runError?: string | null
+  readonly runError?: string | null | undefined
 }
 
 export interface ScenarioRunControls {
@@ -71,7 +71,7 @@ export function useScenarioRunControls({
     try {
       const request = await scenariosApi.getLaunchConfiguration(scenarioResultId, controller.signal)
       if (rerunRequest.current !== controller || controller.signal.aborted) return
-      navigate(scenarioRerunRoutePath(request.scenario_name, scenarioResultId))
+      void navigate(scenarioRerunRoutePath(request.scenario_name, scenarioResultId))
     } catch (error: unknown) {
       if (rerunRequest.current !== controller || controller.signal.aborted) return
       setRerunError(toApiError(error).detail)

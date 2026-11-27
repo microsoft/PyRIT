@@ -4,7 +4,7 @@
 from abc import abstractmethod
 from typing import Literal
 
-from pyrit.models import ScenarioResult
+from pyrit.models import AttackOutcome, ScenarioResult
 from pyrit.output.base import PrinterBase
 
 # Which projection of a scenario result to render: the aggregate overview or the
@@ -28,6 +28,7 @@ class ScenarioResultPrinterBase(PrinterBase):
         view: ScenarioView = "overview",
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> str:
         """
         Render a scenario result and return it as a string.
@@ -40,6 +41,8 @@ class ScenarioResultPrinterBase(PrinterBase):
                 these attack ids. Ignored by other views. Defaults to None.
             limit (int | None): For the ``"attacks"`` view, the maximum number of attacks
                 to show. Ignored by other views. Defaults to None.
+            outcome (AttackOutcome | None): For the ``"attacks"`` view, keep only attacks with
+                this outcome before applying ``limit``. Ignored by other views. Defaults to None.
 
         Returns:
             str: The rendered scenario result text.
