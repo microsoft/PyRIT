@@ -7,7 +7,7 @@ import inspect
 import logging
 import re
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 from urllib.parse import urlparse
 
 import msal
@@ -157,7 +157,7 @@ class AsyncTokenProviderCredential:
     async def close(self) -> None:  # pyrit-async-suffix-exempt
         """No-op close for protocol compliance. The callable provider does not hold resources."""
 
-    async def __aenter__(self) -> AsyncTokenProviderCredential:
+    async def __aenter__(self) -> Self:
         """
         Enter the async context manager.
 
