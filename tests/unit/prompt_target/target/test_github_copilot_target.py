@@ -2562,7 +2562,7 @@ async def test_normalizer_keeps_event_loop_responsive_during_client_construction
         try:
             loop.call_soon_threadsafe(constructor_entered.set)
             # The bound lets a blocked event loop escape without satisfying the responsiveness assertion.
-            released_while_constructing = release.wait(timeout=5.0)
+            released_while_constructing = release.wait(timeout=TEST_WATCHDOG_SECONDS)
             return client
         finally:
             loop.call_soon_threadsafe(constructor_finished.set)
@@ -2583,11 +2583,11 @@ async def test_normalizer_keeps_event_loop_responsive_during_client_construction
     )
     release_task = asyncio.create_task(release_constructor_async())
     try:
-        await asyncio.wait_for(asyncio.gather(request_task, release_task), timeout=10.0)
+        await asyncio.wait_for(asyncio.gather(request_task, release_task), timeout=TEST_WATCHDOG_SECONDS)
     finally:
         release.set()
         await _cancel_tasks_async(request_task, release_task)
-        await asyncio.wait_for(constructor_finished.wait(), timeout=5.0)
+        await asyncio.wait_for(constructor_finished.wait(), timeout=TEST_WATCHDOG_SECONDS)
 
     await target.cleanup_target_async()
     client.stop.assert_awaited_once()

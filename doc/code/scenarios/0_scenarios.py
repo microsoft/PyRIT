@@ -308,7 +308,7 @@ print_scenario_list(items=response.items)
 #
 # ### Automatic Resume
 #
-# If you re-run a `scenario`, it will automatically start where it left off. The framework tracks completed attacks and objectives in memory, so you won't lose progress if something interrupts your scenario execution. This means you can safely stop and restart scenarios without duplicating work.
+# If you re-run a `scenario`, it will automatically start where it left off. The framework tracks completed attacks and objectives in memory, so you won't lose progress if something interrupts your scenario execution. This means you can safely stop and restart scenarios without duplicating work. An attempt that is cancelled before it finishes, for example when you stop the scenario, keeps the requests it already sent and their conversation but leaves no `AttackResult`, because no outcome was reached. Resume runs that objective again.
 #
 # ### Retry Mechanism
 #

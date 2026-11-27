@@ -27,7 +27,7 @@ interface VersionedInput extends ConverterInputPiece {
 }
 
 interface ConversionState {
-  scopeKey?: string
+  scopeKey?: string | undefined
   generation: string
   sourceInputs: ConverterInputPiece[]
   inputs: VersionedInput[]
@@ -61,7 +61,7 @@ interface ConversionScope {
 }
 
 interface PieceConverterOptions {
-  initialSnapshot?: ChatConverterSnapshot
+  initialSnapshot?: ChatConverterSnapshot | undefined
   selectedIds?: ReadonlySet<string>
 }
 

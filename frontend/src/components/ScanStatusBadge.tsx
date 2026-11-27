@@ -60,12 +60,13 @@ export default function ScanStatusBadge({
   label,
   testId,
 }: ScanStatusBadgeProps) {
+  const icon = withIcon ? scanStatusIcon(status) : undefined
   return (
     <Badge
       appearance={appearance}
       color={SCAN_STATUS_COLORS[status]}
-      icon={withIcon ? scanStatusIcon(status) : undefined}
-      data-testid={testId}
+      {...(icon ? { icon } : {})}
+      {...(testId ? { 'data-testid': testId } : {})}
     >
       {label ?? SCAN_STATUS_LABELS[status]}
     </Badge>

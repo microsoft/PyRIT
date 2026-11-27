@@ -71,8 +71,8 @@ export function useSeedExamples(
         const response = await datasetsApi.listSeedExamples({
           selection_key: selectionKey,
           limit: query.limit,
-          cursor: query.cursor ?? undefined,
-          search: query.search || undefined,
+          ...(query.cursor != null ? { cursor: query.cursor } : {}),
+          ...(query.search ? { search: query.search } : {}),
           modality: query.modalities,
           seed_type: query.seedTypes,
           harm_category: query.harmCategories,

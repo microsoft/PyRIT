@@ -7,7 +7,7 @@ import { useScorerMetricsDetailsStyles } from './ScorerMetricsDetails.styles'
 
 interface ScorerMetricsDetailsProps {
   metrics?: ScorerEvaluationMetrics | null
-  scoreType?: string | null
+  scoreType?: string | null | undefined
   fallback?: string
 }
 

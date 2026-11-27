@@ -2,15 +2,17 @@
 # Licensed under the MIT license.
 
 from collections.abc import Sequence
-from typing import get_args
+from typing import cast, get_args
 
 from pyrit.models import ChatMessageRole, Message, MessagePiece, PromptDataType
 
 #: Roles a scorer reads unless it declares otherwise. Simulated response roles are opt-in
 #: because a prepended turn is fabricated history rather than something the target said,
 #: and a scorer that judges the target must not mistake one for the other.
-DEFAULT_SUPPORTED_ROLES: tuple[ChatMessageRole, ...] = tuple(
-    role for role in get_args(ChatMessageRole) if role not in {"simulated_assistant", "simulated_tool"}
+# get_args is typed as returning Any; the members of the role Literal are exactly the valid roles.
+DEFAULT_SUPPORTED_ROLES: tuple[ChatMessageRole, ...] = cast(
+    "tuple[ChatMessageRole, ...]",
+    tuple(role for role in get_args(ChatMessageRole) if role not in {"simulated_assistant", "simulated_tool"}),
 )
 
 
