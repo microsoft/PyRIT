@@ -34,6 +34,7 @@ import type { ScenarioSuiteResponse } from '@/types'
 
 import { useScenarioSuiteLibraryStyles } from './ScenarioSuiteLibrary.styles'
 import { NEW_SUITE_ROUTE, suiteEditorRoutePath } from './suiteRoutes'
+import { fluentRef } from '@/utils/fluentRef'
 
 const DEFINED_IN_CODE_HINT = 'Defined in code, so it cannot be edited or deleted here.'
 
@@ -63,6 +64,11 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
   const [generation, setGeneration] = useState(0)
   const pending = useRef(false)
   const mutationEpoch = useRef(0)
+  const [settledLoads, setSettledLoads] = useState(0)
+  const editButtons = useRef(new Map<string, HTMLElement>())
+  const newSuiteButton = useRef<HTMLButtonElement>(null)
+  // A conflict reload can drop the record, so focus waits until the reload settles.
+  const focusAfterReload = useRef<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -77,9 +83,11 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
         setItems(response.items)
         setSource(response.source)
         setError(null)
+        setSettledLoads((count) => count + 1)
       } catch (err: unknown) {
         if (cancelled || controller.signal.aborted || epoch !== mutationEpoch.current) return
         setError(toApiError(err).detail)
+        setSettledLoads((count) => count + 1)
       } finally {
         if (!cancelled) {
           setLoading(false)
@@ -101,6 +109,15 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
   }, [])
   useAutoRefresh(() => { if (!pending.current) refresh() }, !loading && !deleting)
 
+  useEffect(() => {
+    const name = focusAfterReload.current
+    if (name === null) return
+    focusAfterReload.current = null
+    const editButton = editButtons.current.get(name)
+    if (editButton && !editButton.matches(':disabled')) editButton.focus()
+    else newSuiteButton.current?.focus()
+  }, [settledLoads])
+
   const handleDelete = async (): Promise<void> => {
     if (!pendingDelete) {
       return
@@ -109,11 +126,21 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
     mutationEpoch.current++
     setActionError(null)
     try {
-      await scenarioSuitesApi.remove(pendingDelete.suite.name)
+      await scenarioSuitesApi.remove(pendingDelete.suite.name, pendingDelete.version ?? undefined)
       setPendingDelete(null)
       refresh()
     } catch (err: unknown) {
-      setActionError(toApiError(err).detail)
+      const apiError = toApiError(err)
+      if (apiError.status === 409) {
+        focusAfterReload.current = pendingDelete.suite.name
+        setPendingDelete(null)
+        refresh()
+        setActionError(
+          `Suite '${pendingDelete.suite.name}' changed since it was loaded. Review it and try again.`,
+        )
+        return
+      }
+      setActionError(apiError.detail)
     } finally {
       setDeleting(false)
     }
@@ -136,6 +163,7 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
         </div>
         <div className={styles.headerActions}>
           <Button
+            ref={fluentRef(newSuiteButton)}
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
@@ -248,6 +276,10 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
                     <TableCell>
                       <div className={styles.actions}>
                         <Button
+                          ref={(node) => {
+                            if (node) editButtons.current.set(item.suite.name, node)
+                            else editButtons.current.delete(item.suite.name)
+                          }}
                           className={styles.touchTarget}
                           appearance="subtle"
                           icon={<EditRegular />}

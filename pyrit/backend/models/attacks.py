@@ -11,7 +11,7 @@ This is the attack-centric API design where every user interaction targets a mod
 import copy
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, Self, cast
 
 from pydantic import (
     AfterValidator,
@@ -47,6 +47,7 @@ from pyrit.models import (
     PromptDataType,
     PromptResponseError,
     Score,
+    TargetCapabilities,
 )
 from pyrit.models.component_spec import RegisteredComponentReference, TargetBinding
 from pyrit.models.results.attack_result import ManualContinuation, ScoringFailure, normalize_legacy_attack_attribution
@@ -62,6 +63,8 @@ class TargetInfo(BaseModel):
     model_name: str | None = Field(None, description="Model or deployment name")
     identifier_hash: str = Field(..., description="Canonical target identifier hash")
     binding: TargetBinding | None = None
+    capabilities: TargetCapabilities | None = None
+    supports_history_replay: bool | None = None
 
 
 class ScoreView(Score):
@@ -262,6 +265,10 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
     )
     chat_scorer_inherited: bool = Field(default=False, description="Uses the scan's registered original scorer")
     execution_read_only: bool = Field(default=False, description="Execution changes require a manual continuation")
+    in_progress: bool = Field(
+        default=False, description="The attack is still running in a scan; its result is not saved yet"
+    )
+    scenario_result_id: str | None = Field(default=None, description="The scan run that produced this attack")
 
     @computed_field
     @property
@@ -319,6 +326,11 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
         if not target_id:
             return None
         target_registry_name = self.metadata.get("target_registry_name")
+        binding = TargetBinding.from_metadata(self.metadata)
+        saved = self.metadata.get("target_capabilities")
+        capabilities = TargetCapabilities.model_validate(saved) if saved is not None else None
+        if binding is not None:
+            capabilities = binding.capabilities
         return TargetInfo(
             target_type=target_id.class_name,
             target_registry_name=target_registry_name if isinstance(target_registry_name, str) else None,
@@ -326,7 +338,9 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
             endpoint=cast("str | None", target_id.params.get("endpoint") or None),
             model_name=cast("str | None", target_id.params.get("model_name") or None),
             identifier_hash=target_id.hash,
-            binding=TargetBinding.from_metadata(self.metadata),
+            binding=binding,
+            capabilities=capabilities,
+            supports_history_replay=self.metadata.get("target_supports_history_replay"),
         )
 
     @computed_field  # type: ignore[prop-decorator]
@@ -360,6 +374,10 @@ class AttackMetadata(BaseModel):
     chat_scorer: RegisteredComponentReference | None = None
     chat_scorer_inherited: bool = False
     execution_read_only: bool = False
+    in_progress: bool = Field(
+        default=False, description="The attack is still running in a scan; its result is not saved yet"
+    )
+    scenario_result_id: str | None = Field(default=None, description="The scan run that produced this attack")
     manual_continuation: ManualContinuation | None = None
     last_response_message_piece_id: str | None = None
     related_conversation_count: int = Field(..., ge=0, description="Number of pruned conversations, excluding main")
@@ -473,7 +491,7 @@ class MessagePieceRequest(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_converted_value_data_type(self) -> "MessagePieceRequest":
+    def _validate_converted_value_data_type(self) -> Self:
         """
         Validate that an explicit converted type accompanies a converted value.
 
@@ -630,7 +648,7 @@ class CreateAttackRequest(_AttackAttributionInput):
     )
 
     @model_validator(mode="after")
-    def _normalize_legacy_objective(self) -> "CreateAttackRequest":
+    def _normalize_legacy_objective(self) -> Self:
         """
         Normalize the deprecated name input.
 
@@ -680,7 +698,7 @@ class UpdateAttackRequest(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_update(self) -> "UpdateAttackRequest":
+    def _validate_update(self) -> Self:
         """
         Validate that the request contains a supported update.
 
@@ -756,7 +774,7 @@ class SaveConversationRequest(_AttackAttributionInput):
     expected_source_piece_ids: list[uuid.UUID] | None = None
 
     @model_validator(mode="after")
-    def _validate_destination(self) -> "SaveConversationRequest":
+    def _validate_destination(self) -> Self:
         """
         Validate source and destination references.
 
@@ -843,11 +861,6 @@ class AddMessageRequest(MessageRequest):
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
     target_binding: TargetBindingInput | None = None
-    converter_ids: list[IdentifierStr] | None = Field(
-        None,
-        max_length=MAX_ITEMS,
-        description="Deprecated global request converter pipeline. Use request_converter_configurations instead.",
-    )
     request_converter_configurations: list[ConverterConfigurationRequest] | None = Field(
         None,
         min_length=1,
@@ -878,8 +891,29 @@ class AddMessageRequest(MessageRequest):
         "Usually the attack's main conversation, but can be a related conversation.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_converter_ids(cls, data: Any) -> Any:
+        """
+        Reject the removed top-level ``converter_ids`` field instead of silently ignoring it.
+
+        Unknown fields are otherwise ignored, so a client still sending ``converter_ids``
+        would have its message sent without converters and without any error.
+
+        Returns:
+            The unchanged model input.
+
+        Raises:
+            ValueError: If the input has a top-level ``converter_ids`` field.
+        """
+        if isinstance(data, dict) and "converter_ids" in data:
+            raise ValueError(
+                "converter_ids is no longer supported on this request; use request_converter_configurations instead"
+            )
+        return data
+
     @model_validator(mode="after")
-    def _validate_converter_configurations(self) -> "AddMessageRequest":
+    def _validate_converter_configurations(self) -> Self:
         """
         Validate converter configuration combinations and request indexes.
 
@@ -891,11 +925,8 @@ class AddMessageRequest(MessageRequest):
         """
         if any(piece.source_piece_id is not None for piece in self.pieces):
             raise ValueError("source_piece_id requires a complete conversation save")
-        if self.converter_ids and self.request_converter_configurations:
-            raise ValueError("converter_ids and request_converter_configurations cannot both be provided")
-
         has_converter_configurations = bool(
-            self.converter_ids or self.request_converter_configurations or self.response_converter_configurations
+            self.request_converter_configurations or self.response_converter_configurations
         )
         if not self.send and has_converter_configurations:
             raise ValueError("Converter configurations require send=True")

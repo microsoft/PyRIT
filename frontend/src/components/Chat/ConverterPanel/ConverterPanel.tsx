@@ -55,14 +55,14 @@ const PANEL_RESIZE_STEP = 16
 interface ValuePreviewProps {
   dataType: string
   emptyText: string
-  label?: string
+  label?: string | undefined
   sectionTestId?: string
-  testId?: string
-  value?: string
+  testId?: string | undefined
+  value?: string | undefined
   editorLabel?: string
   allowSelection?: boolean
   edited?: boolean
-  onChange?: (value: string) => void
+  onChange?: ((value: string) => void) | undefined
 }
 
 interface ConverterPanelProps {
@@ -194,7 +194,7 @@ export default function ConverterPanel({
   const [settings, setSettings] = useState<{
     stageId: string
     pieceType: string
-    editing: { converter: ConverterInstance; spec?: SourceInstanceSpec }
+    editing: { converter: ConverterInstance; spec?: SourceInstanceSpec | undefined }
   } | null>(null)
   const [settingsGeneration, setSettingsGeneration] = useState(generation)
   if (settingsGeneration !== generation) {
@@ -422,6 +422,14 @@ export default function ConverterPanel({
     return () => {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
+      // Unmounting mid drag removes the mouseup listener before it can fire,
+      // so the body wide cursor and selection lock have to be released here or
+      // they stick until a full page reload.
+      if (isResizing.current) {
+        isResizing.current = false
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
     }
   }, [minPanelWidth, maxPanelWidth])
 

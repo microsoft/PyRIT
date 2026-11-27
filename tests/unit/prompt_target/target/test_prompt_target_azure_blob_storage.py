@@ -35,6 +35,11 @@ def test_initialization_with_required_parameters(azure_blob_storage_target: Azur
     assert azure_blob_storage_target._sas_token == "valid_sas_token"
 
 
+def test_declares_no_response_support(azure_blob_storage_target: AzureBlobStorageTarget):
+    # The returned blob URL is a delivery receipt, not a reply.
+    assert not azure_blob_storage_target.capabilities.supports_responses
+
+
 def test_supported_auth_modes_includes_identity():
     """Blob advertises identity-based auth (DefaultAzureCredential) alongside api_key."""
     assert AzureBlobStorageTarget.supported_auth_modes == ("api_key", "identity")
@@ -164,6 +169,18 @@ async def test_create_container_client_uses_sas_token(azure_blob_storage_target:
 
     mock_from_container_url.assert_called_once_with(container_url=container_url, credential="valid_sas_token")
     assert azure_blob_storage_target._credential is None
+
+
+async def test_create_container_client_rejects_non_string_sas_token(
+    azure_blob_storage_target: AzureBlobStorageTarget,
+):
+    azure_blob_storage_target._sas_token = lambda: "valid_sas_token"
+
+    with patch.object(AsyncContainerClient, "from_container_url", return_value=AsyncMock()) as mock_client:
+        with pytest.raises(TypeError, match="Azure Storage SAS token must be a string"):
+            await azure_blob_storage_target._create_container_client_async()
+
+    mock_client.assert_not_called()
 
 
 def test_parse_url_raises_for_url_without_container(patch_central_database):
@@ -378,3 +395,40 @@ async def test_send_prompt_async_returns_url_of_uploaded_blob(
     )
     mock_client.get_blob_client.assert_called_once_with(blob=expected_blob_path)
     assert response[0].get_value() == expected_blob_url
+
+
+def test_supported_content_type_is_shared_between_storage_and_target():
+    from pyrit.memory import SupportedContentType as StorageContentType
+    from pyrit.prompt_target import azure_blob_storage_target
+
+    # The target re-exports the storage enum so existing imports keep working and there is one definition.
+    assert azure_blob_storage_target.SupportedContentType is StorageContentType
+    assert {member.value for member in StorageContentType} >= {"text/plain", "text/html"}
+
+
+def test_supported_content_type_members_are_strings():
+    from pyrit.memory import SupportedContentType
+
+    assert SupportedContentType.PLAIN_TEXT == "text/plain"
+    assert SupportedContentType.HTML == "text/html"
+    assert isinstance(SupportedContentType.HTML, str)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_blob_content_type_accepts_raw_mime_string():
+    target = AzureBlobStorageTarget(
+        container_url="https://test.blob.core.windows.net/test",
+        sas_token="valid_sas_token",
+        blob_content_type="text/html",  # type: ignore[arg-type]
+    )
+    assert target._blob_content_type == "text/html"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_blob_content_type_rejects_unsupported_mime_string():
+    with pytest.raises(ValueError, match="application/pdf"):
+        AzureBlobStorageTarget(
+            container_url="https://test.blob.core.windows.net/test",
+            sas_token="valid_sas_token",
+            blob_content_type="application/pdf",  # type: ignore[arg-type]
+        )

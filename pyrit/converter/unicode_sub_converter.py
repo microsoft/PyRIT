@@ -54,10 +54,20 @@ class UnicodeSubstitutionConverter(Converter):
             ConverterResult: The result containing the converted output and its type.
 
         Raises:
-            ValueError: If the input type is not supported.
+            ValueError: If the input type is not supported, or if shifting a character by ``start_value``
+                does not give a valid Unicode scalar value (above U+10FFFF or a surrogate).
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        ret_text = "".join(chr(self.startValue + ord(ch)) for ch in prompt)
-        return ConverterResult(output_text=ret_text, output_type="text")
+        converted = []
+        for ch in prompt:
+            code_point = self.startValue + ord(ch)
+            if code_point > 0x10FFFF or 0xD800 <= code_point <= 0xDFFF:
+                raise ValueError(
+                    f"start_value {self.startValue:#x} cannot encode {ch!r}: the result {code_point:#x} "
+                    "is not a valid Unicode scalar value."
+                )
+            converted.append(chr(code_point))
+
+        return ConverterResult(output_text="".join(converted), output_type="text")

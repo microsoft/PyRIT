@@ -5,9 +5,11 @@ import itertools
 import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Sequence
-from typing import Any, NoReturn, cast
+from types import MappingProxyType
+from typing import Any, ClassVar, NoReturn, cast
 
 from pyrit.auth import ensure_async_token_provider
+from pyrit.common.constructor_capture import capture_constructor_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -21,12 +23,14 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    ProviderTraceReference,
 )
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
     build_response_format,
     build_text_chat_messages,
     is_text_only_conversation,
+    should_skip_audio_piece,
     validate_chat_tool_message,
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
@@ -38,14 +42,20 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     is_content_filter_response,
     validate_chat_completion_response,
 )
+from pyrit.prompt_target.common.chat_completions_tool_loop import _ChatCompletionsToolLoopMixin
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import (
     TargetCapabilities,
     get_known_capabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
+from pyrit.prompt_target.common.target_trace_config import (
+    TargetTraceConfig,
+    record_provider_trace_reference,
+    request_trace_headers,
+)
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
+from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
@@ -138,7 +148,31 @@ def _provider_specific_headers(provider_specific_header: Any) -> dict[str, str]:
     return headers
 
 
-class LiteLLMChatTarget(PromptTarget):
+def _provider_trace_reference(response: Any) -> ProviderTraceReference | None:
+    """
+    Read the response id LiteLLM returned for a completion.
+
+    The response id is the provider's id for the completion, the value OpenTelemetry's GenAI
+    conventions record as ``gen_ai.response.id``. A response id that is missing or not a usable
+    string records nothing rather than failing the send.
+
+    Returns:
+        ProviderTraceReference | None: The identifier, or None when the response carries none.
+    """
+    hidden = getattr(response, "_hidden_params", None)
+    hidden = hidden if isinstance(hidden, dict) else {}
+
+    def usable(value: Any) -> str | None:
+        return value if isinstance(value, str) and 0 < len(value) <= 256 else None
+
+    request_id = usable(getattr(response, "id", None))
+    if request_id is None:
+        return None
+    provider = usable(hidden.get("custom_llm_provider")) or "litellm"
+    return ProviderTraceReference(provider=provider[:128], request_id=request_id)
+
+
+class LiteLLMChatTarget(_ChatCompletionsToolLoopMixin, PromptTarget):
     """
     Chat target that uses the LiteLLM SDK to access 100+ LLM providers.
 
@@ -164,9 +198,10 @@ class LiteLLMChatTarget(PromptTarget):
             ``LITELLM_MODEL`` environment variable.
         api_key: Optional API key, or a callable that returns an access token (sync or async).
             When omitted, falls back to the ``LITELLM_API_KEY`` environment variable and then
-            to LiteLLM's own provider-specific environment variable lookup.
+            to LiteLLM's own provider-specific environment variable lookup. An empty string
+            skips the ``LITELLM_API_KEY`` fallback.
         endpoint: Optional base URL override (e.g. for a self-hosted proxy or LiteLLM gateway).
-            Falls back to the ``LITELLM_ENDPOINT`` environment variable.
+            Falls back to the ``LITELLM_ENDPOINT`` environment variable unless it is an empty string.
         headers: Optional extra HTTP headers forwarded to the provider (``extra_headers``).
         temperature: Sampling temperature (0-2).
         top_p: Nucleus sampling probability (0-1).
@@ -199,8 +234,41 @@ class LiteLLMChatTarget(PromptTarget):
         trace_config: Request tracing configuration. Tracing is disabled by default because a
             provider or gateway is not known to accept W3C trace context. Pass
             ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint; each request then
-            sends a fresh ``traceparent`` in ``extra_headers``.
+            sends a fresh ``traceparent`` in ``extra_headers``. Whatever this setting, each request
+            records the provider's response id and LiteLLM's provider route as a
+            ``ProviderTraceReference``. A send whose tool loop runs a local tool records none,
+            since one id cannot name the tool's run or the traces of later completions.
+        tools: Executable tools advertised to the model.
+        tool_providers: Providers discovered within each send's resource scope.
+        execute_tools: Execute configured tools locally, or return calls to the caller.
+        max_tool_rounds: Maximum completions containing locally dispatched calls per send.
+            Calls beyond the limit receive error results without execution.
     """
+
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
+    # A model name's provider prefix chooses where requests and the key go.
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {"model_name", "endpoint", "api_key", "headers", "extra_body_parameters"}
+    )
+
+    _reconstruction_parameters: dict[str, object] = {}
+
+    # Environment variables read when ``api_key`` or ``endpoint`` is omitted. Subclasses that pin a
+    # provider override these; None skips the lookup and leaves it to LiteLLM.
+    _API_KEY_ENVIRONMENT_VARIABLE: ClassVar[str | None] = "LITELLM_API_KEY"
+    _ENDPOINT_ENVIRONMENT_VARIABLE: ClassVar[str | None] = "LITELLM_ENDPOINT"
+    # Header names, compared case-insensitively, that identifiers never record.
+    _CREDENTIAL_HEADERS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "authorization",
+            "proxy-authorization",
+            "x-api-key",
+            "api-key",
+            "ocp-apim-subscription-key",
+            "cookie",
+            "set-cookie",
+        }
+    )
 
     # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
     # model metadata at construction time (see ``_derive_capabilities_from_litellm``).
@@ -210,11 +278,19 @@ class LiteLLMChatTarget(PromptTarget):
             supports_multi_turn=True,
             supports_multi_message_pieces=True,
             supports_editable_history=True,
+            supports_prefill=True,
             supports_system_prompt=True,
             input_modalities=_TEXT_INPUT,
         )
     )
 
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Opt in LiteLLM implementations to server-only reconstruction."""
+        super().__init_subclass__(**kwargs)
+        if "__init__" in cls.__dict__:
+            type.__setattr__(cls, "__init__", capture_constructor_parameters(cls.__init__))
+
+    @capture_constructor_parameters
     def __init__(
         self,
         *,
@@ -237,6 +313,10 @@ class LiteLLMChatTarget(PromptTarget):
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
         trace_config: TargetTraceConfig | None = None,
+        tools: Sequence[Tool] | None = None,
+        tool_providers: Sequence[ToolProvider] | None = None,
+        execute_tools: bool = True,
+        max_tool_rounds: int = 10,
     ) -> None:
         """
         Initialize a LiteLLMChatTarget.
@@ -253,6 +333,14 @@ class LiteLLMChatTarget(PromptTarget):
         validate_top_p(top_p)
         validate_presence_penalty(presence_penalty)
         validate_frequency_penalty(frequency_penalty)
+        self._init_tools(
+            tools=tools,
+            tool_providers=tool_providers,
+            execute_tools=execute_tools,
+            max_tool_rounds=max_tool_rounds,
+            n=n,
+            extra_body_parameters=extra_body_parameters,
+        )
 
         super().__init__(
             model_name=resolved_model,
@@ -262,14 +350,17 @@ class LiteLLMChatTarget(PromptTarget):
             trace_config=trace_config,
         )
 
-        # Resolve api_key: explicit value/callable > LITELLM_API_KEY env var > None (LiteLLM
+        # Resolve api_key: explicit value/callable > _API_KEY_ENVIRONMENT_VARIABLE > None (LiteLLM
         # then reads provider-specific env vars itself). ``ensure_async_token_provider`` wraps a
         # sync token provider so we can uniformly await it at request time.
-        if api_key is None:
-            api_key = os.environ.get("LITELLM_API_KEY")
-        self._api_key = ensure_async_token_provider(api_key)
+        if api_key is None and self._API_KEY_ENVIRONMENT_VARIABLE:
+            api_key = os.environ.get(self._API_KEY_ENVIRONMENT_VARIABLE)
+        self._api_key = None if api_key == "" else ensure_async_token_provider(api_key)
 
-        self._endpoint = endpoint or os.environ.get("LITELLM_ENDPOINT")
+        endpoint_variable = self._ENDPOINT_ENVIRONMENT_VARIABLE
+        if endpoint is None and endpoint_variable:
+            endpoint = os.environ.get(endpoint_variable)
+        self._endpoint = endpoint or None
         self._headers = headers
         self._temperature = temperature
         self._top_p = top_p
@@ -363,6 +454,7 @@ class LiteLLMChatTarget(PromptTarget):
             supports_multi_turn=True,
             supports_multi_message_pieces=True,
             supports_editable_history=True,
+            supports_prefill=self._DEFAULT_CONFIGURATION.capabilities.supports_prefill,
             supports_system_prompt=True,
             supports_json_output=supports_json_output,
             supports_json_schema=supports_json_schema,
@@ -398,8 +490,54 @@ class LiteLLMChatTarget(PromptTarget):
                 "n": self._n,
                 "stop": self._stop,
                 "extra_body_parameters": self._extra_body_parameters,
+                **self._tool_identifier_params(),
             },
         )
+
+    def _identifier_headers(self) -> dict[str, str] | None:
+        """
+        Return the configured headers without credentials, for identifiers that record headers.
+
+        Returns:
+            dict[str, str] | None: The non-credential headers, or None when there are none.
+        """
+        return {
+            name: value for name, value in (self._headers or {}).items() if name.lower() not in self._CREDENTIAL_HEADERS
+        } or None
+
+    def get_reconstruction_parameters(self) -> dict[str, object]:
+        """
+        Return server-only inputs, including resolved authentication.
+
+        Returns:
+            dict[str, object]: Resolved constructor inputs.
+
+        Raises:
+            ValueError: If ``extra_body_parameters`` sets temperature, which a copy's temperature can't override.
+        """
+        if "temperature" in (self._extra_body_parameters or {}):
+            raise ValueError(
+                "Separate temperature settings are not supported when extra_body_parameters sets temperature"
+            )
+        # Resolved values, with "" for unset ones, so a copy never reads this server's environment.
+        return {
+            **self._reconstruction_parameters,
+            "model_name": self._model_name,
+            "endpoint": self._endpoint or "",
+            "api_key": "" if self._api_key is None else self._api_key,
+            "underlying_model": self._underlying_model,
+            "custom_configuration": self.configuration,
+        }
+
+    def attach_reconstruction_source(self, source: object) -> None:
+        """
+        Share request pacing and credential status, not behavioral configuration.
+
+        Args:
+            source (object): The registered target this copy was built from.
+        """
+        super().attach_reconstruction_source(source)
+        self._rate_limit_source = getattr(source, "_rate_limit_source", source)
 
     def is_json_response_supported(self) -> bool:
         """
@@ -413,18 +551,21 @@ class LiteLLMChatTarget(PromptTarget):
     # Not decorated with ``pyrit_target_retry``: LiteLLM owns transient/rate-limit retry via
     # ``num_retries`` (see ``__init__``). Stacking both would multiply the retry count.
     @limit_requests_per_minute
-    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+    async def _send_completion_async(
+        self, *, conversation: list[Message], request: Message, tools: Sequence[Tool]
+    ) -> Message:
         litellm = self._import_litellm()
 
-        message = normalized_conversation[-1]
+        message = request
         request_piece: MessagePiece = message.message_pieces[0]
 
         logger.info(f"Sending prompt to LiteLLM target ({self._model_name}): {message}")
 
         json_config = self._get_json_response_config(message_piece=request_piece)
-        messages = await self._build_chat_messages_async(normalized_conversation)
+        messages = await self._build_chat_messages_async(conversation)
         api_key = await self._resolve_api_key_async()
         body = self._construct_request_body(messages=messages, json_config=json_config, api_key=api_key)
+        self._add_tool_definitions(body=body, tools=tools)
         # Applied after the passthrough merge so ``extra_body_parameters`` cannot drop the context.
         # LiteLLM merges ``headers`` with ``extra_headers`` and then the provider-specific headers,
         # so all three are checked for manual values.
@@ -442,7 +583,9 @@ class LiteLLMChatTarget(PromptTarget):
         try:
             response = await litellm.acompletion(**body)
         except Exception as exc:
-            return self._handle_litellm_exception(exc=exc, request=request_piece)
+            [error_message] = self._handle_litellm_exception(exc=exc, request=request_piece)
+            return error_message
+        record_provider_trace_reference(request=message, reference=_provider_trace_reference(response))
 
         # Content filtering is red-team critical: surface it as an error Message (not an
         # exception) so attacks can continue and blocked-content scorers can still score.
@@ -457,7 +600,7 @@ class LiteLLMChatTarget(PromptTarget):
             # otherwise be lost precisely where a red teamer most wants to see it.
             capture_usage_and_finish_reason(pieces=filter_message.message_pieces, response=response)
             self._capture_response_cost(pieces=filter_message.message_pieces, response=response)
-            return [filter_message]
+            return filter_message
 
         # A response cut off at the token limit may legitimately carry a partial answer (or no
         # content at all), so skip the strict empty-response validation for it — mirroring
@@ -466,7 +609,7 @@ class LiteLLMChatTarget(PromptTarget):
             warn_truncated_response(signal="finish_reason='length'", limit_parameter="max_tokens")
         else:
             validate_chat_completion_response(response=response)
-        return [await self._construct_message_from_response_async(response=response, request=request_piece)]
+        return await self._construct_message_from_response_async(response=response, request=request_piece)
 
     async def _resolve_api_key_async(self) -> str | None:
         """
@@ -496,6 +639,33 @@ class LiteLLMChatTarget(PromptTarget):
         return await build_multimodal_chat_messages_async(
             conversation, prefer_transcript_for_history=prefer_transcript_for_history
         )
+
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
+        """
+        Match the shared Chat Completions builder's historical wire modalities.
+
+        Args:
+            message_piece: Historical message piece to check.
+            has_text_piece: Whether its message contains a text piece.
+
+        Returns:
+            PromptDataType | None: The wire modality, or None for omitted audio.
+        """
+        prefer_transcript_for_history = bool(
+            self._audio_response_config and self._audio_response_config.prefer_transcript_for_history
+        )
+        if should_skip_audio_piece(
+            message_piece=message_piece,
+            is_last_message=False,
+            has_text_piece=has_text_piece,
+            prefer_transcript_for_history=prefer_transcript_for_history,
+        ):
+            return None
+        if message_piece.is_blocked_error():
+            return "text"
+        return message_piece.converted_value_data_type
 
     def _construct_request_body(
         self,
@@ -701,4 +871,5 @@ class LiteLLMChatTarget(PromptTarget):
         if isinstance(exc, authentication_error):
             raise PyritException(message=f"Authentication failed: {exc}") from exc
 
-        raise PyritException(message=f"LiteLLM error: {exc}") from exc
+        status_code = getattr(exc, "status_code", None) or 500
+        raise PyritException(status_code=status_code, message=f"LiteLLM error: {exc}") from exc

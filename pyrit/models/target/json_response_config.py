@@ -9,7 +9,7 @@ from typing import Any, ClassVar, Self
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from pyrit.models.target.json_schema_definition import (
-    JSON_SCHEMA_METADATA_KEY,  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    JSON_SCHEMA_METADATA_KEY,  # runtime-required by Pydantic field annotations
 )
 
 
@@ -53,7 +53,7 @@ class JsonResponseConfig(BaseModel):
     strict: bool = True
 
     @model_validator(mode="after")
-    def _schema_implies_enabled(self) -> JsonResponseConfig:
+    def _schema_implies_enabled(self) -> Self:
         if self.json_schema is not None:
             self.enabled = True
         return self

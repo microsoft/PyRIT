@@ -44,6 +44,7 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable, Generator, Iterable, Mapping
 from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from pyrit.common.attack_result_scope import get_current_attack_result_id
@@ -71,10 +72,14 @@ DEFAULT_PROBE_TIMEOUT_SECONDS: float = 30.0
 DEFAULT_PROBE_RETRY_BACKOFF_SECONDS: float = 0.1
 MAX_PROBE_RETRY_BACKOFF_SECONDS: float = 1.0
 
+# Longest error message a failed check reports, so a provider's full response body
+# does not flood the result.
+_MAX_ERROR_DETAIL_LENGTH: int = 500
+
 # Exceptions that are deterministic on the probe payload and will not become
 # valid on a retry (malformed Message, type errors, missing attributes, etc.).
 # These fail the probe immediately rather than wasting backoff time.
-_NON_RETRYABLE_PROBE_EXCEPTIONS: tuple[type[BaseException], ...] = (
+_NON_RETRYABLE_PROBE_EXCEPTIONS: tuple[type[Exception], ...] = (
     ValueError,
     TypeError,
     AttributeError,
@@ -88,6 +93,64 @@ PROBE_METADATA_KEY: str = "capability_probe"
 PROBE_METADATA_VALUE: str = "1"
 
 _CapabilityProbe = Callable[[PromptTarget, float, int], Awaitable[bool]]
+_RAISE_ON_PROBE_ERROR: ContextVar[bool] = ContextVar("raise_on_probe_error", default=False)
+
+
+class CapabilityDiscoveryError(RuntimeError):
+    """Discovery could not determine support because a probe failed."""
+
+
+def _status_code(error: BaseException) -> int | None:
+    """
+    Return the HTTP status code an SDK error carries, if any.
+
+    Returns:
+        int | None: The status code, or None when the error has none.
+    """
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+    return status_code if isinstance(status_code, int) else None
+
+
+def _describe_error(error: BaseException) -> str:
+    """
+    Summarize ``error`` on one line so a failed check names its cause.
+
+    Database errors report the driver's message instead of the full statement
+    and its parameters.
+
+    Returns:
+        str: The error type, HTTP status when known, and the first line of its message.
+    """
+    if isinstance(error, CapabilityDiscoveryError):
+        return str(error)
+    original = getattr(error, "orig", None)
+    source = original if isinstance(original, BaseException) else error
+    lines = str(source).strip().splitlines()
+    text = lines[0].strip() if lines else ""
+    if len(text) > _MAX_ERROR_DETAIL_LENGTH:
+        text = text[:_MAX_ERROR_DETAIL_LENGTH].rstrip() + "..."
+    status_code = _status_code(error)
+    kind = type(error).__name__ if status_code is None else f"{type(error).__name__} (HTTP {status_code})"
+    return f"{kind}: {text}" if text else kind
+
+
+def _raise_if_inconclusive(*, error: Exception, label: str) -> None:
+    """
+    Reject operational failures when discovery will be applied automatically.
+
+    Raises:
+        CapabilityDiscoveryError: A strict probe failed without evidence of rejection.
+    """
+    if not _RAISE_ON_PROBE_ERROR.get():
+        return
+    if isinstance(error, CapabilityDiscoveryError):
+        raise CapabilityDiscoveryError(f"{label}: {error}") from error
+    if not (isinstance(error, ValueError) or _status_code(error) in (400, 422)):
+        raise CapabilityDiscoveryError(
+            f"{label} failed: {_describe_error(error)}; capabilities were not changed."
+        ) from error
 
 
 def _json_enforcing_target_types() -> tuple[type[PromptTarget], ...]:
@@ -105,10 +168,11 @@ def _json_enforcing_target_types() -> tuple[type[PromptTarget], ...]:
     Returns:
         tuple[type[PromptTarget], ...]: The target classes that enforce JSON hints.
     """
+    from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
     from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
     from pyrit.prompt_target.openai.openai_response_target import OpenAIResponseTarget
 
-    return (OpenAIChatTarget, OpenAIResponseTarget)
+    return (OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget)
 
 
 # Every text probe sends a text-only payload. Permissive overrides therefore
@@ -153,17 +217,11 @@ def _permissive_configuration(
     merged_modalities = original.capabilities.input_modalities | _TEXT_MODALITY
     if extra_input_modalities is not None:
         merged_modalities = frozenset(merged_modalities | frozenset(extra_input_modalities))
-    permissive_caps = TargetCapabilities(
-        supports_multi_turn=True,
-        supports_multi_message_pieces=True,
-        supports_json_schema=True,
-        supports_json_output=True,
-        supports_editable_history=True,
-        supports_system_prompt=True,
-        supports_streaming_audio=True,
-        supports_web_search=True,
-        input_modalities=merged_modalities | TOOL_CALL_INPUT_MODALITIES,
-        output_modalities=original.capabilities.output_modalities,
+    permissive_caps = original.capabilities.model_copy(
+        update={
+            **{capability.value: True for capability in CapabilityName},
+            "input_modalities": merged_modalities | TOOL_CALL_INPUT_MODALITIES,
+        }
     )
     # Rebuild a fresh configuration from the instance's native capabilities so
     # probes bypass preflight validation without inheriting ADAPT policy or
@@ -197,7 +255,6 @@ def _disable_probe_tools(*, target: PromptTarget) -> Generator[None, None, None]
                 target._extra_body_parameters["extra_body"] = {
                     key: value for key, value in extra_body.items() if key not in tool_settings
                 }
-        if isinstance(target, OpenAIResponseTarget):
             stack.callback(setattr, target, "_execute_tools", target._execute_tools)
             stack.callback(setattr, target, "_suppress_tools", target._suppress_tools)
             target._execute_tools = False
@@ -253,6 +310,7 @@ async def _send_and_check_async(
     timeout_s: float,
     retries: int = 1,
     label: str = "Capability probe",
+    failures: list[str] | None = None,
 ) -> bool:
     """
     Send ``message`` and report whether the call succeeded cleanly.
@@ -276,6 +334,8 @@ async def _send_and_check_async(
             Defaults to 1.
         label (str): Short label used in log messages. Defaults to
             ``"Capability probe"``.
+        failures (list[str] | None): When given, receives a one-line reason
+            for each failed send, so callers can report why a check failed.
 
     Returns:
         bool: ``True`` iff the call returned without raising and every response
@@ -284,6 +344,11 @@ async def _send_and_check_async(
         ``"empty"``, ``"unknown"``) is treated as failure. An empty response
         list (or responses with no message pieces) is also treated as a failure.
     """
+
+    def _record_failure(error: Exception) -> None:
+        if failures is not None:
+            failures.append(f"{label}: {_describe_error(error)}")
+
     attempts = max(1, retries + 1)
     last_exc: Exception | None = None
     for attempt in range(attempts):
@@ -298,6 +363,8 @@ async def _send_and_check_async(
         except _NON_RETRYABLE_PROBE_EXCEPTIONS as exc:
             # Deterministic on the probe payload — retrying will not help.
             logger.debug("%s failed with non-retryable error: %s", label, exc)
+            _raise_if_inconclusive(error=exc, label=label)
+            _record_failure(exc)
             return False
         except Exception as exc:
             last_exc = exc
@@ -308,21 +375,32 @@ async def _send_and_check_async(
 
         if not responses or any(not r.message_pieces for r in responses):
             logger.debug("%s returned an empty response; treating as failure", label)
+            empty_error = RuntimeError("The target returned an empty response.")
+            _raise_if_inconclusive(error=empty_error, label=label)
+            _record_failure(empty_error)
             return False
         for response in responses:
             for piece in response.message_pieces:
                 if piece.response_error != "none":
                     logger.debug("%s returned error response: %s", label, piece.converted_value)
+                    response_error = RuntimeError(
+                        f"The target returned a '{piece.response_error}' error response: {piece.converted_value}"
+                    )
+                    _raise_if_inconclusive(error=response_error, label=label)
+                    _record_failure(response_error)
                     return False
         return True
 
     logger.info("%s exhausted %d attempt(s); last error: %s", label, attempts, last_exc)
+    if last_exc is not None:
+        _raise_if_inconclusive(error=last_exc, label=label)
+        _record_failure(last_exc)
     return False
 
 
 def _retry_backoff_seconds(*, attempt: int) -> float:
     """Return the exponential backoff delay for a retry attempt."""
-    backoff_seconds: float = DEFAULT_PROBE_RETRY_BACKOFF_SECONDS * (2**attempt)
+    backoff_seconds: float = DEFAULT_PROBE_RETRY_BACKOFF_SECONDS * (2.0**attempt)
     return min(backoff_seconds, MAX_PROBE_RETRY_BACKOFF_SECONDS)
 
 
@@ -354,6 +432,9 @@ async def _probe_system_prompt_async(target: PromptTarget, timeout_s: float, ret
 
     Returns:
         bool: ``True`` if the system + user request succeeded; ``False`` otherwise.
+
+    Raises:
+        CapabilityDiscoveryError: Strict discovery could not prepare its history.
     """
     conversation_id = _new_conversation_id()
     system_piece = MessagePiece(
@@ -376,6 +457,10 @@ async def _probe_system_prompt_async(target: PromptTarget, timeout_s: float, ret
         (await target._memory.add_message_to_memory_async(request=Message(message_pieces=[system_piece])))
     except Exception as exc:
         logger.debug("System-prompt probe could not seed system message: %s", exc)
+        if _RAISE_ON_PROBE_ERROR.get():
+            raise CapabilityDiscoveryError(
+                f"Could not prepare the system-prompt probe: {_describe_error(exc)}; capabilities were not changed."
+            ) from exc
         return False
     user_piece = _user_text_piece(value="hi", conversation_id=conversation_id)
     return await _send_and_check_async(
@@ -443,6 +528,9 @@ async def _probe_multi_turn_async(target: PromptTarget, timeout_s: float, retrie
 
     Returns:
         bool: ``True`` if both turns succeeded; ``False`` if either turn failed.
+
+    Raises:
+        CapabilityDiscoveryError: Strict discovery could not prepare its history.
     """
     conversation_id = _new_conversation_id()
     first = _user_text_piece(value="My favorite color is blue.", conversation_id=conversation_id)
@@ -477,6 +565,10 @@ async def _probe_multi_turn_async(target: PromptTarget, timeout_s: float, retrie
         (await target._memory.add_message_to_memory_async(request=assistant_reply))
     except Exception as exc:
         logger.debug("Multi-turn probe could not seed conversation history: %s", exc)
+        if _RAISE_ON_PROBE_ERROR.get():
+            raise CapabilityDiscoveryError(
+                f"Could not prepare the multi-turn probe: {_describe_error(exc)}; capabilities were not changed."
+            ) from exc
         return False
 
     second = _user_text_piece(value="What did I just tell you?", conversation_id=conversation_id)
@@ -644,12 +736,12 @@ _CAPABILITY_PROBES: dict[CapabilityName, _CapabilityProbe] = {
 }
 
 
-def _supports_tool_history_probe(target: PromptTarget) -> bool:
+def _supports_chat_probes(target: PromptTarget) -> bool:
     """
-    Check whether the adapter has a verified structured-history probe.
+    Check whether the adapter transmits the features exercised by chat probes.
 
     Returns:
-        bool: Whether the structured history can be sent by this adapter.
+        bool: Whether chat features can be sent by this adapter.
     """
     from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
     from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
@@ -710,6 +802,7 @@ async def _discover_capability_flags_async(
                         queried_json_capabilities.add(capability)
             except Exception as exc:
                 logger.debug("Probe for %s raised: %s", capability.value, exc)
+                _raise_if_inconclusive(error=exc, label=capability.value)
 
     # JSON probes only verify the target accepted the request, not that the
     # target translated the JSON metadata into provider request fields. Emit
@@ -801,13 +894,16 @@ async def _discover_input_modalities_async(
         if tool_modalities:
             for include_text in sorted({"text" in combo for combo in tool_modalities}):
                 combinations = {combo for combo in tool_modalities if ("text" in combo) == include_text}
-                if _supports_tool_history_probe(target) and await _probe_tool_calls_async(
+                can_probe = _supports_chat_probes(target)
+                if can_probe and await _probe_tool_calls_async(
                     target=target, timeout_s=per_probe_timeout_s, retries=retries, include_text=include_text
                 ):
                     queried.update(combinations)
-                else:
+                elif not can_probe or not _RAISE_ON_PROBE_ERROR.get():
                     logger.info("Tool history support was not confirmed; retaining declared tool modalities.")
                     queried.update(declared_tools & combinations)
+                else:
+                    logger.info("Tool history was rejected; excluding tested tool modalities.")
         for combination in test_modalities:
             if combination & {"function_call", "function_call_output", "tool_call"}:
                 logger.debug("Tool artifacts are checked by the tool-call history probe, not file-asset probes.")
@@ -815,13 +911,17 @@ async def _discover_input_modalities_async(
                     queried.add(combination)
                 continue
             try:
-                message = _create_test_message(modalities=combination, test_assets=assets)
+                message = await asyncio.to_thread(_create_test_message, modalities=combination, test_assets=assets)
             except FileNotFoundError as exc:
                 # Skip combinations we cannot construct a valid probe payload for.
                 logger.info("Skipping modality %s: %s", combination, exc)
+                if _RAISE_ON_PROBE_ERROR.get() and combination in declared_modalities:
+                    queried.add(combination)
                 continue
             except ValueError as exc:
                 logger.info("Skipping modality %s: %s", combination, exc)
+                if _RAISE_ON_PROBE_ERROR.get() and combination in declared_modalities:
+                    queried.add(combination)
                 continue
 
             # "Supported" means the request was accepted. A target may still
@@ -838,7 +938,105 @@ async def _discover_input_modalities_async(
     return queried
 
 
+async def _check_control_request_async(
+    *,
+    target: PromptTarget,
+    test_assets: dict[PromptDataType, str] | None,
+    timeout_s: float,
+    retries: int,
+) -> None:
+    """
+    Confirm a declared input works before interpreting rejected feature probes.
+
+    Raises:
+        CapabilityDiscoveryError: No declared input produced a successful control request.
+    """
+    combinations = sorted(
+        target.capabilities.input_modalities,
+        key=lambda combination: (combination != frozenset({"text"}), len(combination), sorted(combination)),
+    )
+    assets = test_assets if test_assets is not None else DEFAULT_TEST_ASSETS
+    failures: list[str] = []
+    with _permissive_configuration(target=target):
+        for combination in combinations:
+            try:
+                message = await asyncio.to_thread(_create_test_message, modalities=combination, test_assets=assets)
+            except (FileNotFoundError, ValueError) as exc:
+                logger.info("Cannot prepare control input %s: %s", sorted(combination), exc)
+                failures.append(f"Could not prepare {sorted(combination)}: {_describe_error(exc)}")
+                continue
+            if await _send_and_check_async(
+                target=target,
+                message=message,
+                timeout_s=timeout_s,
+                retries=retries,
+                label=f"Control request {sorted(combination)}",
+                failures=failures,
+            ):
+                return
+    reasons = "; ".join(failures) if failures else "the target declares no input types"
+    raise CapabilityDiscoveryError(
+        f"No declared input passed a control request ({reasons}); capabilities were not changed."
+    )
+
+
 async def discover_target_capabilities_async(
+    *,
+    target: PromptTarget,
+    per_probe_timeout_s: float = DEFAULT_PROBE_TIMEOUT_SECONDS,
+    test_modalities: set[frozenset[PromptDataType]] | None = None,
+    test_assets: dict[PromptDataType, str] | None = None,
+    capabilities: Iterable[CapabilityName] | None = None,
+    retries: int = 1,
+    apply: bool = False,
+    raise_on_error: bool = False,
+) -> TargetCapabilities:
+    """
+    Discover capabilities with live requests, optionally applying the result.
+
+    Requests confirm acceptance, not full feature behavior. Features without a
+    probe retain declared support. By default, errors are best-effort negative
+    results. Set ``raise_on_error`` when automatically applying results so an
+    operational failure cannot replace working declarations. Strict discovery
+    first requires a successful control request using a declared input.
+
+    Args:
+        target (PromptTarget): Target to probe.
+        per_probe_timeout_s (float): Timeout for each request attempt.
+        test_modalities (set[frozenset[PromptDataType]] | None): Input combinations
+            to check; defaults to declared combinations.
+        test_assets (dict[PromptDataType, str] | None): Probe media paths.
+        capabilities (Iterable[CapabilityName] | None): Flags to check; defaults to all.
+        retries (int): Additional attempts after a failed request.
+        apply (bool): Install the completed result on the target.
+        raise_on_error (bool): Raise on inconclusive operational errors.
+
+    Returns:
+        TargetCapabilities: Probed support, merged with untested declarations.
+
+    Raises:
+        CapabilityDiscoveryError: A check was inconclusive in strict mode.
+    """
+    token = _RAISE_ON_PROBE_ERROR.set(raise_on_error)
+    try:
+        if raise_on_error:
+            await _check_control_request_async(
+                target=target, test_assets=test_assets, timeout_s=per_probe_timeout_s, retries=retries
+            )
+        return await _discover_target_capabilities_async(
+            target=target,
+            per_probe_timeout_s=per_probe_timeout_s,
+            test_modalities=test_modalities,
+            test_assets=test_assets,
+            capabilities=capabilities,
+            retries=retries,
+            apply=apply,
+        )
+    finally:
+        _RAISE_ON_PROBE_ERROR.reset(token)
+
+
+async def _discover_target_capabilities_async(
     *,
     target: PromptTarget,
     per_probe_timeout_s: float = DEFAULT_PROBE_TIMEOUT_SECONDS,
@@ -890,6 +1088,10 @@ async def discover_target_capabilities_async(
         declared where probing is unavailable or out of scope.
     """
     capabilities_to_probe = list(capabilities) if capabilities is not None else None
+    if _RAISE_ON_PROBE_ERROR.get() and not _supports_chat_probes(target):
+        logger.info("Retaining declared capabilities for %s: no verified chat probes.", type(target).__name__)
+        capabilities_to_probe = []
+        test_modalities = set()
 
     queried_caps = await _discover_capability_flags_async(
         target=target,
@@ -915,35 +1117,27 @@ async def discover_target_capabilities_async(
     def _resolve(name: CapabilityName) -> bool:
         if name in probed:
             return name in queried_caps
-        return bool(getattr(declared, name.value))
+        return declared.includes(capability=name)
 
     resolved_multi_turn = _resolve(CapabilityName.MULTI_TURN)
     # Editable history is only meaningful if multi-turn probing/declaration
     # also resolved to True.
     resolved_editable_history = declared.supports_editable_history and resolved_multi_turn
-    if test_modalities is None:
+    if test_modalities is None and not _RAISE_ON_PROBE_ERROR.get():
         # Mirror the boolean fallback: combinations the probe could not confirm
         # fall back to the target's declared support rather than being silently
         # dropped (e.g. on transient network failure).
         resolved_input_modalities = frozenset(queried_modalities | declared.input_modalities)
     else:
-        resolved_input_modalities = frozenset(
-            queried_modalities | (declared.input_modalities - frozenset(test_modalities))
-        )
+        probed_modalities = declared.input_modalities if test_modalities is None else frozenset(test_modalities)
+        resolved_input_modalities = frozenset(queried_modalities | (declared.input_modalities - probed_modalities))
 
-    resolved = TargetCapabilities(
-        supports_multi_turn=resolved_multi_turn,
-        supports_multi_message_pieces=_resolve(CapabilityName.MULTI_MESSAGE_PIECES),
-        supports_json_schema=_resolve(CapabilityName.JSON_SCHEMA),
-        supports_json_output=_resolve(CapabilityName.JSON_OUTPUT),
-        supports_editable_history=resolved_editable_history,
-        supports_system_prompt=_resolve(CapabilityName.SYSTEM_PROMPT),
-        supports_streaming_audio=declared.supports_streaming_audio,
-        supports_web_search=_resolve(CapabilityName.WEB_SEARCH),
-        input_modalities=resolved_input_modalities,
-        # Output modalities are still declarative because probing them would
-        # require target-specific response inspection.
-        output_modalities=declared.output_modalities,
+    resolved = declared.model_copy(
+        update={
+            **{capability.value: _resolve(capability) for capability in CapabilityName},
+            "supports_editable_history": resolved_editable_history,
+            "input_modalities": resolved_input_modalities,
+        }
     )
     if apply:
         target.apply_capabilities(capabilities=resolved)
@@ -992,6 +1186,16 @@ def _create_test_message(
             raise ValueError(f"No test asset configured for modality '{modality}'.")
         if not Path(asset_path).is_file():
             raise FileNotFoundError(f"Test asset for modality '{modality}' not found at: {asset_path}")
+        if modality == "image_path":
+            from PIL import Image
+
+            try:
+                with Image.open(asset_path) as image:
+                    image.verify()
+                with Image.open(asset_path) as image:
+                    image.load()
+            except (OSError, SyntaxError) as exc:
+                raise ValueError(f"Invalid image probe asset: {asset_path}") from exc
 
         pieces.append(
             MessagePiece(

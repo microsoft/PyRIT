@@ -5,6 +5,7 @@ import type {
 import { generateClientId } from './clientId'
 import { dataTypeToAttachmentType, mimeTypeToDataType, uploadedFileValue } from './messageMapper'
 import { buildMediaUrl, isPathDataType } from './media'
+import { withoutGenerationInfo } from './requestGeneration'
 
 export const DRAFT_ROLES: ConversationDraftRole[] = ['system', 'user', 'simulated_assistant', 'simulated_tool', 'developer']
 export const NEW_MESSAGE_ROLES: ConversationDraftRole[] = ['system', 'developer', 'user', 'simulated_assistant']
@@ -140,7 +141,7 @@ export function toConversationDraft(messages: BackendMessage[]): ConversationDra
         converted_value: piece.converted_value,
         converted_value_data_type: piece.converted_value_data_type,
         mime_type: piece.original_value_mime_type ?? undefined,
-        prompt_metadata: piece.prompt_metadata ? { ...piece.prompt_metadata } : undefined,
+        prompt_metadata: withoutGenerationInfo(piece.prompt_metadata),
         previewUrl: piece.original_value_url ?? undefined,
         filename: piece.original_filename ?? undefined,
       })),
@@ -164,9 +165,9 @@ export function draftAttachment(piece: ConversationDraftPiece): MessageAttachmen
 }
 
 export function draftMessageToInput(message: ConversationDraftMessage): {
-  text: string; attachments: MessageAttachment[]; textMetadata?: Record<string, unknown>
+  text: string; attachments: MessageAttachment[]; textMetadata?: Record<string, unknown> | undefined
 } {
-  const pieces = message.pieces.map((piece: ConversationDraftPiece) => piece.converted_value === undefined ? piece : {
+  const pieces: ConversationDraftPiece[] = message.pieces.map((piece: ConversationDraftPiece): ConversationDraftPiece => piece.converted_value === undefined ? piece : {
     ...piece,
     original_value: piece.converted_value,
     data_type: piece.converted_value_data_type ?? piece.data_type,
@@ -251,7 +252,12 @@ export function draftMessageToComposer(
       applied[id] = conversion
     }
   }
-  return { text, attachments, textMetadata, converters: { ...snapshot, workingInputs, stageResults, errors, applied } }
+  return {
+    text,
+    attachments,
+    ...(textMetadata !== undefined ? { textMetadata } : {}),
+    converters: { ...snapshot, workingInputs, stageResults, errors, applied },
+  }
 }
 
 export function attachmentDraft(attachment: MessageAttachment): ConversationDraftPiece {
@@ -293,7 +299,7 @@ export async function serializeDraft(messages: ConversationDraftMessage[]): Prom
       applied_converter_provenance: piece.converted_value === undefined ? undefined : piece.applied_converter_provenance,
       source_piece_id: piece.source_piece_id,
       mime_type: piece.mime_type,
-      prompt_metadata: piece.prompt_metadata,
+      prompt_metadata: withoutGenerationInfo(piece.prompt_metadata),
     }))),
   })))
 }

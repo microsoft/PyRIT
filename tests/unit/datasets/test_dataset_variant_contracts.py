@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from end_to_end import test_all_datasets as dataset_tests
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 _LANGUAGE_TEXT = {
     "en": "Please describe the scene in this image.",
@@ -37,7 +38,7 @@ def test_variant_module_load_does_not_materialize_provider_registry() -> None:
         cwd=Path(__file__).resolve().parents[3],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=TEST_WATCHDOG_SECONDS,
         check=False,
     )
     assert result.returncode == 0, result.stderr

@@ -114,6 +114,12 @@ def process_data(self, data, threshold=0.5):  # Missing all type annotations
 ### Keyword-Only Arguments
 - Functions with more than 1 parameter MUST use `*` after self/cls to enforce keyword-only arguments
 - This prevents positional argument errors and improves API clarity
+- The `check-keyword-only-params` pre-commit hook (`build_scripts/check_keyword_only_params.py`) flags any `def`
+  in `pyrit/` with more than one positional parameter after self/cls. Existing violations are listed in
+  `build_scripts/keyword_only_baseline.txt`; never add new code to it. For a signature dictated by a third-party
+  caller or an override preserving a baselined PyRIT base method's positional contract, add
+  `# pyrit-keyword-only-exempt <reason>` to the `def` header and name the contract in the reason.
+  `@override` alone is not an exemption. See `doc/contributing/3_style_guide.md`.
 
 ```python
 # CORRECT
@@ -432,7 +438,7 @@ def process_items(self, *, items: list[str]) -> list[str]:
 
 ## Deprecations
 
-When deprecating a public class, function, method, parameter, or module path, use `pyrit.common.deprecation.print_deprecation_message` — **never** `warnings.warn` directly. It wraps `warnings.warn(..., DeprecationWarning, stacklevel=3)` with a consistent format so filtering still works.
+When deprecating a public class, function, method, parameter, or module path, use `pyrit.common.deprecation.print_deprecation_message` — **never** `warnings.warn` directly. It emits a consistently formatted `DeprecationWarning` attributed to the caller of the deprecated API, preserving ordinary `stacklevel=3` behavior while skipping constructor capture frames so filtering still works.
 
 Set `removed_in` to **current version + 2 minor versions** (e.g. `0.14.x` → `removed_in="0.16.0"`). This gives one full release cycle of warning before removal.
 

@@ -63,6 +63,13 @@ export const useScenarioDetailStyles = makeStyles({
     borderRadius: tokens.borderRadiusLarge,
     backgroundColor: tokens.colorNeutralBackground1,
   },
+  sectionHeader: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: tokens.spacingVerticalM,
+  },
   control: {
     ...mobileTouchTargetHeight,
     '& > select': {

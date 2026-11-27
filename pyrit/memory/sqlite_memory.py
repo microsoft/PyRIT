@@ -38,7 +38,7 @@ from pyrit.memory.memory_models import (
     UTCDateTime,
 )
 from pyrit.memory.memory_session import MemorySession
-from pyrit.memory.storage import DiskStorageIO
+from pyrit.memory.storage import DiskStorageIO, StorageIO
 from pyrit.models import ConversationStats
 
 if TYPE_CHECKING:
@@ -136,8 +136,10 @@ def _cleanup_interrupted_sqlite_connection(context: ExceptionContext) -> None:
 
 
 class _SQLiteAsyncSession(AsyncSession):
-    def __init__(self, *, engine: AsyncEngine, release: Callable[[], None] | None = None) -> None:
-        super().__init__(bind=engine, sync_session_class=MemorySession)
+    def __init__(
+        self, *, engine: AsyncEngine, storage: StorageIO | None, release: Callable[[], None] | None = None
+    ) -> None:
+        super().__init__(bind=engine, sync_session_class=MemorySession, info={"dataset_storage_io": storage})
         self._release: Callable[[], None] | None = release
 
     async def close(self) -> None:  # pyrit-async-suffix-exempt
@@ -322,11 +324,13 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             raise RuntimeError("Close the synchronous memory session before opening an async session on this thread.")
         connection_lock = self._transaction_lock
         if connection_lock is None:
-            return _SQLiteAsyncSession(engine=self._get_async_engine())
+            return _SQLiteAsyncSession(engine=self._get_async_engine(), storage=self.results_storage_io)
         while not connection_lock.acquire(blocking=False):
             await asyncio.sleep(0.01)
         try:
-            return _SQLiteAsyncSession(engine=self._get_async_engine(), release=connection_lock.release)
+            return _SQLiteAsyncSession(
+                engine=self._get_async_engine(), storage=self.results_storage_io, release=connection_lock.release
+            )
         except BaseException:
             connection_lock.release()
             raise
@@ -590,7 +594,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Raises:
             RuntimeError: If acquiring a session would block an event loop.
         """
-        session = self.SessionFactory()
+        session = self.SessionFactory(info={"dataset_storage_io": self.results_storage_io})
         connection_lock = self._connection_lock
         if connection_lock is None:
             return session
@@ -717,9 +721,17 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             Sorted list of unique attack class name strings.
         """
         with closing(self._get_session()) as session:
-            class_name_expr = func.json_extract(
-                AttackResultEntry.atomic_attack_identifier,
-                "$.children.attack_technique.children.attack.class_name",
+            # Exactly one of the two identifier layouts is present per row, so
+            # the coalesced expression surfaces legacy class names too.
+            class_name_expr = func.coalesce(
+                func.json_extract(
+                    AttackResultEntry.atomic_attack_identifier,
+                    "$.children.attack_technique.children.attack.class_name",
+                ),
+                func.json_extract(
+                    AttackResultEntry.atomic_attack_identifier,
+                    "$.children.attack.class_name",
+                ),
             )
             rows = session.query(class_name_expr).filter(class_name_expr.isnot(None)).distinct().all()
         return sorted(row[0] for row in rows)
@@ -727,8 +739,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def _execute_get_unique_converter_class_names(self) -> list[str]:
         """
         SQLite implementation: extract unique converter class_name values
-        from the children.attack_technique.children.attack.children.request_converters
-        array in the atomic_attack_identifier JSON column.
+        from the request_converters array of either identifier layout
+        in the atomic_attack_identifier JSON column.
 
         Returns:
             Sorted list of unique converter class name strings.
@@ -741,6 +753,14 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                     json_each(
                         json_extract("AttackResultEntries".atomic_attack_identifier,
                             '$.children.attack_technique.children.attack.children.request_converters')
+                    ) AS j
+                    WHERE cls IS NOT NULL
+                    UNION
+                    SELECT DISTINCT json_extract(j.value, '$.class_name') AS cls
+                    FROM "AttackResultEntries",
+                    json_each(
+                        json_extract("AttackResultEntries".atomic_attack_identifier,
+                            '$.children.attack.children.request_converters')
                     ) AS j
                     WHERE cls IS NOT NULL"""
                 )
@@ -796,7 +816,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                             SELECT p2.id
                             FROM "PromptMemoryEntries" p2
                             WHERE p2.conversation_id = aggregate_rows.conversation_id
-                            ORDER BY p2.sequence DESC, p2.id DESC
+                            ORDER BY p2.sequence DESC, p2.timestamp DESC, p2.id DESC
                             LIMIT 1
                         )
                     """

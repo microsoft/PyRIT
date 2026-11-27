@@ -3,17 +3,19 @@ import type { Parameter, RegisteredScenario } from '@/types'
 import {
   buildEstimateRequest,
   buildRunRequest,
+  linkedDatasetProblem,
+  minimumSelectionMessage,
   scenarioDynamicParameters,
   type ScenarioLaunchInput,
 } from './scenarioLaunchRequest'
 
 const OBJECTIVE: Parameter = {
-  name: 'objective', description: 'The objective.', param_type: 'str', choices: null, default: null, required: false,
-} as unknown as Parameter
+  name: 'objective', description: 'The objective.', type_name: 'str | None', choices: null, default: null, required: false,
+}
 const HISTORY: Parameter = {
-  name: 'prepended_conversation_id', description: 'History.', param_type: 'str', choices: null, default: null,
+  name: 'prepended_conversation_id', description: 'History.', type_name: 'str | None', choices: null, default: null,
   required: false,
-} as unknown as Parameter
+}
 
 function makeScenario(overrides: Partial<RegisteredScenario> = {}): RegisteredScenario {
   return {
@@ -88,6 +90,20 @@ describe('scenario launch requests', () => {
     expect(run).toEqual({ ok: true, request: { scenario_name: 'garak.api_key', target_name: 'target', operation_id: 'operation' } })
   })
 
+  it('carries explicitly selected generation and scoring targets through estimates and launches', () => {
+    const scenario = makeScenario()
+    const input = makeInput({ scenario, adversarialTargetName: 'generation', scoringTargetName: 'rubric' })
+
+    for (const result of [buildEstimateRequest(input), buildRunRequest(input)]) {
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.request).toMatchObject({
+        adversarial_target_name: 'generation',
+        scoring_target_name: 'rubric',
+      })
+    }
+  })
+
   it('omits unchanged datasets and an unset operation', () => {
     const run = buildRunRequest(makeInput({ operationId: null }))
 
@@ -104,6 +120,7 @@ describe('scenario launch requests', () => {
     ['pending technique edits', { techniqueEditError: 'Wait for valid technique settings before launch.' },
       'Wait for valid technique settings before launch.'],
     ['invalid datasets', { datasetError: 'Bad dataset limit.' }, 'Bad dataset limit.'],
+    ['linked datasets that cannot launch', { linkedDatasetError: 'Linked problem.' }, 'Linked problem.'],
     ['an unsupported conversation', {
       supportsPrependedConversation: false,
       scenarioParamValues: { objective: '', prepended_conversation_id: 'saved' },
@@ -118,6 +135,20 @@ describe('scenario launch requests', () => {
     expect(buildEstimateRequest(makeInput({ targetName: '' })).ok).toBe(true)
   })
 
+  it('does not estimate a configuration whose linked datasets cannot launch', () => {
+    expect(buildEstimateRequest(makeInput({ linkedDatasetError: 'Linked problem.' })))
+      .toEqual({ ok: false, error: 'Linked problem.' })
+  })
+
+  it('reports only linked names the client knows cannot launch, keeping whitespace visible', () => {
+    expect(linkedDatasetProblem([], false)).toBeNull()
+    expect(linkedDatasetProblem([' returns ', 'returns ', 'missing'], true)).toBeNull()
+    expect(linkedDatasetProblem(['ds_a', ' returns ', ''], false)).toBe(
+      'This scenario can\'t take the linked datasets: ds_a, " returns ", "".',
+    )
+    expect(linkedDatasetProblem(['ds_a', ' '], true)).toBeNull()
+  })
+
   it('keeps run-only limits out of the estimate', () => {
     const before = buildEstimateRequest(makeInput())
     const after = buildEstimateRequest(makeInput({ maxConcurrency: 0, maxRetries: -1 }))
@@ -126,4 +157,11 @@ describe('scenario launch requests', () => {
     // An identical payload keeps the estimate key, so editing launch-only fields sends no new estimate.
     expect(after).toEqual(before)
   })
+
+  it.each([[1, 'Select a dataset.'], [2, 'Select at least 2 datasets.']])(
+    'words a minimum of %i datasets as validate_minimum_selection does',
+    (minimum, message) => {
+      expect(minimumSelectionMessage(minimum)).toBe(message)
+    },
+  )
 })

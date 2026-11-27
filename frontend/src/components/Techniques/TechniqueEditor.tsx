@@ -11,7 +11,9 @@ import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import ParameterField from '@/components/Parameters/ParameterField'
 import ConverterChainField from '@/components/Converters/ConverterChainField'
 import ReferenceField from '@/components/Parameters/ReferenceField'
-import { buildParametersFromForm, getInitialFormValues, type ParameterFormValue } from '@/components/Parameters/parameterForm'
+import {
+  buildParametersFromForm, getInitialFormValues, nonNullableTypeName, type ParameterFormValue,
+} from '@/components/Parameters/parameterForm'
 import { convertersApi, techniquesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
@@ -22,6 +24,7 @@ import type {
 } from '@/types'
 
 import { useTechniqueEditorStyles } from './TechniqueEditor.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 const SCALAR_TYPES = new Set(['str', 'int', 'float', 'bool', 'list[str]', 'list[int]', 'list[float]', 'list[bool]'])
 const VALIDATION_DELAY_MS = 300
@@ -32,7 +35,7 @@ function canConfigure(parameter: Parameter, allowStructured = true): boolean {
     return allowStructured && !parameter.is_list && Object.values(parameter.variants).some((parameters) =>
       parameters.every((nested) => !nested.required || canConfigure(nested, false)))
   }
-  return SCALAR_TYPES.has(parameter.type_name) || Boolean(parameter.choices?.length)
+  return SCALAR_TYPES.has(nonNullableTypeName(parameter.type_name)) || Boolean(parameter.choices?.length)
 }
 
 function guiParameters(parameters: Parameter[], allowStructured = true): Parameter[] {
@@ -68,7 +71,7 @@ interface TechniqueEditorProps {
   onCreated?: () => void
   /** Both configurations remain source-pinned. The initial value can include applied run-local edits. */
   original?: TechniqueConfiguration
-  initial?: TechniqueConfiguration
+  initial?: TechniqueConfiguration | undefined
   onApplied?: (result: TechniqueEditResponse) => void
   autoApply?: boolean
   onPending?: () => void
@@ -177,7 +180,7 @@ export default function TechniqueEditor({
       changes.params = { ...result.parameters }
       for (const parameter of changedParameters) {
         if (!Object.prototype.hasOwnProperty.call(changes.params, parameter.name)) {
-          changes.params[parameter.name] = parameter.type_name === 'str' && !parameter.choices?.length
+          changes.params[parameter.name] = nonNullableTypeName(parameter.type_name) === 'str' && !parameter.choices?.length
             && !parameter.reference_type ? '' : null
         }
       }
@@ -289,7 +292,7 @@ export default function TechniqueEditor({
                 && event.currentTarget.contains(event.target)) event.preventDefault()
             }}>
               {loading && <Spinner label="Loading technique types..." />}
-              {displayedError && <MessageBar intent="error" role="alert" ref={errorRef} tabIndex={-1}><MessageBarBody>{displayedError}</MessageBarBody></MessageBar>}
+              {displayedError && <MessageBar intent="error" role="alert" ref={fluentRef(errorRef)} tabIndex={-1}><MessageBarBody>{displayedError}</MessageBarBody></MessageBar>}
               {!loading && types.length === 0 && <Button onClick={() => setRetry(retry + 1)}>Retry metadata</Button>}
               {!loading && types.length > 0 && (
                 <>

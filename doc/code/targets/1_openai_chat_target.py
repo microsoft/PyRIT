@@ -175,9 +175,58 @@ result = await attack.execute_async(
 await output_attack_async(result)
 
 # %% [markdown]
+# ## Audio Output
+#
+# Chat Completions models that support audio output (for example `gpt-4o-audio-preview`) can reply with speech as well as text. Pass an `OpenAIChatAudioConfig` as `audio_response_config` to turn this on:
+#
+# - `voice`: The voice to use, such as `alloy`, `coral`, `echo`, or `shimmer`.
+# - `audio_format`: The format of the saved audio, one of `wav` (default), `mp3`, `aac`, `flac`, `opus`, or `pcm16`. `pcm16` responses are saved as `.wav` files.
+# - `prefer_transcript_for_history`: When `True` (default), earlier user turns that contain both audio and a text transcript are sent as text only to save bandwidth and tokens. The latest user turn still includes its audio.
+#
+# The config is converted to Chat Completions request parameters and merged into `extra_body_parameters`. If the same key is also set in `extra_body_parameters`, the explicit value wins. A typical audio reply contains a transcript `text` piece and an `audio_path` piece that points to the saved audio file; either piece is omitted if the API does not return it. Assistant audio is not sent back on later turns because the transcript carries its content.
+#
+# Audio output is only available through the Chat Completions API. The Responses API does not support it, and for live audio conversations use `RealtimeTarget` instead.
+#
+# ```python
+# from pyrit.prompt_target import OpenAIChatAudioConfig, OpenAIChatTarget
+#
+# target = OpenAIChatTarget(
+#     model_name="gpt-4o-audio-preview",
+#     audio_response_config=OpenAIChatAudioConfig(voice="coral", audio_format="mp3"),
+# )
+# ```
+#
+# The next cell shows the request parameters that a config produces. It does not call any endpoint.
+
+# %%
+from pyrit.prompt_target import OpenAIChatAudioConfig
+
+audio_config = OpenAIChatAudioConfig(voice="coral", audio_format="mp3")
+print(audio_config.to_extra_body_parameters())
+
+# %% [markdown]
+# ## Local Tools
+#
+# `OpenAIChatTarget` can run tools on the host through the same bounded tool loop as `OpenAIResponseTarget` and `ClaudeChatTarget`, so a tool behaves the same on each. Pass typed tools as `tools`, or providers such as `MCPToolProvider` as `tool_providers`. The target advertises them to the model, runs the calls the model returns, and sends back the results until the model answers. `max_tool_rounds` (10 by default) caps how many completions in one send can have their calls run. Automatic execution requires `n=1`. With `execute_tools=False`, the target advertises the tools but returns the model's calls without running them.
+#
+# ```python
+# from pyrit.prompt_target import OpenAIChatTarget, tool
+#
+#
+# @tool
+# async def add_one_async(*, value: int) -> int:
+#     """Add one to a number."""
+#     return value + 1
+#
+#
+# target = OpenAIChatTarget(tools=[add_one_async], max_tool_rounds=2)
+# ```
+#
+# See the [OpenAI Responses Target](./2_openai_responses_target.ipynb) for defining tools and discovering MCP tools, and the [Claude chat target](./claude_chat_target.md) for how the loop handles invalid calls and tool failures.
+#
 # ## OpenAI Configuration
 #
-# All `OpenAITarget`s can communicate to [Azure OpenAI (AOAI)](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference), [OpenAI](https://platform.openai.com/docs/api-reference/introduction), or other compatible endpoints (e.g., Ollama, Groq, HuggingFace).
+# All `OpenAITarget`s can communicate with [Azure OpenAI (AOAI)](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference), [OpenAI](https://platform.openai.com/docs/api-reference/introduction), or any other endpoint that speaks the OpenAI API, including [Anthropic](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk), [Google Gemini](https://ai.google.dev/gemini-api/docs/openai), [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-chat-completions.html), Ollama, Groq, HuggingFace, and OpenRouter. See [Populating Secrets](../../getting_started/populating_secrets.md) for ready-to-copy endpoint and environment variable examples for each provider.
 #
 # The `OpenAIChatTarget` is built to be as cross-compatible as we can make it, while still being as flexible as we can make it by exposing functionality via parameters.
 #

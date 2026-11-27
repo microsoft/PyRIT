@@ -4,6 +4,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -234,6 +235,37 @@ async def test_filter_by_ids(sqlite_instance: MemoryInterface, sample_attack_res
     assert results[0].id == scenario_result1.id
 
 
+@pytest.mark.parametrize(("limit", "expected_hours"), [(2, [4, 3]), (None, [4, 3, 2, 1, 0])])
+async def test_limit_and_order_hold_when_ids_span_batches(
+    sqlite_instance: MemoryInterface, sample_attack_results, limit, expected_hours
+):
+    """A batched id query must keep the caller's ordering and limit across batches.
+
+    Rows come back from one statement per batch, so the limit has to bound the
+    merged rows and the completion time ordering has to be re-applied globally
+    instead of leaving each batch's local order in place. The ids are passed
+    oldest first, three per batch, so the first batch holds more rows than the
+    limit: keeping batch order or capping each batch below the limit both give
+    a different result.
+    """
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    stored = []
+    for hour in range(5):
+        scenario_result = create_scenario_result(
+            name=f"Scenario {hour}",
+            attack_results={"Attack1": [sample_attack_results[0]]},
+        )
+        scenario_result.completion_time = base + timedelta(hours=hour)
+        await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result])
+        stored.append(scenario_result)
+    ids = [str(result.id) for result in stored]
+
+    with patch.object(sqlite_instance, "_MAX_BIND_VARS", 3):
+        results = await sqlite_instance.get_scenario_results_async(scenario_result_ids=ids, limit=limit)
+
+    assert [result.scenario_name for result in results] == [f"Scenario {hour}" for hour in expected_hours]
+
+
 async def test_empty_ids_returns_empty(sqlite_instance: MemoryInterface):
     """Test that empty ID list returns empty results."""
     results = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[])
@@ -300,13 +332,15 @@ async def test_attack_order_preserved(sqlite_instance: MemoryInterface):
 
     sid = scenario_result.id
     # Insert in a specific order; hydration must surface them in the same order.
+    # Explicit timestamps keep coarse clocks (Windows before Python 3.13) from tying.
+    started = datetime.now(tz=UTC)
     attack_results = [
         _make_attack_result_for_scenario(
             scenario_result_id=sid,
             atomic_attack_name="Attack1",
             objective_index=i,
             conversation_id=f"conv_{i}",
-        )
+        ).model_copy(update={"timestamp": started + timedelta(seconds=i)})
         for i in range(5)
     ]
     for ar in attack_results:
@@ -847,7 +881,10 @@ async def test_get_scenario_results_loads_attack_results_via_foreign_key(
 
     sid = scenario_result.id
     ar1 = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=0)
-    ar2 = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=1)
+    # Hydration orders by timestamp, which a coarse clock can leave tied.
+    ar2 = _make_attack_result_for_scenario(
+        scenario_result_id=sid, atomic_attack_name="a", objective_index=1
+    ).model_copy(update={"timestamp": ar1.timestamp + timedelta(seconds=1)})
     ar3 = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="b", objective_index=0)
     (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3]))
 
@@ -1032,6 +1069,39 @@ async def test_try_update_scenario_run_state_preserves_a_terminal_state(
     assert hydrated.scenario_run_state == ScenarioRunState.CANCELLED
     assert hydrated.error_message == "Run was cancelled by user"
     assert hydrated.error_type == "CancelledError"
+
+
+async def test_try_update_scenario_run_state_compares_expected_metadata_fields(
+    sqlite_instance: MemoryInterface,
+):
+    """A state transition can also be guarded by an execution-specific metadata value."""
+    scenario_result = create_scenario_result(name="CAS Metadata", attack_results={"a": []})
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
+    sid = str(scenario_result.id)
+    token_key = "scenario_run_execution_token_v1"
+    await sqlite_instance.update_scenario_run_state_and_metadata_fields_async(
+        scenario_result_id=sid,
+        scenario_run_state=ScenarioRunState.IN_PROGRESS,
+        metadata_fields={token_key: "resumed-execution"},
+    )
+
+    stale_update = await sqlite_instance.try_update_scenario_run_state_async(
+        scenario_result_id=sid,
+        expected_states={ScenarioRunState.IN_PROGRESS},
+        scenario_run_state=ScenarioRunState.FAILED,
+        expected_metadata_fields={token_key: "original-execution"},
+    )
+    matching_update = await sqlite_instance.try_update_scenario_run_state_async(
+        scenario_result_id=sid,
+        expected_states={ScenarioRunState.IN_PROGRESS},
+        scenario_run_state=ScenarioRunState.FAILED,
+        expected_metadata_fields={token_key: "resumed-execution"},
+    )
+
+    assert stale_update is False
+    assert matching_update is True
+    [hydrated] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[sid])
+    assert hydrated.scenario_run_state == ScenarioRunState.FAILED
 
 
 async def test_try_update_scenario_run_state_reports_a_missing_row(

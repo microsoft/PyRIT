@@ -17,6 +17,7 @@ from pyrit.prompt_target import (
     get_known_capabilities,
 )
 from pyrit.prompt_target.common.conversation_normalization_pipeline import NORMALIZABLE_CAPABILITIES
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 
 
 class TestCapabilityHandlingPolicy:
@@ -29,6 +30,7 @@ class TestCapabilityHandlingPolicy:
         assert CapabilityName.JSON_OUTPUT.value == "supports_json_output"
         assert CapabilityName.EDITABLE_HISTORY.value == "supports_editable_history"
         assert CapabilityName.SYSTEM_PROMPT.value == "supports_system_prompt"
+        assert CapabilityName.PREFILL.value == "supports_prefill"
 
     def test_unsupported_capability_behavior_values(self):
         assert UnsupportedCapabilityBehavior.ADAPT.value == "adapt"
@@ -111,6 +113,18 @@ class TestCapabilityHandlingPolicy:
         assert capabilities.includes(capability=CapabilityName.JSON_OUTPUT) is True
         assert capabilities.includes(capability=CapabilityName.EDITABLE_HISTORY) is False
 
+    def test_supports_prefill_defaults_false_and_round_trips(self):
+        default_caps = TargetCapabilities()
+        assert default_caps.supports_prefill is False
+        assert default_caps.includes(capability=CapabilityName.PREFILL) is False
+
+        caps = TargetCapabilities(supports_prefill=True)
+        assert caps.includes(capability=CapabilityName.PREFILL) is True
+
+        dumped = caps.model_dump()
+        assert dumped["supports_prefill"] is True
+        assert TargetCapabilities.model_validate(dumped) == caps
+
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 # Clear them so that targets use _DEFAULT_CONFIGURATION instead of _KNOWN_CAPABILITIES.
@@ -181,6 +195,52 @@ class TestDefaultConfigurationDefined:
             )
 
 
+class TestSupportsPrefillDefaults:
+    """Prefill describes the adapter's request shape, independently of model behavior."""
+
+    @pytest.mark.parametrize("underlying_model", [None, "gpt-4o", "unknown-model"])
+    @pytest.mark.parametrize(
+        "target_name",
+        ["HuggingFaceChatTarget", "OpenAIChatTarget", "OpenAIResponseTarget", "LiteLLMChatTarget", "AzureMLChatTarget"],
+    )
+    def test_chat_defaults_preserve_prefill_with_model_profiles(self, target_name, underlying_model):
+        from pyrit import prompt_target
+
+        target_class = getattr(prompt_target, target_name)
+        assert target_class.get_default_configuration(underlying_model).capabilities.supports_prefill is True
+
+    @pytest.mark.parametrize("underlying_model", [None, "gpt-4o"])
+    @pytest.mark.parametrize(
+        "target_name",
+        ["HTTPTarget", "HTTPXAPITarget", "PlaywrightTarget", "PlaywrightCopilotTarget", "OpenAICompletionTarget"],
+    )
+    def test_integration_and_completion_targets_default_off(self, target_name, underlying_model):
+        from pyrit import prompt_target
+
+        target_class = getattr(prompt_target, target_name)
+        assert target_class.get_default_configuration(underlying_model).capabilities.supports_prefill is False
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("target_name", ["OpenAIChatTarget", "OpenAIResponseTarget", "AzureMLChatTarget"])
+    @pytest.mark.parametrize("underlying_model", [None, "gpt-4o"])
+    def test_explicit_custom_opt_out_wins(self, target_name, underlying_model):
+        from pyrit import prompt_target
+
+        target_class = getattr(prompt_target, target_name)
+        default = target_class.get_default_configuration(underlying_model)
+        opted_out = TargetConfiguration(
+            capabilities=default.capabilities.model_copy(update={"supports_prefill": False})
+        )
+        target = target_class(
+            model_name="test-deployment",
+            endpoint="https://mock.example.com/",
+            api_key="test-key",
+            custom_configuration=opted_out,
+            **({"underlying_model": underlying_model} if target_name != "AzureMLChatTarget" else {}),
+        )
+        assert target.capabilities.supports_prefill is False
+
+
 @pytest.mark.usefixtures("patch_central_database")
 class TestTargetCapabilitiesModalities:
     """Test that each target declares the correct input/output modalities via _DEFAULT_CONFIGURATION."""
@@ -189,6 +249,9 @@ class TestTargetCapabilitiesModalities:
         caps = TargetCapabilities()
         assert caps.input_modalities == frozenset({frozenset(["text"])})
         assert caps.output_modalities == frozenset({frozenset(["text"])})
+
+    def test_default_capabilities_support_responses(self):
+        assert TargetCapabilities().includes(capability=CapabilityName.RESPONSES)
 
     @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_chat_target_modalities(self):
@@ -320,7 +383,9 @@ class TestTargetCapabilitiesModalities:
 
         from pyrit.prompt_target import PlaywrightCopilotTarget
 
-        target = PlaywrightCopilotTarget(page=MagicMock())
+        page = MagicMock()
+        page.url = "https://copilot.microsoft.com/"
+        target = PlaywrightCopilotTarget(page=page)
         assert any("text" in combo for combo in target.capabilities.input_modalities)
         assert any("image_path" in combo for combo in target.capabilities.input_modalities)
         assert any("text" in combo for combo in target.capabilities.output_modalities)
@@ -401,6 +466,12 @@ class TestTargetCapabilitiesModalities:
 
 class TestGetKnownCapabilities:
     """Test get_known_capabilities for every recognized model."""
+
+    @pytest.mark.parametrize("model", ["gpt-4o", "gpt-5.1", "gpt-5", "gpt-5.4"])
+    def test_model_profile_does_not_resolve_runtime_temperature(self, model: str) -> None:
+        caps = get_known_capabilities(model)
+        assert caps is not None
+        assert not caps.supports_temperature
 
     def test_gpt_4o_supports_multi_turn_and_json_output(self):
         caps = get_known_capabilities("gpt-4o")
@@ -489,6 +560,41 @@ class TestGetKnownCapabilities:
         assert get_known_capabilities("") is None
 
 
+def test_gpt_5_aliases_share_full_model_profile() -> None:
+    gpt_5 = get_known_capabilities("gpt-5")
+    gpt_5_1 = get_known_capabilities("gpt-5.1")
+    gpt_5_4 = get_known_capabilities("gpt-5.4")
+    assert gpt_5 is not None and gpt_5_1 is not None and gpt_5_4 is not None
+    assert gpt_5_1 is gpt_5
+    assert gpt_5_4 is gpt_5
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
+def test_grok_4_3_model_name_adds_only_tool_call_input() -> None:
+    from pyrit.prompt_target import OpenAIChatTarget
+
+    target = OpenAIChatTarget(model_name="grok-4.3", endpoint="https://mock.azure.com/", api_key="mock-api-key")
+    defaults = OpenAIChatTarget._DEFAULT_CONFIGURATION.capabilities
+    assert target.capabilities.input_modalities == defaults.input_modalities | TOOL_CALL_INPUT_MODALITIES
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
+def test_grok_4_3_underlying_model_uses_full_profile() -> None:
+    from pyrit.prompt_target import OpenAIChatTarget
+
+    target = OpenAIChatTarget(
+        model_name="grok-deployment",
+        underlying_model="grok-4.3",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+    )
+    assert target.capabilities.supports_json_schema is True
+    assert frozenset({"text", "image_path"}) in target.capabilities.input_modalities
+    assert target.capabilities.input_modalities >= TOOL_CALL_INPUT_MODALITIES
+
+
 @pytest.mark.usefixtures("patch_central_database")
 class TestGetDefaultConfiguration:
     """Test PromptTarget.get_default_configuration classmethod."""
@@ -520,11 +626,12 @@ class TestGetDefaultConfiguration:
         assert expected is not None
         assert result.capabilities == expected.model_copy(
             update={
+                "supports_temperature": False,
                 "input_modalities": frozenset(
                     combo
                     for combo in expected.input_modalities
                     if not combo & {"function_call", "function_call_output"}
-                )
+                ),
             }
         )
 

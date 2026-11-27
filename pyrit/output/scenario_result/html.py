@@ -46,8 +46,16 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
   {% if report.overview.scenario.description %}<p>{{ report.overview.scenario.description }}</p>{% endif %}
 
   <div class="cards">
-    <div class="card"><div class="label">Success rate</div>
-      <div class="value">{{ report.overview.stats.overall_success_rate }}%</div></div>
+    <div class="card"><div class="label">
+      {%- if report.overview.stats.objective_scorer_scope == "mixed_scorers" %}Aggregate success rate
+      ({{ report.overview.objective_scorers | selectattr("num_objective_executions") | list | length }}
+      objective scorers, descriptive)
+      {%- else %}Success rate{% endif %}</div>
+      <div class="value">{{ report.overview.stats.overall_success_rate }}%</div>
+      {%- if report.overview.stats.objective_scorer_scope in ("single_scorer", "unknown_scorer") %}
+      {%- set objective_scorer = report.overview.objective_scorers | selectattr("num_objective_executions") | first %}
+      <div class="muted">Objective Scorer: {{ objective_scorer.label }} ({{ objective_scorer.attribution }})</div>
+      {%- endif %}</div>
     <div class="card"><div class="label">Techniques</div>
       <div class="value">{{ report.overview.stats.total_techniques }}</div></div>
     <div class="card"><div class="label">Objective executions</div>
@@ -74,6 +82,32 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
     <tr><th>Model</th><td>{{ report.overview.target.model or "Unknown" }}</td></tr>
     <tr><th>Endpoint</th><td>{{ report.overview.target.endpoint or "Unknown" }}</td></tr>
   </table>
+
+  {% if report.overview.objective_scorers | length > 1 %}
+  <h2>Results by Objective Scorer</h2>
+  <p class="muted">Each row contains only executions attributed to that scorer,
+    not every execution rescored by every scorer.</p>
+  {% if report.overview.stats.objective_scorer_scope == "mixed_scorers" %}
+  <p class="muted">Scorers apply different rubrics; compare success rates only within one objective scorer.</p>
+  {% endif %}
+  <table>
+    <tr>
+      <th>Objective Scorer</th>
+      <th>Attribution</th>
+      <th>Objective executions</th>
+      <th>Success rate (decided)</th>
+      <th>Success rate (all completed)</th>
+      <th>Atomic attacks</th>
+    </tr>
+    {% for j in report.overview.objective_scorers %}
+    <tr><td>{{ j.label }}</td><td>{{ j.attribution }}</td>
+      <td>{{ j.num_objective_executions }}{% if j.planned is not none %}/{{ j.planned }}{% endif %}</td>
+      <td>{{ "%.1f%%" | format(j.success_rate_decided * 100) if j.success_rate_decided is not none else "N/A" }}</td>
+      <td>{{ "%.1f%%" | format(j.success_rate_all * 100) if j.success_rate_all is not none else "N/A" }}</td>
+      <td>{{ j.atomic_attacks | join(", ") }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
 
   <h2>Per-group breakdown</h2>
   <table>
@@ -106,18 +140,21 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
       <div class="role">{{ m.role }}{% if m.is_simulated %} (simulated){% endif %}</div>
       {% for p in m.pieces %}
         {% set has_converted = p.converted_value is defined and p.converted_value is not none %}
-        {% set media_prefix = "" if p.data_type == "text" else "[" ~ p.data_type ~ "] " %}
-        {% set piece_class = "piece" if p.data_type == "text" else "piece media" %}
-        {% set shown_value = p.converted_value if has_converted else p.original_value %}
+        {% set original_type = p.original_value_data_type or p.data_type %}
+        {% set converted_type = (p.converted_value_data_type or p.data_type) if has_converted else original_type %}
+        {% set original_prefix = "" if original_type == "text" else "[" ~ original_type ~ "] " %}
+        {% set original_class = "piece" if original_type == "text" else "piece media" %}
+        {% set converted_prefix = "" if converted_type == "text" else "[" ~ converted_type ~ "] " %}
+        {% set converted_class = "piece" if converted_type == "text" else "piece media" %}
         {% if p.data_type == "reasoning" %}
           <div class="piece reasoning">{{ p.reasoning_summary }}</div>
         {% elif has_converted and p.converted_value != p.original_value %}
           <div class="piece-label">Original:</div>
-          <div class="{{ piece_class }}">{{ media_prefix }}{{ p.original_value }}</div>
+          <div class="{{ original_class }}">{{ original_prefix }}{{ p.original_value }}</div>
           <div class="piece-label">Converted:</div>
-          <div class="{{ piece_class }}">{{ media_prefix }}{{ p.converted_value }}</div>
+          <div class="{{ converted_class }}">{{ converted_prefix }}{{ p.converted_value }}</div>
         {% else %}
-          <div class="{{ piece_class }}">{{ media_prefix }}{{ shown_value }}</div>
+          <div class="{{ converted_class }}">{{ converted_prefix }}{{ p.original_value }}</div>
         {% endif %}
         {% if p.response_error and p.response_error != "none" %}
           <div class="piece err">error: {{ p.response_error }}</div>

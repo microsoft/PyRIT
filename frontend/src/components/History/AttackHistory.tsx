@@ -8,6 +8,7 @@ import {
 } from '@fluentui/react-components'
 import { ChatRegular } from '@fluentui/react-icons'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
+import { useRuntime } from '@/hooks/useRuntime'
 import { attacksApi, labelsApi, operationsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { AttackSummary, FilterOption, TargetInstance } from '../../types'
@@ -32,6 +33,18 @@ interface AttackHistoryProps {
 const PAGE_SIZE = 25
 
 type ListParams = Parameters<typeof attacksApi.listAttacks>[0]
+
+/**
+ * One history page request. The cursor and the displayed page index always
+ * change together, and `listKey` records their runtime generation and filters.
+ */
+interface PageRequest {
+  listKey: string
+  cursor: string | undefined
+  page: number
+  requestId: number
+  quiet: boolean
+}
 
 function buildListParams(filters: HistoryFilters, pageCursor: string | undefined): ListParams {
   const labelParams = [...filters.otherLabels]
@@ -68,8 +81,8 @@ export default function AttackHistory({
   showTitle = true,
 }: AttackHistoryProps) {
   const styles = useAttackHistoryStyles()
+  const runtime = useRuntime()
   const [attacks, setAttacks] = useState<AttackSummary[]>([])
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const pending = useRef(false)
   const optionsPending = useRef(false)
@@ -88,11 +101,22 @@ export default function AttackHistory({
     filterKey: string
     options: string[]
   } | null>(null)
+  const [optionsGeneration, setOptionsGeneration] = useState(runtime.generation)
+
+  // Reset before paint so the new runtime never offers the previous runtime's options.
+  if (optionsGeneration !== runtime.generation) {
+    setOptionsGeneration(runtime.generation)
+    setOperatorOptions([])
+    setOperationOptions([])
+    setAllOtherLabelOptions([])
+    setNarrowedOtherLabelOptions(null)
+    setOptionsError(null)
+    setNarrowedOptionsError(null)
+  }
 
   // Pagination
-  const [cursor, setCursor] = useState<string | undefined>(undefined)
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined)
   const [isLastPage, setIsLastPage] = useState(true)
-  const [page, setPage] = useState(0)
   const filterKey = JSON.stringify([
     filters.outcome,
     filters.includeScenarioAttacks,
@@ -100,7 +124,24 @@ export default function AttackHistory({
     filters.operationId,
     filters.otherLabels,
   ])
-  const [settledFilterKey, setSettledFilterKey] = useState<string | null>(null)
+  const listKey = JSON.stringify([runtime.generation, filterKey])
+  const [pageRequest, setPageRequest] = useState<PageRequest>(() => ({
+    listKey,
+    cursor: undefined,
+    page: 0,
+    requestId: 0,
+    quiet: false,
+  }))
+  const [settledRequestId, setSettledRequestId] = useState<number | null>(null)
+  // Every runtime or filter change (including A -> B -> A while B is loading)
+  // starts a new visit on the first page, so an earlier cursor is never reused.
+  // Uses the "adjust state during render" pattern (see React docs:
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders)
+  // instead of a useEffect so we don't trigger react-hooks/set-state-in-effect.
+  if (pageRequest.listKey !== listKey) {
+    setPageRequest({ listKey, cursor: undefined, page: 0, requestId: pageRequest.requestId + 1, quiet: false })
+    setError(null)
+  }
   const labelOptionFilterKey = JSON.stringify([
     filters.operator,
     filters.otherLabels,
@@ -115,25 +156,13 @@ export default function AttackHistory({
     ? narrowedOptionsError.error ?? optionsError
     : optionsError
 
-  const [fetchToken, setFetchToken] = useState({
-    cursor: undefined as string | undefined,
-    filterKey,
-    nonce: 0,
-    quiet: false,
-  })
-  if (fetchToken.filterKey !== filterKey) {
-    setFetchToken({ cursor: undefined, filterKey, nonce: fetchToken.nonce + 1, quiet: false })
-  }
-
-  const fetchAttacks = useCallback((pageCursor?: string, quiet = false) => {
-    if (!quiet) {
-      setLoading(true)
-      setError(null)
-    }
-    setFetchToken(prev => ({ cursor: pageCursor, filterKey, nonce: prev.nonce + 1, quiet }))
-  }, [filterKey])
+  const fetchAttacks = useCallback((pageCursor: string | undefined, page: number, quiet = false) => {
+    if (!quiet) setError(null)
+    setPageRequest(prev => ({ ...prev, cursor: pageCursor, page, requestId: prev.requestId + 1, quiet }))
+  }, [])
 
   useEffect(() => {
+    if (!runtime.ready) return
     let cancelled = false
     let failed = false
     optionsPending.current = true
@@ -161,15 +190,15 @@ export default function AttackHistory({
       }
     })
     return () => { cancelled = true; optionsPending.current = false }
-  }, [optionsRevision])
+  }, [optionsRevision, runtime.ready, runtime.generation])
 
   // Arbitrary label options are narrowed by the active indexed attribution filters.
   useEffect(() => {
-    if (!hasLabelOptionFilters) return
+    if (!runtime.ready || !hasLabelOptionFilters) return
     let cancelled = false
     labelsApi.getLabels('attacks', {
-      operator: filters.operator.length > 0 ? filters.operator : undefined,
-      label: filters.otherLabels.length > 0 ? filters.otherLabels : undefined,
+      ...(filters.operator.length > 0 ? { operator: filters.operator } : {}),
+      ...(filters.otherLabels.length > 0 ? { label: filters.otherLabels } : {}),
     })
       .then(resp => {
         if (cancelled) return
@@ -191,42 +220,35 @@ export default function AttackHistory({
     hasLabelOptionFilters,
     labelOptionFilterKey,
     optionsRevision,
+    runtime.ready,
+    runtime.generation,
   ])
 
-  // Fetch attacks whenever filters change or an event handler bumps fetchToken.
-  // All setState calls live in .then/.catch/.finally so we don't trigger
+  // Fetch attacks whenever filters change or an event handler issues a new
+  // page request. All setState calls live in .then/.catch so we don't trigger
   // react-hooks/set-state-in-effect.
   useEffect(() => {
+    if (!runtime.ready) return
     let cancelled = false
     pending.current = true
-    const effectiveCursor = fetchToken.filterKey === filterKey && settledFilterKey === filterKey
-      ? fetchToken.cursor
-      : undefined
-    attacksApi.listAttacks(buildListParams(filters, effectiveCursor))
+    const { cursor, requestId, quiet } = pageRequest
+    attacksApi.listAttacks(buildListParams(filters, cursor))
       .then(response => {
         if (cancelled) return
         setAttacks(response.items.map(attack => ({ ...attack, labels: attack.labels ?? {} })))
         setIsLastPage(!response.pagination.has_more)
-        setCursor(response.pagination.next_cursor ?? undefined)
-        setSettledFilterKey(filterKey)
+        setNextCursor(response.pagination.next_cursor ?? undefined)
+        setSettledRequestId(requestId)
         setError(null)
-        // Reset displayed page index when the trigger is a filter change (no
-        // explicit cursor). Pagination handlers pass an explicit cursor and
-        // update `page` themselves.
-        if (!effectiveCursor) setPage(0)
       })
       .catch(err => {
         if (cancelled) return
-        if (!fetchToken.quiet) setAttacks([])
-        setSettledFilterKey(filterKey)
+        if (!quiet) setAttacks([])
+        setSettledRequestId(requestId)
         setError(toApiError(err).detail)
-        if (!fetchToken.quiet && !effectiveCursor) setPage(0)
       })
       .finally(() => {
-        if (!cancelled) {
-          setLoading(false)
-          pending.current = false
-        }
+        if (!cancelled) pending.current = false
       })
     return () => {
       cancelled = true
@@ -242,21 +264,18 @@ export default function AttackHistory({
     filters.operator,
     filters.operationId,
     filters.otherLabels,
-    filterKey,
-    fetchToken,
+    pageRequest,
+    runtime.ready,
   ])
 
   const handleNextPage = () => {
-    if (cursor) {
-      setPage(p => p + 1)
-      fetchAttacks(cursor)
+    if (nextCursor) {
+      fetchAttacks(nextCursor, pageRequest.page + 1)
     }
   }
 
   const handlePrevPage = () => {
-    setPage(0)
-    setCursor(undefined)
-    fetchAttacks()
+    fetchAttacks(undefined, 0)
   }
 
   const formatDate = (dateStr: string) => {
@@ -273,14 +292,15 @@ export default function AttackHistory({
     filters.outcome ||
     !filters.includeScenarioAttacks ||
     filters.operator.length > 0 || filters.operationId.length > 0 || filters.otherLabels.length > 0
-  const filtersPending = settledFilterKey !== filterKey
-  const displayLoading = loading || filtersPending
+  // Quiet refreshes retain the current rows and page; navigation waits for its
+  // own request so the page label always describes the rows on screen.
+  const displayLoading = !pageRequest.quiet && settledRequestId !== pageRequest.requestId
   useAutoRefresh(() => {
     if (!pending.current) {
       if (!optionsPending.current) setOptionsRevision((revision: number) => revision + 1)
-      fetchAttacks(fetchToken.filterKey === filterKey ? fetchToken.cursor : undefined, true)
+      fetchAttacks(pageRequest.cursor, pageRequest.page, true)
     }
-  }, !displayLoading)
+  }, runtime.ready && !displayLoading)
   const emptyStateGuidance = activeTarget
     ? {
         text: 'Start an attack to see it here.',
@@ -343,7 +363,7 @@ export default function AttackHistory({
 
       {!displayLoading && attacks.length > 0 && (
         <HistoryPagination
-          page={page}
+          page={pageRequest.page}
           isLastPage={isLastPage}
           onPrevPage={handlePrevPage}
           onNextPage={handleNextPage}

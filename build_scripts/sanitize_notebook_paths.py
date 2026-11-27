@@ -23,6 +23,12 @@ _COPILOT_REPO_PATTERN = re.compile(
     r"\./\.copilot/repos/(?:copilot-worktrees/[^/]+/[^/]+|[^/]+)/",
 )
 
+_KEY_VAULT_SECRET_URL_PATTERN = re.compile(
+    r"https://[a-z0-9-]+\.vault\.(?:azure\.net|azure\.cn|usgovcloudapi\.net|microsoftazure\.de)"
+    r"/secrets/[a-z0-9-]+(?:/[a-z0-9-]+)?",
+    re.IGNORECASE,
+)
+
 
 def _windows_path_replacer(match: Match[str]) -> str:
     """Replace Windows user path prefix with ./ and normalize backslashes to forward slashes."""
@@ -34,7 +40,7 @@ def _windows_path_replacer(match: Match[str]) -> str:
 
 def sanitize_notebook_paths(file_path: str) -> bool:
     """
-    Remove user-specific path prefixes from notebook cell outputs.
+    Remove user-specific path prefixes and redact Key Vault secret URLs in notebook cell outputs.
 
     Replaces paths like C:\\Users\\username\\project\\file.py with ./project/file.py.
 
@@ -74,7 +80,7 @@ def sanitize_notebook_paths(file_path: str) -> bool:
 
 def _sanitize_output_field(obj: dict, key: str) -> bool:
     """
-    Sanitize a single output field by replacing user path prefixes with ./ normalized paths.
+    Sanitize user paths and Key Vault secret URLs in a single output field.
 
     Args:
         obj (dict): The dict containing the field.
@@ -111,7 +117,7 @@ def _sanitize_output_field(obj: dict, key: str) -> bool:
 
 def _strip_user_paths(text: str) -> str:
     """
-    Replace user-specific path prefixes with ./ and normalize separators.
+    Replace user-specific path prefixes with ./, normalize separators, and redact Key Vault secret URLs.
 
     Windows paths are normalized to forward slashes. For example,
     C:\\Users\\alice\\project\\file.py becomes ./project/file.py.
@@ -125,7 +131,8 @@ def _strip_user_paths(text: str) -> str:
     text = _WINDOWS_PATH_PATTERN.sub(_windows_path_replacer, text)
     for pattern in _UNIX_PATH_PATTERNS:
         text = pattern.sub("./", text)
-    return _COPILOT_REPO_PATTERN.sub("./", text)
+    text = _COPILOT_REPO_PATTERN.sub("./", text)
+    return _KEY_VAULT_SECRET_URL_PATTERN.sub("https://my-vault.vault.azure.net/secrets/my-pyrit-env", text)
 
 
 if __name__ == "__main__":

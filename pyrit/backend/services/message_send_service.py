@@ -12,7 +12,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import lru_cache, partial
 from typing import Any
@@ -44,7 +44,6 @@ from pyrit.backend.services.manual_send_scheduler import (
 )
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.target_service import get_target_service
-from pyrit.common import print_deprecation_message
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.models import (
@@ -57,10 +56,11 @@ from pyrit.models import (
     ConverterIdentifier,
     Message,
     MessagePiece,
+    RequestGenerationInfo,
 )
 from pyrit.models.component_spec import TargetBinding
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
 from pyrit.score import Scorer
 
@@ -80,6 +80,7 @@ class _ValidatedMessage:
     owns_target: bool = False
     target_binding: TargetBinding | None = None
     replay_target: PromptTarget | None = None
+    target_metadata: dict[str, Any] = field(default_factory=dict)
     scoring: ChatScoringSelection | None = None
     scorer: Scorer | None = None
     scoring_error: str | None = None
@@ -325,7 +326,10 @@ class MessageSendService:
         ar = results[0]
         binding = TargetBinding.from_metadata(ar.metadata)
         if request.target_binding is not None and request.target_binding != binding:
-            raise ValueError("This attack's temperature is read-only. Create a new attack to change it.")
+            raise ValueError(
+                "This attack's saved target binding is read-only. "
+                "Use request_generation_config metadata for supported per-send generation settings."
+            )
         policy = get_chat_scoring_service()
         policy.require_manual(ar)
         target_registry_name = request.target_registry_name
@@ -336,6 +340,10 @@ class MessageSendService:
         )
         if binding is None:
             self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
+        if target is not None:
+            target.validate_request_generation_config(
+                request_to_pyrit_message(request=request, conversation_id=request.target_conversation_id, sequence=0)
+            )
 
         msg_conversation_id = request.target_conversation_id
 
@@ -355,6 +363,9 @@ class MessageSendService:
             target = await get_target_service().resolve_binding_async(binding)
             try:
                 self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
+                target.validate_request_generation_config(
+                    request_to_pyrit_message(request=request, conversation_id=msg_conversation_id, sequence=0)
+                )
                 if isinstance(request, MessageSendRequest) and request.count > 1:
                     history = await self._memory.get_conversation_messages_async(conversation_id=msg_conversation_id)
                     validate_history_replay(target=target, messages=history)
@@ -377,9 +388,13 @@ class MessageSendService:
             self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=replay_target)
         if isinstance(request, MessageSendRequest) and request.count > 1 and target is not None:
             history = await self._memory.get_conversation_messages_async(conversation_id=msg_conversation_id)
-            if replay_target is not None and replay_target is not target:
-                validate_history_replay(target=replay_target, messages=history)
-            validate_history_replay(target=target, messages=history)
+            with (
+                get_target_service().capabilities_scope(target=target, metadata=ar.metadata),
+                get_target_service().capabilities_scope(target=replay_target, metadata=ar.metadata),
+            ):
+                if replay_target is not None and replay_target is not target:
+                    validate_history_replay(target=replay_target, messages=history)
+                validate_history_replay(target=target, messages=history)
 
         selection = policy.selection(ar)
         scorer = None
@@ -396,6 +411,7 @@ class MessageSendService:
             applied_identifiers=applied_identifiers,
             target_binding=binding if request.send else None,
             replay_target=replay_target,
+            target_metadata=dict(ar.metadata),
             scoring=selection,
             scorer=scorer,
             scoring_error=scoring_error,
@@ -417,7 +433,12 @@ class MessageSendService:
                     validated.owns_target = True
                 if progress is not None:
                     progress.state = MessageSendState.PREPARING
-                with attack_result_id_scope(attack_result_id=attack_result_id):
+                with (
+                    attack_result_id_scope(attack_result_id=attack_result_id),
+                    get_target_service().capabilities_scope(
+                        target=validated.target, metadata=validated.target_metadata
+                    ),
+                ):
                     target_identifier = validated.target.get_identifier() if validated.target else None
                     if not request.send:
                         existing_metadata = await self._memory.get_conversation_metadata_async(
@@ -476,9 +497,17 @@ class MessageSendService:
                             preparation.target_binding
                         )
                         preparation.owns_target = True
-                    messages = await self._prepare_repeated_send_async(
-                        operation=operation, request=request, validated=preparation
-                    )
+                    with (
+                        get_target_service().capabilities_scope(
+                            target=preparation.target, metadata=preparation.target_metadata
+                        ),
+                        get_target_service().capabilities_scope(
+                            target=preparation.replay_target, metadata=preparation.target_metadata
+                        ),
+                    ):
+                        messages = await self._prepare_repeated_send_async(
+                            operation=operation, request=request, validated=preparation
+                        )
                 finally:
                     if preparation.owns_target and preparation.target:
                         await release_component_async(preparation.target)
@@ -761,15 +790,22 @@ class MessageSendService:
                 )
             if progress is not None:
                 progress.state = MessageSendState.FINALIZING
-            response = await self._stored_response_async(
-                conversation_id=msg_conversation_id, delivered=delivered_response, prior_ids=prior_ids
+            responds = target.configuration.includes(capability=CapabilityName.RESPONSES)
+            response = (
+                await self._stored_response_async(
+                    conversation_id=msg_conversation_id, delivered=delivered_response, prior_ids=prior_ids
+                )
+                if responds
+                else None
             )
             last_response = response.message_pieces[0] if response is not None else None
-            if response is not None and validated.scoring is not None:
+            scoring_anchor = response if responds else delivered_response
+            if scoring_anchor is not None and validated.scoring is not None:
                 evaluation = await self._score_chat_response_async(
-                    response=response,
+                    response=scoring_anchor,
                     validated=validated,
                     progress=progress,
+                    side_effect_evidence_only=not responds,
                 )
         else:
             await self._store_message_only_async(
@@ -819,6 +855,7 @@ class MessageSendService:
         response: Message,
         validated: _ValidatedMessage,
         progress: MessageSendConversation | None,
+        side_effect_evidence_only: bool = False,
     ) -> ChatEvaluation:
         """
         Evaluate the delivered response with the scoring selection captured at admission.
@@ -835,6 +872,7 @@ class MessageSendService:
                 response=response,
                 scorer=validated.scorer,
                 error=validated.scoring_error,
+                side_effect_evidence_only=side_effect_evidence_only,
             )
         finally:
             if progress is not None:
@@ -1163,6 +1201,8 @@ class MessageSendService:
         """Persist all pieces atomically."""
         message = request_to_pyrit_message(request=request, conversation_id=conversation_id, sequence=sequence)
         message.set_simulated_role()
+        for piece in message.message_pieces:
+            RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
         for index, identifiers in applied_converter_identifiers.items():
             message.message_pieces[index].converter_identifiers.extend(identifiers)
         await self._memory.add_message_pieces_to_memory_async(message_pieces=message.message_pieces)
@@ -1208,21 +1248,11 @@ class MessageSendService:
 
     def _resolve_request_converter_configs(self, *, request: AddMessageRequest) -> list[ConverterConfiguration]:
         """
-        Resolve legacy or structured request converter configurations.
+        Resolve the request's converter configurations.
 
         Returns:
             list[ConverterConfiguration]: Resolved request configurations.
         """
-        if request.converter_ids is not None:
-            print_deprecation_message(
-                old_item="AddMessageRequest.converter_ids",
-                new_item="AddMessageRequest.request_converter_configurations",
-                removed_in="1.3.0",
-            )
-        if request.converter_ids:
-            converters = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
-            return ConverterConfiguration.from_converters(converters=converters)
-
         return self._resolve_converter_configs(configurations=request.request_converter_configurations)
 
     def _resolve_converter_configs(

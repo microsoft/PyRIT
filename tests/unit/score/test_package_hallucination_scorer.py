@@ -3,9 +3,14 @@
 
 """Tests for the PackageHallucinationScorer."""
 
+import inspect
+import subprocess
+import sys
+from pathlib import Path
 from time import perf_counter
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 from pyrit.memory import SQLiteMemory
 from pyrit.models import MessagePiece, ScorerEvaluationIdentifier
@@ -873,6 +878,38 @@ class TestAdditionalPackageEcosystems:
         assert score.get_value() is False
         assert score.score_metadata["hallucinated_packages"] == ""
 
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "use builtin qw(true false trim);",
+            "use sort 'stable';",
+            "use filetest 'access';",
+            "use Time::gmtime;",
+            "use IPC::SysV qw(IPC_PRIVATE S_IRUSR S_IWUSR);",
+            "use Tie::StdHandle;",
+            "use AnyDBM_File;",
+        ],
+    )
+    async def test_perl_core_modules_and_pragmas_are_not_hallucinated_packages(self, statement):
+        scorer = PackageHallucinationScorer(
+            known_packages={"JSON::MaybeXS"},
+            ecosystem=PackageEcosystem.PERL,
+        )
+        code = f"```perl\n{statement}\nuse JSON::MaybeXS;\n```"
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
+    async def test_perl_core_modules_do_not_hide_hallucinated_packages(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.PERL,
+        )
+        code = "```perl\nuse strict;\nuse Time::gmtime;\nuse Time::Ghost;\n```"
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
+        assert score.get_value() is True
+        assert score.score_metadata["hallucinated_packages"] == "Time::Ghost"
+
     def test_raku_extracts_module_references(self):
         scorer = PackageHallucinationScorer(
             known_packages=set(),
@@ -1015,3 +1052,87 @@ class TestAdditionalPackageEcosystems:
             "ecosystem": ecosystem.value,
             "hallucinated_packages": hallucinated_package,
         }
+
+
+def _ty_check_probe(probe: Path) -> tuple[int, str]:
+    """Type-check ``probe`` with the repo's ``ty`` settings and return the exit code and output."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ty",
+            "check",
+            "--project",
+            str(Path(__file__).resolve().parents[3]),
+            "--python-version",
+            "3.11",
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=TEST_WATCHDOG_SECONDS,
+        check=False,
+    )
+    return result.returncode, result.stdout + result.stderr
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_javascript_keeps_known_packages_as_written() -> None:
+    """JAVASCRIPT is an explicit branch that adds no built-ins and does not normalize names."""
+    scorer = PackageHallucinationScorer(known_packages={"Lodash", "left_pad"}, ecosystem=PackageEcosystem.JAVASCRIPT)
+    assert scorer._known_packages == {"Lodash", "left_pad"}
+
+
+@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
+def test_init_dispatch_type_exhaustiveness(tmp_path: Path, *, extend_enum: bool) -> None:
+    """
+    The ``assert_never`` guard in ``__init__`` makes ``ty`` flag a new, unhandled ``PackageEcosystem``.
+
+    The probe is built from the real enum and ``__init__`` source on a class that stubs the
+    built-in package sets. The current enum must type-check cleanly; with a temporary extra member
+    ``ty`` must report exactly one error.
+    """
+    enum_source = inspect.getsource(PackageEcosystem)
+    if extend_enum:
+        enum_source += '    FUTURE = "future"\n'
+    stub_sets = [
+        f"    {name}: frozenset[str] = frozenset()\n"
+        for name in (
+            "_RUST_BUILTIN_CRATES",
+            "_RUST_STD_ENTRIES",
+            "_DART_SDK_PACKAGES",
+            "_PERL_CORE_MODULES",
+            "_RAKU_CORE_MODULES",
+            "_RUBY_BUILTIN_FEATURES",
+        )
+    ]
+    probe = tmp_path / "dispatch.py"
+    probe.write_text(
+        "\n".join(
+            [
+                "import sys",
+                "from enum import Enum",
+                "from typing import TYPE_CHECKING, assert_never",
+                "from pyrit.score import (",
+                "    MessageTrueFalseScorer,",
+                "    ScorerPromptValidator,",
+                "    TrueFalseAggregatorFunc,",
+                "    TrueFalseScoreAggregator,",
+                ")",
+                enum_source,
+                "class PackageHallucinationScorer(MessageTrueFalseScorer):",
+                "    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator()\n",
+                *stub_sets,
+                "    @staticmethod\n    def _normalize_python_name(name: str) -> str:\n        return name\n",
+                inspect.getsource(PackageHallucinationScorer.__init__),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    returncode, output = _ty_check_probe(probe)
+    assert returncode == (1 if extend_enum else 0), output
+    if extend_enum:
+        assert output.count("error[") == 1, output
+        assert "type-assertion-failure" in output, output
+        assert "assert_never(ecosystem)" in output, output
+        assert "PackageEcosystem.FUTURE" in output, output

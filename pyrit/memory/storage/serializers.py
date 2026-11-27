@@ -21,6 +21,8 @@ from pyrit.common.path import DB_DATA_PATH
 from pyrit.memory.storage.storage import DiskStorageIO, StorageIO
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterable
+
     from pyrit.memory import MemoryInterface
     from pyrit.models import MessagePiece, PromptDataType, Seed
 
@@ -178,6 +180,19 @@ class DataTypeSerializer(abc.ABC):
         await self._memory.results_storage_io.write_file_async(file_path, data)
         self.value = str(file_path)
 
+    async def save_stream_async(self, chunks: AsyncIterable[bytes]) -> None:
+        """
+        Persist a bounded multipart stream through the configured storage backend.
+
+        Raises:
+            RuntimeError: If results storage is not initialized.
+        """
+        file_path = await self.get_data_filename_async()
+        if self._memory.results_storage_io is None:
+            raise RuntimeError("Storage IO not initialized")
+        await self._memory.results_storage_io.write_stream_async(path=file_path, chunks=chunks)
+        self.value = str(file_path)
+
     async def save_b64_image_async(self, data: str | bytes, output_filename: str | None = None) -> None:
         """
         Save a base64-encoded image to storage.
@@ -250,7 +265,7 @@ class DataTypeSerializer(abc.ABC):
                     raise RuntimeError("self._memory.results_storage_io is not initialized")
                 await self._memory.results_storage_io.write_file_async(file_path, audio_data)
             finally:
-                local_temp_path.unlink(missing_ok=True)
+                await asyncio.to_thread(local_temp_path.unlink, missing_ok=True)
 
         # If local, we can just save straight to disk and do not need to delete temp file after
         else:

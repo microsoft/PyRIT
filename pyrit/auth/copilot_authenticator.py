@@ -12,7 +12,6 @@ from typing import Any
 from msal_extensions import FilePersistence, build_encrypted_persistence
 
 from pyrit.auth.authenticator import Authenticator
-from pyrit.common import print_deprecation_message
 from pyrit.common.path import PYRIT_CACHE_PATH
 
 logger = logging.getLogger(__name__)
@@ -45,8 +44,6 @@ class CopilotAuthenticator(Authenticator):
     DEFAULT_TOKEN_CAPTURE_TIMEOUT: int = 60
     #: Default timeout for waiting on page elements (in seconds)
     DEFAULT_ELEMENT_TIMEOUT_SECONDS: int = 10
-    #: Deprecated and unused; will be removed in 1.3.0 together with the ``network_retries`` argument.
-    DEFAULT_NETWORK_RETRIES: int = 3
 
     def __init__(
         self,
@@ -55,7 +52,6 @@ class CopilotAuthenticator(Authenticator):
         maximized: bool = True,
         timeout_for_elements_seconds: int = DEFAULT_ELEMENT_TIMEOUT_SECONDS,
         token_capture_timeout_seconds: int = DEFAULT_TOKEN_CAPTURE_TIMEOUT,
-        network_retries: int | None = None,
         fallback_to_plaintext: bool = False,
     ) -> None:
         """
@@ -66,8 +62,6 @@ class CopilotAuthenticator(Authenticator):
             maximized (bool): Whether to start the browser maximized. Default is True.
             timeout_for_elements_seconds (int): Timeout used when waiting for page elements, in seconds.
             token_capture_timeout_seconds (int): Maximum time to wait for token capture via network monitoring.
-            network_retries (int | None): Deprecated and ignored; no operation is retried. Will be removed in
-                1.3.0. Default is None.
             fallback_to_plaintext (bool): Whether to fallback to plaintext storage if encryption is unavailable.
                 If set to False (default), an exception will be raised if encryption cannot be used.
                 WARNING: Setting to True stores tokens in plaintext.
@@ -76,13 +70,6 @@ class CopilotAuthenticator(Authenticator):
             ValueError: If the required environment variables are not set.
         """
         super().__init__()
-
-        if network_retries is not None:
-            print_deprecation_message(
-                old_item="CopilotAuthenticator(network_retries=...)",
-                new_item="CopilotAuthenticator()",
-                removed_in="1.3.0",
-            )
 
         self._username = os.getenv("COPILOT_USERNAME")
         self._password = os.getenv("COPILOT_PASSWORD")
@@ -307,7 +294,7 @@ class CopilotAuthenticator(Authenticator):
         import sys
 
         try:
-            from playwright.async_api import async_playwright  # type: ignore[ty:unresolved-import]  # noqa: F401
+            from playwright.async_api import async_playwright  # type: ignore[ty:import-not-found]  # noqa: F401
         except ImportError:
             raise RuntimeError(
                 "Playwright is not installed. Please install it with: "
@@ -365,7 +352,7 @@ class CopilotAuthenticator(Authenticator):
         Raises:
             ValueError: If the username is not set.
         """
-        from playwright.async_api import async_playwright  # type: ignore[ty:unresolved-import]
+        from playwright.async_api import async_playwright  # type: ignore[ty:import-not-found]
 
         bearer_token: str | None = None
         token_expires_in = None

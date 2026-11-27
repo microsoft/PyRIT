@@ -1,4 +1,4 @@
-import { isJsonObjectParameter } from '@/components/Parameters/parameterForm'
+import { isJsonObjectParameter, nonNullableTypeName } from '@/components/Parameters/parameterForm'
 import type { Parameter, TargetTypeEntry } from '@/types'
 import { isGuiTargetType } from '@/utils/targetVisibility'
 
@@ -46,8 +46,8 @@ export function isMetadataDrivenTargetParameter(targetType: string, parameter: P
     return true
   }
   if (parameter.is_list) {
-    const elementType = /^list\[(.+)\]$/.exec(parameter.type_name)?.[1]
-    return elementType !== undefined && SCALAR_PARAMETER_TYPES.has(elementType)
+    const elementType = /^list\[(.+)\]$/.exec(nonNullableTypeName(parameter.type_name))?.[1]
+    return elementType !== undefined && SCALAR_PARAMETER_TYPES.has(nonNullableTypeName(elementType))
   }
   return parameter.type_name
     .split('|')

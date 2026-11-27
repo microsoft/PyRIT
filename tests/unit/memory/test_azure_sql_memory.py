@@ -16,6 +16,7 @@ from sqlalchemy.orm import Query, Session
 from pyrit.common import Singleton
 from pyrit.converter import Base64Converter
 from pyrit.memory import (
+    AttackResultEntry,
     AttackResultKeysetCursor,
     AzureSQLMemory,
     EmbeddingDataEntry,
@@ -194,6 +195,7 @@ def test_remove_seeds_metadata_only_matches_scalar_json_types(
     session.query.return_value = query
     query.filter.return_value = query
     query.delete.return_value = 1
+    query.first.return_value = None
 
     with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
         if remove_groups:
@@ -204,7 +206,7 @@ def test_remove_seeds_metadata_only_matches_scalar_json_types(
             removed = uninitialized_memory_interface._execute_remove_seeds_from_memory(metadata={"payload": value})
 
     assert removed == 1
-    condition = query.filter.call_args.args[0]
+    condition = query.filter.call_args_list[-1 if remove_groups else 0].args[0]
     compiled = condition.compile(dialect=mssql.dialect())
     assert "[metadata_0].[type] IN (1, 2, 3)" in str(compiled)
     assert compiled.params["md_key_0"] == "payload"
@@ -620,6 +622,27 @@ def test_get_conversation_stats_types_created_at_as_utc_datetime(
     assert isinstance(sql.selected_columns.created_at.type, UTCDateTime)
 
 
+def test_get_conversation_stats_orders_the_last_piece_canonically(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The last message lookup orders pieces the way the conversation page does.
+
+    SQL Server UUID ordering differs from the SDK string comparison the page
+    uses, so the lookup sorts ids through the same lowered collation, and the
+    timestamp decides between pieces that share a sequence number.
+    """
+    session = MagicMock()
+    session.execute.return_value.fetchall.return_value = []
+
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        uninitialized_memory_interface._execute_get_conversation_stats(conversation_ids=["conversation"])
+
+    sql = str(session.execute.call_args.args[0])
+    assert "p2.sequence DESC" in sql
+    assert "p2.timestamp DESC" in sql
+    assert "LOWER(CAST(p2.id AS VARCHAR(36))) COLLATE Latin1_General_100_BIN2 DESC" in sql
+
+
 def test_get_conversation_stats_uses_one_latest_row_apply(
     uninitialized_memory_interface: AzureSQLMemory,
 ) -> None:
@@ -635,6 +658,23 @@ def test_get_conversation_stats_uses_one_latest_row_apply(
     assert sql.upper().count("SELECT TOP 1") == 1
     assert "OUTER APPLY" in sql.upper()
     assert "p2.converted_value_data_type AS last_data_type" in sql
+
+
+def test_latest_per_conversation_tiebreak_orders_uuids_canonically(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The anti-join tiebreak normalizes both id operands for SQL Server.
+
+    Native uniqueidentifier ordering differs from the SDK string comparison,
+    so an unnormalized comparison would crown a different tie winner than the
+    post-fetch Python dedup on the same rows.
+    """
+    condition = uninitialized_memory_interface._attack_results_not_superseded_condition(conditions=[])
+    statement = select(AttackResultEntry.id).where(condition)
+    sql = str(statement.compile(dialect=mssql.dialect())).upper()
+
+    assert "LOWER(CAST(NEWER.ID AS VARCHAR(36)))" in sql
+    assert "LOWER(CAST([ATTACKRESULTENTRIES].ID AS VARCHAR(36)))" in sql
 
 
 def test_get_conversation_stats_chunks_within_bind_budget(

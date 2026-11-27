@@ -26,7 +26,7 @@ import uuid
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, assert_never
 
 from pydantic import Field
 
@@ -43,6 +43,7 @@ from pyrit.models import (
     AttackSeedGroup,
     ScoringExpectation,
 )
+from pyrit.prompt_target import TargetRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -214,7 +215,11 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
     DELEGATES_SCORING: ClassVar[bool] = True
     FIXED_PARAMS_TYPE = AttackParameters.excluding("next_message", "prepended_conversation")
 
+    # Each child attack validates its own target, so the compound adds no requirement.
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
     RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.ORCHESTRATION
+    IS_COMPOUND: ClassVar[bool] = True
 
     CHILD_ATTACK_RESULT_IDS_KEY: str = "child_attack_result_ids"
     """Metadata key under which the per-child-attack result IDs are stored."""
@@ -470,6 +475,12 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         if self._completion_policy is SequenceCompletionPolicy.STRICT_ALL:
             return result.outcome is not AttackOutcome.SUCCESS
         # EXHAUSTIVE and LAST_RESULT run every child attack to completion.
+        if (  # pragma: no cover
+            TYPE_CHECKING
+            and self._completion_policy is not SequenceCompletionPolicy.EXHAUSTIVE
+            and self._completion_policy is not SequenceCompletionPolicy.LAST_RESULT
+        ):
+            assert_never(self._completion_policy)
         return False
 
     def _compute_outcome(self, *, results: list[AttackResult]) -> AttackOutcome:
@@ -484,6 +495,13 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 return AttackOutcome.FAILURE
             return AttackOutcome.UNDETERMINED
         # FIRST_SUCCESS, FIRST_DECISIVE, EXHAUSTIVE all share any-success semantics.
+        if (  # pragma: no cover
+            TYPE_CHECKING
+            and self._completion_policy is not SequenceCompletionPolicy.FIRST_SUCCESS
+            and self._completion_policy is not SequenceCompletionPolicy.FIRST_DECISIVE
+            and self._completion_policy is not SequenceCompletionPolicy.EXHAUSTIVE
+        ):
+            assert_never(self._completion_policy)
         if any(r.outcome is AttackOutcome.SUCCESS for r in results):
             return AttackOutcome.SUCCESS
         if all(r.outcome is AttackOutcome.ERROR for r in results):

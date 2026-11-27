@@ -8,7 +8,7 @@ import logging
 import sys
 import typing
 from enum import Enum
-from typing import Any, Union
+from typing import TYPE_CHECKING, Any, Union, assert_never
 
 from pyrit.executor.attack import AttackScoringConfig
 
@@ -92,6 +92,28 @@ class _ConstructorCompatibilityHelper:
         )
         return False
 
+    def scoring_config_incompatibility(self, *, config_type: type[AttackScoringConfig]) -> str | None:
+        """
+        Describe why a scoring config of ``config_type`` would not reach the attack.
+
+        Lets a caller check compatibility before it builds a config.
+
+        Args:
+            config_type (type[AttackScoringConfig]): The type of config a caller would pass.
+
+        Returns:
+            str | None: The reason the attack would drop such a config, or None when it accepts one.
+        """
+        if "attack_scoring_config" not in self.accepted_params:
+            return f"{self._attack_class.__name__} does not accept 'attack_scoring_config'."
+        required = self.scoring_config_type
+        if required is None or issubclass(config_type, required):
+            return None
+        return (
+            f"Scorer config of type {config_type.__name__} is incompatible "
+            f"with {self._attack_class.__name__} (requires {required.__name__})."
+        )
+
     def _apply_scorer_policy(self, message: str) -> None:
         """
         Apply the scorer override policy for an incompatibility.
@@ -102,10 +124,18 @@ class _ConstructorCompatibilityHelper:
         Raises:
             ValueError: If the policy is RAISE.
         """
-        if self._scorer_override_policy == ScorerOverridePolicy.RAISE:
-            raise ValueError(message)
-        if self._scorer_override_policy == ScorerOverridePolicy.WARN:
-            logger.warning(message)
+        policy = self._scorer_override_policy
+        match policy:
+            case ScorerOverridePolicy.RAISE:
+                raise ValueError(message)
+            case ScorerOverridePolicy.WARN:
+                logger.warning(message)
+            case ScorerOverridePolicy.SKIP:
+                pass
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(policy)
+                # Preserve the historical runtime fallback for values outside the declared enum: ignore silently.
 
     def _derive_scoring_config_type(self) -> type | None:
         """

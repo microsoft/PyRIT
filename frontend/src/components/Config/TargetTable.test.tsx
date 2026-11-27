@@ -1,8 +1,10 @@
-import { act, render, screen, fireEvent, within } from '@testing-library/react'
+import { act, render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
+import { useTargetCapabilityDetection } from '@/hooks/useTargetCapabilityDetection'
+import { targetsApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { TargetCapabilities, TargetInstance } from '@/types'
 import {
@@ -11,7 +13,25 @@ import {
   userPreferencesStorageKey,
   writeUserPreferences,
 } from '@/utils/userPreferences'
-import TargetTable from './TargetTable'
+import TargetTableView from './TargetTable'
+
+function TargetTable({
+  onTargetDetected,
+  visible = true,
+  ...props
+}: Omit<React.ComponentProps<typeof TargetTableView>, 'detection'> & {
+  onTargetDetected?: (updated: TargetInstance, previous: TargetInstance) => void
+  visible?: boolean
+}) {
+  const detection = useTargetCapabilityDetection({ generation: props.generation ?? '', onTargetDetected })
+  return visible ? <TargetTableView {...props} detection={detection} /> : null
+}
+
+jest.mock('@/services/api', () => ({
+  targetsApi: { detectCapabilities: jest.fn() },
+}))
+
+const detectCapabilities = jest.mocked(targetsApi.detectCapabilities)
 
 jest.mock('./TargetTable.styles', () => ({
   useTargetTableStyles: () => new Proxy({}, { get: () => '' }),
@@ -104,7 +124,167 @@ describe('TargetTable', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    detectCapabilities.mockReset()
     window.localStorage.clear()
+  })
+
+  it('should reveal all-selected checkboxes only after entering detection and cancel without requests', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><TargetTable {...defaultProps} /></TestWrapper>)
+    const controls = screen.getByRole('toolbar', { name: 'Target controls' })
+    expect(within(controls).getByRole('button', { name: 'Show hidden targets (0)' })).toBeDisabled()
+    expect(within(controls).getByRole('button', { name: 'Auto-detect capabilities' })).toBeEnabled()
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    expect(screen.queryByRole('checkbox', { name: 'Select all shown targets' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    expect(screen.getByRole('checkbox', { name: 'Select all shown targets' })).toBeChecked()
+    for (const target of sampleTargets) {
+      expect(screen.getByRole('checkbox', { name: `Select ${target.target_registry_name}` })).toBeChecked()
+    }
+    expect(screen.getByRole('button', { name: 'Begin capability detection' })).toBeEnabled()
+    expect(screen.getByText('Checks may incur provider charges.')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Select all' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Select none' })).not.toBeInTheDocument()
+    expect(detectCapabilities).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('checkbox', { name: 'Select all shown targets' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Checks may incur provider charges.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Auto-detect capabilities' })).toBeEnabled()
+    expect(detectCapabilities).not.toHaveBeenCalled()
+  })
+
+  it('should use the header checkbox for all, none, and a subset without a selected-count label', async () => {
+    const user = userEvent.setup()
+    detectCapabilities.mockResolvedValue(sampleTargets[1])
+    const onTargetDetected = jest.fn()
+    render(<TestWrapper><TargetTable {...defaultProps} onTargetDetected={onTargetDetected} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Select all shown targets' }))
+    expect(screen.getByRole('button', { name: 'Begin capability detection' })).toBeDisabled()
+    for (const target of sampleTargets) {
+      expect(screen.getByRole('checkbox', { name: `Select ${target.target_registry_name}` })).not.toBeChecked()
+    }
+    await user.click(screen.getByRole('checkbox', { name: 'Select all shown targets' }))
+    expect(screen.getByRole('checkbox', { name: 'Select all shown targets' })).toBeChecked()
+    for (const target of sampleTargets) {
+      expect(screen.getByRole('checkbox', { name: `Select ${target.target_registry_name}` })).toBeChecked()
+    }
+    await user.click(screen.getByRole('checkbox', { name: 'Select all shown targets' }))
+    await user.click(screen.getByRole('checkbox', { name: `Select ${sampleTargets[1].target_registry_name}` }))
+    expect(screen.getByRole('checkbox', { name: 'Select all shown targets' })).toBePartiallyChecked()
+    expect(screen.queryByText(/shown targets selected/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Begin capability detection' }))
+    expect(await screen.findByText('Saved')).toBeInTheDocument()
+    expect(detectCapabilities).toHaveBeenCalledTimes(1)
+    expect(detectCapabilities).toHaveBeenCalledWith(sampleTargets[1])
+    expect(onTargetDetected).toHaveBeenCalledWith(sampleTargets[1], sampleTargets[1])
+  })
+
+  it('should detect only selected shown targets after hiding and filtering rows', async () => {
+    const user = userEvent.setup()
+    detectCapabilities.mockResolvedValue(sampleTargets[1])
+    render(<TestWrapper><TargetTable {...defaultProps} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    await pickFilterOption(user, 'Filter by type:', 'AzureImageTarget')
+    await user.click(screen.getByRole('button', { name: 'Begin capability detection' }))
+    expect(await screen.findByText('Saved')).toBeInTheDocument()
+    expect(detectCapabilities).toHaveBeenCalledTimes(1)
+    expect(detectCapabilities).toHaveBeenCalledWith(sampleTargets[1])
+  })
+
+  it('should keep a fixed batch while filters change and continue after an error', async () => {
+    const user = userEvent.setup()
+    let rejectFirst: (error: Error) => void = () => {}
+    detectCapabilities
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectFirst = reject }))
+      .mockResolvedValue(sampleTargets[1])
+    const onTargetDetected = jest.fn()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} onTargetDetected={onTargetDetected} />
+      </TestWrapper>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    await user.click(screen.getByRole('button', { name: 'Begin capability detection' }))
+    expect(await screen.findByText('Checking...')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Detecting capabilities...' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    expect(screen.getAllByText('Waiting')).toHaveLength(2)
+    await pickFilterOption(user, 'Filter by type:', 'AzureImageTarget')
+    await act(async () => { rejectFirst(new Error('Endpoint unavailable')) })
+    expect(await screen.findByText(/openai_chat_gpt4: Endpoint unavailable/)).toBeInTheDocument()
+    await waitFor(() => expect(detectCapabilities).toHaveBeenCalledTimes(3))
+    expect(detectCapabilities.mock.calls.map(([target]) => target.target_registry_name))
+      .toEqual(sampleTargets.map((target: TargetInstance) => target.target_registry_name))
+    expect(onTargetDetected).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: 'Auto-detect capabilities' })).toBeEnabled()
+  })
+
+  it('should use the latest parent callback when detection completes', async () => {
+    const user = userEvent.setup()
+    let finish: (target: TargetInstance) => void = () => {}
+    detectCapabilities.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    const firstCallback = jest.fn()
+    const latestCallback = jest.fn()
+    const props = { ...defaultProps, targets: [sampleTargets[0]] }
+    const { rerender } = render(
+      <TestWrapper><TargetTable {...props} onTargetDetected={firstCallback} /></TestWrapper>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    await user.click(screen.getByRole('button', { name: 'Begin capability detection' }))
+    rerender(<TestWrapper><TargetTable {...props} onTargetDetected={latestCallback} /></TestWrapper>)
+    await act(async () => { finish(sampleTargets[0]) })
+    expect(firstCallback).not.toHaveBeenCalled()
+    expect(latestCallback).toHaveBeenCalledWith(sampleTargets[0], sampleTargets[0])
+  })
+
+  it('should restore progress and the original selection when the table remounts during detection', async () => {
+    const user = userEvent.setup()
+    let finish!: (target: TargetInstance) => void
+    detectCapabilities.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    const onTargetDetected = jest.fn()
+    const props = { ...defaultProps, onTargetDetected }
+    const { rerender } = render(<TestWrapper><TargetTable {...props} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Select all shown targets' }))
+    await user.click(screen.getByRole('checkbox', { name: `Select ${sampleTargets[1].target_registry_name}` }))
+    await user.click(screen.getByRole('button', { name: 'Begin capability detection' }))
+    rerender(<TestWrapper><TargetTable {...props} visible={false} /></TestWrapper>)
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    rerender(<TestWrapper><TargetTable {...props} /></TestWrapper>)
+    expect(screen.getByText('Checking...')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Detecting capabilities...' })).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: 'Select all shown targets' })).toBePartiallyChecked()
+    expect(screen.getByRole('checkbox', { name: `Select ${sampleTargets[1].target_registry_name}` })).toBeChecked()
+    for (const target of [sampleTargets[0], sampleTargets[2]]) {
+      expect(screen.getByRole('checkbox', { name: `Select ${target.target_registry_name}` })).not.toBeChecked()
+    }
+    await act(async () => finish(sampleTargets[1]))
+    expect(screen.getByText('Saved')).toBeInTheDocument()
+    expect(onTargetDetected).toHaveBeenCalledWith(sampleTargets[1], sampleTargets[1])
+    expect(detectCapabilities).toHaveBeenCalledTimes(1)
+  })
+
+  it('should discard an old runtime batch without resetting table filters', async () => {
+    const user = userEvent.setup()
+    let finish: (target: TargetInstance) => void = () => {}
+    detectCapabilities.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    const onTargetDetected = jest.fn()
+    const { rerender } = render(
+      <TestWrapper><TargetTable {...defaultProps} generation="first" onTargetDetected={onTargetDetected} /></TestWrapper>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    await user.click(screen.getByRole('button', { name: 'Begin capability detection' }))
+    await pickFilterOption(user, 'Filter by type:', 'AzureImageTarget')
+    rerender(
+      <TestWrapper><TargetTable {...defaultProps} generation="second" onTargetDetected={onTargetDetected} /></TestWrapper>,
+    )
+    await act(async () => { finish(sampleTargets[0]) })
+    expect(onTargetDetected).not.toHaveBeenCalled()
+    expect(detectCapabilities).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Auto-detect capabilities' })).toBeEnabled()
+    expect(screen.getByRole('combobox', { name: 'Filter by type:' })).toHaveValue('Type: AzureImageTarget')
   })
 
   it('should render a flat table with all targets visible', () => {
@@ -181,9 +361,9 @@ describe('TargetTable', () => {
 
     await user.click(screen.getByRole('button', { name: 'Hide target_one' }))
     expect(screen.queryByRole('button', { name: 'Identity for target_one' })).not.toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toBeInTheDocument()
     expect(defaultProps.onSetDefaultAdversarialTarget).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
+    await user.click(screen.getByRole('button', { name: 'Show hidden targets (1)' }))
     expect(screen.getByRole('region', { name: 'Identity for target_one' })).toBeVisible()
   })
 
@@ -318,6 +498,40 @@ describe('TargetTable', () => {
     expect(within(screen.getByRole('table')).queryByLabelText('Default adversarial target')).not.toBeInTheDocument()
     const defaults = within(screen.getByRole('region', { name: 'Target defaults' }))
     expect(defaults.getByRole('option', { name: 'Use server default' })).toHaveValue('')
+  })
+
+  it('should say whether each target comes back after a restart, and nothing for inner targets', async () => {
+    const user = userEvent.setup()
+    const targets = [
+      makeTarget({ target_registry_name: 'saved_chat', origin: 'saved' }),
+      makeTarget({ target_registry_name: 'startup_chat', origin: 'configuration' }),
+      makeTarget({
+        target_registry_name: 'temp_pool',
+        target_type: 'RoundRobinTarget',
+        origin: 'temporary',
+        inner_targets: [{ target_registry_name: 'inner_chat', origin: null }],
+      }),
+      makeTarget({ target_registry_name: 'unknown_chat' }),
+    ]
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={targets} />
+      </TestWrapper>
+    )
+
+    const labelIn = (name: string): string | null => {
+      const row = screen.getByRole('row', { name: new RegExp(`(^|\\s)${name}(\\s|$)`) })
+      const label = ['Saved', 'From configuration', 'Temporary'].find((text) => within(row).queryByText(text))
+      return label ?? null
+    }
+    expect(['saved_chat', 'startup_chat', 'temp_pool', 'unknown_chat'].map(labelIn)).toEqual([
+      'Saved',
+      'From configuration',
+      'Temporary',
+      null,
+    ])
+    await user.click(screen.getByRole('button', { name: 'Expand inner targets' }))
+    expect(labelIn('inner_chat')).toBeNull()
   })
 
   it('should set the supported adversarial role', async () => {
@@ -543,7 +757,7 @@ describe('TargetTable', () => {
     await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
 
     expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toHaveAttribute('aria-pressed', 'false')
 
     firstRender.unmount()
     render(
@@ -567,18 +781,24 @@ describe('TargetTable', () => {
     await user.click(screen.getByRole('button', { name: 'Hide azure_image_dalle' }))
     expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
+    await user.click(screen.getByRole('button', { name: 'Show hidden targets (1)' }))
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByText('dall-e-3')).toBeInTheDocument()
 
+    await user.click(screen.getByRole('button', { name: 'Show hidden targets (1)' }))
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Show hidden targets (1)' }))
     await user.click(screen.getByRole('button', { name: 'Show azure_image_dalle' }))
 
     expect(screen.getByText('dall-e-3')).toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (0)' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (0)' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (0)' })).toHaveAttribute('aria-pressed', 'false')
 
     await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
 
     expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('should merge a visibility change with the latest stored choices', async () => {
@@ -610,7 +830,7 @@ describe('TargetTable', () => {
     )
 
     await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
-    await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
+    await user.click(screen.getByRole('button', { name: 'Show hidden targets (1)' }))
 
     act(() => {
       writeUserPreferences('local', DEFAULT_USER_PREFERENCES)
@@ -620,12 +840,12 @@ describe('TargetTable', () => {
       }))
     })
 
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (0)' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (0)' })).toBeDisabled()
 
     await user.click(screen.getByRole('button', { name: 'Hide azure_image_dalle' }))
 
     expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('should hide registry entries independently when they share an identifier', async () => {
@@ -654,7 +874,7 @@ describe('TargetTable', () => {
 
     expect(screen.queryByText('first_registry_name')).not.toBeInTheDocument()
     expect(screen.getByText('second_registry_name')).toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toBeInTheDocument()
   })
 
   it('should not show filter when only one target type exists', () => {
@@ -1015,5 +1235,178 @@ describe('TargetTable', () => {
     )
 
     expect(screen.queryByLabelText('Expand inner targets')).not.toBeInTheDocument()
+  })
+
+  describe('account', () => {
+    const REJECTED_MESSAGE = 'The last request was rejected. The credentials may be expired or invalid. '
+      + 'Update them through the API (PUT /api/targets/my_rejected/credentials) '
+      + 'or with pyrit_scan set-target-credential my_rejected.'
+    const acceptedTarget = makeTarget({
+      target_registry_name: 'my_accepted', private: true, credentials_rejected: false,
+    })
+    const NOT_UPDATABLE_MESSAGE = 'The last request was rejected. The credentials may be expired or invalid. '
+      + "This target doesn't allow credential updates, so ask whoever set it up to update them."
+    const rejectedTarget = makeTarget({
+      target_registry_name: 'my_rejected', private: true, credentials_rejected: true, allow_credential_updates: true,
+    })
+    const accountTargets = [sampleTargets[0], acceptedTarget, rejectedTarget]
+    const rowFor = (name: string) => within(screen.getByTestId(`target-row-${name}`))
+
+    it('should explain the Account column with info help', async () => {
+      const user = userEvent.setup()
+      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
+
+      expect(screen.getByRole('columnheader', { name: 'Account' })).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /Account.*information/i }))
+      expect(await screen.findByRole('note')).toHaveTextContent(
+        'Shared targets are available to everyone. Yours are available only to you. '
+          + "The icon shows whether the provider accepted the target's credentials on the last request; "
+          + 'there is none until the target is used.',
+      )
+    })
+
+    it.each([
+      ['Shared', false, false, true, 'img', 'Credentials accepted'],
+      ['Shared', false, true, true, 'button', REJECTED_MESSAGE],
+      ['Shared', false, true, false, 'button', NOT_UPDATABLE_MESSAGE],
+      ['Yours', true, false, true, 'img', 'Credentials accepted'],
+      ['Yours', true, true, true, 'button', REJECTED_MESSAGE],
+    ])('should show %s (private: %s) with its credential status (rejected: %s, updatable: %s)', (
+      label: string, isPrivate: boolean, credentialsRejected: boolean, updatable: boolean, role: string, name: string,
+    ) => {
+      const target = makeTarget({
+        target_registry_name: 'my_rejected',
+        private: isPrivate,
+        credentials_rejected: credentialsRejected,
+        allow_credential_updates: updatable,
+      })
+      render(<TestWrapper><TargetTable {...defaultProps} targets={[target]} /></TestWrapper>)
+
+      const row = rowFor('my_rejected')
+      expect(row.getByText(label)).toBeInTheDocument()
+      expect(row.getByRole(role, { name })).toBeInTheDocument()
+    })
+    it('should show a key labeled Credentials accepted once a request succeeded', async () => {
+      const user = userEvent.setup()
+      const target = makeTarget({ target_registry_name: 'my_target', private: true, credentials_rejected: false })
+      render(<TestWrapper><TargetTable {...defaultProps} targets={[target]} /></TestWrapper>)
+
+      const row = rowFor('my_target')
+      expect(row.getByText('Yours')).toBeInTheDocument()
+      const key = row.getByRole('img', { name: 'Credentials accepted' })
+      expect(row.queryByRole('button', { name: /rejected/ })).not.toBeInTheDocument()
+      await user.hover(key)
+      expect(await screen.findByRole('tooltip')).toHaveTextContent('Credentials accepted')
+    })
+
+    it.each([null, undefined])(
+      'should show no credential icon before the target is used (credentials_rejected: %s)',
+      (credentialsRejected: null | undefined) => {
+        const target = makeTarget({
+          target_registry_name: 'my_target', private: true, credentials_rejected: credentialsRejected,
+        })
+        render(<TestWrapper><TargetTable {...defaultProps} targets={[target]} /></TestWrapper>)
+
+        const row = rowFor('my_target')
+        expect(row.getByText('Yours')).toBeInTheDocument()
+        expect(row.queryByRole('img', { name: 'Credentials accepted' })).not.toBeInTheDocument()
+        expect(row.queryByRole('button', { name: /rejected/ })).not.toBeInTheDocument()
+      },
+    )
+
+    it('should explain that a target without credential updates needs its owner when the lock is clicked', async () => {
+      const user = userEvent.setup()
+      const target = makeTarget({
+        target_registry_name: 'team_target', credentials_rejected: true, allow_credential_updates: false,
+      })
+      render(<TestWrapper><TargetTable {...defaultProps} targets={[target]} /></TestWrapper>)
+
+      await user.click(rowFor('team_target').getByRole('button', { name: NOT_UPDATABLE_MESSAGE }))
+
+      expect(await screen.findByText(/ask whoever set it up/)).toBeInTheDocument()
+      expect(screen.queryByText(/set-target-credential/, { selector: 'code' })).not.toBeInTheDocument()
+    })
+
+    it('should show a lock button labeled with how to update rejected credentials', async () => {
+      const user = userEvent.setup()
+      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
+
+      const row = rowFor('my_rejected')
+      expect(row.getByText('Yours')).toBeInTheDocument()
+      expect(row.queryByRole('img', { name: 'Credentials accepted' })).not.toBeInTheDocument()
+      const lock = row.getByRole('button', { name: REJECTED_MESSAGE })
+      await user.hover(lock)
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(REJECTED_MESSAGE)
+    })
+
+    it('should explain how to update rejected credentials when the lock is clicked, without an edit dialog', async () => {
+      const user = userEvent.setup()
+      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
+
+      await user.click(rowFor('my_rejected').getByRole('button', { name: REJECTED_MESSAGE }))
+
+      const commands = await screen.findAllByText(/my_rejected/, { selector: 'code' })
+      expect(commands.map((command: HTMLElement) => command.textContent)).toEqual([
+        'PUT /api/targets/my_rejected/credentials',
+        'pyrit_scan set-target-credential my_rejected',
+      ])
+      expect(commands[0].parentElement).toHaveTextContent(REJECTED_MESSAGE)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    })
+
+    it('should offer no credential row actions', () => {
+      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
+
+      const actions = within(rowFor('my_rejected').getAllByRole('cell')[0]).getAllByRole('button')
+      expect(actions.map((button: HTMLElement) => button.getAttribute('aria-label'))).toEqual(['Hide my_rejected'])
+    })
+
+    it('should leave the account of inner targets blank', async () => {
+      const user = userEvent.setup()
+      const roundRobin = makeTarget({
+        target_registry_name: 'rr_mixed',
+        target_type: 'RoundRobinTarget',
+        target_specific_params: { weights: [1, 1] },
+        inner_targets: [
+          { target_registry_name: 'inner_shared', target_type: 'OpenAIChatTarget' },
+          {
+            target_registry_name: 'inner_mine', target_type: 'OpenAIChatTarget',
+            private: true, credentials_rejected: true,
+          },
+        ],
+      })
+      render(<TestWrapper><TargetTable {...defaultProps} targets={[roundRobin]} /></TestWrapper>)
+
+      await user.click(screen.getByRole('button', { name: 'Expand inner targets' }))
+      const accountColumn = screen.getAllByRole('columnheader')
+        .findIndex((header: HTMLElement) => header.getAttribute('aria-label') === 'Account')
+      for (const name of [/#1 inner_shared/, /#2 inner_mine/]) {
+        const innerRow = screen.getByRole('row', { name })
+        expect(within(innerRow).getAllByRole('cell')[accountColumn]).toBeEmptyDOMElement()
+        expect(within(innerRow).queryByText(/^(Shared|Yours)$/)).not.toBeInTheDocument()
+      }
+    })
+
+    it('should filter targets by account', async () => {
+      const user = userEvent.setup()
+      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
+
+      await pickFilterOption(user, 'Filter by account:', 'Yours')
+      expect(screen.queryByTestId('target-row-openai_chat_gpt4')).not.toBeInTheDocument()
+      expect(screen.getByTestId('target-row-my_accepted')).toBeInTheDocument()
+      expect(screen.getByTestId('target-row-my_rejected')).toBeInTheDocument()
+
+      await pickFilterOption(user, 'Filter by account:', 'Yours')
+      await pickFilterOption(user, 'Filter by account:', 'Shared')
+      expect(screen.getByTestId('target-row-openai_chat_gpt4')).toBeInTheDocument()
+      expect(screen.queryByTestId('target-row-my_accepted')).not.toBeInTheDocument()
+    })
+
+    it('should not offer the account filter when every target is shared', () => {
+      render(<TestWrapper><TargetTable {...defaultProps} /></TestWrapper>)
+
+      expect(screen.queryByRole('combobox', { name: 'Filter by account:' })).not.toBeInTheDocument()
+    })
   })
 })

@@ -21,12 +21,15 @@
 # 0DIN [@odin2024],
 # Aegis [@ghosh2025aegis],
 # Agent Threat Rules [@atr2026],
+# AIR-Bench 2024 [@zeng2024airbench],
 # ALERT [@tedeschi2024alert],
 # Anthropic Model-Written Evals [@perez2022modelwritten],
+# AttaQ [@kour2023unveiling],
 # BeaverTails [@ji2023beavertails],
 # CBT-Bench [@zhang2024cbtbench],
 # CategoricalHarmfulQA (CatQA) [@bhardwaj2024homer],
 # CoCoNot [@brahman2024coconot],
+# CoSafe [@yu2024cosafe],
 # CyberSecEval [@bhatt2023cyberseceval],
 # DarkBench [@darkbench2025],
 # DecodingTrust [@wang2023decodingtrust],
@@ -62,6 +65,7 @@
 # VLSU [@palaskar2025vlsu],
 # VLGuard [@zong2024vlguard],
 # WildGuard [@han2024wildguard],
+# WildJailbreak [@jiang2024wildteaming],
 # XL-SafetyBench [@choi2026xlsafetybench],
 # XSTest [@rottger2023xstest],
 # AILuminate [@ghosh2025ailuminate],
@@ -80,6 +84,9 @@
 # `garak_api_key_templates`, `garak_api_key_partial_keys`, `garak_api_key_safe_placeholders`),
 # the API-key service-to-pattern map (`garak_api_key_service_patterns`),
 # ProPILE PII records and prompt templates (`garak_propile_pii`, `garak_propile_templates`),
+# leak-replay cloze passages that are downloaded at run time rather than bundled
+# (`garak_leak_replay_literature`, `garak_leak_replay_potter`, `garak_leak_replay_nyt`,
+# `garak_leak_replay_guardian`) [@chang2023speak],
 # an audio jailbreak set
 # (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
 

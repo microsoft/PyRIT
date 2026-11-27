@@ -12,6 +12,11 @@ import {
   Text,
   Tooltip,
   Checkbox,
+  MessageBar,
+  MessageBarBody,
+  Popover,
+  PopoverSurface,
+  PopoverTrigger,
   mergeClasses,
 } from '@fluentui/react-components'
 import {
@@ -31,10 +36,15 @@ import {
   ChevronDownRegular,
   EyeOffRegular,
   EyeRegular,
+  KeyFilled,
+  LockClosedFilled,
 } from '@fluentui/react-icons'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
+import type { TargetCapabilityDetection } from '@/hooks/useTargetCapabilityDetection'
 import type { TargetInstance } from '@/types'
 import {
   sameTarget,
@@ -48,20 +58,27 @@ import {
   CAPABILITY_COLUMNS,
   DEFAULT_TARGET_FILTERS,
   MODALITY_LABELS,
+  TARGET_ACCOUNT_LABELS,
   getTargetFilterOptions,
   orderModalities,
+  targetAccount,
   targetMatchesFilters,
   type TargetFilters,
 } from './targetFilters'
 import TargetFiltersBar from './TargetFiltersBar'
+import TargetOriginBadge from './TargetOriginBadge'
 import { useTargetTableStyles } from './TargetTable.styles'
 import TargetSelect from './TargetSelect'
 
 interface TargetTableProps {
+  generation?: string
   targets: TargetInstance[]
   defaultAdversarialTarget: TargetInstance | null
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
+  detection: TargetCapabilityDetection
 }
+
+const CREDENTIALS_ACCEPTED_LABEL = 'Credentials accepted'
 
 /** Format target_specific_params into a short human-readable string. */
 function formatParams(params?: Record<string, unknown> | null): string {
@@ -81,7 +98,10 @@ function formatParams(params?: Record<string, unknown> | null): string {
 }
 
 const COLUMN_TOOLTIPS = {
-  registryName: 'Unique name used to identify this configured target',
+  registryName:
+    'Unique name used to identify this target. Saved targets come back after the backend restarts or is '
+    + 'reinitialized, targets from configuration come back because the server registers them again, and '
+    + 'Temporary targets are gone.',
   type: 'Target class implementation',
   model: 'Configured model name. A dotted underline indicates the deployment alias differs from the underlying model — hover the value to see it.',
   endpoint: 'API endpoint URL the target sends requests to',
@@ -96,7 +116,7 @@ const FunctionCallOutputIcon = forwardRef<HTMLSpanElement, React.HTMLAttributes<
     const styles = useTargetTableStyles()
     return (
       <span ref={ref} className={styles.compositeIcon} {...rest}>
-        <MathFormulaRegular className={className} />
+        <MathFormulaRegular {...(className ? { className } : {})} />
         <ArrowHookUpLeftRegular className={styles.compositeBadge} />
       </span>
     )
@@ -178,6 +198,87 @@ function ModelCell({ target }: { target: TargetInstance }) {
   return <Text size={200}>{displayName}</Text>
 }
 
+function credentialsRejectedMessage(name: string, canUpdate: boolean): string {
+  const rejected = 'The last request was rejected. The credentials may be expired or invalid. '
+  return canUpdate
+    ? rejected + `Update them through the API (PUT /api/targets/${name}/credentials) or with `
+      + `pyrit_scan set-target-credential ${name}.`
+    : rejected + "This target doesn't allow credential updates, so ask whoever set it up to update them."
+}
+
+/** A red lock that explains, on click, how to update credentials the provider rejected. */
+function RejectedCredentialsButton({ name, canUpdate }: { name: string; canUpdate: boolean }) {
+  const styles = useTargetTableStyles()
+  const [infoOpen, setInfoOpen] = useState(false)
+  const [hoverVisible, setHoverVisible] = useState(false)
+  const message = credentialsRejectedMessage(name, canUpdate)
+  return (
+    <Popover withArrow open={infoOpen} onOpenChange={(_, data) => {
+      setInfoOpen(data.open)
+      setHoverVisible(false)
+    }}>
+      <PopoverTrigger disableButtonEnhancement>
+        <Tooltip content={message} relationship="label" visible={hoverVisible && !infoOpen}
+          onVisibleChange={(_, data) => setHoverVisible(!infoOpen && data.visible)}>
+          <Button
+            className={styles.rowAction}
+            appearance="subtle"
+            size="small"
+            icon={<LockClosedFilled className={styles.credentialsRejectedIcon} />}
+            aria-label={message}
+          />
+        </Tooltip>
+      </PopoverTrigger>
+      <PopoverSurface className={styles.credentialsHelp}>
+        The last request was rejected. The credentials may be expired or invalid.{' '}
+        {canUpdate ? (
+          <>
+            Update them through the API (<code>PUT /api/targets/{name}/credentials</code>) or with{' '}
+            <code>pyrit_scan set-target-credential {name}</code>.
+          </>
+        ) : (
+          <>This target doesn&apos;t allow credential updates, so ask whoever set it up to update them.</>
+        )}
+      </PopoverSurface>
+    </Popover>
+  )
+}
+
+/**
+ * Whether the provider accepted the target's credentials; the icon's shape carries that, not only its color.
+ * A target that hasn't been used shows no icon, because nothing has checked its credentials yet.
+ */
+function CredentialsStatus({ target }: { target: TargetInstance }) {
+  const styles = useTargetTableStyles()
+  if (target.credentials_rejected === true) {
+    return (
+      <RejectedCredentialsButton
+        name={target.target_registry_name}
+        canUpdate={target.allow_credential_updates === true}
+      />
+    )
+  }
+  if (target.credentials_rejected !== false) {
+    return null
+  }
+  return (
+    <Tooltip content={CREDENTIALS_ACCEPTED_LABEL} relationship="label">
+      <KeyFilled className={styles.credentialsAcceptedIcon} role="img" aria-label={CREDENTIALS_ACCEPTED_LABEL} />
+    </Tooltip>
+  )
+}
+
+/** Render who can use the target and whether the provider accepted its credentials. */
+function AccountCell({ target }: { target: TargetInstance }) {
+  const styles = useTargetTableStyles()
+  return (
+    <span className={styles.accountCell}>
+      <Text size={200}>{TARGET_ACCOUNT_LABELS[targetAccount(target)]}</Text>
+      <CredentialsStatus target={target} />
+    </span>
+  )
+}
+
 /** Render capability cells for a target. */
 function CapabilityCells({ target }: { target: TargetInstance }) {
   const styles = useTargetTableStyles()
@@ -195,16 +296,19 @@ function CapabilityCells({ target }: { target: TargetInstance }) {
 }
 
 /** Render expandable sub-rows for a RoundRobinTarget's inner targets. */
-function InnerTargetRows({ parentKey, innerTargets, weights }: {
+function InnerTargetRows({ parentKey, innerTargets, weights, selectionVisible, detectionVisible }: {
   parentKey: string
   innerTargets: TargetInstance[]
   weights: number[] | undefined
+  selectionVisible: boolean
+  detectionVisible: boolean
 }) {
   const styles = useTargetTableStyles()
   return (
     <>
       {innerTargets.map((inner, idx) => (
         <TableRow key={`${parentKey}-inner-${idx}`} className={styles.innerTargetRow}>
+          {selectionVisible && <TableCell className={styles.selectionCell} />}
           <TableCell className={styles.actionCell} />
           <TableCell className={styles.registryNameCell}>
             <Text size={200} className={styles.registryNameText}>#{idx + 1} {inner.target_registry_name}</Text>
@@ -212,6 +316,8 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
           <TableCell>
             <Text size={200}>{targetType(inner)}</Text>
           </TableCell>
+          {/* Inner targets don't report who can use them; their own rows show it. */}
+          <TableCell className={styles.accountColumn} />
           <TableCell>
             <ModelCell target={inner} />
           </TableCell>
@@ -232,6 +338,7 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
               {weights?.[idx] != null ? `weight: ${weights[idx]}` : '—'}
             </Text>
           </TableCell>
+          {detectionVisible && <TableCell className={styles.detectionCell} />}
         </TableRow>
       ))}
     </>
@@ -239,9 +346,11 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
 }
 
 export default function TargetTable({
+  generation = '',
   targets,
   defaultAdversarialTarget,
   onSetDefaultAdversarialTarget,
+  detection,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
   const { preferences, updatePreferences } = useUserPreferences()
@@ -252,6 +361,15 @@ export default function TargetTable({
   const [showHiddenTargets, setShowHiddenTargets] = useState(false)
   const [previousHiddenTargetCount, setPreviousHiddenTargetCount] = useState<number | null>(null)
   const [filters, setFilters] = useState<TargetFilters>(DEFAULT_TARGET_FILTERS)
+  const [selecting, setSelecting] = useState(false)
+  const { running: detecting, results: detectionResults } = detection
+  const [excludedTargets, setExcludedTargets] = useState<Set<string>>(new Set())
+  const [detectionGeneration, setDetectionGeneration] = useState(generation)
+  if (detectionGeneration !== generation) {
+    setDetectionGeneration(generation)
+    setSelecting(false)
+    setExcludedTargets(new Set())
+  }
   // Tracks which RoundRobinTarget rows are expanded to show inner targets.
   // We use a Set of target_registry_name strings — when a name is in the set,
   // that row's sub-rows are visible.
@@ -307,6 +425,28 @@ export default function TargetTable({
     [displayedTargets, filters],
   )
   const noTargetsMatch = displayedTargets.length > 0 && filteredTargets.length === 0
+  const isSelected = (target: TargetInstance): boolean => detecting
+    ? Boolean(detectionResults[target.target_registry_name])
+    : !excludedTargets.has(target.target_registry_name)
+  const selectedTargets = filteredTargets.filter(isSelected)
+  const selectionVisible = selecting || detecting
+  const detectionVisible = Object.keys(detectionResults).length > 0
+
+  const selectShown = (selected: boolean): void => {
+    setExcludedTargets((current: Set<string>) => {
+      const next = new Set(current)
+      for (const target of filteredTargets) {
+        if (selected) next.delete(target.target_registry_name)
+        else next.add(target.target_registry_name)
+      }
+      return next
+    })
+  }
+
+  const beginDetection = async (): Promise<void> => {
+    setSelecting(false)
+    await detection.start(selectedTargets)
+  }
 
   const isDefaultAdversarial = (target: TargetInstance): boolean =>
     sameTarget(defaultAdversarialTarget, target)
@@ -341,20 +481,64 @@ export default function TargetTable({
         />
       </section>
       <Divider appearance="strong" className={styles.defaultsDivider} />
-      <div className={styles.visibilityControls}>
-        <Checkbox
-          checked={showHiddenTargets && hiddenTargetCount > 0}
+      <div role="toolbar" aria-label="Target controls" className={styles.visibilityControls}>
+        <Button
+          className={mergeClasses(styles.rowAction, !showHiddenTargets && styles.visibilityInactive)}
+          appearance="subtle"
+          icon={showHiddenTargets ? <EyeRegular /> : <EyeOffRegular />}
+          aria-pressed={showHiddenTargets && hiddenTargetCount > 0}
           disabled={hiddenTargetCount === 0}
-          label={`Show hidden targets (${hiddenTargetCount})`}
-          onChange={(_, data) => setShowHiddenTargets(data.checked === true)}
+          onClick={() => setShowHiddenTargets((current) => !current)}
           data-testid="show-hidden-targets"
-        />
+        >
+          Show hidden targets ({hiddenTargetCount})
+        </Button>
+        <div className={styles.detectionControls}>
+          <Button
+            className={styles.rowAction}
+            appearance="primary"
+            disabled={detecting || (selecting ? selectedTargets.length === 0 : filteredTargets.length === 0)}
+            onClick={() => {
+              if (selecting) void beginDetection()
+              else {
+                setExcludedTargets(new Set())
+                setSelecting(true)
+              }
+            }}
+          >
+            {detecting ? 'Detecting capabilities...' : selecting ? 'Begin capability detection' : 'Auto-detect capabilities'}
+          </Button>
+          {selectionVisible && (
+            <>
+              <Button className={styles.rowAction} disabled={detecting} onClick={() => setSelecting(false)}>
+                Cancel
+              </Button>
+              <Text size={200}>Checks may incur provider charges.</Text>
+            </>
+          )}
+        </div>
       </div>
       <TargetFiltersBar filters={filters} options={filterOptions} onFiltersChange={setFilters} />
+      {Object.entries(detectionResults).filter(([, result]) => result.error).map(([name, result]) => (
+        <MessageBar key={name} intent="error">
+          <MessageBarBody>{name}: {result.error}</MessageBarBody>
+        </MessageBar>
+      ))}
 
       <Table aria-label="Target instances" className={styles.table}>
         <TableHeader className={styles.stickyHeader}>
           <TableRow>
+            {selectionVisible && (
+              <TableHeaderCell className={styles.selectionCell}>
+                <Checkbox
+                  aria-label="Select all shown targets"
+                  disabled={detecting || filteredTargets.length === 0}
+                  checked={selectedTargets.length === 0 ? false
+                    : selectedTargets.length === filteredTargets.length ? true : 'mixed'}
+                  onChange={(_, data) => selectShown(data.checked === true)}
+                />
+              </TableHeaderCell>
+            )}
             <TableHeaderCell className={styles.actionCell}>Actions</TableHeaderCell>
             <TableHeaderCell style={{ width: '180px' }}>
               <Tooltip content={COLUMN_TOOLTIPS.registryName} relationship="description">
@@ -365,6 +549,9 @@ export default function TargetTable({
               <Tooltip content={COLUMN_TOOLTIPS.type} relationship="description">
                 <span className={styles.helpHeader}>Type</span>
               </Tooltip>
+            </TableHeaderCell>
+            <TableHeaderCell aria-label="Account" className={styles.accountColumn}>
+              <ContextualHelpLabel term="Account">{HELP_DEFINITIONS.targetAccount}</ContextualHelpLabel>
             </TableHeaderCell>
             <TableHeaderCell style={{ width: '160px' }}>
               <Tooltip content={COLUMN_TOOLTIPS.model} relationship="description">
@@ -398,6 +585,7 @@ export default function TargetTable({
                 <span className={styles.helpHeader}>Parameters</span>
               </Tooltip>
             </TableHeaderCell>
+            {detectionVisible && <TableHeaderCell className={styles.detectionCell}>Detection</TableHeaderCell>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -413,28 +601,48 @@ export default function TargetTable({
                 key={target.target_registry_name}
                 name={target.target_registry_name}
                 identity={target.identifier}
-                columns={8 + CAPABILITY_COLUMNS.length}
+                columns={9 + CAPABILITY_COLUMNS.length + Number(selectionVisible) + Number(detectionVisible)}
                 expanded={expandedIdentities.has(target.target_registry_name)}
                 onToggle={() => toggleIdentity(target.target_registry_name)}
                 leadingCell={
-                  <TableCell className={styles.actionCell}>
-                    <Button
-                      className={styles.rowAction}
-                      appearance="subtle"
-                      size="small"
-                      icon={hidden ? <EyeRegular /> : <EyeOffRegular />}
-                      onClick={() => setTargetHidden(target, !hidden)}
-                      aria-label={`${hidden ? 'Show' : 'Hide'} ${target.target_registry_name}`}
-                      data-testid={`toggle-target-visibility-${target.target_registry_name}`}
-                    >
-                      {hidden ? 'Show' : 'Hide'}
-                    </Button>
-                  </TableCell>
+                  <>
+                    {selectionVisible && (
+                      <TableCell className={styles.selectionCell}>
+                        <Checkbox
+                          aria-label={`Select ${target.target_registry_name}`}
+                          disabled={detecting}
+                          checked={isSelected(target)}
+                          onChange={(_, data) => {
+                            setExcludedTargets((current: Set<string>) => {
+                              const next = new Set(current)
+                              if (data.checked === true) next.delete(target.target_registry_name)
+                              else next.add(target.target_registry_name)
+                              return next
+                            })
+                          }}
+                        />
+                      </TableCell>
+                    )}
+                    <TableCell className={styles.actionCell}>
+                      <Button
+                        className={styles.rowAction}
+                        appearance="subtle"
+                        size="small"
+                        icon={hidden ? <EyeRegular /> : <EyeOffRegular />}
+                        onClick={() => setTargetHidden(target, !hidden)}
+                        aria-label={`${hidden ? 'Show' : 'Hide'} ${target.target_registry_name}`}
+                        data-testid={`toggle-target-visibility-${target.target_registry_name}`}
+                      >
+                        {hidden ? 'Show' : 'Hide'}
+                      </Button>
+                    </TableCell>
+                  </>
                 }
                 nameCellClassName={styles.registryNameCell}
                 nameContent={
-                  isDefaultAdversarial(target) && (
+                  (target.origin || isDefaultAdversarial(target)) && (
                     <div className={styles.defaultIndicators}>
+                      {target.origin && <TargetOriginBadge origin={target.origin} />}
                       {isDefaultAdversarial(target) && (
                         <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
                           Adversarial
@@ -454,6 +662,8 @@ export default function TargetTable({
                       parentKey={target.target_registry_name}
                       innerTargets={target.inner_targets}
                       weights={weights}
+                      selectionVisible={selectionVisible}
+                      detectionVisible={detectionVisible}
                     />
                   )
                 }
@@ -472,6 +682,9 @@ export default function TargetTable({
                     )}
                     <Text size={200}>{targetType(target)}</Text>
                   </div>
+                </TableCell>
+                <TableCell className={styles.accountColumn}>
+                  <AccountCell target={target} />
                 </TableCell>
                 <TableCell>
                   <ModelCell target={target} />
@@ -493,6 +706,11 @@ export default function TargetTable({
                     {formatParams(target.target_specific_params) || '—'}
                   </Text>
                 </TableCell>
+                {detectionVisible && (
+                  <TableCell className={styles.detectionCell}>
+                    <span role="status">{detectionResults[target.target_registry_name]?.state ?? ''}</span>
+                  </TableCell>
+                )}
               </RegistryIdentityRow>
             )
           })}

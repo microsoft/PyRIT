@@ -3,7 +3,13 @@
 
 """Tests for ``parse_wildguard_response``."""
 
+import inspect
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.score import WildGuardLabel, parse_wildguard_response
@@ -91,3 +97,60 @@ def test_unexpected_label_value_raises() -> None:
 
     with pytest.raises(InvalidJsonException, match="expected yes, no, or N/A"):
         parse_wildguard_response(text)
+
+
+def _ty_check_probe(probe: Path) -> tuple[int, str]:
+    """Type-check ``probe`` with the repo's ``ty`` settings and return the exit code and output."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ty",
+            "check",
+            "--project",
+            str(Path(__file__).resolve().parents[3]),
+            "--python-version",
+            "3.11",
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=TEST_WATCHDOG_SECONDS,
+        check=False,
+    )
+    return result.returncode, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("label", "description"),
+    [
+        (WildGuardLabel.HARMFUL_REQUEST, "the request is harmful"),
+        (WildGuardLabel.RESPONSE_REFUSAL, "the response is a refusal"),
+        (WildGuardLabel.HARMFUL_RESPONSE, "the response is harmful"),
+    ],
+    ids=lambda v: v.name if isinstance(v, WildGuardLabel) else None,
+)
+def test_label_description(label: WildGuardLabel, description: str) -> None:
+    assert label.description == description
+
+
+@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
+def test_label_description_dispatch_type_exhaustiveness(tmp_path: Path, *, extend_enum: bool) -> None:
+    """
+    The ``assert_never`` guard in ``WildGuardLabel.description`` makes ``ty`` flag a new, unhandled label.
+
+    The probe is the real enum source. As it is the current enum must type-check cleanly; with a
+    temporary extra member ``ty`` must report exactly one error.
+    """
+    enum_source = inspect.getsource(WildGuardLabel)
+    if extend_enum:
+        enum_source += '\n    FUTURE = "Future"\n'
+    probe = tmp_path / "dispatch.py"
+    header = "from __future__ import annotations\nimport enum\nfrom typing import TYPE_CHECKING, assert_never\n"
+    probe.write_text(header + enum_source, encoding="utf-8")
+    returncode, output = _ty_check_probe(probe)
+    assert returncode == (1 if extend_enum else 0), output
+    if extend_enum:
+        assert output.count("error[") == 1, output
+        assert "type-assertion-failure" in output, output
+        assert "assert_never(self)" in output, output

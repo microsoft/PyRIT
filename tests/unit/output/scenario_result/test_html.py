@@ -7,7 +7,7 @@ import uuid
 from typing import Any
 
 import pytest
-from unit.mocks import make_scenario_result
+from unit.mocks import make_judged_scenario_result, make_scenario_result
 
 from pyrit.models import (
     AttackOutcome,
@@ -370,3 +370,142 @@ async def test_html_report_labels_converted_piece_from_real_builders():
 
     assert '<div class="piece-label">Original:</div><div class="piece">ORIGINAL_WAS_REMOVED</div>' in html
     assert '<div class="piece-label">Converted:</div><div class="piece"></div>' in html
+
+
+async def test_html_report_labels_converted_media_by_converted_type():
+    payload = _payload()
+    _set_piece(
+        payload,
+        {
+            "data_type": "text",
+            "original_value_data_type": "text",
+            "converted_value_data_type": "image_path",
+            "original_value": "draw a cat",
+            "converted_value": "media/cat.png",
+        },
+    )
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece">draw a cat</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece media">[image_path] media/cat.png</div>' in html
+
+
+async def test_html_report_renders_converted_text_of_media_original_as_text():
+    payload = _payload()
+    _set_piece(
+        payload,
+        {
+            "data_type": "image_path",
+            "original_value_data_type": "image_path",
+            "converted_value_data_type": "text",
+            "original_value": "media/cat.png",
+            "converted_value": "a cat on a mat",
+        },
+    )
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece media">[image_path] media/cat.png</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece">a cat on a mat</div>' in html
+    assert "[image_path] a cat on a mat" not in html
+
+
+async def test_html_report_labels_unchanged_value_by_converted_type():
+    payload = _payload()
+    _set_piece(
+        payload,
+        {
+            "data_type": "text",
+            "original_value_data_type": "text",
+            "converted_value_data_type": "url",
+            "original_value": "https://example.com",
+            "converted_value": "https://example.com",
+        },
+    )
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert '<div class="piece media">[url] https://example.com</div>' in html
+    assert "Original:" not in html
+
+
+async def test_html_report_labels_converted_types_from_real_builders():
+    pieces = [
+        MessagePiece(
+            role="user",
+            original_value="draw a cat",
+            original_value_data_type="text",
+            converted_value="media/cat.png",
+            converted_value_data_type="image_path",
+            conversation_id="c1",
+            sequence=0,
+        ),
+        MessagePiece(
+            role="assistant",
+            original_value="media/dog.png",
+            original_value_data_type="image_path",
+            converted_value="a dog on a log",
+            converted_value_data_type="text",
+            conversation_id="c1",
+            sequence=1,
+        ),
+    ]
+    messages = await JsonConversationPrinter(source=_StubConversationSource({})).build_async(
+        [Message(message_pieces=[piece]) for piece in pieces]
+    )
+    payload = _payload()
+    payload["conversations"][0]["messages"] = messages
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece">draw a cat</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece media">[image_path] media/cat.png</div>' in html
+    assert '<div class="piece-label">Original:</div><div class="piece media">[image_path] media/dog.png</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece">a dog on a log</div>' in html
+
+
+async def test_html_report_renders_per_judge_breakdown_from_real_builders(patch_central_database):
+    judge_a = ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers")
+    judge_b = ComponentIdentifier(class_name="JudgeB", class_module="tests.scorers")
+    result = make_judged_scenario_result(
+        groups=[
+            ("attack_a", judge_a, judge_a, [AttackOutcome.SUCCESS]),
+            ("attack_b", judge_b, judge_b, [AttackOutcome.UNDETERMINED]),
+        ]
+    )
+    overview = JsonScenarioResultPrinter().build(result, view="overview")
+
+    html = await HtmlScenarioReportPrinter().render_async(
+        build_scenario_full_payload(result=result, overview=overview, entries=[])
+    )
+
+    assert re.search(r"Aggregate success rate\s+\(2\s+objective scorers, descriptive\)", html)
+    assert "Results by Objective Scorer" in html
+    assert "Each row contains only executions attributed to that scorer" in html
+    assert "not every execution rescored by every scorer" in html
+    assert f"JudgeA ({judge_a.hash[:12]})" in html
+    assert "<td>100.0%</td>" in html
+    assert "<td>N/A</td>" in html
+
+
+@pytest.mark.parametrize(
+    ("recorded", "expected"),
+    [
+        (
+            ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers"),
+            "Objective Scorer: JudgeA ({hash}) (recorded)",
+        ),
+        (None, "Objective Scorer: Unknown scorer (unknown)"),
+    ],
+)
+async def test_html_report_names_a_single_judge_under_the_headline(patch_central_database, recorded, expected):
+    result = make_judged_scenario_result(groups=[("attack", None, recorded, [AttackOutcome.SUCCESS])])
+    overview = JsonScenarioResultPrinter().build(result, view="overview")
+
+    html = await HtmlScenarioReportPrinter().render_async(
+        build_scenario_full_payload(result=result, overview=overview, entries=[])
+    )
+
+    assert expected.format(hash=recorded.hash[:12] if recorded is not None else "") in html
+    assert "Results by Objective Scorer" not in html

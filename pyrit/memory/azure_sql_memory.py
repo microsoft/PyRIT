@@ -190,8 +190,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             token_bytes = token.token.encode("utf-16-le")
             attrs = dict(params.pop("attrs_before", {}))
             attrs[self.SQL_COPT_SS_ACCESS_TOKEN] = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
-            connection: aioodbc.Connection = await aioodbc.connect(dsn=dsn, attrs_before=attrs, **params)
-            return connection
+            # aioodbc ships no type information; connect() returns an aioodbc.Connection.
+            return cast("aioodbc.Connection", await aioodbc.connect(dsn=dsn, attrs_before=attrs, **params))
 
         engine = create_async_engine(
             url,
@@ -206,6 +206,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
     async def dispose_loop_resources_async(self) -> None:
         """Close the current loop's engine and its owned Azure credential."""
+        await self._release_dataset_uploads_async()
         loop = asyncio.get_running_loop()
         for closed_loop in list(self._async_auth):
             if closed_loop.is_closed():
@@ -244,8 +245,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             # get_required_value() is typed to return Any because it can also preserve callables
             # (e.g. token providers). This call site only ever passes a str | None, so the
             # runtime value is guaranteed to be a str.
-            resolved_value: str = value
-            return resolved_value
+            return cast("str", value)
         except ValueError:
             return None
 
@@ -655,12 +655,18 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         with closing(self._get_session()) as session:
             rows = session.execute(
                 text(
-                    """SELECT DISTINCT JSON_VALUE(atomic_attack_identifier,
-                        '$.children.attack_technique.children.attack.class_name') AS cls
+                    """SELECT DISTINCT COALESCE(
+                        JSON_VALUE(atomic_attack_identifier,
+                            '$.children.attack_technique.children.attack.class_name'),
+                        JSON_VALUE(atomic_attack_identifier, '$.children.attack.class_name')
+                    ) AS cls
                     FROM "AttackResultEntries"
                     WHERE ISJSON(atomic_attack_identifier) = 1
-                    AND JSON_VALUE(atomic_attack_identifier,
-                        '$.children.attack_technique.children.attack.class_name') IS NOT NULL"""
+                    AND COALESCE(
+                        JSON_VALUE(atomic_attack_identifier,
+                            '$.children.attack_technique.children.attack.class_name'),
+                        JSON_VALUE(atomic_attack_identifier, '$.children.attack.class_name')
+                    ) IS NOT NULL"""
                 )
             ).fetchall()
         return sorted(row[0] for row in rows)
@@ -668,7 +674,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     def _execute_get_unique_converter_class_names(self) -> list[str]:
         """
         Azure SQL implementation: extract unique converter class_name values
-        from the children.attack_technique.children.attack.children.request_converters array
+        from the request_converters array of either identifier layout
         in the atomic_attack_identifier JSON column.
 
         Returns:
@@ -681,6 +687,13 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     FROM "AttackResultEntries"
                     CROSS APPLY OPENJSON(JSON_QUERY(atomic_attack_identifier,
                         '$.children.attack_technique.children.attack.children.request_converters')) AS c
+                    WHERE ISJSON(atomic_attack_identifier) = 1
+                    AND JSON_VALUE(c.value, '$.class_name') IS NOT NULL
+                    UNION
+                    SELECT DISTINCT JSON_VALUE(c.value, '$.class_name') AS cls
+                    FROM "AttackResultEntries"
+                    CROSS APPLY OPENJSON(JSON_QUERY(atomic_attack_identifier,
+                        '$.children.attack.children.request_converters')) AS c
                     WHERE ISJSON(atomic_attack_identifier) = 1
                     AND JSON_VALUE(c.value, '$.class_name') IS NOT NULL"""
                 )
@@ -736,7 +749,10 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                             p2.converted_value_data_type AS last_data_type
                         FROM "PromptMemoryEntries" p2
                         WHERE p2.conversation_id = aggregate_rows.conversation_id
-                        ORDER BY p2.sequence DESC, p2.id DESC
+                        ORDER BY
+                            p2.sequence DESC,
+                            p2.timestamp DESC,
+                            LOWER(CAST(p2.id AS VARCHAR(36))) COLLATE Latin1_General_100_BIN2 DESC
                     ) AS latest
                     """
                 ).columns(created_at=UTCDateTime())
@@ -1015,4 +1031,4 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Session: A new SQLAlchemy session bound to the configured engine.
         """
-        return self.SessionFactory()
+        return self.SessionFactory(info={"dataset_storage_io": self.results_storage_io})

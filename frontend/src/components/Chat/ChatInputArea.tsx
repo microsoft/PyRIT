@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useLayoutEffect, useRef, forwardRef, 
 import { Button, Caption1, MessageBar, MessageBarBody, MessageBarActions, Popover, PopoverSurface, PopoverTrigger, Tooltip, Text } from '@fluentui/react-components'
 import { SendRegular, DismissRegular, InfoRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
-import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, TargetInstance, UndoLastSendAction } from '@/types'
+import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, RequestGenerationDraft, TargetInstance, UndoLastSendAction } from '@/types'
 import { isTargetResolutionBlocking } from '@/utils/targetIdentity'
 import { useAttachmentUploads } from '@/hooks/useAttachmentUploads'
 
@@ -11,6 +11,7 @@ import { usePromptEditorStyles } from './PromptEditor.styles'
 import PromptEditor from './PromptEditor'
 import SystemPromptSetup from './SystemPromptSetup'
 import MultiSendSettings from './MultiSendSettings'
+import GenerationSettings from './GenerationSettings'
 import { attachmentsFromFiles, PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
 
 const DISABLED_WARNING_HOVER_DELAY_MS = 700
@@ -20,7 +21,7 @@ interface StatusBannerProps {
   text: string
   buttonText?: string
   buttonIcon?: React.ReactElement
-  onButtonClick?: () => void
+  onButtonClick?: (() => void) | undefined
   testId: string
   className: string
   textClassName: string
@@ -34,7 +35,8 @@ function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testI
       {icon}
       <Text className={textClassName} size={300}>{text}</Text>
       {onButtonClick && buttonText && (
-        <Button className={buttonClassName} appearance="primary" icon={buttonIcon}
+        <Button className={buttonClassName} appearance="primary"
+          {...(buttonIcon ? { icon: buttonIcon } : {})}
           onClick={onButtonClick} data-testid={buttonTestId}>{buttonText}</Button>
       )}
     </div>
@@ -43,10 +45,10 @@ function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testI
 
 interface TargetResolutionBannerProps {
   status: AttackTargetResolutionStatus
-  activeTarget?: TargetInstance | null
-  onRetry?: () => void
-  onConfigureTarget?: () => void
-  onUseAsTemplate?: () => void
+  activeTarget?: TargetInstance | null | undefined
+  onRetry?: (() => void) | undefined
+  onConfigureTarget?: (() => void) | undefined
+  onUseAsTemplate?: (() => void) | undefined
   styles: ReturnType<typeof usePromptEditorStyles>
 }
 
@@ -110,8 +112,10 @@ export interface ChatInputAreaHandle {
 }
 
 interface ChatInputAreaProps {
-  undoLastSend?: UndoLastSendAction
-  repeatDisabledReason?: string
+  generationDraft?: RequestGenerationDraft
+  onGenerationDraftChange?: (value: RequestGenerationDraft) => void
+  undoLastSend?: UndoLastSendAction | undefined
+  repeatDisabledReason?: string | undefined
   onSend: (
     originalValue: string,
     convertedValue: string | undefined,
@@ -128,10 +132,12 @@ interface ChatInputAreaProps {
   operatorLocked?: boolean
   crossTargetLocked?: boolean
   targetResolutionStatus?: AttackTargetResolutionStatus
-  onRetryTargetResolution?: () => void
+  onRetryTargetResolution?: (() => void) | undefined
   onUseAsTemplate?: () => void
-  attackOperator?: string
+  attackOperator?: string | undefined
   onConfigureTarget?: () => void
+  onBrowseSeedPrompts?: () => void
+  showSeedInspiration?: boolean
   onToggleConverterPanel: () => void
   isConverterPanelOpen: boolean
   onInputChange: (value: string) => void
@@ -159,11 +165,12 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   onSend, conversionRevisionKey = '', disabled = false, fileDropEnabled = true, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
   operatorLocked = false, crossTargetLocked = false,
   targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, onConfigureTarget,
+  onBrowseSeedPrompts, showSeedInspiration = false,
   onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange,
   convertedValue, onClearConversion, onClearAllConversions, onConvertedValueChange,
   converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip,
   onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange,
-  repeatDisabledReason, undoLastSend,
+  repeatDisabledReason, undoLastSend, generationDraft = {}, onGenerationDraftChange,
   initialText = '', initialAttachments = [], initialTextMetadata,
 }, ref) {
   const styles = usePromptEditorStyles()
@@ -293,6 +300,15 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
 
   return <div className={styles.root}>
     <div className={styles.inputContainer}>
+      {showSeedInspiration && onBrowseSeedPrompts && (
+        <div className={styles.seedInspiration} data-testid="seed-inspiration-callout">
+          <Text size={200}>Need inspiration? Browse seed prompts already loaded in memory.</Text>
+          <Button appearance="subtle" className={styles.touchTarget} onClick={onBrowseSeedPrompts}
+            data-testid="browse-seed-prompts-btn">
+            Browse seed prompts
+          </Button>
+        </div>
+      )}
       {isTargetResolutionBlocking(targetResolutionStatus) ? (
         <TargetResolutionBanner status={targetResolutionStatus} activeTarget={activeTarget} onRetry={onRetryTargetResolution}
           onConfigureTarget={onConfigureTarget} onUseAsTemplate={onUseAsTemplate} styles={styles} />
@@ -346,6 +362,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                 <Button className={styles.sendButton} appearance="primary" icon={<SendRegular />}
                   onClick={() => { void handleSend() }} disabledFocusable={!canSend} aria-label="Send message" data-testid="send-message-btn" />
               </Tooltip>
+              {onGenerationDraftChange && <GenerationSettings value={generationDraft}
+                onChange={onGenerationDraftChange} target={activeTarget} disabled={disabled} />}
               {convertedValue != null && <Tooltip content="Clear conversion" relationship="label">
                 <Button appearance="subtle" className={styles.clearConversionButton} icon={<DismissRegular />}
                   onClick={onClearConversion} data-testid="clear-conversion-btn" />
@@ -386,6 +404,10 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
         </div>
         </>
       )}
+      {onBrowseSeedPrompts && <Button appearance="subtle" className={styles.touchTarget}
+        aria-label="Browse seed prompts from composer" onClick={onBrowseSeedPrompts}>
+        Seed prompts
+      </Button>}
     </div>
   </div>
 })

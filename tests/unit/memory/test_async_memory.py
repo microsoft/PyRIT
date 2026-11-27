@@ -25,6 +25,7 @@ from unit.async_utils import (
     TEST_WATCHDOG_SECONDS,
     drain_tasks_async,
     get_defined_tasks,
+    wait_for_event_async,
     wait_for_worker_ready_async,
 )
 
@@ -302,7 +303,7 @@ async def test_azure_auth_wait_is_async_and_credential_is_closed() -> None:
         auth = AsyncAzureAuth("scope")
         task = asyncio.create_task(auth.get_access_token_async())
         try:
-            await asyncio.wait_for(started.wait(), timeout=5)
+            await wait_for_event_async(event=started, tasks=[task])
             await asyncio.sleep(0)
             assert not task.done()
         finally:
@@ -321,6 +322,7 @@ async def test_azure_disposal_failure_discards_engine_and_credential(failing_res
     auth = MagicMock(spec=AsyncAzureAuth)
     memory._async_engines = {loop: engine}
     memory._async_auth = {loop: auth}
+    memory._dataset_upload_leases = {}
     close = engine.dispose if failing_resource == "engine" else auth.close_async
     close.side_effect = [RuntimeError("close failed"), None]
 
@@ -373,6 +375,7 @@ async def test_azure_closed_loop_drops_both_owned_resources() -> None:
     auth = MagicMock(spec=AsyncAzureAuth)
     memory._async_engines = {loop: engine}
     memory._async_auth = {loop: auth}
+    memory._dataset_upload_leases = {}
     with pytest.warns(DeprecationWarning), pytest.raises(RuntimeError, match="owning event loops"):
         memory.dispose_engine()
     assert memory._async_engines == {loop: engine}
@@ -734,6 +737,7 @@ async def test_azure_async_creator_preserves_options_and_refreshes_token(mock_ai
     memory._verbose = False
     memory._async_auth = {}
     memory._async_engines = {}
+    memory._dataset_upload_leases = {}
     engine = MagicMock(spec=AsyncEngine)
     engine.dialect = MSDialectAsync_aioodbc()
     credential = MagicMock(spec=AsyncAzureAuth)

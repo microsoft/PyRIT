@@ -27,6 +27,7 @@ from pyrit.analytics import (
 )
 from pyrit.backend.models import (
     ConversationMessagesResponse,
+    DatasetListResponse,
     ListRegisteredScenariosResponse,
     ProblemDetail,
     ScenarioRunListResponse,
@@ -35,7 +36,11 @@ from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, Cursor
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services import get_scenario_run_service, get_scenario_service
-from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
+from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
+from pyrit.backend.services.scenario_run_service import (
+    ScenarioRunConflictError,
+    ScenarioRunNotFoundError,
+)
 from pyrit.models import (
     ScenarioHierarchyNode,
     ScenarioHierarchyProjection,
@@ -47,6 +52,7 @@ from pyrit.models import (
     ScenarioRunState,
 )
 from pyrit.models.catalog import RegisteredScenario, RunScenarioRequest, ScenarioRunSummary
+from pyrit.models.scenario_readiness import ScenarioReadiness
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
@@ -94,6 +100,26 @@ async def get_scan_conversation_async(
 # ============================================================================
 
 
+@router.post("/catalog/{scenario_name}/readiness", response_model=ScenarioReadiness)
+async def get_scenario_readiness_async(
+    *, scenario_name: IdentifierStr, request: ScenarioRunSizeEstimateRequest
+) -> ScenarioReadiness:
+    """
+    Resolve scan roles independently of run-size estimation or dataset preparation.
+
+    Returns:
+        ScenarioReadiness: Effective roles and configuration issues.
+    """
+    try:
+        return await run_in_threadpool(
+            ScenarioConfigurationResolver.resolve_readiness,
+            scenario_name=scenario_name,
+            request=request,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
 @router.get(
     "/catalog",
     response_model=ListRegisteredScenariosResponse,
@@ -118,6 +144,30 @@ async def list_scenarios(  # pyrit-async-suffix-exempt
         cursor=cursor,
         include_estimates=include_estimates,
     )
+
+
+@router.get(
+    "/catalog/{scenario_name:path}/datasets",
+    response_model=DatasetListResponse,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid scenario configuration"},
+        404: {"model": ProblemDetail, "description": "Scenario not found"},
+    },
+)
+async def list_compatible_scenario_datasets_async(scenario_name: IdentifierStr) -> DatasetListResponse:
+    """
+    List verified scenario-compatible choices without fetching providers or starting a scan.
+
+    Returns:
+        DatasetListResponse: Named datasets satisfying the scenario's data contract.
+    """
+    try:
+        result = await get_scenario_service().list_compatible_datasets_async(scenario_name=scenario_name)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_name}' not found")
+    return result
 
 
 @router.get(
@@ -226,7 +276,10 @@ async def load_scenario_datasets_async(
     responses={
         400: {"model": ProblemDetail, "description": "Invalid request (bad scenario/target/technique)"},
         404: {"model": ProblemDetail, "description": "Saved run not found"},
-        409: {"model": ProblemDetail, "description": "Saved run cannot be resumed"},
+        409: {
+            "model": ProblemDetail,
+            "description": "Saved run cannot be resumed, or a launch script would replace a saved entry",
+        },
     },
 )
 async def start_scenario_run(  # pyrit-async-suffix-exempt

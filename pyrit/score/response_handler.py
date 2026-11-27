@@ -11,13 +11,12 @@ from abc import abstractmethod
 from collections.abc import Sequence
 from enum import Enum
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 from pydantic import BaseModel
 
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
-from pyrit.models import JsonResponseConfig, UnvalidatedScore
-from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
+from pyrit.models import FloatFeedback, JsonResponseConfig, UnvalidatedScore
 
 if TYPE_CHECKING:
     import uuid
@@ -125,7 +124,12 @@ def _build_unvalidated_score(
             category_response = None
         elif category_conflict_policy is CategoryConflictPolicy.PREFER_RESPONSE:
             category = None
+        elif category_conflict_policy is CategoryConflictPolicy.REJECT_CONFLICT:
+            raise ValueError("Category is present in the response and an argument")
         else:
+            if TYPE_CHECKING:
+                assert_never(category_conflict_policy)
+            # Preserve the historical runtime fallback for values outside the declared enum.
             raise ValueError("Category is present in the response and an argument")
 
     # Validate and normalize category to a list of strings
@@ -171,7 +175,7 @@ def _build_unvalidated_score(
         # this key itself after parsing (float_scale_threshold_scorer), and
         # true_false_score_aggregator / true_false_inverter_scorer already
         # strip it defensively on the same grounds.
-        normalized_md.pop(ORIGINAL_FLOAT_VALUE_KEY, None)
+        normalized_md = FloatFeedback.remove_from(normalized_md)
 
     return UnvalidatedScore(
         raw_score_value=str(parsed_response[score_value_output_key]),
@@ -389,6 +393,20 @@ class JsonSchemaResponseHandler(ResponseHandler):
                 return legacy
         return [*legacy, historical]
 
+    def _convert_response(self, parsed_response: dict[str, Any]) -> dict[str, Any]:
+        """
+        Validate and convert the decoded response before the score is read from it.
+
+        Subclasses with their own response contract override this, so the response is decoded once.
+
+        Args:
+            parsed_response (dict[str, Any]): The decoded top-level JSON object.
+
+        Returns:
+            dict[str, Any]: The response the score is read from.
+        """
+        return parsed_response
+
     def parse(
         self,
         *,
@@ -432,7 +450,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
                     message=f"Invalid JSON response, expected a top-level object: {response_json}"
                 )
             score = _build_unvalidated_score(
-                parsed_response=parsed_response,
+                parsed_response=self._convert_response(parsed_response),
                 score_value_output_key=self._score_value_output_key,
                 rationale_output_key=self._rationale_output_key,
                 description_output_key=self._description_output_key,

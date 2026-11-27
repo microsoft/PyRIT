@@ -124,6 +124,7 @@ class GCGCandidateProposer:
 
         Raises:
             RuntimeError: If workers do not produce an aggregate gradient.
+            TypeError: If a worker returns something other than a gradient tensor.
         """
         # Dispatch gradient calculation to all workers
         for j, worker in enumerate(self._workers):
@@ -136,8 +137,11 @@ class GCGCandidateProposer:
 
         # Collect and aggregate gradients across workers
         for j, worker in enumerate(self._workers):
-            new_grad: torch.Tensor = worker.results.get().to(self._main_device)
-            new_grad = new_grad / new_grad.norm(dim=-1, keepdim=True)
+            worker_grad = worker.results.get()
+            if not isinstance(worker_grad, torch.Tensor):
+                raise TypeError(f"GCG worker {j} must return a gradient tensor, got {type(worker_grad).__name__}")
+            new_grad = worker_grad.to(self._main_device)
+            new_grad = new_grad.div(new_grad.norm(dim=-1, keepdim=True))
             # Each embedding row is a sampleable token ID, including added tokens.
             # Tokens outside the embedding matrix cannot be sampled and need not match.
             # Workers outlive per-step proposers and progressive inner attacks.

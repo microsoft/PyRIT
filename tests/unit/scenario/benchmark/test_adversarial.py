@@ -101,6 +101,7 @@ from pyrit.scenario.scenarios.benchmark.adversarial import (
 )
 from pyrit.score import MessageScorable, TrueFalseCompositeScorer, TrueFalseInverterScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
+from tests.unit.mocks import accept_scenario_scoring
 
 # ---------------------------------------------------------------------------
 # Module-level constants derived from the canonical factory catalog
@@ -213,6 +214,7 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     factory.requirements = TechniqueRequirements()
     technique_instance = MagicMock(spec=AttackTechnique)
     technique_instance.attack = MagicMock(spec=AttackStrategy)
+    technique_instance.attack.IS_COMPOUND = False
     technique_instance.seed_technique = seed_technique
     technique_instance.requirements = factory.requirements
     technique_instance.get_identifier.return_value = ComponentIdentifier(
@@ -223,6 +225,7 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     # The benchmark derives a prefixed factory explicitly before building; returning
     # the same mock keeps existing `factory.create` assertions valid.
     factory.with_adversarial_system_prompt_prefix.return_value = factory
+    accept_scenario_scoring(factory)
     AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
     return factory
 
@@ -250,10 +253,13 @@ async def test_compound_estimate_uses_initialization_cap_async(
     def get_seeds(*, dataset_name: str, **_: object) -> list[SeedObjective]:
         return seeds_by_dataset[dataset_name]
 
-    config = CompoundDatasetAttackConfiguration.per_dataset(
-        dataset_names=list(seeds_by_dataset), max_dataset_size=child_limit
+    config = CompoundDatasetAttackConfiguration(
+        configurations=[
+            DatasetAttackConfiguration(sources=[DatasetSource(name=name)], max_per_dataset=child_limit)
+            for name in seeds_by_dataset
+        ]
     )
-    config.max_dataset_size = outer_limit
+    config.max_total = outer_limit
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.get_identifier.return_value = ComponentIdentifier(class_name="MockScorer", class_module="test")
     TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="estimate_adversarial")
@@ -306,9 +312,9 @@ async def test_compound_estimate_uses_initialization_cap_async(
 class TestAdversarialBenchmarkMetadata:
     """Tests for class-level metadata that doesn't depend on any runtime state."""
 
-    def test_version_is_7(self) -> None:
-        """VERSION 7 identifies runs using independent named-source and total limits."""
-        assert AdversarialBenchmark.VERSION == 7
+    def test_version_is_8(self) -> None:
+        """VERSION 8 prevents reuse of runs that substituted TAP's objective judge."""
+        assert AdversarialBenchmark.VERSION == 8
 
     def test_baseline_attack_policy_is_forbidden(self):
         """A baseline contributes no signal to a model-comparison benchmark, so it is forbidden."""
@@ -569,7 +575,8 @@ class TestAdversarialBenchmarkInit:
         default_scorer = MagicMock(spec=TrueFalseScorer)
         with patch.object(AdversarialBenchmark, "_get_default_objective_scorer", return_value=default_scorer):
             bench = AdversarialBenchmark()
-        assert bench._objective_scorer is default_scorer
+            assert bench._configured_objective_scorer is None
+            assert bench._objective_scorer is default_scorer
         assert bench.uses_default_adversarial_target is False
 
     def test_construct_with_explicit_objective_scorer(self):
@@ -611,6 +618,10 @@ class TestAdversarialBenchmarkInit:
 
     async def test_initialize_without_selection_resolves_default_before_empty_build_failure_async(self) -> None:
         """Omitting ``scenario_techniques`` resolves exactly the approved benchmark defaults."""
+        adversarial_target = TargetRegistry.get_registry_singleton().instances.get("adversarial_chat")
+        adversarial_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockAdversarialTarget", class_module="pyrit.test"
+        )
         objective_target = MagicMock(spec=PromptTarget)
         objective_target.get_identifier.return_value = ComponentIdentifier(
             class_name="MockObjectiveTarget", class_module="pyrit.test"
@@ -637,8 +648,8 @@ class TestAdversarialBenchmarkInit:
 
         assert {technique.value for technique in bench._scenario_techniques} == _DEFAULT_BENCHMARK_TECHNIQUE_NAMES
 
-    def test_tap_constructs_with_benchmark_scorer_policy(self, caplog):
-        """The benchmark's generic scorer is skipped under TAP's WARN policy so TAP can use its own scorer."""
+    def test_tap_constructs_with_the_benchmark_scoring_config(self, caplog):
+        """TAP takes the benchmark's AttackScoringConfig as is instead of dropping it for its own judge."""
         factory = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()["tap"]
 
         objective_target = MagicMock(spec=PromptTarget)
@@ -688,7 +699,8 @@ class TestAdversarialBenchmarkInit:
         assert "test objective" in rendered
         assert "Expected prefix" in rendered
         assert "{{" not in rendered
-        assert any("incompatible" in record.message for record in caplog.records)
+        assert technique.attack.get_attack_scoring_config() is scoring_config
+        assert not any("incompatible" in record.message for record in caplog.records)
         atomic_attack = MagicMock()
         atomic_attack.attack_technique = technique
         expected_scorer_hash = ScorerEvaluationIdentifier(technique.attack._objective_scorer.get_identifier()).eval_hash
@@ -722,7 +734,12 @@ class TestAdversarialBenchmarkInit:
             class_name="MockAdversarialTarget",
             class_module="tests.unit.scenario.benchmark.test_adversarial",
         )
-        scoring_config = AttackScoringConfig(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        objective_scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockObjectiveScorer",
+            class_module="tests.unit.scenario.benchmark.test_adversarial",
+        )
+        scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
         default_technique = registered_factory.create(
             objective_target=objective_target,
@@ -1093,6 +1110,7 @@ class TestGetAtomicAttacksCrossProduct:
             requirements=registered_factory.requirements,
             seed_technique=registered_factory.seed_technique,
         )
+        accept_scenario_scoring(override_factory)
         override_factory.create.return_value = registered_factory.create.return_value
         registered_factory.with_attack_kwargs.return_value = override_factory
         override_factory.with_adversarial_system_prompt_prefix.return_value = override_factory
@@ -2197,6 +2215,7 @@ def _make_exact_cached_result(
 
 def _make_cache_reuse_candidate(*, seed_groups: list[AttackSeedGroup]) -> MagicMock:
     candidate = MagicMock(spec=AtomicAttack)
+    candidate.attack_technique.attack.IS_COMPOUND = False
     candidate.atomic_attack_name = "attack_a"
     candidate.display_group = "adv_target"
     candidate.technique_name = None
@@ -2494,6 +2513,7 @@ class TestReusableCachedResults:
         bench._memory_labels = {"pipeline_build_id": "42"}
         bench._precomputed_cached_results = {"attack_a": [source_result]}
         candidate = MagicMock(spec=AtomicAttack)
+        candidate.attack_technique.attack.IS_COMPOUND = False
         candidate.atomic_attack_name = "attack_a"
         candidate.technique_eval_hash = "technique-hash"
         candidate.seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value="objective")])]

@@ -7,7 +7,7 @@ Converter-related request and response models.
 This module defines the Instance models and preview functionality.
 """
 
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -16,8 +16,10 @@ from pyrit.backend.models.common import (
     MAX_ITEMS,
     REGISTRY_INSTANCE_NAME_PATTERN,
     IdentifierStr,
+    RegistrationRequest,
 )
-from pyrit.models import ConverterIdentifier, Parameter, PromptDataType
+from pyrit.models import ConverterIdentifier, Parameter, PromptDataType, validate_registry_name
+from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.models.component_spec import SourceInstanceSpec
 
 __all__ = [
@@ -82,6 +84,13 @@ class ConverterInstance(BaseModel):
     parameters: list[Parameter] = Field(
         default_factory=list, description="Editable inputs with source-specific defaults"
     )
+    origin: RegistryEntryOrigin | None = Field(
+        None,
+        description=(
+            "Where the converter comes from: 'saved' (restored at every start), 'configuration' (the server's "
+            "startup scripts), or 'temporary' (gone after a restart or reinitialization)"
+        ),
+    )
 
 
 class ConverterInstanceListResponse(BaseModel):
@@ -90,7 +99,7 @@ class ConverterInstanceListResponse(BaseModel):
     items: list[ConverterInstance] = Field(..., description="List of converter instances")
 
 
-class CreateConverterRequest(BaseModel):
+class CreateConverterRequest(RegistrationRequest):
     """Request to create a new converter instance."""
 
     name: str | None = Field(
@@ -99,7 +108,14 @@ class CreateConverterRequest(BaseModel):
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
         description="Unique registry name for the converter instance",
     )
-    register: bool = Field(True, description="Register the object; false returns only its descriptor")
+    persist: bool = Field(
+        False,
+        description=(
+            "Save the converter so it comes back after the backend restarts or is reinitialized (true), or keep it "
+            "only until then (false). A saved converter needs a name of lowercase letters, digits, and underscores, "
+            "can't hold a key or use an uploaded file, and can't be a copy made with source or private."
+        ),
+    )
     source: SourceInstanceSpec | None = None
     type: IdentifierStr = Field(..., description="Converter type (e.g., 'Base64Converter')")
     params: dict[IdentifierStr, Any] = Field(
@@ -107,13 +123,36 @@ class CreateConverterRequest(BaseModel):
         max_length=MAX_ITEMS,
         description="Converter constructor parameters",
     )
+    private: bool | None = Field(
+        None,
+        description=(
+            "Whether only the signed-in user who creates it can see and use it. Omitted, it is shared, unless "
+            "it is built on your private targets; then it is private and false is refused. true requires register=true."
+        ),
+    )
 
     @model_validator(mode="after")
-    def _validate_registration(self) -> "CreateConverterRequest":
-        if self.register and not self.name:
+    def _validate_registration(self) -> Self:
+        if self.register_instance and not self.name:
             raise ValueError("name is required when register=true")
         if self.source is not None and self.params:
             raise ValueError("Use source.params for reconstruction overrides")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_persist(self) -> Self:
+        if not self.persist:
+            return self
+        if not self.register_instance:
+            raise ValueError("persist requires register=true")
+        if self.name is None:
+            raise ValueError("persist requires a name")
+        validate_registry_name(self.name)
+        if self.source is not None:
+            raise ValueError("persist can't be used with source: a copy of a converter can't be saved yet")
+        # A saved converter is restored with no caller, so it would come back shared.
+        if self.private:
+            raise ValueError("A private converter can't be saved; leave out persist or private")
         return self
 
 
@@ -151,7 +190,7 @@ class ConverterPreviewRequest(BaseModel):
     converter_specs: list[SourceInstanceSpec | None] | None = Field(None, max_length=MAX_ITEMS)
 
     @model_validator(mode="after")
-    def _validate_specs(self) -> "ConverterPreviewRequest":
+    def _validate_specs(self) -> Self:
         if self.converter_specs is not None and len(self.converter_specs) != len(self.converter_ids):
             raise ValueError("converter_specs must match converter_ids in order")
         return self

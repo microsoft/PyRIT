@@ -8,6 +8,7 @@ Tests for persisting the loose content a score is anchored on.
 ``ScorableContentEntries`` the score's anchor resolved to nothing.
 """
 
+import asyncio
 import hashlib
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -15,8 +16,9 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy.dialects import mssql
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
-from pyrit.memory import MemoryInterface, StorageIO
+from pyrit.memory import AzureBlobStorageIO, MemoryInterface, StorageIO
 from pyrit.memory.memory_models import ScorableContentEntry, ScoreEntry
 from pyrit.models import (
     ComponentIdentifier,
@@ -185,6 +187,7 @@ async def test_file_content_uses_configured_azure_results_storage(
     source.write_bytes(content_bytes)
     digest = hashlib.sha256(content_bytes).hexdigest()
     storage = AsyncMock(spec=StorageIO)
+    storage.canonical_path.side_effect = AzureBlobStorageIO.__new__(AzureBlobStorageIO).canonical_path
     results_path = "https://account.blob.core.windows.net/container/results"
     score = _content_score(ContentScorable(value=str(source), data_type="binary_path"))
 
@@ -199,3 +202,34 @@ async def test_file_content_uses_configured_azure_results_storage(
     entry = sqlite_instance._query_entries(ScorableContentEntry)[0]
     assert entry.value == expected_path
     assert entry.value_sha256 == digest
+
+
+async def test_failed_media_copy_cancels_the_other_copies_async(
+    sqlite_instance: MemoryInterface, tmp_path: Path
+) -> None:
+    sibling_started = asyncio.Event()
+    sibling_cancelled = asyncio.Event()
+    failure = OSError("disk full")
+    first = ContentScorable(value=str(tmp_path / "first.png"), data_type="image_path")
+    second = ContentScorable(value=str(tmp_path / "second.png"), data_type="image_path")
+
+    async def prepare_async(*, scorable: ContentScorable) -> object:
+        if scorable == first:
+            sibling_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                sibling_cancelled.set()
+                raise
+        await asyncio.wait_for(sibling_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+        raise failure
+
+    with (
+        patch.object(sqlite_instance, "_prepare_scorable_content_async", side_effect=prepare_async),
+        pytest.raises(OSError, match="disk full") as exc_info,
+    ):
+        await sqlite_instance.add_scores_to_memory_async(scores=[_content_score(first), _content_score(second)])
+
+    assert exc_info.value is failure
+    assert sibling_cancelled.is_set()
+    assert sqlite_instance._query_entries(ScoreEntry) == []
