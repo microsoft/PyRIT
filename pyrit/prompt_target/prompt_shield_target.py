@@ -294,6 +294,9 @@ class PromptShieldTarget(PromptTarget):
         Parse the input given to the target to extract the two fields sent to
         Prompt Shield: userPrompt: str, and documents: list[str].
 
+        Tags pair left to right: each ``<document>`` starts a document that ends at the first
+        following ``</document>``, and a tag with no partner stays literal userPrompt text.
+
         Args:
             input_str: The input string to parse.
 

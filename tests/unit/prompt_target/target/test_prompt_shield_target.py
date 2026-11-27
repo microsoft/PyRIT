@@ -118,8 +118,8 @@ async def test_prompt_shield_document_parsing_keeps_text_between_documents(promp
             {"userPrompt": " mid </document> tail", "documents": ["doc1"]},
         ),
         (
-            "a </document> b </document> c",
-            {"userPrompt": "a </document> b </document> c", "documents": []},
+            "x<document>y</document>z<document>",
+            {"userPrompt": "xz<document>", "documents": ["y"]},
         ),
         (
             "Explain the <document> tag",
@@ -137,7 +137,7 @@ async def test_prompt_shield_document_parsing_keeps_text_between_documents(promp
     ids=[
         "stray_closing_tag",
         "extra_closing_tag_after_document",
-        "multiple_stray_closing_tags",
+        "unclosed_opening_tag_after_document",
         "unclosed_opening_tag",
         "literal_opening_tag_inside_document",
         "empty_document",
