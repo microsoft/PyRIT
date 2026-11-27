@@ -13,6 +13,7 @@ from pyrit.converter import (
     AskToDecodeConverter,
     Base64Converter,
     ColumnarTranspositionConverter,
+    RegionalIndicatorConverter,
     SearchReplaceConverter,
 )
 from pyrit.executor.attack import (
@@ -275,7 +276,7 @@ class TestEncodingTechniqueDefault:
         }
         all_names = {t.value for t in EncodingTechnique.get_all_techniques()}
         assert default_names < all_names
-        assert len(all_names) == 21
+        assert len(all_names) == 22
         # The niche/lossy schemes stay ALL-only.
         assert all_names - default_names == {
             "braille",
@@ -286,6 +287,7 @@ class TestEncodingTechniqueDefault:
             "ubbi_dubbi",
             "bifid",
             "columnar_transposition",
+            "regional_indicator",
         }
 
     def test_get_aggregate_tags_includes_default(self):
@@ -596,6 +598,52 @@ class TestEncodingAtomicAttacks:
             for run in attack_runs:
                 assert isinstance(run.attack_technique.attack, PromptSendingAttack)
                 assert len(run._seed_groups) == len(mock_attack_seed_groups)
+
+    async def test_regional_indicator_technique_builds_converter_attacks(
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
+    ):
+        """Selecting RegionalIndicator must register a row that applies the converter.
+
+        The enum-level tests pass even if the ``regional_indicator`` row is removed or misnamed in
+        ``_converter_variants()``; this exercises the selection path end to end so such a regression
+        is caught.
+        """
+        from unittest.mock import patch
+
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_attack_seed_groups},
+        ):
+            scenario = Encoding(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                    "scenario_techniques": [EncodingTechnique.RegionalIndicator],
+                }
+            )
+            await scenario.initialize_async()
+
+            attacks = scenario._get_converter_attacks(
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups})
+            )
+
+            # The technique must produce attacks (a missing/misnamed row would yield none).
+            assert attacks, "regional_indicator technique built no attacks"
+            assert all(aa.display_group == "regional_indicator" for aa in attacks)
+
+            names = {aa.atomic_attack_name for aa in attacks}
+            assert "regional_indicator_raw" in names, "missing raw variant"
+            assert any(n != "regional_indicator_raw" for n in names), "missing decode variant"
+
+            # The RegionalIndicatorConverter is actually applied in every variant's request converters.
+            for aa in attacks:
+                applied = [
+                    conv for config in aa.attack_technique.attack.get_request_converters() for conv in config.converters
+                ]
+                assert any(isinstance(conv, RegionalIndicatorConverter) for conv in applied)
 
     async def test_decode_prompts_disclose_keyed_cipher_description(
         self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
