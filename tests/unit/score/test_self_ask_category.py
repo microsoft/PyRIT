@@ -3,6 +3,7 @@
 
 import json
 from textwrap import dedent
+from typing import assert_type
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -385,3 +386,23 @@ def test_category_factory_supports_inline_template(patch_central_database):
 
     assert "bullying" in scorer._system_prompt
     assert "Fallback: no_harm" in scorer._system_prompt
+
+
+def test_self_factories_return_subclass(patch_central_database) -> None:
+    """Self-typed factories return the subclass they are called on (PyRIT #4504)."""
+
+    class _SubClassifier(ContentClassifier):
+        pass
+
+    classifier = _SubClassifier.from_yaml(ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value)
+    assert_type(classifier, _SubClassifier)
+    assert isinstance(classifier, _SubClassifier)
+
+    class _SubScorer(SelfAskCategoryScorer):
+        pass
+
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    scorer = _SubScorer.from_content_classifier(chat_target=chat_target, content_classifier=classifier)
+    assert_type(scorer, _SubScorer)
+    assert isinstance(scorer, _SubScorer)
