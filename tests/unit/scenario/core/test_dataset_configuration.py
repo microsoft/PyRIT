@@ -3,6 +3,7 @@
 
 """Tests for the DatasetConfiguration base class and DatasetAttackConfiguration."""
 
+from contextlib import nullcontext
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -148,12 +149,80 @@ def test_general_dataset_default_remains_uncapped() -> None:
 
 
 def test_canonical_dataset_selection_does_not_warn(recwarn: pytest.WarningsRecorder) -> None:
-    config = DatasetAttackConfiguration(sources=[DatasetSource(name="d1")], max_total=3, fetch=DatasetFetchPolicy.NEVER)
+    config = DatasetAttackConfiguration(
+        sources=[DatasetSource(name="d1")], max_total=3, fetch=DatasetFetchPolicy.ALWAYS
+    )
     config.max_total = 2
+    config = config.with_overrides(fetch=DatasetFetchPolicy.IF_MISSING)
     assert config.dataset_names == ["d1"]
     assert config.max_total == 2
-    assert config.fetch is DatasetFetchPolicy.NEVER
+    assert config.fetch is DatasetFetchPolicy.IF_MISSING
     assert not recwarn
+
+
+_NEVER_WARNING = r"DatasetFetchPolicy\.NEVER is deprecated and will be removed in 1\.4\.0"
+_SOURCE_FETCH_WARNING = r"DatasetSource\(fetch=\.\.\.\) is deprecated and will be removed in 1\.4\.0"
+
+
+def test_fetch_never_on_configuration_warns_once_and_keeps_policy() -> None:
+    with pytest.warns(DeprecationWarning, match=_NEVER_WARNING) as record:
+        config = DatasetAttackConfiguration(sources=[DatasetSource(name="d1")], fetch=DatasetFetchPolicy.NEVER)
+    assert len(record) == 1
+    assert config.fetch is DatasetFetchPolicy.NEVER
+
+
+def test_fetch_never_override_warns_once_and_keeps_policy() -> None:
+    config = DatasetAttackConfiguration(sources=[DatasetSource(name="d1")])
+    with pytest.warns(DeprecationWarning, match=_NEVER_WARNING) as record:
+        overridden = config.with_overrides(fetch=DatasetFetchPolicy.NEVER)
+    assert len(record) == 1
+    assert overridden.fetch is DatasetFetchPolicy.NEVER
+
+
+def test_compound_fetch_never_override_warns_once_and_reaches_children() -> None:
+    config = CompoundDatasetAttackConfiguration(
+        configurations=[DatasetAttackConfiguration(sources=[DatasetSource(name=name)]) for name in ("a", "b")]
+    )
+    with pytest.warns(DeprecationWarning, match=_NEVER_WARNING) as record:
+        overridden = config.with_overrides(fetch=DatasetFetchPolicy.NEVER)
+    assert len(record) == 1
+    assert [child.fetch for child in overridden.configurations] == [DatasetFetchPolicy.NEVER] * 2
+
+
+@pytest.mark.parametrize("policy", [DatasetFetchPolicy.IF_MISSING, DatasetFetchPolicy.ALWAYS])
+def test_source_fetch_warns_and_keeps_policy(policy: DatasetFetchPolicy) -> None:
+    with pytest.warns(DeprecationWarning, match=_SOURCE_FETCH_WARNING) as record:
+        source = DatasetSource(name="d1", fetch=policy)
+    assert len(record) == 1
+    assert source.fetch is policy
+    assert DatasetAttackConfiguration(sources=[source])._preparation_sources() == [(source, policy)]
+
+
+def test_source_fetch_never_warns_for_both_deprecations() -> None:
+    with pytest.warns(DeprecationWarning) as record:
+        source = DatasetSource(name="d1", fetch=DatasetFetchPolicy.NEVER)
+    messages = [str(warning.message) for warning in record]
+    assert len(messages) == 2
+    assert any("DatasetSource(fetch=...)" in message for message in messages)
+    assert any("DatasetFetchPolicy.NEVER" in message for message in messages)
+    assert source.fetch is DatasetFetchPolicy.NEVER
+
+
+async def test_prepare_with_fetch_never_warns_and_keeps_stored_only_behavior() -> None:
+    config = DatasetAttackConfiguration(sources=[DatasetSource(name="absent")])
+    with (
+        pytest.warns(DeprecationWarning, match=_NEVER_WARNING),
+        pytest.raises(DatasetConstraintError, match="fetch is 'never'"),
+    ):
+        await config.prepare_async(fetch=DatasetFetchPolicy.NEVER)
+
+
+def test_per_dataset_without_auto_fetch_warns_only_for_per_dataset() -> None:
+    with pytest.warns(DeprecationWarning) as record:
+        config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["a"], auto_fetch=False)
+    assert len(record) == 1
+    assert "per_dataset" in str(record[0].message)
+    assert config.configurations[0].fetch is DatasetFetchPolicy.NEVER
 
 
 @pytest.mark.parametrize(
@@ -168,9 +237,12 @@ def test_canonical_dataset_selection_does_not_warn(recwarn: pytest.WarningsRecor
 def test_legacy_dataset_arguments_warn_and_preserve_selection(
     *, legacy_kwargs: dict[str, Any], canonical_kwargs: dict[str, Any], argument: str
 ) -> None:
-    with pytest.warns(DeprecationWarning, match=rf"DatasetConfiguration\({argument}=.*removed in 1\.4\.0"):
+    with pytest.warns(DeprecationWarning, match=rf"DatasetConfiguration\({argument}=.*removed in 1\.4\.0") as record:
         legacy = DatasetAttackConfiguration(**legacy_kwargs)
-    canonical = DatasetAttackConfiguration(**canonical_kwargs)
+    assert len(record) == 1
+    never = canonical_kwargs.get("fetch") is DatasetFetchPolicy.NEVER
+    with pytest.warns(DeprecationWarning, match=_NEVER_WARNING) if never else nullcontext():
+        canonical = DatasetAttackConfiguration(**canonical_kwargs)
     assert legacy.sources == canonical.sources
     assert legacy.max_total == canonical.max_total
     assert legacy.max_per_dataset == canonical.max_per_dataset

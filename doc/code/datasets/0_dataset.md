@@ -66,6 +66,37 @@ A `SeedDataset` is a collection of related `SeedGroups` that you want to test to
 
 Datasets can be loaded from local YAML files or fetched remotely from sources like HuggingFace, making it easy to share and version test cases across teams.
 
+## Scanner dataset loading
+
+A scan loads its datasets with one of two policies, set for the whole scan. `if_missing` fetches datasets that aren't
+stored yet; stored contents win, including edited and generated datasets. `always` replaces each dataset with a fresh
+copy from its provider when the scan starts. A stored dataset with no provider to refresh from, such as one generated
+or uploaded in the GUI, keeps its stored copy under `always`, and the backend logs a warning naming it. A refresh
+validates the full replacement before committing it, so a rejected refresh leaves the stored datasets unchanged.
+
+The scanner shows the two policies as **Cached** (`if_missing`) and **Regenerate** (`always`). The switch appears only
+when a selected dataset has a provider to refresh from. Under **Regenerate**, a selected dataset without one says it
+uses its stored copy.
+
+Selected datasets that aren't stored yet and have a provider load automatically when the page opens or when you
+select them, once per visit and in either mode. A failed load shows its error with **Retry**. Estimating a scan never
+loads data. **Launch scan** stays usable while datasets load: the run is saved first, shown as **Preparing
+datasets**, and starts attacks after loading finishes. A scan is rejected before it's saved when a missing dataset
+has no provider, or any dataset is missing under the deprecated `never` policy. If loading fails, the run fails before any attack executes and can't be resumed; use **Rerun with
+changes** to start a new run. Scans without dataset inputs or named sources launch directly, and Python and API
+launches that don't ask for background preparation load their datasets before the run starts.
+
+`DatasetFetchPolicy.NEVER`, the per-source `DatasetSource(fetch=...)` setting, and `--dataset-fetch never` are
+deprecated and will be removed in 1.4.0; they work as before until then. Use `if_missing`, set on the configuration.
+API requests still accept `never` and per-source `fetch` from saved presets and older clients without a warning. The
+GUI shows a saved `always` as **Regenerate** and a saved `never` or `if_missing` as **Cached**; with no scan-level
+policy it shows the scenario's default, which is **Cached** for every built-in scenario. Its requests set only the
+scan's policy.
+
+Loads and runs that write the same dataset take turns, and each checks what is stored again when its turn comes,
+so a dataset that finished loading while a run waited isn't fetched twice. This coordination covers one backend
+process.
+
 ## Generated Datasets
 
 A generation provider uses a configured `PromptTarget` to create a dataset. Store the result

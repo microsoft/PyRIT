@@ -251,6 +251,7 @@ describe('Scenario catalog-to-run integration', () => {
       max_retries: 0,
       include_baseline: expectedEstimateRequest.include_baseline,
       labels: { operator: 'integration-test' },
+      prepare_in_background: true,
     }))
     expect(await screen.findByTestId('scenario-run-page')).toBeInTheDocument()
     expect(screen.getByLabelText('Current route')).toHaveTextContent(

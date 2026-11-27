@@ -79,6 +79,7 @@ from pyrit.models import (
     ComponentIdentifier,
     ScenarioActiveConversation,
     ScenarioAttackResultDelta,
+    ScenarioDatasetPreparation,
     ScenarioHierarchyNode,
     ScenarioHierarchyProjection,
     ScenarioIdentifier,
@@ -252,6 +253,7 @@ class _ActiveTask:
     cancellation_reason: str = _USER_CANCELLATION_REASON
     cancellation_error_type: str = "CancelledError"
     retain_error_on_terminalization: bool = False
+    prepare_datasets: bool = False
     # Captured at admission so a run queued behind another caller's run acts for its own caller.
     caller_principal: str | None = None
 
@@ -783,10 +785,10 @@ class ScenarioRunService:
         """
         Initialize and schedule a scenario run.
 
-        Performs all validation and initialization eagerly (initializers, target
-        resolution, technique validation, scenario.initialize_async) so errors are
-        returned immediately. On success, starts execution when idle or appends
-        the initialized run to the FIFO waiting queue.
+        Validates configuration eagerly. A fresh background-preparation request checks its
+        sources without fetching and persists a pending run; other requests finish
+        initialization before admission. On success, starts preparation/execution when
+        idle or appends the run to the FIFO queue.
 
         Args:
             request: The run request with scenario name, target, and options.
@@ -872,6 +874,7 @@ class ScenarioRunService:
             scenario_registry_name=request.scenario_name,
             created_at=persisted.creation_time,
             enqueued_at=datetime.now(UTC),
+            prepare_datasets=request.prepare_in_background and not request.scenario_result_id,
             caller_principal=get_caller_principal(),
         )
         await self._enqueue_run_async(scheduled=scheduled)
@@ -1007,7 +1010,7 @@ class ScenarioRunService:
                 fresh scenario result.
 
         Returns:
-            _PreparedRun: The initialized scenario and its scoped default.
+            _PreparedRun: The initialized or pending scenario and its scoped default.
 
         Raises:
             ValueError: If scenario, target, initializer, or technique cannot be found.
@@ -1899,6 +1902,7 @@ class ScenarioRunService:
                 self._resolved_role_metadata,
                 expected_references=(initial_metadata or {}).get("scenario_expected_role_references_v1"),
             ),
+            defer_dataset_preparation=request.prepare_in_background and not request.scenario_result_id,
             initial_metadata={
                 **(initial_metadata or {}),
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
@@ -1927,7 +1931,7 @@ class ScenarioRunService:
         """
         Execute a scenario run (background task entry point).
 
-        Only calls scenario.run_async on the already-initialized scenario.
+        Completes deferred initialization before calling scenario.run_async.
 
         Terminal handoff releases executable objects. Bounded error evidence is
         retained separately for later status polling.
@@ -1941,6 +1945,8 @@ class ScenarioRunService:
 
         try:
             with override_default_adversarial_target(active.adversarial_target):
+                if active.prepare_datasets:
+                    await active.scenario.initialize_async()
                 await active.scenario.run_async()
 
         except asyncio.CancelledError:
@@ -2187,6 +2193,7 @@ class ScenarioRunService:
             scenario_registry_name=plan.scenario_registry_name if plan else None,
             scenario_version=scenario_result.scenario_version,
             status=status,
+            dataset_preparation_pending=ScenarioDatasetPreparation.is_pending(metadata=scenario_result.metadata),
             created_at=scenario_result.creation_time,
             started_at=self._load_started_at(scenario_result=scenario_result),
             updated_at=updated_at,
@@ -2266,6 +2273,26 @@ class ScenarioRunService:
                 record.scenario_result_id,
             )
             return None
+
+    @staticmethod
+    def _history_dataset_preparation_pending(*, record: ScenarioHistoryRunRecord) -> bool:
+        """
+        Read whether one history row's run has not finished preparing its datasets.
+
+        The history projection reads a stored JSON null, and any scalar on SQL Server, as none.
+
+        Returns:
+            bool: True if the run recorded pending preparation; False if it recorded none.
+
+        Raises:
+            ValueError: If the projected state is malformed or its text is not JSON.
+        """
+        stored = record.dataset_preparation
+        if stored is None:
+            return False
+        if isinstance(stored, str):
+            stored = json.loads(stored)
+        return ScenarioDatasetPreparation.is_pending(metadata={ScenarioDatasetPreparation.METADATA_KEY: stored})
 
     async def _recount_with_sdk_statistics_async(
         self,
@@ -2559,6 +2586,7 @@ class ScenarioRunService:
             scenario_registry_name=record.scenario_registry_name,
             scenario_version=record.scenario_version,
             status=status,
+            dataset_preparation_pending=self._history_dataset_preparation_pending(record=record),
             created_at=record.created_at,
             started_at=record.started_at,
             updated_at=max(timestamps),
@@ -2982,6 +3010,7 @@ class ScenarioRunService:
         if header_result is None:
             return None
 
+        preparing = ScenarioDatasetPreparation.is_pending(metadata=header_result.metadata)
         try:
             plan = self._load_run_plan(scenario_result=header_result)
         except (ValidationError, ValueError):
@@ -3007,6 +3036,10 @@ class ScenarioRunService:
             active_group_ids=active_group_ids,
             terminal=terminal,
             objective_scorer_identifier=objective_scorer_identifier,
+            # Results read after a preparing header may belong to the plan preparation is
+            # about to save; report none so the caller's cursor stays put and its next poll
+            # receives that plan.
+            max_deltas=0 if preparing else None,
         )
         progress = self._build_progress_response(
             header_result=header_result,
@@ -3019,6 +3052,7 @@ class ScenarioRunService:
             terminal=terminal,
             queue_position=queue_position,
             active_scenario_result_id=active_scenario_result_id,
+            preparing=preparing,
         )
         progress.recorded_conversations = self._recorded_conversations(header_result)
         if header_result.operation_id is not None:
@@ -3039,6 +3073,7 @@ class ScenarioRunService:
         terminal: bool,
         queue_position: int | None,
         active_scenario_result_id: str | None,
+        preparing: bool = False,
     ) -> ScenarioRunProgress:
         if len(progress_snapshot.deltas) != len(progress_snapshot.results):
             raise ValueError("Scenario progress deltas and results have different lengths.")
@@ -3060,7 +3095,7 @@ class ScenarioRunService:
         deltas = progress_snapshot.deltas[start:end]
         results = list(progress_snapshot.results[start:end])
         has_more = end < len(progress_snapshot.deltas)
-        response_plan = progress_snapshot.plan if since is None else None
+        response_plan = progress_snapshot.plan if since is None and not preparing else None
         next_cursor = (
             self._encode_progress_cursor(scenario_result_id=scenario_result_id, delta=deltas[-1]) if deltas else since
         )
@@ -3076,6 +3111,7 @@ class ScenarioRunService:
         scenario_identity.parameters = filter_sensitive_fields(scenario_identity.parameters)
         return ScenarioRunProgress(
             run=ScenarioProgressHeader(
+                dataset_preparation_pending=preparing,
                 scenario_result_id=scenario_result_id,
                 scenario_name=header_result.scenario_name,
                 scenario_registry_name=plan.scenario_registry_name if plan else None,

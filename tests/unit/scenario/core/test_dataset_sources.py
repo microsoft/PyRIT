@@ -4,6 +4,7 @@
 """Named selection, explicit preparation, and durable storage contracts."""
 
 import asyncio
+import logging
 import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import closing
@@ -18,6 +19,7 @@ import aiofiles
 import pytest
 from sqlalchemy import event
 from sqlalchemy.exc import SQLAlchemyError
+from unit.async_utils import get_defined_tasks, settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
 
 from pyrit.datasets import SeedDatasetProvider
@@ -50,6 +52,7 @@ from pyrit.scenario.core import (
     BaselineAttackPolicy,
     DatasetConstraintError,
     ScenarioTechnique,
+    dataset_configuration,
 )
 from pyrit.scenario.core.dataset_configuration import (
     require_min_size,
@@ -542,6 +545,62 @@ async def test_preparation_persists_then_reuses(
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("policy", [DatasetFetchPolicy.IF_MISSING, DatasetFetchPolicy.ALWAYS])
+async def test_writers_of_one_dataset_take_turns_and_recheck_storage_async(
+    *, sqlite_instance: SQLiteMemory, dataset_writer_wait: asyncio.Event, policy: DatasetFetchPolicy
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hold_fetch(**kwargs: Any) -> SeedDataset:
+        entered.set()
+        await release.wait()
+        return dataset("shared", 3)
+
+    holder = MagicMock(spec=SeedDatasetProvider)
+    holder.dataset_name = "shared"
+    holder.fetch_dataset_async = AsyncMock(side_effect=hold_fetch)
+    waiter = MagicMock(spec=SeedDatasetProvider)
+    waiter.dataset_name = "shared"
+    waiter.fetch_dataset_async = AsyncMock(
+        return_value=SeedDataset(
+            dataset_name="shared",
+            seeds=[SeedObjective(value=f"waiter-{index}", dataset_name="shared") for index in range(2)],
+        )
+    )
+    holding_config, waiting_config = (
+        DatasetAttackConfiguration(sources=[DatasetSource(name="shared", provider=provider)], fetch=policy)
+        for provider in (holder, waiter)
+    )
+    holding: asyncio.Task[None] | None = None
+    waiting: asyncio.Task[None] | None = None
+    try:
+        holding = asyncio.create_task(holding_config.prepare_async())
+        await wait_for_event_async(event=entered, tasks=[holding])
+        waiting = asyncio.create_task(waiting_config.prepare_async())
+        await wait_for_event_async(event=dataset_writer_wait, tasks=[waiting])
+        assert not holding.done()
+        waiter.fetch_dataset_async.assert_not_awaited()
+        release.set()
+        await wait_for_completion_async(future=holding)
+        await wait_for_completion_async(future=waiting)
+    finally:
+        release.set()
+        await settle_tasks_async(*get_defined_tasks(holding, waiting))
+
+    stored = {seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="shared")}
+    if policy is DatasetFetchPolicy.ALWAYS:
+        holder.fetch_dataset_async.assert_awaited_once_with(cache=False)
+        waiter.fetch_dataset_async.assert_awaited_once_with(cache=False)
+        assert stored == {"waiter-0", "waiter-1"}
+    else:
+        holder.fetch_dataset_async.assert_awaited_once_with()
+        waiter.fetch_dataset_async.assert_not_awaited()
+        assert stored == {"shared-0", "shared-1", "shared-2"}
+    assert not dataset_configuration._dataset_writers
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_insert_failure_rolls_back_complete_dataset(
     *, sqlite_instance: SQLiteMemory, configured_provider: bool
 ) -> None:
@@ -707,12 +766,17 @@ async def test_refresh_replaces_complete_dataset_and_repeats_on_new_preparation_
     assert len(await sqlite_instance.get_seeds_async(dataset_name="other")) == 1
 
 
+@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("compound", [False, True])
-async def test_refresh_preflight_rejects_stored_memory_only_source_before_fetch_async(
-    *, memory: MagicMock, compound: bool
+async def test_refresh_keeps_stored_copy_of_source_without_provider_async(
+    *, sqlite_instance: SQLiteMemory, compound: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
+    for name in ("a", "b"):
+        await sqlite_instance.add_seeds_to_memory_async(seeds=dataset(name, 2).seeds, added_by="test")
+    kept = {seed.id: seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="b")}
     provider = MagicMock(spec=SeedDatasetProvider)
     provider.dataset_name = "a"
+    provider.fetch_dataset_async.return_value = dataset("a", 3)
     sources = [DatasetSource(name="a", provider=provider), DatasetSource(name="b")]
     config = (
         CompoundDatasetAttackConfiguration(
@@ -724,13 +788,37 @@ async def test_refresh_preflight_rejects_stored_memory_only_source_before_fetch_
         else DatasetAttackConfiguration(sources=sources, fetch=DatasetFetchPolicy.ALWAYS)
     )
     with (
+        patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={}),
+        caplog.at_level(logging.WARNING, logger=dataset_configuration.__name__),
+    ):
+        await config.check_preparation_async()
+        await config.prepare_async()
+    provider.fetch_dataset_async.assert_awaited_once_with(cache=False)
+    assert sorted(seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="a")) == [
+        "a-0",
+        "a-1",
+        "a-2",
+    ]
+    assert {seed.id: seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="b")} == kept
+    # The launch check stays quiet; only preparation reports the kept copy.
+    assert caplog.text.count("Datasets ['b'] have no provider to refresh from; keeping their stored copies.") == 1
+
+
+async def test_refresh_still_rejects_missing_source_without_provider_async(*, memory: MagicMock) -> None:
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.dataset_name = "a"
+    config = DatasetAttackConfiguration(
+        sources=[DatasetSource(name="a", provider=provider), DatasetSource(name="absent")],
+        fetch=DatasetFetchPolicy.ALWAYS,
+    )
+    with (
         patch.object(CentralMemory, "get_memory_instance", return_value=memory),
         patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={}),
-        pytest.raises(DatasetConstraintError, match="no provider to refresh"),
+        pytest.raises(DatasetConstraintError, match=r"\['absent'\] are missing and have no provider"),
     ):
         await config.prepare_async()
     provider.fetch_dataset_async.assert_not_awaited()
-    memory.replace_seeds_for_dataset_async.assert_not_awaited()
+    memory.add_seed_datasets_to_memory_async.assert_not_awaited()
 
 
 @pytest.mark.parametrize("policy", [DatasetFetchPolicy.NEVER, DatasetFetchPolicy.IF_MISSING])

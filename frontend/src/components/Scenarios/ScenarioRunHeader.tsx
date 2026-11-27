@@ -22,7 +22,9 @@ interface ScenarioRunHeaderProps {
 /** The scan's Operation, title, state, and run controls, with any control failure below them. */
 export default function ScenarioRunHeader({ run, active, controls, headerRef }: ScenarioRunHeaderProps) {
   const styles = useScenarioRunPageStyles()
-  const resumable = run.status === 'FAILED' || run.status === 'CANCELLED'
+  // A run that stopped before dataset preparation finished has no stored plan to resume.
+  const resumable = !run.dataset_preparation_pending && (run.status === 'FAILED' || run.status === 'CANCELLED')
+  const preparing = run.status === 'IN_PROGRESS' && run.dataset_preparation_pending === true
   return (
     <>
       <header className={styles.header} ref={headerRef} tabIndex={-1}>
@@ -30,7 +32,8 @@ export default function ScenarioRunHeader({ run, active, controls, headerRef }: 
           <OperationParentLink id={run.operation_id} name={run.operation_name} />
           <div className={styles.titleRow}>
             <Text as="h1" size={700} weight="semibold">{run.scenario_registry_name ?? run.scenario_name}</Text>
-            <ScanStatusBadge status={run.status} testId="run-state-badge" />
+            <ScanStatusBadge status={run.status} testId="run-state-badge"
+              {...(preparing ? { label: 'Preparing datasets' } : {})} />
           </div>
           {run.description && <Text className={styles.sectionHint}>{run.description}</Text>}
         </div>

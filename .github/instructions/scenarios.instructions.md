@@ -164,10 +164,11 @@ Options:
 - `DatasetSource(provider=...)` attaches a configured `SeedDatasetProvider` instance whose
   `dataset_name` must match the source name. It takes precedence over registry lookup.
   Configuration copies must preserve live providers by identity, not serialize or deep-copy them.
-- `fetch=DatasetFetchPolicy.IF_MISSING` prepares absent configured or registered datasets.
-  `NEVER` requires stored data. `ALWAYS` fetches with `cache=False` and atomically replaces
-  the complete stored dataset for a new run. It requires a configured or registered provider,
-  even when data is already stored. A filter miss must never trigger another fetch.
+- Set the fetch policy on the configuration, for the whole scan.
+  `fetch=DatasetFetchPolicy.IF_MISSING` prepares absent configured or registered datasets.
+  `ALWAYS` fetches with `cache=False` and atomically replaces the complete stored dataset for
+  a new run. A stored dataset with no configured or registered provider keeps its stored copy,
+  and a warning names it; a missing one still fails. A filter miss must never trigger another fetch.
 - With `IF_MISSING`, stored rows win even if a configured provider's inputs change.
   Refresh can remove manual edits and prevent older runs from resuming. All provider results
   are fetched and checked before any dataset write. Candidates and retained sources must
@@ -223,7 +224,9 @@ Options:
   Reads use `_collect_seeds_for_dataset_async()` and must not fetch.
 - Build synthesized prompts from those filtered seeds, not a second unfiltered memory query.
   Scenario code must not call memory seed-read methods directly; the scenario contract test enforces this.
-- `dataset_names`, `max_dataset_size`, `auto_fetch`, and `per_dataset()` are deprecated.
+- `dataset_names`, `max_dataset_size`, `auto_fetch`, `per_dataset()`, `DatasetFetchPolicy.NEVER`,
+  `DatasetSource(fetch=...)`, and `--dataset-fetch never` are deprecated. API requests still accept
+  `never` and per-source `fetch` without a warning, for saved presets and older clients.
 
 `max_dataset_size` is an exact alias for `max_total`; it does not disable source caps.
 To keep the old total-only selection of up to 10 groups, use

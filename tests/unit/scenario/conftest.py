@@ -20,8 +20,11 @@ def enforce_dataset_isolation(block_dataset_provider_lookup: AsyncMock) -> None:
 def mock_dataset_preparation() -> Generator[AsyncMock, None, None]:
     """Skip preparation only in tests that supply their own mocked seed populations."""
     # Required data prepares together with the population, so skipping one means skipping both.
+    # A run saved before preparation checks its sources first, so skipping preparation skips that check too.
     with (
         patch.object(DatasetConfiguration, "prepare_async", new_callable=AsyncMock) as prepare,
         patch.object(ScenarioRequiredData, "prepare_async", new=prepare),
+        patch.object(DatasetConfiguration, "check_preparation_async", new_callable=AsyncMock),
+        patch.object(ScenarioRequiredData, "check_preparation_async", new_callable=AsyncMock),
     ):
         yield prepare

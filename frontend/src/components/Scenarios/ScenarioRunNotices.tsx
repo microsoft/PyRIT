@@ -30,20 +30,29 @@ export default function ScenarioRunNotices({ run, summary, state, inlineAttempt,
   const runErrorShownInline = inlineError !== null && run.error === inlineError.error_message
     && (!run.error_type || run.error_type === inlineError.error_type)
   const runError = run.error && !runErrorShownInline ? run.error : null
+  const pending = run.dataset_preparation_pending === true
   const showRunNotice = Boolean(runError) || (!inlineError && (run.status === 'FAILED' || overall.errors > 0))
+    || (run.status === 'CANCELLED' && pending)
   const unmatched = summary.unattributed_attempts ?? 0
   const overloaded = state.overloadSummaries.length > 0
   const notices: string[] = []
   if (overloaded) notices.push('Service overload detected.')
   if (unmatched > 0) notices.push(`${unmatched} execution${unmatched === 1 ? '' : 's'} could not be matched to the saved plan.`)
-  if (!state.planComplete) notices.push('The saved execution plan is incomplete; some totals cannot be verified.')
+  // A run still preparing datasets has no plan yet, which is expected rather than incomplete.
+  if (!state.planComplete && !pending) notices.push('The saved execution plan is incomplete; some totals cannot be verified.')
   const runIntent = run.status === 'FAILED' ? 'error' : run.status === 'CANCELLED' && overall.errors === 0 ? 'info' : 'warning'
 
   return (
     <>
       {showRunNotice && <MessageBar intent={runIntent}>
-        <MessageBarBody>{run.status === 'FAILED' ? 'Scan failed. Resume to continue remaining attacks.'
-          : run.status === 'CANCELLED' ? 'Scan cancelled.'
+        <MessageBarBody>{run.status === 'FAILED'
+          ? pending
+            ? 'Scan initialization failed before execution. Check the error details and use Rerun with changes to review the configuration.'
+            : 'Scan failed. Resume to continue remaining attacks.'
+          : run.status === 'CANCELLED'
+            ? pending
+              ? 'Scan cancelled before execution. Use Rerun with changes to review the configuration.'
+              : 'Scan cancelled.'
           : `${overall.errors} attack${overall.errors === 1 ? '' : 's'} ended with an error.`}
           {firstError && <Button appearance="transparent" onClick={(event) => { onOpenAttempt(firstError, event.currentTarget) }}>
             View attack

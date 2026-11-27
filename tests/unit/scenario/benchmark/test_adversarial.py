@@ -230,13 +230,11 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     return factory
 
 
-async def _build_atomic_attacks(bench: AdversarialBenchmark) -> list:
+async def _build_atomic_attacks(bench: AdversarialBenchmark, *, is_resume: bool = False) -> list:
     """Drive the post-``initialize_async`` build path: resolve seeds, snapshot the
     context, then build atomic attacks — the same sequence ``initialize_async`` runs."""
-    seed_groups_by_dataset = await bench._resolve_seed_groups_by_dataset_async(
-        apply_sampling=bench._scenario_result_id is None
-    )
-    context = bench._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
+    seed_groups_by_dataset = await bench._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
+    context = bench._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset, is_resume=is_resume)
     return await bench._build_atomic_attacks_async(context=context)
 
 
@@ -1762,7 +1760,7 @@ class TestSkipCachedFilter:
         bench._scenario_result_id = str(uuid.uuid4())
 
         with patch.object(bench, "_collect_reusable_cached_results_async") as collect_reusable:
-            atomic_attacks = await _build_atomic_attacks(bench)
+            atomic_attacks = await _build_atomic_attacks(bench, is_resume=True)
 
         collect_reusable.assert_not_called()
         assert len(atomic_attacks[0].seed_groups) == 1

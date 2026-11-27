@@ -1,4 +1,4 @@
-import type { Parameter, RegisteredScenario } from '@/types'
+import type { Parameter, RegisteredScenario, ScenarioDatasetSourceSettings } from '@/types'
 
 import {
   buildEstimateRequest,
@@ -7,6 +7,7 @@ import {
   minimumSelectionMessage,
   scenarioDynamicParameters,
   type ScenarioLaunchInput,
+  usesScenarioDatasets,
 } from './scenarioLaunchRequest'
 
 const OBJECTIVE: Parameter = {
@@ -109,6 +110,32 @@ describe('scenario launch requests', () => {
 
     expect(run.ok && 'datasets' in run.request).toBe(false)
     expect(run.ok && 'operation_id' in run.request).toBe(false)
+  })
+
+  it('asks the run to prepare datasets only when the launch does, keeping it out of the estimate', () => {
+    const input = makeInput({ prepareDatasetsInBackground: true })
+    const run = buildRunRequest(input)
+    const estimate = buildEstimateRequest(input)
+    const eager = buildRunRequest(makeInput({ prepareDatasetsInBackground: false }))
+
+    expect(run.ok && run.request.prepare_in_background).toBe(true)
+    expect(estimate.ok && 'prepare_in_background' in estimate.request).toBe(false)
+    expect(eager.ok && 'prepare_in_background' in eager.request).toBe(false)
+  })
+
+  const FIXED_SOURCE: ScenarioDatasetSourceSettings = {
+    name: 'fixed', max_size: 'all', fetch: 'if_missing', configured_provider: false,
+  }
+  it.each<[string, Partial<RegisteredScenario>, ScenarioDatasetSourceSettings[], boolean]>([
+    ['takes dataset input', {}, [], true],
+    ['has default datasets', { supported_parameter_names: ['objective_target'], default_datasets: ['harmbench'] }, [], true],
+    ['has fixed sources', { supported_parameter_names: ['objective_target'] }, [FIXED_SOURCE], true],
+    ['uses only inline seeds', { supported_parameter_names: ['objective_target'] }, [], false],
+  ])('reports whether a scenario that %s has datasets to prepare', (_, overrides, sources, expected) => {
+    const scenario = makeScenario({ default_datasets: [], ...overrides })
+    const defaults = { sources, max_per_dataset: 'all' as const, max_total: 'all' as const, fetch: 'if_missing' as const, filters: {} }
+
+    expect(usesScenarioDatasets(scenario, defaults)).toBe(expected)
   })
 
   it.each<[string, Partial<ScenarioLaunchInput>, string]>([

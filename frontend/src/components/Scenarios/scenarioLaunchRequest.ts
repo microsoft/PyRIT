@@ -6,6 +6,7 @@ import type {
   RunScenarioRequest,
   ScenarioDatasetOptions,
   ScenarioDatasetRequest,
+  ScenarioDatasetSettings,
   ScenarioRunSizeEstimateRequest,
   TechniqueOverride,
 } from '@/types'
@@ -102,6 +103,15 @@ export function scenarioDynamicParameters(scenario: RegisteredScenario): Paramet
 }
 
 /**
+ * Whether a launch has datasets to prepare: dataset input, or default or fixed sources even without overrides.
+ * A scan with neither, such as one using only inline seeds, keeps its eager launch.
+ */
+export function usesScenarioDatasets(scenario: RegisteredScenario, defaults: ScenarioDatasetSettings): boolean {
+  return supportsParameter(scenario, 'dataset_config') || scenario.default_datasets.length > 0
+    || defaults.sources.length > 0
+}
+
+/**
  * The one effective launch configuration. The estimate and the run request are
  * both built from it, so the preview always describes what gets launched.
  */
@@ -122,6 +132,8 @@ export interface ScenarioLaunchInput {
   datasetError: string | null
   /** Why the linked dataset names can't launch; see `linkedDatasetProblem`. */
   linkedDatasetError?: string | null
+  /** Save the run first and load its datasets while it starts, so Launch doesn't wait for providers. */
+  prepareDatasetsInBackground?: boolean
   includeBaseline: boolean
   techniqueOverride?: TechniqueOverride | undefined
   techniqueEditError?: string | undefined
@@ -267,6 +279,7 @@ export function buildRunRequest(input: ScenarioLaunchInput): BuildRunRequestResu
     scenario_name: input.scenario.scenario_name,
     ...estimateResult.request,
   }
+  if (input.prepareDatasetsInBackground) request.prepare_in_background = true
   if (input.operationId) request.operation_id = input.operationId
   if (supportsParameter(input.scenario, 'max_concurrency')) {
     request.max_concurrency = input.maxConcurrency

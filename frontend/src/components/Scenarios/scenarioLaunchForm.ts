@@ -10,6 +10,7 @@ import type {
 } from '@/types'
 import { sameTarget } from '@/utils/targetIdentity'
 
+import { withScanLevelLoading } from './datasetPresentation'
 import { DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_RETRIES } from './scenarioLaunchRequest'
 
 export interface TechniqueOptions {
@@ -111,8 +112,9 @@ function initialDatasetEdits(
   base: ScenarioDatasetRequest,
   datasetNames: readonly string[] | undefined,
 ): ScenarioDatasetRequest {
-  if (datasetNames === undefined) return base
-  return { ...base, sources: datasetNames.map((name) => ({ name })) }
+  const saved = withScanLevelLoading(base)
+  if (datasetNames === undefined) return saved
+  return { ...saved, sources: datasetNames.map((name) => ({ name })) }
 }
 
 export function initialScenarioLaunchForm({

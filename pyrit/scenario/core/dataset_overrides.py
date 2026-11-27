@@ -19,6 +19,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetConstraintError,
     DatasetSource,
     DatasetSourceKind,
+    _without_fetch_deprecation,
 )
 from pyrit.scenario.core.required_data import ScenarioRequiredData
 
@@ -48,28 +49,31 @@ def apply_dataset_overrides(
         raise DatasetConstraintError("This scenario does not support a total dataset limit.")
     if not options.filters and request.filters:
         raise DatasetConstraintError("This scenario does not support dataset filters.")
-    kwargs: dict[str, Any] = {}
-    if request.sources is not None:
-        if isinstance(config, CompoundDatasetAttackConfiguration):
-            raise DatasetConstraintError("Compound sources are fixed; source edits are ambiguous.")
-        existing = {source.name: source for source in config.sources}
-        selected = []
-        for source in request.sources:
-            base = existing.get(source.name, DatasetSource(name=source.name))
-            edits = {
-                **({"max_size": source.max_size} if source.max_size != "default" else {}),
-                **({"fetch": source.fetch} if source.fetch is not None else {}),
-            }
-            selected.append(replace(base, **edits) if edits else base)
-        kwargs["sources"] = selected
-    if request.fetch is not None:
-        kwargs["fetch"] = request.fetch
-    effective = config.with_overrides(
-        **kwargs,
-        max_per_dataset=request.max_per_dataset,
-        max_total=request.max_total,
-        filters=request.filters,
-    )
+    if isinstance(config, CompoundDatasetAttackConfiguration) and request.sources is not None:
+        raise DatasetConstraintError("Compound sources are fixed; source edits are ambiguous.")
+    # Requests keep accepting the deprecated 'never' policy and per-source fetch, from saved presets and older
+    # clients, without warning.
+    with _without_fetch_deprecation():
+        kwargs: dict[str, Any] = {}
+        if request.sources is not None:
+            existing = {source.name: source for source in config.sources}
+            selected = []
+            for source in request.sources:
+                base = existing.get(source.name, DatasetSource(name=source.name))
+                edits = {
+                    **({"max_size": source.max_size} if source.max_size != "default" else {}),
+                    **({"fetch": source.fetch} if source.fetch is not None else {}),
+                }
+                selected.append(replace(base, **edits) if edits else base)
+            kwargs["sources"] = selected
+        if request.fetch is not None:
+            kwargs["fetch"] = request.fetch
+        effective = config.with_overrides(
+            **kwargs,
+            max_per_dataset=request.max_per_dataset,
+            max_total=request.max_total,
+            filters=request.filters,
+        )
     validate_dataset_selection(config=effective, defaults=config, options=options)
     return effective
 

@@ -348,7 +348,8 @@ def _add_run_arguments(*, parser: ArgumentParser, scenario_params: list[Paramete
     parser.add_argument(
         "--dataset-fetch",
         choices=["never", "if_missing", "always"],
-        help="Dataset preparation policy; omission keeps scenario settings. always replaces stored data.",
+        help="Dataset preparation policy; omission keeps scenario settings. always replaces stored data that has "
+        "a provider. never is deprecated; use if_missing.",
     )
     parser.add_argument(
         "--dataset-filters",

@@ -50,6 +50,7 @@ from pyrit.models import (
     Parameter,
     RegistryReference,
     ScenarioDatasetOptions,
+    ScenarioDatasetPreparation,
     ScenarioDatasetRequest,
     ScenarioDatasetSettings,
     ScenarioDatasetSizeCap,
@@ -103,6 +104,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetSource,
     DatasetSourceKind,
     MissingDatasetError,
+    _without_fetch_deprecation,
     prepare_configurations_async,
 )
 from pyrit.scenario.core.dataset_overrides import (
@@ -358,6 +360,7 @@ class Scenario(ABC):
         self._scenario_result_id: str | None = str(scenario_result_id) if scenario_result_id else None
         self._scenario_registry_name: str | None = None
         self._initial_metadata: dict[str, Any] = {}
+        self._pending_initialization: ScenarioResult | None = None
         self._active_atomic_groups: dict[str, str] = {}
         self._active_executor: AttackExecutor | None = None
 
@@ -1155,9 +1158,11 @@ class Scenario(ABC):
         config = self._dataset_config
         if self._required_data is None or config.dataset_names or config.source_kind is DatasetSourceKind.INLINE:
             return
-        self._required_data = self._required_data.with_sources(
-            sources=self._required_data.sources, fetch=config.fetch, filters=config.filters
-        )
+        # The configuration already warned about any deprecated policy it was given.
+        with _without_fetch_deprecation():
+            self._required_data = self._required_data.with_sources(
+                sources=self._required_data.sources, fetch=config.fetch, filters=config.filters
+            )
 
     def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
         """
@@ -1208,20 +1213,21 @@ class Scenario(ABC):
         # The legacy configuration read these datasets as its population, so its own validators
         # validated the raw template/corpus seeds. Those seeds are now required data, so the
         # validators move with them; the configuration keeps only its defaults and limits.
-        self._required_data = required.with_sources(
-            sources=[
-                DatasetSource(
-                    name=source.name,
-                    max_size=config.source_limit(source.name),
-                    fetch=source.fetch,
-                    provider=source.provider,
-                )
-                for source in config.sources
-            ],
-            fetch=config.fetch,
-            filters=config.filters,
-            validators=config._user_validators,
-        )
+        with _without_fetch_deprecation():
+            self._required_data = required.with_sources(
+                sources=[
+                    DatasetSource(
+                        name=source.name,
+                        max_size=config.source_limit(source.name),
+                        fetch=source.fetch,
+                        provider=source.provider,
+                    )
+                    for source in config.sources
+                ],
+                fetch=config.fetch,
+                filters=config.filters,
+                validators=config._user_validators,
+            )
         stripped = config.with_overrides(sources=[])
         # Remove the moved validators by identity: a validator may be any callable, including an
         # unhashable instance, so they can't go in a set.
@@ -1563,6 +1569,13 @@ class Scenario(ABC):
             population=self._dataset_config,
             validate_assembly=lambda: self._resolve_seed_groups_by_dataset_async(apply_sampling=False),
         )
+
+    async def _check_dataset_preparation_async(self) -> None:
+        """Reject sources that preparation could never load, without fetching or writing."""
+        if self._required_data is None:
+            await self._dataset_config.check_preparation_async()
+            return
+        await self._required_data.check_preparation_async(population=self._dataset_config)
 
     async def _validate_prepared_population_async(self) -> None:
         population = await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=False)
@@ -2000,6 +2013,38 @@ class Scenario(ABC):
                 ``BASELINE_ATTACK_POLICY`` is ``Forbidden``, or if a resumed run can't be rebuilt
                 (it was created by an older PyRIT, or a dataset its scenario reads was deleted).
         """
+        if self._pending_initialization is not None:
+            await self._initialize_attacks_async(stored_result=None)
+            return
+        stored_result = await self._initialize_runtime_async()
+        await self._initialize_attacks_async(stored_result=stored_result)
+
+    async def create_pending_run_async(self) -> None:
+        """
+        Validate a new run and persist its identity before dataset preparation.
+
+        Sources that preparation could never load are rejected before the run is stored, without fetching.
+
+        Raises:
+            ValueError: If this scenario already refers to a run.
+        """
+        if self._scenario_result_id is not None:
+            raise ValueError("Only a new run can defer dataset preparation.")
+        await self._initialize_runtime_async()
+        await self._check_dataset_preparation_async()
+        result = ScenarioResult(
+            scenario_identifier=self._build_scenario_identifier(),
+            scenario_description=self._description,
+            labels=self._memory_labels,
+            operation_id=self._operation_id,
+            attack_results={},
+            metadata={**self._initial_metadata, **ScenarioDatasetPreparation(pending=True).to_metadata()},
+        )
+        await self._memory.add_scenario_results_to_memory_async(scenario_results=[result])
+        self._scenario_result_id = str(result.id)
+        self._pending_initialization = result
+
+    async def _initialize_runtime_async(self) -> ScenarioResult | None:
         if not self._params_resolved:
             self.set_params_from_args(args=self.params)
         raw_operation_id = self.params.get("operation_id")
@@ -2018,6 +2063,11 @@ class Scenario(ABC):
             if not stored:
                 raise ValueError(f"Scenario result id '{self._scenario_result_id}' not found in memory")
             stored_result = stored[0]
+            if ScenarioDatasetPreparation.is_pending(metadata=stored_result.metadata):
+                raise ValueError(
+                    "This run never finished dataset preparation and can't be resumed. "
+                    "Start a new run with the same configuration instead."
+                )
             stored_id = stored_result.operation_id
             # A run may be resumed with the name it was started with, or a name of its saved Operation.
             if operation_name is not None and operation_name != stored_result.labels.get("operation"):
@@ -2060,6 +2110,10 @@ class Scenario(ABC):
                 )
         else:
             self._initial_metadata[SCENARIO_ROLE_REFERENCES_METADATA_KEY] = references
+        return stored_result
+
+    async def _initialize_attacks_async(self, *, stored_result: ScenarioResult | None) -> None:
+        pending = self._pending_initialization
         stored_plan = self._get_stored_run_plan(stored_result=stored_result) if stored_result is not None else None
 
         # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
@@ -2072,7 +2126,9 @@ class Scenario(ABC):
         #
         # A new run resolves and samples its population, then stores it with the result. Resume
         # rebuilds from that stored population and never reads the population datasets, so
-        # dataset edits, refreshes, and deletes after planning don't affect it.
+        # dataset edits, refreshes, and deletes after planning don't affect it. A pending run
+        # persisted before dataset preparation is new, not a resume.
+        is_resume = stored_result is not None
         if stored_result is not None:
             seed_groups_by_dataset = await self._load_planned_population_async(
                 stored_result=stored_result, stored_plan=stored_plan
@@ -2092,11 +2148,12 @@ class Scenario(ABC):
         # Launch and resume both check the actual population against the scenario's input contract.
         self._validate_dataset_population(seed_groups_by_dataset)
         # A fresh run's result id is chosen now, so attacks built below can already refer to the run.
-        new_result_id = uuid.uuid4()
+        new_result_id = pending.id if pending is not None else uuid.uuid4()
         context = self._build_scenario_context(
             seed_groups_by_dataset=seed_groups_by_dataset,
             scenario_result_id=self._scenario_result_id or str(new_result_id),
             stored_run_plan=stored_plan,
+            is_resume=is_resume,
         )
         with override_default_adversarial_target(self._resolved_adversarial_target):
             self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
@@ -2147,9 +2204,27 @@ class Scenario(ABC):
             },
         )
 
-        await self._memory.add_planned_scenario_result_async(
-            scenario_result=result, seed_groups_by_dataset=seed_groups_by_dataset
-        )
+        if pending is not None:
+            header = await self._memory.get_scenario_result_header_async(scenario_result_id=str(pending.id))
+            if header is None:
+                raise RuntimeError("The preparing scenario run no longer exists.")
+            result.creation_time = header.creation_time
+            result.completion_time = header.completion_time
+            result.scenario_run_state = header.scenario_run_state
+            result.metadata = {
+                **header.metadata,
+                **result.metadata,
+                **ScenarioDatasetPreparation(pending=False).to_metadata(),
+            }
+            # Resume rebuilds from the planned population, so it is stored with the completed header.
+            await self._memory.complete_pending_scenario_result_async(
+                scenario_result=result, seed_groups_by_dataset=seed_groups_by_dataset
+            )
+            self._pending_initialization = None
+        else:
+            await self._memory.add_planned_scenario_result_async(
+                scenario_result=result, seed_groups_by_dataset=seed_groups_by_dataset
+            )
         self._scenario_result_id = str(result.id)
         logger.info(f"Created new scenario result with ID: {self._scenario_result_id}")
 
@@ -2665,6 +2740,7 @@ class Scenario(ABC):
         seed_groups_by_dataset: dict[str, list[AttackSeedGroup]],
         stored_run_plan: ScenarioRunPlan | None = None,
         scenario_result_id: str | None = None,
+        is_resume: bool = False,
     ) -> ScenarioContext:
         """
         Snapshot the resolved runtime inputs into a ``ScenarioContext``.
@@ -2680,6 +2756,7 @@ class Scenario(ABC):
                 ``context.seed_groups`` is derived from these so both views share one sample.
             stored_run_plan (ScenarioRunPlan | None): The original plan when resuming.
             scenario_result_id (str | None): The id of the ``ScenarioResult`` this run writes to.
+            is_resume (bool): Whether the builder restores a prior run from its stored population.
 
         Returns:
             ScenarioContext: The immutable inputs for atomic-attack construction.
@@ -2706,6 +2783,7 @@ class Scenario(ABC):
             seed_groups_by_dataset=seed_groups_by_dataset,
             stored_run_plan=stored_run_plan,
             scenario_result_id=scenario_result_id,
+            is_resume=is_resume,
         )
 
     @abstractmethod

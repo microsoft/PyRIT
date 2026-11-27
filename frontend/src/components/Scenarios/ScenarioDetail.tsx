@@ -32,6 +32,7 @@ import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
 import TargetSelect from '@/components/Config/TargetSelect'
 import TechniqueEditor from '@/components/Techniques/TechniqueEditor'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
+import { useDatasetAutoLoad } from '@/hooks/useDatasetAutoLoad'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { useRunTechniqueEditor } from '@/hooks/useRunTechniqueEditor'
@@ -72,7 +73,7 @@ import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import ScenarioEstimateSection from './ScenarioEstimateSection'
 import ScenarioRunPreviewDialog from './ScenarioRunPreviewDialog'
 import ScenarioTechniqueSection from './ScenarioTechniqueSection'
-import { datasetTotalLimit, scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
+import { datasetCanRefresh, datasetTotalLimit, scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
 import { formatCarriedParameterPreview } from './scenarioLaunchPresentation'
 import { normalizeScenarioMarkdown } from './scenarioMarkdown'
 import { carriedPresetScenarioParams, seedPresetTechniques, untouchedPresetScenarioParams } from './scenarioPresetSeed'
@@ -105,6 +106,7 @@ import {
   requiresDatasetSelection,
   supportsParameter,
   usesCompatibleDatasetPicker,
+  usesScenarioDatasets,
 } from './scenarioLaunchRequest'
 import ScenarioDatasetTable from './ScenarioDatasetTable'
 import DatasetActions from './DatasetActions'
@@ -488,11 +490,11 @@ function ScenarioLaunchForm({
   } = form
   const setDatasetEdits = useCallback(
     (edits: ScenarioDatasetRequest) => dispatch({ type: 'setDatasetEdits', edits }),
-    [],
+    [dispatch],
   )
   const setDatasetError = useCallback(
     (error: string | null) => dispatch({ type: 'setDatasetError', error }),
-    [],
+    [dispatch],
   )
   const updateScenarioParam = (name: string, value: ParameterFormValue): void => {
     dispatch({ type: 'setParam', name, value })
@@ -592,7 +594,6 @@ function ScenarioLaunchForm({
     linkedDatasetError,
   ])
   const estimateResult = useMemo(() => buildEstimateRequest(launchInput), [launchInput])
-  const requestResult = useMemo(() => buildRunRequest(launchInput), [launchInput])
   const estimateRequest = useMemo(
     () => estimateResult.ok ? estimateResult.request : null,
     [estimateResult],
@@ -642,6 +643,11 @@ function ScenarioLaunchForm({
   const effectiveDatasets = datasetProjection?.effective_datasets ?? datasetDefaults
   const datasetOptions: ScenarioDatasetOptions = datasetProjection?.dataset_options
     ?? scenarioDatasetOptions(scenario)
+  const prepareDatasetsInBackground = usesScenarioDatasets(scenario, datasetDefaults)
+  const requestResult = useMemo(
+    () => buildRunRequest({ ...launchInput, prepareDatasetsInBackground }),
+    [launchInput, prepareDatasetsInBackground],
+  )
   const selectedDatasetNames = (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name)
   // The server enforces the scenario's declared minimum. Launch scan presents it on the required picker in the
   // library's wording; the estimate's own rejection can be about another field, so it stays in the run estimate.
@@ -659,13 +665,35 @@ function ScenarioLaunchForm({
       reloadDatasetMetadata()
     }
   }, [datasetSelectionKey, reloadDatasetMetadata, compatibleDatasetsOnly])
+  // Selected datasets that are missing and have a source load on their own, each name once per page visit
+  // (scenario and runtime generation). Compatible-only choices are already stored, and the preset editor never
+  // loads. A catalog reload that still omits or reports a tried name as missing starts nothing.
+  const autoLoadNames = compatibleDatasetsOnly || staleSelection || !runtime.ready || estimateRequest === null
+    || datasetMetadata.loading || datasetMetadata.error !== null ? [] : selectedDatasetNames.filter((name) => {
+      const metadata = datasetMetadata.items.find((item) => item.name === name)
+      const settings = effectiveDatasets.sources.find((source) => source.name === name)
+        ?? datasetDefaults.sources.find((source) => source.name === name)
+      return metadata !== undefined && !metadata.loaded && datasetCanRefresh(metadata, settings)
+    })
+  const loadSelectedDatasets = datasetMetadata.loadSelected
+  const startDatasetLoad = useCallback((names: string[]) => {
+    if (estimateRequest !== null) void loadSelectedDatasets(scenario.scenario_name, estimateRequest, names)
+  }, [estimateRequest, loadSelectedDatasets, scenario.scenario_name])
+  const retryDatasetLoads = useDatasetAutoLoad(
+    JSON.stringify([scenario.scenario_name, runtime.generation]), autoLoadNames, startDatasetLoad,
+  )
   const confirmedDatasetSettings = currentDatasetEstimate?.status === 'resolved'
     ? currentDatasetEstimate.datasetSettings : undefined
   const checkingRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0 && currentDatasetEstimate === null
   const unconfirmedRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0
     && !checkingRefreshPolicies && confirmedDatasetSettings === undefined
+  // A stored dataset with no provider keeps its copy under Regenerate, so only datasets that can refresh are
+  // named. One the listing can't describe yet stays named, and is reported below as unchecked.
   const refreshDatasets = [...new Set((confirmedDatasetSettings?.sources ?? [])
-    .filter((source) => source.fetch === 'always').map((source) => source.name))]
+    .filter((source) => {
+      const metadata = datasetMetadata.items.find((item) => item.name === source.name)
+      return source.fetch === 'always' && (metadata === undefined || datasetCanRefresh(metadata, source))
+    }).map((source) => source.name))]
   const editedRefreshDatasets = refreshDatasets.filter((name) => {
     const metadata = datasetMetadata.items.find((item) => item.name === name)
     return metadata?.loaded && (!metadata.origins?.length
@@ -1079,16 +1107,8 @@ function ScenarioLaunchForm({
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
                 datasets={datasetMetadata.items} disabled={submitting}
                 loading={datasetMetadata.loading} metadataError={datasetMetadata.error}
-                preparing={datasetMetadata.preparing} loadError={datasetMetadata.loadError}
-                loadEnabled={runtime.ready && !staleSelection && estimateRequest !== null
-                  && confirmedDatasetSettings !== undefined
-                  && !confirmedDatasetSettings.sources.some((source) => source.fetch === 'always'
-                    && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
-                {...(compatibleDatasetsOnly ? {} : {
-                  onLoad: () => {
-                    if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest)
-                  },
-                })}
+                loadingNames={datasetMetadata.loadingNames} loadErrors={datasetMetadata.loadErrors}
+                onRetryLoad={retryDatasetLoads}
                 compatibleOnly={compatibleDatasetsOnly}
                 required={datasetRequired} selectionError={datasetSelectionError} pickerRef={datasetPickerRef}
                 onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
@@ -1159,7 +1179,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null) || linkedDatasetError !== null}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || (supportsDatasets && datasetError !== null) || linkedDatasetError !== null}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan

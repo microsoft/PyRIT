@@ -196,7 +196,7 @@ def parse_dataset_source(value: str) -> Any:
 
 def parse_dataset_fetch(value: str) -> str:
     """
-    Validate the global preparation policy without importing dataset providers.
+    Validate the global preparation policy without importing dataset providers. ``never`` is deprecated.
 
     Returns:
         str: Validated preparation policy.
@@ -232,6 +232,13 @@ def build_dataset_request_fields(args: dict[str, Any]) -> dict[str, Any]:
         )
     filters = collapse_dataset_filters(args["dataset_filters"]) if args.get("dataset_filters") else None
     if new_form:
+        # TODO(PyRIT 1.4): Remove the 'never' choice.
+        if args.get("dataset_fetch") == "never":
+            print_deprecation_message(
+                old_item="--dataset-fetch never", new_item="--dataset-fetch if_missing", removed_in="1.4.0"
+            )
+            # DeprecationWarning is suppressed by default in a CLI, so also print a visible note.
+            print("Note: '--dataset-fetch never' is deprecated; use '--dataset-fetch if_missing'.", file=sys.stderr)
         return {
             "datasets": ScenarioDatasetRequest(
                 sources=args.get("datasets"),
@@ -244,8 +251,6 @@ def build_dataset_request_fields(args: dict[str, Any]) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     for key in ("dataset_names", "max_dataset_size"):
         if args.get(key) is not None:
-            from pyrit.common import print_deprecation_message
-
             print_deprecation_message(
                 old_item="--" + key.replace("_", "-"),
                 new_item="--datasets" if key == "dataset_names" else "--max-total",

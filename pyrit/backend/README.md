@@ -221,6 +221,32 @@ and **400** otherwise, and storage that can't be written receives **503**. Each 
 `temporary`, as for targets. A saved converter can't be removed through the API yet (**409**): delete its file under
 `registry_recipes_source` and restart the backend.
 
+### Scenario dataset preparation
+
+See [scanner dataset loading](../../doc/code/datasets/0_dataset.md#scanner-dataset-loading) for the shared
+behavior. `POST /api/scenarios/catalog/{name}/datasets/load` accepts the same configuration as an estimate, loads
+only the selected sources that aren't stored yet, and doesn't create a run. The GUI calls it automatically for
+selected datasets that aren't stored and have a provider, once per dataset per page visit. Discovery GETs and
+estimates never fetch or write datasets.
+
+The scan-level `datasets.fetch` is `if_missing` (the GUI's **Cached**) or `always` (**Regenerate**). Under `always`,
+a stored dataset with no configured or registered provider keeps its stored copy, and the backend logs a warning
+naming it. Requests still accept the deprecated `never` and per-source `sources[].fetch` from saved presets and older
+clients, without a server-side warning; both will be removed in 1.4.0. The GUI doesn't send them.
+
+`POST /api/scenarios/runs` accepts `prepare_in_background: true` for a fresh run. Configuration, dependency, and
+Operation validation run first, and sources the run could never load, such as a missing `never` source or a missing
+source without a provider, are rejected without fetching. The run is then stored, admitted to the existing queue,
+and reported with `dataset_preparation_pending: true` in its summary and progress header until its datasets are
+prepared; attacks start only after that. Preparation honors the effective `if_missing`, `always`, or deprecated
+`never` policy. If it fails, the run fails without executing attacks and can't be resumed; start a new run instead.
+The GUI sends the flag for scans that use datasets, so a scan can launch while its datasets are still loading.
+Without it, the request prepares datasets before it returns, as before.
+
+Loads and runs that write the same dataset name in the same memory take turns, and each checks what is stored again
+when its turn comes, so a dataset that finished loading while a run waited isn't fetched twice. This coordination
+covers one backend process.
+
 ### Dataset creation, batch mutation, and deletion
 
 `POST /api/datasets` creates a named dataset synchronously from multipart form data.

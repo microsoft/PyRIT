@@ -62,45 +62,58 @@ describe('useScenarioDatasets', () => {
     view.unmount()
   })
 
-  it('loads only on explicit action and refreshes metadata after success', async () => {
+  it('loads only when asked and refreshes metadata after success', async () => {
     list.mockResolvedValue({ items: [NAMED] })
     loadDatasets.mockResolvedValue({})
     const view = renderHook(() => useScenarioDatasets('test'))
     await waitFor(() => expect(view.result.current.items).toEqual([NAMED]))
     expect(loadDatasets).not.toHaveBeenCalled()
     const request = { datasets: { max_total: 4 } }
-    await act(async () => { await view.result.current.loadSelected('test', request) })
+    await act(async () => { await view.result.current.loadSelected('test', request, ['named']) })
     expect(loadDatasets).toHaveBeenCalledWith('test', request)
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
-    expect(view.result.current.loadError).toBeNull()
+    expect(view.result.current.loadingNames).toEqual([])
+    expect(view.result.current.loadErrors).toEqual({})
   })
 
-  it('retains load failures and still refreshes current metadata', async () => {
+  it('keeps each failure on its dataset names, clears it when they load again, and refreshes metadata', async () => {
     list.mockResolvedValue({ items: [NAMED] })
-    loadDatasets.mockRejectedValue(new Error('Load failed'))
+    loadDatasets.mockRejectedValueOnce(new Error('Load failed'))
     const view = renderHook(() => useScenarioDatasets('test'))
-    await act(async () => { await view.result.current.loadSelected('test', {}) })
-    await waitFor(() => expect(view.result.current.loadError).not.toBeNull())
-    expect(view.result.current.preparing).toBe(false)
+    await act(async () => { await view.result.current.loadSelected('test', {}, ['a', 'b']) })
+    expect(view.result.current.loadErrors).toEqual({ a: 'Load failed', b: 'Load failed' })
+    expect(view.result.current.loadingNames).toEqual([])
     expect(list).toHaveBeenCalledTimes(2)
+    let finish: () => void = () => {}
+    loadDatasets.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve }))
+    let retry: Promise<void> = Promise.resolve()
+    act(() => { retry = view.result.current.loadSelected('test', {}, ['a']) })
+    expect(view.result.current.loadErrors).toEqual({ b: 'Load failed' })
+    expect(view.result.current.loadingNames).toEqual(['a'])
+    await act(async () => { finish(); await retry })
+    expect(view.result.current.loadErrors).toEqual({ b: 'Load failed' })
   })
 
-  it('deduplicates load clicks and ignores completion from a previous generation', async () => {
+  it('starts a request for every call, tracks each one, and ignores completion from a previous generation', async () => {
     list.mockResolvedValue({ items: [NAMED] })
-    let finish: () => void = () => {}
-    loadDatasets.mockReturnValue(new Promise<void>((resolve) => { finish = resolve }))
+    const finishers: Array<() => void> = []
+    const held = (): Promise<void> => new Promise<void>((resolve) => { finishers.push(resolve) })
+    loadDatasets.mockImplementationOnce(held).mockImplementationOnce(held)
     const view = renderHook(() => useScenarioDatasets('test'))
-    let pending: Promise<void>
-    act(() => {
-      pending = view.result.current.loadSelected('test', {})
-      void view.result.current.loadSelected('test', {})
-    })
-    expect(loadDatasets).toHaveBeenCalledTimes(1)
+    let first: Promise<void> = Promise.resolve()
+    let second: Promise<void> = Promise.resolve()
+    act(() => { first = view.result.current.loadSelected('test', {}, ['a']) })
+    act(() => { second = view.result.current.loadSelected('test', {}, ['b']) })
+    expect(loadDatasets).toHaveBeenCalledTimes(2)
+    expect(view.result.current.loadingNames).toEqual(['a', 'b'])
+    await act(async () => { finishers[0]?.(); await first })
+    expect(view.result.current.loadingNames).toEqual(['b'])
     generation = 'two'
     view.rerender()
-    await act(async () => { finish(); await pending })
-    expect(view.result.current.preparing).toBe(false)
-    expect(view.result.current.loadError).toBeNull()
+    expect(view.result.current.loadingNames).toEqual([])
+    await act(async () => { finishers[1]?.(); await second })
+    expect(view.result.current.loadingNames).toEqual([])
+    expect(view.result.current.loadErrors).toEqual({})
   })
 
   it('uses one read-only compatible listing in StrictMode and scopes cached choices to scenario', async () => {

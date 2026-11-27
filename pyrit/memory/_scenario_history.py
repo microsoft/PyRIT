@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import String, and_, case, cast, func, or_, select
 
-from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayValue, JsonScalar, UuidHex
+from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayValue, JsonContainer, JsonScalar, UuidHex
 from pyrit.memory.memory_models import AttackResultEntry, ConversationEntry, FindingEvidenceEntry, ScenarioResultEntry
-from pyrit.models import SCENARIO_CONVERSATIONS_METADATA_KEY
+from pyrit.models import SCENARIO_CONVERSATIONS_METADATA_KEY, ScenarioDatasetPreparation
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -163,6 +163,9 @@ class _ScenarioHistoryQueries:
             ScenarioResultEntry.completion_time,
             ScenarioResultEntry.error_message,
             ScenarioResultEntry.error_type,
+            JsonContainer(ScenarioResultEntry.scenario_metadata, f"$.{ScenarioDatasetPreparation.METADATA_KEY}").label(
+                "dataset_preparation"
+            ),
             *(
                 expression.label(label)
                 for expression, label in zip(
@@ -201,6 +204,7 @@ class _ScenarioHistoryQueries:
                 scenario_registry_name=row.scenario_registry_name,
                 plan_atomic_groups=row.plan_atomic_groups,
                 plan_seed_id_map=row.plan_seed_id_map,
+                dataset_preparation=row.dataset_preparation,
             )
             for row in page_rows
         ]

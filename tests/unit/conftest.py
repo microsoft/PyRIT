@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import os
 import sqlite3
 import sys
@@ -9,7 +10,7 @@ import time
 import weakref
 from collections.abc import AsyncGenerator, Generator, Iterator
 from contextlib import closing, contextmanager
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, patch
 
 import aiosqlite
@@ -98,6 +99,24 @@ def block_dataset_provider_lookup() -> Generator[AsyncMock, None, None]:
         patch.object(SeedDatasetProvider, "_materialize_builtin_providers", side_effect=AssertionError(message)),
     ):
         yield lookup
+
+
+@pytest.fixture
+def dataset_writer_wait() -> Generator[asyncio.Event, None, None]:
+    """Set when a caller waits for a dataset writer another caller holds."""
+    from pyrit.scenario.core import dataset_configuration
+
+    waiting = asyncio.Event()
+    writer_class = dataset_configuration._DatasetWriter
+
+    class _ObservedLock(asyncio.Lock):
+        async def acquire(self) -> Literal[True]:
+            if self.locked():
+                waiting.set()
+            return await super().acquire()
+
+    with patch.object(dataset_configuration, "_DatasetWriter", new=lambda: writer_class(lock=_ObservedLock())):
+        yield waiting
 
 
 if sys.platform == "win32":

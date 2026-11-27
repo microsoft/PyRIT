@@ -32,6 +32,7 @@ export default function ScenarioRunProgress({
   const queued = run.status === 'QUEUED'
   const status = queued
     ? `Queued${run.queue_position ? ` · Position ${run.queue_position}` : ''}`
+    : run.dataset_preparation_pending ? 'Preparing selected datasets. Execution will start when loading finishes.'
     : `${overall.completed}${overall.planned === null ? '' : ` of ${overall.planned}`} attacks complete`
   return (
     <div className={mergeClasses(styles.progressRegion, !active && styles.progressRegionComplete)}

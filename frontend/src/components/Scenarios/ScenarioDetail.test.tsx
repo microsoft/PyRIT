@@ -19,6 +19,7 @@ import { useRuntime } from '@/hooks/useRuntime'
 import { installRouterTestRequest } from '@/test-utils/routerRequest'
 import type {
   AddMessageResponse,
+  DatasetInfo,
   RegisteredScenario,
   ScenarioDatasetSettings,
   ScenarioPreset,
@@ -78,6 +79,12 @@ function techniqueConfiguration(name: string): TechniqueConfiguration {
     supplied_parameters: [], read_only: { policy: 'Retained unchanged.' },
     supports_prepended_conversation: true,
   }
+}
+
+const MISSING_HARMBENCH: DatasetInfo = {
+  name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: false, provider_available: true,
+  logical_examples: null, seed_pieces: null, objectives: null, modalities: [], harm_categories: [],
+  has_unlabeled_harm_categories: false,
 }
 
 const mockNavigate = jest.fn()
@@ -367,6 +374,119 @@ describe('ScenarioDetail', () => {
     jest.useRealTimers()
   })
 
+  it('loads a missing selected dataset on its own and keeps Launch available while it loads', async () => {
+    const user = userEvent.setup()
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({ items: [MISSING_HARMBENCH] })
+    mockEstimateRun.mockResolvedValue({
+      ...makeEstimate(8), effective_datasets: {
+        sources: [{ name: 'harmbench', max_size: 5, fetch: 'if_missing', configured_provider: false }],
+        max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {},
+      },
+    })
+    jest.mocked(scenariosApi.loadDatasets).mockReturnValue(new Promise(() => {}))
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    const datasets = await screen.findByRole('region', { name: 'Datasets' })
+    await waitFor(() => expect(within(datasets).getByRole('status')).toHaveTextContent('Loading datasets...'))
+    expect(scenariosApi.loadDatasets).toHaveBeenCalledTimes(1)
+    expect(scenariosApi.loadDatasets).toHaveBeenCalledWith('foundry.red_team_agent', expect.objectContaining({
+      techniques: ['default_technique'],
+    }))
+    expect(within(datasets).queryByRole('button', { name: /Load datasets/ })).not.toBeInTheDocument()
+    expect(within(datasets).getByRole('radio', { name: 'Regenerate' })).toBeEnabled()
+    await confirmRunPreview(user)
+    expect(mockStartRun).toHaveBeenCalledTimes(1)
+    expect(mockStartRun.mock.calls[0][0].prepare_in_background).toBe(true)
+    expect(scenariosApi.loadDatasets).toHaveBeenCalledTimes(1)
+  })
+
+  it('never loads a tried dataset again when a catalog reload still omits or reports it missing', async () => {
+    const user = userEvent.setup()
+    // The default stored source is left out of the compatibility-filtered catalog; harmbench is missing.
+    mockGetScenario.mockResolvedValue(makeScenario({
+      default_datasets: ['harmbench', 'omitted_stored'],
+      dataset_defaults: {
+        sources: [
+          { name: 'harmbench', max_size: 5, fetch: 'if_missing', configured_provider: false },
+          { name: 'omitted_stored', max_size: 5, fetch: 'if_missing', configured_provider: true },
+        ],
+        max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {},
+      },
+    }))
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({ items: [MISSING_HARMBENCH] })
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await waitFor(() => expect(scenariosApi.loadDatasets).toHaveBeenCalledTimes(1))
+    // The load finished and reloaded the catalog, which still omits one source and reports the other missing.
+    await waitFor(() => expect(scenariosApi.listCompatibleDatasets).toHaveBeenCalledTimes(2))
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    await waitFor(() => expect(scenariosApi.listCompatibleDatasets).toHaveBeenCalledTimes(3))
+    await user.keyboard('{Escape}')
+    await flushRenderedPromises()
+    expect(scenariosApi.loadDatasets).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('loads a dataset selected while another load is running', async () => {
+    const user = userEvent.setup()
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({ items: [
+      MISSING_HARMBENCH, { ...MISSING_HARMBENCH, name: 'remote', selection_key: 'dataset:named:remote' },
+    ] })
+    jest.mocked(scenariosApi.loadDatasets).mockReturnValue(new Promise(() => {}))
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await waitFor(() => expect(scenariosApi.loadDatasets).toHaveBeenCalledTimes(1))
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    await user.click(await screen.findByRole('option', { name: 'remote (Unknown)' }))
+    await waitFor(() => expect(scenariosApi.loadDatasets).toHaveBeenCalledTimes(2))
+    expect(jest.mocked(scenariosApi.loadDatasets).mock.calls[1]?.[1].datasets?.sources).toEqual([
+      { name: 'harmbench' }, { name: 'remote' },
+    ])
+  })
+
+  it('shows a failed load with a Retry that loads only the failed dataset again', async () => {
+    const user = userEvent.setup()
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({ items: [
+      MISSING_HARMBENCH, { ...MISSING_HARMBENCH, name: 'remote', selection_key: 'dataset:named:remote' },
+    ] })
+    jest.mocked(scenariosApi.loadDatasets).mockReturnValueOnce(new Promise(() => {}))
+      .mockRejectedValueOnce(new Error('Provider offline.'))
+      .mockReturnValueOnce(new Promise(() => {}))
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await waitFor(() => expect(scenariosApi.loadDatasets).toHaveBeenCalledTimes(1))
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    await user.click(await screen.findByRole('option', { name: 'remote (Unknown)' }))
+    const datasets = screen.getByRole('region', { name: 'Datasets' })
+    const failure = await within(datasets).findByText("Couldn't load remote: Provider offline.")
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled()
+    await user.click(within(failure.parentElement as HTMLElement).getByRole('button', { name: 'Retry loading remote' }))
+    await waitFor(() => expect(scenariosApi.loadDatasets).toHaveBeenCalledTimes(3))
+    expect(within(datasets).queryByText(/Provider offline\./)).not.toBeInTheDocument()
+    // harmbench's first load is still running, so only remote was re-armed.
+    const remoteRow = within(datasets).getByRole('row', { name: /remote \(Unknown\)/ })
+    expect(within(remoteRow).getByText('Loading...')).toBeInTheDocument()
+  })
+
+  it('does not load selected datasets that are already stored', async () => {
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await screen.findByRole('table', { name: 'Selected datasets' })
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
+    await flushRenderedPromises()
+    expect(scenariosApi.loadDatasets).not.toHaveBeenCalled()
+  })
+
+  it('keeps the eager launch for an inline-only scanner without dataset inputs or sources', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      scenario_name: 'technique.execute', max_concrete_techniques: 1, default_datasets: [],
+      uses_default_adversarial_target: false,
+      supported_parameter_names: ['objective_target', 'scenario_techniques', 'max_concurrency', 'max_retries'],
+    }))
+    renderDetail('/scanner/launch/technique.execute')
+    await user.click(await screen.findByRole('radio', { name: 'default_technique', exact: true }))
+    await confirmRunPreview(user)
+    expect(mockStartRun).toHaveBeenCalledTimes(1)
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('prepare_in_background')
+    expect(scenariosApi.loadDatasets).not.toHaveBeenCalled()
+  })
+
   it('prefills a rerun without replacing its saved server-default adversarial target', async () => {
     const user = userEvent.setup()
     const preferred = makeAdversarialTarget('preferred-adversarial')
@@ -392,6 +512,21 @@ describe('ScenarioDetail', () => {
       target_name: 'target-b', techniques: ['crescendo'], include_baseline: false, max_concurrency: 3, max_retries: 2,
     }))
     expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('adversarial_target_name')
+  })
+
+  it.each([
+    [{ fetch: 'never' as const, sources: [{ name: 'harmbench', fetch: 'always' as const, max_size: 3 }] },
+      'Cached', { fetch: 'if_missing', sources: [{ name: 'harmbench', max_size: 3 }] }],
+    [{ fetch: 'always' as const, sources: [{ name: 'harmbench', fetch: 'never' as const }] },
+      'Regenerate', { fetch: 'always', sources: [{ name: 'harmbench' }] }],
+  ])('relaunches saved dataset loading %j as %s with only the scan-level policy', async (datasets, choice, sent) => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/launch/foundry.red_team_agent', {
+      initialRun: { scenario_name: 'foundry.red_team_agent', target_name: 'target-a', techniques: ['crescendo'], datasets },
+    })
+    expect(await screen.findByRole('radio', { name: choice })).toBeChecked()
+    await confirmRunPreview(user)
+    expect(mockStartRun.mock.calls[0][0].datasets).toEqual(sent)
   })
 
   it('preserves a saved scoring target without adding a launch-form control', async () => {
@@ -906,6 +1041,7 @@ describe('ScenarioDetail', () => {
       scenario_name: 'foundry.red_team_agent',
       target_name: 'target-a',
       include_baseline: false,
+      prepare_in_background: true,
     })
     expect(screen.queryByText('Select at least one attack technique.')).not.toBeInTheDocument()
   })
@@ -961,6 +1097,7 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun).toHaveBeenCalledWith({
       scenario_name: 'foundry.red_team_agent',
       scenario_params: { note: 'Keep this value' },
+      prepare_in_background: true,
     })
   })
 
@@ -1156,6 +1293,7 @@ describe('ScenarioDetail', () => {
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
     expect(mockStartRun.mock.calls[0][0]).toEqual({
       ...estimateRequest,
+      prepare_in_background: true,
       scenario_name: 'foundry.red_team_agent',
       max_concurrency: 10,
       max_retries: 0,
@@ -2395,7 +2533,7 @@ describe('ScenarioDetail', () => {
     })
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await flushRenderedPromises()
-    await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
+    await user.click(await screen.findByRole('radio', { name: 'Regenerate' }))
     await advanceTimers(300)
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
@@ -2410,7 +2548,7 @@ describe('ScenarioDetail', () => {
     await user.click(within(confirmed).getByRole('button', { name: 'Launch scan' }))
     expect(mockStartRun).toHaveBeenCalledTimes(1)
     expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
-      fetch: 'always', sources: [{ name: 'harmbench', fetch: 'always' }],
+      fetch: 'always',
     })
   })
 
@@ -2419,12 +2557,12 @@ describe('ScenarioDetail', () => {
     jest.mocked(scenariosApi.listCompatibleDatasets).mockRejectedValueOnce(new Error('Metadata unavailable'))
     mockEstimateRun.mockResolvedValue({
       ...makeEstimate(8), effective_datasets: {
-        sources: [{ name: 'harmbench', max_size: 5, fetch: 'always', configured_provider: false }],
+        sources: [{ name: 'harmbench', max_size: 5, fetch: 'always', configured_provider: true }],
         max_per_dataset: 5, max_total: 'all', fetch: 'always', filters: {},
       },
     })
     renderDetail('/scanner/launch/foundry.red_team_agent')
-    await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
+    await user.click(await screen.findByRole('radio', { name: 'Regenerate' }))
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
@@ -2444,12 +2582,48 @@ describe('ScenarioDetail', () => {
       },
     })
     renderDetail('/scanner/launch/foundry.red_team_agent')
-    await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
+    await user.click(await screen.findByRole('radio', { name: 'Regenerate' }))
     const preview = await openRunPreview(user)
     await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
     const warning = within(preview).getByRole('alert')
     expect(warning).toHaveTextContent('full stored datasets: remote.')
     expect(warning).not.toHaveTextContent('harmbench')
+  })
+
+  it('names only datasets that can refresh and marks stored ones without a provider', async () => {
+    const user = userEvent.setup()
+    const stored = { ...MISSING_HARMBENCH, name: 'generated', selection_key: 'dataset:named:generated', loaded: true,
+      provider_available: false, logical_examples: 4, origins: ['generated'] }
+    const remote = { ...MISSING_HARMBENCH, name: 'remote', selection_key: 'dataset:named:remote', loaded: true,
+      logical_examples: 4, origins: ['remote'] }
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({ items: [stored, remote] })
+    mockEstimateRun.mockImplementation(async (_name: string, request: ScenarioRunSizeEstimateRequest) => ({
+      ...makeEstimate(8), effective_datasets: {
+        sources: (request.datasets?.sources ?? [{ name: 'harmbench' }]).map((source) => ({
+          name: source.name, max_size: 5, fetch: request.datasets?.fetch === 'always' ? 'always' : 'if_missing',
+          configured_provider: false,
+        })),
+        max_per_dataset: 5, max_total: 'all', fetch: request.datasets?.fetch === 'always' ? 'always' : 'if_missing', filters: {},
+      },
+    }))
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    const datasets = await screen.findByRole('region', { name: 'Datasets' })
+    await user.click(within(datasets).getByRole('combobox', { name: 'Add dataset' }))
+    await user.click(await screen.findByRole('option', { name: 'generated (Generated)' }))
+    await user.click(within(datasets).getByRole('combobox', { name: 'Add dataset' }))
+    await user.click(await screen.findByRole('option', { name: 'remote (Remote provider)' }))
+    await user.click(within(datasets).getByRole('button', { name: 'Remove harmbench' }))
+    await user.click(within(datasets).getByRole('radio', { name: 'Regenerate' }))
+    const generatedRow = within(datasets).getByRole('row', { name: /generated \(Generated\)/ })
+    expect(within(generatedRow).getByText('Uses stored copy')).toBeInTheDocument()
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1].datasets).toEqual({
+      fetch: 'always', sources: [{ name: 'generated' }, { name: 'remote' }],
+    }))
+    const preview = await openRunPreview(user)
+    await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+    const warning = within(preview).getByRole('alert')
+    expect(warning).toHaveTextContent('Regenerate will replace the full stored datasets: remote.')
+    expect(warning).not.toHaveTextContent('generated')
   })
 
   it('waits for the current projection after removing and re-adding a default source', async () => {
@@ -2464,7 +2638,7 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledTimes(1))
     await act(async () => resolveEstimate({ ...makeEstimate(8), effective_datasets: defaults }))
-    await user.click(screen.getByRole('radio', { name: 'Refresh' }))
+    await user.click(screen.getByRole('radio', { name: 'Regenerate' }))
     await user.click(screen.getByRole('button', { name: 'Remove ds_b' }))
     await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
     await user.click(screen.getByRole('option', { name: 'ds_b (Unknown)', exact: true }))
@@ -2474,7 +2648,7 @@ describe('ScenarioDetail', () => {
     expect(confirm).toBeDisabled()
     expect(within(preview).getByRole('status')).toHaveTextContent('Checking dataset refresh policies')
     await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1].datasets?.sources).toEqual([
-      { name: 'ds_a', fetch: 'always' }, { name: 'ds_b' },
+      { name: 'ds_a' }, { name: 'ds_b' },
     ]))
     await act(async () => resolveEstimate({
       ...makeEstimate(8), effective_datasets: {
@@ -2486,7 +2660,7 @@ describe('ScenarioDetail', () => {
     await user.click(confirm)
     expect(mockStartRun).toHaveBeenCalledTimes(1)
     expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
-      fetch: 'always', sources: [{ name: 'ds_a', fetch: 'always' }, { name: 'ds_b' }],
+      fetch: 'always', sources: [{ name: 'ds_a' }, { name: 'ds_b' }],
     })
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument())
   })
@@ -2506,7 +2680,7 @@ describe('ScenarioDetail', () => {
     }))
     mockEstimateRun.mockRejectedValue(new Error('Estimate unavailable'))
     renderDetail('/scanner/launch/foundry.red_team_agent')
-    await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
+    await user.click(await screen.findByRole('radio', { name: 'Regenerate' }))
     await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
       'foundry.red_team_agent', expect.objectContaining({ datasets: { fetch: 'always' } }), expect.any(AbortSignal),
     ))
@@ -2515,11 +2689,11 @@ describe('ScenarioDetail', () => {
     expect(within(failedPreview).getByRole('alert')).toHaveTextContent('Cannot confirm which datasets will refresh')
     await user.click(within(failedPreview).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument())
-    expect(screen.getByRole('radio', { name: 'Refresh' })).toBeChecked()
-    expect(screen.getByRole('radio', { name: 'Load missing' })).toBeEnabled()
+    expect(screen.getByRole('radio', { name: 'Regenerate' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: 'Cached' })).toBeEnabled()
     if (policy === 'if_missing') {
-      await user.click(screen.getByRole('radio', { name: 'Load missing' }))
-      expect(screen.getByRole('radio', { name: 'Load missing' })).toBeChecked()
+      await user.click(screen.getByRole('radio', { name: 'Cached' }))
+      expect(screen.getByRole('radio', { name: 'Cached' })).toBeChecked()
     }
     const preview = await openRunPreview(user)
     const confirm = within(preview).getByRole('button', { name: 'Launch scan' })
@@ -2588,6 +2762,7 @@ describe('ScenarioDetail', () => {
       scenario_name: 'foundry.red_team_agent',
       target_name: 'target-a',
       techniques: ['default_technique'],
+      prepare_in_background: true,
       max_concurrency: 10,
       max_retries: 0,
       include_baseline: true,
@@ -2722,7 +2897,7 @@ describe('ScenarioDetail', () => {
     await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
-    expect(mockStartRun).toHaveBeenCalledWith(expectedRunRequest)
+    expect(mockStartRun).toHaveBeenCalledWith({ ...expectedRunRequest, prepare_in_background: true })
     expect(mockStartRun.mock.calls[0][0].techniques).not.toContain('default')
     expect(expectedEstimateRequest.techniques).toEqual(expectedRunRequest.techniques)
     expect(expectedEstimateRequest.scenario_params).toEqual(expectedRunRequest.scenario_params)
@@ -2939,6 +3114,7 @@ describe('ScenarioDetail', () => {
         scenario_name: 'foundry.red_team_agent',
         target_name: 'target-a',
         techniques: ['crescendo', CONVERTER_TOKEN],
+        prepare_in_background: true,
         max_concurrency: 10,
         max_retries: 0,
         include_baseline: true,
@@ -3518,6 +3694,10 @@ describe('ScenarioDetail', () => {
           filters: true, compatible_only: true,
         },
       }))
+      // The selected choices are missing and have a provider, so only the compatible-only rule keeps them from loading.
+      jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({ items: [
+        MISSING_HARMBENCH, { ...MISSING_HARMBENCH, name: 'ds_a', selection_key: 'dataset:named:ds_a' },
+      ] })
       renderDetail('/scanner/launch/foundry.assert_policy')
       await screen.findByText('harmbench (Unknown)')
       const turns = screen.getByTestId('scenario-param-max_turns')

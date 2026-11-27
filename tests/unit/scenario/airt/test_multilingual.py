@@ -113,6 +113,7 @@ def mock_objective_scorer() -> MagicMock:
 def _patch_seed_groups(mock_memory_seed_groups: list[AttackSeedGroup]) -> Generator[None, None, None]:
     with (
         patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock),
+        patch.object(DatasetAttackConfiguration, "check_preparation_async", new_callable=AsyncMock),
         patch.object(
             Multilingual,
             "_resolve_seed_groups_by_dataset_async",
@@ -359,8 +360,14 @@ class TestMultilingual:
         with pytest.raises(ValueError, match="expected one of"):
             scenario.set_params_from_args(args={"translation_strategies": ["unknown"]})
 
+    @pytest.mark.parametrize("pending", [False, True])
     async def test_metadata_records_resolved_languages(
-        self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer, mock_memory_seed_groups
+        self,
+        mock_objective_target,
+        mock_adversarial_chat,
+        mock_objective_scorer,
+        mock_memory_seed_groups,
+        pending: bool,
     ):
         with _patch_seed_groups(mock_memory_seed_groups):
             scenario = Multilingual(
@@ -373,6 +380,8 @@ class TestMultilingual:
                     "languages": ["French", "Spanish"],
                 }
             )
+            if pending:
+                await scenario.create_pending_run_async()
             await scenario.initialize_async()
 
         metadata = scenario._build_initial_scenario_metadata()

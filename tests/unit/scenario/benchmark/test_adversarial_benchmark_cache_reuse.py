@@ -71,7 +71,7 @@ def _register_adversarial(*, temperature: float, max_requests_per_minute: int | 
     instances.register(adversarial, name=ADVERSARIAL_NAME)
 
 
-async def _run_benchmark(*, objective_target: OpenAIChatTarget, use_cached: bool) -> list:
+async def _run_benchmark(*, objective_target: OpenAIChatTarget, use_cached: bool, pending: bool = False) -> list:
     scenario = AdversarialBenchmark(objective_scorer=SubStringScorer(substring=MARKER), use_cached=use_cached)
     scenario.set_params_from_args(
         args={
@@ -84,13 +84,17 @@ async def _run_benchmark(*, objective_target: OpenAIChatTarget, use_cached: bool
             "use_cached": use_cached,
         }
     )
+    if pending:
+        await scenario.create_pending_run_async()
     await scenario.initialize_async()
     _OfflineChatTarget.adversarial_calls = 0
     result = await scenario.run_async()
     return [attack_result for results in result.attack_results.values() for attack_result in results]
 
 
-async def _cached_rerun(*, second_temperature: float, second_max_requests_per_minute: int | None = None):
+async def _cached_rerun(
+    *, second_temperature: float, second_max_requests_per_minute: int | None = None, pending: bool = False
+) -> tuple[list, list, int]:
     """Run at temperature 1.2 with caching off, re-register the same name, then run again with caching on."""
     objective_target = _OfflineChatTarget(model_name="objective-model", **_ENDPOINT)
     _register_adversarial(temperature=1.2)
@@ -98,7 +102,7 @@ async def _cached_rerun(*, second_temperature: float, second_max_requests_per_mi
     assert len(first) == 1
     assert _OfflineChatTarget.adversarial_calls > 0
     _register_adversarial(temperature=second_temperature, max_requests_per_minute=second_max_requests_per_minute)
-    second = await _run_benchmark(objective_target=objective_target, use_cached=True)
+    second = await _run_benchmark(objective_target=objective_target, use_cached=True, pending=pending)
     return first, second, _OfflineChatTarget.adversarial_calls
 
 
@@ -114,8 +118,9 @@ async def test_cache_does_not_reuse_results_from_a_different_adversarial_tempera
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_cache_reuses_results_for_an_identical_adversarial_configuration():
-    first, second, adversarial_calls = await _cached_rerun(second_temperature=1.2)
+@pytest.mark.parametrize("pending", [False, True])
+async def test_cache_reuses_results_for_an_identical_adversarial_configuration(pending: bool) -> None:
+    first, second, adversarial_calls = await _cached_rerun(second_temperature=1.2, pending=pending)
 
     assert [r.metadata.get("cached_from_attack_result_id") for r in second] == [first[0].attack_result_id]
     assert adversarial_calls == 0

@@ -32,6 +32,8 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetConstraintError,
     DatasetSource,
     ResolvedDataset,
+    _without_fetch_deprecation,
+    check_configurations_async,
     prepare_configurations_async,
 )
 
@@ -86,6 +88,7 @@ class ScenarioRequiredData:
         Args:
             sources (Sequence[DatasetSource]): The required datasets, with optional providers and fetch policies.
             fetch (DatasetFetchPolicy): The default preparation policy for sources without their own.
+                ``NEVER`` and per-source policies are deprecated.
             validators (Sequence[Callable[[ResolvedDataset], None]] | None): Checks run on the full
                 required data, both on normal reads and on refresh candidates before they're stored.
             filters (dict[str, list[str]] | None): ``get_seeds`` filters applied when reading, before
@@ -155,6 +158,17 @@ class ScenarioRequiredData:
             configurations=configurations, fetch=fetch, validate_assembly=validate_assembly
         )
 
+    async def check_preparation_async(self, *, population: DatasetConfiguration | None = None) -> None:
+        """
+        Run the checks ``prepare_async`` makes before fetching, without fetching or writing.
+
+        Args:
+            population (DatasetConfiguration | None): The scenario's population configuration that will be
+                prepared in the same batch.
+        """
+        configurations = [self._configuration, *([population] if population is not None else [])]
+        await check_configurations_async(configurations=configurations)
+
     async def load_async(self, *, names: Sequence[str] | None = None) -> dict[str, list[Seed[Any]]]:
         """
         Read the required datasets from memory without fetching.
@@ -209,7 +223,12 @@ class ScenarioRequiredData:
         """
         if not options.supports_overrides and request != ScenarioDatasetRequest():
             raise DatasetConstraintError("This scenario does not support dataset overrides.")
-        required = self if request.fetch is None else self.with_sources(sources=self.sources, fetch=request.fetch)
+        if request.fetch is None:
+            required = self
+        else:
+            # Requests keep accepting the deprecated 'never' policy without warning.
+            with _without_fetch_deprecation():
+                required = self.with_sources(sources=self.sources, fetch=request.fetch)
         if request.sources is None:
             return required, request
         names = self.dataset_names
@@ -285,8 +304,10 @@ class ScenarioRequiredData:
     def _with_source_fetch(self, source_fetch: dict[str, DatasetFetchPolicy]) -> ScenarioRequiredData:
         if not source_fetch:
             return self
-        sources = [
-            replace(source, fetch=source_fetch[source.name]) if source.name in source_fetch else source
-            for source in self.sources
-        ]
-        return self.with_sources(sources=sources, fetch=self.fetch)
+        # Requests keep accepting deprecated per-source fetch settings without warning.
+        with _without_fetch_deprecation():
+            sources = [
+                replace(source, fetch=source_fetch[source.name]) if source.name in source_fetch else source
+                for source in self.sources
+            ]
+            return self.with_sources(sources=sources, fetch=self.fetch)

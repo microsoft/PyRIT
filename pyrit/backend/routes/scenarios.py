@@ -289,8 +289,9 @@ async def start_scenario_run(  # pyrit-async-suffix-exempt
     Start a new scenario run as a background task.
 
     Initialization runs eagerly so configuration errors surface here, then the run
-    itself continues in the background. Returns a scenario_result_id that can be
-    polled for status.
+    itself continues in the background. With ``prepare_in_background``, a fresh run is
+    saved before its datasets load, and loads them in the background. Returns a
+    scenario_result_id that can be polled for status.
 
     Args:
         request: Scenario run configuration.

@@ -464,6 +464,7 @@ class ScenarioHistoryRunRecord:
     plan_seed_id_map: str | list[dict[str, str]] | None
     started_at: datetime | None = None
     operation_id: uuid.UUID | None = None
+    dataset_preparation: str | dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -8422,15 +8423,7 @@ class MemoryInterface(abc.ABC):
             SQLAlchemyError: If a scenario result or identifier graph cannot be persisted.
         """
         entries = [ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
-        plan_entries = [
-            ScenarioPlanSeedGroupEntry(
-                scenario_result_id=result_id, dataset_name=dataset_name, position=position, seed_group=seed_group
-            )
-            for result_id, population in (planned_seed_groups or {}).items()
-            for position, (dataset_name, seed_group) in enumerate(
-                (name, group) for name, groups in population.items() for group in groups
-            )
-        ]
+        plan_entries = self._planned_seed_group_entries(planned_seed_groups or {})
         with closing(self._get_session()) as session:
             try:
                 for scenario_result in scenario_results:
@@ -8450,6 +8443,60 @@ class MemoryInterface(abc.ABC):
                 if isinstance(error, IntegrityError):
                     self._raise_if_operations_missing(
                         session=session, operation_ids=_operation_ids(entries), error=error
+                    )
+                raise
+
+    @staticmethod
+    def _planned_seed_group_entries(
+        planned_seed_groups: Mapping[uuid.UUID, Mapping[str, Sequence[AttackSeedGroup]]],
+    ) -> list[ScenarioPlanSeedGroupEntry]:
+        return [
+            ScenarioPlanSeedGroupEntry(
+                scenario_result_id=result_id, dataset_name=dataset_name, position=position, seed_group=seed_group
+            )
+            for result_id, population in planned_seed_groups.items()
+            for position, (dataset_name, seed_group) in enumerate(
+                (name, group) for name, groups in population.items() for group in groups
+            )
+        ]
+
+    def _execute_complete_pending_scenario_result(
+        self,
+        *,
+        scenario_result: ScenarioResult,
+        seed_groups_by_dataset: Mapping[str, Sequence[AttackSeedGroup]],
+    ) -> None:
+        """
+        Replace a stored pending scenario result with its planned run and store the planned seed groups.
+
+        Args:
+            scenario_result: The planned result, with the pending result's ID.
+            seed_groups_by_dataset: The planned population, by dataset name, in planned order.
+
+        Raises:
+            LookupError: If the pending result or its Operation no longer exists.
+            SQLAlchemyError: If the result, its identifier graph, or its seed groups cannot be persisted.
+        """
+        entry = ScenarioResultEntry(entry=scenario_result)
+        plan_entries = self._planned_seed_group_entries({scenario_result.id: seed_groups_by_dataset})
+        with closing(self._get_session()) as session:
+            try:
+                existing = session.get(ScenarioResultEntry, entry.id)
+                if existing is None:
+                    raise LookupError(f"Scenario result {entry.id} not found")
+                self._validate_activity_operation(session=session, entry=entry, existing=existing)
+                self._persist_scenario_identifier(
+                    session=session, scenario_identifier=scenario_result.scenario_identifier
+                )
+                session.merge(entry)
+                session.flush()
+                session.add_all(plan_entries)
+                session.commit()
+            except SQLAlchemyError as error:
+                session.rollback()
+                if isinstance(error, IntegrityError):
+                    self._raise_if_operations_missing(
+                        session=session, operation_ids=_operation_ids([entry]), error=error
                     )
                 raise
 
@@ -13278,6 +13325,29 @@ class MemoryInterface(abc.ABC):
             self._execute_add_scenario_results_to_memory,
             scenario_results=[scenario_result],
             planned_seed_groups={scenario_result.id: seed_groups_by_dataset},
+        )
+
+    async def complete_pending_scenario_result_async(
+        self, *, scenario_result: ScenarioResult, seed_groups_by_dataset: Mapping[str, Sequence[AttackSeedGroup]]
+    ) -> None:
+        """
+        Replace a run saved before dataset preparation with its planned result and planned seed groups.
+
+        Both are stored in one transaction, so a resumable result always has its planned population.
+
+        Args:
+            scenario_result (ScenarioResult): The planned result, with the saved run's ID.
+            seed_groups_by_dataset (Mapping[str, Sequence[AttackSeedGroup]]): The planned population,
+                by dataset name, in the order the run was built from.
+
+        Raises:
+            LookupError: If the saved run or its Operation no longer exists.
+            SQLAlchemyError: If the result, its identifier graph, or its seed groups cannot be persisted.
+        """
+        return await self._run_database_operation_async(
+            self._execute_complete_pending_scenario_result,
+            scenario_result=scenario_result,
+            seed_groups_by_dataset=seed_groups_by_dataset,
         )
 
     async def get_planned_seed_groups_async(self, *, scenario_result_id: str) -> dict[str, list[AttackSeedGroup]]:

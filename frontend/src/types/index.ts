@@ -1929,6 +1929,8 @@ export interface ScenarioSuiteExecutionSummary {
 }
 
 export interface RunScenarioRequest {
+  /** For a fresh run, save a preparing run first and load its datasets while it starts. */
+  prepare_in_background?: boolean
   scoring_target_name?: string | null
   objective_scorer?: RegisteredComponentReference | null
   scenario_name: string
@@ -2156,6 +2158,8 @@ export interface ScenarioRunSummary {
   queue_position?: number | null
   active_scenario_result_id?: string | null
   overload_summaries?: ScenarioOverloadSummary[]
+  /** The run has not yet finished preparing its datasets. */
+  dataset_preparation_pending?: boolean
 }
 
 export interface ScenarioTargetSummary {
@@ -2194,6 +2198,8 @@ export interface ScenarioRunListItem {
   successful_attacks: number
   error_attacks: number
   attack_details_available: boolean
+  /** The run has not yet finished preparing its datasets. */
+  dataset_preparation_pending?: boolean
 }
 
 export interface ScenarioRunListResponse {
@@ -2226,6 +2232,8 @@ export interface ScenarioProgressHeader {
   queue_position?: number | null | undefined
   active_scenario_result_id?: string | null | undefined
   overload_summaries?: ScenarioOverloadSummary[]
+  /** The run has not yet finished preparing its datasets. */
+  dataset_preparation_pending?: boolean
 }
 
 export interface ScenarioQueueEntry {

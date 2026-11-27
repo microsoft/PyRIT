@@ -6,6 +6,7 @@ Tests for ScenarioRunService.
 """
 
 import asyncio
+import json
 import logging
 import threading
 import uuid
@@ -17,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 import pyrit.backend.services.scenario_configuration_resolver as _resolver_mod
 import pyrit.backend.services.scenario_progress_read_model as _progress_mod
@@ -53,6 +55,7 @@ from pyrit.models import (
     RetryEvent,
     ScenarioAttackResultDelta,
     ScenarioDatasetOptions,
+    ScenarioDatasetPreparation,
     ScenarioDatasetRequest,
     ScenarioIdentifier,
     ScenarioObjectiveScorerMetrics,
@@ -1456,6 +1459,7 @@ class TestScenarioRunServiceStartRun:
             scenario_result_id=None,
             constructor_kwargs={},
             configuration_metadata=ANY,
+            defer_dataset_preparation=False,
             initial_metadata={
                 _svc_mod._SCHEDULER_METADATA_KEY: _svc_mod._SCHEDULER_METADATA_VALUE,
                 _svc_mod._LAUNCH_REQUEST_METADATA_KEY: ANY,
@@ -3679,6 +3683,42 @@ async def test_legacy_plan_techniques_agree_across_projections(
     assert all(group.description and group.tags == ["default"] for group in progress.plan.atomic_groups)
     stored = (await sqlite_instance.get_scenario_results_async(scenario_result_ids=[run_id]))[0]
     assert stored.metadata[SCENARIO_RUN_PLAN_METADATA_KEY] == raw_plan
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("stored", "history_error", "history_match"),
+    [
+        ({"pending": "yes"}, ValidationError, "ScenarioDatasetPreparation"),
+        (1, ValidationError, "ScenarioDatasetPreparation"),
+        ("yes", json.JSONDecodeError, "Expecting value"),
+    ],
+    ids=["non-boolean-pending", "non-object", "non-json-text"],
+)
+async def test_malformed_dataset_preparation_fails_every_read(
+    *, sqlite_instance: SQLiteMemory, stored: object, history_error: type[ValueError], history_match: str
+) -> None:
+    """Detail, progress and History raise on preparation state the model rejects instead of reading it as prepared."""
+    scenario_result = make_scenario_result(
+        scenario_name="test.malformed_preparation",
+        techniques=["base64"],
+        objective_target_identifier=get_mock_target_identifier(),
+        attack_results={},
+        scenario_run_state=ScenarioRunState.FAILED,
+        metadata={ScenarioDatasetPreparation.METADATA_KEY: stored},
+    )
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result])
+    run_id = str(scenario_result.id)
+    service = ScenarioRunService()
+
+    with pytest.raises(ValidationError, match="ScenarioDatasetPreparation"):
+        await service.get_run_async(scenario_result_id=run_id)
+    with pytest.raises(ValidationError, match="ScenarioDatasetPreparation"):
+        await service.get_run_progress_from_storage_async(
+            scenario_result_id=run_id, since=None, limit=25, active_group_ids=[]
+        )
+    with pytest.raises(history_error, match=history_match):
+        await service.list_runs_async()
 
 
 class TestScenarioRunServiceCancelRun:

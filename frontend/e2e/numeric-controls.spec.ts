@@ -19,6 +19,9 @@ const DATASETS = {
     { name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: false, provider_available: true, origins: [], logical_examples: null },
     { name: 'custom_objectives', selection_key: 'dataset:named:custom_objectives', loaded: true, provider_available: true,
       origins: ['user'], logical_examples: 10, modalities: ['text', 'image_path'], harm_categories: [], has_unlabeled_harm_categories: false },
+    // Generated in the GUI: stored, with no provider to download a fresh copy from.
+    { name: 'generated_objectives', selection_key: 'dataset:named:generated_objectives', loaded: true, provider_available: false,
+      origins: ['generated'], logical_examples: 4, modalities: ['text'], harm_categories: [], has_unlabeled_harm_categories: false },
   ],
 }
 
@@ -229,21 +232,18 @@ test('native shared dynamic parameter controls step once', async ({ page }) => {
   await expectNativeSteps(page.getByRole('spinbutton', { name: 'temperature', exact: true }), 0.5)
 })
 
-test('dataset sources and explicit loading are separate from Parameters', async ({ page }, testInfo) => {
+test('dataset sources load automatically and are separate from Parameters', async ({ page }, testInfo) => {
   await page.goto(`/scanner/launch/${SCENARIO.scenario_name}`)
   const section = page.getByRole('region', { name: 'Datasets', exact: true })
   await expect(section.getByRole('table', { name: 'Selected datasets' })).toBeVisible()
   await expect(section.getByRole('columnheader', { name: 'Size' })).toBeVisible()
-  await expect(section.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveText('Up to 5')
-  await expect(section.getByText('Not stored in memory', { exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Parameters' }).getByRole('table')).toHaveCount(0)
   await expect(section.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveText('Up to 5')
   await expect(section.getByText('Details and advanced settings')).toHaveCount(0)
-  await section.screenshot({ path: testInfo.outputPath('datasets-default.png') })
-  await section.getByRole('button', { name: 'Load datasets' }).click()
+  // The missing default dataset has a provider, so it loads without a Load button.
   await expect(section.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveText('Up to 5 of 200')
-  await expect(section.getByRole('button', { name: 'Load datasets' })).toHaveCount(0)
-  await expect(section.getByRole('radio', { name: 'Load missing', exact: true })).toBeChecked()
+  await expect(section.getByRole('button', { name: /Load datasets/ })).toHaveCount(0)
+  await expect(section.getByRole('radio', { name: 'Cached', exact: true })).toBeChecked()
   await expect(section.getByRole('button', { name: 'Filter harm category malware' })).toBeVisible()
   await expect(section.getByRole('button', { name: 'Filter data type Text' })).toBeVisible()
   await section.screenshot({ path: testInfo.outputPath('datasets-loaded.png') })
@@ -299,7 +299,6 @@ test('dataset rows add immediately, edit in place, share filters, and reset with
   await page.getByRole('option', { name: 'custom_objectives (User)', exact: true }).click()
   await expect(section.getByText('custom_objectives (User)', { exact: true })).toBeVisible()
   await section.getByRole('button', { name: 'Remove harmbench' }).click()
-  await expect(section.getByRole('button', { name: 'Load datasets' })).toHaveCount(0)
   await section.getByRole('button', { name: 'Edit custom_objectives objective limit' }).click()
   await page.getByRole('textbox', { name: 'custom_objectives objective limit' }).fill('3')
   await page.getByRole('button', { name: 'Done', exact: true }).click()
@@ -311,30 +310,89 @@ test('dataset rows add immediately, edit in place, share filters, and reset with
   await expect(section.getByText('Filters:', { exact: true })).toHaveCount(0)
   await section.getByRole('button', { name: 'Reset datasets' }).click()
   await expect(section.getByText('harmbench (Unknown)', { exact: true })).toBeVisible()
-  await expect(section.getByRole('button', { name: 'Load datasets' })).toBeVisible()
+  // harmbench loaded when the page opened; resetting back to it does not load it again.
+  await expect(section.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveText('Up to 5 of 200')
   await expect(section.getByRole('button', { name: 'Remove type filter text' })).toHaveCount(0)
 })
 
-for (const [label, fetch] of [['Stored only', 'never'], ['Load missing', 'if_missing']] as const) {
-  test(`dataset manual loading preserves the ${fetch} launch policy`, async ({ page }) => {
-    await page.goto(`/scanner/launch/${SCENARIO.scenario_name}`)
-    const section = page.getByRole('region', { name: 'Datasets', exact: true })
-    const policy = section.getByRole('radio', { name: label, exact: true })
-    await expect(section.getByRole('radio', { name: 'Load missing', exact: true })).toBeChecked()
-    if (fetch === 'if_missing') {
-      await section.getByRole('radio', { name: 'Stored only', exact: true }).check()
+test('a dataset load keeps Launch usable while it runs and a failed load offers Retry', async ({ page }, testInfo) => {
+  let releaseFirstLoad: () => void = () => {}
+  const firstLoadHeld = new Promise<void>((resolve) => { releaseFirstLoad = resolve })
+  let attempts = 0
+  await page.route('**/datasets/load', async (route) => {
+    attempts += 1
+    if (attempts > 1) {
+      await route.fallback()
+      return
     }
-    await policy.check()
-    const load = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith('/datasets/load'))
-    await section.getByRole('button', { name: 'Load datasets' }).click()
-    const request = await load
-    expect(request.postDataJSON().datasets.fetch).toBe(fetch)
-    expect(request.postDataJSON().datasets.sources[0].fetch).toBe(fetch)
-    await expect(section.getByRole('button', { name: 'Load datasets' })).toHaveCount(0)
-    await expect(policy).toBeChecked()
-    await expect(section.getByRole('radio')).toHaveCount(3)
+    await firstLoadHeld
+    await route.fulfill({ status: 503, json: { detail: 'Mock provider is offline.' } })
   })
-}
+  await page.goto(`/scanner/launch/${SCENARIO.scenario_name}`)
+  const section = page.getByRole('region', { name: 'Datasets', exact: true })
+  const harmbench = section.getByRole('row').filter({ hasText: 'harmbench (Unknown)' })
+  await expect(section.getByRole('status')).toHaveText('Loading datasets...')
+  // The row's state sits under the dataset name, the column a narrow screen keeps in view.
+  await expect(harmbench.getByRole('cell').first().getByText('Loading...', { exact: true })).toBeVisible()
+  await expect(page.getByTestId('launch-scenario-btn')).toBeEnabled()
+  const table = section.getByRole('table', { name: 'Selected datasets' })
+  // Measured from the section's top, so scrolling the page does not change it.
+  const tableOffset = async (): Promise<number | undefined> => {
+    const [sectionBox, tableBox] = [await section.boundingBox(), await table.boundingBox()]
+    return sectionBox && tableBox ? tableBox.y - sectionBox.y : undefined
+  }
+  const tableOffsetWhileLoading = await tableOffset()
+  expect(tableOffsetWhileLoading).toEqual(expect.any(Number))
+  await section.screenshot({ path: testInfo.outputPath('datasets-auto-loading.png') })
+  releaseFirstLoad()
+  await expect(section.getByRole('alert')).toHaveText("Couldn't load harmbench: Mock provider is offline.")
+  const retry = section.getByRole('button', { name: 'Retry loading harmbench', exact: true })
+  await expect(retry).toBeVisible()
+  await expect(page.getByTestId('launch-scenario-btn')).toBeEnabled()
+  await section.screenshot({ path: testInfo.outputPath('datasets-load-error.png') })
+  await retry.click()
+  await expect(section.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveText('Up to 5 of 200')
+  await expect(section.getByRole('alert')).toHaveCount(0)
+  // The load announcement takes no space, so the table sits where it did while the dataset loaded.
+  await expect.poll(tableOffset).toBeCloseTo(Number(tableOffsetWhileLoading), 0)
+  expect(attempts).toBe(2)
+})
+
+test('dataset loading sends one load per missing dataset and only the scan-level policy', async ({ page }, testInfo) => {
+  const loads: ScenarioDatasetRequest[] = []
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/datasets/load')) loads.push(request.postDataJSON().datasets ?? {})
+  })
+  await page.goto(`/scanner/launch/${SCENARIO.scenario_name}`)
+  const section = page.getByRole('region', { name: 'Datasets', exact: true })
+  const regenerate = section.getByRole('radio', { name: 'Regenerate', exact: true })
+  await expect(section.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveText('Up to 5 of 200')
+  await expect(section.getByRole('radio')).toHaveCount(2)
+  await expect(section.getByRole('radio', { name: 'Cached', exact: true })).toBeChecked()
+  await expect(section.getByText('Uses stored datasets and loads missing ones.', { exact: true })).toBeVisible()
+  await regenerate.check()
+  await expect(regenerate).toBeChecked()
+  await expect(section.getByText('Downloads a fresh copy when the scan starts.', { exact: true })).toBeVisible()
+  // Opening the picker reloads the catalog; nothing already tried loads again.
+  await section.getByRole('combobox', { name: 'Add dataset' }).click()
+  await page.getByRole('option', { name: 'generated_objectives (Generated)', exact: true }).click()
+  const generated = section.getByRole('row').filter({ hasText: 'generated_objectives (Generated)' })
+  await expect(generated.getByText('Uses stored copy', { exact: true })).toBeVisible()
+  await expect(section.getByRole('row').filter({ hasText: 'harmbench (Unknown)' }).getByText('Uses stored copy')).toHaveCount(0)
+  await section.screenshot({ path: testInfo.outputPath('datasets-regenerate-stored-copy.png') })
+  await section.getByRole('radio', { name: 'Cached', exact: true }).check()
+  await expect(generated.getByText('Uses stored copy')).toHaveCount(0)
+  // With only a dataset that has nothing to refresh from, there is no loading choice.
+  await section.getByRole('button', { name: 'Remove harmbench' }).click()
+  await expect(section.getByRole('radiogroup', { name: 'Dataset loading' })).toHaveCount(0)
+  await section.screenshot({ path: testInfo.outputPath('datasets-no-loading-choice.png') })
+  expect(loads).toHaveLength(1)
+  expect(loads[0]).toEqual({})
+  for (const request of loads) {
+    expect(request.fetch === undefined || request.fetch === 'if_missing' || request.fetch === 'always').toBe(true)
+    for (const source of request.sources ?? []) expect(source).not.toHaveProperty('fetch')
+  }
+})
 
 test('dataset refresh requires preview confirmation and warns before replacing user data', async ({ page }) => {
   const launches: ScenarioDatasetRequest[] = []
@@ -351,8 +409,8 @@ test('dataset refresh requires preview confirmation and warns before replacing u
   await section.getByRole('combobox', { name: 'Add dataset' }).click()
   await page.getByRole('option', { name: 'custom_objectives (User)', exact: true }).click()
   await section.getByRole('button', { name: 'Remove harmbench' }).click()
-  await section.getByRole('radio', { name: 'Refresh', exact: true }).check()
-  await expect(section.getByRole('radio', { name: 'Refresh', exact: true })).toBeChecked()
+  await section.getByRole('radio', { name: 'Regenerate', exact: true }).check()
+  await expect(section.getByRole('radio', { name: 'Regenerate', exact: true })).toBeChecked()
   await page.getByRole('button', { name: 'Launch scan', exact: true }).click()
   const preview = page.getByRole('dialog', { name: 'Run preview' })
   await expect(preview.getByRole('alert')).toContainText('full stored datasets: custom_objectives')
@@ -366,7 +424,7 @@ test('dataset refresh requires preview confirmation and warns before replacing u
   await preview.getByRole('button', { name: 'Launch scan', exact: true }).click()
   await expect(page.getByText('Mock launch stopped after checking the refresh request.', { exact: true })).toBeVisible()
   expect(launches).toEqual([{
-    fetch: 'always', sources: [{ name: 'custom_objectives', fetch: 'always' }],
+    fetch: 'always', sources: [{ name: 'custom_objectives' }],
   }])
 })
 

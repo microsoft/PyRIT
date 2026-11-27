@@ -546,8 +546,9 @@ class TestTextAdaptiveAtomicAttacks:
         assert len(selectors_seen) == 2
         assert len({id(s) for s in selectors_seen}) == 1
 
+    @pytest.mark.parametrize("pending", [False, True])
     async def test_selection_uses_this_run_id_and_resume_repeats_it_async(
-        self, *, mock_objective_target: MagicMock, mock_objective_scorer: MagicMock
+        self, *, mock_objective_target: MagicMock, mock_objective_scorer: MagicMock, pending: bool
     ) -> None:
         groups = {"violence": [_make_seed_group(value=f"obj-{i}", harm_categories=["violence"]) for i in range(6)]}
         seen: list[tuple[str | None, tuple[str, ...]]] = []
@@ -578,11 +579,14 @@ class TestTextAdaptiveAtomicAttacks:
                 scenario_result_id=scenario_result_id,
             )
             scenario.set_params_from_args(args={"objective_target": mock_objective_target, "include_baseline": False})
+            if pending and scenario_result_id is None:
+                await scenario.create_pending_run_async()
             await scenario.initialize_async()
             return scenario
 
         with (
             patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock) as mock_prepare,
+            patch.object(DatasetAttackConfiguration, "check_preparation_async", new_callable=AsyncMock),
             patch.object(
                 DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",

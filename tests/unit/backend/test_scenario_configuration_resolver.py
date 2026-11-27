@@ -155,6 +155,24 @@ async def test_total_override_preserves_source_limits_async(
     assert original.max_per_dataset == 4
 
 
+def test_request_with_deprecated_fetch_settings_applies_without_warning(recwarn: pytest.WarningsRecorder) -> None:
+    original = DatasetAttackConfiguration(sources=[DatasetSource(name="kept")])
+    request = ScenarioDatasetRequest(
+        sources=[
+            DatasetSourceInput(name="kept", fetch=DatasetFetchPolicy.ALWAYS),
+            DatasetSourceInput(name="new", fetch=DatasetFetchPolicy.NEVER),
+        ],
+        fetch=DatasetFetchPolicy.NEVER,
+    )
+    resolved = apply_dataset_overrides(config=original, request=request, options=ScenarioDatasetOptions())
+    assert not recwarn
+    assert resolved.fetch is DatasetFetchPolicy.NEVER
+    assert [(source.name, source.fetch) for source in resolved.sources] == [
+        ("kept", DatasetFetchPolicy.ALWAYS),
+        ("new", DatasetFetchPolicy.NEVER),
+    ]
+
+
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("total", [None, 7])
 @pytest.mark.parametrize("configured_provider", [False, True], ids=["registered", "configured"])
