@@ -194,6 +194,30 @@ async def test_ldap_injection_scorer_scales_on_long_closer_runs(text: str, expec
     assert score.get_value() is expected
 
 
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Every ``ldap://`` in one run of URL characters used to be retried as the start of a URL.
+        pytest.param("ldap://" * 15_000, False, id="repeated-url-scheme"),
+        pytest.param("ldap://" * 15_000 + "h???*)(uid=", True, id="repeated-url-scheme-then-filter"),
+        # A run of opening parentheses after a filter break used to be split between two repeats in every way.
+        pytest.param("*)" + "(" * 50_000, False, id="filter-break-then-parens"),
+        pytest.param("*)" + "(" * 50_000 + "uid=", True, id="filter-break-then-parens-and-attribute"),
+        pytest.param("ldap://h???*)" + "(" * 50_000, False, id="url-filter-break-then-parens"),
+        # Each encoded closer in a URL filter used to rescan the rest of the filter for a null byte.
+        pytest.param("ldap://h???" + "%29" * 30_000, False, id="url-filter-encoded-closers"),
+        pytest.param("ldap://h???" + "%29" * 30_000 + "%00", True, id="url-filter-encoded-closers-then-null"),
+    ],
+)
+async def test_ldap_injection_scorer_scales_on_long_url_and_parenthesis_runs(
+    text: str, expected: bool, patch_central_database
+):
+    scorer = LDAPInjectionOutputScorer()
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is expected
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -259,6 +283,9 @@ async def test_ldap_injection_scorer_custom_patterns(patch_central_database):
         "ldap://example.com/???%29%28%21%28%75id%3dalice%29%29",
         "ldap://example.com/???%29%5cx00",
         "ldap://example.com/???(uid=alice) ldap://example.com/???%29%28%75id%3d%2a%29",
+        "ldap://ldap://example.com/???%2a%29%28%75id%3d%2a%29",
+        "see.ldap://example.com/???%29%28%75id%3d%2a%29",
+        "ldap://a/???x?ldap://example.com/???%29%28%75id%3d%2a%29",
     ],
 )
 @pytest.mark.usefixtures("patch_central_database")
@@ -298,6 +325,7 @@ async def test_ldap_url_encoded_filter_detected_async(*, text: str, sqlite_insta
         "https://example.com/???%2a%29%28%75id%3d%2a%29",
         "%2a%29%28%75id%3d%2a%29",
         "ldap://example.com/???)%255c01",
+        "xldap://example.com/???%2a%29%28%75id%3d%2a%29",
     ],
 )
 @pytest.mark.usefixtures("patch_central_database")
