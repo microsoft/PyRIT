@@ -18,6 +18,7 @@ import FindingTreeItem, { type FindingTreeActions } from './FindingTreeItem'
 import OperationDeleteDialog from './OperationDeleteDialog'
 import OperationEditDialog from './OperationEditDialog'
 import { useOperationsStyles } from './Operations.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 const PAGE_SIZE = 20
 
@@ -41,7 +42,7 @@ interface PathsTarget {
 
 interface OperationDetailPageProps {
   /** Called after the Operation is renamed or deleted, so views holding it can refresh. */
-  onOperationChanged?: () => void
+  onOperationChanged?: (() => void) | undefined
 }
 
 export default function OperationDetailPage({ onOperationChanged }: OperationDetailPageProps) {
@@ -245,7 +246,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
             }} />
           {fields !== null && <FindingExportDialog key={current.operation.id} operation={current.operation}
             fields={fields} fieldsRevision={fieldsRevision} />}
-          <Button ref={newFindingRef} appearance="primary" className={styles.button} icon={<AddRegular />}
+          <Button ref={fluentRef(newFindingRef)} appearance="primary" className={styles.button} icon={<AddRegular />}
             disabled={fields === null} onClick={event => {
               returnFocusRef.current = event.currentTarget
               setDialog({ editing: null, parent: null })

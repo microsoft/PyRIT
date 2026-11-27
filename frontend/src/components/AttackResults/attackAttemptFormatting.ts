@@ -1,4 +1,4 @@
-import type { ScenarioProgressCounts, ScenarioProgressResult } from '@/types'
+import type { ScenarioProgressCounts, ScenarioProgressResult, ScenarioRunPlanAtomicGroup } from '@/types'
 import { formatAnalyticsPercent } from '@/utils/attackAnalytics'
 
 const OBJECTIVE_PREVIEW_LENGTH = 96
@@ -99,4 +99,9 @@ export function objectivePreview(objective: string | null, fallbackId: string): 
     sliceEnd -= 1
   }
   return `${objective.slice(0, sliceEnd)}…`
+}
+
+/** The technique a planned group ran, as results show it: Baseline for a baseline, else its technique name. */
+export function plannedTechniqueLabel(group: Pick<ScenarioRunPlanAtomicGroup, 'kind' | 'technique_name'>): string | null {
+  return group.kind === 'baseline' ? 'Baseline' : group.technique_name ?? null
 }

@@ -108,6 +108,7 @@ import {
 } from './scenarioLaunchRequest'
 import ScenarioDatasetTable from './ScenarioDatasetTable'
 import DatasetActions from './DatasetActions'
+import { fluentRef } from '@/utils/fluentRef'
 
 function targetOptionLabel(target: TargetInstance): string {
   const modelName = targetModelName(target)
@@ -133,9 +134,9 @@ interface ScorerPickerData {
 
 interface ScenarioDetailProps extends ScorerPickerData {
   /** A saved run to start from, or undefined for a fresh form. */
-  initialRun?: RunScenarioRequest
+  initialRun?: RunScenarioRequest | undefined
   /** The scan the saved run came from, for the back link. */
-  sourceRunId?: string
+  sourceRunId?: string | undefined
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
@@ -342,8 +343,8 @@ function ScenarioDetailContent({
 }
 
 interface ScenarioLaunchFormProps extends ScorerPickerData {
-  initialRun?: RunScenarioRequest
-  sourceRunId?: string
+  initialRun?: RunScenarioRequest | undefined
+  sourceRunId?: string | undefined
   scenario: RegisteredScenario
   /** Seeds the initial form state only; edits are never written back to the preset. */
   preset?: ScenarioPresetResponse | null
@@ -471,7 +472,7 @@ function ScenarioLaunchForm({
       preset,
       seededTechniques: techniqueSeed.techniques,
       initialRun,
-      datasetNames: takesLinkedDatasets && linkedDatasetNames.length > 0 ? linkedDatasetNames : undefined,
+      ...(takesLinkedDatasets && linkedDatasetNames.length > 0 ? { datasetNames: linkedDatasetNames } : {}),
     }),
   )
   const {
@@ -716,7 +717,7 @@ function ScenarioLaunchForm({
       // The launched request is the one this render built, so it is still current here.
       if (requestResult.ok) rememberScanTargets(targets, requestResult.request)
       if (!compatibleDatasetsOnly) datasetMetadata.reload()
-      navigate(scenarioRunRoutePath(summary.scenario_result_id), {
+      void navigate(scenarioRunRoutePath(summary.scenario_result_id), {
         state: { scenarioName: scenario.scenario_name },
       })
     },
@@ -937,7 +938,7 @@ function ScenarioLaunchForm({
               </MessageBar>
             )}
             {apiError && (
-              <MessageBar intent="error" ref={apiErrorRef} tabIndex={-1}>
+              <MessageBar intent="error" ref={fluentRef(apiErrorRef)} tabIndex={-1}>
                 <MessageBarBody role="alert">{apiError}</MessageBarBody>
               </MessageBar>
             )}
@@ -1083,9 +1084,11 @@ function ScenarioLaunchForm({
                   && confirmedDatasetSettings !== undefined
                   && !confirmedDatasetSettings.sources.some((source) => source.fetch === 'always'
                     && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
-                onLoad={compatibleDatasetsOnly ? undefined : () => {
-                  if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest)
-                }}
+                {...(compatibleDatasetsOnly ? {} : {
+                  onLoad: () => {
+                    if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest)
+                  },
+                })}
                 compatibleOnly={compatibleDatasetsOnly}
                 required={datasetRequired} selectionError={datasetSelectionError} pickerRef={datasetPickerRef}
                 onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
@@ -1152,7 +1155,7 @@ function ScenarioLaunchForm({
 
             <section className={styles.launchSection} aria-label="Launch scan">
               <Button
-                ref={launchButtonRef}
+                ref={fluentRef(launchButtonRef)}
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"

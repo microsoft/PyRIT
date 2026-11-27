@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing import assert_type
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -269,3 +270,14 @@ def test_insecure_code_factory_snapshots_harm_categories(mock_chat_target):
 
     assert scorer._harm_categories == ("security",)
     assert "privacy" not in scorer._system_prompt
+
+
+def test_from_harm_categories_returns_subclass(mock_chat_target) -> None:
+    """Self-typed from_harm_categories returns the subclass it is called on (PyRIT #4504)."""
+
+    class _SubScorer(InsecureCodeScorer):
+        pass
+
+    scorer = _SubScorer.from_harm_categories(chat_target=mock_chat_target)
+    assert_type(scorer, _SubScorer)
+    assert isinstance(scorer, _SubScorer)

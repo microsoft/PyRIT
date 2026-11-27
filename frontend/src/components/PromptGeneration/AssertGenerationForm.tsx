@@ -639,14 +639,16 @@ function AssertGenerationFormContent({
 
       <GenerationCommonFields
         descriptor={descriptor}
-        datasetName={mode === 'single' ? {
-          value: singleDatasetName,
-          onChange: (value: string) => {
-            setDatasetName(value)
-            setDatasetNameTouched(true)
+        {...(mode === 'single' ? {
+          datasetName: {
+            value: singleDatasetName,
+            onChange: (value: string) => {
+              setDatasetName(value)
+              setDatasetNameTouched(true)
+            },
+            error: singleDatasetName ? datasetNameError(singleDatasetName) : null,
           },
-          error: singleDatasetName ? datasetNameError(singleDatasetName) : null,
-        } : undefined}
+        } : {})}
         targets={targets}
         targetsLoading={targetsLoading}
         targetsError={targetsError}
