@@ -24,6 +24,7 @@ from pyrit.models import (
     ObjectiveTargetEvaluationIdentifier,
     Parameter,
     ScenarioDatasetSizeEstimate,
+    ScenarioRunPlan,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateCondition,
@@ -955,8 +956,15 @@ class AdversarialBenchmark(Scenario):
                 if attack is not None:
                     attribution_data["parent_eval_hash"] = attack.technique_eval_hash
                 cached_seed_group = cached_seed_groups.get(to_sha256(result.objective))
+                planned_unit_id = None
                 if cached_seed_group is not None:
                     attribution_data["seed_group_id"] = cached_seed_group.logical_id
+                    if attack is not None:
+                        planned_unit_id = ScenarioRunPlan.compute_planned_unit_id(
+                            scenario_result_id=self._scenario_result_id,
+                            atomic_group_id=self._get_atomic_group_id(atomic_attack=attack),
+                            seed_group_id=cached_seed_group.logical_id,
+                        )
                 metadata = dict(result.metadata)
                 metadata.setdefault("cached_from_attack_result_id", result.attack_result_id)
                 copies.append(
@@ -966,6 +974,7 @@ class AdversarialBenchmark(Scenario):
                             "attack_result_id": str(uuid.uuid4()),
                             "attribution_parent_id": self._scenario_result_id,
                             "attribution_data": attribution_data,
+                            "planned_unit_id": planned_unit_id,
                             "operation_id": self._operation_id,
                             "operation": None,
                             "labels": {

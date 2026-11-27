@@ -579,6 +579,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             result.attribution_data = attribution_data
             return
         result.attribution_parent_id = attribution.parent_id
+        result.planned_unit_id = attribution.planned_unit_id
         attribution_data["parent_collection"] = attribution.parent_collection
         if attribution.parent_eval_hash is not None:
             attribution_data["parent_eval_hash"] = attribution.parent_eval_hash

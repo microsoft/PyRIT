@@ -2777,6 +2777,9 @@ async def test_501_units_with_tail_error_and_unmatched_tail_error_diagnostics_pa
                 "seed_group_id": f"seed_{i}",
                 "result_role": AttackResultRole.TARGET_FACING.value,
             },
+            planned_unit_id=ScenarioRunPlan.compute_planned_unit_id(
+                scenario_result_id=scenario_id, atomic_group_id="group_1", seed_group_id=f"seed_{i}"
+            ),
             timestamp=base_time + timedelta(seconds=i),
         )
         for i in range(500)
@@ -2799,6 +2802,9 @@ async def test_501_units_with_tail_error_and_unmatched_tail_error_diagnostics_pa
             "seed_group_id": "seed_500",
             "result_role": AttackResultRole.TARGET_FACING.value,
         },
+        planned_unit_id=ScenarioRunPlan.compute_planned_unit_id(
+            scenario_result_id=scenario_id, atomic_group_id="group_1", seed_group_id="seed_500"
+        ),
         timestamp=base_time + timedelta(seconds=500),
     )
     all_results.append(tail_planned_result)

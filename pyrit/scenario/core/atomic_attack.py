@@ -28,6 +28,7 @@ from pyrit.models import (
     AttackResult,
     AttackSeedGroup,
     ObjectiveTargetEvaluationIdentifier,
+    ScenarioRunPlan,
     ScenarioRunPlanGroupKind,
     ScenarioRunPlanScorerBinding,
     config_hash,
@@ -523,6 +524,11 @@ class AtomicAttack:
                         parent_collection=self.atomic_attack_name,
                         parent_eval_hash=technique_eval_hash,
                         seed_group_id=seed_group.logical_id,
+                        planned_unit_id=ScenarioRunPlan.compute_planned_unit_id(
+                            scenario_result_id=self._scenario_result_id,
+                            atomic_group_id=self.logical_group_id,
+                            seed_group_id=seed_group.logical_id,
+                        ),
                     )
                     for seed_group in self._seed_groups
                 ]

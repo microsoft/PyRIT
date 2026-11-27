@@ -57,6 +57,10 @@ class AttackResultAttribution:
             children of an orchestration parent. Persisted into
             ``AttackResultEntry.attribution_data``. ``SequentialAttack`` sets it for each
             child attack it dispatches, e.g. ``2`` for the second child.
+        planned_unit_id (str | None): Optional ID of the parent's planned unit of work this
+            result executes. Persisted to ``AttackResultEntry.planned_unit_id`` (foreign key to
+            ``ScenarioPlannedUnitEntries.id``). ``Scenario`` sets it from
+            ``ScenarioRunPlan.compute_planned_unit_id``.
     """
 
     parent_id: str
@@ -64,6 +68,7 @@ class AttackResultAttribution:
     parent_eval_hash: str | None = None
     seed_group_id: str | None = None
     attempt_index: int | None = None
+    planned_unit_id: str | None = None
 
 
 async def enrich_attack_result_identifier_async(

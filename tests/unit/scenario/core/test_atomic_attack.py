@@ -20,6 +20,7 @@ from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
     ComponentIdentifier,
+    ScenarioRunPlan,
     ScoringExpectation,
     SeedGroup,
     SeedGroupRequirements,
@@ -1163,6 +1164,31 @@ class TestAtomicAttackAttributionStamping:
         attributions = mock_exec.call_args.kwargs["attributions"]
         assert all(attribution.parent_eval_hash is not None for attribution in attributions)
         assert all(attribution.parent_eval_hash == atomic.technique_eval_hash for attribution in attributions)
+
+    async def test_attribution_links_each_seed_group_to_its_planned_unit(
+        self, mock_attack, sample_seed_groups, sample_attack_results
+    ):
+        """Each attempt references the planned unit the run stored for its atomic group and seed group."""
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="MyAtomicAttack",
+        )
+        atomic._scenario_result_id = "00000000-0000-0000-0000-000000000abc"
+
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = wrap_results(sample_attack_results)
+            await atomic.run_async()
+
+        attributions = mock_exec.call_args.kwargs["attributions"]
+        assert [attribution.planned_unit_id for attribution in attributions] == [
+            ScenarioRunPlan.compute_planned_unit_id(
+                scenario_result_id="00000000-0000-0000-0000-000000000abc",
+                atomic_group_id=atomic.logical_group_id,
+                seed_group_id=seed_group.logical_id,
+            )
+            for seed_group in sample_seed_groups
+        ]
 
 
 @pytest.mark.usefixtures("patch_central_database")

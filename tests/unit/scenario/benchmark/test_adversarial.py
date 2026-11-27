@@ -67,6 +67,7 @@ from pyrit.models import (
     Operation,
     ScenarioIdentifier,
     ScenarioResult,
+    ScenarioRunPlan,
     ScenarioRunPlanGroupKind,
     ScenarioRunSizeEstimateStatus,
     ScenarioRunState,
@@ -2554,6 +2555,7 @@ class TestReusableCachedResults:
             outcome=AttackOutcome.FAILURE,
         )
         attributed.attribution_data = {**(attributed.attribution_data or {}), "seed_group_id": "stale-seed"}
+        attributed.planned_unit_id = str(uuid.uuid4())
         cached = [attributed, legacy] if reverse else [legacy, attributed]
 
         bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
@@ -2572,6 +2574,15 @@ class TestReusableCachedResults:
         assert {copy.objective: copy.attribution_data["seed_group_id"] for copy in copies} == {
             "legacy cached": seed_groups["legacy cached"].logical_id,
             "attributed cached": seed_groups["attributed cached"].logical_id,
+        }
+        # Copies link to this run's stored planned units, never the original run's.
+        assert {copy.objective: copy.planned_unit_id for copy in copies} == {
+            objective: ScenarioRunPlan.compute_planned_unit_id(
+                scenario_result_id=bench._scenario_result_id,
+                atomic_group_id=plan.atomic_groups[0].id,
+                seed_group_id=seed_groups[objective].logical_id,
+            )
+            for objective in ("legacy cached", "attributed cached")
         }
 
         fresh = AttackResult(

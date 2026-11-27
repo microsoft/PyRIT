@@ -58,7 +58,7 @@ from sqlalchemy.sql.operators import asc_op, desc_op
 
 from pyrit.analytics import compute_outcome_statistics
 from pyrit.analytics.outcome_statistics import success_percentage
-from pyrit.analytics.scenario_statistics import combine_execution_counts
+from pyrit.analytics.scenario_statistics import combine_execution_counts, load_scenario_run_plan
 from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.pagination import DecodedKeysetCursor
@@ -118,6 +118,7 @@ from pyrit.memory.memory_models import (
     PromptGenerationEntry,
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
+    ScenarioPlannedUnitEntry,
     ScenarioPlanSeedGroupEntry,
     ScenarioResultEntry,
     ScorableContentEntry,
@@ -3639,24 +3640,6 @@ class MemoryInterface(abc.ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} must implement _get_scenario_attempt_unit_expressions "
-            "to support Scenario history queries."
-        )
-
-    def _get_scenario_plan_unit_subqueries(self, *, scenario_result_ids: Sequence[uuid.UUID]) -> tuple[Any, Any]:
-        """
-        Return backend-specific run-plan expansions used to resolve attempts to planned units.
-
-        The first subquery yields one row per planned ``(atomic group, seed group)`` pair with
-        columns ``scenario_result_id``, ``group_ordinal``, ``atomic_group_id``,
-        ``atomic_attack_name``, ``technique_eval_hash`` and ``seed_group_id``. The second yields
-        one row per planned seed group with columns ``scenario_result_id``, ``seed_group_id`` and
-        ``objective_sha256``.
-
-        Raises:
-            NotImplementedError: If the memory backend does not support Scenario history queries.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement _get_scenario_plan_unit_subqueries "
             "to support Scenario history queries."
         )
 
@@ -8422,7 +8405,7 @@ class MemoryInterface(abc.ABC):
             SQLAlchemyError: If a scenario result or identifier graph cannot be persisted.
         """
         entries = [ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
-        plan_entries = [
+        plan_entries: list[Base] = [
             ScenarioPlanSeedGroupEntry(
                 scenario_result_id=result_id, dataset_name=dataset_name, position=position, seed_group=seed_group
             )
@@ -8431,6 +8414,12 @@ class MemoryInterface(abc.ABC):
                 (name, group) for name, groups in population.items() for group in groups
             )
         ]
+        for scenario_result in scenario_results:
+            run_plan = load_scenario_run_plan(scenario_result)
+            if run_plan is not None:
+                plan_entries.extend(
+                    ScenarioPlannedUnitEntry.from_run_plan(scenario_result_id=scenario_result.id, run_plan=run_plan)
+                )
         with closing(self._get_session()) as session:
             try:
                 for scenario_result in scenario_results:
@@ -8802,12 +8791,11 @@ class MemoryInterface(abc.ABC):
 
         Persisted attempts are grouped into logical work units before being counted, so
         retries and errored re-runs of the same objective collapse into a single unit.
-        For every scenario listed in ``plan_scenario_ids`` the persisted run plan resolves
-        those units: attempts are matched to their planned atomic group and seed group
-        (remapping objective-hash attribution onto the planned seed group ID), and attempts
-        that resolve to no planned unit are excluded from the counters. Scenarios outside
-        ``plan_scenario_ids`` keep the persisted attribution as the unit identity and count
-        every unit, which is the legacy behavior for runs without a usable plan.
+        For every scenario listed in ``plan_scenario_ids``, an attempt counts toward the planned
+        unit it is linked to (``AttackResultEntry.planned_unit_id``), and attempts linked to no
+        planned unit are excluded from the counters. Scenarios outside ``plan_scenario_ids`` keep
+        the persisted attribution as the unit identity and count every unit, which is the legacy
+        behavior for runs without a usable plan.
 
         Args:
             scenario_result_ids (Sequence[str]): Scenario run IDs to aggregate.
@@ -9000,13 +8988,12 @@ class MemoryInterface(abc.ABC):
             select(
                 AttackResultEntry.id.label("attempt_id"),
                 AttackResultEntry.attribution_parent_id.label("scenario_result_id"),
+                AttackResultEntry.planned_unit_id.label("planned_unit_id"),
                 atomic_name.label("atomic_attack_name"),
                 technique_hash.label("technique_eval_hash"),
-                attributed_seed_group_id.label("attributed_seed_group_id"),
                 func.coalesce(
                     attributed_seed_group_id, identifier_seed_key, AttackResultEntry.objective_sha256, ""
                 ).label("seed_group_id"),
-                AttackResultEntry.objective_sha256.label("objective_sha256"),
                 AttackResultEntry.outcome.label("outcome"),
                 AttackResultEntry.timestamp.label("timestamp"),
                 case(
@@ -9287,151 +9274,41 @@ class MemoryInterface(abc.ABC):
         """
         Resolve every persisted attempt to the logical work unit whose counters it feeds.
 
+        An attempt linked to a planned unit counts toward that unit. In runs listed in ``plan_entry_ids``,
+        unlinked attempts are excluded from the unit counters but keep their own identity for the
+        producer counts, so configurations sharing a name stay apart.
+
         Returns:
             Any: A statement selecting one row per attempt with its resolved unit identity.
         """
-        # Without a matching planned group, a unit is its atomic attack name plus technique configuration,
+        # Without a planned unit, a unit is its atomic attack name plus technique configuration,
         # the same identity pyrit.analytics.scenario_statistics uses, so configurations sharing a name stay apart.
         unplanned_group_id = (
             type_coerce(attempts.c.atomic_attack_name, Unicode)
             .concat(literal("\x1f", Unicode))
             .concat(type_coerce(attempts.c.technique_eval_hash, Unicode))
         )
-        if not plan_entry_ids:
-            return select(
-                attempts.c.scenario_result_id,
-                attempts.c.attempt_id,
-                attempts.c.outcome,
-                attempts.c.timestamp,
-                attempts.c.total_retries,
-                attempts.c.has_retries,
-                attempts.c.result_role,
-                attempts.c.attempt_index,
-                attempts.c.has_child_links,
-                attempts.c.duplicates_child_error,
-                unplanned_group_id.label("unit_group_id"),
-                attempts.c.seed_group_id.label("unit_seed_id"),
-                literal(1).label("is_planned"),
-            )
-
-        planned_units, plan_seeds = self._get_scenario_plan_unit_subqueries(scenario_result_ids=plan_entry_ids)
-        # How many planned groups share each atomic attack name, so name-only matches can require a unique group.
-        groups_per_name = (
-            select(
-                planned_units.c.scenario_result_id,
-                planned_units.c.atomic_attack_name,
-                func.count(func.distinct(planned_units.c.atomic_group_id)).label("group_count"),
-            )
-            .group_by(planned_units.c.scenario_result_id, planned_units.c.atomic_attack_name)
-            .subquery("history_planned_groups_per_name")
-        )
-        planned = (
-            select(
-                planned_units.c.scenario_result_id,
-                planned_units.c.group_ordinal,
-                planned_units.c.atomic_group_id,
-                planned_units.c.atomic_attack_name,
-                planned_units.c.technique_eval_hash,
-                planned_units.c.seed_group_id,
-                plan_seeds.c.objective_sha256,
-                groups_per_name.c.group_count,
-                func.count()
-                .over(
-                    partition_by=(
-                        planned_units.c.scenario_result_id,
-                        planned_units.c.atomic_group_id,
-                        plan_seeds.c.objective_sha256,
-                    )
-                )
-                .label("objective_match_count"),
-            )
-            .select_from(
-                planned_units.outerjoin(
-                    plan_seeds,
-                    and_(
-                        plan_seeds.c.scenario_result_id == planned_units.c.scenario_result_id,
-                        plan_seeds.c.seed_group_id == planned_units.c.seed_group_id,
-                    ),
-                ).join(
-                    groups_per_name,
-                    and_(
-                        groups_per_name.c.scenario_result_id == planned_units.c.scenario_result_id,
-                        groups_per_name.c.atomic_attack_name == planned_units.c.atomic_attack_name,
-                    ),
-                )
-            )
-            .subquery("history_planned_units")
-        )
-        # Without explicit seed attribution, an objective must identify exactly one planned seed group.
-        seed_matches_exactly = planned.c.seed_group_id == attempts.c.attributed_seed_group_id
-        match_condition = and_(
-            planned.c.scenario_result_id == attempts.c.scenario_result_id,
-            planned.c.atomic_attack_name == attempts.c.atomic_attack_name,
-            # Same rule as ScenarioPlanLookup.resolve_group: without a technique hash, the name must be unambiguous.
-            or_(
-                and_(attempts.c.technique_eval_hash == "", planned.c.group_count == 1),
-                planned.c.technique_eval_hash == attempts.c.technique_eval_hash,
-            ),
-            or_(
-                seed_matches_exactly,
-                and_(
-                    attempts.c.attributed_seed_group_id.is_(None),
-                    planned.c.objective_sha256 == attempts.c.objective_sha256,
-                    planned.c.objective_match_count == 1,
-                ),
-            ),
-        )
-        matched = (
-            select(
-                attempts.c.scenario_result_id,
-                attempts.c.attempt_id,
-                attempts.c.outcome,
-                attempts.c.timestamp,
-                attempts.c.total_retries,
-                attempts.c.has_retries,
-                attempts.c.result_role,
-                attempts.c.attempt_index,
-                attempts.c.has_child_links,
-                attempts.c.duplicates_child_error,
-                attempts.c.atomic_attack_name,
-                unplanned_group_id.label("unplanned_group_id"),
-                attempts.c.seed_group_id,
-                planned.c.atomic_group_id,
-                planned.c.seed_group_id.label("planned_seed_group_id"),
-                func.row_number()
-                .over(
-                    partition_by=attempts.c.attempt_id,
-                    order_by=(
-                        case((seed_matches_exactly, 0), else_=1),
-                        planned.c.group_ordinal,
-                        planned.c.seed_group_id,
-                    ),
-                )
-                .label("match_rank"),
-            )
-            .select_from(attempts.outerjoin(planned, match_condition))
-            .subquery("history_matched_attempts")
-        )
+        planned_units = ScenarioPlannedUnitEntry.__table__.alias("history_planned_units")
         return select(
-            matched.c.scenario_result_id,
-            matched.c.attempt_id,
-            matched.c.outcome,
-            matched.c.timestamp,
-            matched.c.total_retries,
-            matched.c.has_retries,
-            matched.c.result_role,
-            matched.c.attempt_index,
-            matched.c.has_child_links,
-            matched.c.duplicates_child_error,
-            func.coalesce(matched.c.atomic_group_id, matched.c.unplanned_group_id).label("unit_group_id"),
-            func.coalesce(matched.c.planned_seed_group_id, matched.c.seed_group_id).label("unit_seed_id"),
+            attempts.c.scenario_result_id,
+            attempts.c.attempt_id,
+            attempts.c.outcome,
+            attempts.c.timestamp,
+            attempts.c.total_retries,
+            attempts.c.has_retries,
+            attempts.c.result_role,
+            attempts.c.attempt_index,
+            attempts.c.has_child_links,
+            attempts.c.duplicates_child_error,
+            func.coalesce(planned_units.c.atomic_group_id, unplanned_group_id).label("unit_group_id"),
+            func.coalesce(planned_units.c.seed_group_id, attempts.c.seed_group_id).label("unit_seed_id"),
             # Runs outside the plan-resolution set keep their raw identity and stay counted.
             case(
-                (matched.c.scenario_result_id.notin_(plan_entry_ids), 1),
-                (matched.c.planned_seed_group_id.is_(None), 0),
+                (attempts.c.scenario_result_id.notin_(plan_entry_ids), 1),
+                (planned_units.c.id.is_(None), 0),
                 else_=1,
             ).label("is_planned"),
-        ).where(matched.c.match_rank == 1)
+        ).select_from(attempts.outerjoin(planned_units, planned_units.c.id == attempts.c.planned_unit_id))
 
     @staticmethod
     def _parse_scenario_started_at(*, raw_value: Any) -> datetime | None:
@@ -13749,12 +13626,11 @@ class MemoryInterface(abc.ABC):
 
         Persisted attempts are grouped into logical work units before being counted, so
         retries and errored re-runs of the same objective collapse into a single unit.
-        For every scenario listed in ``plan_scenario_ids`` the persisted run plan resolves
-        those units: attempts are matched to their planned atomic group and seed group
-        (remapping objective-hash attribution onto the planned seed group ID), and attempts
-        that resolve to no planned unit are excluded from the counters. Scenarios outside
-        ``plan_scenario_ids`` keep the persisted attribution as the unit identity and count
-        every unit, which is the legacy behavior for runs without a usable plan.
+        For every scenario listed in ``plan_scenario_ids``, an attempt counts toward the planned
+        unit it is linked to (``AttackResultEntry.planned_unit_id``), and attempts linked to no
+        planned unit are excluded from the counters. Scenarios outside ``plan_scenario_ids`` keep
+        the persisted attribution as the unit identity and count every unit, which is the legacy
+        behavior for runs without a usable plan.
 
         Args:
             scenario_result_ids (Sequence[str]): Scenario run IDs to aggregate.
