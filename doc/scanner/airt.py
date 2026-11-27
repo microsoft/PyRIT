@@ -408,6 +408,9 @@ await output_scenario_async(scenario_result)
 # target, such as `max_completion_tokens`, to bound the cost of a run. Leave room above a full
 # answer: with a limit close to the size of the first reply, no reply can reach 3 times that size.
 #
+# The target must support multi-turn conversations, and every seed group needs a first user message.
+# Use a `max_turns` of at least 2, so that at least one follow-up is sent.
+#
 # ```bash
 # pyrit_scan run airt.cost_amplification \
 #   --initializers target \

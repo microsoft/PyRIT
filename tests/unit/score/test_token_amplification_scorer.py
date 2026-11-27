@@ -6,7 +6,14 @@ import uuid
 import pytest
 
 from pyrit.memory import CentralMemory
-from pyrit.models import ChatMessageRole, Message, MessagePiece, TokenUsage
+from pyrit.models import (
+    ChatMessageRole,
+    Message,
+    MessagePiece,
+    PromptDataType,
+    PromptResponseError,
+    TokenUsage,
+)
 from pyrit.score import FloatScaleThresholdScorer, MessageScorable, TokenAmplificationScorer
 
 
@@ -18,11 +25,15 @@ def _piece(
     output_tokens: int | None = None,
     truncated: bool = False,
     text: str = "text",
+    data_type: PromptDataType = "text",
+    response_error: PromptResponseError = "none",
 ) -> MessagePiece:
-    """Build a text piece, with the token usage a target would save when ``output_tokens`` is set."""
+    """Build a piece, with the token usage a target would save when ``output_tokens`` is set."""
     piece = MessagePiece(
         role=role,
         original_value=text,
+        original_value_data_type=data_type,
+        response_error=response_error,
         conversation_id=conversation_id,
         sequence=sequence,
         prompt_metadata=TokenUsage(output_tokens=output_tokens).to_metadata() if output_tokens is not None else {},
@@ -262,3 +273,120 @@ class TestTokenAmplificationScorerWithThreshold:
         [score] = await scorer.score_async(scorable=MessageScorable.from_message(replies[1]))
 
         assert score.is_undetermined
+
+
+async def _add_pieces_async(pieces: list[MessagePiece]) -> list[Message]:
+    """Store one message for each piece and return the messages in order."""
+    memory = CentralMemory.get_memory_instance()
+    messages = [Message(message_pieces=[piece]) for piece in pieces]
+    for message in messages:
+        await memory.add_message_to_memory_async(request=message)
+    return messages
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTokenAmplificationScorerBlockedAndFailedReplies:
+    @pytest.mark.parametrize(
+        ("data_type", "response_error"), [("error", "blocked"), ("error", "empty"), ("text", "empty")]
+    )
+    async def test_reply_without_content_is_scored_by_its_token_usage(self, data_type, response_error):
+        conversation_id = str(uuid.uuid4())
+        messages = await _add_pieces_async(
+            [
+                _piece(role="user", conversation_id=conversation_id, sequence=0),
+                _piece(role="assistant", conversation_id=conversation_id, sequence=1, output_tokens=100),
+                _piece(role="user", conversation_id=conversation_id, sequence=2),
+                _piece(
+                    role="assistant",
+                    conversation_id=conversation_id,
+                    sequence=3,
+                    output_tokens=900,
+                    data_type=data_type,
+                    response_error=response_error,
+                ),
+            ]
+        )
+        scorer = FloatScaleThresholdScorer(scorer=TokenAmplificationScorer(), threshold=0.3)
+
+        [score] = await scorer.score_async(scorable=MessageScorable.from_message(messages[3]))
+
+        assert score.get_value() is True
+        assert "9.00 times the first reply" in score.score_rationale
+
+    @pytest.mark.parametrize(
+        ("data_type", "response_error"), [("error", "blocked"), ("error", "empty"), ("text", "empty")]
+    )
+    async def test_reply_without_content_or_token_usage_is_undetermined(self, data_type, response_error):
+        conversation_id = str(uuid.uuid4())
+        messages = await _add_pieces_async(
+            [
+                _piece(role="user", conversation_id=conversation_id, sequence=0),
+                _piece(role="assistant", conversation_id=conversation_id, sequence=1, output_tokens=100),
+                _piece(role="user", conversation_id=conversation_id, sequence=2),
+                _piece(
+                    role="assistant",
+                    conversation_id=conversation_id,
+                    sequence=3,
+                    data_type=data_type,
+                    response_error=response_error,
+                ),
+            ]
+        )
+        scorer = FloatScaleThresholdScorer(scorer=TokenAmplificationScorer(), threshold=0.3)
+
+        [score] = await scorer.score_async(scorable=MessageScorable.from_message(messages[3]))
+
+        assert score.is_undetermined
+        assert score.score_value is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTokenAmplificationScorerToolCalls:
+    async def test_tool_call_before_the_first_answer_is_not_the_first_reply(self):
+        conversation_id = str(uuid.uuid4())
+        messages = await _add_pieces_async(
+            [
+                _piece(role="user", conversation_id=conversation_id, sequence=0),
+                _piece(
+                    role="assistant",
+                    conversation_id=conversation_id,
+                    sequence=1,
+                    output_tokens=20,
+                    data_type="function_call",
+                ),
+                _piece(role="tool", conversation_id=conversation_id, sequence=2, data_type="function_call_output"),
+                _piece(role="assistant", conversation_id=conversation_id, sequence=3, output_tokens=100),
+            ]
+        )
+
+        [score] = await TokenAmplificationScorer().score_message_async(message=messages[3])
+
+        assert score.get_value() == pytest.approx(0.1)
+        assert score.score_metadata["reply_number"] == 1
+        assert score.score_metadata["reply_count"] == 1
+        assert score.score_metadata["baseline_output_tokens"] == 100
+
+    async def test_tool_call_between_answers_is_not_counted_as_a_reply(self):
+        conversation_id = str(uuid.uuid4())
+        messages = await _add_pieces_async(
+            [
+                _piece(role="user", conversation_id=conversation_id, sequence=0),
+                _piece(role="assistant", conversation_id=conversation_id, sequence=1, output_tokens=100),
+                _piece(role="user", conversation_id=conversation_id, sequence=2),
+                _piece(
+                    role="assistant",
+                    conversation_id=conversation_id,
+                    sequence=3,
+                    output_tokens=15,
+                    data_type="tool_call",
+                ),
+                _piece(role="tool", conversation_id=conversation_id, sequence=4, data_type="function_call_output"),
+                _piece(role="assistant", conversation_id=conversation_id, sequence=5, output_tokens=400),
+            ]
+        )
+
+        [score] = await TokenAmplificationScorer().score_message_async(message=messages[5])
+
+        assert score.get_value() == pytest.approx(0.4)
+        assert score.score_metadata["reply_number"] == 2
+        assert score.score_metadata["output_tokens_by_reply"] == "100,400"

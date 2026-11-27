@@ -21,8 +21,13 @@ from pyrit.models import (
     SeedPrompt,
     TokenUsage,
 )
-from pyrit.prompt_target import PromptTarget
-from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetCapabilities, TargetConfiguration
+from pyrit.scenario import (
+    AtomicAttack,
+    DatasetAttackConfiguration,
+    IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
+)
 from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.scenarios.airt import CostAmplification, CostAmplificationTechnique
@@ -105,6 +110,7 @@ def _context(
     objective_target: PromptTarget,
     seed_groups: list[AttackSeedGroup],
     include_baseline: bool = False,
+    policy: IncompatibleTechniquePolicy = IncompatibleTechniquePolicy.SKIP,
 ) -> ScenarioContext:
     return ScenarioContext(
         objective_target=objective_target,
@@ -113,6 +119,7 @@ def _context(
         seed_groups=seed_groups,
         memory_labels={"source": "context"},
         include_baseline=include_baseline,
+        incompatible_technique_policy=policy,
     )
 
 
@@ -123,6 +130,7 @@ async def _build_async(
     include_baseline: bool = False,
     max_turns: int | None = None,
     adversarial_chat: PromptTarget | None = None,
+    policy: IncompatibleTechniquePolicy = IncompatibleTechniquePolicy.SKIP,
 ) -> list[AtomicAttack]:
     scenario = CostAmplification(adversarial_chat=adversarial_chat or _FollowUpAdversarialTarget())
     scenario.set_params_from_args(args={} if max_turns is None else {"max_turns": max_turns})
@@ -131,6 +139,7 @@ async def _build_async(
             objective_target=objective_target,
             seed_groups=seed_groups or _seed_groups(),
             include_baseline=include_baseline,
+            policy=policy,
         )
     )
 
@@ -243,6 +252,62 @@ class TestCostAmplificationAtomicAttacks:
             )
 
 
+def _single_turn_target() -> MockPromptTarget:
+    return MockPromptTarget(
+        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=False))
+    )
+
+
+def _objective_only_groups() -> list[AttackSeedGroup]:
+    return [AttackSeedGroup(seeds=[SeedObjective(value="Get the assistant to write replies that keep growing")])]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCostAmplificationRequirements:
+    async def test_technique_declares_its_requirements(self):
+        [atomic] = await _build_async(objective_target=MockPromptTarget())
+
+        requirements = atomic.attack_technique.requirements
+        assert CapabilityName.MULTI_TURN in requirements.objective_target.native_required
+        assert requirements.seed_group.required_user_prompt
+
+    async def test_single_turn_target_is_skipped(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            atomics = await _build_async(objective_target=_single_turn_target())
+
+        assert atomics == []
+        assert any("incompatible with the objective target" in record.getMessage() for record in caplog.records)
+
+    async def test_single_turn_target_raises_under_raise_policy(self):
+        with pytest.raises(IncompatibleTechniqueError, match="incompatible with the objective target"):
+            await _build_async(objective_target=_single_turn_target(), policy=IncompatibleTechniquePolicy.RAISE)
+
+    async def test_single_turn_target_still_gets_the_baseline(self):
+        atomics = await _build_async(objective_target=_single_turn_target(), include_baseline=True)
+
+        assert [atomic.atomic_attack_name for atomic in atomics] == ["baseline"]
+
+    async def test_seed_group_without_a_first_message_is_skipped(self):
+        atomics = await _build_async(objective_target=MockPromptTarget(), seed_groups=_objective_only_groups())
+
+        assert atomics == []
+
+    async def test_seed_group_without_a_first_message_raises_under_raise_policy(self):
+        with pytest.raises(IncompatibleTechniqueError, match="A stored user prompt is required"):
+            await _build_async(
+                objective_target=MockPromptTarget(),
+                seed_groups=_objective_only_groups(),
+                policy=IncompatibleTechniquePolicy.RAISE,
+            )
+
+    async def test_groups_without_a_first_message_are_dropped_and_the_rest_kept(self):
+        groups = _seed_groups(count=2) + _objective_only_groups()
+
+        [atomic] = await _build_async(objective_target=MockPromptTarget(), seed_groups=groups)
+
+        assert len(atomic.seed_groups) == 2
+
+
 @pytest.mark.usefixtures("patch_central_database")
 class TestCostAmplificationOutputBudget:
     @pytest.mark.parametrize(
@@ -264,8 +329,12 @@ class TestCostAmplificationOutputBudget:
             await _build_async(objective_target=MockPromptTarget(), seed_groups=_seed_groups(count=2), max_turns=4)
 
         messages = [record.getMessage() for record in caplog.records]
-        assert any("objective target declares no output token limit" in m and "up to 8 replies" in m for m in messages)
-        assert any("adversarial chat declares no output token limit" in m and "up to 6 replies" in m for m in messages)
+        assert any(
+            "objective target declares no output token limit" in m and "8 planned replies" in m for m in messages
+        )
+        assert any(
+            "adversarial chat declares no output token limit" in m and "6 planned replies" in m for m in messages
+        )
 
     async def test_build_counts_baseline_replies_in_the_objective_target_budget(self, caplog):
         with caplog.at_level(logging.WARNING, logger="pyrit.scenario.scenarios.airt.cost_amplification"):
@@ -277,16 +346,28 @@ class TestCostAmplificationOutputBudget:
             )
 
         messages = [record.getMessage() for record in caplog.records]
-        assert any("objective target declares no output token limit" in m and "up to 10 replies" in m for m in messages)
+        assert any(
+            "objective target declares no output token limit" in m and "10 planned replies" in m for m in messages
+        )
 
-    async def test_build_logs_the_maximum_output_tokens_when_a_limit_is_set(self, caplog):
+    async def test_build_logs_the_planned_output_tokens_when_a_limit_is_set(self, caplog):
         target = _LimitedTarget(parameter="max_completion_tokens", limit=500)
 
         with caplog.at_level(logging.INFO, logger="pyrit.scenario.scenarios.airt.cost_amplification"):
             await _build_async(objective_target=target, seed_groups=_seed_groups(count=2), max_turns=4)
 
         messages = [record.getMessage() for record in caplog.records]
-        assert any("objective target can produce at most 4000 output tokens" in m for m in messages)
+        planned = [m for m in messages if "objective target is planned to produce up to 4000 output tokens" in m]
+        assert planned
+        assert "Retries and tool calls are not counted" in planned[0]
+
+    @pytest.mark.parametrize(("max_turns", "warns"), [(1, True), (2, False)])
+    async def test_build_warns_when_max_turns_leaves_no_follow_up(self, caplog, max_turns, warns):
+        with caplog.at_level(logging.WARNING, logger="pyrit.scenario.scenarios.airt.cost_amplification"):
+            await _build_async(objective_target=MockPromptTarget(), max_turns=max_turns)
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("no follow-up is sent" in m for m in messages) is warns
 
     async def test_build_does_not_change_target_settings(self):
         target = _LimitedTarget(parameter="max_completion_tokens", limit=500)
@@ -331,6 +412,26 @@ class TestCostAmplificationRun:
         assert result.outcome == AttackOutcome.UNDETERMINED
         assert result.executed_turns == 3
         assert result.automated_score.is_undetermined
+
+    async def test_public_run_path_reports_baseline_failure_and_technique_success(self):
+        target = _TokenUsageTarget(output_tokens=[100, 400, 400, 400])
+        scenario = CostAmplification(adversarial_chat=_FollowUpAdversarialTarget())
+        scenario.set_params_from_args(
+            args={
+                "objective_target": target,
+                "dataset_config": DatasetAttackConfiguration(seed_groups=_seed_groups()),
+                "max_turns": 3,
+            }
+        )
+        await scenario.initialize_async()
+
+        result = await scenario.run_async()
+
+        outcomes = {name: [attack.outcome for attack in attacks] for name, attacks in result.attack_results.items()}
+        assert outcomes == {
+            "baseline": [AttackOutcome.FAILURE],
+            "cost_amplification_follow_up_expansion": [AttackOutcome.SUCCESS],
+        }
 
     async def test_baseline_first_reply_does_not_achieve_the_objective(self):
         target = _TokenUsageTarget(output_tokens=[400])

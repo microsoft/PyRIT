@@ -8,8 +8,8 @@ from typing import ClassVar
 from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
 from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig, RedTeamingAttack
-from pyrit.models import AttackSeedGroup, Parameter, SeedPrompt
-from pyrit.prompt_target import PromptTarget
+from pyrit.models import AttackSeedGroup, Parameter, SeedGroupRequirements, SeedPrompt
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetRequirements
 from pyrit.scenario.core import get_default_adversarial_target
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -36,6 +36,16 @@ DEFAULT_AMPLIFICATION_THRESHOLD = 3.0
 
 # Identifier parameters that targets use for their output token limit.
 _OUTPUT_LIMIT_PARAMETERS = ("max_completion_tokens", "max_output_tokens", "max_tokens", "max_new_tokens")
+
+# The scorer compares each reply with the first reply of the same conversation.
+# - A target without native multi-turn support gets a new conversation on every turn, so later
+#   replies could not be compared with the first one.
+# - The first reply must answer the seed group's own first message, not one written by the
+#   adversarial chat, so every seed group needs a stored user prompt.
+_TECHNIQUE_REQUIREMENTS = TechniqueRequirements(
+    objective_target=TargetRequirements(native_required=frozenset({CapabilityName.MULTI_TURN})),
+    seed_group=SeedGroupRequirements(required_user_prompt=True),
+)
 
 
 class CostAmplificationTechnique(ScenarioTechnique):
@@ -125,6 +135,9 @@ class CostAmplification(Scenario):
         and by the output limit configured on the target. Set an output limit on the objective
         target before running; without one the cost of each reply is unbounded.
 
+        The objective target must support multi-turn conversations natively, and every seed group
+        needs a first user message. ``max_turns`` must be at least 2 for a follow-up to be sent.
+
         Args:
             objective_scorer (TrueFalseScorer | None): Custom scorer for objective evaluation.
                 Defaults to a ``TokenAmplificationScorer`` behind a threshold.
@@ -166,23 +179,26 @@ class CostAmplification(Scenario):
 
     def _log_output_budget(self, *, role: str, target: PromptTarget, max_replies: int) -> None:
         """
-        Log the most output tokens a target can produce in this run.
+        Log the planned output tokens of a target in this run.
+
+        The figure is one reply for each planned turn at the target's output limit. Retries and tool
+        calls make extra completions, so the real total can be higher.
 
         Args:
             role (str): How the target is used in the run, for the log message.
             target (PromptTarget): The target to describe.
-            max_replies (int): The most replies the run can request from the target.
+            max_replies (int): The replies the run plans to request from the target.
         """
         limit = self._get_output_limit(target=target)
         if limit is None:
             logger.warning(
-                f"CostAmplification: the {role} declares no output token limit, so the cost of each of its up to "
-                f"{max_replies} replies is unbounded. Set an output limit on the target to bound the run."
+                f"CostAmplification: the {role} declares no output token limit, so the cost of each of its "
+                f"{max_replies} planned replies is unbounded. Set an output limit on the target to bound the run."
             )
             return
         logger.info(
-            f"CostAmplification: the {role} can produce at most {max_replies * limit} output tokens "
-            f"({max_replies} replies of up to {limit} tokens)."
+            f"CostAmplification: the {role} is planned to produce up to {max_replies * limit} output tokens "
+            f"({max_replies} replies of up to {limit} tokens). Retries and tool calls are not counted."
         )
 
     def _get_atomic_attack_from_technique(
@@ -212,7 +228,7 @@ class CostAmplification(Scenario):
         if self._adversarial_chat is None:
             self._adversarial_chat = self._resolved_adversarial_target or get_default_adversarial_target()
 
-        requirements = TechniqueRequirements()
+        requirements = _TECHNIQUE_REQUIREMENTS
         if not check_target_compatibility(
             target=context.objective_target,
             attack_class=RedTeamingAttack,
@@ -233,6 +249,11 @@ class CostAmplification(Scenario):
             return None
 
         max_turns = self.params["max_turns"]
+        if max_turns < 2:
+            logger.warning(
+                f"CostAmplification: max_turns is {max_turns}, so no follow-up is sent and the objective cannot "
+                "be achieved. Use at least 2."
+            )
         # The baseline, when included, sends each first message once more.
         baseline_replies = len(seed_groups) if context.include_baseline else 0
         self._log_output_budget(
@@ -261,7 +282,8 @@ class CostAmplification(Scenario):
                     attack_scoring_config=scoring_config,
                     attack_adversarial_config=adversarial_config,
                     max_turns=max_turns,
-                )
+                ),
+                requirements=requirements,
             ),
             seed_groups=compatible_groups,
             adversarial_chat=self._adversarial_chat,
