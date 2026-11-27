@@ -67,7 +67,7 @@ class HTTPXAPITarget(HTTPTarget):
         return str(cleaned_url)
 
     @staticmethod
-    def _merge_base_and_url(base_url: httpx.URL, url: httpx.URL) -> httpx.URL:
+    def _merge_base_and_url(*, base_url: httpx.URL, url: httpx.URL) -> httpx.URL:
         """
         Resolve ``url`` against ``base_url`` exactly like ``httpx.AsyncClient`` does.
 
@@ -160,7 +160,7 @@ class HTTPXAPITarget(HTTPTarget):
 
         merge_url = httpx.URL(http_url)
         if merge_url.is_relative_url and base_url and str(base_url):
-            resolved_url = self._merge_base_and_url(httpx.URL(base_url), merge_url)
+            resolved_url = self._merge_base_and_url(base_url=httpx.URL(base_url), url=merge_url)
         else:
             resolved_url = merge_url
 
