@@ -239,7 +239,7 @@ class WordDocConverter(Converter):
             if placeholder not in paragraph.text:
                 continue
 
-            if self._replace_placeholder_in_paragraph(paragraph, placeholder, content):
+            if self._replace_placeholder_in_paragraph(paragraph=paragraph, placeholder=placeholder, content=content):
                 replaced_any = True
 
         if not replaced_any:
@@ -255,7 +255,7 @@ class WordDocConverter(Converter):
         return buffer.getvalue()
 
     @staticmethod
-    def _replace_placeholder_in_paragraph(paragraph: Any, placeholder: str, content: str) -> bool:
+    def _replace_placeholder_in_paragraph(*, paragraph: Any, placeholder: str, content: str) -> bool:
         """
         Replace a placeholder inside a single run of a paragraph.
 

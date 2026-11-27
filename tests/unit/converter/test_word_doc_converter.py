@@ -295,13 +295,17 @@ async def test_convert_async_end_to_end_new_doc(sqlite_instance) -> None:
     assert isinstance(result, ConverterResult)
     assert result.output_type == "binary_path"
     assert result.output_text  # non-empty path
+    assert Document(result.output_text).paragraphs[0].text == "End-to-end test content"
 
 
 async def test_convert_async_end_to_end_injection(tmp_path: Path, sqlite_instance) -> None:
     """End-to-end: convert_async injects into an existing docx (no mocking of internal logic)."""
     existing_docx_path = tmp_path / "e2e_template.docx"
     document = Document()
-    document.add_paragraph("Hello {{INJECTION_PLACEHOLDER}} world")
+    paragraph = document.add_paragraph()
+    paragraph.add_run("Hello ").italic = True
+    paragraph.add_run("{{INJECTION_PLACEHOLDER}}").bold = True
+    paragraph.add_run(" world")
     document.save(existing_docx_path)
 
     converter = WordDocConverter(existing_docx=existing_docx_path)
@@ -310,13 +314,21 @@ async def test_convert_async_end_to_end_injection(tmp_path: Path, sqlite_instanc
     assert isinstance(result, ConverterResult)
     assert result.output_type == "binary_path"
     assert result.output_text  # non-empty path
+    output_paragraph = Document(result.output_text).paragraphs[0]
+    assert output_paragraph.text == "Hello INJECTED_VALUE world"
+    assert [run.text for run in output_paragraph.runs] == ["Hello ", "INJECTED_VALUE", " world"]
+    assert output_paragraph.runs[0].italic is True
+    assert output_paragraph.runs[1].bold is True
+    assert Document(existing_docx_path).paragraphs[0].text == "Hello {{INJECTION_PLACEHOLDER}} world"
 
 
 def test_replace_placeholder_in_paragraph_returns_false_when_not_found() -> None:
     """_replace_placeholder_in_paragraph should return False when placeholder is not in any run."""
     document = Document()
     paragraph = document.add_paragraph("No placeholder here")
-    result = WordDocConverter._replace_placeholder_in_paragraph(paragraph, "{{INJECTION_PLACEHOLDER}}", "content")
+    result = WordDocConverter._replace_placeholder_in_paragraph(
+        paragraph=paragraph, placeholder="{{INJECTION_PLACEHOLDER}}", content="content"
+    )
     assert result is False
 
 
@@ -325,6 +337,8 @@ def test_replace_placeholder_in_paragraph_returns_true_on_match() -> None:
     document = Document()
     paragraph = document.add_paragraph()
     paragraph.add_run("Text with {{INJECTION_PLACEHOLDER}} inside")
-    result = WordDocConverter._replace_placeholder_in_paragraph(paragraph, "{{INJECTION_PLACEHOLDER}}", "REPLACED")
+    result = WordDocConverter._replace_placeholder_in_paragraph(
+        paragraph=paragraph, placeholder="{{INJECTION_PLACEHOLDER}}", content="REPLACED"
+    )
     assert result is True
     assert paragraph.runs[0].text == "Text with REPLACED inside"
