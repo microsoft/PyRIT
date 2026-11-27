@@ -9,7 +9,7 @@ import uuid
 from abc import abstractmethod
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar, cast, final, overload
 
 from pyrit.common import print_deprecation_message
 from pyrit.common.task_utils import gather_with_cleanup_async
@@ -558,7 +558,7 @@ class Scorer(Identifiable, abc.ABC):
         # Only scorers that hold a target define _prompt_target; absence means no target.
         return cast("PromptTarget | None", getattr(self, "_prompt_target", None))
 
-    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Self:
         """
         Return a scorer whose LLM-backed leaves use the given blocked-response policy.
 

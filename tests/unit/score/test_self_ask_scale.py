@@ -4,7 +4,7 @@
 import uuid
 from pathlib import Path
 from textwrap import dedent
-from typing import Any
+from typing import Any, assert_type
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -337,3 +337,23 @@ def test_scale_init_system_prompt_str_and_invalid_type(patch_central_database):
 
     with pytest.raises(TypeError, match="system_prompt must be a SeedPrompt or str"):
         SelfAskScaleScorer(chat_target=chat_target, system_prompt=123, scale=scale)
+
+
+def test_self_factories_return_subclass(patch_central_database) -> None:
+    """Self-typed factories return the subclass they are called on (PyRIT #4504)."""
+
+    class _SubRubric(NumericRubric):
+        pass
+
+    rubric = _SubRubric.from_yaml(tree_scale_path)
+    assert_type(rubric, _SubRubric)
+    assert isinstance(rubric, _SubRubric)
+
+    class _SubScorer(SelfAskScaleScorer):
+        pass
+
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    scorer = _SubScorer.from_scale(chat_target=chat_target, scale=rubric)
+    assert_type(scorer, _SubScorer)
+    assert isinstance(scorer, _SubScorer)

@@ -471,7 +471,7 @@ export function useConversationMessages({
         && activeLoadRef.current === null
       )
     )) { return }
-    loadConversation(attackResultId, activeConversationId)
+    void loadConversation(attackResultId, activeConversationId)
   }, [activeConversationId, attackResultId, isActiveConversationSending, loadConversation, messagePageSize, readConversationById])
 
   useEffect(() => {

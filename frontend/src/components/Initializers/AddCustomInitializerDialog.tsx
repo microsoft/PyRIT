@@ -46,7 +46,7 @@ export default function AddCustomInitializerDialog({
   return (
     <Dialog open={open} onOpenChange={(_, data) => onOpenChange(data.open)}>
       <DialogSurface className={styles.sourceDialog}>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={(event) => { void handleSubmit(event) }}>
           <DialogBody>
             <DialogTitle>Add custom initializer</DialogTitle>
             <DialogContent className={styles.dialogBody}>

@@ -46,7 +46,7 @@ export function usePromptGenerationSubmit(): PromptGenerationSubmitState {
           targets,
           pause_for_review: pauseForReview,
         })
-        navigate(PROMPT_GENERATIONS_PATH)
+        void navigate(PROMPT_GENERATIONS_PATH)
         return
       }
       const created = await promptGenerationsApi.create({
@@ -56,7 +56,7 @@ export function usePromptGenerationSubmit(): PromptGenerationSubmitState {
         targets,
         pause_for_review: pauseForReview,
       })
-      navigate(promptGenerationRoutePath(created.id))
+      void navigate(promptGenerationRoutePath(created.id))
     } catch (cause: unknown) {
       setError(toApiError(cause).detail)
       setSubmitting(false)
