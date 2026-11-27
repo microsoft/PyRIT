@@ -56,7 +56,7 @@ export default function AnalyticsDimensionPicker({ label, dimension, onChange }:
             validationState={labelKey && !isAnalyticsLabelKey(labelKey) ? 'error' : 'none'}
             validationMessage={labelKey && !isAnalyticsLabelKey(labelKey)
               ? 'Use letters, numbers, _, . or -. Operation and operator have dedicated filters.'
-              : undefined}
+              : null}
           >
             <Input
               className={styles.input}

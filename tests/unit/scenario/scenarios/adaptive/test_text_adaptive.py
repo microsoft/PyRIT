@@ -618,7 +618,8 @@ class TestTextAdaptiveAtomicAttacks:
             len({ScenarioEvaluationIdentifier(result.scenario_identifier).eval_hash for result in stored_results}) == 1
         )
         assert mock_prepare.await_count == 2
-        assert [call.kwargs["apply_sampling"] for call in mock_groups.await_args_list] == [True, False, True]
+        # Resume rebuilds the stored population and never resolves the datasets.
+        assert [call.kwargs["apply_sampling"] for call in mock_groups.await_args_list] == [True, True]
 
     async def test_atomic_names_contain_dataset_and_objective_hash(self, mock_objective_target, mock_objective_scorer):
         groups = {
@@ -1098,12 +1099,13 @@ class TestTextAdaptiveResume:
         restored_selector.select_async.assert_not_awaited()
         assert [group.model_dump(mode="json") for group in groups] == snapshots
         if max_total == "all":
-            with pytest.raises(ValueError, match="planned seed-group occurrence.*missing"):
-                await initialize_async(
-                    selector=restored_selector,
-                    scenario_result_id=original._scenario_result_id,
-                    sources=groups[:1],
-                )
+            # Resume rebuilds the stored population, so a source losing an occurrence doesn't matter.
+            shrunk = await initialize_async(
+                selector=restored_selector,
+                scenario_result_id=original._scenario_result_id,
+                sources=groups[:1],
+            )
+            assert shrunk._build_run_plan() == plan
             restored_selector.select_async.assert_not_awaited()
 
     @pytest.mark.parametrize("simulated", [False, True])
@@ -1398,11 +1400,9 @@ class TestTextAdaptiveResume:
             )
         selector.select_async.assert_not_awaited()
 
-    @pytest.mark.parametrize("missing_data", ["choices", "run_plan"])
     async def test_resume_rejects_missing_saved_choices_async(
         self,
         *,
-        missing_data: str,
         mock_objective_target: MagicMock,
         mock_objective_scorer: MagicMock,
     ) -> None:
@@ -1421,10 +1421,7 @@ class TestTextAdaptiveResume:
         assert scenario_result_id is not None
         [stored] = await original._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
         metadata = dict(stored.metadata)
-        if missing_data == "choices":
-            del metadata["run_plan"]["atomic_groups"][0]["selected_technique_eval_hashes"]
-        else:
-            del metadata["run_plan"]
+        del metadata["run_plan"]["atomic_groups"][0]["selected_technique_eval_hashes"]
         await original._memory.update_scenario_metadata_async(
             scenario_result_id=scenario_result_id,
             metadata=metadata,

@@ -13,9 +13,11 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    ProviderTraceReference,
     RequestGenerationConfig,
     RequestGenerationInfo,
     TargetCapabilities,
+    ToolCaptureCoverage,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
@@ -310,11 +312,16 @@ class RoundRobinTarget(PromptTarget):
                 responses = await target._send_with_capabilities_async(
                     normalized_conversation=normalized_conversation, capabilities=self.capabilities
                 )
+                if last_exception is not None:
+                    self._forget_provider_trace_reference(normalized_conversation[-1])
 
                 inner_id_hash = target.get_identifier().hash
                 for response in responses:
                     for piece in response.message_pieces:
                         piece.prompt_metadata["inner_target_identifier"] = inner_id_hash
+                        # A failed child may have run tools before its messages were discarded.
+                        if last_exception is not None:
+                            piece.prompt_metadata.pop(ToolCaptureCoverage.METADATA_KEY, None)
 
                 return responses
             except Exception as ex:
@@ -323,11 +330,26 @@ class RoundRobinTarget(PromptTarget):
                     f"failed: {ex}. Trying next target."
                 )
                 last_exception = ex
+                self._forget_provider_trace_reference(normalized_conversation[-1])
 
         # All targets failed — propagate the last exception.
         if last_exception is not None:
             raise last_exception
         raise RuntimeError("No targets to try — this should be unreachable.")
+
+    @staticmethod
+    def _forget_provider_trace_reference(request: Message) -> None:
+        """
+        Drop the provider's response id once a child has failed.
+
+        A failed child may already have sent completions, so no single response id the next child
+        records can name every trace this request produced. The request stays unlinked instead.
+
+        Args:
+            request (Message): The normalized request the children share.
+        """
+        for piece in request.message_pieces:
+            ProviderTraceReference.clear_metadata(piece.prompt_metadata)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

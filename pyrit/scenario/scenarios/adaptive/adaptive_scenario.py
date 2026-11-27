@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import abstractmethod
-from collections import Counter, defaultdict, deque
+from collections import Counter
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.utils import to_sha256
@@ -32,7 +32,7 @@ from pyrit.models import (
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack, build_baseline_atomic_attacks
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.technique_requirements import (
     IncompatibleTechniqueError,
@@ -44,8 +44,6 @@ from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispat
 from pyrit.scenario.scenarios.adaptive.selectors import EpsilonGreedyTechniqueSelector, TechniqueSelector
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
-
     from pyrit.models import AttackSeedGroup, ScenarioRunPlan, ScenarioRunPlanAtomicGroup
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
@@ -213,11 +211,6 @@ class AdaptiveScenario(Scenario):
                         f"Scenario result id '{self._scenario_result_id}' cannot resume: "
                         f"atomic group '{group.atomic_attack_name}' has no saved adaptive technique choices."
                     )
-        elif self._scenario_result_id is not None:
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' cannot resume: "
-                "the run has no saved adaptive technique choices. Start a new scenario."
-            )
 
         # Building the technique catalog reads each technique's prompt YAML, so keep the
         # synchronous builder off the event loop.
@@ -225,36 +218,18 @@ class AdaptiveScenario(Scenario):
         self._selected_seed_group_adaptations = []
         self._selected_technique_hashes = {}
 
+        # Resume receives the stored planned population, so it builds and names atomics exactly
+        # as the original run did; only the technique choices come from the stored plan.
         atomic_attacks: list[AtomicAttack] = []
         if context.include_baseline:
-            if context.stored_run_plan is None:
-                atomic_attacks.extend(
-                    build_baseline_atomic_attacks(
-                        objective_target=context.objective_target,
-                        objective_scorer=self._objective_scorer,
-                        seed_groups=list(context.seed_groups),
-                        memory_labels=context.memory_labels,
-                    )
+            atomic_attacks.extend(
+                build_baseline_atomic_attacks(
+                    objective_target=context.objective_target,
+                    objective_scorer=self._objective_scorer,
+                    seed_groups=list(context.seed_groups),
+                    memory_labels=context.memory_labels,
                 )
-            else:
-                for planned, population in self._restore_planned_populations(
-                    seed_groups=context.seed_groups,
-                    planned_groups=(
-                        group
-                        for group in context.stored_run_plan.atomic_groups
-                        if group.kind is ScenarioRunPlanGroupKind.BASELINE
-                    ),
-                ):
-                    atomic_attacks.append(
-                        build_baseline_atomic_attack(
-                            objective_target=context.objective_target,
-                            objective_scorer=self._objective_scorer,
-                            seed_groups=population,
-                            memory_labels=context.memory_labels,
-                            atomic_attack_name=planned.atomic_attack_name,
-                            display_group=planned.display_group,
-                        )
-                    )
+            )
         for dataset_name, seed_groups in context.seed_groups_by_dataset.items():
             atomic_attacks.extend(
                 await self._build_atomics_for_dataset_async(
@@ -405,8 +380,9 @@ class AdaptiveScenario(Scenario):
         dispatcher.
 
         Seed compatibility is reported once per technique/dataset combination.
-        Groups with no compatible technique are not scheduled. On resume, only
-        groups in the stored plan are rebuilt, using their saved choices.
+        Groups with no compatible technique are not scheduled. On resume the population is
+        the stored planned one, so atomics get their original names; only groups in the
+        stored plan are rebuilt, using their saved choices.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs.
@@ -420,34 +396,15 @@ class AdaptiveScenario(Scenario):
             list[AtomicAttack]: One atomic per compatible seed group.
                 Empty list when every seed group is incompatible with
                 every technique.
-
-        Raises:
-            ValueError: If a saved adaptive group does not contain exactly one source group.
         """
         named_seed_groups: list[tuple[str, AttackSeedGroup]] = []
-        if stored_groups is None:
-            objective_counts = Counter(group.objective.value for group in seed_groups)
-            occurrences: Counter[str] = Counter()
-            for group in seed_groups:
-                key = (
-                    group.logical_id
-                    if objective_counts[group.objective.value] > 1
-                    else to_sha256(group.objective.value)
-                )
-                occurrences[key] += 1
-                suffix = f"__{occurrences[key]}" if occurrences[key] > 1 else ""
-                named_seed_groups.append((f"{self._atomic_attack_prefix()}_{dataset_name}::{key}{suffix}", group))
-        else:
-            for planned, population in self._restore_planned_populations(
-                seed_groups=seed_groups,
-                planned_groups=(group for group in stored_groups.values() if group.display_group == dataset_name),
-            ):
-                if len(population) != 1:
-                    raise ValueError(
-                        f"Adaptive atomic group '{planned.atomic_attack_name}' must contain one seed group."
-                    )
-                named_seed_groups.append((planned.atomic_attack_name, population[0]))
-        seed_groups = [group for _, group in named_seed_groups]
+        objective_counts = Counter(group.objective.value for group in seed_groups)
+        occurrences: Counter[str] = Counter()
+        for group in seed_groups:
+            key = group.logical_id if objective_counts[group.objective.value] > 1 else to_sha256(group.objective.value)
+            occurrences[key] += 1
+            suffix = f"__{occurrences[key]}" if occurrences[key] > 1 else ""
+            named_seed_groups.append((f"{self._atomic_attack_prefix()}_{dataset_name}::{key}{suffix}", group))
 
         dispatcher = AdaptiveTechniqueDispatcher(
             objective_target=context.objective_target,
@@ -484,10 +441,14 @@ class AdaptiveScenario(Scenario):
             ]
             if not compatible:
                 continue
+            selected_hashes = None
+            if stored_groups is not None:
+                # A group the original run didn't schedule stays unscheduled; the base's plan
+                # check reports any planned group that can't be rebuilt.
+                if atomic_attack_name not in stored_groups:
+                    continue
+                selected_hashes = stored_groups[atomic_attack_name].selected_technique_eval_hashes
 
-            selected_hashes = (
-                stored_groups[atomic_attack_name].selected_technique_eval_hashes if stored_groups is not None else None
-            )
             attack = await dispatcher.build_attack_async(
                 seed_group=seed_group,
                 compatible=compatible,
@@ -515,37 +476,6 @@ class AdaptiveScenario(Scenario):
             )
 
         return atomics
-
-    @staticmethod
-    def _restore_planned_populations(
-        *,
-        seed_groups: Sequence[AttackSeedGroup],
-        planned_groups: Iterable[ScenarioRunPlanAtomicGroup],
-    ) -> list[tuple[ScenarioRunPlanAtomicGroup, list[AttackSeedGroup]]]:
-        """
-        Restore saved populations in plan order, consuming each source occurrence once.
-
-        Returns:
-            list[tuple]: Planned atomic groups paired with their original population sizes.
-
-        Raises:
-            ValueError: If the source cannot supply a planned seed-group occurrence.
-        """
-        available: dict[str, deque[AttackSeedGroup]] = defaultdict(deque)
-        for seed_group in seed_groups:
-            available[seed_group.logical_id].append(seed_group)
-        populations = []
-        for planned in planned_groups:
-            population = []
-            for seed_group_id in planned.seed_group_ids:
-                if not available[seed_group_id]:
-                    raise ValueError(
-                        f"Cannot resume atomic group '{planned.atomic_attack_name}': "
-                        f"planned seed-group occurrence '{seed_group_id}' is missing."
-                    )
-                population.append(available[seed_group_id].popleft())
-            populations.append((planned, population))
-        return populations
 
     def _build_run_plan(self) -> ScenarioRunPlan:
         """

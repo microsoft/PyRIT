@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-
+from pyrit.common.text_helper import graphemes
 from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy, WordSelectionStrategy
 from pyrit.converter.word_level_converter import WordLevelConverter
 from pyrit.models import ComponentIdentifier
@@ -10,6 +10,8 @@ from pyrit.models import ComponentIdentifier
 class StringJoinConverter(WordLevelConverter):
     """
     Converts text by joining its characters with the specified join value.
+
+    Characters are grapheme clusters, so combining marks, Indic vowel signs and emoji sequences stay whole.
     """
 
     def __init__(
@@ -60,4 +62,4 @@ class StringJoinConverter(WordLevelConverter):
         Returns:
             str: The converted word.
         """
-        return self._join_value.join(word)
+        return self._join_value.join(graphemes(word))

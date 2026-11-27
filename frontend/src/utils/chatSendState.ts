@@ -30,12 +30,12 @@ export interface RecoverableSendDraft {
   historyCutoffIndex: number
   failedRequestMessageIndex: number
   originalValue: string
-  textMetadata?: Record<string, unknown>
+  textMetadata?: Record<string, unknown> | undefined
   attachments: MessageAttachment[]
   conversions: Record<string, PieceConversion>
   source: 'live' | 'persisted'
   converterGeneration?: string
-  pipelines?: Record<string, ConverterPipelineStage[]>
+  pipelines?: Record<string, ConverterPipelineStage[]> | undefined
 }
 
 /** One submitted send. Its identity is the lock owner for `conversationId`; fields mutate as the send advances. */
@@ -45,7 +45,7 @@ export interface PendingSend {
   readonly controller: AbortController
   readonly draftRevision: number | undefined
   readonly originalValue: string
-  readonly textMetadata?: Record<string, unknown>
+  readonly textMetadata?: Record<string, unknown> | undefined
   readonly attachments: MessageAttachment[]
   readonly conversions: Record<string, PieceConversion>
   readonly priorUserPieceIds: Set<string>
@@ -54,17 +54,17 @@ export interface PendingSend {
   readonly converterGeneration: string
   readonly target: TargetReference
   readonly chatScorerExplicit: boolean
-  chatScorerChoice?: RegisteredComponentReference | null
+  chatScorerChoice?: RegisteredComponentReference | null | undefined
   observation?: MessageSendObservation
-  readonly converterSnapshot?: ChatConverterSnapshot
-  readonly pipelines?: Record<string, ConverterPipelineStage[]>
+  readonly converterSnapshot?: ChatConverterSnapshot | undefined
+  readonly pipelines?: Record<string, ConverterPipelineStage[]> | undefined
   attackResultId: string | null
   conversationId: string
   needsRefresh: boolean
-  responseReadId?: number
-  progress?: MessageSendStatus
+  responseReadId?: number | undefined
+  progress?: MessageSendStatus | undefined
   repeatGroup?: RepeatSendGroup
-  preservedDraft?: Pick<ChatDraftContextState, 'originatingAttackId' | 'originatingConversationId' | 'sequence'>
+  preservedDraft?: Pick<ChatDraftContextState, 'originatingAttackId' | 'originatingConversationId' | 'sequence'> | undefined
 }
 
 /** The last single send from this tab, kept while its converters can still be restored. */
@@ -74,7 +74,7 @@ export interface UndoableSend {
   historySignature: string
   cutoffIndex: number
   originalValue: string
-  textMetadata?: Record<string, unknown>
+  textMetadata?: Record<string, unknown> | undefined
   attachments: MessageAttachment[]
   converters: ChatConverterSnapshot
   history: Array<Pick<BackendMessage, 'role'>>
@@ -85,7 +85,7 @@ export interface RepeatSendGroup {
   source: PendingSend
   progress: MessageSendStatus
   conversations: Map<string, PendingSend>
-  read?: Promise<MessageSendStatus>
+  read?: Promise<MessageSendStatus> | undefined
 }
 
 export interface RepeatSendView {
@@ -120,11 +120,11 @@ export type ChatSendAction =
   | { readonly type: 'tracking-started'; readonly conversationId: string }
   | { readonly type: 'tracking-finished'; readonly conversationId: string }
   | { readonly type: 'scoring-observed'; readonly conversationId: string; readonly scoring: boolean }
-  | { readonly type: 'issue-changed'; readonly conversationId: string; readonly issue?: SendIssue }
+  | { readonly type: 'issue-changed'; readonly conversationId: string; readonly issue?: SendIssue | undefined }
   /** A conversation load reported its persisted recovery, or the lack of one. */
-  | { readonly type: 'recovery-loaded'; readonly conversationId: string; readonly recovery?: RecoverableSendDraft }
+  | { readonly type: 'recovery-loaded'; readonly conversationId: string; readonly recovery?: RecoverableSendDraft | undefined }
   /** A send's own response read replaces the conversation's recovery. */
-  | { readonly type: 'recovery-replaced'; readonly conversationId: string; readonly recovery?: RecoverableSendDraft }
+  | { readonly type: 'recovery-replaced'; readonly conversationId: string; readonly recovery?: RecoverableSendDraft | undefined }
   | { readonly type: 'recoveries-cleared' }
   | { readonly type: 'repeat-started'; readonly progress: MessageSendStatus }
   | { readonly type: 'repeat-progressed'; readonly progress: MessageSendStatus; readonly needsRefresh: boolean }
