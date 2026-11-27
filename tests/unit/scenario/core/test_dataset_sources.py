@@ -18,6 +18,7 @@ import aiofiles
 import pytest
 from sqlalchemy import event
 from sqlalchemy.exc import SQLAlchemyError
+from unit.async_utils import get_defined_tasks, settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
 
 from pyrit.datasets import SeedDatasetProvider
@@ -50,6 +51,7 @@ from pyrit.scenario.core import (
     BaselineAttackPolicy,
     DatasetConstraintError,
     ScenarioTechnique,
+    dataset_configuration,
 )
 from pyrit.scenario.core.dataset_configuration import (
     require_min_size,
@@ -539,6 +541,62 @@ async def test_preparation_persists_then_reuses(
         await config.prepare_async()
         assert len(await sqlite_instance.get_seeds_async(dataset_name="fresh")) == 12
     assert provider.fetch_dataset_async.await_count == 2
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("policy", [DatasetFetchPolicy.IF_MISSING, DatasetFetchPolicy.ALWAYS])
+async def test_writers_of_one_dataset_take_turns_and_recheck_storage_async(
+    *, sqlite_instance: SQLiteMemory, dataset_writer_wait: asyncio.Event, policy: DatasetFetchPolicy
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hold_fetch(**kwargs: Any) -> SeedDataset:
+        entered.set()
+        await release.wait()
+        return dataset("shared", 3)
+
+    holder = MagicMock(spec=SeedDatasetProvider)
+    holder.dataset_name = "shared"
+    holder.fetch_dataset_async = AsyncMock(side_effect=hold_fetch)
+    waiter = MagicMock(spec=SeedDatasetProvider)
+    waiter.dataset_name = "shared"
+    waiter.fetch_dataset_async = AsyncMock(
+        return_value=SeedDataset(
+            dataset_name="shared",
+            seeds=[SeedObjective(value=f"waiter-{index}", dataset_name="shared") for index in range(2)],
+        )
+    )
+    holding_config, waiting_config = (
+        DatasetAttackConfiguration(sources=[DatasetSource(name="shared", provider=provider)], fetch=policy)
+        for provider in (holder, waiter)
+    )
+    holding: asyncio.Task[None] | None = None
+    waiting: asyncio.Task[None] | None = None
+    try:
+        holding = asyncio.create_task(holding_config.prepare_async())
+        await wait_for_event_async(event=entered, tasks=[holding])
+        waiting = asyncio.create_task(waiting_config.prepare_async())
+        await wait_for_event_async(event=dataset_writer_wait, tasks=[waiting])
+        assert not holding.done()
+        waiter.fetch_dataset_async.assert_not_awaited()
+        release.set()
+        await wait_for_completion_async(future=holding)
+        await wait_for_completion_async(future=waiting)
+    finally:
+        release.set()
+        await settle_tasks_async(*get_defined_tasks(holding, waiting))
+
+    stored = {seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="shared")}
+    if policy is DatasetFetchPolicy.ALWAYS:
+        holder.fetch_dataset_async.assert_awaited_once_with(cache=False)
+        waiter.fetch_dataset_async.assert_awaited_once_with(cache=False)
+        assert stored == {"waiter-0", "waiter-1"}
+    else:
+        holder.fetch_dataset_async.assert_awaited_once_with()
+        waiter.fetch_dataset_async.assert_not_awaited()
+        assert stored == {"shared-0", "shared-1", "shared-2"}
+    assert not dataset_configuration._dataset_writers
 
 
 @pytest.mark.usefixtures("patch_central_database")

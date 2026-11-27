@@ -77,9 +77,9 @@ from pyrit.models import (
     AttackResult,
     AttackResultMetadata,
     ComponentIdentifier,
-    DatasetFetchPolicy,
     ScenarioActiveConversation,
     ScenarioAttackResultDelta,
+    ScenarioDatasetPreparation,
     ScenarioHierarchyNode,
     ScenarioHierarchyProjection,
     ScenarioIdentifier,
@@ -123,7 +123,6 @@ from pyrit.registry.instance_registry import (
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
-from pyrit.scenario.core.dataset_overrides import project_dataset_settings
 from pyrit.setup.initializers import FindingsInitializer
 
 if TYPE_CHECKING:
@@ -786,9 +785,10 @@ class ScenarioRunService:
         """
         Initialize and schedule a scenario run.
 
-        Validates configuration eagerly. Missing-only background requests persist a
-        pending run; other requests finish initialization before admission. On success,
-        starts preparation/execution when idle or appends the run to the FIFO queue.
+        Validates configuration eagerly. A fresh background-preparation request checks its
+        sources without fetching and persists a pending run; other requests finish
+        initialization before admission. On success, starts preparation/execution when
+        idle or appends the run to the FIFO queue.
 
         Args:
             request: The run request with scenario name, target, and options.
@@ -1071,14 +1071,11 @@ class ScenarioRunService:
                 references = stored.metadata.get(_LAUNCH_REFERENCES_METADATA_KEY) if stored is not None else None
                 if isinstance(references, dict):
                     metadata["scenario_expected_role_references_v1"] = references
-            from pyrit.backend.services.dataset_preparation_service import get_dataset_preparation_service
-
-            with get_dataset_preparation_service().scope(retry_failed=not request.prepare_in_background):
-                scenario = await self._initialize_scenario_async(
-                    request=request,
-                    init_kwargs=init_kwargs,
-                    initial_metadata=metadata,
-                )
+            scenario = await self._initialize_scenario_async(
+                request=request,
+                init_kwargs=init_kwargs,
+                initial_metadata=metadata,
+            )
         return _PreparedRun(scenario=scenario, adversarial_target=adversarial_target)
 
     @staticmethod
@@ -1904,7 +1901,6 @@ class ScenarioRunService:
             configuration_metadata=partial(
                 self._resolved_role_metadata,
                 expected_references=(initial_metadata or {}).get("scenario_expected_role_references_v1"),
-                missing_only=request.prepare_in_background and not request.scenario_result_id,
             ),
             defer_dataset_preparation=request.prepare_in_background and not request.scenario_result_id,
             initial_metadata={
@@ -1920,18 +1916,10 @@ class ScenarioRunService:
         scenario: Scenario,
         *,
         expected_references: Mapping[str, str] | None = None,
-        missing_only: bool = False,
     ) -> dict[str, Any]:
         readiness = scenario.get_readiness()
         if readiness.issues:
             raise ScenarioConfigurationError(issues=readiness.issues)
-        if missing_only:
-            settings = project_dataset_settings(scenario._dataset_config, required_data=scenario._required_data)
-            if any(source.fetch is not DatasetFetchPolicy.IF_MISSING for source in settings.sources):
-                raise ValueError(
-                    "Background preparation requires missing-only dataset loading. "
-                    "Use the SDK/API eager path for fixed 'never' or 'always' policies."
-                )
         references = {f"{binding.role}_hash": binding.identifier.hash for binding in readiness.bindings}
         if expected_references is not None and references != expected_references:
             raise ScenarioRunConflictError(
@@ -1958,10 +1946,7 @@ class ScenarioRunService:
         try:
             with override_default_adversarial_target(active.adversarial_target):
                 if active.prepare_datasets:
-                    from pyrit.backend.services.dataset_preparation_service import get_dataset_preparation_service
-
-                    with get_dataset_preparation_service().scope():
-                        await active.scenario.initialize_async()
+                    await active.scenario.initialize_async()
                 await active.scenario.run_async()
 
         except asyncio.CancelledError:
@@ -2208,7 +2193,9 @@ class ScenarioRunService:
             scenario_registry_name=plan.scenario_registry_name if plan else None,
             scenario_version=scenario_result.scenario_version,
             status=status,
-            dataset_preparation_pending=bool(scenario_result.metadata.get("dataset_preparation_pending")),
+            dataset_preparation_pending=self._dataset_preparation_pending(
+                metadata=scenario_result.metadata, scenario_result_id=scenario_result_id
+            ),
             created_at=scenario_result.creation_time,
             started_at=self._load_started_at(scenario_result=scenario_result),
             updated_at=updated_at,
@@ -2288,6 +2275,44 @@ class ScenarioRunService:
                 record.scenario_result_id,
             )
             return None
+
+    @staticmethod
+    def _dataset_preparation_pending(*, metadata: dict[str, Any], scenario_result_id: str) -> bool:
+        """
+        Read whether a run has not finished preparing its datasets, for display.
+
+        Returns:
+            bool: True if the run recorded pending preparation; False if it recorded none
+                or its stored state is malformed. Resume still rejects a malformed state.
+        """
+        try:
+            return ScenarioDatasetPreparation.is_pending(metadata=metadata)
+        except ValueError:
+            logger.warning(
+                "Scenario run %s has malformed dataset-preparation metadata; treating it as prepared.",
+                scenario_result_id,
+            )
+            return False
+
+    @classmethod
+    def _history_dataset_preparation_pending(cls, *, record: ScenarioHistoryRunRecord) -> bool:
+        """
+        Read whether one history row's run has not finished preparing its datasets.
+
+        Returns:
+            bool: True if the run recorded pending preparation; False if it recorded none
+                or its stored state is malformed.
+        """
+        stored = record.dataset_preparation
+        if stored is None:
+            return False
+        if isinstance(stored, str):
+            with contextlib.suppress(json.JSONDecodeError):
+                stored = json.loads(stored)
+        return cls._dataset_preparation_pending(
+            metadata={ScenarioDatasetPreparation.METADATA_KEY: stored},
+            scenario_result_id=record.scenario_result_id,
+        )
 
     async def _recount_with_sdk_statistics_async(
         self,
@@ -2581,6 +2606,7 @@ class ScenarioRunService:
             scenario_registry_name=record.scenario_registry_name,
             scenario_version=record.scenario_version,
             status=status,
+            dataset_preparation_pending=self._history_dataset_preparation_pending(record=record),
             created_at=record.created_at,
             started_at=record.started_at,
             updated_at=max(timestamps),
@@ -3004,6 +3030,9 @@ class ScenarioRunService:
         if header_result is None:
             return None
 
+        preparing = self._dataset_preparation_pending(
+            metadata=header_result.metadata, scenario_result_id=scenario_result_id
+        )
         try:
             plan = self._load_run_plan(scenario_result=header_result)
         except (ValidationError, ValueError):
@@ -3029,6 +3058,10 @@ class ScenarioRunService:
             active_group_ids=active_group_ids,
             terminal=terminal,
             objective_scorer_identifier=objective_scorer_identifier,
+            # Results read after a preparing header may belong to the plan preparation is
+            # about to save; report none so the caller's cursor stays put and its next poll
+            # receives that plan.
+            max_deltas=0 if preparing else None,
         )
         progress = self._build_progress_response(
             header_result=header_result,
@@ -3041,6 +3074,7 @@ class ScenarioRunService:
             terminal=terminal,
             queue_position=queue_position,
             active_scenario_result_id=active_scenario_result_id,
+            preparing=preparing,
         )
         progress.recorded_conversations = self._recorded_conversations(header_result)
         if header_result.operation_id is not None:
@@ -3061,6 +3095,7 @@ class ScenarioRunService:
         terminal: bool,
         queue_position: int | None,
         active_scenario_result_id: str | None,
+        preparing: bool = False,
     ) -> ScenarioRunProgress:
         if len(progress_snapshot.deltas) != len(progress_snapshot.results):
             raise ValueError("Scenario progress deltas and results have different lengths.")
@@ -3082,7 +3117,7 @@ class ScenarioRunService:
         deltas = progress_snapshot.deltas[start:end]
         results = list(progress_snapshot.results[start:end])
         has_more = end < len(progress_snapshot.deltas)
-        response_plan = progress_snapshot.plan if since is None else None
+        response_plan = progress_snapshot.plan if since is None and not preparing else None
         next_cursor = (
             self._encode_progress_cursor(scenario_result_id=scenario_result_id, delta=deltas[-1]) if deltas else since
         )
@@ -3098,7 +3133,7 @@ class ScenarioRunService:
         scenario_identity.parameters = filter_sensitive_fields(scenario_identity.parameters)
         return ScenarioRunProgress(
             run=ScenarioProgressHeader(
-                dataset_preparation_pending=bool(header_result.metadata.get("dataset_preparation_pending")),
+                dataset_preparation_pending=preparing,
                 scenario_result_id=scenario_result_id,
                 scenario_name=header_result.scenario_name,
                 scenario_registry_name=plan.scenario_registry_name if plan else None,

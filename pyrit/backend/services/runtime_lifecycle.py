@@ -16,7 +16,6 @@ from pyrit.auth import caller_principal_context
 from pyrit.backend.models.initializers import ConfiguredInitializerSetting
 from pyrit.backend.services.analytics_service import get_analytics_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
-from pyrit.backend.services.dataset_preparation_service import has_active_dataset_preparation
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 from pyrit.backend.services.prompt_generation_service import peek_prompt_generation_service
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
@@ -331,7 +330,6 @@ class RuntimeLifecycle:
             or outstanding_estimates()
             or has_active_manual_sends()
             or has_active_analytics_work()
-            or has_active_dataset_preparation()
         )
 
     async def shutdown_async(self) -> None:

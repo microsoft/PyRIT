@@ -51,7 +51,7 @@ export default function ScenarioRunNotices({ run, summary, state, inlineAttempt,
             : 'Scan failed. Resume to continue remaining attacks.'
           : run.status === 'CANCELLED'
             ? pending
-              ? 'Scan cancelled before execution. Shared dataset loading may continue. Use Rerun with changes to review the configuration.'
+              ? 'Scan cancelled before execution. Use Rerun with changes to review the configuration.'
               : 'Scan cancelled.'
           : `${overall.errors} attack${overall.errors === 1 ? '' : 's'} ended with an error.`}
           {firstError && <Button appearance="transparent" onClick={(event) => { onOpenAttempt(firstError, event.currentTarget) }}>

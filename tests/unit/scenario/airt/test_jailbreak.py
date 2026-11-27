@@ -146,6 +146,7 @@ FIXTURES = ["patch_central_database", "mock_runtime_env"]
 def _patch_seed_groups(seed_groups: list[AttackSeedGroup]) -> Generator[None, None, None]:
     with (
         patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock),
+        patch.object(DatasetAttackConfiguration, "check_preparation_async", new_callable=AsyncMock),
         patch.object(
             Jailbreak,
             "_resolve_seed_groups_by_dataset_async",

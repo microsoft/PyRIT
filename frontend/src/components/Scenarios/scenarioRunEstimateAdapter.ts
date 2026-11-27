@@ -54,13 +54,6 @@ export function mapScenarioRunEstimate(
     && response.maximum_attack_count == null
     && response.components.length === 0
   ) {
-    if (response.dataset_size.kind === 'all_available' && response.count_deferred === true) {
-      return {
-        status: 'unavailable', scope, deferredCount: true,
-        label: 'Exact count is calculated when the scan starts.',
-        note: response.note ?? undefined,
-      }
-    }
     return {
       status: 'unavailable',
       scope,

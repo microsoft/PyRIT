@@ -25,7 +25,6 @@ type ControlAction = 'reset' | 'status' | 'hold_estimate' | 'release_estimate' |
   | 'hold_metadata' | 'release_metadata' | 'fail_metadata' | 'hold_provider' | 'release_provider' | 'fail_provider'
 
 interface FixtureStatus {
-  source: { commit: string; tree: string; dirty: boolean }
   provider_calls: number
   provider_waiting: boolean
   estimate_waiting: boolean
@@ -70,17 +69,6 @@ async function attachJson(testInfo: TestInfo, name: string, value: object): Prom
   const path = testInfo.outputPath(`${name}.json`)
   await writeFile(path, JSON.stringify(value, null, 2))
   await testInfo.attach(name, { path, contentType: 'application/json' })
-}
-
-async function checkpoint(
-  page: Page, request: APIRequestContext, testInfo: TestInfo, name: string, anchor: Locator,
-): Promise<FixtureStatus> {
-  const status = await control(request, 'status')
-  expect(status.source.dirty).toBe(false)
-  expect(status.source.commit).toMatch(/^[a-f0-9]{40}$/)
-  await attachJson(testInfo, `${name}-counters`, status)
-  await capture(page, testInfo, name, anchor)
-  return status
 }
 
 function nextEstimate(page: Page, path: string = ESTIMATE_PATH): Promise<Response> {
@@ -147,6 +135,26 @@ async function assertNoPreparation(request: APIRequestContext): Promise<FixtureS
   return status
 }
 
+async function launchScan(page: Page): Promise<Response> {
+  const launch = page.getByRole('button', { name: 'Launch scan', exact: true })
+  await expect(launch).toBeEnabled()
+  await launch.click()
+  const preview = page.getByRole('dialog', { name: 'Run preview' })
+  await expect(preview.getByRole('button', { name: 'Launch scan', exact: true })).toBeEnabled()
+  const starting = page.waitForResponse((response: Response) =>
+    new URL(response.url()).pathname === '/api/scenarios/runs' && response.request().method() === 'POST')
+  await preview.getByRole('button', { name: 'Launch scan', exact: true }).click()
+  const started = await starting
+  expect(started.status(), await started.text()).toBe(202)
+  return started
+}
+
+async function readRun(request: APIRequestContext, run: ScenarioRunSummary): Promise<ScenarioRunSummary> {
+  const reading = await request.get(`/api/scenarios/runs/${run.scenario_result_id}`, { headers: compatibilityHeaders() })
+  expect(reading.status()).toBe(200)
+  return reading.json()
+}
+
 async function completedRun(request: APIRequestContext, run: ScenarioRunSummary): Promise<ScenarioRunSummary> {
   const deadline = performance.now() + RUN_COMPLETION_TIMEOUT_MS
   let latest = run
@@ -202,138 +210,130 @@ test.afterEach(async ({ request }: { request: APIRequestContext }, testInfo: Tes
 })
 
 for (const fixed of [false, true]) {
-test(`opens a preparing run while its one background provider invocation is blocked${fixed ? ' with fixed sources' : ''}`, async ({ page, request }: DatasetTestContext, testInfo: TestInfo): Promise<void> => {
-  const scenarioName = fixed ? 'offline.fixed_background_datasets' : 'offline.background_datasets'
-  const name = `background_loading_${fixed ? 'fixed_' : ''}${presetSuffix(testInfo)}`
-  await savePreset(request, {
-    name, scenario_name: scenarioName, techniques: ['dataset_direct'],
-    ...(fixed ? {} : { datasets: { fetch: 'always', sources: [{ name: 'acceptance_background', fetch: 'always' }] } }),
-  })
-  await control(request, 'hold_provider')
-  try {
-    await page.goto(presetEditorRoutePath(name))
-    await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(name)
-    await expect(page.getByText(/Editing this preset does not load datasets/)).toBeVisible()
-    await assertNoPreparation(request)
-    const presetStatus = await checkpoint(page, request, testInfo, 'preset-no-fetch', page.getByRole('textbox', { name: 'Name', exact: true }))
-    expect(presetStatus.provider_calls).toBe(0)
-    await page.getByRole('textbox', { name: 'Description', exact: true }).fill('Preserved SDK refresh policy')
-    const saving = page.waitForResponse((response: Response) =>
-      new URL(response.url()).pathname.includes('/api/scenario-presets/') && response.request().method() === 'PUT')
-    await page.getByRole('button', { name: 'Save preset', exact: true }).click()
-    const saved: ScenarioPresetResponse = await (await saving).json()
-    if (!fixed) expect(saved.preset.datasets).toMatchObject({
-        fetch: 'always', sources: [{ name: 'acceptance_background', fetch: 'always' }],
-      })
-    await page.goto(presetScannerRoutePath(scenarioName, name))
-    await expect.poll(async () => (await control(request, 'status')).provider_waiting).toBe(true)
-    await expect(page.getByText(/Loading selected datasets in the background/)).toBeVisible()
-    await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption(TARGET)
-    if (!fixed) {
-      await expect(page.getByRole('button', { name: 'Edit Maximum objectives' })).toBeEnabled()
-      await setLimit(page, 'Maximum objectives', '2')
+  test(`launches a preparing run while the background provider is held${fixed ? ' with fixed sources' : ''}`, async ({ page, request }: DatasetTestContext, testInfo: TestInfo): Promise<void> => {
+    const scenarioName = fixed ? 'offline.fixed_background_datasets' : 'offline.background_datasets'
+    const name = `background_loading_${fixed ? 'fixed_' : ''}${presetSuffix(testInfo)}`
+    const errors: string[] = []
+    page.on('pageerror', (error: Error) => { errors.push(error.message) })
+    await savePreset(request, { name, scenario_name: scenarioName, techniques: ['dataset_direct'] })
+    await control(request, 'hold_provider')
+    try {
+      await page.goto(presetScannerRoutePath(scenarioName, name))
+      await page.getByTestId('scenario-target-select').selectOption(TARGET)
+      const launch = page.getByRole('button', { name: 'Launch scan', exact: true })
+      await expect(launch).toBeEnabled()
+      const opened = await control(request, 'status')
+      expect(opened.preparations).toBe(0)
+      expect(opened.provider_calls).toBe(0)
+      expect(opened.stored.some((item) => item.name === 'acceptance_background')).toBe(false)
+      if (!fixed) {
+        // Opening the scan doesn't load anything; an explicit Load runs while Launch stays usable.
+        const load = page.getByRole('button', { name: 'Load datasets', exact: true })
+        await expect(load).toBeEnabled()
+        await load.click()
+        await expect.poll(async () => (await control(request, 'status')).provider_waiting).toBe(true)
+        await expect(page.getByRole('button', { name: 'Loading datasets...', exact: true })).toBeDisabled()
+        await expect(launch).toBeEnabled()
+        await capture(page, testInfo, 'explicit-load-provider-held', launch)
+      }
+      await page.getByRole('spinbutton', { name: 'Max concurrency', exact: true }).fill('2')
+      const started = await launchScan(page)
+      const launchRequest: RunScenarioRequest = started.request().postDataJSON()
+      expect(launchRequest.prepare_in_background).toBe(true)
+      expect(launchRequest.max_concurrency).toBe(2)
+      const run: ScenarioRunSummary = await started.json()
+      expect(run.dataset_preparation_pending).toBe(true)
+      await expect(page).toHaveURL(new RegExp(`${scenarioRunRoutePath(run.scenario_result_id)}$`))
+      await expect(page.getByTestId('run-state-badge')).toHaveText('Preparing datasets')
+      // With a Load in flight, the run waits for that writer and then finds the dataset stored, rather than fetching it again.
+      if (fixed) await expect.poll(async () => (await control(request, 'status')).provider_waiting).toBe(true)
+      else await expect.poll(async () => (await control(request, 'status')).preparations).toBe(2)
+      const held = await control(request, 'status')
+      expect(held.provider_calls).toBe(1)
+      expect(held.sent).toEqual([])
+      await expect(page.getByText(/saved execution plan is incomplete/)).toHaveCount(0)
+      await expect(page.getByText('Preparing selected datasets. Execution will start when loading finishes.', { exact: true }))
+        .toBeVisible()
+      await capture(page, testInfo, 'preparing-run-provider-held', page.getByTestId('run-state-badge'))
+      await control(request, 'release_provider')
+      const finished = await completedRun(request, run)
+      expect(finished.dataset_preparation_pending).toBe(false)
+      expect(finished.completed_attacks).toBe(1)
+      await expect(page.getByTestId('run-state-badge')).toHaveText('Completed')
+      const after = await control(request, 'status')
+      expect(after.provider_calls).toBe(1)
+      expect(after.preparations).toBe(fixed ? 1 : 2)
+      expect(after.stored).toContainEqual({ name: 'acceptance_background', count: 1 })
+      expect(after.sent).toHaveLength(1)
+      await attachJson(testInfo, 'background-preparation', { launchRequest, run, finished, after })
+    } finally {
+      await control(request, 'release_provider')
     }
-    await page.getByRole('spinbutton', { name: 'Max concurrency', exact: true }).fill('2')
-    const launch = page.getByRole('button', { name: 'Launch scan', exact: true })
-    await expect(launch).toBeEnabled()
-    const before = await checkpoint(page, request, testInfo, 'before-launch-provider-held', launch)
-    expect(before.provider_waiting).toBe(true)
-    expect(before.provider_calls).toBe(1)
-    expect(before.sent).toEqual([])
-    await launch.click()
-    const preview = page.getByRole('dialog', { name: 'Run preview' })
-    await expect(preview).toBeVisible()
-    await expect(preview.getByRole('button', { name: 'Launch scan', exact: true })).toBeEnabled()
-    await checkpoint(page, request, testInfo, 'confirmation-provider-held', preview)
-    const starting = page.waitForResponse((response: Response) =>
-      new URL(response.url()).pathname === '/api/scenarios/runs' && response.request().method() === 'POST')
-    await preview.getByRole('button', { name: 'Launch scan', exact: true }).click()
-    const response = await starting
-    expect(response.status(), await response.text()).toBe(202)
-    const run: ScenarioRunSummary = await response.json()
-    expect(run.dataset_preparation_pending).toBe(true)
-    await expect(page).toHaveURL(new RegExp(`${scenarioRunRoutePath(run.scenario_result_id)}$`))
-    await expect(page.getByTestId('run-state-badge')).toHaveText('Preparing datasets')
-    const blocked = await checkpoint(page, request, testInfo, 'during-run-provider-held', page.getByTestId('run-state-badge'))
-    expect(blocked.provider_waiting).toBe(true)
-    expect(blocked.provider_calls).toBe(1)
-    expect(blocked.sent).toEqual([])
-    await expect(page.getByText(/saved execution plan is incomplete/)).not.toBeVisible()
-    await control(request, 'release_provider')
-    const finished = await completedRun(request, run)
-    expect(finished.dataset_preparation_pending).toBe(false)
-    expect(finished.completed_attacks).toBe(1)
-    await expect(page.getByTestId('run-state-badge')).toHaveText('Completed')
-    const after = await checkpoint(page, request, testInfo, 'after-run-provider-released', page.getByTestId('run-state-badge'))
-    expect(after.provider_calls).toBe(1)
-  } finally {
-    await control(request, 'release_provider')
-  }
-})
+    expect(errors).toEqual([])
+  })
 }
 
-test('captures an actual provider failure and explicit Retry without hidden attempts', async ({ page, request }: DatasetTestContext, testInfo: TestInfo): Promise<void> => {
-  const name = `provider_retry_${presetSuffix(testInfo)}`
-  await savePreset(request, { name, scenario_name: 'offline.background_datasets', techniques: ['dataset_direct'] })
-  await control(request, 'hold_provider')
-  await control(request, 'fail_provider')
-  try {
-    await page.goto(presetScannerRoutePath('offline.background_datasets', name))
-    await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption(TARGET)
-    await expect.poll(async () => (await control(request, 'status')).provider_waiting).toBe(true)
-    await checkpoint(page, request, testInfo, 'before-failed-provider-release', page.getByRole('button', { name: 'Launch scan', exact: true }))
-    await control(request, 'release_provider')
-    const retry = page.getByRole('button', { name: 'Retry loading datasets', exact: true })
-    await expect(retry).toBeVisible()
-    await page.getByRole('spinbutton', { name: 'Max concurrency', exact: true }).fill('3')
-    const failure = await checkpoint(page, request, testInfo, 'provider-error-explicit-retry', retry)
-    expect(failure.provider_calls).toBe(1)
-    expect(failure.sent).toEqual([])
-    expect(failure.stored.some((item) => item.name === 'acceptance_background')).toBe(false)
-    await control(request, 'hold_provider')
-    await retry.click()
-    await expect.poll(async () => (await control(request, 'status')).provider_waiting).toBe(true)
-    const retrying = await checkpoint(page, request, testInfo, 'retry-provider-held', page.getByRole('button', { name: 'Launch scan', exact: true }))
-    expect(retrying.provider_calls).toBe(2)
-    await control(request, 'release_provider')
-    await expect(retry).toHaveCount(0)
-    await expect.poll(async () => (await control(request, 'status')).stored.some((item) => item.name === 'acceptance_background')).toBe(true)
-    const recovered = await checkpoint(page, request, testInfo, 'after-provider-retry', page.getByRole('button', { name: 'Launch scan', exact: true }))
-    expect(recovered.provider_calls).toBe(2)
-    expect(recovered.sent).toEqual([])
-  } finally {
-    await control(request, 'release_provider')
-  }
-})
-
-test('captures inline-only launch despite an estimate failure without dataset preparation', async ({ page, request }: DatasetTestContext, testInfo: TestInfo): Promise<void> => {
+test('launches an inline-only scan eagerly despite an estimate failure, without dataset preparation', async ({ page, request }: DatasetTestContext, testInfo: TestInfo): Promise<void> => {
   const name = `inline_no_dataset_${presetSuffix(testInfo)}`
+  const errors: string[] = []
+  page.on('pageerror', (error: Error) => { errors.push(error.message) })
   await savePreset(request, { name, scenario_name: 'technique.execute', techniques: ['dataset_direct'] })
   await control(request, 'fail_estimate')
   await page.goto(presetScannerRoutePath('technique.execute', name))
-  await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption(TARGET)
+  await page.getByTestId('scenario-target-select').selectOption(TARGET)
   await page.getByRole('textbox', { name: 'objective', exact: true }).fill('Say hello without datasets.')
   await expect(page.getByText(/Deliberate offline estimate failure/)).toBeVisible()
-  const launch = page.getByRole('button', { name: 'Launch scan', exact: true })
-  await expect(launch).toBeEnabled()
-  const before = await checkpoint(page, request, testInfo, 'inline-estimate-error-launchable', launch)
-  expect(before.provider_calls).toBe(0)
-  await launch.click()
-  const preview = page.getByRole('dialog', { name: 'Run preview' })
-  await expect(preview.getByRole('button', { name: 'Launch scan', exact: true })).toBeEnabled()
-  const starting = page.waitForResponse((response: Response) =>
-    new URL(response.url()).pathname === '/api/scenarios/runs' && response.request().method() === 'POST')
-  await preview.getByRole('button', { name: 'Launch scan', exact: true }).click()
-  const response = await starting
-  expect(response.status(), await response.text()).toBe(202)
-  expect(response.request().postDataJSON().prepare_in_background).toBeUndefined()
-  const run: ScenarioRunSummary = await response.json()
+  const started = await launchScan(page)
+  expect(started.request().postDataJSON().prepare_in_background).toBeUndefined()
+  const run: ScenarioRunSummary = await started.json()
   expect(run.dataset_preparation_pending).toBe(false)
   await completedRun(request, run)
   await expect(page.getByTestId('run-state-badge')).toHaveText('Completed')
-  const after = await checkpoint(page, request, testInfo, 'inline-eager-run-completed', page.getByTestId('run-state-badge'))
+  await capture(page, testInfo, 'inline-eager-run-completed', page.getByTestId('run-state-badge'))
+  const after = await control(request, 'status')
   expect(after.provider_calls).toBe(0)
+  expect(after.provider_lookups).toBe(0)
   expect(after.preparations).toBe(1)
+  expect(errors).toEqual([])
+})
+
+test('keeps a run whose dataset preparation failed out of Resume', async ({ page, request }: DatasetTestContext, testInfo: TestInfo): Promise<void> => {
+  const scenarioName = 'offline.background_datasets'
+  const name = `background_failure_${presetSuffix(testInfo)}`
+  const errors: string[] = []
+  page.on('pageerror', (error: Error) => { errors.push(error.message) })
+  await savePreset(request, { name, scenario_name: scenarioName, techniques: ['dataset_direct'] })
+  await control(request, 'hold_provider')
+  await control(request, 'fail_provider')
+  try {
+    await page.goto(presetScannerRoutePath(scenarioName, name))
+    await page.getByTestId('scenario-target-select').selectOption(TARGET)
+    const started = await launchScan(page)
+    const run: ScenarioRunSummary = await started.json()
+    expect(run.dataset_preparation_pending).toBe(true)
+    await expect.poll(async () => (await control(request, 'status')).provider_waiting).toBe(true)
+    await control(request, 'release_provider')
+    await expect.poll(async () => (await readRun(request, run)).status).toBe('FAILED')
+    const failed = await readRun(request, run)
+    expect(failed.dataset_preparation_pending).toBe(true)
+    expect(failed.error).toContain('Synthetic provider failed.')
+    await expect(page.getByTestId('run-state-badge')).toHaveText('Failed')
+    await expect(page.getByText(/Scan initialization failed before execution/)).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Resume', exact: true })).toHaveCount(0)
+    await capture(page, testInfo, 'failed-preparation-run', page.getByTestId('run-state-badge'))
+    await page.goto(`/scanner/history?id=${run.scenario_result_id}`)
+    const row = page.getByTestId(`scenario-history-row-${run.scenario_result_id}`)
+    await expect(row).toContainText('Stopped before execution')
+    await expect(page.getByTestId(`scenario-history-resume-${run.scenario_result_id}`)).toHaveCount(0)
+    await capture(page, testInfo, 'failed-preparation-history', row)
+    const after = await control(request, 'status')
+    expect(after.provider_calls).toBe(1)
+    expect(after.sent).toEqual([])
+    expect(after.stored.some((item) => item.name === 'acceptance_background')).toBe(false)
+  } finally {
+    await control(request, 'release_provider')
+  }
+  expect(errors).toEqual([])
 })
 
 test('configures, saves, refreshes, estimates without a target, and launches the same dataset request', async ({ page, request }: DatasetTestContext, testInfo: TestInfo): Promise<void> => {

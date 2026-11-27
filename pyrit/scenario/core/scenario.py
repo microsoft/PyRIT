@@ -50,6 +50,7 @@ from pyrit.models import (
     Parameter,
     RegistryReference,
     ScenarioDatasetOptions,
+    ScenarioDatasetPreparation,
     ScenarioDatasetRequest,
     ScenarioDatasetSettings,
     ScenarioDatasetSizeCap,
@@ -908,9 +909,7 @@ class Scenario(ABC):
                 note=budget.detail, dataset_size=budget, dataset_limit=dataset_limit
             )
         if isinstance(budget, AllAvailableDatasetSize):
-            return ScenarioRunSizeEstimate(
-                status=ScenarioRunSizeEstimateStatus.Unavailable,
-                count_deferred=True,
+            return ScenarioRunSizeEstimate.unavailable(
                 dataset_size=budget,
                 dataset_limit=dataset_limit,
                 note=(
@@ -1570,6 +1569,13 @@ class Scenario(ABC):
             validate_assembly=lambda: self._resolve_seed_groups_by_dataset_async(apply_sampling=False),
         )
 
+    async def _check_dataset_preparation_async(self) -> None:
+        """Reject sources that preparation could never load, without fetching or writing."""
+        if self._required_data is None:
+            await self._dataset_config.check_preparation_async()
+            return
+        await self._required_data.check_preparation_async(population=self._dataset_config)
+
     async def _validate_prepared_population_async(self) -> None:
         population = await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=False)
         await asyncio.to_thread(self._check_dataset_population, population)
@@ -2016,19 +2022,22 @@ class Scenario(ABC):
         """
         Validate a new run and persist its identity before dataset preparation.
 
+        Sources that preparation could never load are rejected before the run is stored, without fetching.
+
         Raises:
             ValueError: If this scenario already refers to a run.
         """
         if self._scenario_result_id is not None:
             raise ValueError("Only a new run can defer dataset preparation.")
         await self._initialize_runtime_async()
+        await self._check_dataset_preparation_async()
         result = ScenarioResult(
             scenario_identifier=self._build_scenario_identifier(),
             scenario_description=self._description,
             labels=self._memory_labels,
             operation_id=self._operation_id,
             attack_results={},
-            metadata={**self._initial_metadata, "dataset_preparation_pending": True},
+            metadata={**self._initial_metadata, **ScenarioDatasetPreparation(pending=True).to_metadata()},
         )
         await self._memory.add_scenario_results_to_memory_async(scenario_results=[result])
         self._scenario_result_id = str(result.id)
@@ -2053,10 +2062,10 @@ class Scenario(ABC):
             if not stored:
                 raise ValueError(f"Scenario result id '{self._scenario_result_id}' not found in memory")
             stored_result = stored[0]
-            if stored_result.metadata.get("dataset_preparation_pending"):
+            if ScenarioDatasetPreparation.is_pending(metadata=stored_result.metadata):
                 raise ValueError(
-                    "This run never finished dataset preparation. "
-                    "Retry loading its sources and start a new configuration."
+                    "This run never finished dataset preparation and can't be resumed. "
+                    "Start a new run with the same configuration instead."
                 )
             stored_id = stored_result.operation_id
             # A run may be resumed with the name it was started with, or a name of its saved Operation.
@@ -2201,7 +2210,11 @@ class Scenario(ABC):
             result.creation_time = header.creation_time
             result.completion_time = header.completion_time
             result.scenario_run_state = header.scenario_run_state
-            result.metadata = {**header.metadata, **result.metadata, "dataset_preparation_pending": False}
+            result.metadata = {
+                **header.metadata,
+                **result.metadata,
+                **ScenarioDatasetPreparation(pending=False).to_metadata(),
+            }
             # Resume rebuilds from the planned population, so it is stored with the completed header.
             await self._memory.complete_pending_scenario_result_async(
                 scenario_result=result, seed_groups_by_dataset=seed_groups_by_dataset

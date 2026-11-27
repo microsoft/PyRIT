@@ -283,7 +283,6 @@ class ScenarioRunSizeEstimate(BaseModel):
     """
 
     status: ScenarioRunSizeEstimateStatus = ScenarioRunSizeEstimateStatus.Conditional
-    count_deferred: bool = Field(False, description="A supported uncapped count will be resolved during preparation")
     total_attack_count: int | None = Field(
         default=None,
         ge=0,
@@ -533,7 +532,7 @@ class RunScenarioRequest(_DatasetRequestModel, _ScenarioLaunchOptions):
     technique_override: TechniqueOverride | None = None
     objective_scorer: RegisteredComponentReference | None = None
     prepare_in_background: bool = Field(
-        False, description="For fresh missing-only runs, persist a preparing run before loading datasets."
+        False, description="For a fresh run, save a preparing run first and load its datasets while it starts."
     )
 
     scenario_name: _RequestName = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
@@ -663,6 +662,7 @@ class ScenarioRunListItem(BaseModel):
     scenario_registry_name: str | None = Field(None, description="Requested scenario registry key when available")
     scenario_version: int = Field(0, ge=0, description="Version of the scenario")
     status: ScenarioRunState = Field(..., description="Current run status")
+    dataset_preparation_pending: bool = Field(False, description="The run has not yet finished preparing its datasets")
     created_at: datetime = Field(..., description="When the run was created")
     started_at: datetime | None = Field(None, description="When active scenario execution started")
     updated_at: datetime = Field(..., description="When the run status last changed")

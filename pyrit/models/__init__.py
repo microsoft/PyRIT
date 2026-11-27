@@ -184,6 +184,7 @@ if TYPE_CHECKING:
         ScenarioDatasetSettings,
         ScenarioDatasetSourceSettings,
     )
+    from pyrit.models.scenario_dataset_preparation import ScenarioDatasetPreparation
     from pyrit.models.scenario_dataset_size_estimate import (
         AllAvailableDatasetSize,
         BoundedDatasetSize,
@@ -496,6 +497,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetRequest": "pyrit.models.scenario_dataset",
     "ScenarioDatasetSettings": "pyrit.models.scenario_dataset",
     "ScenarioDatasetSourceSettings": "pyrit.models.scenario_dataset",
+    "ScenarioDatasetPreparation": "pyrit.models.scenario_dataset_preparation",
     "DatasetLimitInput": "pyrit.models.scenario_dataset_size_estimate",
     "DatasetLimitState": "pyrit.models.scenario_dataset_size_estimate",
     "IndeterminateDatasetSize": "pyrit.models.scenario_dataset_size_estimate",

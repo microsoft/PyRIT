@@ -1,4 +1,4 @@
-import type { Parameter, RegisteredScenario, ScenarioDatasetSettings } from '@/types'
+import type { Parameter, RegisteredScenario, ScenarioDatasetSourceSettings } from '@/types'
 
 import {
   buildEstimateRequest,
@@ -6,8 +6,8 @@ import {
   linkedDatasetProblem,
   minimumSelectionMessage,
   scenarioDynamicParameters,
-  usesScenarioDatasets,
   type ScenarioLaunchInput,
+  usesScenarioDatasets,
 } from './scenarioLaunchRequest'
 
 const OBJECTIVE: Parameter = {
@@ -28,9 +28,6 @@ function makeScenario(overrides: Partial<RegisteredScenario> = {}): RegisteredSc
     supported_parameters: [OBJECTIVE, HISTORY],
     uses_default_adversarial_target: true,
     max_concrete_techniques: null,
-    default_datasets: [],
-    dataset_defaults: { sources: [], max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {} },
-    dataset_options: { mode: 'any', allowed_names: [], supports_overrides: true, per_dataset_limit: true, total_limit: true, filters: true },
     ...overrides,
   } as RegisteredScenario
 }
@@ -56,56 +53,6 @@ function makeInput(overrides: Partial<ScenarioLaunchInput> = {}): ScenarioLaunch
 }
 
 describe('scenario launch requests', () => {
-  it('can resolve new parameter defaults despite a stale dataset-table validation error', () => {
-    const input = makeInput({ datasetError: 'Select a permitted source.' })
-    expect(buildEstimateRequest({ ...input, normalizeDatasetLoading: false }).ok).toBe(true)
-    expect(buildRunRequest(input)).toEqual({ ok: false, error: 'Select a permitted source.' })
-  })
-
-  it.each([true, false, undefined])('distinguishes inherited and protected compound policies (%s)', (inherited) => {
-    const defaults: ScenarioDatasetSettings = {
-      sources: [{ name: 'compound', max_size: 5, fetch: 'never', fetch_inherited: inherited, configured_provider: false }],
-      max_per_dataset: 5, max_total: 'all', fetch: 'never', filters: {},
-    }
-    const input = makeInput({
-      datasetDefaults: defaults,
-      datasetOptions: {
-        mode: 'fixed', allowed_names: [], supports_overrides: true, source_settings: false,
-        per_dataset_limit: true, total_limit: true, filters: true,
-      },
-    })
-    const result = buildRunRequest(input)
-    if (inherited === true) {
-      expect(result.ok && result.request.datasets).toEqual({ fetch: 'if_missing' })
-    } else {
-      expect(result.ok).toBe(false)
-      expect(!result.ok && result.error).toMatch(inherited === false ? /protects source-specific/ : /inheritance is unknown/)
-    }
-  })
-
-  it.each(['if_missing', 'always'] as const)('uses resolved defaults instead of static %s sources', (policy) => {
-    const scenario = makeScenario({
-      dataset_defaults: {
-        sources: [{ name: 'static', max_size: 5, fetch: policy, configured_provider: false }],
-        max_per_dataset: 5, max_total: 'all', fetch: policy, filters: {},
-      },
-    })
-    const input = makeInput({ scenario })
-    const projection = buildEstimateRequest({ ...input, normalizeDatasetLoading: false })
-    expect(projection.ok && projection.request.datasets).toBeUndefined()
-    const result = buildRunRequest({
-      ...input,
-      datasetDefaults: {
-        sources: [{ name: 'resolved', max_size: 5, fetch: 'never', fetch_inherited: false, configured_provider: false }],
-        max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {},
-      },
-    })
-    expect(result.ok && result.request.datasets).toEqual({
-      fetch: 'if_missing', sources: [{ name: 'resolved', fetch: 'if_missing' }],
-    })
-    expect(input.datasetEdits).toEqual({})
-  })
-
   it('builds the run request from the same input as the estimate, plus run-only settings', () => {
     const input = makeInput({ datasetEdits: { max_total: 3 }, includeBaseline: true })
 
@@ -116,7 +63,6 @@ describe('scenario launch requests', () => {
     if (!estimate.ok || !run.ok) return
     expect(run.request).toEqual({
       scenario_name: 'garak.api_key',
-      prepare_in_background: true,
       ...estimate.request,
       operation_id: 'operation',
       max_concurrency: 4,
@@ -128,7 +74,7 @@ describe('scenario launch requests', () => {
       include_baseline: true,
       target_name: 'target',
       adversarial_target_name: 'adversary',
-      datasets: { max_total: 3, fetch: 'if_missing' },
+      datasets: { max_total: 3 },
       scenario_params: { objective: 'steal a key' },
     })
   })
@@ -145,33 +91,6 @@ describe('scenario launch requests', () => {
     expect(run).toEqual({ ok: true, request: { scenario_name: 'garak.api_key', target_name: 'target', operation_id: 'operation' } })
   })
 
-  it.each([false, true])('keeps fixed required sources applicable without dataset overrides (legacy names: %s)', (legacyNames) => {
-    const scenario = makeScenario({
-      scenario_name: 'garak.exploitation', supported_parameter_names: ['objective_target'], supported_parameters: [],
-      default_datasets: legacyNames ? ['required'] : [],
-      dataset_defaults: {
-        sources: [{ name: 'required', max_size: 'all', fetch: 'if_missing', configured_provider: false }],
-        max_per_dataset: 'all', max_total: 'all', fetch: 'if_missing', filters: {},
-      },
-      dataset_options: {
-        mode: 'fixed', allowed_names: [], supports_overrides: false, per_dataset_limit: false,
-        total_limit: false, filters: false, source_settings: false,
-      },
-    })
-    expect(usesScenarioDatasets(scenario)).toBe(true)
-    const request = buildRunRequest(makeInput({ scenario }))
-    expect(request.ok && request.request.prepare_in_background).toBe(true)
-    const protectedRequest = buildRunRequest(makeInput({
-      scenario,
-      datasetDefaults: {
-        ...scenario.dataset_defaults,
-        sources: [{ name: 'required', max_size: 'all', fetch: 'never', fetch_inherited: false, configured_provider: false }],
-        max_per_dataset: 'all', max_total: 'all', fetch: 'never', filters: {},
-      },
-    }))
-    expect(!protectedRequest.ok && protectedRequest.error).toMatch(/protects source-specific loading policies/)
-  })
-
   it('carries explicitly selected generation and scoring targets through estimates and launches', () => {
     const scenario = makeScenario()
     const input = makeInput({ scenario, adversarialTargetName: 'generation', scoringTargetName: 'rubric' })
@@ -186,11 +105,37 @@ describe('scenario launch requests', () => {
     }
   })
 
-  it('keeps already missing-only defaults and omits an unset operation', () => {
+  it('omits unchanged datasets and an unset operation', () => {
     const run = buildRunRequest(makeInput({ operationId: null }))
 
     expect(run.ok && 'datasets' in run.request).toBe(false)
     expect(run.ok && 'operation_id' in run.request).toBe(false)
+  })
+
+  it('asks the run to prepare datasets only when the launch does, keeping it out of the estimate', () => {
+    const input = makeInput({ prepareDatasetsInBackground: true })
+    const run = buildRunRequest(input)
+    const estimate = buildEstimateRequest(input)
+    const eager = buildRunRequest(makeInput({ prepareDatasetsInBackground: false }))
+
+    expect(run.ok && run.request.prepare_in_background).toBe(true)
+    expect(estimate.ok && 'prepare_in_background' in estimate.request).toBe(false)
+    expect(eager.ok && 'prepare_in_background' in eager.request).toBe(false)
+  })
+
+  const FIXED_SOURCE: ScenarioDatasetSourceSettings = {
+    name: 'fixed', max_size: 'all', fetch: 'if_missing', configured_provider: false,
+  }
+  it.each<[string, Partial<RegisteredScenario>, ScenarioDatasetSourceSettings[], boolean]>([
+    ['takes dataset input', {}, [], true],
+    ['has default datasets', { supported_parameter_names: ['objective_target'], default_datasets: ['harmbench'] }, [], true],
+    ['has fixed sources', { supported_parameter_names: ['objective_target'] }, [FIXED_SOURCE], true],
+    ['uses only inline seeds', { supported_parameter_names: ['objective_target'] }, [], false],
+  ])('reports whether a scenario that %s has datasets to prepare', (_, overrides, sources, expected) => {
+    const scenario = makeScenario({ default_datasets: [], ...overrides })
+    const defaults = { sources, max_per_dataset: 'all' as const, max_total: 'all' as const, fetch: 'if_missing' as const, filters: {} }
+
+    expect(usesScenarioDatasets(scenario, defaults)).toBe(expected)
   })
 
   it.each<[string, Partial<ScenarioLaunchInput>, string]>([

@@ -46,7 +46,6 @@ export function estimateFromState(state: ScenarioRunEstimateState): ScenarioRunE
 export function formatAtomicAttackCount(state: ScenarioRunEstimateState): string {
   const estimate = estimateFromState(state)
   if (!estimate) {
-    if (state.status === 'unavailable' && state.deferredCount) return 'All available'
     return state.status === 'loading' ? 'Calculating...' : 'Unknown'
   }
   const prefix = estimate.approximate ? 'About ' : ''

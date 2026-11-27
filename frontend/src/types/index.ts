@@ -1692,7 +1692,6 @@ export interface ScenarioDatasetOptions {
 }
 
 export interface ScenarioDatasetSourceSettings {
-  fetch_inherited?: boolean | null
   name: string
   max_size: number | 'all'
   fetch: DatasetFetchPolicy
@@ -1930,6 +1929,7 @@ export interface ScenarioSuiteExecutionSummary {
 }
 
 export interface RunScenarioRequest {
+  /** For a fresh run, save a preparing run first and load its datasets while it starts. */
   prepare_in_background?: boolean
   scoring_target_name?: string | null
   objective_scorer?: RegisteredComponentReference | null
@@ -1986,7 +1986,6 @@ export type DatasetLimitInput =
   | { state: 'scenario_default' | 'not_applicable'; value?: null }
 
 export interface ScenarioRunSizeEstimateResponse {
-  count_deferred?: boolean
   status?: 'exact' | 'approximate' | 'conditional' | 'unavailable'
   dataset_size: ScenarioDatasetSizeEstimate
   dataset_limit: DatasetLimitInput
@@ -2070,7 +2069,6 @@ export type ScenarioRunEstimateResult =
       scope: 'default' | 'request'
       label: string
       note?: string | undefined
-      deferredCount?: boolean
     }
 
 export type ScenarioRunEstimateState =
@@ -2130,7 +2128,6 @@ export interface ScenarioOverloadSummary {
 }
 
 export interface ScenarioRunSummary {
-  dataset_preparation_pending?: boolean
   scenario_result_id: string
   scenario_name: string
   scenario_registry_name?: string | null
@@ -2161,6 +2158,8 @@ export interface ScenarioRunSummary {
   queue_position?: number | null
   active_scenario_result_id?: string | null
   overload_summaries?: ScenarioOverloadSummary[]
+  /** The run has not yet finished preparing its datasets. */
+  dataset_preparation_pending?: boolean
 }
 
 export interface ScenarioTargetSummary {
@@ -2199,6 +2198,8 @@ export interface ScenarioRunListItem {
   successful_attacks: number
   error_attacks: number
   attack_details_available: boolean
+  /** The run has not yet finished preparing its datasets. */
+  dataset_preparation_pending?: boolean
 }
 
 export interface ScenarioRunListResponse {
@@ -2208,7 +2209,6 @@ export interface ScenarioRunListResponse {
 
 /** Compact persisted run header returned by the progress endpoint. */
 export interface ScenarioProgressHeader {
-  dataset_preparation_pending?: boolean
   scenario_result_id: string
   scenario_name: string
   scenario_registry_name?: string | null | undefined
@@ -2232,6 +2232,8 @@ export interface ScenarioProgressHeader {
   queue_position?: number | null | undefined
   active_scenario_result_id?: string | null | undefined
   overload_summaries?: ScenarioOverloadSummary[]
+  /** The run has not yet finished preparing its datasets. */
+  dataset_preparation_pending?: boolean
 }
 
 export interface ScenarioQueueEntry {

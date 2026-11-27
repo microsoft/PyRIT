@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-import subprocess
 from contextlib import ExitStack
 from contextvars import ContextVar
 from datetime import UTC
@@ -235,7 +234,6 @@ def _install_controls(
     patches: ExitStack,
     sent: list[str],
     preset_mutations: list[dict[str, str]],
-    source_snapshot: dict[str, str | bool],
 ) -> None:
     from fastapi import HTTPException
 
@@ -284,7 +282,7 @@ def _install_controls(
                 await asyncio.wait_for(provider_gate.wait(), timeout=120)
                 if fail_provider:
                     fail_provider = False
-                    raise ValueError("Synthetic provider failed. Retry loading datasets to make a new attempt.")
+                    raise ValueError("Synthetic provider failed.")
             finally:
                 provider_waiting = False
             return SeedDataset(
@@ -309,9 +307,6 @@ def _install_controls(
             await asyncio.wait_for(preparation_idle.wait(), timeout=120)
             if "acceptance_background" in await memory.get_seed_dataset_names_async():
                 await memory.delete_dataset_async(dataset_name="acceptance_background")
-            from pyrit.backend.services.dataset_preparation_service import close_dataset_preparation_async
-
-            await close_dataset_preparation_async()
             provider_calls = 0
             fail_provider = False
         elif action is FixtureAction.HOLD_ESTIMATE:
@@ -341,7 +336,6 @@ def _install_controls(
             "provider_lookups": provider_lookups,
             "provider_calls": provider_calls,
             "provider_waiting": provider_waiting,
-            "source": source_snapshot,
             "sent": list(sent),
             "preset_source": ScenarioPresetRegistry.get_registry_singleton().source,
             "preset_mutations": list(preset_mutations),
@@ -460,25 +454,7 @@ async def _seed_async(*, memory: SQLiteMemory, patches: ExitStack) -> None:
     )
     sent: list[str] = []
     _register_components(sent)
-    source_snapshot = await asyncio.to_thread(_source_snapshot)
-    _install_controls(
-        memory=memory, patches=patches, sent=sent, preset_mutations=preset_mutations, source_snapshot=source_snapshot
-    )
-
-
-def _source_snapshot() -> dict[str, str | bool]:
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[3]
-
-    def git(*args: str) -> str:
-        return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
-
-    return {
-        "commit": git("rev-parse", "HEAD"),
-        "tree": git("rev-parse", "HEAD^{tree}"),
-        "dirty": bool(git("status", "--porcelain=v1", "--untracked-files=no")),
-    }
+    _install_controls(memory=memory, patches=patches, sent=sent, preset_mutations=preset_mutations)
 
 
 if __name__ == "__main__":

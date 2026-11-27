@@ -54,21 +54,6 @@ const EXACT_ESTIMATE: ScenarioRunSizeEstimateResponse = {
 }
 
 describe('ScenarioRunEstimate', () => {
-  it('distinguishes a supported uncapped count from a real estimate failure', () => {
-    const state = mapScenarioRunEstimate({
-      ...EXACT_ESTIMATE, status: 'unavailable', count_deferred: true, estimated_attack_count: null, components: [], datasets: [],
-      note: 'The exact compatible population is checked during preparation.',
-    }, 'request')
-    render(<TestWrapper>
-      <ScenarioRunEstimateSummary state={state} />
-      <ScenarioRunEstimateDetails state={state} />
-    </TestWrapper>)
-    expect(screen.getByText('All available')).toBeInTheDocument()
-    expect(screen.getByText('Exact count is calculated when the scan starts.')).toBeInTheDocument()
-    expect(screen.getByText('The exact compatible population is checked during preparation.')).toBeInTheDocument()
-    expect(screen.queryByText('Estimate unavailable')).not.toBeInTheDocument()
-  })
-
   it('shows the indeterminate detail when no note is present', () => {
     const state = mapScenarioRunEstimate({
       ...EXACT_ESTIMATE,
@@ -203,7 +188,6 @@ describe('ScenarioRunEstimate', () => {
 
     const unavailable = mapScenarioRunEstimate({
       ...EXACT_ESTIMATE,
-      status: 'unavailable',
       estimated_attack_count: null,
       minimum_attack_count: null,
       maximum_attack_count: null,

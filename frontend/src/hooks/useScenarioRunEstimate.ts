@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { mapScenarioRunEstimate } from '@/components/Scenarios/scenarioRunEstimateAdapter'
 import { scenariosApi } from '@/services/api'
@@ -29,8 +29,6 @@ interface UseScenarioRunEstimateInput {
   request: ScenarioRunSizeEstimateRequest | null
   /** Identifies the request; answers for any other key are stale. */
   requestKey: string | null
-  /** Resolver inputs, excluding selection-only edits, for reusing known defaults while counts refresh. */
-  datasetContextKey?: string | null
   /** Why no request could be built, shown while ``request`` is null. */
   invalidReason: string | null
   ready: boolean
@@ -42,8 +40,6 @@ export interface ScenarioRunEstimate {
   state: ScenarioRunEstimateState
   /** The latest dataset projection from the backend, if any. */
   datasetProjection: ScenarioRunSizeEstimateResponse | null
-  datasetProjectionContextKey: string | null
-  retry: () => void
   /** The backend answer for the current request, or null while it's pending. */
   current: EstimateRequestState | null
   /** The server's message when it rejected the current request's configuration (HTTP 400 or 422), else null. */
@@ -63,18 +59,13 @@ export function useScenarioRunEstimate({
   scenarioName,
   request,
   requestKey,
-  datasetContextKey = requestKey,
   invalidReason,
   ready,
   paused,
 }: UseScenarioRunEstimateInput): ScenarioRunEstimate {
   const [requestState, setRequestState] = useState<EstimateRequestState | null>(null)
   const [lastGoodEstimate, setLastGoodEstimate] = useState<SuccessfulEstimateResult | null>(null)
-  const [datasetProjection, setDatasetProjection] = useState<{
-    contextKey: string | null
-    response: ScenarioRunSizeEstimateResponse
-  } | null>(null)
-  const [attempt, setAttempt] = useState(0)
+  const [datasetProjection, setDatasetProjection] = useState<ScenarioRunSizeEstimateResponse | null>(null)
   const sequenceRef = useRef(0)
   // Drive estimation off the request key, not the request object, so launch-only
   // edits that rebuild an identical request don't re-POST the same estimate.
@@ -98,7 +89,7 @@ export function useScenarioRunEstimate({
         .then((response) => {
           if (isStale()) return
           const result = mapScenarioRunEstimate(response, 'request')
-          setDatasetProjection({ contextKey: datasetContextKey, response })
+          setDatasetProjection(response)
           setRequestState({ status: 'resolved', requestKey, result, datasetSettings: response.effective_datasets })
           if (result.status === 'available' || result.status === 'conditional') {
             setLastGoodEstimate(result)
@@ -116,11 +107,8 @@ export function useScenarioRunEstimate({
               .then((response) => {
                 if (isStale()) return
                 setDatasetProjection((previous) => ({
-                  contextKey: datasetContextKey,
-                  response: {
-                    ...response,
-                    effective_datasets: previous?.response.effective_datasets ?? response.effective_datasets,
-                  },
+                  ...response,
+                  effective_datasets: previous?.effective_datasets ?? response.effective_datasets,
                 }))
               })
               .catch(() => { /* The original validation error remains authoritative. */ })
@@ -132,14 +120,12 @@ export function useScenarioRunEstimate({
       window.clearTimeout(debounceTimer)
       controller.abort()
     }
-  }, [requestKey, datasetContextKey, scenarioName, ready, paused, attempt])
+  }, [requestKey, scenarioName, ready, paused])
 
   const current = requestState?.requestKey === requestKey ? requestState : null
   return {
     state: estimateState({ invalidReason: request === null ? invalidReason : null, current, lastGoodEstimate }),
-    datasetProjection: datasetProjection?.response ?? null,
-    datasetProjectionContextKey: datasetProjection?.contextKey ?? null,
-    retry: useCallback(() => { setAttempt((value) => value + 1) }, []),
+    datasetProjection,
     current,
     rejection: isRejection(current) ? current.error : null,
   }

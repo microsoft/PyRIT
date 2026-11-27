@@ -586,6 +586,7 @@ class TestTextAdaptiveAtomicAttacks:
 
         with (
             patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock) as mock_prepare,
+            patch.object(DatasetAttackConfiguration, "check_preparation_async", new_callable=AsyncMock),
             patch.object(
                 DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",

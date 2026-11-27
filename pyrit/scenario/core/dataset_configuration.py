@@ -26,11 +26,13 @@ limit. Inline configurations never touch memory.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import random
 from collections import Counter
+from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, TypeVar, cast
@@ -51,10 +53,9 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit, normalize_dataset_limit
-from pyrit.scenario.core.dataset_preparation import current_dataset_preparation
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 
     from pyrit.datasets import SeedDatasetProvider
     from pyrit.memory import MemoryInterface
@@ -74,6 +75,74 @@ _candidate_populations: ContextVar[dict[str, list[Seed[Any]]] | None] = ContextV
 )
 
 
+@dataclass
+class _DatasetWriter:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    users: int = 0
+
+
+# Writers keyed by event loop, memory instance and dataset name. An entry lives only while it has users,
+# and its lock is only ever awaited on the loop in its key.
+_dataset_writers: dict[tuple[int, int, str], _DatasetWriter] = {}
+
+
+@asynccontextmanager
+async def _dataset_writer_async(*, memory: MemoryInterface, name: str) -> AsyncGenerator[None, None]:
+    """
+    Hold the right to load or refresh one dataset in one memory, within this event loop.
+
+    The key leaves out the provider, so two providers configured for the same name never write it
+    at once. Holding a writer doesn't share data: each holder rechecks memory and fetches for itself.
+
+    Args:
+        memory (MemoryInterface): The memory the dataset is written to.
+        name (str): The dataset name.
+
+    Yields:
+        None: While this caller is the only writer of the dataset.
+    """
+    key = (id(asyncio.get_running_loop()), id(memory), name)
+    writer = _dataset_writers.setdefault(key, _DatasetWriter())
+    writer.users += 1
+    try:
+        async with writer.lock:
+            yield
+    finally:
+        writer.users -= 1
+        if not writer.users:
+            del _dataset_writers[key]
+
+
+def _check_shared_names(configurations: Sequence[DatasetConfiguration]) -> None:
+    # Candidates are keyed by name, so a shared name would validate one batch and commit both.
+    counts = Counter(name for config in configurations for name in dict.fromkeys(config.dataset_names))
+    shared = sorted(name for name, count in counts.items() if count > 1)
+    if shared:
+        raise DatasetConstraintError(
+            f"Datasets {shared} are named by more than one configuration prepared together, such as "
+            "required data and the population. List each dataset in one place."
+        )
+
+
+async def check_configurations_async(*, configurations: Sequence[DatasetConfiguration]) -> None:
+    """
+    Run the checks ``prepare_configurations_async`` makes before fetching, without fetching or writing.
+
+    A run saved before its datasets are prepared uses this to reject sources that can never load, such as a
+    missing dataset with fetch ``never`` or one without a provider, before the run is stored.
+
+    Args:
+        configurations (Sequence[DatasetConfiguration]): The configurations that will be prepared together.
+
+    Raises:
+        DatasetConstraintError: If a dataset is named by more than one configuration, or a source cannot
+            be fetched.
+    """
+    _check_shared_names(configurations)
+    for config in configurations:
+        await config._plan_preparation_async(fetch=None)
+
+
 async def prepare_configurations_async(
     *,
     configurations: Sequence[DatasetConfiguration],
@@ -87,6 +156,10 @@ async def prepare_configurations_async(
     each configuration that fetched data and then ``validate_assembly`` run while all fetched
     candidates are visible to reads, so a rejected refresh leaves every stored dataset unchanged.
 
+    Loads and refreshes of the same dataset in the same memory take turns. A caller that waited
+    skips a missing dataset another caller stored meanwhile, and still refreshes one it fetches
+    with ``always``.
+
     Args:
         configurations (Sequence[DatasetConfiguration]): The configurations to prepare together.
         fetch (DatasetFetchPolicy | None): Optional policy for this operation only.
@@ -97,49 +170,49 @@ async def prepare_configurations_async(
         DatasetConstraintError: If a dataset is named by more than one configuration, a source cannot
             be fetched, or the candidates fail validation.
     """
-    # Candidates are keyed by name, so a shared name would validate one batch and commit both.
-    counts = Counter(name for config in configurations for name in dict.fromkeys(config.dataset_names))
-    shared = sorted(name for name, count in counts.items() if count > 1)
-    if shared:
-        raise DatasetConstraintError(
-            f"Datasets {shared} are named by more than one configuration prepared together, such as "
-            "required data and the population. List each dataset in one place."
-        )
-    fetches = [(config, *await config._fetch_for_preparation_async(fetch=fetch)) for config in configurations]
-    if not any(policies[name] is DatasetFetchPolicy.ALWAYS for _, fetched, policies in fetches for name in fetched):
-        for config, fetched, _ in fetches:
-            for name, dataset in fetched.items():
-                owner = current_dataset_preparation(config._memory)
-                if owner is not None:
-                    await owner[0].store_missing_async(name=name, dataset=dataset)
-                elif name not in await config._memory.get_seed_dataset_names_async():
+    _check_shared_names(configurations)
+    plans = [(config, *await config._plan_preparation_async(fetch=fetch)) for config in configurations]
+    writers = {(id(config._memory), name): config._memory for config, _, providers in plans for name in providers}
+    async with AsyncExitStack() as held:
+        # One acquisition order keeps preparations that share datasets from waiting on each other.
+        for key in sorted(writers):
+            await held.enter_async_context(_dataset_writer_async(memory=writers[key], name=key[1]))
+        fetches = [
+            (config, await config._fetch_planned_async(policies=policies, providers=providers), policies)
+            for config, policies, providers in plans
+        ]
+        if not any(policies[name] is DatasetFetchPolicy.ALWAYS for _, fetched, policies in fetches for name in fetched):
+            for config, fetched, _ in fetches:
+                for dataset in fetched.values():
                     await config._memory.add_seed_datasets_to_memory_async(
                         datasets=[dataset], added_by="DatasetConfiguration"
                     )
-        return
-    prepared: list[tuple[DatasetConfiguration, dict[str, PreparedSeedBatch], dict[str, DatasetFetchPolicy]]] = []
-    for config, fetched, policies in fetches:
-        batches = {
-            name: await config._memory.prepare_seed_batch_async(seeds=dataset.seeds, added_by="DatasetConfiguration")
-            for name, dataset in fetched.items()
-        }
-        prepared.append((config, batches, policies))
-    candidates = {name: batch.seeds for _, batches, _ in prepared for name, batch in batches.items()}
-    token = _candidate_populations.set(candidates)
-    try:
-        for config, batches, _ in prepared:
-            if batches:
-                await config.with_overrides()._validate_candidate_population_async()
-        if validate_assembly is not None:
-            await validate_assembly()
-    finally:
-        _candidate_populations.reset(token)
-    for config, batches, policies in prepared:
-        for name, batch in batches.items():
-            if policies[name] is DatasetFetchPolicy.ALWAYS:
-                await config._memory.replace_prepared_seed_batch_async(dataset_name=name, batch=batch)
-            else:
-                await config._memory.add_prepared_seed_batch_async(batch)
+            return
+        prepared: list[tuple[DatasetConfiguration, dict[str, PreparedSeedBatch], dict[str, DatasetFetchPolicy]]] = []
+        for config, fetched, policies in fetches:
+            batches = {
+                name: await config._memory.prepare_seed_batch_async(
+                    seeds=dataset.seeds, added_by="DatasetConfiguration"
+                )
+                for name, dataset in fetched.items()
+            }
+            prepared.append((config, batches, policies))
+        candidates = {name: batch.seeds for _, batches, _ in prepared for name, batch in batches.items()}
+        token = _candidate_populations.set(candidates)
+        try:
+            for config, batches, _ in prepared:
+                if batches:
+                    await config.with_overrides()._validate_candidate_population_async()
+            if validate_assembly is not None:
+                await validate_assembly()
+        finally:
+            _candidate_populations.reset(token)
+        for config, batches, policies in prepared:
+            for name, batch in batches.items():
+                if policies[name] is DatasetFetchPolicy.ALWAYS:
+                    await config._memory.replace_prepared_seed_batch_async(dataset_name=name, batch=batch)
+                else:
+                    await config._memory.add_prepared_seed_batch_async(batch)
 
 
 class _Unset(Enum):
@@ -651,18 +724,27 @@ class DatasetConfiguration:
         """
         await prepare_configurations_async(configurations=[self], fetch=fetch)
 
-    async def _fetch_for_preparation_async(
-        self, *, fetch: DatasetFetchPolicy | None
-    ) -> tuple[dict[str, SeedDataset], dict[str, DatasetFetchPolicy]]:
+    async def check_preparation_async(self) -> None:
         """
-        Check all sources and fetch the datasets that preparation would write, without writing.
-
-        Returns:
-            tuple[dict[str, SeedDataset], dict[str, DatasetFetchPolicy]]: The fetched datasets and
-            every source's effective policy, keyed by dataset name.
+        Run the checks ``prepare_async`` makes before fetching, without fetching or writing.
 
         Raises:
-            DatasetConstraintError: If a source cannot be fetched or provider data is invalid.
+            DatasetConstraintError: If a source cannot be fetched.
+        """
+        await check_configurations_async(configurations=[self])
+
+    async def _plan_preparation_async(
+        self, *, fetch: DatasetFetchPolicy | None
+    ) -> tuple[dict[str, DatasetFetchPolicy], dict[str, SeedDatasetProvider]]:
+        """
+        Check all sources and resolve a provider for each dataset preparation would write, without fetching.
+
+        Returns:
+            tuple[dict[str, DatasetFetchPolicy], dict[str, SeedDatasetProvider]]: Every source's
+            effective policy, and the provider for each dataset to fetch, keyed by dataset name.
+
+        Raises:
+            DatasetConstraintError: If a source cannot be fetched.
         """
         self.validate_configuration()
         if fetch is not None and not isinstance(fetch, DatasetFetchPolicy):
@@ -691,7 +773,7 @@ class DatasetConfiguration:
                 raise DatasetConstraintError(f"Dataset '{name}' is missing and fetch is 'never'. Import it first.")
             to_fetch.append(name)
         if not to_fetch:
-            return {}, policies
+            return policies, {}
         from pyrit.datasets import SeedDatasetProvider
 
         providers = {name: provider for name in to_fetch if (provider := configured_providers[name]) is not None}
@@ -707,38 +789,44 @@ class DatasetConfiguration:
             )
         if unavailable:
             raise DatasetConstraintError(f"Datasets {unavailable} are missing and have no provider. Import them first.")
-        fetched: dict[str, SeedDataset] = {}
-        for name in to_fetch:
-            refresh = policies[name] is DatasetFetchPolicy.ALWAYS
-            owner = current_dataset_preparation(self._memory) if not refresh else None
-            if owner is not None:
-                preparation, retry_failed = owner
-                dataset = await preparation.fetch_async(
-                    name=name,
-                    provider=providers[name],
-                    registered=configured_providers[name] is None,
-                    retry_failed=retry_failed,
-                    fetch=lambda name=name: self._fetch_provider_async(
-                        name=name, provider=providers[name], refresh=False
-                    ),
-                )
-                if dataset is not None:
-                    fetched[name] = dataset
-            else:
-                fetched[name] = await self._fetch_provider_async(name=name, provider=providers[name], refresh=refresh)
-        return fetched, policies
+        return policies, {name: providers[name] for name in to_fetch}
 
-    @staticmethod
-    async def _fetch_provider_async(*, name: str, provider: SeedDatasetProvider, refresh: bool) -> SeedDataset:
-        dataset = await provider.fetch_dataset_async(cache=False) if refresh else await provider.fetch_dataset_async()
-        if (
-            not dataset.seeds
-            or dataset.dataset_name != name
-            or any(seed.dataset_name != name for seed in dataset.seeds)
-        ):
-            raise DatasetConstraintError(f"Provider for '{name}' must return non-empty seeds with that dataset name.")
-        SeedDataset.group_seed_prompts_by_prompt_group_id(dataset.seeds)
-        return dataset
+    async def _fetch_planned_async(
+        self, *, policies: dict[str, DatasetFetchPolicy], providers: dict[str, SeedDatasetProvider]
+    ) -> dict[str, SeedDataset]:
+        """
+        Fetch the planned datasets, while holding their writers, without writing.
+
+        A missing dataset that another writer stored after planning is skipped; ``always`` still refreshes.
+
+        Returns:
+            dict[str, SeedDataset]: The fetched datasets, keyed by dataset name.
+
+        Raises:
+            DatasetConstraintError: If provider data is invalid.
+        """
+        if not providers:
+            return {}
+        stored_names = set(await self._memory.get_seed_dataset_names_async())
+        fetched: dict[str, SeedDataset] = {}
+        for name, provider in providers.items():
+            refresh = policies[name] is DatasetFetchPolicy.ALWAYS
+            if name in stored_names and not refresh:
+                continue
+            dataset = (
+                await provider.fetch_dataset_async(cache=False) if refresh else await provider.fetch_dataset_async()
+            )
+            if (
+                not dataset.seeds
+                or dataset.dataset_name != name
+                or any(seed.dataset_name != name for seed in dataset.seeds)
+            ):
+                raise DatasetConstraintError(
+                    f"Provider for '{name}' must return non-empty seeds with that dataset name."
+                )
+            SeedDataset.group_seed_prompts_by_prompt_group_id(dataset.seeds)
+            fetched[name] = dataset
+        return fetched
 
     async def _validate_candidate_population_async(self) -> None:
         """Validate raw configuration populations before replacement."""

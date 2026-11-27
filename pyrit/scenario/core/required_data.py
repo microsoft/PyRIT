@@ -32,6 +32,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetConstraintError,
     DatasetSource,
     ResolvedDataset,
+    check_configurations_async,
     prepare_configurations_async,
 )
 
@@ -155,6 +156,17 @@ class ScenarioRequiredData:
             configurations=configurations, fetch=fetch, validate_assembly=validate_assembly
         )
 
+    async def check_preparation_async(self, *, population: DatasetConfiguration | None = None) -> None:
+        """
+        Run the checks ``prepare_async`` makes before fetching, without fetching or writing.
+
+        Args:
+            population (DatasetConfiguration | None): The scenario's population configuration that will be
+                prepared in the same batch.
+        """
+        configurations = [self._configuration, *([population] if population is not None else [])]
+        await check_configurations_async(configurations=configurations)
+
     async def load_async(self, *, names: Sequence[str] | None = None) -> dict[str, list[Seed[Any]]]:
         """
         Read the required datasets from memory without fetching.
@@ -248,7 +260,6 @@ class ScenarioRequiredData:
                 name=source.name,
                 max_size="all",
                 fetch=source.fetch or self.fetch,
-                fetch_inherited=source.fetch is None,
                 configured_provider=source.provider is not None,
             )
             for source in self.sources

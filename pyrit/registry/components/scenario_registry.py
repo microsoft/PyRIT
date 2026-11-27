@@ -339,7 +339,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
                 persist atomically when a fresh scenario result is created.
             constructor_kwargs (dict[str, Any] | None): Explicit constructor inputs for this run.
             configuration_metadata: Validate resolved configuration and capture identities before initialization.
-            defer_dataset_preparation: Persist a validated pending run without loading providers.
+            defer_dataset_preparation: Persist a validated pending run without fetching its datasets.
                 Its owner must call ``initialize_async()`` before execution.
             **initialize_kwargs (Any): Common run-resolved parameters merged into the
                 param bag (notably ``objective_target``).

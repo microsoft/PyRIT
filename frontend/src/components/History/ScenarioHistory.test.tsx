@@ -359,6 +359,29 @@ describe('ScenarioHistory', () => {
     },
   )
 
+  it('shows runs whose datasets are still preparing, and offers no resume once they stop before execution', async () => {
+    const pending = { ...RUN, dataset_preparation_pending: true, total_attacks: null, completed_attacks: 0 }
+    mockedScenariosApi.listRuns.mockResolvedValue({
+      items: [
+        { ...pending, scenario_result_id: 'preparing', status: 'IN_PROGRESS', completed_at: null },
+        { ...pending, scenario_result_id: 'stopped', status: 'FAILED', error: 'Synthetic provider failed' },
+        { ...RUN, scenario_result_id: 'resumable', status: 'FAILED', dataset_preparation_pending: false },
+      ],
+      pagination: { limit: 25, has_more: false },
+    })
+    renderHistory()
+    await screen.findByRole('table', { name: 'Scanner history' })
+
+    const preparing = screen.getByTestId('scenario-history-row-preparing')
+    expect(within(preparing).getByText('Preparing datasets')).toBeInTheDocument()
+    const stopped = screen.getByTestId('scenario-history-row-stopped')
+    expect(within(stopped).getByText('Failed')).toBeInTheDocument()
+    expect(within(stopped).getByText('Stopped before execution')).toBeInTheDocument()
+    expect(screen.queryByTestId('scenario-history-resume-stopped')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('scenario-history-resume-preparing')).not.toBeInTheDocument()
+    expect(screen.getByTestId('scenario-history-resume-resumable')).toBeEnabled()
+  })
+
   it('keeps missing launch configuration conflicts visible after refresh without opening a dialog', async () => {
     const user = userEvent.setup()
     const detail = 'This run has no saved launch configuration and cannot be resumed.'

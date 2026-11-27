@@ -66,40 +66,25 @@ A `SeedDataset` is a collection of related `SeedGroups` that you want to test to
 
 Datasets can be loaded from local YAML files or fetched remotely from sources like HuggingFace, making it easy to share and version test cases across teams.
 
-## Background scanner preparation
+## Scanner dataset loading
 
-The scanner automatically prepares only selected missing sources. Discovery and estimates
-remain read-only. Stored contents win, including edited and generated datasets; filters and
-selection limits never trigger a replacement or another provider call.
+Each dataset source in a scenario has a loading policy: `never` uses only stored datasets, `if_missing` fetches
+sources that aren't stored yet, and `always` replaces each source with a fresh copy from its provider. The scanner
+shows them as **Stored only**, **Load missing**, and **Refresh**. Under `if_missing`, stored contents win, including
+edited and generated datasets. A refresh validates the full replacement before committing it, so a rejected refresh
+leaves the stored datasets unchanged.
 
-Loading does not disable the form or Launch. Confirming Launch creates a run immediately;
-its normal queue/execution lifecycle shows dataset preparation before any attacks start.
-The backend shares missing-only provider work across selections, tabs, and launch within
-one runtime and memory lifetime. Registered providers share by provider class and source;
-configured providers share only when they are the same live instance, not merely the same
-dataset name. Distinct configured providers are not assumed equivalent.
-Successful fetches are shared through their missing-only commit, not cached for the runtime:
-deleting a stored source permits a fresh fetch. Refreshed scanner metadata also invalidates
-the previous selection's prepared state when a source is no longer stored.
+Opening, configuring, and estimating a scan never loads data. Select **Load datasets** to fetch the selected sources
+that aren't stored yet; the form and **Launch scan** stay usable while it runs. Otherwise, a launched scan loads its
+datasets itself: the run is saved first, shown as **Preparing datasets**, and starts attacks after loading finishes.
+A scan is rejected before it's saved when a `never` source is missing or a source that must be fetched has no
+provider. If loading fails, the run fails before any attack executes and can't be resumed; use **Rerun with
+changes** to start a new run. Scans without dataset inputs or named sources launch directly, and Python and API
+launches that don't ask for background preparation load their datasets before the run starts.
 
-Provider failures stay visible until **Retry loading datasets** is selected. They cannot
-silently restart on a parameter edit or execute an incomplete run. Cancellation stops that
-run's wait without cancelling work another caller may need. Runtime replacement refuses
-active preparation, and shutdown drains owned provider work before disposing memory.
-This sticky-failure behavior is limited to automatic GUI preparation. Repeating an explicit
-legacy API load or eager API run makes a new attempt after a transient provider failure.
-
-The scanner uses `if_missing`. Saved `never`/`always` settings are visibly normalized for
-that scan when overrides are permitted; protected policies are rejected instead. Preset
-editing never prepares data and preserves its SDK-capable loading settings on save. Python
-and ordinary API launches retain `never`, `if_missing`, and explicit `always` refresh.
-Normalization uses parameter-resolved settings, not static catalog source names.
-Source settings report whether a global loading-policy override can control them; unknown
-inheritance is guarded rather than guessed. Confirmation can wait for this read-only
-configuration projection, but never for an exact attack count or provider completion.
-Inline-only scanners without dataset inputs or named sources keep their eager launch path;
-estimate failures remain advisory. Fixed named/required sources still use preparation even
-when the scenario exposes no dataset overrides.
+Loads and runs that write the same dataset take turns, and each checks what is stored again when its turn comes,
+so a dataset that finished loading while a run waited isn't fetched twice. This coordination covers one backend
+process.
 
 ## Generated Datasets
 

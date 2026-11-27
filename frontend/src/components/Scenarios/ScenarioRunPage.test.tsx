@@ -770,15 +770,15 @@ describe('ScenarioRunPage', () => {
   })
 
   it.each([null, 'Run was cancelled by user'])(
-    'does not prescribe a nonexistent provider Retry after cancelling initialization (%s)', async (error) => {
+    'points a run cancelled before its datasets were ready to Rerun with changes (%s)', async (error) => {
     const user = userEvent.setup()
     state = makeState({
       run: { ...RUN, status: 'CANCELLED', dataset_preparation_pending: true, error },
       summary: PENDING_SUMMARY, plan: null, planComplete: false, results: [],
     })
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
-    expect(screen.getByText(/Scan cancelled before execution/)).toHaveTextContent('Shared dataset loading may continue.')
-    expect(screen.queryByText(/Retry loading datasets/)).not.toBeInTheDocument()
+    expect(screen.getByText(/Scan cancelled before execution/)).toHaveTextContent('Use Rerun with changes to review the configuration.')
+    expect(screen.queryByText(/dataset loading may continue/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Resume' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Rerun with changes' })).toBeEnabled()
     if (error) {
@@ -798,7 +798,6 @@ describe('ScenarioRunPage', () => {
     })
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     expect(screen.getByText(/Scan initialization failed before execution/)).toBeInTheDocument()
-    expect(screen.queryByText(/Retry loading datasets/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Resume' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Rerun with changes' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: 'Error details' }))

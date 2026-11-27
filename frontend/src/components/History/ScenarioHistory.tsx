@@ -600,7 +600,8 @@ function ScenarioHistoryTable({
               </div>
             </TableCell>
             <TableCell>
-              {run.status === 'FAILED' && (
+              {/* A run that stopped before its datasets were ready has no plan to resume from. */}
+              {run.status === 'FAILED' && !run.dataset_preparation_pending && (
                 <Button
                   className={styles.touchTarget}
                   icon={<PlayRegular />}
@@ -633,7 +634,7 @@ function formatHistoryState(run: ScenarioRunListItem, queueSnapshot: ScenarioQue
     return formatState(run.status)
   }
   if (isRunInProgress(run, queueSnapshot)) {
-    return 'In progress'
+    return run.dataset_preparation_pending ? 'Preparing datasets' : 'In progress'
   }
   const position = queueSnapshot?.queued.find(
     (entry) => entry.scenario_result_id === run.scenario_result_id,
@@ -698,6 +699,10 @@ function formatAttackProgress(
   run: ScenarioRunListItem,
   queueSnapshot: ScenarioQueueSnapshot | null,
 ): string | null {
+  if (run.dataset_preparation_pending) {
+    // The attack plan exists only after dataset preparation finishes.
+    return isTerminal(run.status) ? 'Stopped before execution' : null
+  }
   if (isTerminal(run.status)) {
     return run.planned_total_available !== false
       && run.total_attacks !== null

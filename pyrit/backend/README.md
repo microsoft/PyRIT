@@ -223,26 +223,22 @@ and **400** otherwise, and storage that can't be written receives **503**. Each 
 
 ### Scenario dataset preparation
 
-See [background scanner preparation](../../doc/code/datasets/0_dataset.md#background-scanner-preparation)
-for the shared behavior. `POST /api/scenarios/catalog/{name}/datasets/load` accepts the
-same configuration as an estimate and loads selected missing sources only. `?retry=true`
-explicitly retries failed provider work for `?automatic=true` GUI requests. Ordinary explicit
-API loads retry on each request. Discovery GETs and estimates never prepare data.
+See [scanner dataset loading](../../doc/code/datasets/0_dataset.md#scanner-dataset-loading) for the shared
+behavior. `POST /api/scenarios/catalog/{name}/datasets/load` accepts the same configuration as an estimate, loads
+only the selected sources that aren't stored yet, and doesn't create a run. Discovery GETs and estimates never fetch
+or write datasets.
 
-GUI launches send `prepare_in_background: true` to `POST /api/scenarios/runs`.
-Configuration, dependency, and Operation validation still precede acceptance. Fresh
-missing-only runs are persisted before provider loading, then admitted to the existing FIFO.
-The summary and progress header expose `dataset_preparation_pending`; no additional
-persisted run state is introduced. Attacks execute only after initialization completes.
-Preparation errors terminalize the run without executing attacks. A run without a prepared
-plan cannot resume; reopen its configuration, retry its sources, and start a new run.
-Omitting the flag preserves eager API initialization and all fetch-policy capabilities.
-Uncapped estimates retain their existing `unavailable` status for subclass validation,
-with `count_deferred: true` marking a supported count deferred to preparation. Actual
-estimate failures are not marked deferred; both paths retain their server-provided notes.
-Dataset settings also expose `sources[].fetch_inherited`: `true` means a global fetch
-override controls that source, `false` means a source-local policy, and `null` means unknown.
-Automatic clients normalize parameter-resolved settings and guard unknown policy provenance.
+`POST /api/scenarios/runs` accepts `prepare_in_background: true` for a fresh run. Configuration, dependency, and
+Operation validation run first, and sources the run could never load, such as a missing `never` source or a source
+without a provider, are rejected without fetching. The run is then stored, admitted to the existing queue, and
+reported with `dataset_preparation_pending: true` in its summary and progress header until its datasets are
+prepared; attacks start only after that. Preparation honors each source's `never`, `if_missing`, or `always` policy.
+If it fails, the run fails without executing attacks and can't be resumed; start a new run instead. The GUI sends the
+flag for scans that use datasets. Without it, the request prepares datasets before it returns, as before.
+
+Loads and runs that write the same dataset name in the same memory take turns, and each checks what is stored again
+when its turn comes, so a dataset that finished loading while a run waited isn't fetched twice. This coordination
+covers one backend process.
 
 ### Dataset creation, batch mutation, and deletion
 

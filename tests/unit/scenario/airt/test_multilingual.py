@@ -113,6 +113,7 @@ def mock_objective_scorer() -> MagicMock:
 def _patch_seed_groups(mock_memory_seed_groups: list[AttackSeedGroup]) -> Generator[None, None, None]:
     with (
         patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock),
+        patch.object(DatasetAttackConfiguration, "check_preparation_async", new_callable=AsyncMock),
         patch.object(
             Multilingual,
             "_resolve_seed_groups_by_dataset_async",

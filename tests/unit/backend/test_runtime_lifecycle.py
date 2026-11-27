@@ -117,14 +117,6 @@ async def apply_async(runtime: RuntimeLifecycle) -> None:
     await runtime.apply_task
 
 
-async def test_active_dataset_preparation_blocks_runtime_replacement_async(runtime: RuntimeLifecycle) -> None:
-    with patch.object(lifecycle_module, "has_active_dataset_preparation", return_value=True):
-        assert runtime._has_active_work()
-        await apply_async(runtime)
-    assert runtime.outcome == "busy"
-    assert runtime.generation == "original"
-
-
 async def test_live_apply_runs_as_the_server_not_the_requesting_admin_async(*, runtime: RuntimeLifecycle) -> None:
     seen: list[str | None] = []
 

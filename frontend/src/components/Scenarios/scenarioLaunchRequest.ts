@@ -1,5 +1,4 @@
 import { buildParametersFromForm, type ParameterFormValue } from '@/components/Parameters/parameterForm'
-import { datasetPolicies, explicitDatasetPolicy, scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
 import type {
   Parameter,
   RegisteredComponentReference,
@@ -95,19 +94,21 @@ export function omittedLinkedDatasetsMessage(names: readonly string[]): string {
     : `The linked datasets ${labels} aren't stored datasets this scenario can use, so they weren't selected.`
 }
 
-/** Fixed required sources still need preparation even when the scenario exposes no dataset overrides. */
-export function usesScenarioDatasets(
-  scenario: RegisteredScenario, settings: ScenarioDatasetSettings = scenarioDatasetDefaults(scenario),
-): boolean {
-  return supportsParameter(scenario, 'dataset_config') || scenario.default_datasets.length > 0 || settings.sources.length > 0
-}
-
 /** The scenario-specific parameters the launch form renders, without the common ones. */
 export function scenarioDynamicParameters(scenario: RegisteredScenario): Parameter[] {
   return scenario.supported_parameters.filter(
     (parameter) => supportsParameter(scenario, parameter.name)
       && !COMMON_SCENARIO_PARAMETER_NAMES.has(parameter.name),
   )
+}
+
+/**
+ * Whether a launch has datasets to prepare: dataset input, or default or fixed sources even without overrides.
+ * A scan with neither, such as one using only inline seeds, keeps its eager launch.
+ */
+export function usesScenarioDatasets(scenario: RegisteredScenario, defaults: ScenarioDatasetSettings): boolean {
+  return supportsParameter(scenario, 'dataset_config') || scenario.default_datasets.length > 0
+    || defaults.sources.length > 0
 }
 
 /**
@@ -131,10 +132,8 @@ export interface ScenarioLaunchInput {
   datasetError: string | null
   /** Why the linked dataset names can't launch; see `linkedDatasetProblem`. */
   linkedDatasetError?: string | null
-  datasetDefaults?: ScenarioDatasetSettings
-  datasetOptions?: ScenarioDatasetOptions
-  /** Read-only projection requests preserve input policies; launch and preload normalize them. */
-  normalizeDatasetLoading?: boolean
+  /** Save the run first and load its datasets while it starts, so Launch doesn't wait for providers. */
+  prepareDatasetsInBackground?: boolean
   includeBaseline: boolean
   techniqueOverride?: TechniqueOverride | undefined
   techniqueEditError?: string | undefined
@@ -167,9 +166,6 @@ export function buildEstimateRequest({
   presetScenarioParams = {},
   datasetEdits,
   datasetError,
-  datasetDefaults,
-  datasetOptions,
-  normalizeDatasetLoading = true,
   includeBaseline,
   techniqueOverride,
   techniqueEditError,
@@ -213,27 +209,7 @@ export function buildEstimateRequest({
   }
 
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
-  if (normalizeDatasetLoading && supportsDatasets && datasetError) return { ok: false, error: datasetError }
-  const defaults = datasetDefaults ?? scenarioDatasetDefaults(scenario)
-  const options = datasetOptions ?? scenarioDatasetOptions(scenario)
-  const sources = datasetEdits.sources ?? defaults.sources
-  const policies = usesScenarioDatasets(scenario, defaults) ? datasetPolicies(datasetEdits, defaults, defaults) : []
-  const protectedPolicies = policies.filter((source) => {
-    const settings = defaults.sources.find((item) => item.name === source.name)
-    const explicit = explicitDatasetPolicy(datasetEdits.sources?.find((item) => item.name === source.name)?.fetch)
-    return source.fetch !== 'if_missing' && (!supportsDatasets || !options.supports_overrides
-      || (options.source_settings === false && (explicit != null || settings?.fetch_inherited !== true)))
-  })
-  const unknownPolicy = options.supports_overrides && protectedPolicies.some((source) =>
-    options.source_settings === false
-    && explicitDatasetPolicy(datasetEdits.sources?.find((item) => item.name === source.name)?.fetch) === undefined
-    && defaults.sources.find((item) => item.name === source.name)?.fetch_inherited == null)
-  if (normalizeDatasetLoading && protectedPolicies.length > 0) return {
-    ok: false,
-    error: unknownPolicy
-      ? 'Source loading-policy inheritance is unknown. Reload scenario metadata or use the SDK/API; this form cannot safely override it.'
-      : 'This scenario protects source-specific loading policies. Use the SDK/API to preserve them; scans here only load missing data.',
-  }
+  if (supportsDatasets && datasetError) return { ok: false, error: datasetError }
   const request: ScenarioRunSizeEstimateRequest = {}
   if (scoringTargetName) request.scoring_target_name = scoringTargetName
   if (objectiveScorer) request.objective_scorer = objectiveScorer
@@ -250,24 +226,8 @@ export function buildEstimateRequest({
   if (scenario.uses_default_adversarial_target && adversarialTargetName) {
     request.adversarial_target_name = adversarialTargetName
   }
-  if (!normalizeDatasetLoading && supportsDatasets && Object.keys(datasetEdits).length > 0) {
+  if (supportsDatasets && Object.keys(datasetEdits).length > 0) {
     request.datasets = datasetEdits
-  }
-  if (normalizeDatasetLoading && supportsDatasets && options.supports_overrides && (
-    Object.keys(datasetEdits).length > 0 || defaults.fetch !== 'if_missing'
-    || sources.some((source) => source.fetch && source.fetch !== 'if_missing')
-  )) {
-    request.datasets = {
-      ...datasetEdits,
-      fetch: 'if_missing',
-      ...(options.source_settings === false || sources.length === 0
-        || (!datasetEdits.sources && !sources.some((source) => source.fetch && source.fetch !== 'if_missing')) ? {} : {
-        sources: sources.map((source) => ({
-          ...datasetEdits.sources?.find((item) => item.name === source.name),
-          name: source.name, fetch: 'if_missing',
-        })),
-      }),
-    }
   }
   const sentPresetParams = Object.fromEntries(Object.entries(presetScenarioParams).filter(
     ([name]) => supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(name),
@@ -319,7 +279,7 @@ export function buildRunRequest(input: ScenarioLaunchInput): BuildRunRequestResu
     scenario_name: input.scenario.scenario_name,
     ...estimateResult.request,
   }
-  if (usesScenarioDatasets(input.scenario, input.datasetDefaults)) request.prepare_in_background = true
+  if (input.prepareDatasetsInBackground) request.prepare_in_background = true
   if (input.operationId) request.operation_id = input.operationId
   if (supportsParameter(input.scenario, 'max_concurrency')) {
     request.max_concurrency = input.maxConcurrency

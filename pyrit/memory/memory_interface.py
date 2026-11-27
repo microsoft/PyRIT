@@ -464,6 +464,7 @@ class ScenarioHistoryRunRecord:
     plan_seed_id_map: str | list[dict[str, str]] | None
     started_at: datetime | None = None
     operation_id: uuid.UUID | None = None
+    dataset_preparation: str | dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

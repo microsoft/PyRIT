@@ -1,7 +1,8 @@
-import { type Ref, useEffect, useState } from 'react'
+import { type Ref, useEffect, useId, useState } from 'react'
 
 import {
-  Badge, Button, Combobox, Divider, MessageBar, MessageBarActions, MessageBarBody, Option, Spinner,
+  Badge, Button, Combobox, Divider, mergeClasses, MessageBar, MessageBarActions, MessageBarBody, Option, Radio, RadioGroup,
+  Spinner,
   Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, ToggleButton, Tooltip,
 } from '@fluentui/react-components'
 import { DismissRegular } from '@fluentui/react-icons'
@@ -9,12 +10,12 @@ import { DismissRegular } from '@fluentui/react-icons'
 import { MODALITY_LABELS } from '@/components/Config/targetFilters'
 import HelpField from '@/components/HelpField'
 import type {
-  DatasetInfo, ScenarioDatasetLimit, ScenarioDatasetOptions, ScenarioDatasetRequest,
+  DatasetInfo, DatasetFetchPolicy, ScenarioDatasetLimit, ScenarioDatasetOptions, ScenarioDatasetRequest,
   ScenarioDatasetSettings, ScenarioDatasetSourceInput,
 } from '@/types'
 
 import DatasetLimitControl from './DatasetLimitControl'
-import { datasetChoices, datasetFacts, datasetNameWithOrigin, datasetPolicies, datasetSize, datasetTotalLimit, parseCaseLimit } from './datasetPresentation'
+import { canEditDatasetLoading, datasetChoices, datasetFacts, datasetNameWithOrigin, datasetPolicies, datasetSize, datasetTotalLimit, parseCaseLimit } from './datasetPresentation'
 import { useScenarioDatasetTableStyles } from './ScenarioDatasetTable.styles'
 import { fluentRef } from '@/utils/fluentRef'
 
@@ -29,12 +30,12 @@ interface ScenarioDatasetTableProps {
   metadataError: string | null
   preparing?: boolean
   loadError?: string | null
-  /** The choices are stored datasets the scenario already checked, so loading and reset rules don't apply. */
+  loadEnabled?: boolean
+  onLoad?: () => void
+  /** The choices are stored datasets the scenario already checked, so load, reset and loading rules don't apply. */
   compatibleOnly?: boolean
   /** Marks the picker required until the first dataset is chosen. */
   required?: boolean
-  automaticLoading?: boolean
-  onRetryPreparation?: () => void
   /** Why the required picker has too few datasets, shown as its validation message. */
   selectionError?: string | null
   pickerRef?: Ref<HTMLInputElement>
@@ -45,11 +46,12 @@ interface ScenarioDatasetTableProps {
 
 export default function ScenarioDatasetTable({
   request, defaults, effective, options, datasets, disabled, loading, metadataError,
-  preparing = false, loadError, automaticLoading = false, onRetryPreparation, compatibleOnly = false,
+  preparing = false, loadError, loadEnabled = false, onLoad, compatibleOnly = false,
   required = false, selectionError = null, pickerRef,
   onReload, onChange, onValidationChange,
 }: ScenarioDatasetTableProps) {
   const styles = useScenarioDatasetTableStyles()
+  const loadingId = useId()
   const [search, setSearch] = useState('')
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [emptySelections, setEmptySelections] = useState<string[]>([])
@@ -60,7 +62,8 @@ export default function ScenarioDatasetTable({
   const canFilter = options.supports_overrides && options.filters
   const canAdd = options.max_selected == null || selected.length < options.max_selected
   const replaceSingleSource = options.max_selected === 1
-  const busy = disabled
+  // Loading runs alongside editing: the selection stays editable, and Launch loads whatever is still missing.
+  const busy = disabled || (compatibleOnly && loading)
   const total = datasetTotalLimit(request, defaults)
   const filters = { ...defaults.filters, ...request.filters }
   const candidates = datasetChoices(datasets, compatibleOnly ? [] : defaults.sources, options)
@@ -69,7 +72,7 @@ export default function ScenarioDatasetTable({
     && !loading && !metadataError
   // A required picker stays, so Launch can still point at it; the empty state becomes its hint.
   const showEmptyText = noCompatibleDatasets && !required
-  const { loaded } = datasetFacts(datasets, selected.map((source) => source.name))
+  const { loaded, allLoaded } = datasetFacts(datasets, selected.map((source) => source.name))
   const availableMetadata: Record<string, string[]> = {
     harm_categories: [...new Set(loaded.flatMap((dataset) => dataset.harm_categories))],
     data_types: [...new Set(loaded.flatMap((dataset) => dataset.modalities))],
@@ -136,8 +139,22 @@ export default function ScenarioDatasetTable({
   const validationError = errors[0] ?? null
   useEffect(() => { onValidationChange(validationError) }, [validationError, onValidationChange])
 
-  const policies = datasetPolicies(request, defaults, effective).map((source) => source.fetch)
-  const savedPolicies = [...new Set(policies)].join(', ')
+  const policies = datasetPolicies(request, defaults, effective, options).map((source) => source.fetch)
+  const hasMissingRefresh = selected.some((source, index) => policies[index] === 'always'
+    && !datasets.some((item) => item.name === source.name && item.loaded))
+  const mixedPolicies = policies.some((policy) => policy !== policies[0])
+  const canSetLoading = canEditDatasetLoading(effective, options)
+  const changeLoading = (policy: DatasetFetchPolicy): void => onChange({
+    ...request, fetch: policy,
+    ...(canEditSources ? { sources: selected.map((source) => ({ ...source, fetch: policy })) } : {}),
+  })
+  const loadingDisabledReason = !options.supports_overrides
+    ? 'Loading rules are fixed by this scenario.'
+    : !canSetLoading ? 'This scenario uses source-specific loading rules.' : ''
+  const loadingHint = mixedPolicies ? 'Mixed loading policies'
+    : policies[0] === 'always' ? 'Refresh datasets for each new scan'
+    : policies[0] === 'never' ? 'Only use datasets already in memory'
+    : 'Load missing datasets'
   const picker = <Combobox ref={fluentRef(pickerRef)} aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
     placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]}
     disabled={busy || (compatibleOnly && Boolean(metadataError))}
@@ -161,12 +178,17 @@ export default function ScenarioDatasetTable({
       {compatibleOnly && loading && <Spinner size="tiny" label="Loading compatible datasets..." />}
       {selected.length > 0 && (preparing || (loading && !compatibleOnly)) && <Text role="status" size={200}
         className={styles.loadingHint}>
-        {preparing ? 'Loading selected datasets in the background. You can launch the scan now.' : 'Checking dataset details...'}
+        {preparing ? 'Loading datasets...' : 'Checking dataset details...'}
       </Text>}
-      {selected.length > 0 && <div className={styles.toolbar}>
+      {!compatibleOnly && !allLoaded && selected.length > 0 && <div className={styles.toolbar}>
+        {onLoad && <Button appearance="primary" className={styles.button}
+          disabled={busy || preparing || loading || !loadEnabled || hasMissingRefresh || requiresImport
+            || metadataError !== null || validationError !== null}
+          onClick={onLoad}>{preparing ? 'Loading datasets...' : 'Load datasets'}</Button>}
         {requiresImport && <Text size={200}>Import the missing datasets into PyRIT first.</Text>}
-        {loadError && onRetryPreparation && <Button className={styles.button} disabled={busy || preparing}
-          onClick={onRetryPreparation}>Retry loading datasets</Button>}
+        {hasMissingRefresh && <Text size={200}>
+          Datasets set to refresh will load when the scan starts. Change the loading policy to load them now.
+        </Text>}
         {metadataError && <Button className={styles.button} disabled={busy} onClick={onReload}>Retry checking datasets</Button>}
       </div>}
       {[metadataError, loadError, ...errors].filter((error): error is string => Boolean(error))
@@ -266,13 +288,30 @@ export default function ScenarioDatasetTable({
       {canFilter && emptySelections.length > 0 && <Button className={styles.button} disabled={busy}
         onClick={() => setEmptySelections([])}>Restore metadata selection</Button>}
       {/* Compatible choices are stored datasets that were already checked, so there is nothing to load. */}
-      {!compatibleOnly && selected.length > 0 && <Text size={200} className={styles.loadingHint}>
-        {automaticLoading
-          ? 'This scan loads only missing selected datasets. Stored contents are kept, including generated datasets.'
-          : `Saved loading policies: ${savedPolicies}. Editing this preset does not load datasets or change these policies.`}
-        {automaticLoading && policies.some((policy) => policy !== 'if_missing')
-          && ' Saved never/always policies are normalized to missing-only for this scan when overrides are permitted; protected policies require the SDK/API. The saved configuration is unchanged.'}
-      </Text>}
+      {!compatibleOnly && selected.length > 0 && <Tooltip content={loadingDisabledReason || 'Refresh replaces the full stored dataset for a new scan.'} relationship="description">
+        <div className={styles.loadingRule}>
+          <Text id={`${loadingId}-label`} className={styles.loadingLabel}>Dataset loading</Text>
+          <div className={styles.loadingControl}>
+            <RadioGroup aria-labelledby={`${loadingId}-label`} aria-describedby={`${loadingId}-hint`}
+              value={mixedPolicies ? '' : (policies[0] ?? '')} layout="horizontal"
+              className={styles.policyTrack}
+              disabled={busy || !canSetLoading} onChange={(_, data) => {
+                if (data.value === 'never' || data.value === 'if_missing' || data.value === 'always') changeLoading(data.value)
+              }}>
+              {!mixedPolicies && <span aria-hidden className={mergeClasses(styles.policyThumb,
+                policies[0] === 'if_missing' && styles.policyThumbMiddle,
+                policies[0] === 'always' && styles.policyThumbEnd)} />}
+              <Radio value="never" label="Stored only" className={styles.policyOption}
+                indicator={{ className: styles.policyIndicator }} input={{ className: styles.policyInput }} />
+              <Radio value="if_missing" label="Load missing" className={styles.policyOption}
+                indicator={{ className: styles.policyIndicator }} input={{ className: styles.policyInput }} />
+              <Radio value="always" label="Refresh" className={styles.policyOption}
+                indicator={{ className: styles.policyIndicator }} input={{ className: styles.policyInput }} />
+            </RadioGroup>
+            <Text id={`${loadingId}-hint`} size={200} className={styles.loadingHint}>{loadingHint}</Text>
+          </div>
+        </div>
+      </Tooltip>}
       {!compatibleOnly && selected.length > 0 && options.supports_overrides && options.total_limit && <Divider />}
       {options.supports_overrides && options.total_limit && <DatasetLimitControl label="Maximum objectives"
         value={request.max_total} defaultValue={defaults.max_total} draft={drafts.total} disabled={busy}
