@@ -137,6 +137,7 @@ stages:
                   --build-arg PYRIT_SOURCE=local \
                   --build-arg GIT_COMMIT="$source_commit" \
                   --build-arg GIT_MODIFIED=false \
+                  --build-arg PYRIT_USE_LOCKFILE=true \
                   .
 
                 az acr login --name "$PYRIT_ACR_NAME"

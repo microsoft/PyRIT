@@ -436,6 +436,8 @@ The pipeline reads `gui-deploy.yml` and the deployment scripts from the queued c
 
 The Build job logs disk usage and prunes unused local Docker images and build cache before and after building, even on failure, to leave space for Component Governance scanning. Pushed ACR images are unaffected. This cleanup is only for disposable hosted agents, not shared self-hosted agents.
 
+The application image installs the Python package versions in the checkout's `uv.lock`, and a stale lock fails the build. The build still downloads packages over the network, and the lock does not pin the base image.
+
 #### Deployment structure
 
 All four deployment stages reuse `infra/pipelines/deploy-stage.yml`, which keeps the variable groups, deployment job, checkout, and `AzureCLI@2` Bash task in one place. Each stage supplies its existing name, dependencies, runtime condition, slot, and phase:
