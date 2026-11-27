@@ -25,6 +25,7 @@ from pyrit.converter import (
     PigpenConverter,
     ROT13Converter,
     SearchReplaceConverter,
+    TapCodeConverter,
     ZalgoConverter,
 )
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
@@ -131,6 +132,7 @@ class EncodingTechnique(ScenarioTechnique):
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
+    TapCode = ("tap_code", set[str]())
     Pigpen = ("pigpen", set[str]())
     Disemvowel = ("disemvowel", set[str]())
     UbbiDubbi = ("ubbi_dubbi", set[str]())
@@ -322,6 +324,7 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
+            ([TapCodeConverter()], "tap_code", "tap_code"),
             ([PigpenConverter()], "pigpen", "pigpen"),
             # "disemvowel": remove all vowels ("disemvoweling"), a comment-moderation technique
             # popularized on the Making Light blog (https://nielsenhayden.com/makinglight/).
