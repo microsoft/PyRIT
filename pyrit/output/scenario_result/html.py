@@ -1,9 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 from pyrit.output.base import PrinterBase
+
+if TYPE_CHECKING:
+    from pyrit.output._json_types import ScenarioFull
 
 # Text-only report template (media pieces render as a placeholder + reference, not inline).
 # Autoescaping is enabled at render time, so transcript values (untrusted) are HTML-escaped.
@@ -186,12 +189,12 @@ class HtmlScenarioReportPrinter(PrinterBase):
     not inline media.
     """
 
-    async def render_async(self, payload: dict[str, Any]) -> str:
+    async def render_async(self, payload: "ScenarioFull") -> str:
         """
         Render a ``full`` report payload as an HTML document.
 
         Args:
-            payload (dict[str, Any]): The structure from ``build_scenario_full_payload``.
+            payload (ScenarioFull): The structure from ``build_scenario_full_payload``.
 
         Returns:
             str: The rendered HTML document.

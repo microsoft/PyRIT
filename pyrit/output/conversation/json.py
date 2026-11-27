@@ -2,9 +2,9 @@
 # Licensed under the MIT license.
 
 import json
-from typing import Any
 
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.output._json_types import MessageInfo, ReasoningPieceInfo, RegularPieceInfo
 from pyrit.output.conversation.base import ConversationPrinterBase
 from pyrit.output.conversation.source import ConversationSource, MemoryConversationSource
 from pyrit.output.score.json import JsonScorePrinter
@@ -52,7 +52,7 @@ class JsonConversationPrinter(ConversationPrinterBase):
         include_scores: bool = False,
         include_reasoning_summaries: bool = False,
         objective_scorer_identifier: ComponentIdentifier | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[MessageInfo]:
         """
         Build the structured (dict) representation of a conversation.
 
@@ -64,7 +64,7 @@ class JsonConversationPrinter(ConversationPrinterBase):
                 this scorer's score on each piece. Defaults to None (every score).
 
         Returns:
-            list[dict[str, Any]]: One dict per message with renderable pieces.
+            list[MessageInfo]: One dict per message with renderable pieces.
         """
         objective_scores = (
             await self._select_objective_scores_async(
@@ -73,7 +73,7 @@ class JsonConversationPrinter(ConversationPrinterBase):
             if include_scores
             else None
         )
-        result: list[dict[str, Any]] = []
+        result: list[MessageInfo] = []
         for message in messages:
             pieces = self._get_renderable_pieces(
                 message=message,
@@ -133,7 +133,7 @@ class JsonConversationPrinter(ConversationPrinterBase):
         piece: MessagePiece,
         include_scores: bool,
         objective_scores: dict[str, Score] | None,
-    ) -> dict[str, Any]:
+    ) -> ReasoningPieceInfo | RegularPieceInfo:
         """
         Build the structured representation of a single message piece.
 
@@ -144,14 +144,14 @@ class JsonConversationPrinter(ConversationPrinterBase):
                 keyed by piece id, or None to attach every score.
 
         Returns:
-            dict[str, Any]: The piece's curated fields (a reasoning summary for
+            ReasoningPieceInfo | RegularPieceInfo: The piece's curated fields (a reasoning summary for
                 reasoning pieces, otherwise the original/converted values and their
                 data types; ``data_type`` repeats ``original_value_data_type``).
         """
         if self._is_reasoning_piece(piece=piece):
             return {"data_type": "reasoning", "reasoning_summary": self._safe_reasoning_summary(piece=piece)}
 
-        data: dict[str, Any] = {
+        data: RegularPieceInfo = {
             "data_type": piece.original_value_data_type,
             "original_value_data_type": piece.original_value_data_type,
             "converted_value_data_type": piece.converted_value_data_type,

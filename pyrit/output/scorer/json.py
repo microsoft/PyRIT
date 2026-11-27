@@ -7,6 +7,7 @@ import math
 from typing import Any
 
 from pyrit.models import ComponentIdentifier, ScorerIdentifier, project_behavioral_identity
+from pyrit.output._json_types import ScorerInfo, ScorerNode
 from pyrit.output.scorer.base import ScorerPrinterBase
 from pyrit.output.sink import Sink
 
@@ -34,7 +35,7 @@ class JsonScorerPrinter(ScorerPrinterBase):
         super().__init__(sink=sink)
         self._indent = indent
 
-    def build(self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None) -> dict[str, Any]:
+    def build(self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None) -> ScorerInfo:
         """
         Build the structured (dict) representation of a scorer.
 
@@ -47,7 +48,7 @@ class JsonScorerPrinter(ScorerPrinterBase):
             harm_category (str | None): The harm category. None for objective scorers.
 
         Returns:
-            dict[str, Any]: The scorer's class name, params, children, and metrics.
+            ScorerInfo: The scorer's class name, params, children, and metrics.
         """
         behavioral_identifier = project_behavioral_identity(scorer_identifier, identifier_type=ScorerIdentifier)
         info = self._build_scorer_info(behavioral_identifier)
@@ -55,8 +56,7 @@ class JsonScorerPrinter(ScorerPrinterBase):
             metrics = self._get_harm_metrics(scorer_identifier=scorer_identifier, harm_category=harm_category)
         else:
             metrics = self._get_objective_metrics(scorer_identifier=scorer_identifier)
-        info["metrics"] = scorer_metrics_to_dict(metrics)
-        return info
+        return {**info, "metrics": scorer_metrics_to_dict(metrics)}
 
     async def render_async(self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None) -> str:
         """
@@ -72,7 +72,7 @@ class JsonScorerPrinter(ScorerPrinterBase):
         payload = self.build(scorer_identifier=scorer_identifier, harm_category=harm_category)
         return json.dumps(payload, indent=self._indent, default=str, ensure_ascii=False)
 
-    def _build_scorer_info(self, scorer_identifier: ComponentIdentifier) -> dict[str, Any]:
+    def _build_scorer_info(self, scorer_identifier: ComponentIdentifier) -> ScorerNode:
         """
         Build the class name / params / children block for a scorer, recursing into children.
 
@@ -80,13 +80,13 @@ class JsonScorerPrinter(ScorerPrinterBase):
             scorer_identifier (ComponentIdentifier): The (behavioral) scorer identifier.
 
         Returns:
-            dict[str, Any]: The scorer's ``class_name``, untruncated ``params`` (when any),
+            ScorerNode: The scorer's ``class_name``, untruncated ``params`` (when any),
                 and nested ``children`` (when any).
         """
-        info: dict[str, Any] = {"class_name": scorer_identifier.class_name}
+        info: ScorerNode = {"class_name": scorer_identifier.class_name}
         if scorer_identifier.params:
             info["params"] = dict(scorer_identifier.params)
-        children: dict[str, Any] = {}
+        children: dict[str, ScorerNode | list[ScorerNode]] = {}
         for child_name, child_value in scorer_identifier.children.items():
             if isinstance(child_value, list):
                 children[child_name] = [self._build_scorer_info(child) for child in child_value]
