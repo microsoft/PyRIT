@@ -8,7 +8,7 @@ from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, ClassVar, Generic, Literal, Self, TypeVar, get_args, get_origin
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Self, TypeVar, assert_never, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
@@ -2162,6 +2162,13 @@ class SeedEntry(Base):
                     f"Could not rebuild simulated conversation seed {self.id} "
                     f"(name={self.name!r}, dataset={self.dataset_name!r}): {exc}"
                 ) from exc
+        match self.seed_type:
+            case "prompt":
+                pass
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(self.seed_type)
+                # Preserve the historical runtime fallback for values outside the declared literal: rebuild a prompt.
         return SeedPrompt(
             id=self.id,
             origin=SeedOrigin(self.origin),

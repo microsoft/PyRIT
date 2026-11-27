@@ -185,6 +185,33 @@ async def test_source_rejects_output_that_is_not_a_single_value() -> None:
     assert "secret-value" not in str(error.value)
 
 
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (CredentialSource(kind=CredentialSourceKind.PROMPT), "the prompt"),
+        (
+            CredentialSource(kind=CredentialSourceKind.ENVIRONMENT, environment_variable="KEY"),
+            "environment variable KEY",
+        ),
+        (CredentialSource(kind=CredentialSourceKind.ANT), "the active ant profile"),
+        (_ANT, "ant profile 'copyrit'"),
+    ],
+)
+def test_description_names_each_source(source: CredentialSource, expected: str) -> None:
+    assert source.description == expected
+
+
+def test_description_of_an_unknown_source_keeps_the_prompt_fallback() -> None:
+    assert CredentialSource(kind="future").description == "the prompt"
+
+
+async def test_unknown_source_keeps_the_ant_fallback() -> None:
+    source = CredentialSource(kind="future", ant_profile="copyrit")
+    with patch("pyrit.cli._target_credentials._read_ant_async", new_callable=AsyncMock, return_value=_SECRET) as ant:
+        assert await read_target_credential_async(source=source, target_name="mine") == _SECRET
+    assert ant.call_args.kwargs == {"profile": "copyrit"}
+
+
 # ============================================================================
 # API client
 # ============================================================================

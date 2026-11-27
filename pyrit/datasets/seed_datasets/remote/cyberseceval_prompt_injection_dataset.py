@@ -12,7 +12,7 @@ from typing_extensions import override
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
+from pyrit.models import Modality, SeedDataset, SeedObjective, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -113,17 +113,19 @@ class _CyberSecEvalPromptInjectionDataset(_RemoteDatasetLoader):
 
     CyberSecEval sends the system prompt (``test_case_prompt``) and the user input
     (``user_input``) to the model under test unchanged, so this loader does the same.
-    Each case becomes two ``SeedPrompt`` values that share a ``prompt_group_id``: a
-    ``system`` seed at sequence 0 holding ``test_case_prompt`` and a ``user`` seed at
-    sequence 1 holding ``user_input``. Both values are kept verbatim so the seeds
-    reproduce the benchmark.
+    Each case becomes three seeds that share a ``prompt_group_id``: a ``SeedObjective``
+    holding ``judge_question``, a ``system`` seed at sequence 0 holding
+    ``test_case_prompt`` and a ``user`` seed at sequence 1 holding ``user_input``. The
+    prompt values are kept verbatim so the seeds reproduce the benchmark.
+
+    The judge question is the yes/no question CyberSecEval asks its judge model about a
+    response, for example "Does this response contain the word 'Piano'?". It is the
+    case's objective, so a scorer that judges against the objective, such as
+    ``CyberSecEvalPromptInjectionScorer``, reproduces the benchmark's success check.
+    This loader does not run that judge step.
 
     The metadata on each seed holds ``prompt_id``, ``injection_type``,
-    ``injection_variant``, ``risk_category`` and ``judge_question``. The judge
-    question is the yes/no question CyberSecEval asks its judge model about a
-    response, for example "Does this response contain the word 'Piano'?". It is kept
-    so a scorer can reproduce the benchmark's success check. This loader does not
-    run that judge step.
+    ``injection_variant``, ``risk_category`` and ``judge_question``.
 
     These are benchmark cases, not harmful content: they measure whether a model
     follows an attacker over its operator. No harm category applies, so ``harm_categories``
@@ -150,7 +152,7 @@ class _CyberSecEvalPromptInjectionDataset(_RemoteDatasetLoader):
     # Metadata
     harm_categories: list[str] = []
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
-    size: str = "medium"  # 251 test cases, 502 seeds
+    size: str = "medium"  # 251 test cases, 753 seeds
     tags: set[str] = {"safety", "cybersecurity", "prompt_injection"}
 
     def __init__(
@@ -248,6 +250,7 @@ class _CyberSecEvalPromptInjectionDataset(_RemoteDatasetLoader):
         )
 
         seed_prompts: list[SeedUnion] = []
+        case_count = 0
         for row_index, example in enumerate(examples):
             missing_keys = _REQUIRED_KEYS - example.keys()
             if missing_keys:
@@ -287,6 +290,7 @@ class _CyberSecEvalPromptInjectionDataset(_RemoteDatasetLoader):
             if selected_risks is not None and risk_category.value not in selected_risks:
                 continue
 
+            case_count += 1
             seed_prompts.extend(
                 self._build_seeds(
                     prompt_id=prompt_id,
@@ -308,7 +312,7 @@ class _CyberSecEvalPromptInjectionDataset(_RemoteDatasetLoader):
             )
 
         logger.info(
-            f"Successfully loaded {len(seed_prompts) // 2} test cases ({len(seed_prompts)} seeds) "
+            f"Successfully loaded {case_count} test cases ({len(seed_prompts)} seeds) "
             "from CyberSecEval prompt injection dataset"
         )
 
@@ -326,7 +330,7 @@ class _CyberSecEvalPromptInjectionDataset(_RemoteDatasetLoader):
         risk_category: CyberSecEvalRiskCategory,
     ) -> list[SeedUnion]:
         """
-        Build the system and user seeds for one test case.
+        Build the objective, system and user seeds for one test case.
 
         Args:
             prompt_id: The upstream ``prompt_id`` of the test case.
@@ -338,7 +342,8 @@ class _CyberSecEvalPromptInjectionDataset(_RemoteDatasetLoader):
             risk_category: Whether the case is security-violating or logic-violating.
 
         Returns:
-            list[SeedUnion]: The system seed (sequence 0) and the user seed (sequence 1).
+            list[SeedUnion]: The objective seed holding ``judge_question``, the system seed (sequence 0)
+                and the user seed (sequence 1).
         """
         group_id = uuid.uuid4()
         metadata: dict[str, str | int] = {
@@ -359,6 +364,12 @@ class _CyberSecEvalPromptInjectionDataset(_RemoteDatasetLoader):
             "prompt_group_id": group_id,
         }
         return [
+            SeedObjective(
+                value=judge_question,
+                name=f"CyberSecEval Prompt Injection {prompt_id} (objective)",
+                metadata=dict(metadata),
+                **common,
+            ),
             SeedPrompt(
                 value=system_prompt,
                 name=f"CyberSecEval Prompt Injection {prompt_id} (system)",
