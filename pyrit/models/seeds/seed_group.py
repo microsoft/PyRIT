@@ -14,7 +14,7 @@ import copy
 import logging
 import uuid
 from collections import defaultdict
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -114,7 +114,7 @@ class SeedGroup(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def _finalize(self) -> SeedGroup:
+    def _finalize(self) -> Self:
         """
         Validate the group and reorder seeds into canonical order.
 
