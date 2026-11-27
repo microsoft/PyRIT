@@ -50,6 +50,14 @@ project:
       severity: ignore
       keys:
         - "https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation"
+    # GitHub serves a persistent 503 for this blob page to automated link
+    # checks (also via curl with a browser user agent), while the repository
+    # root and tree pages return 200 and the contents API confirms the file
+    # exists. Exempt only this one blob URL.
+    - rule: link-resolves
+      severity: ignore
+      keys:
+        - "https://github.com/KutalVolkan/ai_recruiter/blob/main/ai_recruiter.py"
     # NCC Group's site serves a bot-protection challenge that returns 403 to
     # automated link checks (403 even with a browser user agent via curl).
     # The articles load fine in a real browser; exempt only these three posts.
