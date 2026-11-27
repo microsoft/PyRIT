@@ -3,6 +3,7 @@
 
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,10 +22,13 @@ from pyrit.models import (
     Acquisition,
     ComponentIdentifier,
     ContentScorable,
+    ContentWritten,
     Equals,
     MessageScorable,
     Score,
     ScoringExpectation,
+    SurfaceObservationPayload,
+    SurfaceScorable,
     ToolArgumentRequirement,
     ToolCallRequirement,
     ToolEventsObservationPayload,
@@ -39,8 +43,10 @@ from pyrit.models import (
     UndeterminedScoreError,
 )
 from pyrit.score import (
+    FileWriteScorer,
     InMemoryTraceClient,
     InMemoryTraceExporter,
+    LocalFileSurfaceSource,
     NonReplayableObservationError,
     OtelToolCallScorer,
     OtelTraceSource,
@@ -721,11 +727,22 @@ async def test_scorer_rejects_source_that_changes_scope_or_payload_async(tamper:
     client.close()
 
 
-def test_score_observation_rejects_non_tool_event_evidence() -> None:
+async def test_score_observation_rejects_stored_surface_evidence_async(
+    *, tmp_path: Path, sqlite_instance: SQLiteMemory
+) -> None:
+    surface_scorer = FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path))
+    scope = SurfaceScorable(uri="/data/out.txt")
+    surface_score = (
+        await surface_scorer.score_async(
+            scorable=scope, expectation=ScoringExpectation(conditions=(ContentWritten(uri=scope.uri),))
+        )
+    )[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=surface_score.observation_ids))[0]
+    assert isinstance(observation.payload, SurfaceObservationPayload)
     scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=InMemoryTraceClient()))
 
     with pytest.raises(NonReplayableObservationError, match="stored tool-event observation"):
-        scorer._score_observation(observation=object(), evidence=object(), expectation=_expectation("lookup"))  # type: ignore[arg-type]
+        await scorer.score_observation_async(observation=observation, expectation=_expectation("lookup"))
 
 
 def _exhaustive(*names: str) -> ScoringExpectation:
