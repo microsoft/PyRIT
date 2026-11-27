@@ -22,6 +22,7 @@ from pyrit.converter import (
     LeetspeakConverter,
     MorseConverter,
     NatoConverter,
+    RailFenceConverter,
     ROT13Converter,
     SearchReplaceConverter,
     ZalgoConverter,
@@ -130,6 +131,7 @@ class EncodingTechnique(ScenarioTechnique):
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
     ColumnarTransposition = ("columnar_transposition", set[str]())
+    RailFence = ("rail_fence", set[str]())
     Disemvowel = ("disemvowel", set[str]())
     UbbiDubbi = ("ubbi_dubbi", set[str]())
 
@@ -320,6 +322,7 @@ class Encoding(Scenario):
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
             ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
+            ([RailFenceConverter()], "rail_fence", "rail_fence"),
             # "disemvowel": remove all vowels ("disemvoweling"), a comment-moderation technique
             # popularized on the Making Light blog (https://nielsenhayden.com/makinglight/).
             ([SearchReplaceConverter(pattern="[AEIOUaeiou]", replace="")], "disemvowel", "disemvowel"),
