@@ -165,7 +165,10 @@ class TestModelWorkerDtype:
         ],
     )
     def test_model_kwargs_override_the_dtype(self, model_kwargs: dict, expected: dict) -> None:
-        with patch.object(attack_manager_mod.AutoModelForCausalLM, "from_pretrained") as from_pretrained:
+        with (
+            patch.object(attack_manager_mod.AutoModelForCausalLM, "from_pretrained") as from_pretrained,
+            patch.object(attack_manager_mod.mp, "JoinableQueue", side_effect=[MagicMock(), MagicMock()]),
+        ):
             attack_manager_mod.ModelWorker(
                 model_path="m", token=None, model_kwargs=dict(model_kwargs), tokenizer=MagicMock(), device="cpu"
             )
