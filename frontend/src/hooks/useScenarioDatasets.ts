@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -14,15 +14,26 @@ interface DatasetSnapshot {
   error: string | null
 }
 
-/** Page-scoped metadata cache with an explicit, missing-only load action. */
+interface DatasetLoads {
+  generation: string
+  /** One entry per request still running, with the dataset names it was started for. */
+  pending: Array<{ id: number; names: string[] }>
+  /** The latest failure for each dataset name, cleared when a new load starts for it. */
+  errors: Record<string, string>
+}
+
+const NO_LOADING_NAMES: readonly string[] = []
+const NO_LOAD_ERRORS: Readonly<Record<string, string>> = {}
+
+/** Page-scoped metadata cache with a missing-only load action that tracks each dataset name. */
 export function useScenarioDatasets(scenarioName: string, enabled = true) {
   const runtime = useRuntime()
   const [snapshot, setSnapshot] = useState<DatasetSnapshot | null>(null)
   const [reloadCount, setReloadCount] = useState(0)
-  const [operation, setOperation] = useState<{ generation: string; busy: boolean; error: string | null } | null>(null)
+  const [loads, setLoads] = useState<DatasetLoads | null>(null)
   const generationRef = useRef(runtime.generation)
   const mountedRef = useRef(true)
-  const pendingRef = useRef<Promise<void> | null>(null)
+  const nextLoadId = useRef(0)
   const listingRef = useRef<{
     key: string
     controller: AbortController
@@ -38,27 +49,44 @@ export function useScenarioDatasets(scenarioName: string, enabled = true) {
     return () => { mountedRef.current = false }
   }, [])
 
-  const loadSelected = (scenarioName: string, request: ScenarioRunSizeEstimateRequest): Promise<void> => {
-    if (pendingRef.current) return pendingRef.current
+  /**
+   * Load the selection's missing datasets on behalf of `names`. Every call starts its own request,
+   * so a dataset selected while another load runs still loads; the backend takes one writer per
+   * dataset and rechecks storage, so overlapping requests fetch each dataset once.
+   */
+  const loadSelected = useCallback(async (
+    loadScenarioName: string, request: ScenarioRunSizeEstimateRequest, names: readonly string[],
+  ): Promise<void> => {
     const generation = runtime.generation
-    setOperation({ generation, busy: true, error: null })
-    const task = async (): Promise<void> => {
-      let error: string | null = null
-      try {
-        await scenariosApi.loadDatasets(scenarioName, request)
-      } catch (err: unknown) {
-        error = toApiError(err).detail
-      } finally {
-        pendingRef.current = null
-        if (mountedRef.current && generationRef.current === generation) {
-          setOperation({ generation, busy: false, error })
-          reload()
-        }
+    const id = ++nextLoadId.current
+    setLoads((previous) => {
+      const current = previous?.generation === generation ? previous : { generation, pending: [], errors: {} }
+      return {
+        generation,
+        pending: [...current.pending, { id, names: [...names] }],
+        errors: Object.fromEntries(Object.entries(current.errors).filter(([name]) => !names.includes(name))),
       }
+    })
+    const failed: Record<string, string> = {}
+    try {
+      await scenariosApi.loadDatasets(loadScenarioName, request)
+    } catch (err: unknown) {
+      const detail = toApiError(err).detail
+      for (const name of names) failed[name] = detail
     }
-    pendingRef.current = task()
-    return pendingRef.current
-  }
+    if (!mountedRef.current || generationRef.current !== generation) return
+    setLoads((previous) => previous?.generation !== generation ? previous : {
+      generation,
+      pending: previous.pending.filter((load) => load.id !== id),
+      errors: { ...previous.errors, ...failed },
+    })
+    reload()
+  }, [runtime.generation, reload])
+  const currentLoads = loads?.generation === runtime.generation ? loads : null
+  const loadingNames = useMemo(
+    () => currentLoads ? [...new Set(currentLoads.pending.flatMap((load) => load.names))] : NO_LOADING_NAMES,
+    [currentLoads],
+  )
 
   useEffect(() => {
     if (!ready) {
@@ -106,7 +134,9 @@ export function useScenarioDatasets(scenarioName: string, enabled = true) {
     loading: ready && current === null,
     reload,
     loadSelected,
-    preparing: operation?.generation === runtime.generation && operation.busy,
-    loadError: operation?.generation === runtime.generation ? operation.error : null,
+    /** Dataset names with a load still running in this runtime generation. */
+    loadingNames,
+    /** The failure of the latest finished load for each dataset name, in this runtime generation. */
+    loadErrors: currentLoads?.errors ?? NO_LOAD_ERRORS,
   }
 }

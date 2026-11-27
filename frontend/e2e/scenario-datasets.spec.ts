@@ -221,21 +221,17 @@ for (const fixed of [false, true]) {
       await page.goto(presetScannerRoutePath(scenarioName, name))
       await page.getByTestId('scenario-target-select').selectOption(TARGET)
       const launch = page.getByRole('button', { name: 'Launch scan', exact: true })
+      // Opening the scan loads its missing dataset on its own, once, while Launch stays usable.
+      await expect.poll(async () => (await control(request, 'status')).provider_waiting).toBe(true)
+      const datasets = page.getByRole('region', { name: 'Datasets', exact: true })
+      await expect(datasets.getByRole('status')).toHaveText('Loading datasets...')
+      await expect(datasets.getByRole('button', { name: /Load datasets/ })).toHaveCount(0)
       await expect(launch).toBeEnabled()
       const opened = await control(request, 'status')
-      expect(opened.preparations).toBe(0)
-      expect(opened.provider_calls).toBe(0)
+      expect(opened.preparations).toBe(1)
+      expect(opened.provider_calls).toBe(1)
       expect(opened.stored.some((item) => item.name === 'acceptance_background')).toBe(false)
-      if (!fixed) {
-        // Opening the scan doesn't load anything; an explicit Load runs while Launch stays usable.
-        const load = page.getByRole('button', { name: 'Load datasets', exact: true })
-        await expect(load).toBeEnabled()
-        await load.click()
-        await expect.poll(async () => (await control(request, 'status')).provider_waiting).toBe(true)
-        await expect(page.getByRole('button', { name: 'Loading datasets...', exact: true })).toBeDisabled()
-        await expect(launch).toBeEnabled()
-        await capture(page, testInfo, 'explicit-load-provider-held', launch)
-      }
+      await capture(page, testInfo, 'automatic-load-provider-held', launch)
       await page.getByRole('spinbutton', { name: 'Max concurrency', exact: true }).fill('2')
       const started = await launchScan(page)
       const launchRequest: RunScenarioRequest = started.request().postDataJSON()
@@ -245,9 +241,9 @@ for (const fixed of [false, true]) {
       expect(run.dataset_preparation_pending).toBe(true)
       await expect(page).toHaveURL(new RegExp(`${scenarioRunRoutePath(run.scenario_result_id)}$`))
       await expect(page.getByTestId('run-state-badge')).toHaveText('Preparing datasets')
-      // With a Load in flight, the run waits for that writer and then finds the dataset stored, rather than fetching it again.
-      if (fixed) await expect.poll(async () => (await control(request, 'status')).provider_waiting).toBe(true)
-      else await expect.poll(async () => (await control(request, 'status')).preparations).toBe(2)
+      // With the automatic load in flight, the run waits for that writer and then finds the dataset stored,
+      // rather than fetching it again.
+      await expect.poll(async () => (await control(request, 'status')).preparations).toBe(2)
       const held = await control(request, 'status')
       expect(held.provider_calls).toBe(1)
       expect(held.sent).toEqual([])
@@ -262,7 +258,7 @@ for (const fixed of [false, true]) {
       await expect(page.getByTestId('run-state-badge')).toHaveText('Completed')
       const after = await control(request, 'status')
       expect(after.provider_calls).toBe(1)
-      expect(after.preparations).toBe(fixed ? 1 : 2)
+      expect(after.preparations).toBe(2)
       expect(after.stored).toContainEqual({ name: 'acceptance_background', count: 1 })
       expect(after.sent).toHaveLength(1)
       await attachJson(testInfo, 'background-preparation', { launchRequest, run, finished, after })
@@ -308,6 +304,14 @@ test('keeps a run whose dataset preparation failed out of Resume', async ({ page
   try {
     await page.goto(presetScannerRoutePath(scenarioName, name))
     await page.getByTestId('scenario-target-select').selectOption(TARGET)
+    // The page's automatic load fails first, shows its error with Retry, and leaves Launch usable.
+    await expect.poll(async () => (await control(request, 'status')).provider_waiting).toBe(true)
+    await control(request, 'release_provider')
+    const datasets = page.getByRole('region', { name: 'Datasets', exact: true })
+    await expect(datasets.getByRole('alert').filter({ hasText: 'Synthetic provider failed.' })).toBeVisible()
+    await expect(datasets.getByRole('button', { name: 'Retry loading acceptance_background', exact: true })).toBeVisible()
+    await capture(page, testInfo, 'automatic-load-failed', datasets)
+    await control(request, 'hold_provider')
     const started = await launchScan(page)
     const run: ScenarioRunSummary = await started.json()
     expect(run.dataset_preparation_pending).toBe(true)
@@ -327,7 +331,8 @@ test('keeps a run whose dataset preparation failed out of Resume', async ({ page
     await expect(page.getByTestId(`scenario-history-resume-${run.scenario_result_id}`)).toHaveCount(0)
     await capture(page, testInfo, 'failed-preparation-history', row)
     const after = await control(request, 'status')
-    expect(after.provider_calls).toBe(1)
+    // One fetch for the automatic load and one for the run's own preparation; both failed.
+    expect(after.provider_calls).toBe(2)
     expect(after.sent).toEqual([])
     expect(after.stored.some((item) => item.name === 'acceptance_background')).toBe(false)
   } finally {

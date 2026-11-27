@@ -8,6 +8,7 @@ import {
   type ScenarioConfigFields,
   type ScenarioConfigFormState,
 } from '@/components/Scenarios/scenarioConfigForm'
+import { withScanLevelLoading } from '@/components/Scenarios/datasetPresentation'
 import { untouchedPresetScenarioParams } from '@/components/Scenarios/scenarioPresetSeed'
 import type { RegisteredScenario, ScenarioPreset } from '@/types'
 import { validateRegistryName } from '@/utils/registryName'
@@ -65,7 +66,7 @@ export function presetToConfigState(
     includeBaseline: scenario.baseline_policy === 'forbidden'
       ? false
       : preset.include_baseline ?? defaults.includeBaseline,
-    datasets: preset.datasets ?? defaults.datasets,
+    datasets: preset.datasets ? withScanLevelLoading(preset.datasets) : defaults.datasets,
     scenarioParamValues: getInitialFormValues(
       dynamicScenarioParameters(scenario),
       preset.scenario_params ?? null,

@@ -1,16 +1,15 @@
-import type { ScenarioDatasetOptions, ScenarioDatasetRequest, ScenarioDatasetSettings } from '@/types'
+import type { ScenarioDatasetRequest, ScenarioDatasetSettings } from '@/types'
 
-import { datasetNameWithOrigin, datasetPolicies, datasetTotalLimit } from './datasetPresentation'
+import {
+  datasetCanRefresh, datasetLoadingChoice, datasetNameWithOrigin, datasetTotalLimit, withScanLevelLoading,
+} from './datasetPresentation'
 
 const SETTINGS: ScenarioDatasetSettings = {
   sources: [
-    { name: 'stored', max_size: 5, fetch: 'never', configured_provider: false },
+    { name: 'stored', max_size: 5, fetch: 'if_missing', configured_provider: false },
     { name: 'fresh', max_size: 5, fetch: 'always', configured_provider: true },
   ],
   max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {},
-}
-const OPTIONS: ScenarioDatasetOptions = {
-  mode: 'any', allowed_names: [], per_dataset_limit: true, total_limit: true, supports_overrides: true, filters: true,
 }
 
 describe('datasetTotalLimit', () => {
@@ -40,43 +39,49 @@ describe('datasetNameWithOrigin', () => {
   })
 })
 
-describe('datasetPolicies', () => {
-  it('uses effective source policies rather than the default global policy', () => {
-    expect(datasetPolicies({}, SETTINGS, SETTINGS, OPTIONS)).toEqual([
-      { name: 'stored', fetch: 'never' }, { name: 'fresh', fetch: 'always' },
-    ])
-  })
-
-  it('keeps explicit source policies when applying a global request', () => {
-    expect(datasetPolicies({
-      fetch: 'always', sources: [{ name: 'stored', fetch: 'never' }, { name: 'new' }],
-    }, SETTINGS, SETTINGS, OPTIONS)).toEqual([
-      { name: 'stored', fetch: 'never' }, { name: 'new', fetch: 'always' },
-    ])
-  })
-
-  it('does not overwrite protected policies with global draft settings', () => {
-    expect(datasetPolicies({ fetch: 'always' }, SETTINGS, SETTINGS, {
-      ...OPTIONS, source_settings: false,
-    })).toEqual([{ name: 'stored', fetch: 'never' }, { name: 'fresh', fetch: 'always' }])
-  })
-
-  it('shows a permitted global draft instead of a stale protected-source projection', () => {
-    const defaults: ScenarioDatasetSettings = {
-      ...SETTINGS,
-      sources: [{ name: 'stored', max_size: 5, fetch: 'if_missing', configured_provider: false }],
-    }
-    expect(datasetPolicies({ fetch: 'always' }, defaults, defaults, {
-      ...OPTIONS, source_settings: false,
-    })).toEqual([{ name: 'stored', fetch: 'always' }])
-    expect(datasetPolicies({ fetch: 'if_missing' }, defaults, defaults, {
-      ...OPTIONS, source_settings: false,
-    })).toEqual([{ name: 'stored', fetch: 'if_missing' }])
-  })
-
-  it('uses retained effective policies and treats default as inheritance', () => {
-    expect(datasetPolicies({
-      fetch: 'always', sources: [{ name: 'stored', fetch: 'default' }],
-    }, SETTINGS, SETTINGS, OPTIONS)).toEqual([{ name: 'stored', fetch: 'never' }])
+describe('datasetLoadingChoice', () => {
+  it.each<[ScenarioDatasetRequest, 'if_missing' | 'always']>([
+    [{}, 'if_missing'],
+    [{ fetch: null }, 'if_missing'],
+    [{ fetch: 'default' }, 'if_missing'],
+    [{ fetch: 'never' }, 'if_missing'],
+    [{ fetch: 'if_missing' }, 'if_missing'],
+    [{ sources: [{ name: 'fresh', fetch: 'always' }] }, 'if_missing'],
+    [{ fetch: 'always' }, 'always'],
+  ])('shows %j as %s', (request: ScenarioDatasetRequest, expected: 'if_missing' | 'always') => {
+    expect(datasetLoadingChoice(request)).toBe(expected)
   })
 })
+
+describe('withScanLevelLoading', () => {
+  it('drops per-source policies and reads never as Cached, keeping every other setting', () => {
+    expect(withScanLevelLoading({
+      fetch: 'never', max_total: 3, filters: { harm_categories: ['hate'] },
+      sources: [{ name: 'stored', fetch: 'never', max_size: 2 }, { name: 'fresh', fetch: 'always' }],
+    })).toEqual({
+      fetch: 'if_missing', max_total: 3, filters: { harm_categories: ['hate'] },
+      sources: [{ name: 'stored', max_size: 2 }, { name: 'fresh' }],
+    })
+  })
+
+  it.each<ScenarioDatasetRequest>([
+    {}, { fetch: 'always' }, { fetch: 'if_missing' }, { fetch: null, sources: null }, { fetch: 'default' },
+  ])('keeps %j unchanged', (request: ScenarioDatasetRequest) => {
+    expect(withScanLevelLoading(request)).toEqual(request)
+  })
+})
+
+describe('datasetCanRefresh', () => {
+  const dataset = {
+    name: 'sample', selection_key: 'dataset:named:sample', loaded: true, provider_available: false,
+    logical_examples: 1, seed_pieces: 1, objectives: 1, modalities: [], harm_categories: [],
+    has_unlabeled_harm_categories: false,
+  }
+  it('needs a registered or configured provider', () => {
+    expect(datasetCanRefresh(dataset, SETTINGS.sources[0])).toBe(false)
+    expect(datasetCanRefresh(undefined, undefined)).toBe(false)
+    expect(datasetCanRefresh({ ...dataset, provider_available: true }, SETTINGS.sources[0])).toBe(true)
+    expect(datasetCanRefresh(undefined, SETTINGS.sources[1])).toBe(true)
+  })
+})
+

@@ -47,32 +47,33 @@ export function datasetTotalLimit(
     ? request.max_total : defaults.max_total
 }
 
-function explicitDatasetPolicy(value: ScenarioDatasetRequest['fetch']): DatasetFetchPolicy | undefined {
-  return value === 'never' || value === 'if_missing' || value === 'always' ? value : undefined
+/** The scanner's two loading choices: Cached (`if_missing`) unless the scan asks to regenerate (`always`). */
+export function datasetLoadingChoice(request: ScenarioDatasetRequest): Exclude<DatasetFetchPolicy, 'never'> {
+  return request.fetch === 'always' ? 'always' : 'if_missing'
 }
 
-export function canEditDatasetLoading(effective: ScenarioDatasetSettings, options: ScenarioDatasetOptions): boolean {
-  return options.supports_overrides && (options.source_settings !== false
-    || effective.sources.every((source) => source.fetch === effective.fetch))
+/**
+ * A saved dataset request as the scanner sends it: only the scan-level policy. The deprecated
+ * per-source `fetch` is dropped and `never` reads as Cached, so the form shows what it launches.
+ */
+export function withScanLevelLoading(request: ScenarioDatasetRequest): ScenarioDatasetRequest {
+  const result: ScenarioDatasetRequest = { ...request }
+  if (request.sources) {
+    result.sources = request.sources.map((source) => {
+      const kept: ScenarioDatasetSourceInput = { ...source }
+      delete kept.fetch
+      return kept
+    })
+  }
+  if (request.fetch === 'never') result.fetch = 'if_missing'
+  return result
 }
 
-export function datasetPolicies(
-  request: ScenarioDatasetRequest, defaults: ScenarioDatasetSettings,
-  effective: ScenarioDatasetSettings, options: ScenarioDatasetOptions,
-): Array<{ name: string; fetch: DatasetFetchPolicy }> {
-  const selected: ScenarioDatasetSourceInput[] = request.sources ?? defaults.sources.map((source) => ({ name: source.name }))
-  const canEditSources = options.supports_overrides && options.source_settings !== false
-  const globalDraft = canEditDatasetLoading(effective, options) ? explicitDatasetPolicy(request.fetch) : undefined
-  return selected.map((source) => {
-    const settings = effective.sources.find((item) => item.name === source.name)
-      ?? defaults.sources.find((item) => item.name === source.name)
-    return {
-      name: source.name,
-      fetch: canEditSources ? explicitDatasetPolicy(source.fetch) ?? settings?.fetch
-        ?? explicitDatasetPolicy(request.fetch) ?? defaults.fetch
-        : globalDraft ?? settings?.fetch ?? defaults.fetch,
-    }
-  })
+/** Whether a dataset has something to download a fresh copy from: a registered or configured provider. */
+export function datasetCanRefresh(
+  dataset: DatasetInfo | undefined, settings: ScenarioDatasetSourceSettings | undefined,
+): boolean {
+  return Boolean(dataset?.provider_available || settings?.configured_provider)
 }
 
 export function parseCaseLimit(text: string): number | null {

@@ -29,7 +29,7 @@ export const useScenarioDatasetTableStyles = makeStyles({
   policyTrack: {
     position: 'relative',
     display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
+    gridTemplateColumns: 'repeat(2, 1fr)',
     width: 'fit-content',
     maxWidth: '100%',
     padding: tokens.spacingHorizontalXS,
@@ -41,7 +41,7 @@ export const useScenarioDatasetTableStyles = makeStyles({
     top: tokens.spacingVerticalXS,
     bottom: tokens.spacingVerticalXS,
     left: tokens.spacingHorizontalXS,
-    width: `calc((100% - ${tokens.spacingHorizontalXS} * 2) / 3)`,
+    width: `calc((100% - ${tokens.spacingHorizontalXS} * 2) / 2)`,
     borderRadius: tokens.borderRadiusCircular,
     backgroundColor: tokens.colorNeutralBackground1,
     boxShadow: tokens.shadow2,
@@ -51,8 +51,7 @@ export const useScenarioDatasetTableStyles = makeStyles({
     transitionTimingFunction: tokens.curveEasyEase,
     '@media (prefers-reduced-motion: reduce)': { transitionDuration: '0ms' },
   },
-  policyThumbMiddle: { transform: 'translateX(100%)' },
-  policyThumbEnd: { transform: 'translateX(200%)' },
+  policyThumbEnd: { transform: 'translateX(100%)' },
   policyOption: {
     ...mobileTouchTarget,
     position: 'relative',

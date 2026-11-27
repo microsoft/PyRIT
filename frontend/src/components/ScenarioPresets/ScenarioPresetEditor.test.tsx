@@ -1386,3 +1386,34 @@ describe('ScenarioPresetEditor compatible-only datasets', () => {
     expect(screen.queryByRole('radiogroup', { name: 'Dataset loading' })).not.toBeInTheDocument()
   })
 })
+
+describe('ScenarioPresetEditor dataset loading', () => {
+  it('shows the two-stop loading choice, saves only the scan-level policy, and never loads datasets', async () => {
+    const user = userEvent.setup()
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValueOnce({ items: [{
+      name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: false, provider_available: true,
+      logical_examples: null, seed_pieces: null, objectives: null, modalities: [], harm_categories: [],
+      has_unlabeled_harm_categories: false,
+    }] })
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, datasets: { fetch: 'never', sources: [{ name: 'harmbench', fetch: 'always' }] } },
+      version: 'v1',
+      issues: [],
+    })
+    renderEdit()
+
+    const group = await screen.findByRole('radiogroup', { name: 'Dataset loading' })
+    expect(within(group).getAllByRole('radio')).toHaveLength(2)
+    expect(within(group).getByRole('radio', { name: 'Cached' })).toBeChecked()
+    await user.click(within(group).getByRole('radio', { name: 'Regenerate' }))
+    await user.click(screen.getByRole('button', { name: 'Save preset' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
+      STORED_PRESET.name,
+      expect.objectContaining({ datasets: { fetch: 'always', sources: [{ name: 'harmbench' }] } }),
+      'v1',
+    ))
+    expect(scenariosApi.loadDatasets).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: /Load datasets/ })).not.toBeInTheDocument()
+  })
+})

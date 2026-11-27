@@ -238,6 +238,7 @@ def _install_controls(
     from fastapi import HTTPException
 
     from pyrit.backend.main import app
+    from pyrit.backend.models import DatasetInfo
     from pyrit.backend.services import DatasetService, ScenarioService
     from pyrit.common import path as paths
     from pyrit.datasets import SeedDatasetProvider
@@ -273,15 +274,15 @@ def _install_controls(
             return "acceptance_background"
 
         async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
-            nonlocal provider_calls, provider_waiting, fail_provider
+            nonlocal provider_calls, provider_waiting
             from pyrit.models import SeedDataset, SeedObjective
 
             provider_calls += 1
             provider_waiting = True
             try:
                 await asyncio.wait_for(provider_gate.wait(), timeout=120)
+                # Every fetch fails until reset, so the page's automatic load and the run both see the failure.
                 if fail_provider:
-                    fail_provider = False
                     raise ValueError("Synthetic provider failed.")
             finally:
                 provider_waiting = False
@@ -393,7 +394,18 @@ def _install_controls(
         if fail_metadata:
             fail_metadata = False
             raise HTTPException(status_code=503, detail="Deliberate offline dataset metadata failure.")
-        return await original_metadata(self, loaded_only=loaded_only)
+        listing = await original_metadata(self, loaded_only=loaded_only)
+        if loaded_only or any(item.name == "acceptance_background" for item in listing.items):
+            return listing
+        # Provider discovery is disabled, so list the held source the way the catalog lists a registered provider
+        # that isn't stored yet. The scanner loads such a selected dataset automatically.
+        background = DatasetInfo(
+            name="acceptance_background",
+            selection_key="dataset:named:acceptance_background",
+            loaded=False,
+            provider_available=True,
+        )
+        return listing.model_copy(update={"items": [*listing.items, background]})
 
     async def prepare_async(self: DatasetConfiguration, *, fetch: DatasetFetchPolicy | None = None) -> None:
         nonlocal preparations, preparations_active

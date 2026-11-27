@@ -10,12 +10,15 @@ import { DismissRegular } from '@fluentui/react-icons'
 import { MODALITY_LABELS } from '@/components/Config/targetFilters'
 import HelpField from '@/components/HelpField'
 import type {
-  DatasetInfo, DatasetFetchPolicy, ScenarioDatasetLimit, ScenarioDatasetOptions, ScenarioDatasetRequest,
+  DatasetInfo, ScenarioDatasetLimit, ScenarioDatasetOptions, ScenarioDatasetRequest,
   ScenarioDatasetSettings, ScenarioDatasetSourceInput,
 } from '@/types'
 
 import DatasetLimitControl from './DatasetLimitControl'
-import { canEditDatasetLoading, datasetChoices, datasetFacts, datasetNameWithOrigin, datasetPolicies, datasetSize, datasetTotalLimit, parseCaseLimit } from './datasetPresentation'
+import {
+  datasetCanRefresh, datasetChoices, datasetFacts, datasetLoadingChoice, datasetNameWithOrigin, datasetSize,
+  datasetTotalLimit, parseCaseLimit,
+} from './datasetPresentation'
 import { useScenarioDatasetTableStyles } from './ScenarioDatasetTable.styles'
 import { fluentRef } from '@/utils/fluentRef'
 
@@ -28,10 +31,12 @@ interface ScenarioDatasetTableProps {
   disabled: boolean
   loading: boolean
   metadataError: string | null
-  preparing?: boolean
-  loadError?: string | null
-  loadEnabled?: boolean
-  onLoad?: () => void
+  /** Selected dataset names whose automatic load is still running. */
+  loadingNames?: readonly string[]
+  /** The failure of each dataset name's latest load. */
+  loadErrors?: Readonly<Record<string, string>>
+  /** Load the named datasets again after a failure. Without it, no Retry is offered. */
+  onRetryLoad?: (names: string[]) => void
   /** The choices are stored datasets the scenario already checked, so load, reset and loading rules don't apply. */
   compatibleOnly?: boolean
   /** Marks the picker required until the first dataset is chosen. */
@@ -46,7 +51,7 @@ interface ScenarioDatasetTableProps {
 
 export default function ScenarioDatasetTable({
   request, defaults, effective, options, datasets, disabled, loading, metadataError,
-  preparing = false, loadError, loadEnabled = false, onLoad, compatibleOnly = false,
+  loadingNames = [], loadErrors = {}, onRetryLoad, compatibleOnly = false,
   required = false, selectionError = null, pickerRef,
   onReload, onChange, onValidationChange,
 }: ScenarioDatasetTableProps) {
@@ -139,22 +144,19 @@ export default function ScenarioDatasetTable({
   const validationError = errors[0] ?? null
   useEffect(() => { onValidationChange(validationError) }, [validationError, onValidationChange])
 
-  const policies = datasetPolicies(request, defaults, effective, options).map((source) => source.fetch)
-  const hasMissingRefresh = selected.some((source, index) => policies[index] === 'always'
-    && !datasets.some((item) => item.name === source.name && item.loaded))
-  const mixedPolicies = policies.some((policy) => policy !== policies[0])
-  const canSetLoading = canEditDatasetLoading(effective, options)
-  const changeLoading = (policy: DatasetFetchPolicy): void => onChange({
-    ...request, fetch: policy,
-    ...(canEditSources ? { sources: selected.map((source) => ({ ...source, fetch: policy })) } : {}),
-  })
-  const loadingDisabledReason = !options.supports_overrides
-    ? 'Loading rules are fixed by this scenario.'
-    : !canSetLoading ? 'This scenario uses source-specific loading rules.' : ''
-  const loadingHint = mixedPolicies ? 'Mixed loading policies'
-    : policies[0] === 'always' ? 'Refresh datasets for each new scan'
-    : policies[0] === 'never' ? 'Only use datasets already in memory'
-    : 'Load missing datasets'
+  const canRefresh = (name: string): boolean =>
+    datasetCanRefresh(datasets.find((item) => item.name === name), settingsFor(name))
+  // Compatible choices are stored datasets that were already checked, so there is nothing to load or refresh.
+  const showLoadingChoice = options.supports_overrides && !compatibleOnly
+    && selected.some((source) => canRefresh(source.name))
+  const loadingChoice = datasetLoadingChoice(request)
+  const loadingSelected = selected.some((source) => loadingNames.includes(source.name))
+  // One message per distinct failure, so each Retry re-arms only the datasets that failed together.
+  const failedLoads = new Map<string, string[]>()
+  for (const source of selected) {
+    const error = loadErrors[source.name]
+    if (error !== undefined) failedLoads.set(error, [...(failedLoads.get(error) ?? []), source.name])
+  }
   const picker = <Combobox ref={fluentRef(pickerRef)} aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
     placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]}
     disabled={busy || (compatibleOnly && Boolean(metadataError))}
@@ -176,22 +178,22 @@ export default function ScenarioDatasetTable({
   return (
     <div className={styles.root}>
       {compatibleOnly && loading && <Spinner size="tiny" label="Loading compatible datasets..." />}
-      {selected.length > 0 && (preparing || (loading && !compatibleOnly)) && <Text role="status" size={200}
+      {selected.length > 0 && (loadingSelected || (loading && !compatibleOnly)) && <Text role="status" size={200}
         className={styles.loadingHint}>
-        {preparing ? 'Loading datasets...' : 'Checking dataset details...'}
+        {loadingSelected ? 'Loading datasets...' : 'Checking dataset details...'}
       </Text>}
-      {!compatibleOnly && !allLoaded && selected.length > 0 && <div className={styles.toolbar}>
-        {onLoad && <Button appearance="primary" className={styles.button}
-          disabled={busy || preparing || loading || !loadEnabled || hasMissingRefresh || requiresImport
-            || metadataError !== null || validationError !== null}
-          onClick={onLoad}>{preparing ? 'Loading datasets...' : 'Load datasets'}</Button>}
+      {!compatibleOnly && !allLoaded && selected.length > 0 && (requiresImport || metadataError) && <div className={styles.toolbar}>
         {requiresImport && <Text size={200}>Import the missing datasets into PyRIT first.</Text>}
-        {hasMissingRefresh && <Text size={200}>
-          Datasets set to refresh will load when the scan starts. Change the loading policy to load them now.
-        </Text>}
         {metadataError && <Button className={styles.button} disabled={busy} onClick={onReload}>Retry checking datasets</Button>}
       </div>}
-      {[metadataError, loadError, ...errors].filter((error): error is string => Boolean(error))
+      {[...failedLoads].map(([error, names]) => <MessageBar key={`load:${error}`} intent="error">
+        <MessageBarBody role="alert">{error}</MessageBarBody>
+        {onRetryLoad && <MessageBarActions>
+          <Button size="small" className={styles.button} disabled={disabled}
+            aria-label={`Retry loading ${names.join(', ')}`} onClick={() => onRetryLoad(names)}>Retry</Button>
+        </MessageBarActions>}
+      </MessageBar>)}
+      {[metadataError, ...errors].filter((error): error is string => Boolean(error))
         .map((error) => <MessageBar key={error} intent="error">
           <MessageBarBody role="alert">{error}</MessageBarBody>
           {compatibleOnly && error === metadataError && <MessageBarActions>
@@ -217,12 +219,15 @@ export default function ScenarioDatasetTable({
               ? settingsFor(source.name)?.max_size ?? sourceDefault : sourceDefault
             const cap = typeof source.max_size === 'number' || source.max_size === 'all' ? source.max_size : inherited
             const displayedCap = !canLimit || total === 'all' ? cap : cap === 'all' ? total : Math.min(cap, total)
-            const size = !metadata && (loading || preparing)
+            const rowLoading = loadingNames.includes(source.name)
+            const size = !metadata && (loading || rowLoading)
               ? 'Loading...' : datasetSize(metadata, canLimit ? displayedCap : 'all')
             return <TableRow key={source.name}>
               <TableCell><Text className={styles.datasetName} weight="semibold">
                 {datasetNameWithOrigin(source.name, metadata)}
-              </Text></TableCell>
+              </Text>
+              {showLoadingChoice && loadingChoice === 'always' && metadata?.loaded && !canRefresh(source.name)
+                && <Text block size={200} className={styles.loadingHint}>Uses stored copy</Text>}</TableCell>
               <TableCell>{canLimit ? <DatasetLimitControl label={`${source.name} objective limit`}
                 showLabel={false} text={size} value={source.max_size} defaultValue={inherited}
                 draft={drafts[`source:${source.name}`]} disabled={busy}
@@ -250,7 +255,7 @@ export default function ScenarioDatasetTable({
                 </Tooltip>}
                 {metadata.harm_categories.length === 0 && metadata.modalities.length === 0 && <Text size={200}>No metadata labels.</Text>}
               </div> : <Text size={200}>
-                {loading || preparing ? 'Loading...' : metadataError ? 'Details unavailable'
+                {loading || rowLoading ? 'Loading...' : metadataError ? 'Details unavailable'
                   : compatibleOnly ? 'Not in the compatible list' : 'Not stored in memory'}
               </Text>}</TableCell>
               <TableCell className={styles.actionsCell}>
@@ -287,32 +292,31 @@ export default function ScenarioDatasetTable({
       {(selected.length > 0 || canSelect) && <Divider />}
       {canFilter && emptySelections.length > 0 && <Button className={styles.button} disabled={busy}
         onClick={() => setEmptySelections([])}>Restore metadata selection</Button>}
-      {/* Compatible choices are stored datasets that were already checked, so there is nothing to load. */}
-      {!compatibleOnly && selected.length > 0 && <Tooltip content={loadingDisabledReason || 'Refresh replaces the full stored dataset for a new scan.'} relationship="description">
+      {showLoadingChoice && <Tooltip content="Regenerate replaces the full stored dataset for a new scan." relationship="description">
         <div className={styles.loadingRule}>
           <Text id={`${loadingId}-label`} className={styles.loadingLabel}>Dataset loading</Text>
           <div className={styles.loadingControl}>
             <RadioGroup aria-labelledby={`${loadingId}-label`} aria-describedby={`${loadingId}-hint`}
-              value={mixedPolicies ? '' : (policies[0] ?? '')} layout="horizontal"
-              className={styles.policyTrack}
-              disabled={busy || !canSetLoading} onChange={(_, data) => {
-                if (data.value === 'never' || data.value === 'if_missing' || data.value === 'always') changeLoading(data.value)
+              value={loadingChoice} layout="horizontal" className={styles.policyTrack}
+              disabled={busy} onChange={(_, data) => {
+                // Only the scan-level policy is written; stored datasets with nothing to refresh keep their copy.
+                if (data.value === 'if_missing' || data.value === 'always') onChange({ ...request, fetch: data.value })
               }}>
-              {!mixedPolicies && <span aria-hidden className={mergeClasses(styles.policyThumb,
-                policies[0] === 'if_missing' && styles.policyThumbMiddle,
-                policies[0] === 'always' && styles.policyThumbEnd)} />}
-              <Radio value="never" label="Stored only" className={styles.policyOption}
+              <span aria-hidden className={mergeClasses(styles.policyThumb,
+                loadingChoice === 'always' && styles.policyThumbEnd)} />
+              <Radio value="if_missing" label="Cached" className={styles.policyOption}
                 indicator={{ className: styles.policyIndicator }} input={{ className: styles.policyInput }} />
-              <Radio value="if_missing" label="Load missing" className={styles.policyOption}
-                indicator={{ className: styles.policyIndicator }} input={{ className: styles.policyInput }} />
-              <Radio value="always" label="Refresh" className={styles.policyOption}
+              <Radio value="always" label="Regenerate" className={styles.policyOption}
                 indicator={{ className: styles.policyIndicator }} input={{ className: styles.policyInput }} />
             </RadioGroup>
-            <Text id={`${loadingId}-hint`} size={200} className={styles.loadingHint}>{loadingHint}</Text>
+            <Text id={`${loadingId}-hint`} size={200} className={styles.loadingHint}>
+              {loadingChoice === 'always' ? 'Downloads a fresh copy when the scan starts.'
+                : 'Uses stored datasets and loads missing ones now.'}
+            </Text>
           </div>
         </div>
       </Tooltip>}
-      {!compatibleOnly && selected.length > 0 && options.supports_overrides && options.total_limit && <Divider />}
+      {showLoadingChoice && options.total_limit && <Divider />}
       {options.supports_overrides && options.total_limit && <DatasetLimitControl label="Maximum objectives"
         value={request.max_total} defaultValue={defaults.max_total} draft={drafts.total} disabled={busy}
         onDraftChange={(text) => updateDraft('total', text)} onChange={updateTotal} />}

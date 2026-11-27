@@ -99,7 +99,7 @@ export default function ScenarioRunPreviewDialog({
             </MessageBar>}
             {refresh.refreshed.length > 0 && <MessageBar intent="warning">
               <MessageBarBody role="alert">
-                Refresh will replace the full stored datasets: {refresh.refreshed.join(', ')}.
+                Regenerate will replace the full stored datasets: {refresh.refreshed.join(', ')}.
                 Filters and objective limits do not limit replacement. This can remove manual edits
                 and prevent older runs from resuming. Use a new dataset name to keep both batches.
                 {refresh.edited.length > 0 && <Text block>
