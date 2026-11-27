@@ -131,6 +131,7 @@ type CoffeeResponse = Latte | Americano | undefined
 ```
 
 - Use optional fields (`?`) rather than `| undefined` when a property can be absent.
+  Under `exactOptionalPropertyTypes`, use `?: T` by default, `T | undefined` (required) for an always-present unset slot, and `?: T | undefined` only where an explicit `undefined` write is intended, such as a prop that forwards a possibly-undefined value.
 
 ### Import Aliases
 - Use the `@/` path alias for imports from `src/`. Do not use deeply nested relative paths.

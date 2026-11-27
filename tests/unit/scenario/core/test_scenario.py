@@ -2052,7 +2052,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
     async def test_resume_state_hook_gets_stored_groups_and_names_deleted_datasets(self, mock_objective_target) -> None:
         received: list[dict[str, list[AttackSeedGroup]]] = []
 
-        class _StatefulScenario(self._OverridingScenario):
+        class _StatefulScenario(self._OverridingScenario):  # ty: ignore[unsupported-base]
             async def _prepare_resume_state_async(self, *, seed_groups_by_dataset):
                 received.append(seed_groups_by_dataset)
                 await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
@@ -2089,7 +2089,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
     ) -> None:
         missing = MissingDatasetError("no seeds", dataset_name="unlisted")
 
-        class _UnlistedScenario(self._OverridingScenario):
+        class _UnlistedScenario(self._OverridingScenario):  # ty: ignore[unsupported-base]
             async def _prepare_resume_state_async(self, *, seed_groups_by_dataset):
                 raise missing
 
@@ -2113,7 +2113,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
     async def test_resume_reraises_other_dataset_errors_unchanged(self, mock_objective_target) -> None:
         invalid = DatasetConstraintError("templates are invalid")
 
-        class _InvalidScenario(self._OverridingScenario):
+        class _InvalidScenario(self._OverridingScenario):  # ty: ignore[unsupported-base]
             async def _prepare_resume_state_async(self, *, seed_groups_by_dataset):
                 raise invalid
 
@@ -2599,7 +2599,7 @@ class TestScenarioParallelExecution:
                 if in_flight >= 3:
                     started.set()
                 try:
-                    await asyncio.wait_for(started.wait(), timeout=2.0)
+                    await asyncio.wait_for(started.wait(), timeout=TEST_WATCHDOG_SECONDS)
                 finally:
                     async with lock:
                         in_flight -= 1
@@ -2732,7 +2732,7 @@ class TestScenarioParallelExecution:
         await scenario.initialize_async()
 
         with pytest.raises(asyncio.CancelledError, match="atomic attack cancelled"):
-            await asyncio.wait_for(scenario.run_async(), timeout=5)
+            await asyncio.wait_for(scenario.run_async(), timeout=TEST_WATCHDOG_SECONDS)
 
         mock_atomic_attacks[2].run_async.assert_not_called()
         assert not scenario._active_atomic_groups
