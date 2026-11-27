@@ -4,17 +4,21 @@
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Self
+from typing import Any, NamedTuple, Self
 from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from pyrit.common import print_deprecation_message
 from pyrit.models.decomposition import DecompositionNode, DecompositionPath, validate_own_decomposition
 from pyrit.models.harm_category import HarmCategory
 
+# TODO(PyRIT 1.5): Remove FindingSeverity, the PyRIT 1.2 finding fields, and Finding.severity.value.
+_REMOVED_IN = "1.5.0"
 
-class FindingSeverity(str, Enum):
-    """Operator-selected severity, ordered from highest to lowest."""
+
+class _FindingSeverity(str, Enum):
+    """The PyRIT 1.2 severities, highest first. Deprecated: use the option keys of ``FindingFields.severity``."""
 
     CRITICAL = "critical"
     IMPORTANT = "important"
@@ -22,6 +26,61 @@ class FindingSeverity(str, Enum):
     LOW = "low"
     INFORMATIONAL = "informational"
     OTHER = "other"
+
+
+_SEVERITY_KEYS = frozenset(severity.value for severity in _FindingSeverity if severity is not _FindingSeverity.OTHER)
+_HARM_CATEGORIES = frozenset(category.value for category in HarmCategory if category is not HarmCategory.OTHER)
+# Each PyRIT 1.2 field, and what replaces it.
+_DEPRECATED_FIELDS = {
+    "description": "field_values={'description': ...}",
+    "severity_other": "severity=...",
+    "harm_type": "field_values={'harm_type': ...}",
+    "harm_type_other": "field_values={'harm_type': ...}",
+}
+
+
+class _DeprecatedValues(NamedTuple):
+    """The PyRIT 1.2 fields that a finding's values stand for."""
+
+    description: str
+    severity_other: str | None
+    harm_type: HarmCategory | None
+    harm_type_other: str | None
+
+
+class _SeverityText(str):
+    """A severity that still answers ``.value``, as a PyRIT 1.2 ``FindingSeverity`` did."""
+
+    __slots__ = ()
+
+    @property
+    def value(self) -> str:
+        """The severity as a plain string. Deprecated: use the severity itself."""
+        print_deprecation_message(
+            old_item="Finding.severity.value", new_item="Finding.severity", removed_in=_REMOVED_IN
+        )
+        return str(self)
+
+
+def _resolve_other(*, name: str, selected: object, other: str, text: object) -> object:
+    """
+    Return what a PyRIT 1.2 selection and its Other text stand for: the text for Other, otherwise the selection.
+
+    Text equal to the selection is also accepted, so a client can send back the values a response returned.
+
+    Returns:
+        object: The Other text, or the selection.
+
+    Raises:
+        ValueError: If Other has no text, or another selection has different text.
+    """
+    if selected == other:
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"{name}_other must not be blank when {name} is Other.")
+        return text
+    if text is not None and text != selected:
+        raise ValueError(f"{name}_other is only allowed when {name} is Other.")
+    return selected
 
 
 class FindingCreate(BaseModel):
@@ -35,41 +94,126 @@ class FindingCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str
-    description: str = ""
-    severity: FindingSeverity
-    severity_other: str | None = None
-    harm_type: HarmCategory | None = None
-    harm_type_other: str | None = None
+    severity: str = Field(description="The key of a severity option, or Other text; surrounding whitespace is removed")
+    field_values: dict[str, str] = Field(
+        {}, description="Values by field or level key, each an option's key or text; blank values are dropped"
+    )
     parent_finding_id: UUID | None = None
     demonstrated: bool = True
 
-    @model_validator(mode="after")
-    def _validate_classifications(self) -> Self:
+    @model_validator(mode="before")
+    @classmethod
+    def _move_deprecated_fields(cls, data: Any) -> Any:
         """
-        Require custom text only for an Other selection.
+        Move the PyRIT 1.2 fields where the upgrade migration moves saved values: Other severity text into
+        ``severity``, and the harm type (its Other text for Other) and a non-blank description into ``field_values``.
 
         Returns:
-            Self: The validated finding.
+            Any: The input, with the PyRIT 1.2 fields moved.
 
         Raises:
-            ValueError: If custom text is missing, blank, or has no Other selection.
+            ValueError: If Other text is missing or not allowed, as in PyRIT 1.2, or a moved value conflicts with
+                ``field_values``.
         """
-        for field, is_other, text in [
-            ("severity", self.severity == FindingSeverity.OTHER, self.severity_other),
-            ("harm_type", self.harm_type == HarmCategory.OTHER, self.harm_type_other),
-        ]:
-            if is_other:
-                if text is None or not text.strip():
-                    raise ValueError(f"{field}_other must not be blank when {field} is Other.")
-            elif text is not None:
-                raise ValueError(f"{field}_other is only allowed when {field} is Other.")
-        return self
+        if not isinstance(data, dict):
+            return data
+        # FindingSeverity.OTHER needs its text as in PyRIT 1.2, even without another PyRIT 1.2 field.
+        if data.keys().isdisjoint(_DEPRECATED_FIELDS) and data.get("severity") is not _FindingSeverity.OTHER:
+            return data
+        data = dict(data)
+        old = {name: data.pop(name) for name in _DEPRECATED_FIELDS if name in data}
+        for name in old:
+            print_deprecation_message(
+                old_item=f"{cls.__name__}({name}=...)",
+                new_item=f"{cls.__name__}({_DEPRECATED_FIELDS[name]})",
+                removed_in=_REMOVED_IN,
+            )
+        if "severity" in data:
+            data["severity"] = _resolve_other(
+                name="severity", selected=data["severity"], other="other", text=old.get("severity_other")
+            )
+        moved = {
+            "harm_type": _resolve_other(
+                name="harm_type",
+                selected=old.get("harm_type"),
+                other=HarmCategory.OTHER,
+                text=old.get("harm_type_other"),
+            ),
+            "description": old.get("description"),
+        }
+        field_values = data.get("field_values", {})
+        if not isinstance(field_values, Mapping):
+            return data
+        field_values = dict(field_values)
+        for key, value in moved.items():
+            if value is None or (isinstance(value, str) and not value.strip()):
+                continue
+            if field_values.setdefault(key, value) != value:
+                raise ValueError(f"{key} conflicts with field_values['{key}'].")
+        data["field_values"] = field_values
+        return data
+
+    @property
+    def description(self) -> str:
+        """The description, or an empty string. Deprecated: read ``field_values.get("description", "")``."""
+        print_deprecation_message(
+            old_item=f"{type(self).__name__}.description",
+            new_item=f"{type(self).__name__}.field_values.get('description', '')",
+            removed_in=_REMOVED_IN,
+        )
+        return self._deprecated_values().description
+
+    @property
+    def severity_other(self) -> str | None:
+        """The severity when it is not a PyRIT 1.2 severity, otherwise None. Deprecated: read ``severity``."""
+        print_deprecation_message(
+            old_item=f"{type(self).__name__}.severity_other",
+            new_item=f"{type(self).__name__}.severity",
+            removed_in=_REMOVED_IN,
+        )
+        return self._deprecated_values().severity_other
+
+    @property
+    def harm_type(self) -> HarmCategory | None:
+        """The harm category, Other for typed text, or None. Deprecated: read ``field_values.get("harm_type")``."""
+        print_deprecation_message(
+            old_item=f"{type(self).__name__}.harm_type",
+            new_item=f"{type(self).__name__}.field_values.get('harm_type')",
+            removed_in=_REMOVED_IN,
+        )
+        return self._deprecated_values().harm_type
+
+    @property
+    def harm_type_other(self) -> str | None:
+        """The typed harm type text, or None. Deprecated: read ``field_values.get("harm_type")``."""
+        print_deprecation_message(
+            old_item=f"{type(self).__name__}.harm_type_other",
+            new_item=f"{type(self).__name__}.field_values.get('harm_type')",
+            removed_in=_REMOVED_IN,
+        )
+        return self._deprecated_values().harm_type_other
+
+    def _deprecated_values(self) -> _DeprecatedValues:
+        """
+        Read the PyRIT 1.2 fields that this finding's values stand for.
+
+        Returns:
+            _DeprecatedValues: The description, Other severity text, and harm type with its Other text.
+        """
+        harm = self.field_values.get("harm_type")
+        is_category = harm in _HARM_CATEGORIES
+        return _DeprecatedValues(
+            description=self.field_values.get("description", ""),
+            severity_other=None if self.severity in _SEVERITY_KEYS else self.severity,
+            harm_type=None if harm is None else HarmCategory(harm) if is_category else HarmCategory.OTHER,
+            harm_type_other=None if harm is None or is_category else harm,
+        )
 
     @field_validator("title")
     @classmethod
     def _reject_blank(cls, value: str) -> str:
         """
-        Reject a blank title without normalizing its contents.
+        Reject blank text without normalizing its contents.
 
         Returns:
             str: The original value.
@@ -80,6 +224,34 @@ class FindingCreate(BaseModel):
         if not value.strip():
             raise ValueError("Must not be blank.")
         return value
+
+    @field_validator("severity")
+    @classmethod
+    def _strip_severity(cls, value: str) -> str:
+        """
+        Remove surrounding whitespace and reject blank text.
+
+        Returns:
+            str: The severity without surrounding whitespace.
+
+        Raises:
+            ValueError: If the severity is blank.
+        """
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Must not be blank.")
+        return _SeverityText(stripped)
+
+    @field_validator("field_values")
+    @classmethod
+    def _drop_blank_values(cls, value: dict[str, str]) -> dict[str, str]:
+        """
+        Drop empty and whitespace-only values, keeping other text exactly as entered.
+
+        Returns:
+            dict[str, str]: The non-blank values.
+        """
+        return {key: text for key, text in value.items() if text.strip()}
 
 
 class Finding(FindingCreate):
@@ -126,6 +298,26 @@ def is_finding_path_complete(*, path: DecompositionPath, demonstrated: Mapping[U
         bool: True if each step is a demonstrated sub-finding.
     """
     return all(demonstrated.get(step, False) for step in path.steps)
+
+
+def __getattr__(name: str) -> object:
+    """
+    Resolve the deprecated ``FindingSeverity``.
+
+    Returns:
+        object: The PyRIT 1.2 severity enum.
+
+    Raises:
+        AttributeError: For any other name.
+    """
+    if name != "FindingSeverity":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    print_deprecation_message(
+        old_item=f"{__name__}.FindingSeverity",
+        new_item="the option keys of FindingFields.severity",
+        removed_in=_REMOVED_IN,
+    )
+    return _FindingSeverity
 
 
 class FindingEvidence(BaseModel):

@@ -12,13 +12,27 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.score import LlamaGuardScorer, Scorer, ShieldGemmaGuideline, ShieldGemmaScorer, WildGuardScorer
+from pyrit.score import (
+    CyberSecEvalPromptInjectionScorer,
+    HarmBenchScorer,
+    LlamaGuardScorer,
+    Scorer,
+    ShieldGemmaGuideline,
+    ShieldGemmaScorer,
+    StrongRejectScorer,
+    WildGuardScorer,
+)
 
 # Each scorer renders a caller-supplied string template with PyRIT's path constants bound,
 # so constructing the scorer is enough to evaluate the template.
 SCORER_CASES = [
     pytest.param(LlamaGuardScorer, {}, "{{ message_role }} {{ categories }} {{ conversation }}", id="llamaguard"),
     pytest.param(WildGuardScorer, {}, "{{ user_prompt }} {{ response }}", id="wildguard"),
+    pytest.param(HarmBenchScorer, {}, "{{ behavior }} {{ generation }}", id="harmbench"),
+    pytest.param(StrongRejectScorer, {}, "{{ forbidden_prompt }} {{ response }}", id="strongreject"),
+    pytest.param(
+        CyberSecEvalPromptInjectionScorer, {}, "{{ response }} {{ judge_question }}", id="cyberseceval_prompt_injection"
+    ),
     pytest.param(
         ShieldGemmaScorer,
         {"guideline": ShieldGemmaGuideline(name="Custom harm", description="content that is bad.")},

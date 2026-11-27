@@ -162,8 +162,8 @@ function ToolPiecePrompt({ piece, disabled, onChange, header, attachmentMenuItem
 interface ConversationEditorProps {
   controller: ReturnType<typeof useConversationDraft>
   ref?: Ref<ConversationEditorHandle>
-  sameAttackDisabledReason?: string
-  newAttackDisabledReason?: string
+  sameAttackDisabledReason?: string | undefined
+  newAttackDisabledReason?: string | undefined
   onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void
   onSave?: (destination: SaveConversationRequest['destination']) => void
   onExit?: () => Promise<boolean>
@@ -171,7 +171,7 @@ interface ConversationEditorProps {
   onUploadErrorChange?: (reason: string | undefined) => void
   saveDestination?: SaveConversationRequest['destination']
   saveLabel?: string
-  initialConverters?: ChatConverterSnapshot
+  initialConverters?: ChatConverterSnapshot | undefined
   blockNavigation?: boolean
   preserveOnDatasetNavigation?: boolean
 }

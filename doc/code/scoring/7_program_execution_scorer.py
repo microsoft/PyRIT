@@ -76,6 +76,14 @@ print(f"Score: {score.get_value()} - {score.score_rationale}")
 #
 # Replay uses the saved outputs, not the Docker client. Expected results may change, but the
 # runtime profile name and invocation inputs must still match the saved run.
+#
+# Replay repeats judgment, not execution, so a stored run cannot show that a program is
+# deterministic. To run a case more than once, list it more than once in `cases`: each copy requests
+# a fresh invocation in the same acquisition. A proven case failure scores false and names that case.
+# Backend or cleanup failures may stop remaining invocations; without a proven case failure,
+# incomplete evidence leaves the verdict undetermined. To repeat whole acquisitions instead,
+# combine copies of the scorer with
+# `TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[scorer] * 3)`.
 
 # %%
 memory = CentralMemory.get_memory_instance()

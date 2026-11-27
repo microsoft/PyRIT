@@ -288,7 +288,7 @@ interface DetailState {
   pageStart: number
   nextCursor: string | null
   status: 'loading' | 'ready' | 'error'
-  error?: string
+  error?: string | undefined
 }
 
 function TransitionDetails({ label, transition, count, scenarioResultId, baselineId, attackId }: TransitionRowProps) {
@@ -341,7 +341,7 @@ function TransitionDetails({ label, transition, count, scenarioResultId, baselin
   const fetchPage = (cursor?: string) => {
     if (document.activeElement instanceof HTMLButtonElement) detailsRegion.current?.focus({ preventScroll: true })
     setState((previous) => ({ ...previous, status: 'loading', error: undefined }))
-    setRequest((previous) => ({ cursor, version: previous.version + 1 }))
+    setRequest((previous) => ({ ...(cursor !== undefined ? { cursor } : {}), version: previous.version + 1 }))
   }
 
   return (

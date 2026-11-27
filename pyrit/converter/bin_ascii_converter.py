@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import binascii
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from pyrit.converter.text_selection_strategy import (
     AllWordsSelectionStrategy,
@@ -56,7 +56,7 @@ class BinAsciiConverter(WordLevelConverter):
                 f"Invalid encoding_func '{encoding_func}'. Must be one of: 'hex', 'quoted-printable', 'UUencode'"
             )
 
-        self._encoding_func = encoding_func
+        self._encoding_func: BinAsciiConverter.EncodingFunc = encoding_func
 
         # Encode the separator once, so an all-words join restores the separator the words were split
         # on instead of always inserting an encoded space. A space still encodes to "20" or "=20".
@@ -66,6 +66,8 @@ class BinAsciiConverter(WordLevelConverter):
         elif encoding_func == "quoted-printable":
             self._encoded_separator = binascii.b2a_qp(separator.encode("utf-8")).decode("ascii")
         else:
+            if TYPE_CHECKING and encoding_func != "UUencode":  # pragma: no cover
+                assert_never(encoding_func)
             self._encoded_separator = self._uuencode_chunk(separator)
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -101,6 +103,8 @@ class BinAsciiConverter(WordLevelConverter):
             return binascii.b2a_qp(word.encode("utf-8")).decode("ascii")
         if self._encoding_func == "UUencode":
             return self._uuencode_chunk(word)
+        if TYPE_CHECKING:
+            assert_never(self._encoding_func)
         raise ValueError(f"Unsupported encoding function: {self._encoding_func}")
 
     def _uuencode_chunk(self, text: str) -> str:

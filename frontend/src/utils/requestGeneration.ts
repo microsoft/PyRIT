@@ -78,7 +78,13 @@ export function withRequestGenerationConfig(pieces: MessagePieceRequest[], confi
     if (index === 0 && Object.keys(options).length > 0) {
       metadata[REQUEST_GENERATION_KEY] = { ...options }
     }
-    return { ...piece, prompt_metadata: Object.keys(metadata).length ? metadata : undefined }
+    const nextPiece: MessagePieceRequest = { ...piece }
+    if (Object.keys(metadata).length) {
+      nextPiece.prompt_metadata = metadata
+    } else {
+      delete nextPiece.prompt_metadata
+    }
+    return nextPiece
   })
 }
 
