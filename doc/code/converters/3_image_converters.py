@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.6
 # ---
 
 # %% [markdown]
@@ -246,6 +246,23 @@ print(f"Rotated image saved to: {rotate_result.output_text}")
 
 rotate_img = Image.open(rotate_result.output_text)
 display(rotate_img)
+
+# %% [markdown]
+# ### ImageMirrorConverter
+#
+# The `ImageMirrorConverter` mirrors an image `horizontal`ly (left to right, the default) or `vertical`ly (top to bottom). The output has the same size as the input.
+
+# %%
+from pyrit.converter import ImageMirrorConverter
+
+# Mirror the image horizontally
+mirror_converter = ImageMirrorConverter(direction="horizontal")
+mirror_result = await mirror_converter.convert_async(prompt=image_location)  # type: ignore
+
+print(f"Mirrored image saved to: {mirror_result.output_text}")
+
+mirror_img = Image.open(mirror_result.output_text)
+display(mirror_img)
 
 # %% [markdown]
 # ### ImageNoiseConverter
