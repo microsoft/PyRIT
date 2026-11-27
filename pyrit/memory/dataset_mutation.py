@@ -399,8 +399,13 @@ async def commit_mutation_async(
             if old is None:
                 session.add(replacement)
             else:
+                # Decomposition links are tree invariants managed by whole-tree operations:
+                # the editable projection never carries them, so copying the submitted
+                # None/empty values would silently sever the stored parent link.
+                preserved = ("parent_objective_id", "paths")
                 for attr in inspect(SeedEntry).column_attrs:
-                    setattr(old, attr.key, getattr(replacement, attr.key))
+                    if attr.key not in preserved:
+                        setattr(old, attr.key, getattr(replacement, attr.key))
         for identifier in delete_ids:
             await session.delete(by_id[identifier])
         await session.flush()
