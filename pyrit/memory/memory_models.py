@@ -1944,6 +1944,13 @@ class SeedEntry(Base):
             self.parameters = list(entry.parameters) if entry.parameters else None
             self.sequence = entry.sequence
             self.role = entry.role
+        elif isinstance(entry, SeedSimulatedConversation):
+            # The simulated conversation occupies its own sequence slot in the
+            # group, and the seed example ordering reads the column, so the
+            # declared sequence persists instead of silently becoming NULL.
+            self.parameters = None
+            self.sequence = entry.sequence
+            self.role = None
         else:
             self.parameters = None
             self.sequence = None
