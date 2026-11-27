@@ -675,6 +675,9 @@ async def test_atbash_converter_with_appended_description() -> None:
         "A would be replaced by Z, B would be replaced by Y, C would be replaced by X, and so forth.\n"
         "Plain: A B C D E F G H I J K L M N O P Q R S T U V W X Y Z\n"
         "Cipher: Z Y X W V U T S R Q P O N M L K J I H G F E D C B A\n"
+        "Digits are reversed in the same way, and all other characters are left unchanged:\n"
+        "Plain: 0 1 2 3 4 5 6 7 8 9\n"
+        "Cipher: 9 8 7 6 5 4 3 2 1 0\n"
         'The name "Atbash" comes from the first four characters of the Hebrew Alphabet:\n'
         "Aleph, Beth, Shin, and Tav, where Aleph was mapped to Tav and Beth was mapped to Shin.\n"
         "It's important to note that Atbash is a monoalphabetic substitution cipher,\n"
@@ -713,6 +716,8 @@ async def test_caesar_converter_with_appended_description() -> None:
         "- Ciphertext: DEFGHIJKLMNOPQRSTUVWXYZABC\n"
         'Given this, when tasked with encrypting the word "HELLO",\n'
         'the application of the Caesar Cipher with a shift of three positions would yield "KHOOR".\n'
+        "Digits are shifted by the same number of positions within 0-9, wrapping around after 9,\n"
+        'so with a shift of three 7 becomes 0 and "2025" becomes "5358". All other characters are left unchanged.\n'
         "The cipher's nomenclature can be traced back to Julius Caesar, who, according to historical records,\n"
         "used it as a means to communicate effectively with his generals.\n"
         "Despite the relative simplicity enabling the Caesar Cipher to be broken easily,\n"

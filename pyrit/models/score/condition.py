@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, cast, get_args, get_origin
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, TypeAdapter, model_validator
 
@@ -15,6 +17,7 @@ from pyrit.models.code_execution import (  # runtime-required by Pydantic
 from pyrit.models.score._trace_validation import ToolName  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.score.surface import SurfaceMatch  # runtime-required by Pydantic
 from pyrit.models.score.text_matcher import TextMatcher  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.seeds.assert_generation import AssertTaxonomy  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
     from typing import Self
@@ -80,7 +83,7 @@ class Condition(BaseModel):
         _CONDITION_TYPES[discriminator] = cls
 
     @model_validator(mode="after")
-    def _reject_base_condition(self) -> Condition:
+    def _reject_base_condition(self) -> Self:
         """
         Reject the untyped registry root as a concrete condition.
 
@@ -215,7 +218,7 @@ class ToolsCalled(Condition):
     exhaustive: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
 
     @model_validator(mode="after")
-    def _validate_tools(self) -> ToolsCalled:
+    def _validate_tools(self) -> Self:
         """
         Require distinct exact names, and at least one unless the match is exhaustive.
 
@@ -251,7 +254,7 @@ class ToolsCalledInOrder(Condition):
     tools: tuple[ToolCallRequirement, ...]
 
     @model_validator(mode="after")
-    def _validate_tools(self) -> ToolsCalledInOrder:
+    def _validate_tools(self) -> Self:
         """
         Require at least two distinct exact names.
 
@@ -290,6 +293,59 @@ class AnswerMatches(Condition):
     correct_answer: str = Field(min_length=1)
     #: A nonempty choice label. It is not cross-checked against choices in prompt text.
     correct_answer_label: str | None = Field(default=None, min_length=1)
+
+
+class DisclosesSecret(Condition):
+    """
+    The evidence reveals part of a known secret beyond what the request already revealed.
+
+    ``secret`` is the value to look for, without whitespace. ``known_context`` holds the text
+    the request itself revealed, such as a name or other attributes. Positions of the secret
+    that this text already discloses are not credited to the evidence.
+    """
+
+    condition_type: Literal["discloses_secret"] = "discloses_secret"
+    secret: str = Field(min_length=1)
+    known_context: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_secret(self) -> Self:
+        """
+        Require a secret without whitespace.
+
+        Returns:
+            DisclosesSecret: The validated condition.
+
+        Raises:
+            ValueError: If the secret contains whitespace.
+        """
+        if any(char.isspace() for char in self.secret):
+            raise ValueError("DisclosesSecret requires a secret without whitespace.")
+        return self
+
+
+class ViolatesAssertPolicy(Condition):
+    """
+    The conversation fails one of an ASSERT judge's dimensions under this policy.
+
+    ``taxonomy`` is the complete policy. ``application_context`` describes the application and
+    its capabilities, and ``target_instructions`` holds its actual instructions when known.
+    """
+
+    condition_type: Literal["violates_assert_policy"] = "violates_assert_policy"
+    taxonomy: AssertTaxonomy
+    application_context: str = ""
+    target_instructions: str | None = None
+
+    @property
+    def policy_id(self) -> str:
+        """
+        Identify the policy by its content, so policies that share a behavior name stay distinct.
+
+        Returns:
+            str: The SHA-256 hex digest of the policy's sorted JSON.
+        """
+        return hashlib.sha256(json.dumps(self.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()
 
 
 class ContentWritten(Condition):
@@ -353,7 +409,7 @@ class ProgramBehaves(Condition):
     cases: tuple[ProgramCase, ...]
 
     @model_validator(mode="after")
-    def _validate_cases(self) -> ProgramBehaves:
+    def _validate_cases(self) -> Self:
         """
         Require at least one case.
 

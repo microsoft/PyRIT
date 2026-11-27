@@ -34,6 +34,7 @@ from pyrit.score.true_false.multi_label_true_false_scorer import MultiLabelTrueF
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from pyrit.models import Message
@@ -46,6 +47,67 @@ logger = logging.getLogger(__name__)
 _CONTESTED_THRESHOLD = 0.5
 
 
+def _validate_num_scorer_trials(num_scorer_trials: int) -> None:
+    """
+    Check that the requested number of scorer trials is at least 1.
+
+    Args:
+        num_scorer_trials (int): The requested number of scoring trials.
+
+    Raises:
+        ValueError: If num_scorer_trials is less than 1.
+    """
+    if num_scorer_trials < 1:
+        raise ValueError(f"num_scorer_trials must be at least 1, got {num_scorer_trials}.")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ScoringTrials:
+    """
+    Every verdict from scoring the same responses several times.
+
+    Attributes:
+        scores (np.ndarray): Verdicts of shape ``(num_trials, num_responses)``. An undetermined
+            verdict holds a placeholder (false, or 0.0 for harm scores).
+        undetermined (np.ndarray): Booleans of the same shape, true where no verdict was reached.
+        total_scoring_time (float): Seconds spent scoring.
+        total_scored_items (int): Responses scored, summed over trials.
+    """
+
+    scores: np.ndarray
+    undetermined: np.ndarray
+    total_scoring_time: float
+    total_scored_items: int
+
+    @property
+    def determined_responses(self) -> np.ndarray:
+        """The responses that reached a verdict in every trial."""
+        return ~np.asarray(self.undetermined.any(axis=0), dtype=bool)
+
+    @property
+    def average_score_time_seconds(self) -> float:
+        """The average time to score one response once."""
+        return self.total_scoring_time / self.total_scored_items if self.total_scored_items > 0 else 0.0
+
+    @staticmethod
+    def concatenate(trials: Sequence[ScoringTrials]) -> ScoringTrials:
+        """
+        Join trials run separately on the same responses.
+
+        Args:
+            trials (Sequence[ScoringTrials]): The trials, in order.
+
+        Returns:
+            ScoringTrials: All of them as one set of trials.
+        """
+        return ScoringTrials(
+            scores=np.concatenate([trial.scores for trial in trials]),
+            undetermined=np.concatenate([trial.undetermined for trial in trials]),
+            total_scoring_time=sum(trial.total_scoring_time for trial in trials),
+            total_scored_items=sum(trial.total_scored_items for trial in trials),
+        )
+
+
 @dataclass
 class ScorerEvalDatasetFiles:
     """
@@ -55,7 +117,7 @@ class ScorerEvalDatasetFiles:
     Multiple files matching the patterns will be concatenated before evaluation.
     Each matched path is loaded once, even when patterns overlap or repeat.
 
-    Args:
+    Attributes:
         human_labeled_datasets_files (list[str]): List of glob patterns to match CSV files.
             Examples: ``["objective/*.csv"]``, ``["objective/hate_speech.csv", "objective/violence.csv"]``
         result_file (str): Name of the result file (stem used as dict key in results).
@@ -143,7 +205,7 @@ class ScorerEvaluator(abc.ABC):
         Args:
             dataset_files: ScorerEvalDatasetFiles configuration specifying glob patterns
                 for input files and a result file name.
-            num_scorer_trials: Number of scoring trials per response. Defaults to 3.
+            num_scorer_trials: Number of scoring trials per response. Must be at least 1. Defaults to 3.
             update_registry_behavior: Controls how existing registry entries are handled.
                 Defaults to RegistryUpdateBehavior.SKIP_IF_EXISTS.
             max_concurrency: Maximum number of concurrent scoring requests. Defaults to 10.
@@ -152,8 +214,11 @@ class ScorerEvaluator(abc.ABC):
             ScorerMetrics if evaluation completed, None if no files found.
 
         Raises:
-            ValueError: If harm_category is not specified for harm scorer evaluations.
+            ValueError: If num_scorer_trials is less than 1, or if harm_category is not
+                specified for harm scorer evaluations.
         """
+        _validate_num_scorer_trials(num_scorer_trials)
+
         metrics_type = MetricsType.OBJECTIVE if isinstance(self.scorer, TrueFalseScorer) else MetricsType.HARM
 
         # Validate harm_category for harm scorers
@@ -394,7 +459,7 @@ class ScorerEvaluator(abc.ABC):
 
         Args:
             labeled_dataset (HumanLabeledDataset): The HumanLabeledDataset to evaluate the scorer against.
-            num_scorer_trials (int): The number of trials to run the scorer on all responses.
+            num_scorer_trials (int): The number of trials to run the scorer on all responses. Must be at least 1.
             max_concurrency (int): Maximum number of concurrent scoring requests. Defaults to 10.
 
         Returns:
@@ -402,8 +467,10 @@ class ScorerEvaluator(abc.ABC):
                 depending on the type of the HumanLabeledDataset (HARM or OBJECTIVE).
 
         Raises:
-            ValueError: If the labeled_dataset is invalid.
+            ValueError: If num_scorer_trials is less than 1, or if the labeled_dataset is invalid.
         """
+        _validate_num_scorer_trials(num_scorer_trials)
+
         # Validate dataset and extract data
         assistant_responses, human_scores_list, objectives = await self._validate_and_extract_data_async(
             labeled_dataset
@@ -415,7 +482,8 @@ class ScorerEvaluator(abc.ABC):
             for response in assistant_responses
         ]
 
-        # Transpose human scores so each row is a complete set of scores across all responses
+        # Transpose human scores so each row is a complete set of scores across all responses.
+        # Built before scoring, so ragged human scores fail before any scoring call is paid for.
         all_human_scores = np.array(human_scores_list).T
 
         harm_category = None
@@ -429,47 +497,106 @@ class ScorerEvaluator(abc.ABC):
                     "Ensure all entries have a valid harm_category."
                 )
 
-        # Run scoring trials and measure timing
-        all_model_scores_list = []
-        determined_responses = np.ones(len(assistant_responses), dtype=bool)
+        trials = await self._run_scoring_trials_async(
+            responses=assistant_responses,
+            expectations=[ScoringExpectation(objective=objective) for objective in resolved_objectives],
+            harm_category=harm_category,
+            num_scorer_trials=num_scorer_trials,
+            max_concurrency=max_concurrency,
+        )
+        return self._compute_trial_metrics(
+            trials=trials,
+            all_human_scores=all_human_scores,
+            labeled_dataset=labeled_dataset,
+            harm_category=harm_category,
+        )
+
+    async def _run_scoring_trials_async(
+        self,
+        *,
+        responses: list[Message],
+        expectations: Sequence[ScoringExpectation],
+        harm_category: str | None,
+        num_scorer_trials: int,
+        max_concurrency: int,
+    ) -> ScoringTrials:
+        """
+        Score every response ``num_scorer_trials`` times and keep each verdict.
+
+        A response that reaches no verdict in a trial is marked undetermined rather than dropped,
+        so callers can choose which responses to compare.
+
+        Args:
+            responses (list[Message]): The assistant responses to score.
+            expectations (Sequence[ScoringExpectation]): What each response is scored against.
+            harm_category (str | None): The labeled harm category, for harm datasets.
+            num_scorer_trials (int): The number of trials.
+            max_concurrency (int): Maximum number of concurrent scoring requests.
+
+        Returns:
+            ScoringTrials: Every verdict, which were undetermined, and the scoring time.
+        """
+        placeholder: bool | float = False if self.expected_metrics_type == MetricsType.OBJECTIVE else 0.0
+        all_model_scores_list: list[list[bool | float]] = []
+        undetermined = np.zeros((num_scorer_trials, len(responses)), dtype=bool)
         total_scoring_time = 0.0
         total_scored_items = 0
-        for _ in range(num_scorer_trials):
+        for trial in range(num_scorer_trials):
             start_time = time.perf_counter()
             score_groups = await self._score_responses_grouped_async(
-                responses=assistant_responses,
-                objectives=resolved_objectives,
-                max_concurrency=max_concurrency,
+                responses=responses, expectations=expectations, max_concurrency=max_concurrency
             )
-            elapsed_time = time.perf_counter() - start_time
-            total_scoring_time += elapsed_time
+            total_scoring_time += time.perf_counter() - start_time
             total_scored_items += len(score_groups)
             score_values: list[bool | float] = []
             for index, scores in enumerate(score_groups):
-                score = self._select_evaluation_score(scores=scores, harm_category=harm_category)
-                if score is None:
-                    determined_responses[index] = False
-                    score_values.append(False if self.expected_metrics_type == MetricsType.OBJECTIVE else 0.0)
-                    continue
-                try:
-                    score_values.append(score.get_value())
-                except UndeterminedScoreError:
-                    determined_responses[index] = False
-                    score_values.append(False if self.expected_metrics_type == MetricsType.OBJECTIVE else 0.0)
+                value = self._determined_value(
+                    self._select_evaluation_score(scores=scores, harm_category=harm_category)
+                )
+                if value is None:
+                    undetermined[trial, index] = True
+                    value = placeholder
+                score_values.append(value)
             all_model_scores_list.append(score_values)
+        return ScoringTrials(
+            scores=np.array(all_model_scores_list),
+            undetermined=undetermined,
+            total_scoring_time=total_scoring_time,
+            total_scored_items=total_scored_items,
+        )
+
+    def _compute_trial_metrics(
+        self,
+        *,
+        trials: ScoringTrials,
+        all_human_scores: np.ndarray,
+        labeled_dataset: HumanLabeledDataset,
+        harm_category: str | None = None,
+    ) -> ScorerMetrics:
+        """
+        Compute metrics over the responses that reached a verdict in every trial.
+
+        Args:
+            trials (ScoringTrials): The scoring trials.
+            all_human_scores (np.ndarray): Human scores, shape (num_raters, num_responses).
+            labeled_dataset (HumanLabeledDataset): The dataset the responses came from.
+            harm_category (str | None): The labeled harm category, for harm datasets.
+
+        Returns:
+            ScorerMetrics: The metrics, with the trial scores they were computed from.
+
+        Raises:
+            ValueError: If no response reached a verdict in every trial.
+        """
+        determined_responses = trials.determined_responses
         if not determined_responses.any():
             raise ValueError("Scorer evaluation produced no determined scores to compare with human labels.")
-        all_model_scores = np.array(all_model_scores_list)[:, determined_responses]
-        all_human_scores = all_human_scores[:, determined_responses]
+        all_model_scores = trials.scores[:, determined_responses]
 
-        # Calculate average time per scored item
-        average_score_time = total_scoring_time / total_scored_items if total_scored_items > 0 else 0.0
-
-        # Compute metrics using subclass implementation
         metrics = self._compute_metrics(
-            all_human_scores=all_human_scores,
+            all_human_scores=all_human_scores[:, determined_responses],
             all_model_scores=all_model_scores,
-            num_scorer_trials=num_scorer_trials,
+            num_scorer_trials=trials.scores.shape[0],
             dataset_name=labeled_dataset.name,
             dataset_version=labeled_dataset.version,
             harm_category=harm_category,
@@ -480,25 +607,38 @@ class ScorerEvaluator(abc.ABC):
         # Include trial scores for debugging and future mismatch analysis
         # (not persisted to registry - use returned metrics object for detailed analysis)
         metrics.trial_scores = all_model_scores
-        metrics.num_input_responses = len(assistant_responses)
-        # Include average scoring time per item
-        metrics.average_score_time_seconds = average_score_time
-
+        metrics.num_input_responses = trials.scores.shape[1]
+        metrics.average_score_time_seconds = trials.average_score_time_seconds
         return metrics
 
     async def _score_responses_grouped_async(
         self,
         *,
         responses: list[Message],
-        objectives: list[str],
+        objectives: list[str] | None = None,
+        expectations: Sequence[ScoringExpectation] | None = None,
         max_concurrency: int,
     ) -> list[list[Score]]:
         """
         Score each response while retaining its result-list boundary.
 
+        Args:
+            responses (list[Message]): The responses to score.
+            objectives (list[str] | None): One objective per response. Give this or ``expectations``.
+            expectations (Sequence[ScoringExpectation] | None): One expectation per response, passed
+                to the scorer as it is. Give this or ``objectives``.
+            max_concurrency (int): Maximum number of concurrent scoring requests.
+
         Returns:
             list[list[Score]]: One score list for each response.
+
+        Raises:
+            ValueError: If both or neither of ``objectives`` and ``expectations`` are given.
         """
+        if (objectives is None) == (expectations is None):
+            raise ValueError("Give exactly one of objectives and expectations.")
+        if expectations is None:
+            expectations = [ScoringExpectation(objective=objective) for objective in cast("list[str]", objectives)]
         results = await batch_task_async(
             task_func=self.scorer.score_async,
             task_arguments=["scorable", "expectation"],
@@ -506,10 +646,28 @@ class ScorerEvaluator(abc.ABC):
             batch_size=max_concurrency,
             items_to_batch=[
                 [MessageScorable.from_message(response) for response in responses],
-                [ScoringExpectation(objective=objective) for objective in objectives],
+                list(expectations),
             ],
         )
         return cast("list[list[Score]]", results)
+
+    @staticmethod
+    def _determined_value(score: Score | None) -> bool | float | None:
+        """
+        Read a score's verdict, or None when there is no score or it reached no verdict.
+
+        Args:
+            score (Score | None): The selected score.
+
+        Returns:
+            bool | float | None: The verdict, or None.
+        """
+        if score is None:
+            return None
+        try:
+            return score.get_value()
+        except UndeterminedScoreError:
+            return None
 
     @staticmethod
     def _score_matches_harm_category(*, score: Score, harm_category: str) -> bool:

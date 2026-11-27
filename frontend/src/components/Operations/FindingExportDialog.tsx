@@ -8,13 +8,15 @@ import { ArrowDownloadRegular } from '@fluentui/react-icons'
 
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { FindingExportFormat, FindingListItem, Operation } from '@/types'
+import type { FindingExportFormat, FindingFields, FindingListItem, Operation } from '@/types'
 import { downloadFile } from '@/utils/downloadFile'
 import { findingExportFilename } from '@/utils/findingExportFilename'
+import { findingChildren, findingDescendantIds, flattenFindingTree } from '@/utils/findingTree'
 
-import { useFindingExportDialogStyles } from './FindingExportDialog.styles'
+import { findingIndent, useFindingExportDialogStyles } from './FindingExportDialog.styles'
 import FindingSeverityBadge from './FindingSeverityBadge'
 import { MAX_EXPORT_FINDINGS } from './findingExportLimits'
+import { fluentRef } from '@/utils/fluentRef'
 
 const PAGE_SIZE = 100
 const FORMATS: Record<FindingExportFormat, { option: string; name: string; extension: string }> = {
@@ -24,10 +26,11 @@ const FORMATS: Record<FindingExportFormat, { option: string; name: string; exten
 const NO_SELECTION: ReadonlySet<string> = new Set()
 const NOT_FOUND = 404
 
+// A list or error carries the field revision it was loaded for; one from earlier fields counts as still loading.
 type FindingsLoad =
   | { status: 'loading' }
-  | { status: 'error'; error: string }
-  | { status: 'loaded'; findings: FindingListItem[] }
+  | { status: 'error'; error: string; fieldsRevision: number }
+  | { status: 'loaded'; findings: FindingListItem[]; fieldsRevision: number }
 
 /** The selection to restore after reloading for a deleted finding, and why the export failed. */
 interface SelectionRecovery {
@@ -43,13 +46,17 @@ function removedNotice(titles: readonly string[]): string {
 
 interface FindingExportDialogProps {
   operation: Operation
+  /** The active finding fields, which decide the severity badges. */
+  fields: FindingFields
+  /** Changes when the active fields change, which loads every page again with the new labels. */
+  fieldsRevision: number
 }
 
-export default function FindingExportDialog({ operation }: FindingExportDialogProps) {
+export default function FindingExportDialog({ operation, fields, fieldsRevision }: FindingExportDialogProps) {
   const styles = useFindingExportDialogStyles()
   const [open, setOpen] = useState(false)
   const [loadRevision, setLoadRevision] = useState(0)
-  const [load, setLoad] = useState<FindingsLoad>({ status: 'loading' })
+  const [loadState, setLoad] = useState<FindingsLoad>({ status: 'loading' })
   const [selected, setSelected] = useState<ReadonlySet<string>>(NO_SELECTION)
   const [format, setFormat] = useState<FindingExportFormat>('docx')
   const [exportError, setExportError] = useState('')
@@ -58,19 +65,33 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
   const [exporting, setExporting] = useState(false)
   const submitting = useRef(false)
   const recovery = useRef<SelectionRecovery | null>(null)
+  // The IDs of the last list loaded since the dialog opened. A reload ticks every row only if all of these were ticked.
+  const shown = useRef<ReadonlySet<string> | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const rowId = useId()
   // Aborted when the dialog closes or unmounts, so a late export never downloads into a later view.
   const session = useRef<AbortController | null>(null)
 
+  // Until the reload for changed fields settles, the earlier list can miss a finding that Select all should include.
+  const reloadingForFields = loadState.status !== 'loading' && loadState.fieldsRevision !== fieldsRevision
+  const load: FindingsLoad = reloadingForFields ? { status: 'loading' } : loadState
   const findings = load.status === 'loaded' ? load.findings : []
-  const selectedIds = findings.filter(finding => selected.has(finding.id)).map(finding => finding.id)
-  const allSelected = selectedIds.length === findings.length
-  const selectAllChecked = allSelected ? true : selectedIds.length === 0 ? false : 'mixed'
-  const tooMany = selectedIds.length > MAX_EXPORT_FINDINGS
-  // A natively disabled button drops keyboard focus out of the dialog, so while an export runs, and while the list
-  // reloads or shows nothing selected after a deleted finding, Download stays focusable but unavailable.
-  const downloadKeepsFocus = exporting || (selectedIds.length === 0 && (recovering || removedTitles.length > 0))
+  const children = findingChildren(findings)
+  const roots = children.get(null) ?? []
+  // A selected finding includes all of its sub-findings, so they show as checked and cannot be unchecked alone.
+  const implied = new Set(findings.filter(finding => selected.has(finding.id))
+    .flatMap(finding => findingDescendantIds(children, finding.id)))
+  const included = findings.filter(finding => selected.has(finding.id) || implied.has(finding.id))
+  const selectedIds = flattenFindingTree(findings)
+    .map(({ finding }) => finding.id)
+    .filter(findingId => selected.has(findingId) && !implied.has(findingId))
+  const allSelected = included.length === findings.length
+  const selectAllChecked = allSelected ? true : included.length === 0 ? false : 'mixed'
+  const tooMany = included.length > MAX_EXPORT_FINDINGS
+  // A natively disabled button drops keyboard focus out of the dialog, so while an export runs, while the list reloads,
+  // and while it shows nothing selected after a deleted finding, Download stays focusable but unavailable.
+  const downloadKeepsFocus = exporting || reloadingForFields
+    || (selectedIds.length === 0 && (recovering || removedTitles.length > 0))
 
   useEffect(() => {
     if (!open) return
@@ -107,12 +128,24 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
         }
         offset = page.has_more ? page.next_offset : null
       }
-      setLoad({ status: 'loaded', findings: [...loaded.values()] })
+      setLoad({ status: 'loaded', findings: [...loaded.values()], fieldsRevision })
       setRecovering(false)
       const kept = recovery.current
       recovery.current = null
+      const previous = shown.current
+      shown.current = new Set(loaded.keys())
       if (kept === null) {
-        setSelected(new Set(loaded.keys()))
+        const loadedChildren = findingChildren([...loaded.values()])
+        const loadedRoots = (loadedChildren.get(null) ?? []).map(finding => finding.id)
+        // A reload for changed fields keeps the selection; it includes every finding only if everything was included.
+        setSelected(current => {
+          const included = new Set([...current].flatMap(findingId => [
+            findingId, ...findingDescendantIds(loadedChildren, findingId),
+          ]))
+          return previous === null || [...previous].every(findingId => included.has(findingId))
+            ? new Set(loadedRoots)
+            : new Set([...current].filter(findingId => loaded.has(findingId)))
+        })
         return
       }
       setSelected(new Set(kept.selected.filter(finding => loaded.has(finding.id)).map(finding => finding.id)))
@@ -122,15 +155,16 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
     }
     loadAllPages().catch((cause: unknown) => {
       if (ignore) return
-      setLoad({ status: 'error', error: toApiError(cause).detail })
+      setLoad({ status: 'error', error: toApiError(cause).detail, fieldsRevision })
       setRecovering(false)
     })
     return () => { ignore = true }
-  }, [open, loadRevision, operation.id])
+  }, [open, loadRevision, operation.id, fieldsRevision])
 
   const start = (): void => {
     submitting.current = false
     recovery.current = null
+    shown.current = null
     setRecovering(false)
     setExporting(false)
     setExportError('')
@@ -144,8 +178,13 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
   const toggle = (findingId: string, checked: boolean): void => {
     setSelected(current => {
       const next = new Set(current)
-      if (checked) next.add(findingId)
-      else next.delete(findingId)
+      if (checked) {
+        next.add(findingId)
+        // Its sub-findings are now included with it, so they no longer need their own selection.
+        for (const descendant of findingDescendantIds(children, findingId)) next.delete(descendant)
+      } else {
+        next.delete(findingId)
+      }
       return next
     })
   }
@@ -206,19 +245,28 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
       )
     }
     if (findings.length === 0) return <Text>This operation has no findings to export.</Text>
+    const titles = new Map(findings.map(finding => [finding.id, finding.title]))
+    // One flat list in tree order: nesting elements per level would recurse once per level of a deep decomposition.
     return (
       <>
         <Checkbox label="Select all" checked={selectAllChecked} disabled={exporting}
-          onChange={() => { setSelected(allSelected ? NO_SELECTION : new Set(findings.map(finding => finding.id))) }} />
+          onChange={() => { setSelected(allSelected ? NO_SELECTION : new Set(roots.map(finding => finding.id))) }} />
         <ul className={styles.list}>
-          {findings.map(finding => {
+          {flattenFindingTree(findings).map(({ finding, depth }) => {
             const createdId = `${rowId}-${finding.id}-created`
+            const relationId = `${rowId}-${finding.id}-relation`
+            const isImplied = implied.has(finding.id)
+            const parentTitle = depth > 0 && finding.parent_finding_id ? titles.get(finding.parent_finding_id) : undefined
             return (
-              <li key={finding.id} className={styles.row}>
+              <li key={finding.id} className={styles.row} style={findingIndent(depth)}>
                 <Checkbox className={styles.checkbox} label={{ children: finding.title, className: styles.label }}
-                  aria-describedby={createdId} checked={selected.has(finding.id)} disabled={exporting}
+                  aria-describedby={parentTitle === undefined ? createdId : `${relationId} ${createdId}`}
+                  checked={selected.has(finding.id) || isImplied} disabled={exporting || isImplied}
                   onChange={(_, data) => { toggle(finding.id, data.checked === true) }} />
-                <FindingSeverityBadge finding={finding} />
+                <FindingSeverityBadge fields={fields} severity={finding.severity} />
+                {parentTitle !== undefined && <span id={relationId} className={styles.visuallyHidden}>
+                  {isImplied ? 'Included with' : 'Sub-finding of'} “{parentTitle}”
+                </span>}
                 <Text size={200} className={styles.created}>
                   <time id={createdId} dateTime={finding.created_at}>
                     {new Date(finding.created_at).toLocaleString()}
@@ -238,7 +286,7 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
       else setOpen(false)
     }}>
       <DialogTrigger disableButtonEnhancement>
-        <Button ref={triggerRef} className={styles.button} icon={<ArrowDownloadRegular />}>Export findings</Button>
+        <Button ref={fluentRef(triggerRef)} className={styles.button} icon={<ArrowDownloadRegular />}>Export findings</Button>
       </DialogTrigger>
       <DialogSurface>
         <DialogBody>

@@ -1,9 +1,9 @@
 repos:
   - repo: https://github.com/kynan/nbstripout
-    rev: 34071b78c181af3bf5af955c1426466e096fc3db #0.9.1
+    rev: 512fa4ac6e4674f3a748e7dd5a546c037ec39edf #0.9.2
     hooks:
       - id: nbstripout
-        args: [--keep-output, '--extra-keys=metadata.kernelspec']
+        args: [--keep-output, --keep-id, '--extra-keys=metadata.kernelspec']
         files: ^doc/.*\.ipynb$
 
   - repo: local
@@ -79,7 +79,7 @@ repos:
       - id: detect-private-key
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.4
+    rev: v0.17.6
     hooks:
       - id: ruff-format
       - id: ruff-check

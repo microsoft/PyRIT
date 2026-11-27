@@ -3,19 +3,19 @@
 
 import copy
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Self, cast
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
 from pyrit.models import (
     ComponentIdentifier,
+    FloatFeedback,
     Scorable,
     ScorableUnion,
     Score,
     ScoringExpectation,
 )
-from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.scorer import Scorer, SnapshotParticipation, _set_snapshot_participation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -50,7 +50,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             ComponentIdentifier: The identifier for this scorer.
         """
         return self._create_identifier(
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             sub_scorers=[self._scorer.get_identifier()],
         )
 
@@ -63,7 +63,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
-    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Self:
         """
         Apply the policy to the wrapped scorer.
 
@@ -74,9 +74,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             Scorer: ``self`` when the wrapped scorer is unchanged, otherwise a copy wrapping
             the updated scorer.
         """
-        scoped_inner = cast(
-            "TrueFalseScorer", self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
-        )
+        scoped_inner = self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
         if scoped_inner is self._scorer:
             return self
         scoped = copy.copy(self)
@@ -160,10 +158,8 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             inv_score.set_value(not inv_score.get_value())
             # The wrapped threshold score's float describes the uninverted verdict, and
             # normalize_score_to_float would prefer it over this one.
-            if inv_score.score_metadata and ORIGINAL_FLOAT_VALUE_KEY in inv_score.score_metadata:
-                inv_score.score_metadata = {
-                    k: v for k, v in inv_score.score_metadata.items() if k != ORIGINAL_FLOAT_VALUE_KEY
-                }
+            if inv_score.score_metadata:
+                inv_score.score_metadata = FloatFeedback.remove_from(inv_score.score_metadata)
             inv_score.score_value_description = "Inverted score: " + str(inv_score.score_value_description)
             inv_score.score_rationale = (
                 f"Inverted score from {scorer_type} result: {inv_score.score_value}\n{inv_score.score_rationale}"

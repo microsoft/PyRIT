@@ -20,27 +20,38 @@ from fastapi import FastAPI
 from starlette.requests import Request
 
 import pyrit.backend.services.runtime_lifecycle as lifecycle_module
+from pyrit.auth import caller_principal_scope, get_caller_principal
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
-from pyrit.backend.routes import configuration, health
+from pyrit.backend.routes import configuration, health, targets
 from pyrit.backend.services import ScenarioRunService, get_converter_service, get_target_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
+from pyrit.backend.services.prompt_generation_service import PromptGenerationService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.scenario_run_service import _PreparedRun
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.technique_service import get_technique_service
+from pyrit.converter import Base64Converter
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
-from pyrit.models.catalog import RunScenarioRequest
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RunScenarioRequest
+from pyrit.prompt_target import OpenAIChatTarget, TextTarget
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY, registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
+from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.scenario import Scenario
+from pyrit.score import SubStringScorer
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initialization import reset_setup_registries
-from unit.async_utils import TEST_WATCHDOG_SECONDS
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    settle_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 from unit.mocks import MockPromptTarget, make_scenario_result
 
 _RESTORED_REGISTRIES = (TargetRegistry, ConverterRegistry, ScorerRegistry, AttackTechniqueRegistry)
@@ -104,6 +115,21 @@ async def apply_async(runtime: RuntimeLifecycle) -> None:
     assert result["outcome"] == "accepted"
     assert runtime.apply_task is not None
     await runtime.apply_task
+
+
+async def test_live_apply_runs_as_the_server_not_the_requesting_admin_async(*, runtime: RuntimeLifecycle) -> None:
+    seen: list[str | None] = []
+
+    async def apply_async(*, version: str) -> None:
+        seen.append(get_caller_principal())
+
+    _, version = await runtime.source.read_with_version_async()
+    with patch.object(runtime, "_apply_async", side_effect=apply_async), caller_principal_scope("admin"):
+        assert runtime.begin_apply(version=version)["outcome"] == "accepted"
+        assert runtime.apply_task is not None
+        await runtime.apply_task
+
+    assert seen == [None]
 
 
 @pytest.mark.parametrize("state", ["initializing", "ready", "failed", "restart-required", None])
@@ -409,6 +435,17 @@ async def test_active_suite_submission_rejects_apply_without_mutating(runtime: R
     lifecycle_module.close_services_async.assert_not_awaited()
 
 
+async def test_active_prompt_generation_rejects_apply_without_mutating(runtime: RuntimeLifecycle) -> None:
+    service = MagicMock(spec=PromptGenerationService)
+    service.has_active_work.return_value = True
+    with patch.object(lifecycle_module, "peek_prompt_generation_service", return_value=service):
+        await apply_async(runtime)
+
+    assert runtime.outcome == "busy"
+    assert runtime.state == "ready"
+    lifecycle_module.close_services_async.assert_not_awaited()
+
+
 @pytest.mark.parametrize("count", [1, 3])
 async def test_admitted_manual_send_blocks_reinitialization_without_an_http_request_async(
     runtime: RuntimeLifecycle,
@@ -549,24 +586,24 @@ async def test_http_disconnect_retains_scenario_launch_async(runtime: RuntimeLif
                 client.post("/api/scenarios/runs", json={"scenario_name": "test", "target_name": "test"})
             )
             try:
-                await asyncio.wait_for(entered.wait(), 5)
+                await wait_for_event_async(event=entered, tasks=[request])
                 request.cancel()
                 with pytest.raises(asyncio.CancelledError):
-                    await asyncio.wait_for(request, 5)
+                    await wait_for_completion_async(future=request)
                 assert runtime.operations
                 assert service.has_active_work()
                 assert not service._abandoned_prepare_tasks
                 await apply_async(runtime)
                 assert runtime.outcome == "busy"
                 release.set()
-                await asyncio.wait_for(asyncio.gather(*runtime.operations), 5)
-                await asyncio.wait_for(executed.wait(), 5)
+                await asyncio.wait_for(asyncio.gather(*runtime.operations), TEST_WATCHDOG_SECONDS)
+                await asyncio.wait_for(executed.wait(), TEST_WATCHDOG_SECONDS)
                 scenario.run_async.assert_awaited_once()
                 assert not service._abandoned_prepare_tasks
             finally:
                 release.set()
-                await asyncio.gather(request, *runtime.operations, return_exceptions=True)
-                await asyncio.wait_for(service.shutdown_async(), 5)
+                await settle_tasks_async(request, *runtime.operations)
+                await asyncio.wait_for(service.shutdown_async(), TEST_WATCHDOG_SECONDS)
 
 
 @pytest.mark.parametrize("phase", ["preparation", "cleanup"])
@@ -625,20 +662,20 @@ async def test_runtime_retains_abandoned_preparation_until_memory_shutdown_async
         )
         shutdown: asyncio.Task[None] | None = None
         try:
-            await asyncio.wait_for(entered.wait(), 5)
+            await wait_for_event_async(event=entered, tasks=[start])
             await apply_async(runtime)
             assert runtime.outcome == "busy"
             start.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(start, 5)
+                await wait_for_completion_async(future=start)
             if phase == "cleanup":
                 release.set()
-                await asyncio.wait_for(cleanup_entered.wait(), 5)
+                await asyncio.wait_for(cleanup_entered.wait(), TEST_WATCHDOG_SECONDS)
             await apply_async(runtime)
             assert runtime.outcome == "busy"
             lifecycle_module.close_services_async.assert_not_awaited()
             shutdown = asyncio.create_task(runtime.shutdown_async())
-            await asyncio.wait_for(stopped.wait(), 5)
+            await wait_for_event_async(event=stopped, tasks=[shutdown])
             assert service._stopping
             assert not shutdown.done()
             memory.dispose_engine_async.assert_not_awaited()
@@ -649,29 +686,29 @@ async def test_runtime_retains_abandoned_preparation_until_memory_shutdown_async
                 shutdown.cancel()
                 barrier = asyncio.Event()
                 asyncio.get_running_loop().call_soon(barrier.set)
-                await asyncio.wait_for(barrier.wait(), 5)
+                await asyncio.wait_for(barrier.wait(), TEST_WATCHDOG_SECONDS)
                 assert not shutdown.done()
                 assert all(task.cancelling() == 0 for task in service._preparations)
             release.set()
-            await asyncio.wait_for(cleanup_entered.wait(), 5)
+            await asyncio.wait_for(cleanup_entered.wait(), TEST_WATCHDOG_SECONDS)
             assert not shutdown.done()
             memory.dispose_engine_async.assert_not_awaited()
             cleanup_release.set()
             if cleanup_fails:
                 with pytest.raises(ExceptionGroup, match="shutdown transitions") as error:
-                    await asyncio.wait_for(shutdown, 5)
+                    await wait_for_completion_async(future=shutdown)
                 assert str(error.value.exceptions[0]) == "cleanup persistence failed"
             elif cancel_shutdown:
                 with pytest.raises(asyncio.CancelledError):
-                    await asyncio.wait_for(shutdown, 5)
+                    await wait_for_completion_async(future=shutdown)
             else:
-                await asyncio.wait_for(shutdown, 5)
+                await wait_for_completion_async(future=shutdown)
             assert order == ["prepared", "cleaned", "memory-closed"]
             scenario.run_async.assert_not_called()
         finally:
             release.set()
             cleanup_release.set()
-            await asyncio.gather(start, *([shutdown] if shutdown else []), return_exceptions=True)
+            await settle_tasks_async(start, *([shutdown] if shutdown else []))
 
 
 async def test_apply_denies_writes_but_allows_repair_reads(runtime: RuntimeLifecycle) -> None:
@@ -703,11 +740,17 @@ async def test_management_publishes_target_upload_directory(tmp_path: Path) -> N
     app = FastAPI()
     with patch.dict(os.environ, {}, clear=True):
         service = RuntimeLifecycle(app=app, source=ConfigurationFileService(config_file_value=None))
-    config = ConfigurationLoader(memory_db_type="in_memory", env_files=[], target_upload_directory=str(tmp_path))
+    config = ConfigurationLoader(
+        memory_db_type="in_memory",
+        env_files=[],
+        target_upload_directory=str(tmp_path),
+        registry_recipes_source=str(tmp_path / "recipes"),
+    )
 
     await service._management_async(config)
 
     assert app.state.target_upload_directory == str(tmp_path)
+    assert app.state.registry_recipes_source == str(tmp_path / "recipes")
 
 
 async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repair(tmp_path: Path) -> None:
@@ -720,6 +763,7 @@ async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repai
     assert service.state == "restart-required"
     assert not app.state.allow_custom_initializers
     assert app.state.target_upload_directory is None
+    assert app.state.registry_recipes_source is None
     assert app.state.environment_file_service is None
     content, version = await source.read_with_version_async()
     assert content == "broken: ["
@@ -825,7 +869,7 @@ async def test_shutdown_drains_disconnected_requests_before_closing_async(
                 lifecycle_module.close_services_async.assert_awaited_once()
         finally:
             release.set()
-            await asyncio.gather(request, *children, *([shutdown] if shutdown else []), return_exceptions=True)
+            await settle_tasks_async(request, *children, *([shutdown] if shutdown else []))
 
 
 async def test_shutdown_preserves_request_and_close_failures_async(runtime: RuntimeLifecycle) -> None:
@@ -848,21 +892,21 @@ async def test_shutdown_preserves_request_and_close_failures_async(runtime: Runt
         shutdown: asyncio.Task[None] | None = None
         children: list[asyncio.Task[None]] = []
         try:
-            await asyncio.wait_for(entered.wait(), timeout=5)
+            await wait_for_event_async(event=entered, tasks=[request])
             request.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await request
             children = list(runtime.operations)
             shutdown = asyncio.create_task(shutdown_async())
-            await asyncio.wait_for(shutdown_entered.wait(), timeout=5)
+            await wait_for_event_async(event=shutdown_entered, tasks=[shutdown])
             release.set()
             with pytest.raises(BaseExceptionGroup) as error:
-                await asyncio.wait_for(shutdown, timeout=5)
+                await wait_for_completion_async(future=shutdown)
             assert error.value.exceptions == (request_error, close_error)
             lifecycle_module.close_services_async.assert_awaited_once()
         finally:
             release.set()
-            await asyncio.gather(request, *children, *([shutdown] if shutdown else []), return_exceptions=True)
+            await settle_tasks_async(request, *children, *([shutdown] if shutdown else []))
 
 
 async def test_shutdown_drains_sibling_after_request_failure_async(runtime: RuntimeLifecycle) -> None:
@@ -887,7 +931,7 @@ async def test_shutdown_drains_sibling_after_request_failure_async(runtime: Runt
         shutdown: asyncio.Task[None] | None = None
         children: list[asyncio.Task[None]] = []
         try:
-            await asyncio.wait_for(asyncio.gather(*(event.wait() for event in entered)), timeout=5)
+            await asyncio.wait_for(asyncio.gather(*(event.wait() for event in entered)), timeout=TEST_WATCHDOG_SECONDS)
             children = list(runtime.operations)
             assert len(children) == 2
             for task in children:
@@ -896,22 +940,22 @@ async def test_shutdown_drains_sibling_after_request_failure_async(runtime: Runt
                 request.cancel()
             await asyncio.gather(*requests, return_exceptions=True)
             shutdown = asyncio.create_task(shutdown_async())
-            await asyncio.wait_for(shutdown_entered.wait(), timeout=5)
+            await wait_for_event_async(event=shutdown_entered, tasks=[shutdown])
             release[0].set()
-            await asyncio.wait_for(failed.wait(), timeout=5)
+            await asyncio.wait_for(failed.wait(), timeout=TEST_WATCHDOG_SECONDS)
             assert not shutdown.done()
             assert len(runtime.operations) == 1
             lifecycle_module.close_services_async.assert_not_awaited()
             release[1].set()
             with pytest.raises(ValueError, match="first request failed") as error:
-                await asyncio.wait_for(shutdown, timeout=5)
+                await wait_for_completion_async(future=shutdown)
             assert error.value is failure
             assert all(task.done() for task in children)
             lifecycle_module.close_services_async.assert_awaited_once()
         finally:
             for event in release:
                 event.set()
-            await asyncio.gather(*requests, *children, *([shutdown] if shutdown else []), return_exceptions=True)
+            await settle_tasks_async(*requests, *children, *([shutdown] if shutdown else []))
 
 
 async def test_shutdown_keeps_admission_closed_while_accepted_apply_finishes_async(runtime: RuntimeLifecycle) -> None:
@@ -939,10 +983,10 @@ async def test_shutdown_keeps_admission_closed_while_accepted_apply_finishes_asy
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
         request = asyncio.create_task(client.get("/api/config/draining"))
         try:
-            await asyncio.wait_for(entered.wait(), timeout=5)
-            await asyncio.wait_for(request_entered.wait(), timeout=5)
+            await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            await wait_for_event_async(event=request_entered, tasks=[request])
             shutdown = asyncio.create_task(shutdown_async())
-            await asyncio.wait_for(shutdown_entered.wait(), timeout=5)
+            await wait_for_event_async(event=shutdown_entered, tasks=[shutdown])
             assert runtime.state == "initializing"
             assert runtime.status()["state"] == "stopping"
             assert runtime.begin_apply(version=version)["outcome"] == "stopping"
@@ -950,7 +994,7 @@ async def test_shutdown_keeps_admission_closed_while_accepted_apply_finishes_asy
             lifecycle_module.close_services_async.assert_awaited_once()
             release.set()
             assert runtime.apply_task is not None
-            await asyncio.wait_for(runtime.apply_task, timeout=5)
+            await wait_for_completion_async(future=runtime.apply_task)
             assert runtime.state == "ready"
             assert runtime.generation != "original"
             assert not shutdown.done()
@@ -965,7 +1009,7 @@ async def test_shutdown_keeps_admission_closed_while_accepted_apply_finishes_asy
             }
             assert (await client.get("/api/config")).status_code == 503
             release_request.set()
-            await asyncio.wait_for(shutdown, timeout=5)
+            await wait_for_completion_async(future=shutdown)
             assert runtime.status()["state"] == "stopping"
             assert lifecycle_module.close_services_async.await_count == 2
         finally:
@@ -994,21 +1038,21 @@ async def test_shutdown_cancellation_before_entry_and_during_close_async(runtime
     assert not runtime.is_stopping
     shutdown = asyncio.create_task(runtime.shutdown_async())
     try:
-        await asyncio.wait_for(entered.wait(), timeout=5)
+        await wait_for_event_async(event=entered, tasks=[shutdown])
         for _ in range(2):
             shutdown.cancel()
             barrier = asyncio.Event()
             asyncio.get_running_loop().call_soon(barrier.set)
-            await asyncio.wait_for(barrier.wait(), timeout=5)
+            await asyncio.wait_for(barrier.wait(), timeout=TEST_WATCHDOG_SECONDS)
             assert not shutdown.done()
         release.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(shutdown, timeout=5)
+            await wait_for_completion_async(future=shutdown)
         await runtime.shutdown_async()
         lifecycle_module.close_services_async.assert_awaited_once()
     finally:
         release.set()
-        await asyncio.gather(shutdown, return_exceptions=True)
+        await settle_tasks_async(shutdown)
 
 
 def _save_recipe(root: Path, *, kind: str, name: str, document: dict[str, object]) -> Path:
@@ -1071,6 +1115,71 @@ async def test_startup_restores_an_entry_that_uses_a_startup_target_async(
     converter = ConverterRegistry.get_registry_singleton().instances.get("formal")
     assert converter is not None
     assert converter._converter_target is startup_chat
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_startup_marks_the_targets_its_scripts_register_but_not_saved_ones_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, startup_chat: OpenAIChatTarget
+) -> None:
+    recipes = tmp_path / "recipes"
+    text_target = {"class_module": TextTarget.__module__, "class_name": "TextTarget", "params": {}}
+    _save_recipe(recipes, kind="targets", name="saved_text", document=text_target)
+    targets = TargetRegistry.get_registry_singleton()
+
+    await _start_with_recipes_async(
+        runtime, recipes=recipes, initialize=lambda **_: targets.instances.register(startup_chat, name="startup_chat")
+    )
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    startup_entry, saved_entry = targets.instances.get_entry("startup_chat"), targets.instances.get_entry("saved_text")
+    assert startup_entry is not None and saved_entry is not None
+    assert CONFIGURATION_ENTRY_METADATA_KEY in startup_entry.metadata
+    assert CONFIGURATION_ENTRY_METADATA_KEY not in saved_entry.metadata
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_startup_marks_the_converters_and_scorers_its_scripts_register_but_not_saved_ones_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    ScorerRegistry.reset_registry_singleton()
+    recipes = tmp_path / "recipes"
+    base64 = {"class_module": Base64Converter.__module__, "class_name": "Base64Converter", "params": {}}
+    leak = {"class_module": SubStringScorer.__module__, "class_name": "SubStringScorer", "params": {"substring": "x"}}
+    _save_recipe(recipes, kind="converters", name="saved_base64", document=base64)
+    _save_recipe(recipes, kind="scorers", name="saved_leak", document=leak)
+    converters = ConverterRegistry.get_registry_singleton().instances
+    scorers = ScorerRegistry.get_registry_singleton().instances
+
+    def register_startup_entries(**_: object) -> None:
+        converters.register(Base64Converter(), name="startup_base64")
+        scorers.register(SubStringScorer(substring="y"), name="startup_leak")
+
+    try:
+        await _start_with_recipes_async(runtime, recipes=recipes, initialize=register_startup_entries)
+
+        assert (runtime.state, runtime.outcome) == ("ready", "success")
+        entries = {
+            name: instances.get_entry(name)
+            for instances, name in (
+                (converters, "startup_base64"),
+                (converters, "saved_base64"),
+                (scorers, "startup_leak"),
+                (scorers, "saved_leak"),
+            )
+        }
+        assert {name: registry_entry_origin(entry.metadata) for name, entry in entries.items() if entry} == {
+            "startup_base64": RegistryEntryOrigin.CONFIGURATION,
+            "saved_base64": RegistryEntryOrigin.SAVED,
+            "startup_leak": RegistryEntryOrigin.CONFIGURATION,
+            "saved_leak": RegistryEntryOrigin.SAVED,
+        }
+        assert all(
+            CONFIGURATION_ENTRY_METADATA_KEY not in entry.metadata
+            for name, entry in entries.items()
+            if entry and name.startswith("saved_")
+        )
+    finally:
+        ScorerRegistry.reset_registry_singleton()
 
 
 class _LoopBoundTarget(MockPromptTarget):
@@ -1165,6 +1274,9 @@ async def test_apply_after_a_startup_restore_restores_the_same_entries_async(
     assert converter is not None
     assert converter._converter_target is startup_chat
     assert ScorerRegistry.get_registry_singleton().instances.get("refusal") is not None
+    startup_entry = TargetRegistry.get_registry_singleton().instances.get_entry("startup_chat")
+    assert startup_entry is not None
+    assert CONFIGURATION_ENTRY_METADATA_KEY in startup_entry.metadata
 
 
 class _UnreachableTarget(MockPromptTarget):
@@ -1458,6 +1570,39 @@ async def test_restore_cancellation_propagates_from_startup_async(runtime: Runti
             await _start_with_recipes_async(runtime, recipes=tmp_path / "recipes")
 
     assert runtime.state == "initializing"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_a_target_save_in_flight_makes_apply_busy_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
+    TargetRegistry.reset_registry_singleton()
+    writing, finish_writing = Event(), Event()
+    create_recipe = RegistryRecipeStorage.create_recipe
+
+    def create_recipe_slowly(storage: RegistryRecipeStorage, *, name: str, recipe: ComponentRecipe) -> str:
+        writing.set()
+        finish_writing.wait(TEST_WATCHDOG_SECONDS)
+        return create_recipe(storage, name=name, recipe=recipe)
+
+    runtime.app.include_router(targets.router, prefix="/api")
+    runtime.app.state.registry_recipes_source = str(tmp_path / "recipes")
+    body = {"name": "saved_text", "type": "TextTarget", "params": {}, "persist": True}
+    try:
+        with patch.object(RegistryRecipeStorage, "create_recipe", create_recipe_slowly):
+            transport = httpx.ASGITransport(app=runtime.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                save = asyncio.create_task(client.post("/api/targets", json=body))
+                assert await asyncio.to_thread(writing.wait, TEST_WATCHDOG_SECONDS)
+                await apply_async(runtime)
+                assert (runtime.outcome, runtime.state, runtime.generation) == ("busy", "ready", "original")
+                finish_writing.set()
+                response = await save
+
+        assert response.status_code == 201
+        assert (tmp_path / "recipes" / "targets" / "saved_text.json").exists()
+        lifecycle_module.close_services_async.assert_not_awaited()
+    finally:
+        finish_writing.set()
+        TargetRegistry.reset_registry_singleton()
 
 
 _RESTORABLE_TARGET = {

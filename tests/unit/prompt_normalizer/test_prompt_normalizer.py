@@ -729,6 +729,59 @@ async def test_send_prompt_async_none_in_list_response_returns_empty(mock_memory
     assert response.message_pieces[0].original_value == ""
 
 
+def _write_only_mock_target(*, return_value: object) -> MagicMock:
+    prompt_target = MagicMock()
+    prompt_target.configuration = TargetConfiguration(capabilities=TargetCapabilities(supports_responses=False))
+    prompt_target.send_prompt_async = AsyncMock(return_value=return_value)
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    return prompt_target
+
+
+@pytest.mark.parametrize("target_return", [[], None], ids=["empty-list", "none"])
+@pytest.mark.parametrize("role", ["user", "assistant", "system"])
+async def test_send_prompt_async_write_only_target_returns_request(mock_memory_instance, role, target_return):
+    prompt_target = _write_only_mock_target(return_value=target_return)
+    message = Message.from_prompt(prompt="write-only request", role=role)
+
+    response = await PromptNormalizer().send_prompt_async(message=message, target=prompt_target)
+
+    assert response.api_role == role
+    assert response.get_value() == "write-only request"
+    # Only the request is persisted; no response is fabricated for the write-only target.
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 1
+    persisted = mock_memory_instance.add_message_to_memory_async.call_args.kwargs["request"]
+    assert [piece.id for piece in persisted.message_pieces] == [piece.id for piece in response.message_pieces]
+
+
+async def test_send_prompt_async_empty_list_from_responding_target_is_empty_response(mock_memory_instance):
+    prompt_target = MagicMock()
+    prompt_target.configuration = TargetConfiguration(capabilities=TargetCapabilities())
+    prompt_target.send_prompt_async = AsyncMock(return_value=[])
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+
+    response = await PromptNormalizer().send_prompt_async(
+        message=Message.from_prompt(prompt="request", role="user"), target=prompt_target
+    )
+
+    # The target should have replied, so the missing reply is an empty response, not a delivery.
+    assert response.api_role == "assistant"
+    assert response.get_piece().response_error == "empty"
+    persisted = [call.kwargs["request"] for call in mock_memory_instance.add_message_to_memory_async.call_args_list]
+    assert [message.api_role for message in persisted] == ["user", "assistant"]
+
+
+async def test_send_prompt_async_receipt_from_write_only_target_is_returned(mock_memory_instance):
+    receipt = Message.from_prompt(prompt="https://storage.example/receipt", role="assistant")
+    prompt_target = _write_only_mock_target(return_value=[receipt])
+
+    response = await PromptNormalizer().send_prompt_async(
+        message=Message.from_prompt(prompt="request", role="user"), target=prompt_target
+    )
+
+    # What the target returns is kept; callers ask the target whether it is a reply.
+    assert response.get_value() == "https://storage.example/receipt"
+
+
 async def test_build_message(mock_memory_instance, seed_group):
     # This test is obsolete since _build_message was removed and message preparation
     # is now done inline in send_prompt_async. The functionality is tested by
@@ -1771,3 +1824,36 @@ async def test_repeated_cancellation_finishes_request_persistence(mock_memory_in
             if not task.done():
                 task.cancel()
             await drain_tasks_async(task)
+
+
+async def test_failed_piece_hash_cancels_the_other_hashes_async(mock_memory_instance) -> None:
+    conversation_id = str(uuid4())
+    pieces = [
+        MessagePiece(role="user", original_value=f"piece {index}", conversation_id=conversation_id)
+        for index in range(2)
+    ]
+    message = Message(message_pieces=pieces)
+    sibling_started = asyncio.Event()
+    sibling_cancelled = asyncio.Event()
+    failure = RuntimeError("blob read failed")
+
+    async def hash_piece_async(piece: MessagePiece) -> None:
+        if piece is pieces[0]:
+            sibling_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                sibling_cancelled.set()
+                raise
+        await asyncio.wait_for(sibling_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+        raise failure
+
+    with (
+        patch.object(prompt_normalizer_module, "set_message_piece_sha256_async", side_effect=hash_piece_async),
+        pytest.raises(RuntimeError, match="blob read failed") as exc_info,
+    ):
+        await PromptNormalizer().hash_and_persist_message_async(message=message)
+
+    assert exc_info.value is failure
+    assert sibling_cancelled.is_set()
+    mock_memory_instance.add_message_to_memory_async.assert_not_called()

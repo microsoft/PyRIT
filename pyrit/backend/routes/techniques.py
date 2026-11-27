@@ -106,5 +106,7 @@ async def create_technique_async(request: CreateTechniqueRequest) -> TechniqueIn
     """
     try:
         return await get_technique_service().create_async(request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

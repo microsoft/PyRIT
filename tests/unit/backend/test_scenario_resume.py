@@ -43,6 +43,7 @@ from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackIdentifier,
     AttackOutcome,
+    AttackSeedGroup,
     ComponentIdentifier,
     DatasetFetchPolicy,
     DatasetSourceInput,
@@ -61,7 +62,12 @@ from pyrit.models import (
 from pyrit.models.catalog import RunScenarioRequest, ScenarioRunSummary
 from pyrit.models.seeds import yaml_seed_loader
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, ScorerRegistry, TargetRegistry
-from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration, IncompatibleTechniquePolicy
+from pyrit.scenario import (
+    AttackTechniqueFactory,
+    DatasetAttackConfiguration,
+    DatasetSource,
+    IncompatibleTechniquePolicy,
+)
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechnique,
@@ -76,7 +82,7 @@ from pyrit.scenario.scenarios.airt import RapidResponse
 from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
 from pyrit.scenario.scenarios.foundry import RedTeamAgent
 from pyrit.score import SubStringScorer
-from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async
+from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
 
 # Bound the whole test, including teardown, even if cancellation or the event loop stalls.
@@ -109,7 +115,9 @@ class _OfflineResumeScenario(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=_OfflineTechnique,
-            default_dataset_config=DatasetAttackConfiguration(dataset_names=[_DATASET_NAME], auto_fetch=False),
+            default_dataset_config=DatasetAttackConfiguration(
+                sources=[DatasetSource(name=_DATASET_NAME)], fetch=DatasetFetchPolicy.NEVER
+            ),
             objective_scorer=SubStringScorer(substring="default"),
             scenario_result_id=scenario_result_id,
         )
@@ -624,7 +632,7 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
         assert threading.get_ident() != backend_thread
         assert get_default_adversarial_target() is target
         reads += 1
-        if not release.wait(5):
+        if not release.wait(TEST_WATCHDOG_SECONDS):
             raise TimeoutError("Many-shot disk read was not released.")
         return original_load()
 
@@ -672,8 +680,8 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
                 )
             )
             try:
-                await asyncio.wait_for(entered.wait(), 5)
-                await asyncio.wait_for(heartbeat.wait(), 1)
+                await wait_for_event_async(event=entered, tasks=[launch])
+                await asyncio.wait_for(heartbeat.wait(), TEST_WATCHDOG_SECONDS)
                 assert not launch.done()
                 release.set()
                 response = await wait_for_completion_async(future=launch)
@@ -707,7 +715,7 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
     reads = 0
     original_load = yaml_seed_loader._read_yaml
     original_read = sqlite_instance.get_seeds_async
-    original_write = sqlite_instance.add_scenario_results_to_memory_async
+    original_write = sqlite_instance.add_planned_scenario_result_async
 
     class OfflineFoundry(RedTeamAgent):
         def __init__(self, *, scenario_result_id: str | None = None) -> None:
@@ -729,7 +737,7 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
         assert threading.get_ident() != backend_thread
         assert get_default_adversarial_target() is target
         reads += 1
-        if not release.wait(5):
+        if not release.wait(TEST_WATCHDOG_SECONDS):
             raise TimeoutError("Foundry disk read was not released.")
         return original_load(file)
 
@@ -743,9 +751,11 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
         assert asyncio.get_running_loop() is loop
         return await original_read(**kwargs)
 
-    async def write_results_async(*, scenario_results: Sequence[ScenarioResult]) -> None:
+    async def write_results_async(
+        *, scenario_result: ScenarioResult, seed_groups_by_dataset: Mapping[str, Sequence[AttackSeedGroup]]
+    ) -> None:
         assert asyncio.get_running_loop() is loop
-        await original_write(scenario_results=scenario_results)
+        await original_write(scenario_result=scenario_result, seed_groups_by_dataset=seed_groups_by_dataset)
 
     async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
         assert asyncio.get_running_loop() is loop
@@ -771,7 +781,7 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
             patch.object(yaml_seed_loader, "_read_yaml", side_effect=load_template),
             patch.object(sqlite_instance, "get_seeds_async", side_effect=read_seeds_async) as read_seeds,
             patch.object(
-                sqlite_instance, "add_scenario_results_to_memory_async", side_effect=write_results_async
+                sqlite_instance, "add_planned_scenario_result_async", side_effect=write_results_async
             ) as write,
             patch.object(target, "_send_prompt_to_target_async", side_effect=send_async),
         ):
@@ -790,8 +800,8 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
                 )
             )
             try:
-                await asyncio.wait_for(entered.wait(), 5)
-                await asyncio.wait_for(heartbeat.wait(), 1)
+                await wait_for_event_async(event=entered, tasks=[launch])
+                await asyncio.wait_for(heartbeat.wait(), TEST_WATCHDOG_SECONDS)
                 assert not launch.done()
                 release.set()
                 response = await wait_for_completion_async(future=launch)
@@ -871,7 +881,9 @@ async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) ->
         max_retries=0,
         memory_labels=_LABELS,
         operation_id=_OPERATION_ID,
-        dataset_config=DatasetAttackConfiguration(dataset_names=[_DATASET_NAME], max_dataset_size=2, auto_fetch=False),
+        dataset_config=DatasetAttackConfiguration(
+            sources=[DatasetSource(name=_DATASET_NAME)], max_total=2, fetch=DatasetFetchPolicy.NEVER
+        ),
         initial_metadata={}
         if legacy
         else {
@@ -1507,7 +1519,7 @@ async def test_overlapping_resume_requests_only_initialize_once_async(
 
     with patch.object(service, "_start_run_locked_async", side_effect=fail_launch_async) as start:
         first = asyncio.create_task(service.resume_run_async(scenario_result_id=str(stored.id)))
-        await asyncio.wait_for(entered.wait(), timeout=5)
+        await wait_for_event_async(event=entered, tasks=[first])
         with pytest.raises(ScenarioRunConflictError, match="already being resumed"):
             await service.resume_run_async(scenario_result_id=str(stored.id))
         with pytest.raises(ScenarioRunConflictError, match="already being resumed"):
@@ -1584,7 +1596,7 @@ async def test_resumed_run_uses_existing_fifo_scheduler_async(
         active = await service.start_run_async(
             request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, max_concurrency=1)
         )
-        await asyncio.wait_for(entered.wait(), timeout=5)
+        await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
         resumed = await service.resume_run_async(scenario_result_id=run_id)
         assert resumed.status == ScenarioRunState.QUEUED
         assert resumed.queue_position == 1

@@ -4,6 +4,18 @@ import { scenarioRunRoutePath } from '../src/utils/routeParams'
 const run = scenarioRunRoutePath('00000000-0000-0000-0000-00000000238c')
 const paginatedRun = scenarioRunRoutePath('00000000-0000-0000-0000-00000000238f')
 
+// The Accordion panel animates its height inside overflow: hidden. Pointer actions that start
+// before that motion ends can be released over a different element, so wait for it to finish.
+async function expandPairedOutcomes(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
+  const panel = page
+    .locator('.fui-AccordionPanel')
+    .filter({ has: page.getByRole('region', { name: 'Paired outcomes', exact: true }) })
+  await panel.evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished))
+  })
+}
+
 async function captureExpandedTransition(page: Page, table: Locator, details: Locator, path: string): Promise<void> {
   const header = table.getByRole('row').first()
   await header.evaluate((element) => element.scrollIntoView({ block: 'start' }))
@@ -28,7 +40,7 @@ test('compares persisted outcomes through the real API, including retries and ex
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto(run)
   await expect(page.getByRole('region', { name: 'Paired outcomes', exact: true })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
+  await expandPairedOutcomes(page)
   const panel = page.getByRole('region', { name: 'Paired outcomes', exact: true })
   await expect(panel).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Compare outcomes' })).toBeDisabled()
@@ -81,7 +93,7 @@ test('compares persisted outcomes through the real API, including retries and ex
   await expect(page).toHaveURL(/\/attack\/chat\/[^/]+\/conversations\/[^/]+\?scenarioResultId=/)
   await expect(page.getByText('Offline objective: a')).toBeVisible()
   await page.goto(run)
-  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
+  await expandPairedOutcomes(page)
   const restored = page.getByRole('region', { name: 'Paired outcomes', exact: true })
   await restored.getByLabel('Baseline group').selectOption('baseline')
   await restored.getByLabel('Attack group').selectOption('attack')
@@ -116,9 +128,11 @@ test('keeps expanded pairs usable at a narrow viewport and with keyboard control
   await expect(button).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(panel.getByRole('region', { name: 'Paired comparison' })).toBeVisible()
-  const baselineMetric = await panel.getByRole('group', { name: 'Baseline success rate' }).boundingBox()
-  const attackMetric = await panel.getByRole('group', { name: 'Attack success rate' }).boundingBox()
-  expect(baselineMetric?.y).toBe(attackMetric?.y)
+  await expect(async () => {
+    const baselineMetric = await panel.getByRole('group', { name: 'Baseline success rate' }).boundingBox()
+    const attackMetric = await panel.getByRole('group', { name: 'Attack success rate' }).boundingBox()
+    expect(baselineMetric?.y).toBe(attackMetric?.y)
+  }).toPass({ timeout: 10000 })
   const overflow = await panel.evaluate((element) => element.scrollWidth > element.clientWidth)
   expect(overflow).toBe(false)
   const size = await button.boundingBox()
@@ -138,7 +152,7 @@ test('keeps expanded pairs usable at a narrow viewport and with keyboard control
 
 test('paginates matching SQLite pairs', async ({ page }) => {
   await page.goto(paginatedRun)
-  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
+  await expandPairedOutcomes(page)
   const panel = page.getByRole('region', { name: 'Paired outcomes', exact: true })
   await panel.getByLabel('Baseline group').selectOption('baseline')
   await panel.getByLabel('Attack group').selectOption('attack')
@@ -166,7 +180,7 @@ test('paginates matching SQLite pairs', async ({ page }) => {
 
 test('explains why legacy or failed runs cannot be compared', async ({ page }) => {
   await page.goto(scenarioRunRoutePath('00000000-0000-0000-0000-00000000238d'))
-  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
+  await expandPairedOutcomes(page)
   await expect(page.getByRole('region', { name: 'Paired outcomes', exact: true })).toContainText('saved execution plan')
   await page.goto(scenarioRunRoutePath('00000000-0000-0000-0000-00000000238e'))
   await expect(page.getByRole('button', { name: 'Compare baseline and attack' })).toHaveCount(0)
@@ -175,7 +189,7 @@ test('explains why legacy or failed runs cannot be compared', async ({ page }) =
 test('opens a compound child conversation and pages long seed IDs on mobile', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 })
   await page.goto(scenarioRunRoutePath('00000000-0000-0000-0000-000000002390'))
-  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
+  await expandPairedOutcomes(page)
   const panel = page.getByRole('region', { name: 'Paired outcomes', exact: true })
   await panel.getByLabel('Baseline group').selectOption('baseline')
   await panel.getByLabel('Attack group').selectOption('attack')
@@ -203,7 +217,7 @@ test('opens a compound child conversation and pages long seed IDs on mobile', as
 test('offers a usable mobile retry after a real network failure', async ({ page, context }) => {
   await page.setViewportSize({ width: 320, height: 844 })
   await page.goto(run)
-  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
+  await expandPairedOutcomes(page)
   const panel = page.getByRole('region', { name: 'Paired outcomes', exact: true })
   await panel.getByLabel('Baseline group').selectOption('baseline')
   await panel.getByLabel('Attack group').selectOption('attack')

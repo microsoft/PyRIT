@@ -10,7 +10,7 @@ import uuid
 from abc import abstractmethod
 from contextlib import nullcontext
 from dataclasses import replace
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar, Self, cast
 
 from pyrit.common import print_deprecation_message
 from pyrit.common.task_utils import gather_with_cleanup_async
@@ -40,6 +40,7 @@ from pyrit.models import (
 )
 from pyrit.models.score.observation import _message_piece_digest
 from pyrit.models.score.scorable import SCORABLE_TYPES
+from pyrit.score.expectation_errors import MissingConditionError
 from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation.execution import (
@@ -379,7 +380,7 @@ class MessageScorer(Scorer):
         self._message_resolver = message_resolver or MessageScorableResolver()
         super().__init__(chat_target=chat_target)
 
-    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Self:
         """
         Return this scorer carrying the given blocked-response policy.
 
@@ -452,12 +453,14 @@ class MessageScorer(Scorer):
             expectation (ScoringExpectation | None): The expectation to validate.
 
         Raises:
-            ValueError: If ``MatchesObjective`` is present without an objective to match.
+            MissingConditionError: If ``MatchesObjective`` is present without an objective to match.
         """
         ScoringExpectation.validate_type(expectation)
         if self.condition_type is MatchesObjective and (expectation is None or not expectation.objective):
-            raise ValueError(
-                "MatchesObjective requires the expectation to carry an objective. Set ScoringExpectation.objective."
+            raise MissingConditionError(
+                "MatchesObjective requires the expectation to carry an objective. Set ScoringExpectation.objective.",
+                scorer_name=type(self).__name__,
+                condition_names=("MatchesObjective",),
             )
         super()._validate_expectation(expectation=expectation)
 
@@ -589,6 +592,7 @@ class MessageScorer(Scorer):
             )
         if scores:
             self.validate_return_scores(scores=scores)
+            self._validate_float_feedback(scores=scores)
             _collect_scores(scores)
         return scores
 

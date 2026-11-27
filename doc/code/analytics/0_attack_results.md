@@ -216,6 +216,34 @@ supported. The reported difference is descriptive and does not establish that
 the attack caused an outcome to change. No confidence interval is provided,
 because small and constant paired samples need careful uncertainty treatment.
 
+### ASSERT policy metrics
+
+`compute_assert_policy_metrics_async(result)` reports **impermissible behavior
+violated** and **permissible behavior violated** for a `foundry.assert_policy` run.
+It counts the same latest execution units as `compute_scenario_statistics`,
+separately for each technique and the baseline. Each conversation counts once
+per stance the judge found relevant, as violated if any relevant category of that
+stance was violated, and as not applicable if none was relevant.
+
+Category relevance comes from `AssertCategoryJudgment`; permissibility comes
+from the `ViolatesAssertPolicy` in the policy score's saved `scored_expectation`.
+Analytics never rereads today's seed datasets. Scores without that recorded
+policy or per-category judgments are counted as exclusions, not guessed from
+their generated category. A verdict that contradicts its category judgments
+is rejected.
+
+The result includes independent dimension rates, per-policy category rates,
+and exclusion counts. N/A and missing verdicts stay outside rate denominators.
+Grade counts and medians remain separate for each recorded scale. Rates use
+ASSERT's 90% Wilson interval and flag fewer than five applicable conversations.
+A supplied unmarked or composing objective scorer is reported as `objective`;
+its underlying ASSERT judgments remain independent dimension results.
+
+The run page exposes the same result through
+`GET /api/analytics/assert?scenario_result_id=<run-id>`. The filter selects a
+saved run, not a scenario catalog entry. See the
+[Foundry notebook](../../scanner/foundry.ipynb) for an executed example.
+
 ### Scenario producer accounting
 
 Scenario counts also expose `producer_counts`, separating target-facing,

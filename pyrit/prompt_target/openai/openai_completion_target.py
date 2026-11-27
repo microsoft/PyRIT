@@ -60,8 +60,8 @@ class OpenAICompletionTarget(OpenAITarget):
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
             max_tokens (int, Optional): The maximum number of tokens that can be generated in the
-              completion. The token count of your prompt plus `max_tokens` cannot exceed the model's
-              context length.
+                completion. The token count of your prompt plus `max_tokens` cannot exceed the model's
+                context length.
             temperature (float, Optional): What sampling temperature to use, between 0 and 2.
                 Values like 0.8 will make the output more random, while lower values like 0.2 will
                 make it more focused and deterministic.

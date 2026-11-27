@@ -4,7 +4,8 @@
 import json
 import pickle
 import threading
-from contextlib import nullcontext
+from collections.abc import Generator
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
@@ -206,6 +207,124 @@ class TestGetFilteredCands:
         result = attack.get_filtered_cands(0, cands, filter_cand=True, curr_control="same_control")
         # Should always return exactly len(cands) results
         assert len(result) == 3
+
+
+class TestAttackPromptModelBoundaries:
+    """Tests for what AttackPrompt accepts back from its tokenizer and model."""
+
+    def test_decoded_properties_return_tokenizer_text(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.decode.side_effect = lambda ids: " " + "-".join(str(token) for token in ids.tolist()) + " "
+        prompt.input_ids = torch.tensor([10, 11, 12, 13, 14, 15])
+        prompt._goal_slice = slice(0, 2)
+        prompt._control_slice = slice(2, 4)
+        prompt._assistant_role_slice = slice(4, 5)
+        prompt._target_slice = slice(5, 6)
+
+        assert prompt.goal_str == "10-11"
+        assert prompt.control_str == "12-13"
+        assert prompt.assistant_str == "14"
+        assert prompt.target_str == "15"
+        assert prompt.prompt == " 10-11-12-13 "
+        assert prompt.input_str == " 10-11-12-13-14-15 "
+        assert prompt.eval_str == " 10-11-12-13-14 "
+
+    def test_decoded_property_raises_when_tokenizer_returns_non_string(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.decode.return_value = ["batched", "output"]
+        prompt.input_ids = torch.tensor([10, 11, 12])
+        prompt._control_slice = slice(1, 3)
+
+        with pytest.raises(TypeError, match="Tokenizer decode must return a string, got list"):
+            _ = prompt.control_str
+
+    def test_generate_returns_continuation_after_assistant_role(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.pad_token_id = 0
+        prompt.input_ids = torch.tensor([10, 11, 12, 13])
+        prompt._assistant_role_slice = slice(2, 3)
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.return_value = torch.tensor([[10, 11, 12, 20, 21]])
+        gen_config = SimpleNamespace(max_new_tokens=2)
+
+        continuation = prompt.generate(model, gen_config)
+
+        assert torch.equal(continuation, torch.tensor([20, 21]))
+        generate_args, generate_kwargs = model.generate.call_args
+        assert torch.equal(generate_args[0], torch.tensor([[10, 11, 12]]))
+        assert generate_kwargs["generation_config"] is gen_config
+        assert generate_kwargs["pad_token_id"] == 0
+
+    def test_generate_raises_when_model_returns_non_tensor(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.pad_token_id = 0
+        prompt.input_ids = torch.tensor([10, 11, 12, 13])
+        prompt._assistant_role_slice = slice(2, 3)
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.return_value = [[10, 11, 12, 20, 21]]
+
+        with pytest.raises(TypeError, match="Model generate must return token id tensors, got list"):
+            prompt.generate(model, SimpleNamespace(max_new_tokens=2))
+
+    def test_generate_str_decodes_the_continuation(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.pad_token_id = 0
+        prompt.tokenizer.decode.side_effect = lambda ids: "-".join(str(token) for token in ids.tolist())
+        prompt.input_ids = torch.tensor([10, 11, 12, 13])
+        prompt._assistant_role_slice = slice(2, 3)
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.return_value = torch.tensor([[10, 11, 12, 20, 21]])
+
+        assert prompt.generate_str(model, SimpleNamespace(max_new_tokens=2)) == "20-21"
+
+    def test_generate_str_raises_when_tokenizer_returns_non_string(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.pad_token_id = 0
+        prompt.tokenizer.decode.return_value = ["batched", "output"]
+        prompt.input_ids = torch.tensor([10, 11, 12, 13])
+        prompt._assistant_role_slice = slice(2, 3)
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.return_value = torch.tensor([[10, 11, 12, 20, 21]])
+
+        with pytest.raises(TypeError, match="Tokenizer decode must return a string, got list"):
+            prompt.generate_str(model, SimpleNamespace(max_new_tokens=2))
+
+    def test_control_toks_setter_stores_decoded_control(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.decode.return_value = "new control"
+        prompt.control = "old control"
+
+        with patch.object(prompt, "_update_ids") as update_ids:
+            prompt.control_toks = torch.tensor([7, 8])
+
+        assert prompt.control == "new control"
+        update_ids.assert_called_once_with()
+
+    def test_control_toks_setter_raises_and_keeps_control_when_tokenizer_returns_non_string(self) -> None:
+        prompt = object.__new__(AttackPrompt)
+        prompt.tokenizer = MagicMock()
+        prompt.tokenizer.decode.return_value = ["batched", "output"]
+        prompt.control = "old control"
+
+        with (
+            patch.object(prompt, "_update_ids") as update_ids,
+            pytest.raises(TypeError, match="Tokenizer decode must return a string, got list"),
+        ):
+            prompt.control_toks = torch.tensor([7, 8])
+
+        assert prompt.control == "old control"
+        update_ids.assert_not_called()
 
 
 class TestTargetAndControlLoss:
@@ -1572,7 +1691,10 @@ def test_multi_prompt_test_dispatches_without_model_payload() -> None:
 
     result = attack.test([worker], [prompt], include_loss=True)
 
-    assert result == ([[True]], [[1]], [[0.25]])
+    assert result == ([[1]], [[1]], [[0.25]])
+    # NumPy stacks each (jailbroken, exact_match) pair into one integer array.
+    assert type(result[0][0][0]) is int
+    assert type(result[1][0][0]) is int
     assert worker.call_args_list == [
         call(prompt, ModelWorkerOperation.TEST),
         call(prompt, ModelWorkerOperation.TEST_LOSS),
@@ -2086,20 +2208,49 @@ def test_attack_prompt_logits_rejects_non_string_controls() -> None:
         prompt.logits(model, test_controls=123)
 
 
-def test_attack_prompt_logits_builds_attention_mask() -> None:
+@contextmanager
+def _expect_nested_tensor_warning() -> Generator[None, None, None]:
+    # PyTorch normally emits this C++ warning only once per process.
+    warn_always = torch.is_warn_always_enabled()
+    torch.set_warn_always(True)
+    try:
+        with pytest.warns(UserWarning, match=r"^The PyTorch API of nested tensors is in prototype stage"):
+            yield
+    finally:
+        torch.set_warn_always(warn_always)
+
+
+@pytest.mark.parametrize(
+    ("control_tokens", "expected_ids", "expected_mask"),
+    [
+        ([[5, 6]], [[0, 5, 6, 3]], [[1, 1, 1, 1]]),
+        ([[5]], [[0, 5, 4, 3]], [[1, 1, 0, 1]]),
+        ([[5], [6, 7]], [[0, 5, 4, 3], [0, 6, 7, 3]], [[1, 1, 0, 1], [1, 1, 1, 1]]),
+        ([[4], [5, 6, 7]], [[0, 4, 7, 3], [0, 5, 6, 3]], [[1, 1, 0, 1], [1, 1, 1, 1]]),
+    ],
+)
+def test_attack_prompt_logits_builds_attention_mask(
+    *,
+    control_tokens: list[list[int]],
+    expected_ids: list[list[int]],
+    expected_mask: list[list[int]],
+) -> None:
     prompt = object.__new__(AttackPrompt)
     prompt._control_slice = slice(1, 3)
     prompt.input_ids = torch.tensor([0, 1, 2, 3])
     prompt.tokenizer = MagicMock()
-    prompt.tokenizer.return_value.input_ids = [5, 6]
+    prompt.tokenizer.side_effect = [SimpleNamespace(input_ids=tokens) for tokens in control_tokens]
     model = MagicMock()
     model.device = torch.device("cpu")
-    model.return_value.logits = torch.randn(1, 4, 8)
+    model.return_value.logits = torch.randn(len(control_tokens), 4, 8)
 
-    logits = prompt.logits(model, test_controls=["candidate"])
+    with _expect_nested_tensor_warning():
+        logits, ids = prompt.logits(model, test_controls=["candidate"] * len(control_tokens), return_ids=True)
 
-    assert logits.shape == (1, 4, 8)
-    assert torch.equal(model.call_args.kwargs["attention_mask"], torch.ones(1, 4, dtype=torch.long))
+    assert logits is model.return_value.logits
+    assert torch.equal(ids, torch.tensor(expected_ids))
+    assert torch.equal(model.call_args.kwargs["input_ids"], ids)
+    assert torch.equal(model.call_args.kwargs["attention_mask"], torch.tensor(expected_mask))
 
 
 def test_attack_prompt_logits_forwards_selected_positions() -> None:
@@ -2113,7 +2264,8 @@ def test_attack_prompt_logits_forwards_selected_positions() -> None:
     model.return_value.logits = torch.randn(1, 2, 8)
     positions = torch.tensor([0, 2])
 
-    logits = prompt.logits(model, test_controls=["candidate"], logits_to_keep=positions)
+    with _expect_nested_tensor_warning():
+        logits = prompt.logits(model, test_controls=["candidate"], logits_to_keep=positions)
 
     assert logits.shape == (1, 2, 8)
     assert torch.equal(model.call_args.kwargs["logits_to_keep"], positions)

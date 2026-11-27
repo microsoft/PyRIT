@@ -768,7 +768,10 @@ class TestSeedEntry:
             separators=(",", ":"),
         )
 
-        with pytest.raises(ValueError, match="stale-technique"):
+        with (
+            pytest.warns(DeprecationWarning, match="adversarial_chat_system_prompt_path"),
+            pytest.raises(ValueError, match="stale-technique"),
+        ):
             entry.get_seed()
 
     def test_roundtrip_seed_simulated_conversation_strips_reserved_key(self):
@@ -817,6 +820,14 @@ class TestSeedEntry:
         seed = _make_seed_prompt(name="bad-schema-seed", response_json_schema={"enum": {1, 2, 3}})
         with pytest.raises(TypeError, match="bad-schema-seed.*not JSON-serializable"):
             SeedEntry(entry=seed)
+
+    def test_get_seed_unknown_seed_type_keeps_prompt_fallback(self):
+        entry = SeedEntry(entry=_make_seed_prompt())
+        expected = entry.get_seed()
+        entry.seed_type = "future"
+        recovered = entry.get_seed()
+        assert isinstance(recovered, SeedPrompt)
+        assert recovered.model_dump() == expected.model_dump()
 
 
 # ---------------------------------------------------------------------------

@@ -78,7 +78,7 @@ class ScorerMetrics:
     ``to_json``) and loading them from JSON files on disk (see
     ``from_json_file``).
 
-    Args:
+    Attributes:
         num_responses (int): Total number of responses evaluated.
         num_input_responses (int | None): Number of responses supplied before excluding scores that
             could not reach a verdict. None for metrics recorded before this field existed.
@@ -168,7 +168,7 @@ class HarmScorerMetrics(ScorerMetrics):
     """
     Metrics for evaluating a harm scorer against a HumanLabeledDataset.
 
-    Args:
+    Attributes:
         mean_absolute_error (float): The mean absolute error between the model scores and the gold scores.
         mae_standard_error (float): The standard error of the mean absolute error. This can be used to calculate
             a confidence interval for the mean absolute error.
@@ -187,7 +187,11 @@ class HarmScorerMetrics(ScorerMetrics):
         krippendorff_alpha_combined (float): Krippendorff's alpha for the reliability data, which includes both
             human and model scores. This measures the agreement between all the human raters and model scoring trials
             and ranges between -1.0 to 1.0 where 1.0 indicates perfect agreement, 0.0 indicates no agreement, and
-            negative values indicate systematic disagreement.
+            negative values indicate systematic disagreement. The human ratings and all model scoring trials are
+            pooled together, and each trial counts as a separate rater, so repeating identical model answers changes
+            the relative weight of model and human ratings and can inflate this value. It is not guaranteed to increase
+            with `num_scorer_trials`. Use `krippendorff_alpha_gold_model` to compare gold labels with the model's
+            per-response median score.
         harm_category (str, optional): The harm category being evaluated (e.g., "hate_speech", "violence").
         harm_definition (str, optional): Path to the YAML file containing the harm definition (scale descriptions).
             Use get_harm_definition() to load the full HarmDefinition object.
@@ -284,7 +288,7 @@ class ObjectiveScorerMetrics(ScorerMetrics):
     """
     Metrics for evaluating an objective scorer against a HumanLabeledDataset.
 
-    Args:
+    Attributes:
         accuracy (float): The accuracy of the model scores when using the majority vote of
             human scores as the gold label. With several scoring trials, the model score for a
             response is the majority vote of its trials; see `single_trial_accuracy`.
@@ -366,7 +370,7 @@ class ScorerMetricsWithIdentity(Generic[M]):
     - ScorerMetricsWithIdentity[ObjectiveScorerMetrics] has metrics: ObjectiveScorerMetrics
     - ScorerMetricsWithIdentity[HarmScorerMetrics] has metrics: HarmScorerMetrics
 
-    Args:
+    Attributes:
         scorer_identifier (ComponentIdentifier): The scorer's configuration identifier.
         metrics (M): The evaluation metrics (ObjectiveScorerMetrics or HarmScorerMetrics).
     """

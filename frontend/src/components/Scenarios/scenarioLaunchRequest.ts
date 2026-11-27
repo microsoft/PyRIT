@@ -4,6 +4,7 @@ import type {
   RegisteredComponentReference,
   RegisteredScenario,
   RunScenarioRequest,
+  ScenarioDatasetOptions,
   ScenarioDatasetRequest,
   ScenarioRunSizeEstimateRequest,
   TechniqueOverride,
@@ -40,42 +41,63 @@ export const DEFAULT_MAX_RETRIES = 0
 export const CONVERSATION_PARAMETER_NAMES = new Set(['prepended_conversation_id', 'apply_converters_to_prepended_history'])
 export const OBJECTIVE_PARAMETER_NAMES = new Set(['objective', 'harm_categories'])
 
-const ASSERT_SCORER_PARAMETERS = new Set([
-  'judgment_mode', 'target_system_prompt', 'judge_presets', 'judge_preset_files',
-  'disabled_judge_dimensions', 'judge_samples', 'objective_dimension', 'scoring_target',
-])
-
-/** The ASSERT launch form always uses ASSERT's default scoring; custom scoring stays in the SDK. */
-export function usesDefaultAssertScoring(scenario: RegisteredScenario): boolean {
-  return scenario.scenario_name === 'foundry.assert_policy'
-}
-
-export function isScorerOwnedParameter(scenario: RegisteredScenario, name: string): boolean {
-  return usesDefaultAssertScoring(scenario) && ASSERT_SCORER_PARAMETERS.has(name)
-}
-
-/** Whether a saved value leaves a setting at its default; defaults arrive as display strings. */
-function isDefaultSetting(parameter: Parameter | undefined, value: unknown): boolean {
-  if (value == null) return true
-  if (parameter?.is_list) {
-    const defaults = parameter.default == null ? [] : [parameter.default].flat()
-    return Array.isArray(value) && value.length === defaults.length
-      && value.every((item, index) => String(item) === defaults[index])
-  }
-  return parameter?.default != null && ['string', 'number', 'boolean'].includes(typeof value)
-    && String(value) === String(parameter.default)
-}
-
 export function supportsParameter(scenario: RegisteredScenario, name: string): boolean {
   return scenario.supported_parameter_names.includes(name)
+}
+
+/** Whether a newly generated dataset can be selected: the scenario takes datasets and accepts any dataset name. */
+export function acceptsAnyNamedDataset(scenario: RegisteredScenario, options: ScenarioDatasetOptions): boolean {
+  return supportsParameter(scenario, 'dataset_config') && options.supports_overrides && options.mode === 'any'
+}
+
+/** A scenario that checks stored contents offers only the server's compatible choices, without general dataset actions. */
+export function usesCompatibleDatasetPicker(scenario: RegisteredScenario): boolean {
+  return scenario.dataset_options?.compatible_only === true
+}
+
+/** Whether the scenario declares that a launch needs datasets selected, such as one without defaults. */
+export function requiresDatasetSelection(scenario: RegisteredScenario): boolean {
+  return (scenario.dataset_options?.min_selected ?? 0) > 0
+}
+
+/**
+ * The library's message for fewer datasets than a declared minimum, worded as ``validate_minimum_selection``
+ * in pyrit/scenario/core/dataset_overrides.py words it. The server enforces the minimum; the form shows this
+ * on the dataset picker, since the server checks other fields first and its rejection can be about one of them.
+ */
+export function minimumSelectionMessage(minimum: number): string {
+  return minimum === 1 ? 'Select a dataset.' : `Select at least ${minimum} datasets.`
+}
+
+function linkedDatasetLabel(name: string): string {
+  return name !== '' && name === name.trim() ? name : JSON.stringify(name)
+}
+
+/**
+ * Why a link's dataset names can't launch, or null. A scenario without dataset input, or with fixed
+ * sources, can't take them; other names, including blank ones, are left for the server to validate.
+ */
+export function linkedDatasetProblem(names: readonly string[], takesLinkedDatasets: boolean): string | null {
+  if (names.length === 0) return null
+  if (!takesLinkedDatasets) {
+    return `This scenario can't take the linked datasets: ${names.map(linkedDatasetLabel).join(', ')}.`
+  }
+  return null
+}
+
+/** Why the form left out linked names that a compatible-only scenario's listing omits. */
+export function omittedLinkedDatasetsMessage(names: readonly string[]): string {
+  const labels = names.map(linkedDatasetLabel).join(', ')
+  return names.length === 1
+    ? `The linked dataset ${labels} isn't a stored dataset this scenario can use, so it wasn't selected.`
+    : `The linked datasets ${labels} aren't stored datasets this scenario can use, so they weren't selected.`
 }
 
 /** The scenario-specific parameters the launch form renders, without the common ones. */
 export function scenarioDynamicParameters(scenario: RegisteredScenario): Parameter[] {
   return scenario.supported_parameters.filter(
     (parameter) => supportsParameter(scenario, parameter.name)
-      && !COMMON_SCENARIO_PARAMETER_NAMES.has(parameter.name)
-      && !isScorerOwnedParameter(scenario, parameter.name),
+      && !COMMON_SCENARIO_PARAMETER_NAMES.has(parameter.name),
   )
 }
 
@@ -98,13 +120,15 @@ export interface ScenarioLaunchInput {
   presetScenarioParams?: Record<string, unknown>
   datasetEdits: ScenarioDatasetRequest
   datasetError: string | null
+  /** Why the linked dataset names can't launch; see `linkedDatasetProblem`. */
+  linkedDatasetError?: string | null
   includeBaseline: boolean
-  techniqueOverride?: TechniqueOverride
-  techniqueEditError?: string
+  techniqueOverride?: TechniqueOverride | undefined
+  techniqueEditError?: string | undefined
   supportsPrependedConversation?: boolean
   supportsPrompt?: boolean
   objectiveScorer?: RegisteredComponentReference | null
-  scorerError?: string
+  scorerError?: string | undefined
   operationId: string | null
   maxConcurrency: number
   maxRetries: number
@@ -137,18 +161,9 @@ export function buildEstimateRequest({
   supportsPrompt = true,
   objectiveScorer,
   scorerError,
+  linkedDatasetError,
 }: ScenarioLaunchInput): BuildEstimateRequestResult {
-  if (usesDefaultAssertScoring(scenario)) {
-    if (objectiveScorer || scoringTargetName) {
-      return { ok: false, error: 'This saved ASSERT configuration uses a custom scorer. Use the SDK to preserve it; this form uses default scoring.' }
-    }
-    const nonDefaultScoring = Object.entries(presetScenarioParams).some(([name, value]) =>
-      isScorerOwnedParameter(scenario, name)
-      && !isDefaultSetting(scenario.supported_parameters.find((item) => item.name === name), value))
-    if (nonDefaultScoring) {
-      return { ok: false, error: 'This saved ASSERT configuration has custom judge settings. Use the SDK to preserve them; this form uses default scoring.' }
-    }
-  }
+  if (linkedDatasetError) return { ok: false, error: linkedDatasetError }
   if (techniqueEditError) return { ok: false, error: techniqueEditError }
   if (scorerError) return { ok: false, error: scorerError }
   if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0) {
@@ -171,8 +186,7 @@ export function buildEstimateRequest({
     }
     const result = buildParametersFromForm(
       dynamicParameters.filter((parameter) =>
-        !isScorerOwnedParameter(scenario, parameter.name)
-        && (supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(parameter.name))
+        (supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(parameter.name))
         && (supportsPrompt || parameter.name !== 'prompt')),
       scenarioParamValues,
     )
@@ -204,8 +218,7 @@ export function buildEstimateRequest({
     request.datasets = datasetEdits
   }
   const sentPresetParams = Object.fromEntries(Object.entries(presetScenarioParams).filter(
-    ([name]) => !isScorerOwnedParameter(scenario, name)
-      && (supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(name)),
+    ([name]) => supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(name),
   ))
   const mergedScenarioParams = Object.keys(sentPresetParams).length > 0
     ? { ...(scenarioParams ?? {}), ...sentPresetParams }

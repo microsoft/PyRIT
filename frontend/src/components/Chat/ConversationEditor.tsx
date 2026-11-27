@@ -162,8 +162,8 @@ function ToolPiecePrompt({ piece, disabled, onChange, header, attachmentMenuItem
 interface ConversationEditorProps {
   controller: ReturnType<typeof useConversationDraft>
   ref?: Ref<ConversationEditorHandle>
-  sameAttackDisabledReason?: string
-  newAttackDisabledReason?: string
+  sameAttackDisabledReason?: string | undefined
+  newAttackDisabledReason?: string | undefined
   onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void
   onSave?: (destination: SaveConversationRequest['destination']) => void
   onExit?: () => Promise<boolean>
@@ -171,7 +171,7 @@ interface ConversationEditorProps {
   onUploadErrorChange?: (reason: string | undefined) => void
   saveDestination?: SaveConversationRequest['destination']
   saveLabel?: string
-  initialConverters?: ChatConverterSnapshot
+  initialConverters?: ChatConverterSnapshot | undefined
   blockNavigation?: boolean
   preserveOnDatasetNavigation?: boolean
 }
@@ -273,6 +273,9 @@ export default function ConversationEditor({
   const saveDisabledReason = (converters.isConverting ? 'Wait for conversion to finish before saving.' : undefined)
     ?? uploadError ?? validationError ?? targetError
     ?? (directSaveDestination === 'same_attack' ? sameAttackDisabledReason : newAttackDisabledReason)
+  const saveDisabled = saving || converters.isConverting || Boolean(uploadError) || Boolean(validationError)
+    || Boolean(directSaveDestination && (!messages.length || targetError
+      || (directSaveDestination === 'same_attack' ? sameAttackDisabledReason : newAttackDisabledReason)))
   return (
     <div ref={resizeBoundaryRef} className={styles.root} data-testid="conversation-editor">
       {convertersOpen && <div className={styles.converterPane}>
@@ -373,16 +376,12 @@ export default function ConversationEditor({
         <Button className={styles.button} disabled={saving} onClick={cancel}>Cancel</Button>
         <Tooltip content={saveDisabledReason ?? 'Save a new conversation without changing the original sent history.'}
           relationship="description">
-        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the tooltip explaining why the control is disabled */}
-        <span tabIndex={saveDisabledReason ? 0 : undefined} aria-label={saveDisabledReason ?? undefined}>
         <Button className={styles.button} appearance="primary"
-          disabled={saving || converters.isConverting || Boolean(uploadError) || Boolean(validationError)
-            || Boolean(directSaveDestination && (!messages.length || targetError
-              || (directSaveDestination === 'same_attack' ? sameAttackDisabledReason : newAttackDisabledReason)))}
+          disabled={saveDisabled}
+          disabledFocusable={saveDisabled && Boolean(saveDisabledReason)}
           onClick={() => { if (directSaveDestination) save(directSaveDestination); else setSaveDialogOpen(true) }}>
           {saveLabel}
         </Button>
-        </span>
         </Tooltip>
       </div>
       {!saveDialogOpen && error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}

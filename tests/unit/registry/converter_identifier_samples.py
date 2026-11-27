@@ -11,6 +11,7 @@ from itertools import product
 from pathlib import Path
 from typing import Any
 
+import matplotlib as mpl
 import yaml
 from PIL import Image
 
@@ -96,7 +97,6 @@ SINGLE_VALUE_SETTINGS: dict[tuple[str, str], str] = {
 KNOWN_GAPS: dict[tuple[str, str], str] = {
     ("CodeChameleonConverter", "encrypt_function"): "custom functions are not identified yet, see #3761",
     ("CodeChameleonConverter", "decrypt_function"): "custom functions are not identified yet, see #3761",
-    ("TextJailbreakConverter", "jailbreak_template"): "inline templates share one identifier, see #3760",
 }
 
 BASELINE_SETTINGS: dict[str, dict[str, Any]] = {
@@ -299,6 +299,10 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
         "innocuous_images": (pngs[:19], [pngs[19], *pngs[1:19]], [*pngs[:18], pngs[19]], [*pngs[:19], pngs[18]]),
         "payload_background": (pngs[0], pngs[1], str(other_png)),
         "PDFConverter.existing_pdf": (documents[0], documents[2], other_pdf),
+        "PDFConverter.font_path": tuple(
+            Path(mpl.get_data_path()) / "fonts" / "ttf" / name
+            for name in ("DejaVuSans.ttf", "DejaVuSerif.ttf", "DejaVuSansMono.ttf")
+        ),
         "WordDocConverter.existing_docx": (documents[1], documents[3], other_docx),
         "PDFConverter.prompt_template": (
             SeedPrompt(value="First {{ prompt }}", parameters=["prompt"]),

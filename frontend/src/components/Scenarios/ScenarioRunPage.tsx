@@ -6,6 +6,7 @@ import {
 import { ArrowLeftRegular } from '@fluentui/react-icons'
 import { Link, useLocation, useParams } from 'react-router'
 
+import { plannedTechniqueLabel } from '@/components/AttackResults/attackAttemptFormatting'
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { useScenarioResultHierarchy } from '@/hooks/useScenarioResultHierarchy'
 import { useScenarioRunAttackDetails } from '@/hooks/useScenarioRunAttackDetails'
@@ -15,6 +16,8 @@ import type { ScenarioProgressResult, ScenarioRunPlanSeedGroup } from '@/types'
 import { routerPathParamValue } from '@/utils/routeParams'
 import { isTerminalRunState } from '@/utils/scenarioRunProgress'
 
+import AssertPolicyMetricsPanel from './AssertPolicyMetricsPanel'
+import { isAssertPolicyRun } from './assertPolicyRun'
 import AtomicAttackGroupsSection from './AtomicAttackGroupsSection'
 import AttackActivity from './AttackActivity'
 import AttackDetailsDialog from './AttackDetailsDialog'
@@ -76,7 +79,9 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     [state.plan],
   )
   const techniqueNames = useMemo(
-    () => new Map(state.plan?.atomic_groups.map((group) => [group.id, group.technique_name ?? group.atomic_attack_name]) ?? []),
+    () => new Map(state.plan?.atomic_groups.map((group) => [
+      group.id, plannedTechniqueLabel(group) ?? group.atomic_attack_name,
+    ]) ?? []),
     [state.plan],
   )
   const attemptsBySeed = useMemo(() => {
@@ -149,6 +154,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
           onOpenAttack={attackDetails.open} />
         <ScenarioRunSavedConversations scenarioResultId={scenarioResultId} conversations={savedConversations}
           conversationState={location.state} />
+        {run.status === 'COMPLETED' && isAssertPolicyRun(run) && <AssertPolicyMetricsPanel scenarioResultId={scenarioResultId} />}
         {singleGroupId ? (
           <section className={styles.section} aria-label="Attack details">
             <ScenarioAttackDetails context={detailsContext} attempt={singleAttempt} atomicGroupId={singleGroupId}

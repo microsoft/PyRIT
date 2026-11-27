@@ -386,6 +386,27 @@ async def test_evaluate_dataset_async_excludes_undetermined_responses(mock_objec
     assert metrics.trial_scores.shape == (2, 1)
 
 
+async def test_evaluate_dataset_async_rejects_ragged_human_scores_before_scoring(mock_objective_scorer):
+    responses = [
+        Message(message_pieces=[MessagePiece(role="assistant", original_value=value, original_value_data_type="text")])
+        for value in ["one rater", "two raters"]
+    ]
+    entries = [
+        ObjectiveHumanLabeledEntry([response], human_scores, "Test objective")
+        for response, human_scores in zip(responses, [[True], [True, False]], strict=True)
+    ]
+    dataset = HumanLabeledDataset(
+        name="test_dataset", metrics_type=MetricsType.OBJECTIVE, entries=entries, version="1.0"
+    )
+    evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
+    evaluator._score_responses_grouped_async = AsyncMock()
+
+    with pytest.raises(ValueError, match="inhomogeneous"):
+        await evaluator.evaluate_dataset_async(labeled_dataset=dataset, num_scorer_trials=3)
+
+    evaluator._score_responses_grouped_async.assert_not_called()
+
+
 async def test_evaluate_dataset_async_selects_category_before_filtering_undetermined(mock_harm_scorer):
     responses = [
         Message(message_pieces=[MessagePiece(role="assistant", original_value=value)]) for value in ["unknown", "known"]
@@ -450,6 +471,23 @@ async def test_evaluate_dataset_async_objective_returns_metrics(mock_objective_s
     # Verify metrics returned without registry writing
     assert metrics is not None
     assert isinstance(metrics, ObjectiveScorerMetrics)
+
+
+@pytest.mark.parametrize("num_scorer_trials", [0, -1])
+async def test_evaluate_dataset_async_rejects_nonpositive_trials_before_any_work_async(
+    *, mock_objective_scorer: MagicMock, num_scorer_trials: int
+) -> None:
+    _, assistant = _objective_conversation()
+    dataset = _objective_dataset([ObjectiveHumanLabeledEntry([assistant], [True], "Objective")])
+    mock_objective_scorer.score_async = AsyncMock(return_value=[Score(score_type="true_false", score_value="true")])
+
+    with pytest.raises(ValueError, match=f"num_scorer_trials must be at least 1, got {num_scorer_trials}"):
+        await ObjectiveScorerEvaluator(mock_objective_scorer).evaluate_dataset_async(
+            labeled_dataset=dataset, num_scorer_trials=num_scorer_trials
+        )
+
+    mock_objective_scorer._memory.add_message_to_memory_async.assert_not_awaited()
+    mock_objective_scorer.score_async.assert_not_awaited()
 
 
 def test_compute_objective_metrics_perfect_agreement(mock_objective_scorer):
@@ -1387,6 +1425,50 @@ async def test_run_evaluation_deduplicates_csv_paths_async(*, tmp_path: Path, pa
     assert metrics.accuracy == pytest.approx(0.5)
     assert metrics.dataset_name == "a.csv_b.csv"
     assert metrics.dataset_version == "1.0_1.0"
+
+
+@pytest.mark.parametrize("num_scorer_trials", [0, -1])
+@pytest.mark.parametrize(
+    "update_registry_behavior", [RegistryUpdateBehavior.SKIP_IF_EXISTS, RegistryUpdateBehavior.NEVER_UPDATE]
+)
+async def test_run_evaluation_async_rejects_nonpositive_trials_before_loading_files_async(
+    *,
+    mock_objective_scorer: MagicMock,
+    num_scorer_trials: int,
+    update_registry_behavior: RegistryUpdateBehavior,
+) -> None:
+    evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
+    dataset_files = ScorerEvalDatasetFiles(human_labeled_datasets_files=["*.csv"], result_file="unused.jsonl")
+
+    with (
+        patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH") as mock_evals_path,
+        patch.object(evaluator, "_should_skip_evaluation") as mock_skip,
+        patch.object(evaluator, "evaluate_dataset_async", new_callable=AsyncMock) as mock_evaluate,
+        pytest.raises(ValueError, match=f"num_scorer_trials must be at least 1, got {num_scorer_trials}"),
+    ):
+        await evaluator.run_evaluation_async(
+            dataset_files=dataset_files,
+            num_scorer_trials=num_scorer_trials,
+            update_registry_behavior=update_registry_behavior,
+        )
+
+    mock_evals_path.glob.assert_not_called()
+    mock_skip.assert_not_called()
+    mock_evaluate.assert_not_awaited()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_scorer_evaluate_async_rejects_zero_trials_async() -> None:
+    scorer = SubStringScorer(substring="marker")
+    dataset_files = ScorerEvalDatasetFiles(human_labeled_datasets_files=["*.csv"], result_file="unused.jsonl")
+
+    with (
+        patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH") as mock_evals_path,
+        pytest.raises(ValueError, match="num_scorer_trials must be at least 1, got 0"),
+    ):
+        await scorer.evaluate_async(file_mapping=dataset_files, num_scorer_trials=0)
+
+    mock_evals_path.glob.assert_not_called()
 
 
 @pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])

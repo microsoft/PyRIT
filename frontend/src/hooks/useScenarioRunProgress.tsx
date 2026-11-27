@@ -68,7 +68,7 @@ export function useScenarioRunProgress(scenarioResultId: string): UseScenarioRun
       try {
         const page = await scenariosApi.getRunProgress(
           scenarioResultId,
-          { since: since ?? undefined, limit: PROGRESS_PAGE_LIMIT },
+          { ...(since ? { since } : {}), limit: PROGRESS_PAGE_LIMIT },
           controller.signal,
         )
         if (!active || pollingStoppedRef.current) {

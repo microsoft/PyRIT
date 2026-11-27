@@ -8,7 +8,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -28,7 +28,11 @@ from pyrit.models.score.scorable import (
     TraceScorable,
 )
 from pyrit.models.score.surface import SurfaceBaseline, SurfaceCoverage, SurfaceEntry, SurfaceMatch
-from pyrit.models.score.trace import ToolExecution, TraceCoverage
+from pyrit.models.score.trace import (
+    ExecutionStep,
+    ToolExecution,
+    TraceCoverage,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -54,7 +58,7 @@ def _message_piece_digest(piece: MessagePiece, *, include_id: bool) -> str:
     Returns:
         str: The lowercase SHA-256 digest.
     """
-    value: dict[str, object] = piece.model_dump(mode="json")
+    value = dict[str, object](piece.model_dump(mode="json"))
     value["not_in_memory"] = piece.not_in_memory
     if not include_id:
         value.pop("id")
@@ -238,7 +242,7 @@ class ScorerTargetResponsePayload(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_message_piece_digest_count(self) -> ScorerTargetResponsePayload:
+    def _validate_message_piece_digest_count(self) -> Self:
         """
         Require one digest for each referenced response piece.
 
@@ -280,7 +284,7 @@ class ConversationObservationPayload(BaseModel):
     message_piece_digests: tuple[str, ...]
 
     @model_validator(mode="after")
-    def _validate_references(self) -> ConversationObservationPayload:
+    def _validate_references(self) -> Self:
         """
         Validate snapshot references.
 
@@ -347,7 +351,7 @@ class ToolEventsObservationPayload(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_scope_and_events(self) -> ToolEventsObservationPayload:
+    def _validate_scope_and_events(self) -> Self:
         """
         Keep event identities and completeness within the declared scope.
 
@@ -364,6 +368,60 @@ class ToolEventsObservationPayload(BaseModel):
             raise ValueError("Tool events must belong to the declared trace scope.")
         if self.coverage.complete and any(event.end_time is None for event in self.events):
             raise ValueError("Complete coverage cannot contain unfinished tool events.")
+        return self
+
+
+class ExecutionTraceObservationPayload(BaseModel):
+    """
+    An immutable normalized execution snapshot: model calls, tool calls, agent steps, and their content.
+
+    Content is kept complete; budgets for what a judge is shown apply when rendering.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["execution_trace"] = "execution_trace"
+    schema_version: Literal[1] = 1
+    scope: TraceScorable
+    steps: tuple[ExecutionStep, ...] = ()
+    coverage: TraceCoverage = Field(default_factory=TraceCoverage)
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def _validate_schema_version(cls, value: Any) -> Any:
+        """
+        Require the exact supported schema version, without numeric coercion.
+
+        Returns:
+            Any: The supported schema version.
+
+        Raises:
+            ValueError: If the version is not exactly the supported integer.
+        """
+        if type(value) is not int or value != 1:
+            raise ValueError("Unsupported execution trace payload schema_version; expected 1.")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_steps(self) -> Self:
+        """
+        Keep steps unique, ordered by index, and in scope.
+
+        Returns:
+            ExecutionTraceObservationPayload: The validated snapshot.
+
+        Raises:
+            ValueError: If identities, indexes, scope, or completeness are inconsistent.
+        """
+        identities = [(step.trace_id, step.span_id) for step in self.steps]
+        if len(set(identities)) != len(identities):
+            raise ValueError("Execution steps must have unique trace/span identities.")
+        if [step.index for step in self.steps] != list(range(len(self.steps))):
+            raise ValueError("Execution step indexes must match their positions.")
+        if any(step.trace_id not in self.scope.trace_ids for step in self.steps):
+            raise ValueError("Execution steps must belong to the declared trace scope.")
+        if self.coverage.complete and any(step.end_time is None for step in self.steps):
+            raise ValueError("Complete coverage cannot contain unfinished execution steps.")
         return self
 
 
@@ -401,7 +459,7 @@ class SurfaceObservationPayload(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_entries(self) -> SurfaceObservationPayload:
+    def _validate_entries(self) -> Self:
         """
         Keep entries unique and, for an exact locator, limited to that one location.
 
@@ -456,7 +514,7 @@ class ProgramExecutionObservationPayload(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_events(self) -> ProgramExecutionObservationPayload:
+    def _validate_events(self) -> Self:
         """
         Keep one event per invocation, in invocation order.
 
@@ -477,6 +535,7 @@ class ProgramExecutionObservationPayload(BaseModel):
 ObservationPayload = Annotated[
     ScorerTargetResponsePayload
     | ToolEventsObservationPayload
+    | ExecutionTraceObservationPayload
     | ConversationObservationPayload
     | SurfaceObservationPayload
     | ProgramExecutionObservationPayload,
@@ -498,7 +557,7 @@ class Observation(BaseModel):
     metadata: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _validate_conversation_snapshot(self) -> Observation:
+    def _validate_conversation_snapshot(self) -> Self:
         """
         Validate conversation acquisition and scope.
 
@@ -515,7 +574,7 @@ class Observation(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _validate_target_response(self) -> Observation:
+    def _validate_target_response(self) -> Self:
         """
         Check target response acquisition, anchor compatibility, and embedded evidence.
 
@@ -543,7 +602,7 @@ class Observation(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _validate_tool_acquisition(self) -> Observation:
+    def _validate_tool_acquisition(self) -> Self:
         """
         Require acquisition status to agree with the retained tool snapshot.
 
@@ -564,7 +623,28 @@ class Observation(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _validate_surface_acquisition(self) -> Observation:
+    def _validate_execution_trace_acquisition(self) -> Self:
+        """
+        Require acquisition status to agree with the retained execution snapshot.
+
+        Returns:
+            Observation: The validated observation.
+
+        Raises:
+            ValueError: If acquisition, scope, or coverage are inconsistent.
+        """
+        if not isinstance(self.payload, ExecutionTraceObservationPayload):
+            return self
+        if not isinstance(self.scorable, TraceScorable) or self.scorable != self.payload.scope:
+            raise ValueError("Execution trace observations require a TraceScorable matching their payload scope.")
+        if (self.acquisition is Acquisition.COMPLETE) != self.payload.coverage.complete:
+            raise ValueError("Execution trace acquisition and coverage completeness must agree.")
+        if self.acquisition in (Acquisition.UNAVAILABLE, Acquisition.ERROR) and self.payload.steps:
+            raise ValueError("Unavailable or failed execution trace acquisition cannot contain steps.")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_surface_acquisition(self) -> Self:
         """
         Require acquisition status to agree with the retained surface snapshot.
 
@@ -585,7 +665,7 @@ class Observation(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _validate_program_acquisition(self) -> Observation:
+    def _validate_program_acquisition(self) -> Self:
         """
         Require acquisition status to agree with the execution events.
 
@@ -654,7 +734,12 @@ class Observation(BaseModel):
         """
         if isinstance(
             self.payload,
-            (ToolEventsObservationPayload, SurfaceObservationPayload, ProgramExecutionObservationPayload),
+            (
+                ToolEventsObservationPayload,
+                ExecutionTraceObservationPayload,
+                SurfaceObservationPayload,
+                ProgramExecutionObservationPayload,
+            ),
         ):
             return
         if isinstance(self.payload, ConversationObservationPayload):
