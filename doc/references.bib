@@ -194,12 +194,17 @@
   note      = {Introduces the {SafeBench} typographic-image jailbreak benchmark (AAAI 2025 Oral)},
 }
 
-@article{gupta2024walledeval,
+@inproceedings{gupta2024walledeval,
   title     = {{WalledEval}: A Comprehensive Safety Evaluation Toolkit for Large Language Models},
   author    = {Prannaya Gupta and Le Qi Yau and Hao Han Low and I-Shiang Lee and Hugo Maximus Lim and Yu Xin Teoh and Jia Hng Koh and Dar Win Liew and Rishabh Bhardwaj and Rajat Bhardwaj and Soujanya Poria},
-  journal   = {arXiv preprint arXiv:2408.03837},
+  booktitle = {Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing: System Demonstrations},
+  pages     = {397--407},
   year      = {2024},
-  url       = {https://arxiv.org/abs/2408.03837},
+  publisher = {Association for Computational Linguistics},
+  url       = {https://aclanthology.org/2024.emnlp-demo.42/},
+  doi       = {10.18653/v1/2024.emnlp-demo.42},
+  eprint    = {2408.03837},
+  archivePrefix = {arXiv},
 }
 
 @article{bhardwaj2024homer,
@@ -557,6 +562,47 @@
   url       = {https://arxiv.org/abs/2504.18575},
 }
 
+@article{abercrombie2024taxonomy,
+  title     = {A Collaborative, Human-Centred Taxonomy of {AI}, Algorithmic, and Automation Harms},
+  author    = {Gavin Abercrombie and Djalel Benbouzid and Paolo Giudici and Delaram Golpayegani and Julio Hernandez and Pierre Noro and Harshvardhan Pandit and Eva Paraschou and Charlie Pownall and Jyoti Prajapati and Mark A. Sayre and Ushnish Sengupta and Arthit Suriyawongkul and Ruby Thelot and Sofia Vei and Laura Waltersdorfer},
+  journal   = {arXiv preprint arXiv:2407.01294},
+  year      = {2024},
+  url       = {https://arxiv.org/abs/2407.01294},
+}
+
+@article{bullwinkel2026grpo,
+  title     = {Learning to Attack and Defend: Adaptive Red Teaming of Language Models via {GRPO}},
+  author    = {Blake Bullwinkel and Eugenia Kim and Amanda Minnich and Mark Russinovich},
+  journal   = {arXiv preprint arXiv:2606.09701},
+  year      = {2026},
+  url       = {https://arxiv.org/abs/2606.09701},
+}
+
+@article{xu2026dmn,
+  title     = {{DMN}: A Compositional Framework for Jailbreaking Multimodal {LLMs} with Multi-Image Inputs},
+  author    = {Wenzhuo Xu and Zhipeng Wei and Zonghao Ying and Deyue Zhang and Dongdong Yang and Xiangzheng Zhang and Quanchen Zou},
+  journal   = {arXiv preprint arXiv:2605.18915},
+  year      = {2026},
+  url       = {https://arxiv.org/abs/2605.18915},
+  note      = {ACL 2026},
+}
+
+@article{yang2024audioachilles,
+  title     = {Audio Is the {Achilles}' Heel: Red Teaming Audio Large Multimodal Models},
+  author    = {Hao Yang and Lizhen Qu and Ehsan Shareghi and Gholamreza Haffari},
+  journal   = {arXiv preprint arXiv:2410.23861},
+  year      = {2024},
+  url       = {https://arxiv.org/abs/2410.23861},
+}
+
+@article{yu2026beyondvisualsafety,
+  title     = {Beyond Visual Safety: Jailbreaking Multimodal Large Language Models for Harmful Image Generation via Semantic-Agnostic Inputs},
+  author    = {Mingyu Yu and Lana Liu and Zhehao Zhao and Wei Wang and Sujuan Qin},
+  journal   = {arXiv preprint arXiv:2601.15698},
+  year      = {2026},
+  url       = {https://arxiv.org/abs/2601.15698},
+}
+
 % ============================================================
 % Research Blog Posts and Technical Reports
 % ============================================================
@@ -588,7 +634,7 @@
 }
 
 @misc{embracethered2024unicode,
-  title     = {Hiding and Finding Text with Unicode Tags},
+  title     = {{ASCII} Smuggler Tool: Crafting Invisible Text and Decoding Hidden Codes},
   author    = {Johann Rehberger},
   year      = {2024},
   url       = {https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/},
@@ -892,7 +938,7 @@
 }
 
 @misc{embracethered2025sneakybits,
-  title     = {Sneaky Bits and {ASCII} Smuggler},
+  title     = {Sneaky Bits: Advanced Data Smuggling Techniques ({ASCII} Smuggler Updates)},
   author    = {Johann Rehberger},
   year      = {2025},
   url       = {https://embracethered.com/blog/posts/2025/sneaky-bits-and-ascii-smuggler/},
@@ -974,15 +1020,19 @@
   doi       = {10.18653/v1/2025.findings-acl.100},
 }
 
-@misc{banerjee2025safeinfer,
-  title        = {{SafeInfer}: Context Adaptive Decoding Time Safety Alignment for Large Language Models},
-  author       = {Somnath Banerjee and Sayan Layek and Soham Tripathy and Shanu Kumar and Animesh Mukherjee and Rima Hazra},
-  year         = {2025},
-  eprint       = {2406.12274},
-  archivePrefix= {arXiv},
-  primaryClass = {cs.CL},
-  url          = {https://arxiv.org/abs/2406.12274},
-  note         = {AAAI-2025 (AI Alignment track). Introduces the HarmEval benchmark. Dataset: \url{https://huggingface.co/datasets/SoftMINER-Group/HarmEval}},
+@inproceedings{banerjee2025safeinfer,
+  title     = {{SafeInfer}: Context Adaptive Decoding Time Safety Alignment for Large Language Models},
+  author    = {Somnath Banerjee and Sayan Layek and Soham Tripathy and Shanu Kumar and Animesh Mukherjee and Rima Hazra},
+  booktitle = {Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume    = {39},
+  number    = {26},
+  pages     = {27188--27196},
+  year      = {2025},
+  url       = {https://doi.org/10.1609/aaai.v39i26.34927},
+  doi       = {10.1609/aaai.v39i26.34927},
+  eprint    = {2406.12274},
+  archivePrefix = {arXiv},
+  note      = {AI Alignment track. Introduces the HarmEval benchmark. Dataset: \url{https://huggingface.co/datasets/SoftMINER-Group/HarmEval}},
 }
 
 @article{bhatt2023cyberseceval,
@@ -1032,7 +1082,9 @@
   booktitle = {Findings of the Association for Computational Linguistics: ACL 2023},
   pages     = {13387--13434},
   year      = {2023},
-  url       = {https://arxiv.org/abs/2212.09251},
+  publisher = {Association for Computational Linguistics},
+  url       = {https://aclanthology.org/2023.findings-acl.847/},
+  doi       = {10.18653/v1/2023.findings-acl.847},
 }
 
 @article{struppek2026prefill,

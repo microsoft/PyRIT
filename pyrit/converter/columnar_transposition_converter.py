@@ -29,8 +29,7 @@ class ColumnarTranspositionConverter(Converter):
     References:
         - Wikipedia, "Transposition cipher" (columnar transposition section), public domain:
           https://en.wikipedia.org/wiki/Transposition_cipher
-        - Yuan et al., "GPT-4 Is Too Smart To Be Safe: Stealthy Chat with LLMs via Cipher"
-          (CipherChat), arXiv:2308.06463, which frames classical ciphers as a jailbreak technique.
+        - CipherChat [@yuan2023cipherchat], which frames classical ciphers as a jailbreak technique.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)

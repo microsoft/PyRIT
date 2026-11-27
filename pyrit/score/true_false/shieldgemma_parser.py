@@ -17,8 +17,7 @@ or
 The parser returns the dictionary consumed by ``CallableResponseHandler``. Pair that handler
 with ``ShieldGemmaPolicy`` and ``ShieldGemmaScorer`` to compose a ShieldGemma scorer.
 
-Reference: Wenjun Zeng et al., "ShieldGemma: Generative AI Content Moderation Based on
-Gemma" (2024), https://arxiv.org/abs/2407.21772.
+Reference: [@zeng2024shieldgemma]
 
 Official model card: https://huggingface.co/google/shieldgemma-9b
 """

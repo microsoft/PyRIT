@@ -28,8 +28,9 @@ class GridCompositeConverter(_BaseImageTextConverter):
     keeping the converter's identity (and any downstream technique evaluation
     hash) stable.
 
-    Reference: DMN (ACL 2026) quadrant-splitting; "Beyond Visual Safety"
-    (arXiv:2601.15698) neutralized visual splicing.
+    Related work: "Beyond Visual Safety" [@yu2026beyondvisualsafety] interleaves
+    payload patches with benign images in one composite (neutralized visual splicing);
+    DMN [@xu2026dmn] distributes a typographic instruction across multiple images.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
