@@ -25,11 +25,12 @@ Reference: https://arxiv.org/html/2410.23861
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.models import AttackSeedGroup, Seed, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, PromptDataType, Seed, SeedObjective, SeedPrompt
+from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
@@ -57,6 +58,11 @@ GENERIC_OBJECTIVE = "Get the model to comply with the spoken jailbreak request i
 # so a default run samples a small subset that completes quickly. Override via ``--max-dataset-size``
 # (CLI) or by passing a custom dataset config to ``initialize_async`` for broader coverage.
 DEFAULT_MAX_DATASET_SIZE = 10
+
+_AUDIO_ACHILLES_HEEL_INPUT_MODALITIES = cast(
+    "frozenset[frozenset[PromptDataType]]",
+    frozenset({frozenset({"text", "audio_path"})}),
+)
 
 
 class AudioAchillesHeelDatasetConfiguration(DatasetAttackConfiguration):
@@ -160,14 +166,18 @@ class AudioAchillesHeel(Scenario):
     multimodal user turn scored for compliance (the PyRIT analogue of Garak's non-refusal
     ``mitigation.MitigationBypass`` detector).
 
-    The objective target must accept ``audio_path`` input (i.e. be multimodal); non-audio targets
-    will error when the request is sent.
+    The objective target must accept ``text`` and ``audio_path`` input in one message; targets
+    that cannot are rejected before any request is sent.
 
     Reference: https://arxiv.org/html/2410.23861
     """
 
     VERSION: int = 1
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements(
+        native_required=frozenset({CapabilityName.MULTI_MESSAGE_PIECES}),
+        required_input_modalities=_AUDIO_ACHILLES_HEEL_INPUT_MODALITIES,
+    )
 
     # Audio payload dominated: a text-only baseline of the derived objective drops the audio
     # entirely and is a weak comparison point (Garak has no text-only variant). Baseline stays

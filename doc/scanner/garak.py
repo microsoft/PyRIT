@@ -576,9 +576,9 @@ await output_scenario_async(package_result)
 # pyrit_scan run garak.audio_achilles_heel --target azure_openai_realtime --max-total 2
 # ```
 #
-# > **Note:** The objective target must accept `audio_path` input (i.e. be multimodal). The example
+# > **Note:** The objective target must accept `text` and `audio_path` input in one message. The example
 # > below uses the registered Azure OpenAI Realtime target; non-audio targets such as the default
-# > `openai_chat` will error when the audio request is sent. The full dataset holds ~350
+# > `openai_chat` are rejected before any request is sent. The full dataset holds ~350
 # > clips, so a default run samples a small subset to finish quickly — raise `--max-total`
 # > for broader coverage.
 

@@ -6,10 +6,11 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedPrompt
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.scenario.garak import AudioAchillesHeel, AudioAchillesHeelTechnique  # type: ignore[ty:import-not-found]
 from pyrit.scenario.scenarios.garak.audio_achilles_heel import (
     DEFAULT_MAX_DATASET_SIZE,
@@ -28,6 +29,7 @@ def _mock_id(name: str) -> ComponentIdentifier:
 def mock_objective_target():
     mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_id("MockObjectiveTarget")
+    mock.configuration.capabilities.input_modalities = frozenset({frozenset({"text", "audio_path"})})
     return mock
 
 
@@ -36,6 +38,17 @@ def mock_objective_scorer():
     mock = MagicMock(spec=TrueFalseScorer)
     mock.get_identifier.return_value = _mock_id("MockObjectiveScorer")
     return mock
+
+
+def _text_and_audio_target() -> MockPromptTarget:
+    return MockPromptTarget(
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_message_pieces=True,
+                input_modalities=frozenset({frozenset({"text", "audio_path"})}),
+            )
+        )
+    )
 
 
 def _audio_seed(*, path: str, categories: list[str] | None = None) -> SeedPrompt:
@@ -99,6 +112,50 @@ class TestAudioAchillesHeelInitialization:
     def test_custom_text_prompt_propagates_to_dataset_config(self, mock_objective_scorer):
         scenario = AudioAchillesHeel(objective_scorer=mock_objective_scorer, text_prompt="listen carefully")
         assert scenario._default_dataset_config._text_prompt == "listen carefully"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAudioAchillesHeelTargetRequirements:
+    """Tests for the objective target's text + audio input requirement."""
+
+    def test_target_requirements_declare_grouped_text_and_audio(self):
+        requirements = AudioAchillesHeel.TARGET_REQUIREMENTS
+
+        assert requirements.native_required == frozenset({CapabilityName.MULTI_MESSAGE_PIECES})
+        assert requirements.required_input_modalities == frozenset({frozenset({"text", "audio_path"})})
+
+    def test_readiness_reports_text_only_target(self, mock_objective_scorer):
+        scenario = AudioAchillesHeel(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(args={"objective_target": MockPromptTarget()})
+
+        reasons = [issue.reason for issue in scenario.get_readiness().issues if issue.role == "objective_target"]
+        assert len(reasons) == 1
+        assert "input modality {audio_path, text}" in reasons[0]
+
+    def test_readiness_accepts_text_and_audio_target(self, mock_objective_scorer):
+        scenario = AudioAchillesHeel(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(args={"objective_target": _text_and_audio_target()})
+
+        assert not [issue for issue in scenario.get_readiness().issues if issue.role == "objective_target"]
+
+    async def test_initialize_rejects_text_only_target(self, mock_objective_scorer, audio_dataset_config):
+        scenario = AudioAchillesHeel(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(
+            args={"objective_target": MockPromptTarget(), "dataset_config": audio_dataset_config}
+        )
+
+        with pytest.raises(ValueError, match="input modality"):
+            await scenario.initialize_async()
+
+    async def test_initialize_accepts_text_and_audio_target(self, mock_objective_scorer, audio_dataset_config):
+        scenario = AudioAchillesHeel(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(
+            args={"objective_target": _text_and_audio_target(), "dataset_config": audio_dataset_config}
+        )
+
+        await scenario.initialize_async()
+
+        assert len(scenario._atomic_attacks) == 1
 
 
 @pytest.mark.usefixtures("patch_central_database")
