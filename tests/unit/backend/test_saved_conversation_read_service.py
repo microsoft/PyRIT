@@ -87,6 +87,26 @@ async def test_reference_pages_include_only_main_and_pruned_without_message_hydr
     assert references[1].message_count == 0
 
 
+async def test_reference_cursor_survives_attack_updates_that_keep_the_references_async(
+    sqlite_instance: SQLiteMemory, saved_attack: AttackResult
+) -> None:
+    reader = SavedConversationReadService(memory=sqlite_instance)
+    first = await reader.list_conversations_async(attack_result_id=saved_attack.attack_result_id, limit=1)
+    assert first is not None
+    assert first.pagination is not None
+    assert first.pagination.next_cursor is not None
+    # Setting the outcome (like PATCH /api/attacks/{id} does) moves the timestamp but not the references.
+    await sqlite_instance.update_attack_result_by_id_async(
+        attack_result_id=saved_attack.attack_result_id,
+        update_fields={"outcome": "success", "timestamp": datetime(2030, 1, 1, tzinfo=UTC)},
+    )
+    second = await reader.list_conversations_async(
+        attack_result_id=saved_attack.attack_result_id, limit=1, cursor=first.pagination.next_cursor
+    )
+    assert second is not None
+    assert [reference.conversation_type for reference in second.conversations] == ["pruned"]
+
+
 async def test_piece_pages_continue_through_negative_sequences_and_multimodal_turns_async(
     sqlite_instance: SQLiteMemory, saved_attack: AttackResult, saved_pieces: list[MessagePiece]
 ) -> None:
