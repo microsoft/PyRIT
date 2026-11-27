@@ -5,7 +5,6 @@ import { mobileTouchTarget } from '@/styles/touchTargets'
 export const useScenarioDatasetTableStyles = makeStyles({
   root: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM },
   controls: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalM },
-  browseLink: { color: tokens.colorBrandForegroundLink, ...mobileTouchTarget, display: 'inline-flex', alignItems: 'center' },
   scroll: { overflowX: 'auto' },
   table: { width: '100%', minWidth: '36em', borderCollapse: 'collapse' },
   toolbar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalM },

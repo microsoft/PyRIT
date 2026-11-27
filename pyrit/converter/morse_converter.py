@@ -122,7 +122,8 @@ class MorseConverter(Converter):
             " ": "/",
         }
         extended_mapping = {
-            "%": "------..-.-----",
+            # Morse has no single code for "%"; ITU-R M.1677-1 sends it as 0/0.
+            "%": "----- -..-. -----",
             "À": ".--.-",
             "Å": ".--.-",
             "Ä": ".-.-",

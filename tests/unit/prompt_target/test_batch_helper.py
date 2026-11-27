@@ -5,6 +5,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async, wait_for_event_async
 
 from pyrit.prompt_target.batch_helper import (
     _get_chunks,
@@ -206,7 +207,7 @@ async def test_batch_task_failure_finishes_cleanup_and_never_starts_later_batche
                     task_func=send_async,
                     task_arguments=["item"],
                 ),
-                timeout=5,
+                timeout=TEST_WATCHDOG_SECONDS,
             )
         assert finalized.is_set()
         assert len(slow_tasks) == 1 and slow_tasks[0].done()
@@ -251,15 +252,15 @@ async def test_caller_cancellation_preserves_slow_child_cleanup(cancel_again, ca
         batch_task_async(batch_size=2, items_to_batch=[[1, 2, 3]], task_func=send_async, task_arguments=["item"])
     )
     try:
-        await asyncio.wait_for(all_started.wait(), timeout=5)
+        await wait_for_event_async(event=all_started, tasks=[parent])
         if cancel_children:
             children[1].cancel("stop slow item")
-            await asyncio.wait_for(cleanup_started.wait(), timeout=5)
+            await wait_for_event_async(event=cleanup_started, tasks=[parent])
             children[2].cancel("stop fast item")
         else:
             parent.cancel("stop batch")
-        await asyncio.wait_for(cleanup_started.wait(), timeout=5)
-        await asyncio.wait_for(fast_finished.wait(), timeout=5)
+        await wait_for_event_async(event=cleanup_started, tasks=[parent])
+        await asyncio.wait_for(fast_finished.wait(), timeout=TEST_WATCHDOG_SECONDS)
 
         assert children[1].cancelling() == 1
         assert not cleanup_finished.is_set()
@@ -274,7 +275,7 @@ async def test_caller_cancellation_preserves_slow_child_cleanup(cancel_again, ca
 
         release_cleanup.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(parent, timeout=5)
+            await wait_for_completion_async(future=parent)
         assert cleanup_finished.is_set()
         assert calls == [1, 2]
         assert all(task.done() for task in children.values())
@@ -308,12 +309,12 @@ async def test_caller_cancellation_when_batch_children_finish(child_fails: bool)
         batch_task_async(batch_size=2, items_to_batch=[[1, 2, 3]], task_func=send_async, task_arguments=["item"])
     )
     try:
-        await asyncio.wait_for(all_started.wait(), timeout=5)
+        await wait_for_event_async(event=all_started, tasks=[parent])
         # Children finish before the parent resumes, but gather's callbacks are still queued.
         release_children.set()
         parent.cancel("stop batch")
         with pytest.raises(asyncio.CancelledError, match="stop batch"):
-            await asyncio.wait_for(parent, timeout=5)
+            await wait_for_completion_async(future=parent)
         assert all(task.done() for task in children)
         assert calls == [1, 2]
     finally:
