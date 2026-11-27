@@ -149,7 +149,7 @@ export default function ScenarioDatasetTable({
   // Compatible choices are stored datasets that were already checked, so there is nothing to load or refresh.
   const showLoadingChoice = options.supports_overrides && !compatibleOnly
     && selected.some((source) => canRefresh(source.name))
-  const loadingChoice = datasetLoadingChoice(request)
+  const loadingChoice = datasetLoadingChoice(request, defaults)
   const loadingSelected = selected.some((source) => loadingNames.includes(source.name))
   // One message per distinct failure, so each Retry re-arms only the datasets that failed together. A dataset
   // stored since its load failed, such as by a later load of the whole selection, no longer needs a Retry.
@@ -181,8 +181,9 @@ export default function ScenarioDatasetTable({
   return (
     <div className={styles.root}>
       {compatibleOnly && loading && <Spinner size="tiny" label="Loading compatible datasets..." />}
+      {/* A dataset load is already shown on its row, so its announcement takes no space and the table stays put. */}
       {selected.length > 0 && (loadingSelected || (loading && !compatibleOnly)) && <Text role="status" size={200}
-        className={styles.loadingHint}>
+        className={loadingSelected ? styles.visuallyHidden : styles.loadingHint}>
         {loadingSelected ? 'Loading datasets...' : 'Checking dataset details...'}
       </Text>}
       {!compatibleOnly && !allLoaded && selected.length > 0 && (requiresImport || metadataError) && <div className={styles.toolbar}>
@@ -190,7 +191,7 @@ export default function ScenarioDatasetTable({
         {metadataError && <Button className={styles.button} disabled={busy} onClick={onReload}>Retry checking datasets</Button>}
       </div>}
       {[...failedLoads].map(([error, names]) => <MessageBar key={`load:${error}`} intent="error">
-        <MessageBarBody role="alert">{error}</MessageBarBody>
+        <MessageBarBody role="alert">{`Couldn't load ${names.join(', ')}: ${error}`}</MessageBarBody>
         {onRetryLoad && <MessageBarActions>
           <Button size="small" className={styles.button} disabled={disabled}
             aria-label={`Retry loading ${names.join(', ')}`} onClick={() => onRetryLoad(names)}>Retry</Button>
@@ -229,6 +230,8 @@ export default function ScenarioDatasetTable({
               <TableCell><Text className={styles.datasetName} weight="semibold">
                 {datasetNameWithOrigin(source.name, metadata)}
               </Text>
+              {/* Row states sit under the name, the one column that stays visible on a narrow screen. */}
+              {rowLoading && !metadata?.loaded && <Text block size={200} className={styles.loadingHint}>Loading...</Text>}
               {showLoadingChoice && loadingChoice === 'always' && metadata?.loaded && !canRefresh(source.name)
                 && <Text block size={200} className={styles.loadingHint}>Uses stored copy</Text>}</TableCell>
               <TableCell>{canLimit ? <DatasetLimitControl label={`${source.name} objective limit`}
@@ -257,8 +260,8 @@ export default function ScenarioDatasetTable({
                   <Badge appearance="outline" color="subtle">Unlabeled</Badge>
                 </Tooltip>}
                 {metadata.harm_categories.length === 0 && metadata.modalities.length === 0 && <Text size={200}>No metadata labels.</Text>}
-              </div> : <Text size={200}>
-                {loading || rowLoading ? 'Loading...' : metadataError ? 'Details unavailable'
+              </div> : !rowLoading && <Text size={200}>
+                {loading ? 'Loading...' : metadataError ? 'Details unavailable'
                   : compatibleOnly ? 'Not in the compatible list' : 'Not stored in memory'}
               </Text>}</TableCell>
               <TableCell className={styles.actionsCell}>

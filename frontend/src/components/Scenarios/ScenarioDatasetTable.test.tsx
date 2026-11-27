@@ -372,6 +372,18 @@ describe('ScenarioDatasetTable', () => {
     expect(screen.getByRole('radio', { name: choice })).toBeChecked()
   })
 
+  it('shows a scenario default of always as Regenerate until the scan chooses Cached', async () => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    render(<Harness defaults={{ ...DEFAULTS, fetch: 'always' }} onChange={onChange}
+      initialRequest={{ sources: [{ name: 'stored' }, { name: 'remote' }] }} />)
+    expect(screen.getByRole('radio', { name: 'Regenerate' })).toBeChecked()
+    expect(within(screen.getByRole('row', { name: /stored \(Local files\)/ })).getByText('Uses stored copy')).toBeInTheDocument()
+    await user.click(screen.getByRole('radio', { name: 'Cached' }))
+    expect(onChange.mock.calls.at(-1)?.[0]).toEqual({ fetch: 'if_missing', sources: [{ name: 'stored' }, { name: 'remote' }] })
+    expect(screen.getByRole('radio', { name: 'Cached' })).toBeChecked()
+  })
+
   it('offers the loading choice only when a selected dataset can refresh', () => {
     const view = render(<Harness initialRequest={{ sources: [{ name: 'stored' }, { name: 'other' }] }} />)
     expect(screen.queryByRole('radiogroup', { name: 'Dataset loading' })).not.toBeInTheDocument()
@@ -457,8 +469,9 @@ describe('ScenarioDatasetTable', () => {
       initialRequest={{ sources: [{ name: 'stored' }, { name: 'remote' }, { name: 'second' }] }}
       loadErrors={{ remote: 'Provider offline.', second: 'Provider offline.', removed: 'Not selected.' }} />)
     const alert = screen.getByRole('alert')
-    expect(alert).toHaveTextContent('Provider offline.')
-    expect(screen.queryByText('Not selected.')).not.toBeInTheDocument()
+    // The message names the datasets it belongs to, so each Retry is tied to visible names.
+    expect(alert).toHaveTextContent(/^Couldn't load remote, second: Provider offline\.$/)
+    expect(screen.queryByText(/Not selected\./)).not.toBeInTheDocument()
     await user.click(within(alert.parentElement as HTMLElement).getByRole('button', { name: 'Retry loading remote, second' }))
     expect(onRetryLoad).toHaveBeenCalledWith(['remote', 'second'])
     expect(screen.queryByRole('button', { name: /Load datasets/ })).not.toBeInTheDocument()
@@ -502,7 +515,10 @@ describe('ScenarioDatasetTable', () => {
     const onChange = jest.fn()
     render(<Harness loadingNames={['remote']} onChange={onChange}
       initialRequest={{ sources: [{ name: 'stored' }, { name: 'remote' }] }} />)
-    expect(within(screen.getByRole('row', { name: /remote \(Unknown\)/ })).getByText('Loading...')).toBeInTheDocument()
+    // The row's load state sits under its name, which stays visible when the other columns scroll off a narrow screen.
+    const [nameCell, , criteriaCell] = within(screen.getByRole('row', { name: /remote \(Unknown\)/ })).getAllByRole('cell')
+    expect(within(nameCell).getByText('Loading...')).toBeInTheDocument()
+    expect(criteriaCell).toBeEmptyDOMElement()
     expect(within(screen.getByRole('row', { name: /stored \(Local files\)/ })).queryByText('Loading...')).not.toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Regenerate' })).toBeEnabled()
     await addDataset(user, 'other')

@@ -454,11 +454,11 @@ describe('ScenarioDetail', () => {
     await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
     await user.click(await screen.findByRole('option', { name: 'remote (Unknown)' }))
     const datasets = screen.getByRole('region', { name: 'Datasets' })
-    const failure = await within(datasets).findByText('Provider offline.')
+    const failure = await within(datasets).findByText("Couldn't load remote: Provider offline.")
     expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled()
     await user.click(within(failure.parentElement as HTMLElement).getByRole('button', { name: 'Retry loading remote' }))
     await waitFor(() => expect(scenariosApi.loadDatasets).toHaveBeenCalledTimes(3))
-    expect(within(datasets).queryByText('Provider offline.')).not.toBeInTheDocument()
+    expect(within(datasets).queryByText(/Provider offline\./)).not.toBeInTheDocument()
     // harmbench's first load is still running, so only remote was re-armed.
     const remoteRow = within(datasets).getByRole('row', { name: /remote \(Unknown\)/ })
     expect(within(remoteRow).getByText('Loading...')).toBeInTheDocument()
@@ -3694,6 +3694,10 @@ describe('ScenarioDetail', () => {
           filters: true, compatible_only: true,
         },
       }))
+      // The selected choices are missing and have a provider, so only the compatible-only rule keeps them from loading.
+      jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({ items: [
+        MISSING_HARMBENCH, { ...MISSING_HARMBENCH, name: 'ds_a', selection_key: 'dataset:named:ds_a' },
+      ] })
       renderDetail('/scanner/launch/foundry.assert_policy')
       await screen.findByText('harmbench (Unknown)')
       const turns = screen.getByTestId('scenario-param-max_turns')

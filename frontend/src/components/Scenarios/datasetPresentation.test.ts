@@ -49,7 +49,17 @@ describe('datasetLoadingChoice', () => {
     [{ sources: [{ name: 'fresh', fetch: 'always' }] }, 'if_missing'],
     [{ fetch: 'always' }, 'always'],
   ])('shows %j as %s', (request: ScenarioDatasetRequest, expected: 'if_missing' | 'always') => {
-    expect(datasetLoadingChoice(request)).toBe(expected)
+    expect(datasetLoadingChoice(request, SETTINGS)).toBe(expected)
+  })
+
+  it.each<[ScenarioDatasetRequest, 'if_missing' | 'always']>([
+    [{}, 'always'],
+    [{ fetch: null }, 'always'],
+    [{ fetch: 'default' }, 'always'],
+    [{ fetch: 'if_missing' }, 'if_missing'],
+    [{ fetch: 'never' }, 'if_missing'],
+  ])('shows %j under a scenario default of always as %s', (request: ScenarioDatasetRequest, expected: 'if_missing' | 'always') => {
+    expect(datasetLoadingChoice(request, { ...SETTINGS, fetch: 'always' })).toBe(expected)
   })
 })
 

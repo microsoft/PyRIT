@@ -332,11 +332,20 @@ test('a dataset load keeps Launch usable while it runs and a failed load offers 
   const section = page.getByRole('region', { name: 'Datasets', exact: true })
   const harmbench = section.getByRole('row').filter({ hasText: 'harmbench (Unknown)' })
   await expect(section.getByRole('status')).toHaveText('Loading datasets...')
-  await expect(harmbench.getByText('Loading...', { exact: true })).toBeVisible()
+  // The row's state sits under the dataset name, the column a narrow screen keeps in view.
+  await expect(harmbench.getByRole('cell').first().getByText('Loading...', { exact: true })).toBeVisible()
   await expect(page.getByTestId('launch-scenario-btn')).toBeEnabled()
+  const table = section.getByRole('table', { name: 'Selected datasets' })
+  // Measured from the section's top, so scrolling the page does not change it.
+  const tableOffset = async (): Promise<number | undefined> => {
+    const [sectionBox, tableBox] = [await section.boundingBox(), await table.boundingBox()]
+    return sectionBox && tableBox ? tableBox.y - sectionBox.y : undefined
+  }
+  const tableOffsetWhileLoading = await tableOffset()
+  expect(tableOffsetWhileLoading).toEqual(expect.any(Number))
   await section.screenshot({ path: testInfo.outputPath('datasets-auto-loading.png') })
   releaseFirstLoad()
-  await expect(section.getByRole('alert')).toHaveText('Mock provider is offline.')
+  await expect(section.getByRole('alert')).toHaveText("Couldn't load harmbench: Mock provider is offline.")
   const retry = section.getByRole('button', { name: 'Retry loading harmbench', exact: true })
   await expect(retry).toBeVisible()
   await expect(page.getByTestId('launch-scenario-btn')).toBeEnabled()
@@ -344,6 +353,8 @@ test('a dataset load keeps Launch usable while it runs and a failed load offers 
   await retry.click()
   await expect(section.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveText('Up to 5 of 200')
   await expect(section.getByRole('alert')).toHaveCount(0)
+  // The load announcement takes no space, so the table sits where it did while the dataset loaded.
+  await expect.poll(tableOffset).toBeCloseTo(Number(tableOffsetWhileLoading), 0)
   expect(attempts).toBe(2)
 })
 

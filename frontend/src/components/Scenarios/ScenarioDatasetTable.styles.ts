@@ -26,6 +26,17 @@ export const useScenarioDatasetTableStyles = makeStyles({
   loadingLabel: { whiteSpace: 'nowrap' },
   loadingControl: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalL, maxWidth: '100%' },
   loadingHint: { color: tokens.colorNeutralForeground3 },
+  visuallyHidden: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clip: 'rect(0, 0, 0, 0)',
+    whiteSpace: 'nowrap',
+    border: 0,
+  },
   policyTrack: {
     position: 'relative',
     display: 'grid',

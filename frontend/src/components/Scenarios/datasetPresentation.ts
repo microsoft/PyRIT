@@ -47,9 +47,15 @@ export function datasetTotalLimit(
     ? request.max_total : defaults.max_total
 }
 
-/** The scanner's two loading choices: Cached (`if_missing`) unless the scan asks to regenerate (`always`). */
-export function datasetLoadingChoice(request: ScenarioDatasetRequest): Exclude<DatasetFetchPolicy, 'never'> {
-  return request.fetch === 'always' ? 'always' : 'if_missing'
+/**
+ * The scanner's two loading choices: Cached (`if_missing`) unless the scan regenerates (`always`). A request
+ * that leaves the policy unset runs with the scenario's default, so the choice shows that default.
+ */
+export function datasetLoadingChoice(
+  request: ScenarioDatasetRequest, defaults: ScenarioDatasetSettings,
+): Exclude<DatasetFetchPolicy, 'never'> {
+  const policy = request.fetch && request.fetch !== 'default' ? request.fetch : defaults.fetch
+  return policy === 'always' ? 'always' : 'if_missing'
 }
 
 /**
