@@ -35,9 +35,8 @@ _INNER_CONFTEST = textwrap.dedent(
     # Load the real hook registration without reading local configuration or initializing memory.
     with (
         patch("pyrit.setup.initialize_pyrit_async", new_callable=AsyncMock),
-        patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock(spec=SQLiteMemory)) as memory,
+        patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock(spec=SQLiteMemory)),
     ):
-        memory.return_value.dispose_loop_resources_async = AsyncMock()
         importlib.import_module(pytest_plugins[0])
 
     _calls = []
