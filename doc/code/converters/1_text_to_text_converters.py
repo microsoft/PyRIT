@@ -50,6 +50,7 @@ from pyrit.converter import (
     AsciiArtConverter,
     AskToDecodeConverter,
     AtbashConverter,
+    Base32Converter,
     Base64Converter,
     Base2048Converter,
     BifidConverter,
@@ -84,6 +85,7 @@ token_bijection_tokenizer = SimpleNamespace(
 print("ROT13:", await ROT13Converter().convert_async(prompt=prompt))  # type: ignore
 print("Base64:", await Base64Converter().convert_async(prompt=prompt))  # type: ignore
 print("Base2048:", await Base2048Converter().convert_async(prompt=prompt))  # type: ignore
+print("Base32:", await Base32Converter().convert_async(prompt=prompt))  # type: ignore
 print("Binary:", await BinaryConverter().convert_async(prompt=prompt))  # type: ignore
 print("BinAscii:", await BinAsciiConverter().convert_async(prompt=prompt))  # type: ignore
 print("Morse:", await MorseConverter().convert_async(prompt=prompt))  # type: ignore
