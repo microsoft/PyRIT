@@ -2703,9 +2703,10 @@ describe('ScenarioDetail', () => {
       expect.any(AbortSignal),
     ))
     const estimate = screen.getByTestId('run-estimate')
-    expect(within(estimate).getByText('num_jailbreaks').parentElement).toHaveTextContent(
+    // The effective value renders after the mocked request resolves, not when it is sent.
+    await waitFor(() => expect(within(estimate).getByText('num_jailbreaks').parentElement).toHaveTextContent(
       'num_jailbreaks2',
-    )
+    ))
     const preview = await openRunPreview(user)
     expect(within(preview).getByText('target-a')).toBeInTheDocument()
     expect(within(preview).getByText('prompt_sending')).toBeInTheDocument()
