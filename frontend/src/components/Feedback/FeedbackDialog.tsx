@@ -34,6 +34,7 @@ import {
   OtherFeedback,
   PraiseFeedback,
 } from './categories'
+import { fluentRef } from '@/utils/fluentRef'
 
 interface FeedbackDialogProps {
   open: boolean
@@ -370,7 +371,7 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
               {isFeedbackCategory(category) && (
                 <Button
                   {...confirmRestoreFocusTarget}
-                  ref={submitButtonRef}
+                  ref={fluentRef(submitButtonRef)}
                   appearance="primary"
                   onClick={handleSubmit}
                   disabled={!canSubmit}

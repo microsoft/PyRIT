@@ -11,12 +11,12 @@ import { useSaveConversationDialogStyles } from './SaveConversationDialog.styles
 
 interface SaveConversationDialogProps {
   initialDestination?: SaveConversationRequest['destination']
-  sameAttackDisabledReason?: string
-  newAttackDisabledReason?: string
+  sameAttackDisabledReason?: string | undefined
+  newAttackDisabledReason?: string | undefined
   objectiveChanged: boolean
   saving: boolean
   error: string | null
-  validationError?: string | null
+  validationError?: string | null | undefined
   onClose: () => void
   onSave: (destination: SaveConversationRequest['destination']) => void
 }
