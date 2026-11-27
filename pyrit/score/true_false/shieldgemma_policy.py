@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -104,7 +104,7 @@ class ShieldGemmaPolicy(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_unique_guideline_names(self) -> ShieldGemmaPolicy:
+    def _validate_unique_guideline_names(self) -> Self:
         # Matched the same way get() matches, so a policy cannot validate with two names
         # that only differ in case and then leave the second one unreachable.
         names = [name.casefold() for name in self.guideline_names]

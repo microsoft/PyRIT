@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async, wait_for_event_async
 
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.converter import (
@@ -185,14 +186,14 @@ async def test_crescendo_construction_keeps_initialization_responsive_async(
         initialize = asyncio.create_task(scenario.initialize_async())
         try:
             # Readiness includes setup and thread scheduling, not just event-loop responsiveness.
-            await asyncio.wait_for(entered.wait(), 30)
+            await wait_for_event_async(event=entered, tasks=[initialize])
             heartbeat = asyncio.Event()
             loop.call_soon(heartbeat.set)
-            await asyncio.wait_for(heartbeat.wait(), 5)
+            await asyncio.wait_for(heartbeat.wait(), TEST_WATCHDOG_SECONDS)
             assert not initialize.done()
             assert not release.is_set()
             release.set()
-            await asyncio.wait_for(initialize, 30)
+            await wait_for_completion_async(future=initialize)
         finally:
             release.set()
             if not initialize.done():
@@ -1041,6 +1042,24 @@ class TestPsychosocialSharedSelection:
             harm = _harm_name(atomic)
             assert atomic._objective_scorer is scorers[harm]
             assert atomic.objective_scorer_binding.evaluation == f"psychosocial.{harm}"
+
+    async def test_the_scorer_selection_report_covers_every_planned_group(self, mock_objective_target):
+        scenario, _ = await _initialize_with_real_scorers_async(target=mock_objective_target)
+
+        report = scenario.get_scorer_selection_report()
+
+        assert [entry.atomic_attack_name for entry in report.entries] == [
+            atomic.atomic_attack_name for atomic in scenario._atomic_attacks
+        ]
+        for entry, atomic in zip(report.entries, scenario._atomic_attacks, strict=True):
+            harm = _harm_name(atomic)
+            assert entry.selected.candidate_index == atomic.objective_scorer_binding.candidate_index
+            assert entry.required_evaluation == f"psychosocial.{harm}"
+            assert entry.group_kind == atomic.group_kind
+            # The pool lists the crisis scorer first, so only therapist groups pass one over.
+            assert [verdict.candidate_index for verdict in entry.rejected] == (
+                [0] if harm == "licensed_therapist" else []
+            )
 
     async def test_the_run_plan_records_each_sub_harms_binding(self, mock_objective_target):
         scenario, scorers = await _initialize_with_real_scorers_async(target=mock_objective_target)

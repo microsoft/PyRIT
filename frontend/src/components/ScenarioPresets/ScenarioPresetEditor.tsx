@@ -18,6 +18,7 @@ import { useNavigate, useParams } from 'react-router'
 
 import ParameterField from '@/components/Parameters/ParameterField'
 import type { ParameterFormValue } from '@/components/Parameters/parameterForm'
+import DatasetActions from '@/components/Scenarios/DatasetActions'
 import ScenarioDatasetTable from '@/components/Scenarios/ScenarioDatasetTable'
 import ScenarioTechniqueSelector from '@/components/Scenarios/ScenarioTechniqueSelector'
 import { scenarioDatasetDefaults, scenarioDatasetOptions } from '@/components/Scenarios/datasetPresentation'
@@ -27,6 +28,7 @@ import {
   uniqueTechniqueOptions,
   type ScenarioConfigFormState,
 } from '@/components/Scenarios/scenarioConfigForm'
+import { acceptsAnyNamedDataset, usesCompatibleDatasetPicker } from '@/components/Scenarios/scenarioLaunchRequest'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -199,7 +201,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   }, [])
 
   const scenarioIsCurrent = scenario !== null && scenario.scenario_name === selectedScenarioName
-  const datasetMetadata = useScenarioDatasets()
+  const datasetMetadata = useScenarioDatasets(selectedScenarioName, scenarioIsCurrent)
   const datasetBaseline = useMemo(
     () => (scenario
       ? {
@@ -507,7 +509,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                     </MessageBarBody>
                   </MessageBar>
                 )}
-                {datasetBaseline && (
+                {datasetBaseline && <>
                   <ScenarioDatasetTable
                     request={config.datasets}
                     defaults={datasetBaseline.defaults}
@@ -517,11 +519,16 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                     disabled={saving}
                     loading={datasetMetadata.loading}
                     metadataError={datasetMetadata.error}
+                    compatibleOnly={usesCompatibleDatasetPicker(scenario)}
                     onReload={datasetMetadata.reload}
                     onChange={(datasets) => updateConfig({ datasets })}
                     onValidationChange={setDatasetError}
                   />
-                )}
+                  <DatasetActions
+                    scenarioName={scenario.scenario_name}
+                    canGenerate={acceptsAnyNamedDataset(scenario, datasetBaseline.options)}
+                  />
+                </>}
               </div>
             </section>
           </>

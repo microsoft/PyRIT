@@ -15,7 +15,7 @@ interface UseScenarioRunControlsOptions {
   readonly retry: () => void
   readonly refreshQueue: () => void
   /** The run's own error, which the page already shows with the run. */
-  readonly runError?: string | null
+  readonly runError?: string | null | undefined
 }
 
 export interface ScenarioRunControls {
