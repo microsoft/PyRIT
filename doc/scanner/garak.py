@@ -136,8 +136,8 @@ await output_scenario_async(prompt_inject_result)
 # pyrit_scan run garak.encoding --target openai_chat --techniques base64 --max-total 1
 # ```
 #
-# **Available techniques** (21 encodings): Base64, Base2048, Base16, Base32, ASCII85, Hex,
-# QuotedPrintable, UUencode, ROT13, Braille, Atbash, MorseCode, NATO, Ecoji, Zalgo, LeetSpeak,
+# **Available techniques** (23 encodings): Base64, Base2048, Base16, Base32, Base58, Base62, ASCII85,
+# Hex, QuotedPrintable, UUencode, ROT13, Braille, Atbash, MorseCode, NATO, Ecoji, Zalgo, LeetSpeak,
 # AsciiSmuggler, Bifid, ColumnarTransposition, UbbiDubbi, Disemvowel
 #
 # **Aggregate techniques:** `ALL` (every encoding, exhaustive) and `DEFAULT` (a broad curated subset
