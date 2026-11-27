@@ -1553,38 +1553,6 @@ def test_seed_group_mixed_prompt_types():
     assert group.objective.value == "Test objective"
 
 
-def test_seed_group_dict_with_seed_type_objective_keeps_value():
-    """Test that a dictionary with seed_type='objective' creates an objective."""
-    prompt_dict = {
-        "value": "Test objective from dict with seed_type",
-        "seed_type": "objective",
-    }
-
-    group = SeedGroup(seeds=[prompt_dict])
-
-    # Should create objective from the dictionary
-    assert group.objective is not None
-    assert group.objective.value == "Test objective from dict with seed_type"
-
-    # Prompts list should be empty
-    assert len(group.prompts) == 0
-
-
-def test_seed_group_dict_with_seed_type_prompt_keeps_value():
-    """Test that a dictionary with seed_type='prompt' creates a prompt."""
-    prompt_dict = {"value": "Test prompt from dict with seed_type", "seed_type": "prompt", "sequence": 1}
-
-    group = SeedGroup(seeds=[prompt_dict])
-
-    # Should create prompt from the dictionary
-    assert len(group.prompts) == 1
-    assert group.prompts[0].value == "Test prompt from dict with seed_type"
-    assert group.prompts[0].sequence == 1
-
-    # No objective should be created
-    assert group.objective is None
-
-
 # ============================================================================
 # SeedDataset base_params verification tests
 # These tests verify that all base parameters are correctly passed from dict

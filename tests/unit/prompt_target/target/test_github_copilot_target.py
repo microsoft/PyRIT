@@ -1132,7 +1132,6 @@ async def test_self_ask_true_false_uses_fresh_copilot_session_after_unusable_rep
             original_value=answer,
         ).to_message()
     )
-    saved_answer.get_piece()
     input_scorable = MessageScorable.from_message(saved_answer)
 
     try:
