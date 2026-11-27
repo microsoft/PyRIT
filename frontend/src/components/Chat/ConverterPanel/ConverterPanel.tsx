@@ -55,14 +55,14 @@ const PANEL_RESIZE_STEP = 16
 interface ValuePreviewProps {
   dataType: string
   emptyText: string
-  label?: string
+  label?: string | undefined
   sectionTestId?: string
-  testId?: string
-  value?: string
+  testId?: string | undefined
+  value?: string | undefined
   editorLabel?: string
   allowSelection?: boolean
   edited?: boolean
-  onChange?: (value: string) => void
+  onChange?: ((value: string) => void) | undefined
 }
 
 interface ConverterPanelProps {
@@ -194,7 +194,7 @@ export default function ConverterPanel({
   const [settings, setSettings] = useState<{
     stageId: string
     pieceType: string
-    editing: { converter: ConverterInstance; spec?: SourceInstanceSpec }
+    editing: { converter: ConverterInstance; spec?: SourceInstanceSpec | undefined }
   } | null>(null)
   const [settingsGeneration, setSettingsGeneration] = useState(generation)
   if (settingsGeneration !== generation) {

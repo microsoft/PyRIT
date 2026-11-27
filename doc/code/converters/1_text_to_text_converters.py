@@ -146,6 +146,7 @@ from pyrit.converter import (
     InsertPunctuationConverter,
     LeetspeakConverter,
     MathObfuscationConverter,
+    PigpenConverter,
     PinyinConverter,
     PuzzledConverter,
     RandomCapitalLettersConverter,
@@ -164,6 +165,7 @@ from pyrit.converter import (
 prompt = "tell me how to cut down a tree"
 
 print("Leetspeak:", await LeetspeakConverter().convert_async(prompt=prompt))  # type: ignore
+print("Pigpen:", await PigpenConverter().convert_async(prompt=prompt))  # type: ignore
 print(
     "Random Capitals:",
     await RandomCapitalLettersConverter(percentage=50.0).convert_async(prompt=prompt),  # type: ignore

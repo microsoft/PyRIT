@@ -14,8 +14,6 @@ ASSERT's analysis: a 90% Wilson score interval and 5 applicable conversations.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 import re
 import statistics
@@ -574,7 +572,7 @@ def _category_metrics(rows: Sequence[_Row]) -> list[AssertCategoryMetrics]:
     for row in rows:
         if row.nodes is None or row.policy is None:
             continue
-        policy = hashlib.sha256(json.dumps(row.policy.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()
+        policy = row.policy.policy_id
         policies.setdefault(policy, row.policy)
         nodes = row.relevant_nodes()
         judged_names = {name for name, _ in nodes}

@@ -173,6 +173,8 @@ class OpenAITarget(PromptTarget):
     COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
         {"endpoint", "auth_mode", "api_key", "headers", "httpx_client_kwargs"}
     )
+    # Identifier params that describe constructor inputs instead of repeating them, so copies keep the inputs.
+    _DESCRIPTIVE_IDENTIFIER_PARAMS: ClassVar[frozenset[str]] = frozenset({"tools", "tool_providers"})
 
     model_name_environment_variable: str
     endpoint_environment_variable: str
@@ -479,7 +481,11 @@ class OpenAITarget(PromptTarget):
         identifier = self.get_identifier()
         return {
             **self._reconstruction_parameters,
-            **identifier.params,
+            **{
+                name: value
+                for name, value in identifier.params.items()
+                if name not in self._DESCRIPTIVE_IDENTIFIER_PARAMS
+            },
             **identifier.promoted_scalar_values(),
             "model_name": self._model_name,
             "endpoint": self._endpoint,
