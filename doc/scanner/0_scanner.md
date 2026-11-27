@@ -72,6 +72,50 @@ to disable authentication discovery.
 a Graph token with permissions beyond `User.Read`, and the CLI sends that token to the backend.
 Prefer automatic device-code authentication.
 
+### Using an AI Agent
+
+AI agents such as GitHub Copilot can run and review scans through the backend's MCP endpoint,
+`/api/mcp`. Its tools are a selected set of the backend's REST operations: listing targets,
+scenarios, techniques, datasets, and scorers; starting and following scenario runs; and
+reading attack results, conversations, and analytics. With the backend running (see
+[Getting Started](../gui/0_gui.md#getting-started)), connect GitHub Copilot CLI:
+
+```bash
+copilot mcp add --transport http pyrit http://localhost:8000/api/mcp
+```
+
+Clients that read the portable `mcpServers` format, such as GitHub Copilot in VS Code, take the
+same entry, for example in a workspace `.mcp.json` file:
+
+```json
+{"mcpServers": {"pyrit": {"type": "http", "url": "http://localhost:8000/api/mcp", "tools": ["*"]}}}
+```
+
+Then ask, for example, "Which PyRIT targets are registered?" or "Summarize my latest scenario
+run." Each tool call is a request with the agent's credentials, so it gets the same validation
+and authentication as any other client. With Entra authentication, GitHub Copilot CLI asks you to
+sign in through your browser the first time you start an interactive `copilot` session; `copilot -p`
+can't open a browser, so sign in that way first. MCP clients that can't sign in on their own can
+send a Microsoft Graph access token instead, for example with
+`--header "Authorization: Bearer <token>"`.
+
+PyRIT also includes agent skills, task guides that the agent follows when a request matches.
+`pyrit-technique` finds which attack technique best achieves an objective against a target by
+running and comparing one `technique.execute` scan per technique. `pyrit-results` turns a scan's
+results into candidate findings: it compares each technique with the baseline, checks the
+scorer's reasons, and cites the attack results that show each finding, for you to record in an
+[operation](../gui/0_gui.md#operations). `pyrit-scenario` plans a scan of what you want to test
+and starts a small first run, asking you first when the plan needs a choice from you, such as an
+attacker model. Add PyRIT's skills to GitHub Copilot CLI:
+
+```bash
+copilot skill add "$(python -c "import pathlib, pyrit.backend; print(pathlib.Path(pyrit.backend.__file__).parent / 'skills')")"
+```
+
+Then ask, for example, "/pyrit-technique Which technique best gets my target to reveal its
+system prompt?", "/pyrit-scenario Scan my target for cyber harms.", or "/pyrit-results What did
+my latest scan find?"
+
 ## Built-in Scenarios
 
 PyRIT ships with scenarios organized into the following families:

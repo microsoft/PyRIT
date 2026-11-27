@@ -18,7 +18,8 @@ class CompatibilityMiddleware:
     """Enforce one exact packaged compatibility identity on business API requests."""
 
     _NEUTRAL_PATHS: ClassVar[frozenset[str]] = frozenset(
-        {"/api/health", "/api/auth/config", "/api/version", "/api/media"}
+        # MCP clients are not PyRIT builds, so they cannot send a matching marker.
+        {"/api/health", "/api/auth/config", "/api/version", "/api/media", "/api/mcp"}
     )
 
     def __init__(self, app: ASGIApp) -> None:
