@@ -247,8 +247,9 @@ run, and `decided_units` the shared units whose outcome is success or failure in
 every run. `agreement_rate` is `(always_success + always_failure) / decided_units`.
 `run_success_counts` and `run_success_rates` follow the order the runs were
 passed in, and the rates use `decided_units` as their denominator, so
-`rate_range` (highest rate minus lowest) compares the same objectives. All three
-are `None` when no unit is decided in every run.
+`rate_range` (highest rate minus lowest) compares the same objectives. When no
+unit is decided in every run, `agreement_rate` and `rate_range` are `None` and
+`run_success_rates` holds one `None` per run.
 
 Errored, undetermined and missing outcomes stay out of the denominator and are
 counted instead: `error_units`, `undetermined_units` and `missing_units` count
