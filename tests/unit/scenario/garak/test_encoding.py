@@ -567,7 +567,8 @@ class TestEncodingAtomicNameUniqueness:
             ]
             assert row_converters, "polybius row applies no PolybiusConverter"
             result = await row_converters[0].convert_async(prompt="Hello World")
-            assert result.output_text == "23 15 31 31 34 52 34 42 31 14"
+            # Each word is encoded independently and joined with the "/" word token.
+            assert result.output_text == "23 15 31 31 34 / 52 34 42 31 14"
 
     async def test_memory_labels_propagate_to_atomic_attacks(
         self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups
@@ -1096,3 +1097,30 @@ class TestEncodingAsciiSmugglerDecodedText:
         outcome = await self._outcome(converter=Base64Converter(), target=_ReplyTarget(reply=self._ASCII_VALUE))
 
         assert outcome != AttackOutcome.SUCCESS
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestEncodingPolybiusDecodedText:
+    """Tests that the polybius variant folds J to I so J-containing seeds can still score true."""
+
+    def _seed_groups(self, value: str) -> list[AttackSeedGroup]:
+        config = EncodingDatasetConfiguration(sources=[DatasetSource(name="garak_slur_terms_en")])
+        return config._build_attack_groups([SeedPrompt(value=value, data_type="text")])
+
+    @pytest.mark.parametrize(
+        ("value", "expected_metadata"),
+        [
+            ("no special letters", {}),
+            ("Java jungle", {"decoded_text": "Iava iungle"}),
+        ],
+    )
+    def test_polybius_variant_records_j_to_i_decoded_text_on_copies(self, value, expected_metadata):
+        # A correctly decoded polybius prompt answers with I for each J, so the scenario attaches the
+        # J->I folded text as decoded_text for seeds that contain a J (and nothing otherwise).
+        shared_groups = self._seed_groups(value)
+
+        [group] = Encoding._seed_groups_for_converters(converters=[PolybiusConverter()], seed_groups=shared_groups)
+
+        assert group.seeds[1].value == value
+        assert group.seeds[1].metadata == expected_metadata
+        assert shared_groups[0].seeds[1].metadata == {}

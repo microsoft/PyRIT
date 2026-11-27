@@ -1,20 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.converter.converter import Converter, ConverterResult
-from pyrit.models import ComponentIdentifier, PromptDataType
+from pyrit.converter.word_level_converter import WordLevelConverter
 
-_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_SQUARE = "ABCDEFGHIKLMNOPQRSTUVWXYZ"  # 25 letters, I/J merged (no J)
 
 
-class PolybiusConverter(Converter):
+class PolybiusConverter(WordLevelConverter):
     """
     Encodes text using the Polybius square.
 
     The Polybius square is a classical cipher that maps each letter of the alphabet to a
     pair of coordinates (row, column) on a 5x5 grid. Because the Latin alphabet has 26
-    letters but the grid holds only 25 cells, two letters are merged into a single cell
-    (traditionally ``I`` and ``J``). The standard square is::
+    letters but the grid holds only 25 cells, ``I`` and ``J`` are merged into a single cell
+    (any ``J`` is treated as ``I``). The standard square is::
 
            1 2 3 4 5
         1  A B C D E
@@ -24,10 +23,12 @@ class PolybiusConverter(Converter):
         5  V W X Y Z
 
     With this square ``A`` encodes to ``11``, ``B`` to ``12``, ``I`` (and ``J``) to ``24``,
-    and ``Z`` to ``55``. The two merged letters, the separator placed between the row and
-    column digits of a pair, and the separator placed between pairs are all configurable.
-    Non-letter characters (digits, punctuation, whitespace) are preserved unchanged so the
-    encoded prompt keeps its structure. Encoding is case-insensitive.
+    and ``Z`` to ``55``. Each ASCII letter is replaced by its two-digit coordinate pair and the
+    pairs within a word are separated by a single space. A non-letter character (digit,
+    punctuation, non-ASCII letter) is emitted as its own space-separated token, and word
+    boundaries are written as ``/`` so that the words and any literal digits stay distinct from
+    the coordinate pairs (``"AB CD"`` gives ``11 12 / 13 14`` while ``"ABCD"`` gives
+    ``11 12 13 14``). Encoding is case-insensitive.
 
     Reference: https://en.wikipedia.org/wiki/Polybius_square (public domain cipher).
 
@@ -39,110 +40,63 @@ class PolybiusConverter(Converter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
-    def __init__(
-        self,
-        *,
-        merge_letters: tuple[str, str] = ("I", "J"),
-        coordinate_separator: str = "",
-        letter_separator: str = " ",
-    ) -> None:
+    _WORD_SEPARATOR = "/"
+
+    # Each letter -> its two-digit (row, column) coordinate on the 5x5 square; J shares I's cell.
+    _ENCODING = {letter: f"{index // 5 + 1}{index % 5 + 1}" for index, letter in enumerate(_SQUARE)}
+    _ENCODING["J"] = _ENCODING["I"]
+
+    async def convert_word_async(self, word: str) -> str:
         """
-        Initialize the Polybius square converter.
+        Convert one word into Polybius square coordinates.
+
+        Each ASCII letter becomes its two-digit coordinate pair; every other character (digit,
+        punctuation, non-ASCII letter) passes through unchanged. Tokens are separated by a single
+        space so that letters, literal digits, and coordinate pairs stay distinguishable.
 
         Args:
-            merge_letters (tuple[str, str]): The two letters that share a single cell on the
-                grid. The second letter is omitted from the grid and encodes to the same
-                coordinate as the first. Defaults to ``("I", "J")``.
-            coordinate_separator (str): String inserted between the row and column digits of a
-                single letter's coordinate pair (e.g. ``"-"`` yields ``1-1`` for ``A``).
-                Defaults to ``""``.
-            letter_separator (str): String inserted between the coordinate pairs of consecutive
-                letters. Defaults to ``" "``.
-
-        Raises:
-            ValueError: If ``merge_letters`` does not contain two distinct ASCII letters.
-        """
-        first, second = merge_letters
-        first = first.upper()
-        second = second.upper()
-        if first not in _ALPHABET or second not in _ALPHABET:
-            raise ValueError("merge_letters must both be ASCII letters A-Z")
-        if first == second:
-            raise ValueError("merge_letters must be two distinct letters")
-
-        self._merge_letters = (first, second)
-        self._coordinate_separator = coordinate_separator
-        self._letter_separator = letter_separator
-
-        # Build the 5x5 grid from the alphabet with the second merged letter removed, then
-        # point the removed letter at the cell of the first merged letter.
-        grid_letters = [letter for letter in _ALPHABET if letter != second]
-        self._encoding: dict[str, str] = {}
-        for index, letter in enumerate(grid_letters):
-            row = index // 5 + 1
-            column = index % 5 + 1
-            self._encoding[letter] = f"{row}{coordinate_separator}{column}"
-        self._encoding[second] = self._encoding[first]
-
-    def _build_identifier(self) -> ComponentIdentifier:
-        """
-        Build identifier with the Polybius converter parameters.
+            word (str): The word to convert.
 
         Returns:
-            ComponentIdentifier: The identifier for this converter.
+            str: The converted word, with per-character tokens separated by spaces.
         """
-        return self._create_identifier(
-            params={
-                "merge_letters": list(self._merge_letters),
-                "coordinate_separator": self._coordinate_separator,
-                "letter_separator": self._letter_separator,
-            }
-        )
+        output = [self._ENCODING.get(char.upper(), char) if char.isascii() else char for char in word]
+        return " ".join(output)
 
-    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+    def join_words(self, words: list[str]) -> str:
         """
-        Convert the given prompt into Polybius square coordinates.
+        Join converted words while preserving every source-space boundary.
 
         Args:
-            prompt (str): The prompt to be converted.
-            input_type (PromptDataType, optional): Type of input data. Defaults to "text".
+            words (list[str]): The converted words.
 
         Returns:
-            ConverterResult: The result containing the Polybius-encoded representation of the prompt.
-
-        Raises:
-            ValueError: If the input type is not supported.
+            str: The converted words separated by explicit ``/`` word tokens.
         """
-        if not self.input_supported(input_type):
-            raise ValueError("Input type not supported")
+        output: list[str] = []
+        for index, word in enumerate(words):
+            if index:
+                output.append(self._WORD_SEPARATOR)
+            if word:
+                output.append(word)
 
-        output_text = self._polybius(prompt)
-        return ConverterResult(output_text=output_text, output_type="text")
+        return " ".join(output)
 
-    def _polybius(self, text: str) -> str:
+    @classmethod
+    def to_ascii_equivalent(cls, *, text: str) -> str | None:
         """
-        Encode letters as coordinate pairs; preserve every non-letter character unchanged.
+        Return the text a target reconstructs when it decodes the square correctly.
 
-        Runs of consecutive encoded letters are joined by ``letter_separator``; a non-letter
-        character ends such a run and passes through verbatim.
+        Because ``J`` shares ``I``'s cell, a correctly decoded prompt answers with ``I`` for each
+        ``J``. The Encoding scenario feeds this value to ``DecodingScorer`` as ``decoded_text`` so a
+        seed containing ``J`` can still score true.
+
+        Args:
+            text (str): The original (pre-encoding) seed text.
 
         Returns:
-            str: The Polybius-encoded text with non-letter characters preserved.
+            str | None: ``text`` with ``J``/``j`` folded to ``I``/``i``, or ``None`` when the text
+                contains no ``J`` and nothing changes.
         """
-        parts: list[str] = []
-        pending: list[str] = []
-
-        def flush() -> None:
-            if pending:
-                parts.append(self._letter_separator.join(pending))
-                pending.clear()
-
-        for char in text:
-            upper = char.upper()
-            if upper in self._encoding:
-                pending.append(self._encoding[upper])
-            else:
-                flush()
-                parts.append(char)
-        flush()
-        return "".join(parts)
+        folded = text.replace("J", "I").replace("j", "i")
+        return folded if folded != text else None

@@ -415,7 +415,6 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
         "seed": (0, 1),
         "random_seed": (0, 1),
         "CaesarConverter.caesar_offset": (1, -1, 2, 0, 24, 25),
-        "PolybiusConverter.merge_letters": (("U", "V"), ("C", "K")),
         "trap_template": (
             "{prompt} is {wrong_value}",
             "Is {prompt} {wrong_value}?",

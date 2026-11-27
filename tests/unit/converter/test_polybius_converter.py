@@ -55,41 +55,29 @@ async def test_polybius_converter_case_insensitive():
 async def test_polybius_converter_preserves_non_letters():
     converter = PolybiusConverter()
     result = await converter.convert_async(prompt="A1 B!", input_type="text")
-    # Letters encode; digits, spaces, punctuation pass through unchanged.
-    assert result.output_text == "111 12!"
+    # Each character is its own space-separated token, so a literal digit ("1") stays distinct
+    # from a coordinate pair ("11"), and the "/" marks the word boundary.
+    assert result.output_text == "11 1 / 12 !"
 
 
 async def test_polybius_converter_word_boundary_grouping():
     converter = PolybiusConverter()
-    result = await converter.convert_async(prompt="AB CD", input_type="text")
-    # Space ends a run of letters and passes through verbatim.
-    assert result.output_text == "11 12 13 14"
+    spaced = await converter.convert_async(prompt="AB CD", input_type="text")
+    joined = await converter.convert_async(prompt="ABCD", input_type="text")
+    # A space becomes an explicit "/" word token, so the two inputs no longer collide.
+    assert spaced.output_text == "11 12 / 13 14"
+    assert joined.output_text == "11 12 13 14"
+    assert spaced.output_text != joined.output_text
 
 
-async def test_polybius_converter_custom_coordinate_separator():
-    converter = PolybiusConverter(coordinate_separator="-")
-    result = await converter.convert_async(prompt="AB", input_type="text")
-    assert result.output_text == "1-1 1-2"
-
-
-async def test_polybius_converter_custom_letter_separator():
-    converter = PolybiusConverter(letter_separator=".")
-    result = await converter.convert_async(prompt="AB", input_type="text")
-    assert result.output_text == "11.12"
-
-
-async def test_polybius_converter_empty_letter_separator():
-    converter = PolybiusConverter(letter_separator="")
-    result = await converter.convert_async(prompt="AB", input_type="text")
-    assert result.output_text == "1112"
-
-
-async def test_polybius_converter_custom_merge_letters():
-    # Merge C and K instead of I and J: the grid omits K, so J keeps its own cell.
-    converter = PolybiusConverter(merge_letters=("C", "K"))
-    result = await converter.convert_async(prompt="CK", input_type="text")
-    pair = result.output_text.split(" ")
-    assert pair[0] == pair[1]
+async def test_polybius_converter_digit_letter_order_distinct():
+    converter = PolybiusConverter()
+    # "A1" and "1A" encoded different coordinate/digit orders rather than colliding on "111".
+    a_then_1 = await converter.convert_async(prompt="A1", input_type="text")
+    one_then_a = await converter.convert_async(prompt="1A", input_type="text")
+    assert a_then_1.output_text == "11 1"
+    assert one_then_a.output_text == "1 11"
+    assert a_then_1.output_text != one_then_a.output_text
 
 
 async def test_polybius_converter_empty():
@@ -102,25 +90,24 @@ async def test_polybius_converter_empty():
 async def test_polybius_converter_only_non_letters():
     converter = PolybiusConverter()
     result = await converter.convert_async(prompt="123 !?", input_type="text")
-    assert result.output_text == "123 !?"
+    # Every character is its own token; the space becomes the "/" word token.
+    assert result.output_text == "1 2 3 / ! ?"
 
 
-async def test_polybius_converter_invalid_merge_letters_non_alpha():
-    with pytest.raises(ValueError):
-        PolybiusConverter(merge_letters=("I", "5"))
+async def test_polybius_converter_to_ascii_equivalent_folds_j_to_i():
+    # A correctly decoded prompt answers with I for each J (J shares I's cell).
+    assert PolybiusConverter.to_ascii_equivalent(text="Jack jumped") == "Iack iumped"
 
 
-async def test_polybius_converter_invalid_merge_letters_identical():
-    with pytest.raises(ValueError):
-        PolybiusConverter(merge_letters=("I", "I"))
+async def test_polybius_converter_to_ascii_equivalent_none_without_j():
+    # No J means nothing changes, so the hook returns None and the scenario keeps the exact seed.
+    assert PolybiusConverter.to_ascii_equivalent(text="hello world") is None
 
 
-async def test_polybius_converter_identifier_includes_params():
-    converter = PolybiusConverter(coordinate_separator="-", letter_separator="/")
+async def test_polybius_converter_identifier_records_word_split_separator():
+    converter = PolybiusConverter()
     params = converter.get_identifier().params
-    assert params["coordinate_separator"] == "-"
-    assert params["letter_separator"] == "/"
-    assert list(params["merge_letters"]) == ["I", "J"]
+    assert params["word_split_separator"] == " "
 
 
 async def test_polybius_converter_input_not_supported():
