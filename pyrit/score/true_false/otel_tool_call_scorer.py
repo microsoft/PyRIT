@@ -48,6 +48,13 @@ _NO_TRACE_ARGUMENTS_REASON = (
     "use MessageToolCallScorer to match arguments."
 )
 
+_ORDER_IGNORES_ARGUMENTS_REASON = (
+    "OtelToolCallOrderScorer does not match tool arguments, so it cannot confirm an argument requirement; "
+    "use OtelToolCallScorer or MessageToolCallScorer to match arguments."
+)
+
+_UNREADABLE_TRACE_ARGUMENTS_REASON = "The arguments of one or more calls could not be read from the trace."
+
 _UNLINKED_REQUESTS_REASON = (
     "One or more requests in this conversation carry no trace link, so tool calls outside the "
     "correlated traces cannot be ruled out."
@@ -62,6 +69,7 @@ def match_tools_called(
 
     A requirement with argument constraints needs an execution whose retained arguments match.
     Its absence can still be refuted from complete evidence, because no call means no matching call.
+    A call whose arguments were not retained or could not be read leaves the requirement undetermined.
 
     Returns:
         bool | None: True for observed calls, false for complete absence, otherwise None. An
@@ -91,8 +99,7 @@ def _match_tools_called(
         return None, False
     calls: dict[str, list[Mapping[str, JsonValue] | None]] = {}
     for event in payload.events:
-        # Trace events do not retain arguments, so they cannot confirm an argument requirement.
-        calls.setdefault(event.name, []).append(None)
+        calls.setdefault(event.name, []).append(event.arguments)
     verdicts = [match_tool_requirement(requirement=tool, calls=calls.get(tool.name, [])) for tool in condition.tools]
     complete = acquisition is Acquisition.COMPLETE and payload.coverage.complete
     if all(verdict is True for verdict in verdicts):
@@ -197,8 +204,8 @@ def match_tools_called_in_order(
     establish no order. An observed order stands with partial evidence. A negative needs
     complete evidence in which every candidate order is contradicted or a tool never ran.
 
-    Trace events do not retain arguments, so a requirement with argument constraints cannot be
-    confirmed: an observed order is undetermined, because the ordered attempts may not be the
+    Order matching does not match tool arguments, so a requirement with argument constraints cannot
+    be confirmed: an observed order is undetermined, because the ordered attempts may not be the
     matching calls. A contradiction still stands, because it rules out every choice of attempts,
     matching ones included.
 
@@ -361,8 +368,8 @@ class OtelToolCallScorer(_OtelToolEvidenceScorer):
         condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalled)
         value = match_tools_called(condition=condition, payload=evidence, acquisition=observation.acquisition)
         names = ", ".join(describe_tool_requirement(tool) for tool in condition.tools)
-        constrains_arguments = any(tool.arguments for tool in condition.tools)
-        if constrains_arguments:
+        constrained = {tool.name for tool in condition.tools if tool.arguments}
+        if constrained and not evidence.arguments_retained:
             logger.warning(
                 "OtelToolCallScorer received a requirement with argument constraints, which trace evidence "
                 "cannot confirm. Use MessageToolCallScorer to match arguments."
@@ -377,8 +384,10 @@ class OtelToolCallScorer(_OtelToolEvidenceScorer):
                 if value is False
                 else f"Trace evidence cannot establish invocation of all required tools: {names}."
             )
-        if value is None and constrains_arguments:
+        if value is None and constrained and not evidence.arguments_retained:
             rationale = f"{rationale} {_NO_TRACE_ARGUMENTS_REASON}"
+        elif value is None and any(event.name in constrained and event.arguments is None for event in evidence.events):
+            rationale = f"{rationale} {_UNREADABLE_TRACE_ARGUMENTS_REASON}"
         return [
             Score(
                 score_value=None if value is None else str(value).lower(),
@@ -470,8 +479,8 @@ class OtelToolCallOrderScorer(_OtelToolEvidenceScorer):
         constrains_arguments = any(tool.arguments for tool in condition.tools)
         if constrains_arguments:
             logger.warning(
-                "OtelToolCallOrderScorer received a requirement with argument constraints, which trace evidence "
-                "cannot confirm. Use MessageToolCallScorer to match arguments."
+                "OtelToolCallOrderScorer received a requirement with argument constraints, which it does not "
+                "match. Use OtelToolCallScorer or MessageToolCallScorer to match arguments."
             )
         names = " -> ".join(describe_tool_requirement(tool) for tool in condition.tools)
         rationale = (
@@ -482,7 +491,7 @@ class OtelToolCallOrderScorer(_OtelToolEvidenceScorer):
             else f"Trace evidence cannot establish the required tool order: {names}."
         )
         if value is None and constrains_arguments:
-            rationale = f"{rationale} {_NO_TRACE_ARGUMENTS_REASON}"
+            rationale = f"{rationale} {_ORDER_IGNORES_ARGUMENTS_REASON}"
         return [
             Score(
                 score_value=None if value is None else str(value).lower(),

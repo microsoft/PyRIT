@@ -85,10 +85,52 @@ def test_tool_payload_serializes_no_argument_capture_by_default() -> None:
     assert ToolEventsObservationPayload(scope=SCOPE, arguments_retained=False) == payload
 
 
-@pytest.mark.parametrize("arguments_retained", [True, 0, 0.0, "false", None])
-def test_tool_payload_rejects_argument_capture_and_coercion(arguments_retained: object) -> None:
-    with pytest.raises(ValidationError, match="arguments_retained must be false"):
+@pytest.mark.parametrize("arguments_retained", [1, 0, 0.0, "false", "true", None])
+def test_tool_payload_rejects_a_coerced_argument_marker(arguments_retained: object) -> None:
+    with pytest.raises(ValidationError, match="arguments_retained must be a boolean"):
         ToolEventsObservationPayload.model_validate({"scope": SCOPE, "arguments_retained": arguments_retained})
+
+
+def _argument_event(arguments: dict[str, object] | None, *, span_id: str = "2" * 16) -> ToolExecution:
+    return ToolExecution.model_validate(
+        {
+            "name": "send_email",
+            "trace_id": TRACE_ID,
+            "span_id": span_id,
+            "start_time": START_TIME,
+            "arguments": arguments,
+        }
+    )
+
+
+def test_tool_payload_round_trips_retained_arguments() -> None:
+    payload = ToolEventsObservationPayload(
+        scope=SCOPE,
+        events=(
+            _argument_event({"to": "a@example.com"}),
+            _argument_event({}, span_id="3" * 16),
+            _argument_event(None, span_id="4" * 16),
+        ),
+        arguments_retained=True,
+    )
+    observation = _observation(payload=payload, acquisition=Acquisition.PARTIAL)
+
+    assert Observation.model_validate_json(observation.model_dump_json()) == observation
+    assert payload.model_dump(mode="json")["arguments_retained"] is True
+    assert [event.arguments for event in payload.events] == [{"to": "a@example.com"}, {}, None]
+
+
+def test_tool_payload_without_arguments_keeps_its_stored_form() -> None:
+    payload = ToolEventsObservationPayload(scope=SCOPE, events=(_event(),))
+
+    assert "arguments" not in payload.model_dump(mode="json")["events"][0]
+    assert ToolEventsObservationPayload.model_validate(payload.model_dump(mode="json")) == payload
+
+
+@pytest.mark.parametrize("arguments", [{"to": "a@example.com"}, {}])
+def test_tool_payload_rejects_arguments_when_not_retained(arguments: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="arguments_retained is false"):
+        ToolEventsObservationPayload(scope=SCOPE, events=(_argument_event(arguments),))
 
 
 def test_unavailable_observation_preserves_requested_scope() -> None:

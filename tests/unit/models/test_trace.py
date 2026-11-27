@@ -147,6 +147,25 @@ def test_tool_execution_preserves_attempt_status(status: TraceSpanStatus) -> Non
     }
 
 
+def test_tool_execution_round_trips_arguments() -> None:
+    event = ToolExecution.model_validate(
+        {**_model_data(ToolExecution), "arguments": {"to": "a@example.com", "recipient": {"cc": [1, None]}}}
+    )
+
+    assert ToolExecution.model_validate_json(event.model_dump_json()) == event
+    assert event.model_dump(mode="json")["arguments"] == {"to": "a@example.com", "recipient": {"cc": [1, None]}}
+    assert "arguments" not in ToolExecution.model_validate(_model_data(ToolExecution)).model_dump(mode="json")
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    ["{}", ["to"], {"to": object()}, {"to": float("nan")}, {"to": {"sizes": [1, float("-inf")]}}],
+)
+def test_tool_execution_rejects_unstructured_arguments(arguments: object) -> None:
+    with pytest.raises(ValidationError):
+        ToolExecution.model_validate({**_model_data(ToolExecution), "arguments": arguments})
+
+
 @pytest.mark.parametrize("model_type", [TraceSpan, ToolExecution])
 def test_execution_rejects_unknown_status(model_type: type[BaseModel]) -> None:
     with pytest.raises(ValidationError):

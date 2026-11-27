@@ -14,9 +14,10 @@
 # `OtelToolCallScorer` answers "Did these tools run?" It matches exact,
 # case-sensitive names in execution spans, not claims in a response or
 # model-proposed calls. A failed execution attempt counts; the scorer does not
-# check tool success, arguments, or call count. `OtelToolCallOrderScorer`, shown
-# below, checks the order of tool calls from the same evidence. For argument
-# matching, use `MessageToolCallScorer` (see "Require arguments" below).
+# check tool success or call count. `OtelToolCallOrderScorer`, shown
+# below, checks the order of tool calls from the same evidence by name only; it
+# does not read arguments. With `OtelToolCallScorer`, a requirement can also
+# constrain a call's arguments (see "Require arguments" below).
 #
 # The example tool is named **`my_tool_call`**, implemented by the `my_tool_call()` function
 # below. Its span records `"gen_ai.tool.name": "my_tool_call"`.
@@ -122,8 +123,9 @@ print(f"Missing tool after controlled completion: {negative.get_value()}")
 #
 # Load the observation from PyRIT memory, stop capture, and change the expected name.
 # Replay reads the same immutable snapshot; it does not call the trace client.
-# Arguments and results are not retained. Scorer target response observations still
-# have their stricter, original-expectation replay rules.
+# Results are not retained; tool arguments are kept as parsed JSON when the span
+# carries them. Scorer target response observations still have their stricter,
+# original-expectation replay rules.
 
 # %%
 saved = (await memory.get_observations_async(observation_ids=negative.observation_ids))[0]
@@ -601,10 +603,15 @@ print(f"Trace the backend does not have: {missing.acquisition.value}")
 # ```
 #
 # `MessageToolCallScorer` reads the arguments from the stored `function_call`
-# piece of each execution. Trace events do not retain arguments, so
-# `OtelToolCallScorer` cannot confirm an argument requirement and leaves it
-# undetermined. Complete trace evidence with no execution of the tool still makes
-# it false, because no call means no matching call.
+# piece of each execution. `OtelTraceSource` keeps the parsed JSON object from
+# each tool span's arguments: OpenInference `input.value`, or the GenAI
+# `gen_ai.tool.call.arguments` attribute. So `OtelToolCallScorer` decides argument
+# requirements the same way. Missing, unparseable, non-object, non-finite, or
+# more than 64 levels deep arguments leave that call undetermined, and the
+# rationale says the arguments could not be read. Complete trace evidence with no
+# execution of the tool still makes it false, because no call means no matching
+# call. Observations stored before trace arguments were captured hold no
+# arguments, so an argument requirement replayed on them stays undetermined.
 #
 # ## Let a scenario choose the tool-call scorer
 #

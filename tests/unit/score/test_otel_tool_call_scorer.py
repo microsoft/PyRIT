@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -23,6 +24,7 @@ from pyrit.models import (
     ContentScorable,
     Equals,
     MessageScorable,
+    Observation,
     Score,
     ScoringExpectation,
     ToolArgumentRequirement,
@@ -229,35 +231,50 @@ async def test_name_only_requirement_gets_no_argument_note_or_warning_async(capl
 
 
 @pytest.mark.parametrize("complete", [False, True])
-async def test_name_only_trace_evidence_cannot_confirm_an_argument_requirement_async(
+async def test_name_only_observation_cannot_confirm_an_argument_requirement_async(
     sqlite_instance: SQLiteMemory, complete: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
-    client = InMemoryTraceClient()
+    # Observations stored before trace arguments were captured carry arguments_retained=false.
+    scope = TraceScorable(trace_ids=("1" * 32,))
+    source = OtelTraceSource(trace_client=InMemoryTraceClient())
     span = _span(name="send_email")
-    span.attributes["gen_ai.tool.call.arguments"] = '{"to": "a@example.com"}'
-    client.add_span(span)
-    if complete:
-        client.mark_complete(trace_ids=(span.trace_id,))
-    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+    legacy = Observation(
+        source_identifier=source.get_identifier(),
+        acquisition=Acquisition.COMPLETE if complete else Acquisition.PARTIAL,
+        scorable=scope,
+        payload=ToolEventsObservationPayload.model_validate(
+            {
+                "scope": scope.model_dump(mode="json"),
+                "events": [
+                    {
+                        "name": "send_email",
+                        "trace_id": span.trace_id,
+                        "span_id": span.span_id,
+                        "start_time": span.start_time.isoformat(),
+                        "end_time": span.end_time.isoformat(),
+                    }
+                ],
+                "coverage": {"complete": complete},
+                "arguments_retained": False,
+            }
+        ),
+    )
+    scorer = OtelToolCallScorer(source=source)
 
-    with caplog.at_level("WARNING"):
-        score = (
-            await scorer.score_async(
-                scorable=TraceScorable(trace_ids=(span.trace_id,)), expectation=_argument_expectation()
-            )
-        )[0]
+    with patch.object(source, "acquire_async", new_callable=AsyncMock, return_value=legacy), caplog.at_level("WARNING"):
+        score = (await scorer.score_async(scorable=scope, expectation=_argument_expectation()))[0]
 
     assert score.is_undetermined
     assert "send_email(to)" in score.score_rationale
-    # The rationale says why, so a user is not left to guess that traces drop arguments.
+    # The rationale says why, so a user is not left to guess that the evidence dropped arguments.
     assert "Trace evidence does not retain tool arguments" in score.score_rationale
     assert "MessageToolCallScorer" in score.score_rationale
     assert "argument constraints, which trace evidence cannot confirm" in caplog.text
     observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
-    assert "a@example.com" not in observation.model_dump_json()
-    client.close()
+    assert observation.payload.arguments_retained is False
     replay = (await scorer.score_observation_async(observation=observation, expectation=_argument_expectation()))[0]
     assert replay.is_undetermined
+    assert replay.score_rationale == score.score_rationale
 
 
 @pytest.mark.parametrize(("complete", "expected"), [(False, None), (True, False)])
@@ -291,6 +308,113 @@ async def test_absent_name_only_tool_refutes_alongside_an_undetermined_argument_
         0
     ].get_value() is False
     assert (await scorer.score_async(scorable=scope, expectation=_argument_expectation()))[0].is_undetermined
+
+
+def _argument_scorer(*arguments: JsonValue, convention: str = "genai") -> OtelToolCallScorer:
+    client = InMemoryTraceClient()
+    attribute = "gen_ai.tool.call.arguments" if convention == "genai" else "input.value"
+    for index, value in enumerate(arguments):
+        span = _span(name="send_email", span_id=f"{index + 2:016x}", convention=convention)
+        if value is not None:
+            span.attributes[attribute] = value
+        client.add_span(span)
+    client.mark_complete(trace_ids=("1" * 32,))
+    return OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+
+
+def _send_email_expectation(**matchers: str) -> ScoringExpectation:
+    arguments = tuple(
+        ToolArgumentRequirement(name=name, matcher=Equals(value=value)) for name, value in matchers.items()
+    )
+    return ScoringExpectation(
+        conditions=(ToolsCalled(tools=(ToolCallRequirement(name="send_email", arguments=arguments),)),)
+    )
+
+
+async def test_source_stores_parsed_arguments_not_the_raw_attribute_async(sqlite_instance: SQLiteMemory) -> None:
+    raw = '{"to": "a@example.com", "body": "invoice"}'
+    scorer = _argument_scorer(raw)
+
+    score = (
+        await scorer.score_async(
+            scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=_send_email_expectation(to="a@example.com")
+        )
+    )[0]
+
+    assert score.get_value() is True
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    assert observation.payload.arguments_retained is True
+    assert observation.payload.events[0].arguments == {"to": "a@example.com", "body": "invoice"}
+    assert json.dumps(raw) not in observation.model_dump_json()
+    assert "gen_ai.tool.call.arguments" not in observation.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        None,
+        "not json",
+        '["a@example.com"]',
+        '"a@example.com"',
+        '{"to": NaN}',
+        '{"to": 1e400}',
+        '{"to": "a@example.com", "body": {"sizes": [1, -Infinity]}}',
+        {"to": float("inf")},
+        {"to": "a@example.com", "body": {"sizes": [1, float("nan")]}},
+        3,
+        '{"to": ' + "[" * 100 + "1" + "]" * 100 + "}",
+        '{"to": ' + "[" * 100_000 + "1" + "]" * 100_000 + "}",
+    ],
+    ids=lambda value: f"depth-{str(value).count('[')}" if str(value).count("[") > 10 else None,
+)
+async def test_unreadable_trace_arguments_are_not_retained_and_stay_undetermined_async(
+    sqlite_instance: SQLiteMemory, arguments: JsonValue
+) -> None:
+    scorer = _argument_scorer(arguments)
+
+    score = (
+        await scorer.score_async(
+            scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=_send_email_expectation(to="a@example.com")
+        )
+    )[0]
+
+    assert score.is_undetermined
+    assert "could not be read" in score.score_rationale
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    assert observation.acquisition is Acquisition.COMPLETE
+    assert observation.payload.events[0].arguments is None
+
+
+@pytest.mark.parametrize(
+    ("arguments", "matchers", "expected"),
+    [
+        ('{"to": "a@example.com"}', {"to": "a@example.com"}, True),
+        ({"to": "a@example.com"}, {"to": "a@example.com"}, True),
+        ('{"to": "b@example.com"}', {"to": "a@example.com"}, False),
+        ('{"subject": "hi"}', {"to": "a@example.com"}, False),
+        ('{"to": "a@example.com", "body": "invoice"}', {"to": "a@example.com", "body": "invoice"}, True),
+        ('{"to": "a@example.com", "body": "other"}', {"to": "a@example.com", "body": "invoice"}, False),
+    ],
+)
+@pytest.mark.parametrize("convention", ["genai", "openinference"])
+async def test_trace_arguments_decide_argument_requirements_in_scoring_and_replay_async(
+    sqlite_instance: SQLiteMemory, arguments: JsonValue, matchers: dict[str, str], expected: bool, convention: str
+) -> None:
+    scorer = _argument_scorer(arguments, convention=convention)
+    expectation = _send_email_expectation(**matchers)
+
+    score = (await scorer.score_async(scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=expectation))[0]
+
+    assert score.get_value() is expected
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
+    assert replay.get_value() is expected
+
+
+def test_source_identity_records_normalization_version() -> None:
+    identifier = OtelTraceSource(trace_client=InMemoryTraceClient(source_id="same")).get_identifier()
+
+    assert identifier.params == {"normalization_version": 2, "max_spans": 10000, "timeout_seconds": 30}
 
 
 @pytest.mark.parametrize(

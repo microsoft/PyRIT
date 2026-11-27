@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pyrit.models import (
     Acquisition,
@@ -24,14 +25,75 @@ from pyrit.score.observation.trace_client import TraceAcquisitionError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pydantic import JsonValue
+
     from pyrit.models import TraceQueryResult, TraceScorable, TraceSpan
     from pyrit.score.observation.trace_client import TraceClient
 
 logger = logging.getLogger(__name__)
 
+#: The GenAI semantic-convention attribute that carries a tool call's arguments.
+_ARGUMENTS_ATTRIBUTE = "gen_ai.tool.call.arguments"
+
+#: The OpenInference attribute that carries a tool span's input, which is its call's arguments.
+_OPEN_INFERENCE_ARGUMENTS_ATTRIBUTE = "input.value"
+
+#: The deepest container nesting kept, with the top-level object at depth 1. It stays well below
+#: the depth at which validating ``ToolExecution`` fails, so deeper arguments are unreadable
+#: rather than an error that loses the whole observation.
+_MAX_ARGUMENT_DEPTH = 64
+
+
+def _is_bounded_finite(value: JsonValue) -> bool:
+    """
+    Check that a JSON value nests no deeper than the limit and holds only finite numbers.
+
+    Returns:
+        bool: Whether every container is within ``_MAX_ARGUMENT_DEPTH`` and every number is finite.
+    """
+    pending: list[tuple[JsonValue, int]] = [(value, 0)]
+    while pending:
+        item, depth = pending.pop()
+        if isinstance(item, float) and not math.isfinite(item):
+            return False
+        if isinstance(item, dict | list):
+            if depth + 1 > _MAX_ARGUMENT_DEPTH:
+                return False
+            children = item.values() if isinstance(item, dict) else item
+            pending.extend((child, depth + 1) for child in children)
+    return True
+
+
+def _parse_arguments(value: JsonValue | None) -> dict[str, JsonValue] | None:
+    """
+    Parse one call's arguments into a JSON object.
+
+    A number that is not finite is not JSON, whether it arrives as a ``NaN`` or ``Infinity``
+    constant, as a literal too large to represent, or inside an already-parsed object.
+
+    Returns:
+        dict[str, JsonValue] | None: The parsed arguments, or None if they are missing, do not
+            parse, are not a JSON object, nest more than ``_MAX_ARGUMENT_DEPTH`` levels, or hold
+            a number that is not finite.
+    """
+    if isinstance(value, str):
+        try:
+            value = cast("JsonValue", json.loads(value))
+        except (ValueError, RecursionError):
+            return None
+    if not isinstance(value, dict) or not _is_bounded_finite(value):
+        return None
+    return value
+
 
 class OtelTraceSource:
-    """Normalize explicit GenAI/OpenInference execution spans into safe evidence."""
+    """
+    Normalize explicit GenAI/OpenInference execution spans into safe evidence.
+
+    Each tool event keeps the parsed JSON object from its span's arguments attribute, not the raw
+    attribute: ``input.value`` on an OpenInference tool span, falling back to
+    ``gen_ai.tool.call.arguments``. Arguments that are missing or unreadable are left as None.
+    """
 
     def __init__(self, *, trace_client: TraceClient, max_spans: int = 10000, timeout_seconds: float = 30) -> None:
         """
@@ -50,7 +112,7 @@ class OtelTraceSource:
         """Return parser version and source identity without serializing the client."""
         return ComponentIdentifier.of(
             self,
-            params={"normalization_version": 1, "max_spans": self._max_spans, "timeout_seconds": self._timeout_seconds},
+            params={"normalization_version": 2, "max_spans": self._max_spans, "timeout_seconds": self._timeout_seconds},
             children={"trace_client": self._client.get_identifier()},
         )
 
@@ -101,6 +163,7 @@ class OtelTraceSource:
                 scope=scorable,
                 events=events,
                 coverage=TraceCoverage(complete=acquisition is Acquisition.COMPLETE, reasons=reasons),
+                arguments_retained=True,
             ),
         )
 
@@ -120,6 +183,9 @@ class OtelTraceSource:
             if open_inference and gen_ai and span.attributes.get("gen_ai.tool.name", name) != name:
                 raise ValueError("Span conventions disagree about the executed tool name.")
             call_id = span.attributes.get("gen_ai.tool.call.id")
+            arguments = span.attributes.get(_OPEN_INFERENCE_ARGUMENTS_ATTRIBUTE) if open_inference else None
+            if arguments is None:
+                arguments = span.attributes.get(_ARGUMENTS_ATTRIBUTE)
             events.append(
                 ToolExecution(
                     name=name,
@@ -130,6 +196,7 @@ class OtelTraceSource:
                     start_time=span.start_time,
                     end_time=span.end_time,
                     status=span.status,
+                    arguments=_parse_arguments(arguments),
                 )
             )
         events.sort(key=lambda event: (event.start_time, event.trace_id, event.span_id))
