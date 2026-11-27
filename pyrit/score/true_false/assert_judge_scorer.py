@@ -148,9 +148,7 @@ class AssertJudgeScorer(TrueFalseScorer):
                 trace_source=self._trace_source,
                 trace_requirement=self._trace_requirement,
             )
-            self._judges_by_policy[key] = cast(
-                "TrueFalseScorer", judge.with_scorer_block_policy(raise_if_scorer_blocks=False)
-            )
+            self._judges_by_policy[key] = judge.with_scorer_block_policy(raise_if_scorer_blocks=False)
         return self._judges_by_policy[key]
 
     def _get_child_expectations(

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing import assert_type
 from unittest.mock import MagicMock
 
 import pytest
@@ -324,5 +325,25 @@ def test_with_scorer_block_policy_returns_self_when_already_compliant(patch_cent
     scorer1.raise_if_scorer_blocks = True
 
     composite = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[scorer1])
+
+    assert composite.with_scorer_block_policy(raise_if_scorer_blocks=True) is composite
+
+
+def test_with_scorer_block_policy_returns_subclass(patch_central_database):
+    """Self-typed with_scorer_block_policy preserves the subclass (PyRIT #4504)."""
+    from pyrit.score import SubStringScorer
+
+    class _SubScorer(TrueFalseCompositeScorer):
+        pass
+
+    constituent = SubStringScorer(substring="a")
+    constituent.raise_if_scorer_blocks = True
+    composite = _SubScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[constituent])
+
+    scoped = composite.with_scorer_block_policy(raise_if_scorer_blocks=False)
+    assert_type(scoped, _SubScorer)
+    assert isinstance(scoped, _SubScorer)
+    assert scoped is not composite
+    assert [s.raise_if_scorer_blocks for s in scoped._scorers] == [False]
 
     assert composite.with_scorer_block_policy(raise_if_scorer_blocks=True) is composite

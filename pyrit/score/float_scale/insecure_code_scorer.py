@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from collections.abc import Sequence
+from typing import Self
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.common.text_helper import is_non_empty_string
@@ -142,7 +143,7 @@ class InsecureCodeScorer(MessageFloatScaleScorer):
         system_prompt_template: SeedPrompt | str | None = None,
         response_handler: ResponseHandler | None = None,
         validator: ScorerPromptValidator | None = None,
-    ) -> "InsecureCodeScorer":
+    ) -> Self:
         """
         Build a scorer whose prompt and score metadata use the same harm categories.
 

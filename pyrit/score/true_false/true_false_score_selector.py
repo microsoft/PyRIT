@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Self
 
 from pyrit.score.true_false.multi_label_true_false_scorer import MultiLabelTrueFalseScorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -41,17 +41,14 @@ class TrueFalseScoreSelector(TrueFalseScorer):
         """Return the child's target for batch and evaluation rate-limit validation."""
         return self._scorer.get_chat_target()
 
-    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Self:
         """
         Apply blocked-judge policy to the child without mutating shared instances.
 
         Returns:
             Scorer: This selector or a copy containing the scoped child.
         """
-        child = cast(
-            "MultiLabelTrueFalseScorer",
-            self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks),
-        )
+        child = self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
         if child is self._scorer:
             return self
         scoped = copy.copy(self)

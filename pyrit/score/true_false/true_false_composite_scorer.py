@@ -4,7 +4,7 @@
 import copy
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Self, cast
 
 if TYPE_CHECKING:
     import uuid
@@ -108,7 +108,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
                 return target
         return None
 
-    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Self:
         """
         Apply the policy to every constituent scorer.
 
@@ -120,8 +120,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             updated constituents.
         """
         scoped_scorers = [
-            cast("TrueFalseScorer", s.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks))
-            for s in self._scorers
+            s.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks) for s in self._scorers
         ]
         if all(new is old for new, old in zip(scoped_scorers, self._scorers, strict=True)):
             return self
