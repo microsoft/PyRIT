@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from pyrit.common import default_values
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
-from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
+from pyrit.models import ComponentIdentifier, Message, TokenUsage, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -21,6 +21,7 @@ from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
     set_response_metadata,
+    set_token_usage_metadata,
     warn_truncated_response,
 )
 
@@ -407,6 +408,10 @@ class HuggingFaceChatTarget(PromptTarget):
             ).strip()
 
             truncated = self._is_truncated(generated_tokens=generated_tokens)
+            output_length = len(generated_tokens)
+            usage = TokenUsage(
+                input_tokens=input_length, output_tokens=output_length, total_tokens=input_length + output_length
+            )
             if truncated:
                 warn_truncated_response(signal="max_new_tokens reached", limit_parameter="max_new_tokens")
 
@@ -424,6 +429,7 @@ class HuggingFaceChatTarget(PromptTarget):
                     empty_response.message_pieces[0].prompt_metadata.update(response_metadata)
                     empty_response.message_pieces[0].mark_as_truncated()
                     set_response_metadata(pieces=empty_response.message_pieces, finish_reason="length")
+                    set_token_usage_metadata(pieces=empty_response.message_pieces, usage=usage)
                     return [empty_response]
                 raise EmptyResponseException
 
@@ -437,6 +443,7 @@ class HuggingFaceChatTarget(PromptTarget):
             if truncated:
                 response.message_pieces[0].mark_as_truncated()
             set_response_metadata(pieces=response.message_pieces, finish_reason="length" if truncated else "stop")
+            set_token_usage_metadata(pieces=response.message_pieces, usage=usage)
             return [response]
 
         except Exception as e:
