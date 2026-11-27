@@ -16,8 +16,8 @@ import type {
   ScenarioRunState,
 } from '@/types'
 
-export const HIERARCHY_MAX_NODES = 1000
-export const HIERARCHY_CHILD_PAGE_SIZE = 200
+const HIERARCHY_MAX_NODES = 1000
+const HIERARCHY_CHILD_PAGE_SIZE = 200
 
 export interface HierarchyRootState {
   readonly status: 'loading' | 'ready' | 'error'

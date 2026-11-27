@@ -10,6 +10,7 @@ import { toApiError } from '@/services/errors'
 import type { ConverterInstance, SourceInstanceSpec } from '@/types'
 
 import { useSaveConverterDialogStyles } from './SaveConverterDialog.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 interface SaveConverterDialogProps {
   converterType: string
@@ -73,10 +74,10 @@ export default function SaveConverterDialog({
             <Text>Save these settings under a new name. The original converter stays unchanged.
               Saved converters are available until the backend restarts.</Text>
             {error && <MessageBar intent="error">
-              <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error}</MessageBarBody>
+              <MessageBarBody ref={fluentRef(errorRef)} tabIndex={-1} role="alert">{error}</MessageBarBody>
             </MessageBar>}
             <Field label="Registry name" required
-              validationMessage={showValidation && !name.trim() ? 'Enter a registry name' : undefined}>
+              validationMessage={showValidation && !name.trim() ? 'Enter a registry name' : null}>
               <Input value={name} disabled={submitting} onChange={(_, data) => setName(data.value)} />
             </Field>
           </form>
