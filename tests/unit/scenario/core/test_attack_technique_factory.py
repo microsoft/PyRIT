@@ -13,13 +13,13 @@ from pyrit.converter import Base64Converter, QRCodeConverter, ROT13Converter, Tr
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackScoringConfig,
+    CrescendoAttack,
     PromptSendingAttack,
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.executor.attack.core.attack_config import (
     DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
 )
-from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack
 from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
 from pyrit.models.technique_edit import SimulationSettings
 from pyrit.prompt_normalizer import ConverterConfiguration

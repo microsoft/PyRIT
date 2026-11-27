@@ -11,8 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.converter import ROT13Converter
-from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
-from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack
+from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, CrescendoAttack, PromptSendingAttack
 from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
