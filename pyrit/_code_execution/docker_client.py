@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import re
@@ -93,19 +94,23 @@ class DockerRuntimeProfile:
     Configure a trusted, digest-pinned image and its program interpreter.
 
     The command is followed by the program's path and the invocation's arguments.
+    ``runtime`` names a container runtime registered with the daemon, such as a user-space
+    kernel or microVM runtime, for a stronger boundary than a container sharing the host kernel.
+    By default the daemon's default runtime is used.
     """
 
     image: str
     command: tuple[str, ...]
     program_filename: str = "main.py"
+    runtime: str | None = None
 
     def __post_init__(self) -> None:
         """
-        Validate the image pin and the program file name.
+        Validate the image pin, the program file name, and the runtime name.
 
         Raises:
             ValueError: If the image is not pinned by digest, the command is empty, or the
-                file name is not a plain name.
+                file name or runtime is not a plain name.
         """
         if _DIGEST_PATTERN.search(self.image) is None:
             raise ValueError(f"Runtime image {self.image!r} must be pinned by digest (name@sha256:<64 hex>).")
@@ -113,6 +118,8 @@ class DockerRuntimeProfile:
             raise ValueError("A runtime profile command must be a nonempty argument list.")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", self.program_filename):
             raise ValueError(f"Program file name {self.program_filename!r} must be a plain file name.")
+        if self.runtime is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", self.runtime):
+            raise ValueError(f"Container runtime {self.runtime!r} must be a plain runtime name.")
 
     @property
     def image_digest(self) -> str:
@@ -158,7 +165,11 @@ class DockerSandboxClient:
     state distinguishes program termination from client failure. Cleanup removes each container
     before another invocation starts.
 
-    This is not a hardened multi-tenant sandbox. Use a host dedicated to evaluation.
+    This is not a hardened multi-tenant sandbox. Use a host dedicated to evaluation. With the
+    daemon's default runtime, containers share the host kernel: this is process isolation for
+    development and trusted programs, not a sufficient boundary for hostile code. A profile's
+    ``runtime`` can name a stronger runtime the caller has installed; the daemon must offer it
+    before anything runs, and the identifier records it.
     """
 
     _READ_CHUNK_BYTES = 1 << 16
@@ -225,6 +236,7 @@ class DockerSandboxClient:
                         "image": profile.image,
                         "command": list(profile.command),
                         "program_filename": profile.program_filename,
+                        **({"runtime": profile.runtime} if profile.runtime is not None else {}),
                     }
                     for name, profile in sorted(self._profiles.items())
                 },
@@ -263,8 +275,8 @@ class DockerSandboxClient:
 
         Raises:
             ValueError: If the runtime profile is not configured or there are no invocations.
-            SandboxExecutionError: If the backend cannot enforce the limits, the image declares
-                volumes, or no invocation could be run.
+            SandboxExecutionError: If the backend cannot enforce the limits, does not offer the
+                profile's runtime, the image declares volumes, or no invocation could be run.
         """
         profile = self._profiles.get(runtime_profile_name)
         if profile is None:
@@ -309,7 +321,7 @@ class DockerSandboxClient:
 
     async def _validate_backend_async(self, *, profile: DockerRuntimeProfile) -> None:
         """
-        Reject unsupported resource controls and image-declared writable volumes.
+        Reject unsupported resource controls, a missing runtime, and image-declared writable volumes.
 
         Raises:
             SandboxExecutionError: If the backend or image cannot meet the isolation requirements.
@@ -327,6 +339,8 @@ class DockerSandboxClient:
                 "Docker must support cgroup memory, swap, CPU, and process limits; "
                 f"check controller delegation on rootless hosts (reported: {output.strip()[:300]})."
             )
+        if profile.runtime is not None:
+            await self._validate_runtime_async(runtime=profile.runtime)
         status, output = await self._control_async(
             "image", "inspect", "--format", "{{json .Config.Volumes}}", profile.image
         )
@@ -335,6 +349,27 @@ class DockerSandboxClient:
         if output.strip() not in ("null", "{}"):
             raise SandboxExecutionError(
                 "Runtime images must not declare volumes, which can bypass the bounded tmpfs storage policy."
+            )
+
+    async def _validate_runtime_async(self, *, runtime: str) -> None:
+        """
+        Require the daemon to offer the profile's container runtime under that exact name.
+
+        Raises:
+            SandboxExecutionError: If the runtimes cannot be read or the runtime is not offered.
+        """
+        status, output = await self._control_async("info", "--format", "{{json .Runtimes}}")
+        if status != 0:
+            raise SandboxExecutionError(f"could not inspect Docker runtimes: {output.strip()[:300]}")
+        try:
+            offered = json.loads(output)
+        except ValueError:
+            offered = None
+        if not isinstance(offered, dict):
+            raise SandboxExecutionError(f"Docker reported unreadable runtimes: {output.strip()[:300]}")
+        if runtime not in offered:
+            raise SandboxExecutionError(
+                f"Docker does not offer the {runtime!r} runtime the profile requires (offered: {sorted(offered)})."
             )
 
     @staticmethod
@@ -523,6 +558,7 @@ class DockerSandboxClient:
             "/tmp",
             "--mount",
             f"type=bind,source={os.fspath(program_dir)},target=/program,readonly",
+            *(("--runtime", profile.runtime) if profile.runtime is not None else ()),
             "--entrypoint",
             resolved_command[0],
             profile.image,

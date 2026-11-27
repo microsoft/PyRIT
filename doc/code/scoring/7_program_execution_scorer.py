@@ -19,6 +19,12 @@
 # Docker must support cgroup memory, swap, CPU, and process limits. Runtime images must not
 # declare volumes. Unsupported backends and images are rejected before execution.
 #
+# This local setup is for development and trusted programs. On the daemon's default runtime a
+# container shares the host kernel, which is not a sufficient boundary for hostile code. For
+# untrusted programs, use a backend built as a boundary: an isolated execution service, or a
+# `DockerRuntimeProfile(runtime=...)` naming a microVM or user-space kernel runtime installed on
+# the daemon. The client checks that the daemon offers that runtime before anything runs.
+#
 # ## Execute without scoring or memory
 #
 # A runtime profile name selects a trusted client configuration, not an arbitrary image.
