@@ -2245,6 +2245,8 @@ def _try_instantiate_converter(converter_name: str):
         "ImagePromptStyleConverter": {"filter_name": "gritty_documentary"},
         "VigenereConverter": {"key": "testvalue"},
         "ColumnarTranspositionConverter": {"key": "testvalue"},
+        "BeaufortConverter": {"key": "testvalue"},
+        "PortaConverter": {"key": "testvalue"},
         "GridCompositeConverter": {"innocuous_images": ["a.png", "b.png", "c.png"]},
     }
 
