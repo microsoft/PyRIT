@@ -31,6 +31,29 @@ def _float_values(scores: list[Score]) -> list[float] | None:
         return None
 
 
+def _select_winner(*, scores: list[Score], float_values: list[float], raw_result: float) -> Score:
+    """
+    Return the constituent whose value produced the aggregate.
+
+    No match means the aggregate cannot be attributed to a real score (for
+    example, a NaN value assigned after construction). Fail loudly instead of
+    silently dropping the winner's metadata.
+
+    Returns:
+        Score: The constituent whose value equals the aggregate.
+
+    Raises:
+        ValueError: If no constituent matches the aggregate value.
+    """
+    winner = next(
+        (score for score, value in zip(scores, float_values, strict=True) if value == raw_result),
+        None,
+    )
+    if winner is None:
+        raise ValueError(f"No constituent score matches aggregate value {raw_result!r}")
+    return winner
+
+
 def _empty_result(*, name: str) -> ScoreAggregatorResult:
     """
     Build the neutral result for an aggregation that received no scores.
@@ -258,8 +281,11 @@ def _create_aggregator_by_category(
             float_values = _float_values(scores_list)
             if float_values is None:
                 return [_undetermined_result(scores_list, name=name, metadata=metadata, category=category)]
-            result = result_func(float_values)
-            result = max(0.0, min(1.0, result))
+            raw_result = result_func(float_values)
+            if use_selected_score_metadata:
+                selected_score = _select_winner(scores=scores_list, float_values=float_values, raw_result=raw_result)
+                metadata.update(selected_score.score_metadata or {})
+            result = max(0.0, min(1.0, raw_result))
 
             description, rationale = _build_rationale(scores_list, aggregate_description=aggregate_description)
             return [
@@ -298,16 +324,22 @@ def _create_aggregator_by_category(
             float_values = _float_values(category_scores)
             if float_values is None:
                 results.append(
-                    _undetermined_result(category_scores, name=name, metadata=metadata, category=category_list)
+                    _undetermined_result(
+                        category_scores,
+                        name=name,
+                        metadata=metadata,
+                        category=category_list,
+                    )
                 )
                 continue
             raw_result = result_func(float_values)
             if use_selected_score_metadata:
-                selected_score = next(
-                    score for score, value in zip(category_scores, float_values, strict=True) if value == raw_result
+                selected_score = _select_winner(
+                    scores=category_scores,
+                    float_values=float_values,
+                    raw_result=raw_result,
                 )
-                selected_metadata = selected_score.score_metadata or {}
-                metadata.update(selected_metadata)
+                metadata.update(selected_score.score_metadata or {})
             result = max(0.0, min(1.0, raw_result))
 
             # Build description and rationale for this category group
@@ -385,6 +417,7 @@ class FloatScaleScorerAllCategories:
         result_func=max,
         aggregate_description="Maximum value among all constituent scorers across categories",
         group_by_category=False,
+        use_selected_score_metadata=True,
     )
 
     AVERAGE: FloatScaleAggregatorFunc = _create_aggregator_by_category(
@@ -399,4 +432,5 @@ class FloatScaleScorerAllCategories:
         result_func=min,
         aggregate_description="Minimum value among all constituent scorers across categories",
         group_by_category=False,
+        use_selected_score_metadata=True,
     )
