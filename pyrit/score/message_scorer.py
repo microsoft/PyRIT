@@ -41,7 +41,7 @@ from pyrit.models import (
 from pyrit.models.score.observation import _message_piece_digest
 from pyrit.models.score.scorable import SCORABLE_TYPES
 from pyrit.score.expectation_errors import MissingConditionError
-from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
+from pyrit.score.llm_scoring import _ErrorJudgmentObservationError, _validate_judgment_replay_compatibility
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
@@ -1298,6 +1298,22 @@ class MessageScorer(Scorer):
             if observation.metadata.get("reason") == "scorer_response_blocked" and self.raise_if_scorer_blocks:
                 raise NonReplayableObservationError(
                     "Blocked-response replay requires raise_if_scorer_blocks=False to match the acquisition policy."
+                )
+            # An error acquisition has no judgment to parse, but its stored replay contract
+            # must still match before it may replay as undetermined. Route it through the
+            # leaf scorer's parser, which validates the contract (including the target
+            # adaptation fingerprint) and then signals that nothing can be parsed.
+            try:
+                self._score_judgment_observation(
+                    observation=observation,
+                    evidence=evidence,
+                    expectation=expectation,
+                )
+            except _ErrorJudgmentObservationError:
+                pass
+            else:
+                raise NonReplayableObservationError(
+                    f"{type(self).__name__} returned a score for an error-acquired judgment observation."
                 )
             return [
                 self._build_undetermined_score(
