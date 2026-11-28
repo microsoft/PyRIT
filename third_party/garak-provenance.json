@@ -21,6 +21,18 @@
       ]
     },
     {
+      "path": "pyrit/converter/backspace_converter.py",
+      "sources": [
+        "garak/probes/badchars.py"
+      ]
+    },
+    {
+      "path": "pyrit/converter/bidi_swap_converter.py",
+      "sources": [
+        "garak/probes/badchars.py"
+      ]
+    },
+    {
       "path": "pyrit/converter/braille_converter.py",
       "sources": [
         "garak/probes/encoding.py"

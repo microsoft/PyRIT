@@ -34,9 +34,11 @@ if TYPE_CHECKING:
     from pyrit.converter.audio_white_noise_converter import AudioWhiteNoiseConverter
     from pyrit.converter.azure_speech_audio_to_text_converter import AzureSpeechAudioToTextConverter
     from pyrit.converter.azure_speech_text_to_audio_converter import AzureSpeechTextToAudioConverter
+    from pyrit.converter.backspace_converter import BackspaceConverter
     from pyrit.converter.base64_converter import Base64Converter
     from pyrit.converter.base2048_converter import Base2048Converter
     from pyrit.converter.bidi_converter import BidiConverter
+    from pyrit.converter.bidi_swap_converter import BidiSwapConverter
     from pyrit.converter.bifid_converter import BifidConverter
     from pyrit.converter.bijection_converter import (
         DigitBijectionConverter,
@@ -172,9 +174,11 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AudioWhiteNoiseConverter": "pyrit.converter.audio_white_noise_converter",
     "AzureSpeechAudioToTextConverter": "pyrit.converter.azure_speech_audio_to_text_converter",
     "AzureSpeechTextToAudioConverter": "pyrit.converter.azure_speech_text_to_audio_converter",
+    "BackspaceConverter": "pyrit.converter.backspace_converter",
     "Base2048Converter": "pyrit.converter.base2048_converter",
     "Base64Converter": "pyrit.converter.base64_converter",
     "BidiConverter": "pyrit.converter.bidi_converter",
+    "BidiSwapConverter": "pyrit.converter.bidi_swap_converter",
     "BifidConverter": "pyrit.converter.bifid_converter",
     "DigitBijectionConverter": "pyrit.converter.bijection_converter",
     "LetterBijectionConverter": "pyrit.converter.bijection_converter",
