@@ -375,6 +375,33 @@ for name, (template, escape_pattern) in markdown_templates.items():
     print(f"{name}:", text)
 
 # %% [markdown]
+# Decision models such as those behind `LiteLLMDecisionTarget` take a JSON request with a `state` (the
+# text being judged) and typed `questions`. `DecisionOptionOrderConverter` reverses or shuffles the options
+# of each `choice` question and leaves the state, the option text, and other question types unchanged.
+# Option order should not change a decision, so a changed answer shows order sensitivity.
+
+# %%
+import json
+
+from pyrit.converter import DecisionOptionOrderConverter
+
+routing_request = json.dumps(
+    {
+        "state": "I was charged twice for my order.",
+        "questions": {
+            "route": {
+                "type": "choice",
+                "instructions": "Which team should handle this ticket?",
+                "criteria": {"billing": "Charges and invoices.", "refund": "Money back.", "other": "Anything else."},
+            }
+        },
+    }
+)
+order_result = await DecisionOptionOrderConverter().convert_async(prompt=routing_request)  # type: ignore
+print("Option Order:", order_result.output_text)
+assert list(json.loads(order_result.output_text)["questions"]["route"]["criteria"]) == ["other", "refund", "billing"]
+
+# %% [markdown]
 # ### 1.4 Token Smuggling Converters
 #
 # These converters use Unicode variation selectors and other techniques to hide text:

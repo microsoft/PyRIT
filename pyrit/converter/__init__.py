@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from pyrit.converter.colloquial_wordswap_converter import ColloquialWordswapConverter
     from pyrit.converter.columnar_transposition_converter import ColumnarTranspositionConverter
     from pyrit.converter.converter import Converter, ConverterResult, get_converter_modalities
+    from pyrit.converter.decision_option_order_converter import DecisionOptionOrderConverter
     from pyrit.converter.decomposition_converter import DecompositionConverter
     from pyrit.converter.denylist_converter import DenylistConverter
     from pyrit.converter.diacritic_converter import DiacriticConverter
@@ -192,6 +193,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ColumnarTranspositionConverter": "pyrit.converter.columnar_transposition_converter",
     "ContentWordSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "ConverterResult": "pyrit.converter.converter",
+    "DecisionOptionOrderConverter": "pyrit.converter.decision_option_order_converter",
     "DecompositionConverter": "pyrit.converter.decomposition_converter",
     "DenylistConverter": "pyrit.converter.denylist_converter",
     "DiacriticConverter": "pyrit.converter.diacritic_converter",
