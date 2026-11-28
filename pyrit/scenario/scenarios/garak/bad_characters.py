@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
@@ -16,6 +16,7 @@ from pyrit.converter import (
     ZeroWidthConverter,
 )
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
+from pyrit.models import Parameter
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -65,8 +66,9 @@ class BadCharacters(Scenario):
     - ``deletion``: characters are inserted, each followed by a backspace.
 
     Every category makes ``perturbation_budget`` changes per prompt, at random positions. The default
-    of 1 matches garak. ``PromptSendingAttack`` sends each perturbed objective and scores whether the
-    response fulfills the original objective. The default baseline sends the same objectives unchanged.
+    of 1 matches garak. Only text pieces are perturbed; image, audio and other attachments are sent
+    unchanged. ``PromptSendingAttack`` sends each perturbed objective and scores whether the response
+    fulfills the original objective. The default baseline sends the same objectives unchanged.
 
     Garak generates every combination of positions and characters, then downsamples. This scenario
     sends one random variant per objective and technique, so set a seed for reproducible runs.
@@ -78,6 +80,23 @@ class BadCharacters(Scenario):
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @classmethod
+    def additional_parameters(cls) -> list[Parameter]:
+        """
+        Declare the perturbation budget.
+
+        Returns:
+            list[Parameter]: The scenario-specific runtime parameters.
+        """
+        return [
+            Parameter(
+                name="perturbation_budget",
+                description="How many characters each technique changes per prompt. Garak's default is 1.",
+                param_type=int,
+                default=DEFAULT_PERTURBATION_BUDGET,
+            ),
+        ]
+
+    @classmethod
     def _get_additional_scoring_questions(cls) -> list[Path]:
         """Return the task-achieved rubric used to detect harmful compliance."""
         return [SCORER_SEED_PROMPT_PATH / "true_false_question" / "task_achieved.yaml"]
@@ -87,7 +106,6 @@ class BadCharacters(Scenario):
         self,
         *,
         objective_scorer: TrueFalseScorer | None = None,
-        perturbation_budget: int | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
         """
@@ -96,17 +114,8 @@ class BadCharacters(Scenario):
         Args:
             objective_scorer (TrueFalseScorer | None): Scorer for harmful objective fulfillment.
                 Defaults to the scenario's task-achieved scorer.
-            perturbation_budget (int | None): How many characters each technique changes per prompt.
-                Defaults to None, which uses 1, the garak default.
             scenario_result_id (str | None): Optional scenario result ID to resume.
-
-        Raises:
-            ValueError: If ``perturbation_budget`` is not a positive integer.
         """
-        if perturbation_budget is not None and (isinstance(perturbation_budget, bool) or perturbation_budget < 1):
-            raise ValueError(f"perturbation_budget must be a positive integer, got {perturbation_budget!r}")
-        self._perturbation_budget = perturbation_budget or DEFAULT_PERTURBATION_BUDGET
-
         super().__init__(
             version=self.VERSION,
             technique_class=BadCharactersTechnique,
@@ -118,6 +127,27 @@ class BadCharacters(Scenario):
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
+
+    def _perturbation_budget(self) -> int:
+        """
+        Read the perturbation budget from the run parameters.
+
+        Returns:
+            int: How many characters each technique changes per prompt.
+        """
+        return cast("int", self.params.get("perturbation_budget", DEFAULT_PERTURBATION_BUDGET))
+
+    def _validate_runtime_configuration(self) -> None:
+        """
+        Reject a perturbation budget that is not a positive integer.
+
+        Raises:
+            ValueError: If ``perturbation_budget`` is not a positive integer.
+        """
+        super()._validate_runtime_configuration()
+        budget = self._perturbation_budget()
+        if budget < 1:
+            raise ValueError(f"perturbation_budget must be a positive integer, got {budget!r}")
 
     def _converter_for(self, *, technique: str) -> Converter:
         """
@@ -132,7 +162,7 @@ class BadCharacters(Scenario):
         Raises:
             ValueError: If the technique is not a perturbation category.
         """
-        budget = self._perturbation_budget
+        budget = self._perturbation_budget()
         if technique == BadCharactersTechnique.Invisible.value:
             return ZeroWidthConverter(
                 budget=budget,
@@ -176,7 +206,9 @@ class BadCharacters(Scenario):
             attack = PromptSendingAttack(
                 objective_target=context.objective_target,
                 attack_converter_config=AttackConverterConfig(
-                    request_converters=ConverterConfiguration.from_converters(converters=[converter])
+                    request_converters=[
+                        ConverterConfiguration(converters=[converter], prompt_data_types_to_apply=["text"])
+                    ]
                 ),
                 attack_scoring_config=attack_scoring_config,
             )

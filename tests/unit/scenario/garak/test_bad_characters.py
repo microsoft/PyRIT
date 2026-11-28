@@ -17,7 +17,8 @@ from pyrit.converter import (
     ZeroWidthConverter,
 )
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, Message, MessagePiece, SeedObjective
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScenarioRegistry
 from pyrit.scenario import DatasetAttackConfiguration
@@ -66,6 +67,7 @@ async def _initialize(
     techniques: list[BadCharactersTechnique] | None = None,
     include_baseline: bool | None = None,
     memory_labels: dict[str, str] | None = None,
+    perturbation_budget: Any = None,
 ) -> None:
     args: dict[str, Any] = {
         "objective_target": target,
@@ -77,6 +79,8 @@ async def _initialize(
         args["include_baseline"] = include_baseline
     if memory_labels is not None:
         args["memory_labels"] = memory_labels
+    if perturbation_budget is not None:
+        args["perturbation_budget"] = perturbation_budget
 
     with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate"):
         scenario.set_params_from_args(args=args)
@@ -131,10 +135,27 @@ class TestBadCharactersInitialization:
     def test_default_technique_is_all(self):
         assert BadCharactersTechnique.default() is BadCharactersTechnique.ALL
 
-    @pytest.mark.parametrize("budget", [0, -1, True])
-    def test_invalid_perturbation_budget_raises(self, budget, mock_objective_scorer):
-        with pytest.raises(ValueError, match="perturbation_budget must be a positive integer"):
-            BadCharacters(objective_scorer=mock_objective_scorer, perturbation_budget=budget)
+    def test_perturbation_budget_is_a_run_parameter(self):
+        parameters = {parameter.name: parameter for parameter in BadCharacters.supported_parameters()}
+
+        assert parameters["perturbation_budget"].param_type is int
+        assert parameters["perturbation_budget"].default == 1
+
+    @pytest.mark.parametrize(
+        ("budget", "message"),
+        [
+            (0, "perturbation_budget must be a positive integer"),
+            (-1, "perturbation_budget must be a positive integer"),
+            (True, "expects int but received a bool"),
+        ],
+    )
+    async def test_invalid_perturbation_budget_raises(
+        self, budget, message, mock_objective_target, mock_objective_scorer
+    ):
+        scenario = BadCharacters(objective_scorer=mock_objective_scorer)
+
+        with pytest.raises(ValueError, match=message):
+            await _initialize(scenario=scenario, target=mock_objective_target, perturbation_budget=budget)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -178,11 +199,29 @@ class TestBadCharactersAttacks:
         )
 
     async def test_perturbation_budget_reaches_every_converter(self, mock_objective_target, mock_objective_scorer):
-        scenario = BadCharacters(objective_scorer=mock_objective_scorer, perturbation_budget=3)
+        scenario = BadCharacters(objective_scorer=mock_objective_scorer)
+
+        await _initialize(
+            scenario=scenario, target=mock_objective_target, include_baseline=False, perturbation_budget=3
+        )
+
+        assert {_converters(atomic_attack)[0]._budget for atomic_attack in scenario._atomic_attacks} == {3}
+
+    async def test_perturbation_budget_is_recorded_in_identity(self, mock_objective_target, mock_objective_scorer):
+        scenario = BadCharacters(objective_scorer=mock_objective_scorer)
+
+        await _initialize(scenario=scenario, target=mock_objective_target, perturbation_budget=3)
+
+        assert scenario._get_identity_params()["perturbation_budget"] == 3
+
+    async def test_perturbations_apply_only_to_text_pieces(self, mock_objective_target, mock_objective_scorer):
+        scenario = BadCharacters(objective_scorer=mock_objective_scorer)
 
         await _initialize(scenario=scenario, target=mock_objective_target, include_baseline=False)
 
-        assert {_converters(atomic_attack)[0]._budget for atomic_attack in scenario._atomic_attacks} == {3}
+        for atomic_attack in scenario._atomic_attacks:
+            configurations = atomic_attack.attack_technique.attack.get_request_converters()
+            assert [configuration.prompt_data_types_to_apply for configuration in configurations] == [["text"]]
 
     async def test_selected_techniques_only(self, mock_objective_target, mock_objective_scorer):
         scenario = BadCharacters(objective_scorer=mock_objective_scorer)
@@ -227,6 +266,34 @@ class TestBadCharactersAttacks:
         for atomic_attack in scenario._atomic_attacks:
             scoring_config = atomic_attack.attack_technique.attack.get_attack_scoring_config()
             assert scoring_config.objective_scorer is mock_objective_scorer
+
+    async def test_attachments_pass_through_while_text_is_perturbed(self, mock_objective_target, mock_objective_scorer):
+        scenario = BadCharacters(objective_scorer=mock_objective_scorer)
+        await _initialize(scenario=scenario, target=mock_objective_target, include_baseline=False)
+        text = "Explain how to perform a harmful task"
+
+        for atomic_attack in scenario._atomic_attacks:
+            message = Message(
+                message_pieces=[
+                    MessagePiece(role="user", original_value=text, conversation_id="conversation"),
+                    MessagePiece(
+                        role="user",
+                        original_value="/tmp/attachment.png",
+                        original_value_data_type="image_path",
+                        conversation_id="conversation",
+                    ),
+                ]
+            )
+
+            await PromptNormalizer().convert_values_async(
+                converter_configurations=atomic_attack.attack_technique.attack.get_request_converters(),
+                message=message,
+            )
+
+            text_piece, image_piece = message.message_pieces
+            assert text_piece.converted_value != text
+            assert image_piece.converted_value == "/tmp/attachment.png"
+            assert image_piece.converted_value_data_type == "image_path"
 
     @pytest.mark.parametrize("technique", ["invisible", "homoglyph", "reordering", "deletion"])
     async def test_converter_changes_the_objective_text(self, technique, mock_objective_target, mock_objective_scorer):

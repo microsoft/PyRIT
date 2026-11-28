@@ -230,13 +230,14 @@ await output_scenario_async(figstep_result)
 #
 # The default run uses every technique on up to 10 HarmBench objectives and scores whether the
 # response completes the objective. Changes go at random positions, so set a seed for repeatable
-# runs. Pass `perturbation_budget` to the constructor to make more changes per prompt.
+# runs. Use `--perturbation-budget` to make more changes per prompt.
 #
 # **CLI examples:**
 #
 # ```bash
 # pyrit_scan run garak.bad_characters --target openai_chat --max-total 1
 # pyrit_scan run garak.bad_characters --target openai_chat --techniques homoglyph deletion
+# pyrit_scan run garak.bad_characters --target openai_chat --perturbation-budget 3
 # ```
 #
 # > **Note:** By default, PyRIT also sends each sampled objective unchanged. Use
