@@ -75,6 +75,7 @@ if TYPE_CHECKING:
     from pyrit.converter.image_rotation_converter import ImageRotationConverter
     from pyrit.converter.insert_punctuation_converter import InsertPunctuationConverter
     from pyrit.converter.ipa_converter import IPAConverter
+    from pyrit.converter.json_field_converter import JsonFieldConverter
     from pyrit.converter.json_string_converter import JsonStringConverter
     from pyrit.converter.leetspeak_converter import LeetspeakConverter
     from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
@@ -214,6 +215,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "IndexSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "InsertPunctuationConverter": "pyrit.converter.insert_punctuation_converter",
     "IPAConverter": "pyrit.converter.ipa_converter",
+    "JsonFieldConverter": "pyrit.converter.json_field_converter",
     "JsonStringConverter": "pyrit.converter.json_string_converter",
     "KeywordSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "LeetspeakConverter": "pyrit.converter.leetspeak_converter",

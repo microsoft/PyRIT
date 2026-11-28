@@ -313,6 +313,7 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
             SeedPrompt(value="Second {{ prompt }}", parameters=["prompt"]),
         ),
         "LLMGenericTextConverter.system_prompt_template": (SeedPrompt(value="First"), SeedPrompt(value="Second")),
+        "JsonFieldConverter.json_pointer": ("/state", "/note", "", "/a~1b"),
         "PuzzledConverter.essential_words": (["value", "valuex"], ["valuex", "valuex"], ["value", "valuexy"]),
         "TranslationConverter.language": ("first", "second", f"{LONG_TEXT}a", f"{LONG_TEXT}b"),
         "TranslationConverter.prompt_template": (

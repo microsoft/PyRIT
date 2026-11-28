@@ -1827,6 +1827,47 @@ class TestPreviewConversion:
         )
         assert result.converted_value == "keep ⟪dGVzdA==⟫ and ⟪dGVzdDI=⟫"
 
+    async def test_preview_conversion_runs_json_field_converter_built_from_api_params_async(
+        self, *, upload_service: ConverterService
+    ) -> None:
+        await upload_service.create_converter_async(request=CreateConverterRequest(name="b64", type="Base64Converter"))
+        created = await upload_service.create_converter_async(
+            request=CreateConverterRequest(
+                name="state_b64",
+                type="JsonFieldConverter",
+                params={"sub_converter": "b64", "json_pointer": "/state"},
+            )
+        )
+
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value='{"state": "hello", "n": 1.10}',
+                original_value_data_type="text",
+                converter_ids=[created.converter_id],
+            )
+        )
+
+        assert result.converted_value == '{"state": "aGVsbG8=", "n": 1.10}'
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"sub_converter": "missing", "json_pointer": "/state"},
+            {"sub_converter": "b64", "json_pointer": "state"},
+        ],
+    )
+    async def test_create_json_field_converter_rejects_invalid_api_params_async(
+        self, *, upload_service: ConverterService, params: dict[str, str]
+    ) -> None:
+        await upload_service.create_converter_async(request=CreateConverterRequest(name="b64", type="Base64Converter"))
+
+        with pytest.raises(ValueError):
+            await upload_service.create_converter_async(
+                request=CreateConverterRequest(name="state_b64", type="JsonFieldConverter", params=params)
+            )
+
+        assert await upload_service.get_converter_async(converter_id="state_b64") is None
+
     @pytest.mark.parametrize("preserve_tokens", [False, True])
     async def test_preview_conversion_token_selection_matches_direct_async(
         self, *, upload_service: ConverterService, preserve_tokens: bool
@@ -2243,6 +2284,7 @@ def _try_instantiate_converter(converter_name: str):
         "PersuasionConverter": {"persuasion_technique": "logical_appeal"},
         "PromptTemplateConverter": {"template": "Test {{ prompt }}"},
         "ImagePromptStyleConverter": {"filter_name": "gritty_documentary"},
+        "JsonFieldConverter": {"json_pointer": "/state"},
         "VigenereConverter": {"key": "testvalue"},
         "ColumnarTranspositionConverter": {"key": "testvalue"},
         "GridCompositeConverter": {"innocuous_images": ["a.png", "b.png", "c.png"]},
