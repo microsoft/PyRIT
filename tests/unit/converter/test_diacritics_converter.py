@@ -54,11 +54,34 @@ def test_get_accent_mark_valid():
     assert converter._get_accent_mark() == "\u0303"  # Tilde mark
 
 
-def test_get_accent_mark_invalid():
-    converter = DiacriticConverter(accent="invalid")
+def test_invalid_accent_raises_on_construction():
     with pytest.raises(ValueError) as excinfo:
-        converter._get_accent_mark()
-    assert "Accent 'invalid' not recognized" in str(excinfo.value)
+        DiacriticConverter(accent="invalid")
+    message = str(excinfo.value)
+    assert "Accent 'invalid' not recognized" in message
+    for valid_accent in ("acute", "grave", "tilde", "umlaut"):
+        assert valid_accent in message
+
+
+@pytest.mark.parametrize("accent", [["acute"], {"accent": "acute"}, 1, None])
+def test_non_string_accent_raises_on_construction(accent):
+    with pytest.raises(ValueError, match="not recognized"):
+        DiacriticConverter(accent=accent)
+
+
+@pytest.mark.parametrize(
+    ("accent", "expected"),
+    [
+        ("acute", "\u00e9"),
+        ("grave", "\u00e8"),
+        ("tilde", "\u1ebd"),
+        ("umlaut", "\u00eb"),
+    ],
+)
+async def test_valid_accents_construct_and_convert(accent, expected):
+    converter = DiacriticConverter(target_chars="e", accent=accent)
+    result = await converter.convert_async(prompt="e")
+    assert result.output_text == expected
 
 
 async def test_convert_async_single_character():

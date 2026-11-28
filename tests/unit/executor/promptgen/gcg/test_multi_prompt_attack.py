@@ -32,7 +32,7 @@ class _RecordingMultiPromptAttackFactory:
         self._logfile = logfile
         self.params_at_creation: dict[str, Any] | None = None
 
-    def __call__(self, *args: Any) -> _StubMultiPromptAttack:
+    def __call__(self, *args: Any, **kwargs: Any) -> _StubMultiPromptAttack:
         with self._logfile.open() as f:
             self.params_at_creation = json.load(f)["params"]
         return _StubMultiPromptAttack()

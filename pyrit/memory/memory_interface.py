@@ -18,7 +18,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, NoReturn, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, NoReturn, ParamSpec, Self, TypeVar, cast
 from urllib.parse import urlparse
 
 from sqlalchemy import (
@@ -513,7 +513,7 @@ class ScenarioHistoryAggregate:
     group_counts: dict[str, ScenarioProgressCounts] = field(default_factory=dict)
 
     @classmethod
-    def empty(cls, *, scenario_result_id: str) -> "ScenarioHistoryAggregate":
+    def empty(cls, *, scenario_result_id: str) -> Self:
         """
         Build the zero-valued aggregate for a run with no persisted attempts.
 
@@ -626,7 +626,7 @@ class AttackConversationPage:
         limit: int = 50,
         conversation_id: str | None = None,
         objective_score_id: str | None = None,
-    ) -> "AttackConversationPage":
+    ) -> Self:
         """
         Page main and pruned references in stored order: main first, then pruned in their recorded order.
 

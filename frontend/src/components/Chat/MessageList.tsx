@@ -740,7 +740,7 @@ export default function MessageList({
                             icon={<ArrowDownloadRegular />}
                             disabled={pendingDownloads.has(downloadKey)}
                             aria-busy={pendingDownloads.has(downloadKey)}
-                            onClick={() => handleDownload(att, downloadKey)}
+                            onClick={() => { void handleDownload(att, downloadKey) }}
                             data-testid={`download-btn-${index}-${ai}`}
                             className={styles.messageActionButton}
                           >

@@ -717,7 +717,7 @@ function ScenarioLaunchForm({
       // The launched request is the one this render built, so it is still current here.
       if (requestResult.ok) rememberScanTargets(targets, requestResult.request)
       if (!compatibleDatasetsOnly) datasetMetadata.reload()
-      navigate(scenarioRunRoutePath(summary.scenario_result_id), {
+      void navigate(scenarioRunRoutePath(summary.scenario_result_id), {
         state: { scenarioName: scenario.scenario_name },
       })
     },

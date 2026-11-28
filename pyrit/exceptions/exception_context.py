@@ -13,7 +13,7 @@ meaningful context in their messages.
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, cast
+from typing import Any, Self, cast
 
 from pyrit.models import ComponentIdentifier
 
@@ -202,7 +202,7 @@ class ExecutionContextManager:
     context: ExecutionContext
     _token: Any = field(default=None, init=False, repr=False)
 
-    def __enter__(self) -> "ExecutionContextManager":
+    def __enter__(self) -> Self:
         """
         Set the execution context on entry.
 
