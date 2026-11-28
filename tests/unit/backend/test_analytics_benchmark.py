@@ -61,7 +61,9 @@ def measurements() -> AnalyticsBenchmark:
     return benchmark
 
 
-def test_benchmark_configuration_keeps_saved_entries_in_its_own_folder(benchmark_directory: Path) -> None:
+def test_benchmark_configuration_keeps_saved_entries_in_its_own_folder(
+    benchmark_directory: Path,  # noqa: F811
+) -> None:
     config = json.loads((benchmark_directory / "config.yaml").read_text(encoding="utf-8"))
 
     assert config["registry_recipes_source"] == str(benchmark_directory / "registry_recipes")
@@ -72,8 +74,8 @@ def test_benchmark_configuration_keeps_saved_entries_in_its_own_folder(benchmark
 @pytest.mark.parametrize("elapsed_report_seconds", [0.0, 31.0], ids=["normal", "expired-report-deadline"])
 async def test_local_sqlite_workload_counts_requests_writes_and_continuations_async(
     *,
-    benchmark_app: CompatibilityAPI,
-    sqlite_instance: SQLiteMemory,
+    benchmark_app: CompatibilityAPI,  # noqa: F811
+    sqlite_instance: SQLiteMemory,  # noqa: F811
     compatibility_headers: dict[str, str],
     elapsed_report_seconds: float,
 ) -> None:
@@ -220,7 +222,10 @@ async def test_wrong_report_count_is_an_explicit_workload_failure(
 
 
 async def test_wrong_page_bounds_and_repeated_continuations_fail(
-    *, measurements: AnalyticsBenchmark, analytics_service: AttackResultAnalytics, sqlite_instance: SQLiteMemory
+    *,
+    measurements: AnalyticsBenchmark,
+    analytics_service: AttackResultAnalytics,
+    sqlite_instance: SQLiteMemory,  # noqa: F811
 ) -> None:
     empty = await analytics_service.results_async()
     with pytest.raises(ValueError, match="full page"):

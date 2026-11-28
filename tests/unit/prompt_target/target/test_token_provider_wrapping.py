@@ -125,7 +125,7 @@ class TestOpenAITargetWithTokenProviders:
             mock_client = AsyncMock()
             mock_openai.return_value = mock_client
 
-            target = OpenAIChatTarget(
+            OpenAIChatTarget(
                 endpoint="https://api.openai.com/v1",
                 model_name="gpt-4o",
                 api_key=sync_token_provider,
@@ -164,7 +164,7 @@ class TestOpenAITargetWithTokenProviders:
             mock_client = AsyncMock()
             mock_openai.return_value = mock_client
 
-            target = OpenAIChatTarget(
+            OpenAIChatTarget(
                 endpoint="https://api.openai.com/v1",
                 model_name="gpt-4o",
                 api_key=async_token_provider,
@@ -190,7 +190,7 @@ class TestOpenAITargetWithTokenProviders:
             mock_client = AsyncMock()
             mock_openai.return_value = mock_client
 
-            target = OpenAIChatTarget(
+            OpenAIChatTarget(
                 endpoint="https://api.openai.com/v1",
                 model_name="gpt-4o",
                 api_key="sk-string-api-key",
@@ -221,7 +221,7 @@ class TestOpenAITargetWithTokenProviders:
             mock_client = AsyncMock()
             mock_openai.return_value = mock_client
 
-            target = OpenAIChatTarget(
+            OpenAIChatTarget(
                 endpoint="https://myresource.openai.azure.com/openai/v1",
                 model_name="gpt-4o",
                 api_key=mock_sync_bearer_token_provider,

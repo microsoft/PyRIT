@@ -113,7 +113,7 @@ from azure.identity import DefaultAzureCredential, InteractiveBrowserCredential
 try:
     credential: DefaultAzureCredential | InteractiveBrowserCredential = DefaultAzureCredential()
     credential.get_token("https://management.azure.com/.default")
-except Exception as ex:
+except Exception:
     credential = InteractiveBrowserCredential()
 
 workspace_ml_client = MLClient(
@@ -141,7 +141,7 @@ def check_model_version_exists(client, model_name, version) -> bool:
     try:
         models = list(client.models.list(name=model_name))
         model_found = any(model.version == version for model in models)
-    except ResourceNotFoundError as rnfe:
+    except ResourceNotFoundError:
         print(f"Model not found in the registry{registry_name}, please try other registry.")
     return model_found
 

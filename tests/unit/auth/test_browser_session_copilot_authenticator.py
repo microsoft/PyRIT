@@ -902,7 +902,7 @@ async def test_handle_websocket_url_resolves_token_future(hub: str) -> None:
     token_future = asyncio.get_running_loop().create_future()
     websocket_url = f"wss://substrate.svc.cloud.microsoft/m365Copilot/{hub}/user@tenant?access_token=MiXeD-Token"
 
-    result = authenticator._handle_websocket_url(
+    authenticator._handle_websocket_url(
         websocket_url=websocket_url,
         token_future=token_future,
     )

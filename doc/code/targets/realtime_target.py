@@ -95,7 +95,6 @@ await target.cleanup_target_async()  # type: ignore
 
 # %%
 from pyrit.executor.attack import (
-    AttackExecutor,
     PromptSendingAttack,
 )
 

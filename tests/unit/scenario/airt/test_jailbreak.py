@@ -478,7 +478,7 @@ class TestJailbreakAttackGeneration:
         jailbreak converter is layered on top of (not in place of) the user's converters."""
         from pyrit.converter import Base64Converter
 
-        technique_class = _build_jailbreak_technique()
+        _build_jailbreak_technique()
         user_converter = Base64Converter()
         captured: list[Any] = []
         original_create = AttackTechniqueFactory.create

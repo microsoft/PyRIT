@@ -1260,7 +1260,7 @@ class TestBlockedScoringDefaults:
         """A blocked response goes straight through MessageScorer.score_response_async — no TAP-side
         short-circuit. The scorer is responsible for producing 0.0 via its unified fallback."""
         builder = attack_builder.with_default_mocks()
-        attack = builder.build()
+        builder.build()
 
         adversarial_chat_seed = MagicMock(spec=SeedPrompt)
         adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
@@ -1328,7 +1328,7 @@ class TestBlockedScoringDefaults:
     async def test_score_response_delegates_to_scorer_for_unknown_error(self, attack_builder):
         """Non-blocked errors (e.g. 'unknown') also flow through the scorer; no special-casing."""
         builder = attack_builder.with_default_mocks()
-        attack = builder.build()
+        builder.build()
 
         adversarial_chat_seed = MagicMock(spec=SeedPrompt)
         adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")

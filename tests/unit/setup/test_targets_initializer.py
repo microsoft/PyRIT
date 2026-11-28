@@ -271,7 +271,7 @@ class TestTargetInitializerTargetConfigs:
     def test_all_configs_have_required_fields(self):
         """Test that all TARGET_CONFIGS have required fields (key_var is optional for some)."""
         for config in TARGET_CONFIGS:
-            assert config.registry_name, f"Config missing registry_name"
+            assert config.registry_name, "Config missing registry_name"
             assert config.target_class, f"Config {config.registry_name} missing target_class"
             assert config.endpoint_var, f"Config {config.registry_name} missing endpoint_var"
             # key_var is optional for targets like Ollama that don't require auth

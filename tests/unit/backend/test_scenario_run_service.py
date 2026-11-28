@@ -1722,7 +1722,6 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(dataset_names=["custom_a", "custom_b"], max_dataset_size=3))
 
-        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = _apply_mapped_datasets(mock_all_registries)
 
         # Type is preserved (this is the regression assertion)
@@ -1750,7 +1749,6 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(dataset_names=["only_this"]))
 
-        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = _apply_mapped_datasets(mock_all_registries)
         assert type(built_config) is _MarkerDatasetConfiguration
         assert built_config.dataset_names == ["only_this"]
@@ -1774,7 +1772,6 @@ class TestScenarioRunServiceStartRun:
 
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(dataset_names=["custom"]))
-        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         config = _apply_mapped_datasets(mock_all_registries)
         assert isinstance(config, _RequiresExtraArgConfiguration)
         assert config._required_extra == "seeded"
@@ -1800,7 +1797,6 @@ class TestScenarioRunServiceStartRun:
             )
         )
 
-        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = _apply_mapped_datasets(mock_all_registries)
         assert built_config.dataset_names == ["custom"]
         assert built_config.max_total == 7
@@ -1815,7 +1811,6 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(dataset_filters={"harm_categories": ["cyber"]}))
 
-        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = _apply_mapped_datasets(mock_all_registries)
         assert built_config is not default_config
         assert default_config.filters == {}
@@ -1837,8 +1832,6 @@ class TestScenarioRunServiceStartRun:
         mock_tr.instances.get_names.return_value = ["my_target"]
 
         mock_ir = MagicMock()
-
-        service = ScenarioRunService()
 
         with (
             patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
@@ -4233,7 +4226,6 @@ class TestScenarioRunServiceRecovery:
     ) -> None:
         mock_memory = mock_all_registries["memory"]
         run_id = "shutdown-resume-before-initial-cas"
-        token_key = ScenarioRunExecutionToken.METADATA_KEY
         original_token = ScenarioRunExecutionToken(token="a" * 32)
         resumed_token = ScenarioRunExecutionToken(token="b" * 32)
         record = _make_db_scenario_result(result_id=run_id, run_state=ScenarioRunState.IN_PROGRESS)
@@ -4550,7 +4542,6 @@ class TestScenarioRunServiceExecution:
         """Test that a successful execution removes active task and DB reflects COMPLETED."""
         service = ScenarioRunService()
         mock_instance = mock_all_registries["scenario_instance"]
-        mock_memory = mock_all_registries["memory"]
 
         mock_scenario_result = MagicMock()
         mock_scenario_result.id = "sr-uuid-1"

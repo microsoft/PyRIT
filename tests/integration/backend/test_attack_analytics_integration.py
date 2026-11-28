@@ -21,9 +21,9 @@ from test_support.fixtures import authentication_policy, compatibility_headers, 
 
 async def test_100k_attack_analytics_performance_async(
     *,
-    benchmark_app: CompatibilityAPI,
-    sqlite_instance: SQLiteMemory,
-    compatibility_headers: dict[str, str],
+    benchmark_app: CompatibilityAPI,  # noqa: F811
+    sqlite_instance: SQLiteMemory,  # noqa: F811
+    compatibility_headers: dict[str, str],  # noqa: F811
     pytestconfig: pytest.Config,
 ) -> None:
     workload = AnalyticsBenchmark(

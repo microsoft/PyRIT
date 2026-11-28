@@ -239,8 +239,6 @@ async def test_get_message_pieces_empty_prompt_ids_returns_empty(sqlite_instance
 
 
 async def test_duplicate_memory(sqlite_instance: MemoryInterface):
-    attack1 = PromptSendingAttack(objective_target=get_mock_target())
-    attack2 = PromptSendingAttack(objective_target=get_mock_target("Target2"))
     conversation_id_1 = "11111"
     conversation_id_2 = "22222"
     conversation_id_3 = "33333"
@@ -371,8 +369,6 @@ async def test_duplicate_conversation_pieces_not_score(sqlite_instance: MemoryIn
 
 
 async def test_duplicate_conversation_excluding_last_turn(sqlite_instance: MemoryInterface):
-    attack1 = PromptSendingAttack(objective_target=get_mock_target())
-    attack2 = PromptSendingAttack(objective_target=get_mock_target())
     conversation_id_1 = "11111"
     conversation_id_2 = "22222"
     pieces = [
@@ -626,7 +622,6 @@ async def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_insta
 
 
 async def test_duplicate_conversation_excluding_last_turn_same_attack(sqlite_instance: MemoryInterface):
-    attack1 = PromptSendingAttack(objective_target=get_mock_target())
     conversation_id_1 = "11111"
     pieces = [
         MessagePiece(
@@ -673,7 +668,6 @@ async def test_duplicate_conversation_excluding_last_turn_same_attack(sqlite_ins
 
 async def test_duplicate_conversation_creates_new_ids(sqlite_instance: MemoryInterface):
     """Test that duplicated conversation has new piece IDs."""
-    attack1 = PromptSendingAttack(objective_target=get_mock_target())
     conversation_id = "test-conv-123"
     original_piece = MessagePiece(
         role="user",
@@ -704,7 +698,6 @@ async def test_duplicate_conversation_creates_new_ids(sqlite_instance: MemoryInt
 
 async def test_duplicate_conversation_preserves_original_prompt_id(sqlite_instance: MemoryInterface):
     """Test that duplicated conversation preserves original_prompt_id for tracing."""
-    attack1 = PromptSendingAttack(objective_target=get_mock_target())
     conversation_id = "test-conv-456"
     original_piece = MessagePiece(
         role="user",
@@ -727,7 +720,6 @@ async def test_duplicate_conversation_preserves_original_prompt_id(sqlite_instan
 
 async def test_duplicate_conversation_with_multiple_pieces(sqlite_instance: MemoryInterface):
     """Test that duplicating a multi-piece conversation works correctly."""
-    attack1 = PromptSendingAttack(objective_target=get_mock_target())
     conversation_id = "multi-piece-conv"
 
     pieces = [

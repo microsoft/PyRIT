@@ -361,8 +361,8 @@ class PromptGenerationEntry(Base):
         self.id = generation.id
         self.created_at = generation.created_at
         self.pyrit_version = pyrit.__version__
-        for column, value in self.column_values(generation).items():
-            setattr(self, column, value)
+        for column_name, value in self.column_values(generation).items():
+            setattr(self, column_name, value)
 
     @staticmethod
     def column_values(generation: PromptGenerationRecord) -> dict[str, Any]:

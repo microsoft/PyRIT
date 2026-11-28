@@ -9,7 +9,6 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
-from unit.mocks import MockPromptTarget
 
 from pyrit.converter import (
     AnsiAttackConverter,

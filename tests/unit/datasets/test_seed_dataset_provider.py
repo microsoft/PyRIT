@@ -554,9 +554,6 @@ def _all_registered_remote_loaders() -> list[type]:
     registry. Excludes test fixtures (defined under tests/) so the coverage
     contract only applies to shipped loaders.
     """
-    # Re-import to be defensive when collected in isolation; importlib caches it.
-    import pyrit.datasets.seed_datasets.remote  # noqa: F401
-
     return [
         cls
         for cls in SeedDatasetProvider._registry.values()

@@ -604,7 +604,7 @@ class TestInitializeFromConfigAsync:
         mock_config = ConfigurationLoader()
         mock_from_yaml.return_value = mock_config
 
-        result = await initialize_from_config_async("/path/to/config.yaml")
+        await initialize_from_config_async("/path/to/config.yaml")
 
         # Should convert string to Path
         call_args = mock_from_yaml.call_args[0][0]

@@ -264,7 +264,6 @@ class WildGuardScorer(MessageTrueFalseScorer):
         Raises:
             ValueError: If no user prompt is available.
         """
-        objective = expectation.objective if expectation else None
         response = message_piece.converted_value
         user_prompt = _RESOLVED_USER_PROMPT.get()
         if not user_prompt:
