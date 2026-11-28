@@ -457,8 +457,8 @@ def test_all_categories_extrema_resolve_conflicting_metadata_from_selected_score
 
 
 def test_all_categories_average_omits_conflicting_metadata() -> None:
-    # AVERAGE goes through the same winner-selection path as MAX/MIN. A
-    # conflicting key must not be reintroduced from one constituent.
+    # AVERAGE has no winning score. The mean equals the 0.5 constituent, but its
+    # conflicting key must stay omitted.
     scores = [
         _mk_score(0.3, category=["Hate"], metadata={"severity": 1}),
         _mk_score(0.5, category=["Violence"], metadata={"severity": 3}),
