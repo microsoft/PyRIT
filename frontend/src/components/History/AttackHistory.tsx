@@ -241,7 +241,7 @@ export default function AttackHistory({
         setSettledRequestId(requestId)
         setError(null)
       })
-      .catch(err => {
+      .catch((err: unknown) => {
         if (cancelled) return
         if (!quiet) setAttacks([])
         setSettledRequestId(requestId)

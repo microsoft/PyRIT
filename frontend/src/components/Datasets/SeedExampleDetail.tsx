@@ -177,7 +177,7 @@ function MemberMedia({
   const label = member.name ?? `${mapped.kind} seed`
   const refreshUrl = onRefreshUrls == null
     ? undefined
-    : async (): Promise<string | void> => {
+    : async (): Promise<string | undefined> => {
       const next = await onRefreshUrls(member.id)
       if (next == null || next.trim() === '') return undefined
       // Same allowlist as the first paint. A refreshed data: or active URL must not become the download.

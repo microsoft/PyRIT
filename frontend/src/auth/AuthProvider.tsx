@@ -37,7 +37,7 @@ function LoginRedirect() {
         ...buildLoginRequest(),
         state: window.location.pathname + window.location.search,
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
         console.error('Login redirect failed:', error)
       })
   }, [instance])

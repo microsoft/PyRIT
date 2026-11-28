@@ -151,8 +151,9 @@ export default function LabelsBar({
       cancelPendingSave(editSession.current)
       endEdit(editSession.current)
     }
-    const next = { ...labelsRef.current }
-    delete next[key]
+    const next = Object.fromEntries(
+      Object.entries(labelsRef.current).filter(([entryKey]) => entryKey !== key),
+    )
     commitLabels(next)
   }
 

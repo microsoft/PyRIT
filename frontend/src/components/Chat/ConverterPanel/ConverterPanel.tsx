@@ -228,7 +228,7 @@ export default function ConverterPanel({
   }, [resizeBoundaryRef])
   const isResizing = useRef(false)
   const draggedConverterIndex = useRef<number | null>(null)
-  const applyResult = (applied: PieceConversionUpdates | void): void => {
+  const applyResult = (applied: PieceConversionUpdates | undefined): void => {
     if (applied) onApply?.(applied)
   }
   const convert = async (pieceType: string): Promise<void> => {

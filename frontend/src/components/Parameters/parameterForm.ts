@@ -1,4 +1,5 @@
 import type { Parameter } from '@/types'
+import { formatUnknownValue } from '@/utils/targetParams'
 
 /**
  * Shared parameter-form logic reused by every dynamic parameter form in the
@@ -119,7 +120,7 @@ function initialBooleanValue(source: unknown): string {
   if (source == null) {
     return UNSET_BOOLEAN_VALUE
   }
-  return String(source).toLowerCase() === 'true' ? 'true' : 'false'
+  return formatUnknownValue(source).toLowerCase() === 'true' ? 'true' : 'false'
 }
 
 export function getInitialFormValues(
@@ -175,14 +176,14 @@ export function getInitialFormValues(
       }
       case 'list': {
         values[param.name] = Array.isArray(source)
-          ? source.map((entry) => String(entry)).join(', ')
+          ? source.map((entry: unknown) => formatUnknownValue(entry)).join(', ')
           : source != null
-            ? String(source)
+            ? formatUnknownValue(source)
             : ''
         break
       }
       default: {
-        values[param.name] = source != null ? String(source) : ''
+        values[param.name] = source != null ? formatUnknownValue(source) : ''
         break
       }
     }

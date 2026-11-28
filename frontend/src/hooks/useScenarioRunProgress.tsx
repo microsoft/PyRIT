@@ -82,14 +82,12 @@ export function useScenarioRunProgress(scenarioResultId: string): UseScenarioRun
 
         if (page.has_more) {
           const nextCursor = page.next_cursor
-          const cursorAdvances =
-            nextCursor != null && nextCursor !== since && !seenCursors.has(nextCursor)
-          if (cursorAdvances && depth < MAX_PROGRESS_PAGES_PER_CYCLE) {
-            seenCursors.add(nextCursor!)
-            await fetchPage(nextCursor!, depth + 1)
-            return
-          }
-          if (cursorAdvances) {
+          if (nextCursor != null && nextCursor !== since && !seenCursors.has(nextCursor)) {
+            if (depth < MAX_PROGRESS_PAGES_PER_CYCLE) {
+              seenCursors.add(nextCursor)
+              await fetchPage(nextCursor, depth + 1)
+              return
+            }
             // The page budget ran out while pages remain. Schedule another bounded
             // cycle from the saved cursor so the tail of a long or finished run is
             // still loaded; only a page without has_more ends polling for good.

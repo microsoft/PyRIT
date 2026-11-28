@@ -258,10 +258,10 @@ export interface ChatConverterController {
   ) => void
   retainConverters: (availableIds: Set<string>) => void
   discardTemporarySettings?: () => void
-  convert: (pieceType: string) => Promise<PieceConversionUpdates | void>
-  convertRemaining: (pieceId: string, stageId: string) => Promise<PieceConversionUpdates | void>
-  editInput: (pieceId: string, value: string) => PieceConversionUpdates | void
-  editStageOutput: (pieceId: string, stageId: string, value: string) => PieceConversionUpdates | void
+  convert: (pieceType: string) => Promise<PieceConversionUpdates | undefined>
+  convertRemaining: (pieceId: string, stageId: string) => Promise<PieceConversionUpdates | undefined>
+  editInput: (pieceId: string, value: string) => PieceConversionUpdates | undefined
+  editStageOutput: (pieceId: string, stageId: string, value: string) => PieceConversionUpdates | undefined
   apply: () => void
   clear: (pieceId: string) => void
   clearAll: () => void

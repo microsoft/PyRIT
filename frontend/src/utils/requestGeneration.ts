@@ -64,8 +64,9 @@ export function parseGenerationConfig(
 
 /** Generation evidence is server-authored, not editable request metadata. */
 export function withoutGenerationInfo(metadata?: Record<string, unknown> | null): Record<string, unknown> | undefined {
-  const result = { ...metadata }
-  delete result[GENERATION_INFO_KEY]
+  const result = Object.fromEntries(
+    Object.entries(metadata ?? {}).filter(([key]) => key !== GENERATION_INFO_KEY),
+  )
   return Object.keys(result).length ? result : undefined
 }
 
@@ -73,8 +74,9 @@ export function withoutGenerationInfo(metadata?: Record<string, unknown> | null)
 export function withRequestGenerationConfig(pieces: MessagePieceRequest[], config: RequestGenerationConfig): MessagePieceRequest[] {
   const options = Object.fromEntries(Object.entries(config).filter(([, value]) => value != null))
   return pieces.map((piece: MessagePieceRequest, index: number) => {
-    const metadata = withoutGenerationInfo(piece.prompt_metadata) ?? {}
-    delete metadata[REQUEST_GENERATION_KEY]
+    const metadata = Object.fromEntries(
+      Object.entries(withoutGenerationInfo(piece.prompt_metadata) ?? {}).filter(([key]) => key !== REQUEST_GENERATION_KEY),
+    )
     if (index === 0 && Object.keys(options).length > 0) {
       metadata[REQUEST_GENERATION_KEY] = { ...options }
     }

@@ -23,7 +23,7 @@ export interface MediaPreviewProps {
    * Return that URL so this preview can use it in the same update.
    * Chat leaves this unset, so a retry only remounts the current src.
    */
-  readonly onRetry?: (() => Promise<string | void> | string | void) | undefined
+  readonly onRetry?: (() => Promise<string | undefined> | Promise<void> | string | undefined) | undefined
 }
 
 function isAbortError(err: unknown): boolean {

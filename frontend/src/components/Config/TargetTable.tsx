@@ -1,4 +1,5 @@
 import React, { useState, useMemo, forwardRef } from 'react'
+import { formatTargetParams } from '../../utils/targetParams'
 import {
   Table,
   TableHeader,
@@ -81,21 +82,7 @@ interface TargetTableProps {
 const CREDENTIALS_ACCEPTED_LABEL = 'Credentials accepted'
 
 /** Format target_specific_params into a short human-readable string. */
-function formatParams(params?: Record<string, unknown> | null): string {
-  if (!params) return ''
-  const parts: string[] = []
-  for (const [key, val] of Object.entries(params)) {
-    if (val == null) continue
-    if (key === 'extra_body_parameters' && typeof val === 'object') {
-      for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
-        parts.push(`${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
-      }
-    } else {
-      parts.push(`${key}: ${typeof val === 'object' ? JSON.stringify(val) : String(val)}`)
-    }
-  }
-  return parts.join('\n')
-}
+const formatParams = (params?: Record<string, unknown> | null): string => formatTargetParams(params)
 
 const COLUMN_TOOLTIPS = {
   registryName:

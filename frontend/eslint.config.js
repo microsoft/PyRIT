@@ -55,6 +55,11 @@ export default [
       "@typescript-eslint/no-floating-promises": "error",
       "@typescript-eslint/no-misused-promises": "error",
       "@typescript-eslint/prefer-promise-reject-errors": "error",
+      "@typescript-eslint/no-dynamic-delete": "error",
+      "@typescript-eslint/no-invalid-void-type": "error",
+      "@typescript-eslint/no-base-to-string": "error",
+      "@typescript-eslint/use-unknown-in-catch-callback-variable": "error",
+      "@typescript-eslint/no-non-null-assertion": "error",
     },
   },
   // Accessibility checks for production components. Exceptions are disabled
