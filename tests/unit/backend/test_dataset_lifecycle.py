@@ -31,7 +31,15 @@ from pyrit.memory.memory_models import (
     DatasetMediaEntry,
     ScorableContentEntry,
 )
-from pyrit.models import AttackSeedGroup, MessagePiece, Seed, SeedObjective, SeedPrompt, SeedSimulatedConversation
+from pyrit.models import (
+    AttackSeedGroup,
+    MessagePiece,
+    Seed,
+    SeedDataset,
+    SeedObjective,
+    SeedPrompt,
+    SeedSimulatedConversation,
+)
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 URL = "/api/datasets"
@@ -1110,6 +1118,103 @@ async def test_duplicate_names_and_concurrent_uploads(client: AsyncClient, sqlit
     assert sorted([first.status_code, second.status_code]) == [201, 409]
     assert len(await _seeds(sqlite_instance)) == 1
     assert (await _upload(client)).status_code == 409
+
+
+async def test_editing_a_linked_objective_preserves_the_stored_decomposition(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    dataset = SeedDataset.from_dict(
+        {
+            "dataset_name": "upload",
+            "seeds": [
+                {
+                    "seed_type": "objective",
+                    "value": "root objective",
+                    "sub_objectives": [{"key": "child", "value": "child objective"}],
+                    "paths": [["child"]],
+                }
+            ],
+        }
+    )
+    await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="tester")
+    stored = {row.value: row for row in await _seeds(sqlite_instance)}
+    root, child = stored["root objective"], stored["child objective"]
+
+    snapshot = await _editable_async(client)
+    rows = _editable_rows(snapshot)
+    edits = []
+    for row in rows:
+        row["description"] = f"edited {row['value']}"
+        edits.append(row)
+    response = await _update_async(client, snapshot=snapshot, seeds=edits)
+    assert response.status_code == 200, response.text
+
+    stored_after = {row.value: row for row in await _seeds(sqlite_instance)}
+    restored_child = stored_after["child objective"].get_seed()
+    restored_root = stored_after["root objective"].get_seed()
+    assert restored_child.description == "edited child objective"
+    assert restored_child.parent_objective_id == root.id
+    assert restored_root.description == "edited root objective"
+    assert restored_root.paths[0].steps == (child.id,)
+
+
+@pytest.mark.parametrize("deletes", [["child objective"], ["root objective"], ["root objective", "child objective"]])
+async def test_mutation_rejects_deleting_one_end_of_a_stored_decomposition(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, deletes: list[str]
+) -> None:
+    dataset = SeedDataset.from_dict(
+        {
+            "dataset_name": "upload",
+            "seeds": [
+                {
+                    "seed_type": "objective",
+                    "value": "root objective",
+                    "sub_objectives": [{"key": "child", "value": "child objective"}],
+                    "paths": [["child"]],
+                }
+            ],
+        }
+    )
+    await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="tester")
+    stored = {row.value: row for row in await _seeds(sqlite_instance)}
+    snapshot = await _editable_async(client)
+
+    whole_tree = len(deletes) == 2
+    response = await _update_async(client, snapshot=snapshot, deletes=[str(stored[value].id) for value in deletes])
+
+    assert response.status_code == (200 if whole_tree else 422), response.text
+    if whole_tree:
+        assert not await _seeds(sqlite_instance)
+    else:
+        assert {row.value for row in await _seeds(sqlite_instance)} == {"root objective", "child objective"}
+
+
+async def test_mutation_rejects_a_mixed_edit_and_delete_that_breaks_the_decomposition(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    dataset = SeedDataset.from_dict(
+        {
+            "dataset_name": "upload",
+            "seeds": [
+                {
+                    "seed_type": "objective",
+                    "value": "root objective",
+                    "sub_objectives": [{"key": "child", "value": "child objective"}],
+                    "paths": [["child"]],
+                }
+            ],
+        }
+    )
+    await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="tester")
+    stored = {row.value: row for row in await _seeds(sqlite_instance)}
+    snapshot = await _editable_async(client)
+    edit = next(row for row in _editable_rows(snapshot) if row["id"] == str(stored["root objective"].id))
+    edit["description"] = "edited root"
+
+    response = await _update_async(client, snapshot=snapshot, seeds=[edit], deletes=[str(stored["child objective"].id)])
+
+    assert response.status_code == 422, response.text
+    assert {row.value for row in await _seeds(sqlite_instance)} == {"root objective", "child objective"}
 
 
 @pytest.mark.parametrize("seed_type", ["prompt", "objective", "simulated_conversation"])
