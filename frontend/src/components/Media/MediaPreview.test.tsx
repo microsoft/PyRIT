@@ -246,6 +246,84 @@ describe('MediaPreview', () => {
     },
   )
 
+  it('should remount the current url on reopen and Retry when no refresh callback is set', async () => {
+    const user = userEvent.setup()
+    const current = 'https://example.test/pic.png'
+    renderPreview({ type: 'image', src: current, alt: 'pic', lazy: true, recovery: true })
+
+    await user.click(screen.getByRole('button', { name: 'Show image preview' }))
+    fireEvent.load(screen.getByAltText('pic'))
+    await user.click(screen.getByRole('button', { name: 'Hide image preview' }))
+    await user.click(screen.getByRole('button', { name: 'Show image preview' }))
+    expect(screen.getByAltText('pic')).toHaveAttribute('src', current)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    fireEvent.error(screen.getByAltText('pic'))
+    await user.click(screen.getByRole('button', { name: 'Retry image' }))
+    expect(screen.getByAltText('pic')).toHaveAttribute('src', current)
+    expect(screen.queryByTestId('image-error')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('image-refresh-error')).not.toBeInTheDocument()
+  })
+
+  const unusableUrls = [
+    ['undefined', undefined],
+    ['null', null],
+    ['an empty string', ''],
+    ['a whitespace-only string', '   '],
+  ] as const
+
+  it.each(unusableUrls)(
+    'should keep a reopened preview closed when the refresh returns %s and allow another attempt',
+    async (_label, unusable) => {
+      const user = userEvent.setup()
+      const expired = 'https://account.blob.core.windows.net/container/pic.png?sig=expired'
+      const fresh = 'https://account.blob.core.windows.net/container/pic.png?sig=fresh'
+      const refresh = jest.fn(async (): Promise<string> => fresh)
+        .mockResolvedValueOnce(unusable as unknown as string)
+      renderPreview({ type: 'image', src: expired, alt: 'pic', lazy: true, recovery: true, onRetry: refresh })
+
+      await user.click(screen.getByRole('button', { name: 'Show image preview' }))
+      fireEvent.load(screen.getByAltText('pic'))
+      await user.click(screen.getByRole('button', { name: 'Hide image preview' }))
+      await user.click(screen.getByRole('button', { name: 'Show image preview' }))
+
+      expect(refresh).toHaveBeenCalledTimes(1)
+      expect(screen.queryByAltText('pic')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Show image preview' })).toBeEnabled()
+      expect(screen.getByRole('alert')).toHaveTextContent("Couldn't refresh the link.")
+
+      await user.click(screen.getByRole('button', { name: 'Show image preview' }))
+      expect(screen.getByAltText('pic')).toHaveAttribute('src', fresh)
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    },
+  )
+
+  it.each(unusableUrls)(
+    'should keep the error visible when Retry refreshes to %s, then allow another retry',
+    async (_label, unusable) => {
+      const user = userEvent.setup()
+      const expired = 'https://account.blob.core.windows.net/container/pic.png?sig=expired'
+      const fresh = 'https://account.blob.core.windows.net/container/pic.png?sig=fresh'
+      const refresh = jest.fn(async (): Promise<string> => fresh)
+        .mockResolvedValueOnce(unusable as unknown as string)
+      renderPreview({ type: 'image', src: expired, alt: 'pic', lazy: true, recovery: true, onRetry: refresh })
+
+      await user.click(screen.getByRole('button', { name: 'Show image preview' }))
+      fireEvent.error(screen.getByAltText('pic'))
+      await user.click(screen.getByRole('button', { name: 'Retry image' }))
+
+      expect(refresh).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('image-error')).toBeInTheDocument()
+      expect(screen.getByTestId('image-refresh-error')).toHaveTextContent("Couldn't refresh the link.")
+      expect(screen.queryByAltText('pic')).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Retry image' }))
+      await waitFor(() => expect(screen.getByAltText('pic')).toHaveAttribute('src', fresh))
+      expect(screen.queryByTestId('image-error')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('image-refresh-error')).not.toBeInTheDocument()
+    },
+  )
+
   it('should not show a refresh failure that lands after the preview is closed', async () => {
     const user = userEvent.setup()
     let rejectRefresh: (err: Error) => void = () => {}
@@ -259,7 +337,7 @@ describe('MediaPreview', () => {
       onRetry: () => {
         attempts += 1
         if (attempts === 1) return new Promise((_, reject) => { rejectRefresh = reject })
-        return undefined
+        return 'https://account.blob.core.windows.net/container/pic.png?sig=fresh'
       },
     })
     await user.click(screen.getByRole('button', { name: 'Show image preview' }))

@@ -150,9 +150,15 @@ export default function MediaPreview({
     setRefreshing(true)
     setRefreshFailed(false)
     try {
-      const next = await onRetry?.()
+      // Without a refresh callback (chat), a retry only remounts the current src.
+      if (onRetry == null) return true
+      const next = await onRetry()
       if (serial !== refreshSerial.current) return false
-      if (typeof next === 'string' && next.length > 0) setReplacement({ from: src, next })
+      if (typeof next !== 'string' || next.trim() === '') {
+        setRefreshFailed(true)
+        return false
+      }
+      setReplacement({ from: src, next })
       setRefreshFailed(false)
       return true
     } catch (err: unknown) {
