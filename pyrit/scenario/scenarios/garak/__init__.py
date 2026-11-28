@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from pyrit.scenario.scenarios._dynamic_techniques import DoctorTechnique
     from pyrit.scenario.scenarios.garak.api_key import ApiKey, ApiKeyDatasetConfiguration, ApiKeyTechnique
     from pyrit.scenario.scenarios.garak.audio_achilles_heel import AudioAchillesHeel, AudioAchillesHeelTechnique
+    from pyrit.scenario.scenarios.garak.bad_characters import BadCharacters, BadCharactersTechnique
     from pyrit.scenario.scenarios.garak.divergence import (
         Divergence,
         DivergenceDatasetConfiguration,
@@ -53,6 +54,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ApiKeyTechnique": "pyrit.scenario.scenarios.garak.api_key",
     "AudioAchillesHeel": "pyrit.scenario.scenarios.garak.audio_achilles_heel",
     "AudioAchillesHeelTechnique": "pyrit.scenario.scenarios.garak.audio_achilles_heel",
+    "BadCharacters": "pyrit.scenario.scenarios.garak.bad_characters",
+    "BadCharactersTechnique": "pyrit.scenario.scenarios.garak.bad_characters",
     "Divergence": "pyrit.scenario.scenarios.garak.divergence",
     "DivergenceDatasetConfiguration": "pyrit.scenario.scenarios.garak.divergence",
     "DivergenceTechnique": "pyrit.scenario.scenarios.garak.divergence",

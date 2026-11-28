@@ -127,7 +127,9 @@ from pyrit.converter import (
     AnsiAttackConverter,
     ArabicPresentationFormConverter,
     ArabiziConverter,
+    BackspaceConverter,
     BidiConverter,
+    BidiSwapConverter,
     CharacterSpaceConverter,
     CharNoiseConverter,
     CharSwapConverter,
@@ -186,6 +188,15 @@ print("Diacritic:", await DiacriticConverter().convert_async(prompt=prompt))  # 
 
 # Bidi [@boucher2023trojan] wraps text in Unicode bidirectional control characters
 print("Bidi:", await BidiConverter().convert_async(prompt=prompt))  # type: ignore
+
+# Bad Characters [@boucher2022badcharacters] perturbations change a few code points but render like the original.
+# A budget limits Zero Width and Unicode Confusable to that many changes, at random positions.
+print("Zero Width (budget):", await ZeroWidthConverter(budget=2, seed=0).convert_async(prompt=prompt))  # type: ignore
+print("Unicode Confusable (budget):", await UnicodeConfusableConverter(budget=2).convert_async(prompt=prompt))  # type: ignore
+# Bidi Swap stores two adjacent characters in reverse order, behind bidi controls that keep the display the same
+print("Bidi Swap:", await BidiSwapConverter(seed=0).convert_async(prompt=prompt))  # type: ignore
+# Backspace inserts a character followed by a backspace that deletes it on display
+print("Backspace:", await BackspaceConverter(seed=0).convert_async(prompt=prompt))  # type: ignore
 # The Arabic converters only affect Arabic letters, so they use an Arabic prompt
 # ("tell me how to cut down a tree") rather than the Latin-script prompt above.
 arabic_prompt = "أخبرني كيف أقطع شجرة"

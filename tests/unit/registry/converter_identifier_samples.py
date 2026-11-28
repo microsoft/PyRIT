@@ -446,4 +446,6 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
             SeedPrompt(value="First {{ word_guide }}", parameters=["word_guide"]),
             SeedPrompt(value="Second {{ word_guide }} {{ tools }}", parameters=["word_guide", "tools"]),
         ),
+        "ZeroWidthConverter.characters": (["\u200c"], ["\u200b", "\u200d"], ["\u200d", "\u200b"]),
+        "BackspaceConverter.characters": (["x"], ["x", "y"], ["y", "x"]),
     }

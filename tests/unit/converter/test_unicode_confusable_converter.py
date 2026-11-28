@@ -152,3 +152,91 @@ async def test_convert_async_long_prompt(homoglyphs_converter, confusables_conve
     for p_prompt in perturbed_prompts_confusables:
         assert p_prompt != prompt
         assert isinstance(p_prompt, str)
+
+
+def _changed_positions(original: str, converted: str) -> list[int]:
+    assert len(original) == len(converted)
+    return [index for index, (before, after) in enumerate(zip(original, converted, strict=True)) if before != after]
+
+
+@pytest.mark.parametrize("source_package", ["confusable_homoglyphs", "confusables", "cyrillic_homoglyph"])
+@pytest.mark.parametrize("budget", [1, 3])
+async def test_budget_replaces_exactly_budget_characters(source_package: str, budget: int) -> None:
+    # Every letter here has single-character look-alikes in each package, so lengths stay comparable.
+    prompt = "the best yes"
+    converter = UnicodeConfusableConverter(source_package=source_package, budget=budget)
+
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+
+    assert len(_changed_positions(prompt, result.output_text)) == budget
+
+
+async def test_budget_larger_than_candidates_replaces_every_candidate() -> None:
+    converter = UnicodeConfusableConverter(source_package="cyrillic_homoglyph", budget=50)
+
+    result = await converter.convert_async(prompt="copy 3.14", input_type="text")
+
+    assert result.output_text == "\u0441\u043e\u0440\u0443 3.14"
+
+
+async def test_budget_without_candidates_returns_prompt_unchanged() -> None:
+    converter = UnicodeConfusableConverter(source_package="cyrillic_homoglyph", budget=1)
+
+    result = await converter.convert_async(prompt="123 !?", input_type="text")
+
+    assert result.output_text == "123 !?"
+
+
+async def test_budget_cyrillic_uses_table_substitutes() -> None:
+    prompt = "aceopxy"
+    converter = UnicodeConfusableConverter(source_package="cyrillic_homoglyph", budget=2)
+
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+
+    for index in _changed_positions(prompt, result.output_text):
+        assert result.output_text[index] == prompt[index].translate(UnicodeConfusableConverter._CYRILLIC_HOMOGLYPHS)
+
+
+async def test_budget_confusables_skips_spaces() -> None:
+    converter = UnicodeConfusableConverter(source_package="confusables", budget=50)
+
+    result = await converter.convert_async(prompt="a b", input_type="text")
+
+    assert result.output_text[1] == " "
+    assert _changed_positions("a b", result.output_text) == [0, 2]
+
+
+async def test_budget_deterministic_picks_last_substitute() -> None:
+    converter = UnicodeConfusableConverter(source_package="confusables", budget=50, deterministic=True)
+
+    result = await converter.convert_async(prompt="a", input_type="text")
+
+    assert result.output_text == converter._substitutes("a")[-1]
+
+
+async def test_budget_empty_prompt_stays_empty() -> None:
+    converter = UnicodeConfusableConverter(budget=1)
+
+    result = await converter.convert_async(prompt="", input_type="text")
+
+    assert result.output_text == ""
+
+
+def test_substitutes_exclude_original_character() -> None:
+    for source_package in ("confusable_homoglyphs", "confusables", "cyrillic_homoglyph"):
+        converter = UnicodeConfusableConverter(source_package=source_package)
+        assert "a" not in converter._substitutes("a")
+
+
+@pytest.mark.parametrize("budget", [0, -2, True])
+def test_invalid_budget_raises(budget: int) -> None:
+    with pytest.raises(ValueError, match="budget must be a positive integer"):
+        UnicodeConfusableConverter(budget=budget)
+
+
+def test_default_identifier_has_no_budget() -> None:
+    assert "budget" not in UnicodeConfusableConverter().get_identifier().params
+
+
+def test_identifier_includes_budget() -> None:
+    assert UnicodeConfusableConverter(budget=2).get_identifier().params["budget"] == 2
