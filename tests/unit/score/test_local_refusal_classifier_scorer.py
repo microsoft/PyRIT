@@ -358,9 +358,25 @@ def test_recipe_is_retained_and_hashed() -> None:
         LocalRefusalClassifierScorer(max_objective_tokens=64),
         LocalRefusalClassifierScorer(max_input_tokens=400),
         LocalRefusalClassifierScorer(revision="different"),
+        LocalRefusalClassifierScorer(model_path=Path("/models/laya")),
         LocalRefusalClassifierScorer(abstain_band=None),
     ]:
         assert scorer.get_identifier().eval_hash != baseline.eval_hash
+
+
+def test_default_identity_is_stable() -> None:
+    identifier = LocalRefusalClassifierScorer().get_identifier()
+
+    assert identifier.hash == "c27cb6c48558cbb3c6cb500cf8a656b6cb441667e5df79000fad94b813f6e2a7"
+    assert "model_path" not in identifier.params
+    assert "model_path" not in identifier.params["recipe"]
+
+
+def test_model_path_replaces_the_hub_checkpoint_in_the_identity() -> None:
+    params = LocalRefusalClassifierScorer(model_path=Path("/models/laya")).get_identifier().params
+
+    assert params["model_path"] == params["recipe"]["model_path"] == str(Path("/models/laya"))
+    assert not {"model_id", "revision"} & (params.keys() | params["recipe"].keys())
 
 
 def test_explicit_registry_construction() -> None:
@@ -624,19 +640,72 @@ async def test_encoder_loads_once_async() -> None:
     load.assert_called_once()
 
 
-def test_load_pins_revision_and_supports_local_directory(tmp_path: Path) -> None:
+def test_load_downloads_the_pinned_revision() -> None:
     fake = MagicMock()
     with (
         patch.dict(sys.modules, {"laya": fake}),
         patch("huggingface_hub.snapshot_download", return_value="cache") as download,
     ):
         _LayaEncoder(device="cpu")._load_model()
+
+    assert download.call_args.kwargs["revision"] == _LayaEncoder.DEFAULT_MODEL_REVISION
+    assert download.call_args.kwargs["allow_patterns"] == list(module._CHECKPOINT_FILES)
+    fake.load.assert_called_once_with("cache", device="cpu")
+
+
+@pytest.mark.parametrize("location", ["model_path", "model_id"])
+async def test_scorer_loads_its_checkpoint_from_model_path_or_the_hub_async(tmp_path: Path, *, location: str) -> None:
+    from_hub = location == "model_id"
+    scorer = (
+        LocalRefusalClassifierScorer(model_id="contoso/laya_tuned")
+        if from_hub
+        else LocalRefusalClassifierScorer(model_path=tmp_path)
+    )
+    fake = MagicMock()
+    with (
+        patch.dict(sys.modules, {"laya": fake}),
+        patch("huggingface_hub.snapshot_download", return_value="hub-cache") as download,
+        patch.object(module, "_load_training_rows", return_value=([("objective", "response")], [1])),
+        patch.object(
+            _LayaEncoder,
+            "_training_features",
+            return_value=_TrainingFeatures(features=[[0.0], [1.0]], labels=[0, 1]),
+        ),
+        patch.object(module, "_train_head", return_value=_head()),
+    ):
+        await scorer.load_model_async()
+
+    if from_hub:
+        assert download.call_args.args == ("contoso/laya_tuned",)
         assert download.call_args.kwargs["revision"] == _LayaEncoder.DEFAULT_MODEL_REVISION
-        assert download.call_args.kwargs["allow_patterns"] == list(module._CHECKPOINT_FILES)
-        fake.load.assert_called_once_with("cache", device="cpu")
-        download.reset_mock()
-        _LayaEncoder(model_id=str(tmp_path))._load_model()
+        fake.load.assert_called_once_with("hub-cache", device=None)
+    else:
         download.assert_not_called()
+        fake.load.assert_called_once_with(str(tmp_path), device=None)
+
+
+def test_load_downloads_model_id_even_when_a_folder_has_that_name(tmp_path: Path) -> None:
+    fake = MagicMock()
+    with (
+        patch.dict(sys.modules, {"laya": fake}),
+        patch("huggingface_hub.snapshot_download", return_value="cache") as download,
+    ):
+        _LayaEncoder(model_id=str(tmp_path))._load_model()
+
+    assert download.call_args.args == (str(tmp_path),)
+    fake.load.assert_called_once_with("cache", device=None)
+
+
+@pytest.mark.parametrize("model_id", ["/srv/models/laya", "C:\\models\\laya", "./laya", "../laya", "~/laya", "a/b/c"])
+def test_model_id_must_name_a_hub_repository(model_id: str) -> None:
+    with pytest.raises(ValueError, match="model_id must be a Hugging Face Hub repository"):
+        LocalRefusalClassifierScorer(model_id=model_id)
+
+
+@pytest.mark.parametrize("hub_setting", [{"model_id": "convaiinnovations/laya"}, {"revision": "main"}])
+def test_model_path_cannot_be_combined_with_a_hub_setting(hub_setting: dict[str, str]) -> None:
+    with pytest.raises(ValueError, match="model_path can't be combined with model_id or revision"):
+        LocalRefusalClassifierScorer(model_path=Path("/models/laya"), **hub_setting)
 
 
 def test_missing_package_error() -> None:

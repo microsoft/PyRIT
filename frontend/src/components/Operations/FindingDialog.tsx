@@ -32,11 +32,11 @@ interface FindingDialogProps {
   /** Read once, when the dialog opens. A reload while it's open doesn't change its inputs or retired values. */
   fields: FindingFields
   /** An edit's finding, with the retired values the findings list sets apart. */
-  initialValues?: FindingCreate & Pick<FindingListItem, 'retired'>
+  initialValues?: (FindingCreate & Pick<FindingListItem, 'retired'>) | undefined
   editing?: boolean
   context?: React.ReactNode
   /** The title of the finding this one is a sub-finding of. The parent is shown, not edited. */
-  parentTitle?: string
+  parentTitle?: string | undefined
   /** Shows an optional attack ID to link as evidence. */
   evidenceField?: boolean
   saveDisabled?: boolean
@@ -209,7 +209,7 @@ export default function FindingDialog({
                 onChange={(_, data) => { setDraft(value => ({ ...value, demonstrated: data.checked })) }} />
             </Field>
             {evidenceField && <Field label="Evidence attack ID"
-              validationState={attackResultIdError ? 'error' : 'none'} validationMessage={attackResultIdError || undefined}
+              validationState={attackResultIdError ? 'error' : 'none'} validationMessage={attackResultIdError || null}
               hint="Optional. Links a saved attack as evidence; the attack is not changed. Its ID is in the attack's address.">
               <Input className={styles.input} value={attackResultId} disabled={saving} name="attack_result_id"
                 autoComplete="off"

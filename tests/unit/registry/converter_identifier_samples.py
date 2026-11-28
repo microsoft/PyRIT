@@ -11,6 +11,7 @@ from itertools import product
 from pathlib import Path
 from typing import Any
 
+import matplotlib as mpl
 import yaml
 from PIL import Image
 
@@ -298,6 +299,10 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
         "innocuous_images": (pngs[:19], [pngs[19], *pngs[1:19]], [*pngs[:18], pngs[19]], [*pngs[:19], pngs[18]]),
         "payload_background": (pngs[0], pngs[1], str(other_png)),
         "PDFConverter.existing_pdf": (documents[0], documents[2], other_pdf),
+        "PDFConverter.font_path": tuple(
+            Path(mpl.get_data_path()) / "fonts" / "ttf" / name
+            for name in ("DejaVuSans.ttf", "DejaVuSerif.ttf", "DejaVuSansMono.ttf")
+        ),
         "WordDocConverter.existing_docx": (documents[1], documents[3], other_docx),
         "PDFConverter.prompt_template": (
             SeedPrompt(value="First {{ prompt }}", parameters=["prompt"]),
@@ -437,5 +442,9 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
         "PolicyPuppetryConverter.prompt_template": (
             SeedPrompt(value="Say first {{ prompt }} now", parameters=["prompt"]),
             SeedPrompt(value="Say third {{ prompt }} now", parameters=["prompt"]),
+        ),
+        "DRAConverter.prompt_template": (
+            SeedPrompt(value="First {{ word_guide }}", parameters=["word_guide"]),
+            SeedPrompt(value="Second {{ word_guide }} {{ tools }}", parameters=["word_guide", "tools"]),
         ),
     }

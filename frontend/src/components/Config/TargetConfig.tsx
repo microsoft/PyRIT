@@ -98,7 +98,7 @@ export default function TargetConfig({
       }
     }
 
-    attempt(0)
+    void attempt(0)
     return () => {
       cancelled = true
       pending.current = false

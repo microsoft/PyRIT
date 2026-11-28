@@ -123,12 +123,12 @@ export interface ScenarioLaunchInput {
   /** Why the linked dataset names can't launch; see `linkedDatasetProblem`. */
   linkedDatasetError?: string | null
   includeBaseline: boolean
-  techniqueOverride?: TechniqueOverride
-  techniqueEditError?: string
+  techniqueOverride?: TechniqueOverride | undefined
+  techniqueEditError?: string | undefined
   supportsPrependedConversation?: boolean
   supportsPrompt?: boolean
   objectiveScorer?: RegisteredComponentReference | null
-  scorerError?: string
+  scorerError?: string | undefined
   operationId: string | null
   maxConcurrency: number
   maxRetries: number

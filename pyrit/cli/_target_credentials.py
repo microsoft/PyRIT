@@ -17,6 +17,7 @@ import shutil
 import sys
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING, assert_never
 
 
 class TargetCredentialError(Exception):
@@ -45,11 +46,19 @@ class CredentialSource:
     @property
     def description(self) -> str:
         """A short, secret-free description for messages."""
-        if self.kind is CredentialSourceKind.ENVIRONMENT:
-            return f"environment variable {self.environment_variable}"
-        if self.kind is CredentialSourceKind.ANT:
-            return f"ant profile '{self.ant_profile}'" if self.ant_profile else "the active ant profile"
-        return "the prompt"
+        kind = self.kind
+        match kind:
+            case CredentialSourceKind.PROMPT:
+                return "the prompt"
+            case CredentialSourceKind.ENVIRONMENT:
+                return f"environment variable {self.environment_variable}"
+            case CredentialSourceKind.ANT:
+                return f"ant profile '{self.ant_profile}'" if self.ant_profile else "the active ant profile"
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(kind)
+                # Preserve the historical runtime fallback for values outside the declared enum.
+                return "the prompt"
 
 
 async def read_target_credential_async(*, source: CredentialSource, target_name: str, header: str | None = None) -> str:
@@ -68,12 +77,19 @@ async def read_target_credential_async(*, source: CredentialSource, target_name:
     Raises:
         TargetCredentialError: If the source is unavailable or yields no credential, or an unusable one.
     """
-    if source.kind is CredentialSourceKind.PROMPT:
-        credential = await _read_prompt_async(target_name=target_name)
-    elif source.kind is CredentialSourceKind.ENVIRONMENT:
-        credential = _read_environment(variable=source.environment_variable)
-    else:
-        credential = await _read_ant_async(profile=source.ant_profile)
+    kind = source.kind
+    match kind:
+        case CredentialSourceKind.PROMPT:
+            credential = await _read_prompt_async(target_name=target_name)
+        case CredentialSourceKind.ENVIRONMENT:
+            credential = _read_environment(variable=source.environment_variable)
+        case CredentialSourceKind.ANT:
+            credential = await _read_ant_async(profile=source.ant_profile)
+        case _:
+            if TYPE_CHECKING:
+                assert_never(kind)
+            # Preserve the historical runtime fallback for values outside the declared enum.
+            credential = await _read_ant_async(profile=source.ant_profile)
     if header is None:
         return _require_single_token(credential=credential, source=source)
     return _require_header_value(credential=credential, source=source)

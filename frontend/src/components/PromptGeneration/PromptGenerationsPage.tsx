@@ -146,7 +146,7 @@ export default function PromptGenerationsPage() {
                   {generators.map((generator) => (
                     <MenuItem
                       key={generator.name}
-                      onClick={() => navigate(newPromptGenerationRoutePath({ generator: generator.name }))}
+                      onClick={() => { void navigate(newPromptGenerationRoutePath({ generator: generator.name })) }}
                     >
                       {generator.display_name}
                     </MenuItem>

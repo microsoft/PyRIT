@@ -4,6 +4,7 @@
 import enum
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Self
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -79,7 +80,7 @@ class TrueFalseQuestion(BaseModel):
         return false_description or _DEFAULT_FALSE_DESCRIPTION
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "TrueFalseQuestion":
+    def from_yaml(cls, path: str | Path) -> Self:
         """
         Load a ``TrueFalseQuestion`` from a YAML file.
 
@@ -241,7 +242,7 @@ class SelfAskTrueFalseScorer(MessageTrueFalseScorer):
         response_handler: ResponseHandler | None = None,
         validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
-    ) -> "SelfAskTrueFalseScorer":
+    ) -> Self:
         """
         Build a scorer whose system prompt and category are driven by a ``TrueFalseQuestion``.
 

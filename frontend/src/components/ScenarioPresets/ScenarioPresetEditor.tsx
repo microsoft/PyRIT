@@ -324,7 +324,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
       } else {
         await scenarioPresetsApi.update(loaded.preset.name, preset, loaded.version)
       }
-      navigate(PRESETS_ROUTE)
+      void navigate(PRESETS_ROUTE)
     } catch (err) {
       setSaveError(toApiError(err).detail)
       setSaving(false)
@@ -350,7 +350,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
               {status === 'not-found' ? `No preset named "${decodedName}".` : loadError}
             </MessageBarBody>
           </MessageBar>
-          <Button appearance="primary" onClick={() => navigate(PRESETS_ROUTE)}>
+          <Button appearance="primary" onClick={() => { void navigate(PRESETS_ROUTE) }}>
             Back to presets
           </Button>
         </div>
@@ -375,7 +375,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
         </Text>
       </div>
 
-      <form className={styles.form} onSubmit={handleSubmit} noValidate>
+      <form className={styles.form} onSubmit={(event) => { void handleSubmit(event) }} noValidate>
         {saveError && (
           <MessageBar intent="error">
             <MessageBarBody role="alert">{saveError}</MessageBarBody>
@@ -548,7 +548,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
             className={styles.touchTarget}
             appearance="secondary"
             disabled={saving}
-            onClick={() => navigate(PRESETS_ROUTE)}
+            onClick={() => { void navigate(PRESETS_ROUTE) }}
           >
             Cancel
           </Button>

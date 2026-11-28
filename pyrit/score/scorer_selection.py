@@ -37,6 +37,7 @@ from pyrit.score.expectation_errors import AmbiguousConditionError, ExpectationM
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import Self
 
     from pyrit.score.scorer import Scorer
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -125,7 +126,7 @@ class ScorerRequirements:
         _validate_evaluation_key(self.evaluation, owner="ScorerRequirements")
 
     @classmethod
-    def combine(cls, *requirements: ScorerRequirements | None) -> ScorerRequirements:
+    def combine(cls, *requirements: ScorerRequirements | None) -> Self:
         """
         Merge requirements from several owners.
 
@@ -474,7 +475,7 @@ class CompatibleScorers:
         self._candidates = normalized
 
     @classmethod
-    def from_scorer(cls, scorer: TrueFalseScorer) -> CompatibleScorers:
+    def from_scorer(cls, scorer: TrueFalseScorer) -> Self:
         """
         Wrap one scorer as a single untagged candidate.
 

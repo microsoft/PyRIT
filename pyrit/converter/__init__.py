@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from pyrit.converter.decomposition_converter import DecompositionConverter
     from pyrit.converter.denylist_converter import DenylistConverter
     from pyrit.converter.diacritic_converter import DiacriticConverter
+    from pyrit.converter.dra_converter import DRAConverter, DRATemplate
     from pyrit.converter.ecoji_converter import EcojiConverter
     from pyrit.converter.emoji_converter import EmojiConverter
     from pyrit.converter.first_letter_converter import FirstLetterConverter
@@ -92,6 +93,7 @@ if TYPE_CHECKING:
     from pyrit.converter.noise_converter import NoiseConverter
     from pyrit.converter.pdf_converter import PDFConverter
     from pyrit.converter.persuasion_converter import PersuasionConverter
+    from pyrit.converter.pigpen_converter import PigpenConverter
     from pyrit.converter.pinyin_converter import PinyinConverter
     from pyrit.converter.policy_puppetry_converter import PolicyPuppetryConverter, PolicyPuppetryTemplate
     from pyrit.converter.prompt_template_converter import PromptTemplateConverter
@@ -194,6 +196,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "DecompositionConverter": "pyrit.converter.decomposition_converter",
     "DenylistConverter": "pyrit.converter.denylist_converter",
     "DiacriticConverter": "pyrit.converter.diacritic_converter",
+    "DRAConverter": "pyrit.converter.dra_converter",
+    "DRATemplate": "pyrit.converter.dra_converter",
     "EcojiConverter": "pyrit.converter.ecoji_converter",
     "EmojiConverter": "pyrit.converter.emoji_converter",
     "FirstLetterConverter": "pyrit.converter.first_letter_converter",
@@ -228,6 +232,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "NoiseConverter": "pyrit.converter.noise_converter",
     "PDFConverter": "pyrit.converter.pdf_converter",
     "PersuasionConverter": "pyrit.converter.persuasion_converter",
+    "PigpenConverter": "pyrit.converter.pigpen_converter",
     "PinyinConverter": "pyrit.converter.pinyin_converter",
     "PolicyPuppetryConverter": "pyrit.converter.policy_puppetry_converter",
     "PolicyPuppetryTemplate": "pyrit.converter.policy_puppetry_converter",

@@ -11,7 +11,7 @@ listing available datasets and browsing their stored seed examples.
 
 import os
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -68,7 +68,7 @@ class DatasetUploadLimits:
     prompts: int = 10_000
 
     @classmethod
-    def from_environment(cls) -> "DatasetUploadLimits":
+    def from_environment(cls) -> Self:
         """
         Read explicit limits without silently accepting invalid configuration.
 
@@ -99,7 +99,7 @@ class DatasetUploadManifest(BaseModel):
     delete_seed_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _validate_operations(self) -> "DatasetUploadManifest":
+    def _validate_operations(self) -> Self:
         if self.mode == "create":
             if not self.seeds or self.delete_seed_ids or self.expected_version is not None:
                 raise ValueError("Create requires seeds and forbids deletions and expected_version.")

@@ -85,6 +85,8 @@ class TestGetGoalsAndTargetsLegacy:
             params1.n_test_data = 0
             params1.test_data = ""
             params1.random_seed = 42
+            params1.test_goals = []
+            params1.test_targets = []
 
             params2 = MagicMock()
             params2.train_data = csv_path
@@ -92,6 +94,8 @@ class TestGetGoalsAndTargetsLegacy:
             params2.n_test_data = 0
             params2.test_data = ""
             params2.random_seed = 42
+            params2.test_goals = []
+            params2.test_targets = []
 
             goals1, targets1, _, _ = get_goals_and_targets(params1)
             goals2, targets2, _, _ = get_goals_and_targets(params2)
@@ -162,7 +166,7 @@ class TestMainAsyncCli:
 
         with patch.dict("os.environ", {"HUGGINGFACE_TOKEN": ""}, clear=False):
             with pytest.raises(ValueError, match="No HuggingFace token available"):
-                await _main_async(str(config_path), str(data_path))
+                await _main_async(config_path=str(config_path), data_path=str(data_path))
 
     @patch("pyrit.executor.promptgen.gcg.experiments.run._load_environment_files")
     @patch("pyrit.executor.promptgen.gcg.experiments.run.load_goals_and_targets")
@@ -186,7 +190,7 @@ class TestMainAsyncCli:
         with patch.dict("os.environ", {"HUGGINGFACE_TOKEN": "hf_envtoken"}):
             with patch.object(GCGGenerator, "execute_async", new_callable=AsyncMock) as mock_execute:
                 mock_execute.return_value = MagicMock()
-                await _main_async(str(config_path), str(data_path))
+                await _main_async(config_path=str(config_path), data_path=str(data_path))
 
         mock_execute.assert_awaited_once()
         call_kwargs = mock_execute.await_args.kwargs
