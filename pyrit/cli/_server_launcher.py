@@ -342,9 +342,10 @@ def _find_pid_on_port_windows(*, port: int) -> int | None:
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", powershell_command],
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=5,
         )
-        pids = {int(line.strip()) for line in result.stdout.splitlines() if line.strip().isdigit()}
+        pids = {int(line.strip()) for line in (result.stdout or "").splitlines() if line.strip().isdigit()}
         if len(pids) == 1:
             return next(iter(pids))
         if len(pids) > 1:
@@ -357,11 +358,12 @@ def _find_pid_on_port_windows(*, port: int) -> int | None:
             ["netstat", "-ano", "-p", "TCP"],
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    pids = _parse_netstat_listener_pids(output=result.stdout, port=port)
+    pids = _parse_netstat_listener_pids(output=result.stdout or "", port=port)
     return next(iter(pids)) if len(pids) == 1 else None
 
 

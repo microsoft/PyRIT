@@ -97,6 +97,54 @@ def test_windows_pid_lookup_rejects_ambiguous_listener():
     run_mock.assert_called_once()
 
 
+def _fake_run_with_localized_output(cmd, **kwargs):
+    """Emulate a non-English Windows command whose output is not valid UTF-8.
+
+    Decodes the raw bytes with the ``errors`` mode the call requested. With
+    strict decoding the CPython 3.14 reader thread fails and ``subprocess.run``
+    returns ``stdout=None``; with ``errors="replace"`` undecodable bytes become
+    U+FFFD and the ASCII port/PID tokens survive.
+    """
+    raw = _LOCALIZED_POWERSHELL_OUTPUT if cmd[0] == "powershell.exe" else _LOCALIZED_NETSTAT_OUTPUT
+    try:
+        stdout = raw.decode("utf-8", kwargs.get("errors", "strict"))
+    except UnicodeDecodeError:
+        stdout = None
+    return MagicMock(stdout=stdout, returncode=0)
+
+
+_LOCALIZED_POWERSHELL_OUTPUT = b"\xbc\xe7\n"
+_LOCALIZED_NETSTAT_OUTPUT = (
+    b"\xbc\xe7\xbf\xf9\nTCP    0.0.0.0:8000        0.0.0.0:0              LISTENING       4321\n"
+)
+
+
+def test_windows_pid_lookup_tolerates_undecodable_output():
+    """Localized netstat/PowerShell output must not crash the lookup (#4696)."""
+    with patch("subprocess.run", side_effect=_fake_run_with_localized_output) as run_mock:
+        assert _server_launcher._find_pid_on_port_windows(port=8000) == 4321
+
+    assert run_mock.call_count == 2
+    for invocation in run_mock.call_args_list:
+        assert invocation.kwargs["errors"] == "replace"
+
+
+def test_windows_pid_lookup_returns_none_for_free_port_with_undecodable_output():
+    """Free port + localized output returns None instead of crashing (#4696)."""
+    with patch("subprocess.run", side_effect=_fake_run_with_localized_output) as run_mock:
+        assert _server_launcher._find_pid_on_port_windows(port=59515) is None
+
+    assert run_mock.call_count == 2
+    for invocation in run_mock.call_args_list:
+        assert invocation.kwargs["errors"] == "replace"
+
+
+def test_parse_netstat_listener_pids_tolerates_replacement_characters():
+    output = "\ufffd\ufffd localized header\nTCP    0.0.0.0:8000        0.0.0.0:0              LISTENING       4321"
+
+    assert _server_launcher._parse_netstat_listener_pids(output=output, port=8000) == {4321}
+
+
 def test_unix_pid_lookup_falls_back_to_ss_when_lsof_fails():
     ss_result = MagicMock(stdout='users:(("python",pid=5678,fd=3))')
     with patch("subprocess.run", side_effect=[OSError("lsof missing"), ss_result]):
