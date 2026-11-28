@@ -283,9 +283,7 @@ def _create_aggregator_by_category(
                 return [_undetermined_result(scores_list, name=name, metadata=metadata, category=category)]
             raw_result = result_func(float_values)
             if use_selected_score_metadata:
-                selected_score = _select_winner(
-                    scores=scores_list, float_values=float_values, raw_result=raw_result
-                )
+                selected_score = _select_winner(scores=scores_list, float_values=float_values, raw_result=raw_result)
                 metadata.update(selected_score.score_metadata or {})
             result = max(0.0, min(1.0, raw_result))
 
