@@ -6,10 +6,11 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedPrompt
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.scenario.garak import AudioAchillesHeel, AudioAchillesHeelTechnique  # type: ignore[ty:import-not-found]
 from pyrit.scenario.scenarios.garak.audio_achilles_heel import (
     DEFAULT_MAX_DATASET_SIZE,
@@ -28,6 +29,12 @@ def _mock_id(name: str) -> ComponentIdentifier:
 def mock_objective_target():
     mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_id("MockObjectiveTarget")
+    mock.configuration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset({frozenset({"text", "audio_path"})}),
+        )
+    )
     return mock
 
 
@@ -202,3 +209,40 @@ class TestAudioAchillesHeelTechniqueValues:
 
     def test_all_aggregate_present(self):
         assert "all" in AudioAchillesHeelTechnique.get_aggregate_tags()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAudioAchillesHeelTargetRequirements:
+    """TARGET_REQUIREMENTS must reject text-only targets before any request is sent."""
+
+    def test_target_requirements_declare_grouped_text_and_audio(self):
+        requirements = AudioAchillesHeel.TARGET_REQUIREMENTS
+
+        assert requirements.native_required == frozenset({CapabilityName.MULTI_MESSAGE_PIECES})
+        assert requirements.required_input_modalities == frozenset({frozenset({"text", "audio_path"})})
+
+    @pytest.mark.parametrize(
+        ("capabilities", "expected_error"),
+        [
+            (
+                TargetCapabilities(
+                    supports_multi_message_pieces=False,
+                    input_modalities=frozenset({frozenset({"text", "audio_path"})}),
+                ),
+                CapabilityName.MULTI_MESSAGE_PIECES.value,
+            ),
+            (
+                TargetCapabilities(
+                    supports_multi_message_pieces=True,
+                    input_modalities=frozenset({frozenset({"text"})}),
+                ),
+                "input modality",
+            ),
+        ],
+    )
+    def test_target_requirements_reject_incompatible_targets(self, capabilities, expected_error):
+        target = MockPromptTarget()
+        target._configuration = TargetConfiguration(capabilities=capabilities)
+
+        with pytest.raises(ValueError, match=expected_error):
+            AudioAchillesHeel.TARGET_REQUIREMENTS.validate(target=target)
